@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-06
+
+### Fixed
+- Add missing `repository`, `homepage`, `bugs`, and `author` fields to
+  `package.json` so npmjs.com surfaces a "Repository" link to
+  https://github.com/vyuh-labs/dxkit. These fields were accidentally
+  omitted from the 1.2.0 publish during the repo split.
+- Include `LICENSE` and `CHANGELOG.md` in the published tarball.
+
 ## [1.2.0] - 2026-04-06
 
 ### Changed

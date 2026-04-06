@@ -1,8 +1,17 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AI-native developer experience toolkit for any repository",
   "license": "MIT",
+  "author": "Vyuh Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vyuh-labs/dxkit.git"
+  },
+  "homepage": "https://github.com/vyuh-labs/dxkit#readme",
+  "bugs": {
+    "url": "https://github.com/vyuh-labs/dxkit/issues"
+  },
   "bin": {
     "vyuh-dxkit": "./dist/index.js"
   },
@@ -16,7 +25,9 @@
   "files": [
     "dist/",
     "templates/",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "node scripts/copy-templates.js && tsc",
