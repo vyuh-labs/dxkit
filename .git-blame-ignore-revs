@@ -6,4 +6,5 @@
 #
 # This is also honored automatically by GitHub's blame view.
 
-# chore: prettier baseline + register .git-blame-ignore-revs (PLACEHOLDER — see history)
+# chore(dx): test + lint scaffolding, prettier baseline, Node 22
+2098fffd8dc178c339a224b6d70b7e29431dff83
