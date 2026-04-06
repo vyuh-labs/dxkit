@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-06
+
 ### Changed
+- **Repository moved** to its own home at https://github.com/vyuh-labs/dxkit.
+  Previously developed inside `vyuh-labs/codespaces-ai-template-v2`. The npm
+  package name (`@vyuhlabs/dxkit`) is unchanged — `npx @vyuhlabs/dxkit init`
+  works exactly as before.
 - Package is now self-contained: templates live in `src-templates/` inside the
-  package instead of being copied from a parent monorepo at build time. This
-  is a prerequisite for extracting the package into its own repository.
+  repo instead of being copied from a parent monorepo at build time.
+
+### Added
+- `LICENSE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`.
+- GitHub Actions: `ci.yml` (typecheck + build + pack-dry on push/PR) and
+  `publish.yml` (publish to npm on GitHub release).
 
 ## [1.1.0] - 2026-04-06
 
