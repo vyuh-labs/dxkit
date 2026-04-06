@@ -1,0 +1,51 @@
+# Generated from template - Rust package manifest
+# See: https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package]
+name = "{{PROJECT_NAME_SNAKE}}"
+version = "0.1.0"
+edition = "2021"
+rust-version = "{{RUST_MSRV}}"
+authors = ["{{PROJECT_NAME}} <dev@example.com>"]
+description = "{{PROJECT_DESCRIPTION}}"
+readme = "README.md"
+homepage = "https://github.com/{{GITHUB_ORG}}/{{PROJECT_NAME_KEBAB}}"
+repository = "https://github.com/{{GITHUB_ORG}}/{{PROJECT_NAME_KEBAB}}"
+license = "MIT"
+keywords = []
+categories = []
+
+[dependencies]
+# Add your runtime dependencies here
+# Example: serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+# Add your test/dev dependencies here
+# Example: tokio-test = "0.4"
+
+[profile.dev]
+# Development profile - fast compile times
+opt-level = 0
+debug = true
+
+[profile.release]
+# Release profile - optimized for performance
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.test]
+# Test profile
+opt-level = 1
+debug = true
+
+[[bin]]
+name = "{{PROJECT_NAME_KEBAB}}"
+path = "src/main.rs"
+
+[lib]
+name = "{{PROJECT_NAME_SNAKE}}"
+path = "src/lib.rs"

@@ -1,0 +1,376 @@
+# Generated from template - Code Quality Checks
+# This workflow runs linting and formatting checks for all enabled languages
+# Quality checks can be disabled via .project.yaml or SKIP_QUALITY_CHECKS repo variable
+# Configuration is loaded from .project.yaml via project_config.py
+
+name: Quality Checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  SKIP_QUALITY_CHECKS: ${{ vars.SKIP_QUALITY_CHECKS || 'false' }}
+
+jobs:
+  # Validate configuration and load quality settings
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      skip_checks: ${{ steps.config.outputs.skip_checks }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load configuration
+        id: config
+        run: |
+          # Check repo variable first
+          if [ "$SKIP_QUALITY_CHECKS" = "true" ]; then
+            echo "Quality checks disabled via SKIP_QUALITY_CHECKS variable"
+            echo "skip_checks=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Validate .project.yaml exists
+          if [ ! -f ".project.yaml" ]; then
+            echo "::warning::Missing .project.yaml - using defaults"
+          fi
+
+          echo "skip_checks=false" >> $GITHUB_OUTPUT
+          echo "Quality checks enabled"
+
+{{#IF_QUALITY_CHECKS}}
+  # File validation and security checks (sync with pre-commit and make quality)
+  file-validation:
+    name: File Validation & Security
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate YAML files
+        run: |
+          echo "Validating YAML files..."
+          FAILED=0
+          for f in $(find . -name "*.yaml" -o -name "*.yml" -type f -not -path "./.git/*" -not -path "./node_modules/*" 2>/dev/null | head -100); do
+            if ! python3 -c "import yaml; yaml.safe_load(open('$f'))" 2>/dev/null; then
+              echo "Invalid YAML: $f"
+              FAILED=1
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then exit 1; fi
+          echo "All YAML files valid"
+
+      - name: Validate JSON files
+        run: |
+          echo "Validating JSON files..."
+          FAILED=0
+          for f in $(find . -name "*.json" -type f -not -path "./.git/*" -not -path "./node_modules/*" 2>/dev/null | head -100); do
+            if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
+              echo "Invalid JSON: $f"
+              FAILED=1
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then exit 1; fi
+          echo "All JSON files valid"
+
+      - name: Validate TOML files
+        run: |
+          echo "Validating TOML files..."
+          FAILED=0
+          for f in $(find . -name "*.toml" -type f -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./target/*" 2>/dev/null | head -100); do
+            if ! python3 -c "import tomllib; tomllib.load(open('$f', 'rb'))" 2>/dev/null; then
+              echo "Invalid TOML: $f"
+              FAILED=1
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then exit 1; fi
+          echo "All TOML files valid"
+
+      - name: Check for merge conflict markers
+        run: |
+          echo "Checking for merge conflict markers..."
+          if grep -rl "^<<<<<<< \|^=======$\|^>>>>>>> " . --include="*.py" --include="*.go" --include="*.js" --include="*.ts" --include="*.yaml" --include="*.yml" --include="*.json" --include="*.md" 2>/dev/null | grep -v ".git" | head -20; then
+            echo "Merge conflict markers found!"
+            exit 1
+          fi
+          echo "No merge conflict markers found"
+
+      - name: Check for private keys
+        run: |
+          echo "Checking for private keys..."
+          if grep -rl "BEGIN.*PRIVATE KEY" . 2>/dev/null | grep -v ".git" | grep -v "node_modules" | head -20; then
+            echo "Private keys detected - DO NOT COMMIT!"
+            exit 1
+          fi
+          echo "No private keys detected"
+
+      - name: Check for large files
+        run: |
+          echo "Checking for large files (>1MB)..."
+          LARGE_FILES=$(find . -type f -size +1M -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./target/*" 2>/dev/null | head -20)
+          if [ -n "$LARGE_FILES" ]; then
+            echo "Warning: Large files detected:"
+            echo "$LARGE_FILES"
+            echo "::warning::Large files detected (>1MB) - consider adding to .gitignore"
+          fi
+          echo "Large files check complete"
+
+{{#IF_PYTHON}}
+  lint-python:
+    name: Python Linting & Formatting
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python {{PYTHON_VERSION}}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "{{PYTHON_VERSION}}"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Versions synced with .template/config/versions.yaml
+          pip install pyyaml "ruff>=0.8.0" "mypy>=1.8.0"
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export python)"
+            echo "lint_enabled=${PYTHON_LINT_ENABLED:-true}" >> $GITHUB_OUTPUT
+            echo "typecheck_enabled=${PYTHON_TYPECHECK_ENABLED:-true}" >> $GITHUB_OUTPUT
+            echo "format_enabled=${PYTHON_FORMAT_ENABLED:-true}" >> $GITHUB_OUTPUT
+          else
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+            echo "typecheck_enabled=true" >> $GITHUB_OUTPUT
+            echo "format_enabled=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run ruff linter
+        if: steps.quality.outputs.lint_enabled == 'true'
+        run: ruff check .
+
+      - name: Check formatting with ruff
+        if: steps.quality.outputs.format_enabled == 'true'
+        run: ruff format --check .
+
+      - name: Run mypy type checker
+        if: steps.quality.outputs.typecheck_enabled == 'true'
+        run: mypy . || true
+        continue-on-error: true
+
+{{/IF_PYTHON}}
+{{#IF_GO}}
+  lint-go:
+    name: Go Linting & Formatting
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go {{GO_VERSION}}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "{{GO_VERSION}}"
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export go)"
+            echo "lint_enabled=${GO_LINT_ENABLED:-true}" >> $GITHUB_OUTPUT
+            echo "format_enabled=${GO_FORMAT_ENABLED:-true}" >> $GITHUB_OUTPUT
+          else
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+            echo "format_enabled=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run gofmt
+        if: steps.quality.outputs.format_enabled == 'true'
+        run: |
+          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
+            echo "The following files are not formatted:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        if: steps.quality.outputs.lint_enabled == 'true'
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+{{/IF_GO}}
+{{#IF_NODE}}
+  lint-node:
+    name: Node.js Linting & Formatting
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js {{NODE_VERSION}}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: 'npm'
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export node)"
+            echo "lint_enabled=${NODE_LINT_ENABLED:-true}" >> $GITHUB_OUTPUT
+            echo "format_enabled=${NODE_FORMAT_ENABLED:-true}" >> $GITHUB_OUTPUT
+          else
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+            echo "format_enabled=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        if: steps.quality.outputs.lint_enabled == 'true'
+        run: npm run lint
+        continue-on-error: false
+
+      - name: Check formatting with Prettier
+        if: steps.quality.outputs.format_enabled == 'true'
+        run: npx prettier --check 'src/**/*.{ts,js,json}'
+
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+  lint-nextjs:
+    name: Next.js Linting & Formatting
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js {{NODE_VERSION}}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check formatting with Prettier
+        run: npx prettier --check 'src/**/*.{ts,tsx,js,jsx,json,css}'
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+  lint-rust:
+    name: Rust Linting & Formatting
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.skip_checks != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust {{RUST_VERSION}}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: {{RUST_VERSION}}
+          override: true
+          components: rustfmt, clippy
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export rust)"
+            echo "lint_enabled=${RUST_LINT_ENABLED:-true}" >> $GITHUB_OUTPUT
+            echo "format_enabled=${RUST_FORMAT_ENABLED:-true}" >> $GITHUB_OUTPUT
+          else
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+            echo "format_enabled=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check formatting with rustfmt
+        if: steps.quality.outputs.format_enabled == 'true'
+        run: cargo fmt -- --check
+
+      - name: Run clippy linter
+        if: steps.quality.outputs.lint_enabled == 'true'
+        run: cargo clippy -- -D warnings
+
+{{/IF_RUST}}
+{{/IF_QUALITY_CHECKS}}

@@ -1,0 +1,89 @@
+# Generated from template - do not edit directly
+# Regenerate with: ./scripts/bootstrap/bootstrap.sh
+
+FROM mcr.microsoft.com/vscode/devcontainers/base:ubuntu-22.04
+
+# Install system dependencies
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+    && apt-get -y install --no-install-recommends \
+        build-essential \
+        curl \
+        git \
+        wget \
+        unzip \
+        ca-certificates \
+        jq \
+{{#IF_POSTGRES}}
+        postgresql-client \
+{{/IF_POSTGRES}}
+{{#IF_REDIS}}
+        redis-tools \
+{{/IF_REDIS}}
+    && apt-get autoremove -y && apt-get clean -y
+
+{{#IF_GO}}
+# ============================================================================
+# Go {{GO_VERSION}}
+# ============================================================================
+RUN wget -q https://golang.org/dl/go{{GO_VERSION}}.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go{{GO_VERSION}}.linux-amd64.tar.gz \
+    && rm go{{GO_VERSION}}.linux-amd64.tar.gz
+
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPATH="/go"
+ENV GOBIN="/go/bin"
+ENV PATH="${PATH}:${GOBIN}"
+
+# Create Go workspace
+RUN mkdir -p /go/src /go/bin /go/pkg && chmod -R 777 /go
+
+{{/IF_GO}}
+{{#IF_PYTHON}}
+# ============================================================================
+# Python {{PYTHON_VERSION}}
+# ============================================================================
+# Note: We use ensurepip instead of apt's python3-pip because:
+# 1. It installs pip for the specific Python version, not the system Python
+# 2. Python 3.12+ removed distutils which breaks the system pip package
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update \
+    && apt-get install -y \
+        python{{PYTHON_VERSION}} \
+        python{{PYTHON_VERSION}}-dev \
+        python{{PYTHON_VERSION}}-venv \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python{{PYTHON_VERSION}} 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python{{PYTHON_VERSION}} 1 \
+    && python{{PYTHON_VERSION}} -m ensurepip --upgrade \
+    && python{{PYTHON_VERSION}} -m pip install --upgrade pip
+
+{{/IF_PYTHON}}
+{{#IF_NODE}}
+# ============================================================================
+# Node.js {{NODE_VERSION}}
+# ============================================================================
+RUN curl -fsSL https://deb.nodesource.com/setup_{{NODE_VERSION}}.x | bash - \
+    && apt-get install -y nodejs
+
+{{/IF_NODE}}
+{{#IF_RUST}}
+# ============================================================================
+# Rust {{RUST_VERSION}}
+# ============================================================================
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain {{RUST_VERSION}}
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+{{/IF_RUST}}
+# ============================================================================
+# Utility Tools
+# ============================================================================
+
+# Install yq for YAML processing
+RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+    && chmod +x /usr/local/bin/yq
+
+# Set the default user
+USER vscode
+
+# Set working directory
+WORKDIR /workspaces/{{PROJECT_NAME}}

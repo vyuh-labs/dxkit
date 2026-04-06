@@ -1,0 +1,73 @@
+---
+name: review
+description: Review code for quality, security, and patterns. Use when asked to review code, a PR, check for problems, or audit for security issues.
+---
+
+# Code Review
+
+## Quick Check
+Run `make check` first — it validates, lints, tests, and checks docs in one command.
+
+## Review Checklist
+
+### 1. Quality
+- [ ] `make quality` passes
+- [ ] Coverage meets threshold ({{COVERAGE_THRESHOLD}}%)
+- [ ] No suppressed lint rules without justification
+
+### 2. Security
+- [ ] No hardcoded secrets, API keys, tokens, or passwords
+- [ ] No secrets in commit messages, comments, or logs
+- [ ] User input is validated/sanitized at system boundaries
+- [ ] No SQL injection, XSS, or command injection vectors
+- [ ] Sensitive files are gitignored (`.env`, credentials)
+
+### 3. Testing
+- [ ] New features have tests
+- [ ] Edge cases and error paths tested
+- [ ] Tests are deterministic (no timing/order dependencies)
+
+### 4. Architecture
+- [ ] Follows existing patterns in the codebase
+- [ ] Dependencies injected (not imported directly in business logic)
+- [ ] Error handling is consistent
+
+{{#IF_PYTHON}}
+### Python-Specific
+- [ ] Type hints on public functions
+- [ ] Pydantic models for data validation
+- [ ] No bare `except:` — catch specific exceptions
+- [ ] Async/await used correctly (no blocking in async context)
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+### Go-Specific
+- [ ] Errors checked and handled (no `_` for errors)
+- [ ] Context propagated through call chains
+- [ ] Proper resource cleanup (defer for Close/Unlock)
+- [ ] Table-driven tests used where appropriate
+{{/IF_GO}}
+
+{{#IF_NEXTJS}}
+### Next.js-Specific
+- [ ] Server vs client components used correctly
+- [ ] No sensitive data in client components
+- [ ] TypeScript strict mode compliance
+{{/IF_NEXTJS}}
+
+{{#IF_CSHARP}}
+### C#-Specific
+- [ ] Nullable reference types enabled (`#nullable enable`)
+- [ ] Async/await used correctly (no blocking on async with `.Result` or `.Wait()`)
+- [ ] IDisposable resources properly disposed (`using` statements)
+- [ ] LINQ used appropriately (not in hot paths without reason)
+- [ ] Dependency injection used (no `new` for services)
+- [ ] No hardcoded connection strings
+{{/IF_CSHARP}}
+
+## Common Issues
+- Missing error handling
+- Hardcoded configuration (should use `.env` or config)
+- Missing tests for edge cases
+- Inconsistent naming conventions
+- Overly broad error catching

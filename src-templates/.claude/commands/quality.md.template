@@ -1,0 +1,42 @@
+---
+description: Run quality checks (linting, formatting, type checking)
+---
+
+Two-step quality check:
+
+## Step 1: Run Linters
+
+Run these checks in order. Stop and report if any step fails.
+
+{{#IF_NODE}}
+### Node / TypeScript
+1. `npx eslint .` — Lint
+2. `npx tsc --noEmit` — Type check
+{{/IF_NODE}}
+{{#IF_PYTHON}}
+### Python
+1. `ruff check .` — Lint
+2. `ruff format --check .` — Format check
+3. `mypy .` — Type check
+{{/IF_PYTHON}}
+{{#IF_GO}}
+### Go
+1. `golangci-lint run ./...` — Lint
+2. `go vet ./...` — Vet
+{{/IF_GO}}
+{{#IF_CSHARP}}
+### C#
+1. `dotnet format --verify-no-changes` — Format check
+2. `dotnet build --no-restore -warnaserror` — Build with warnings as errors
+{{/IF_CSHARP}}
+{{#IF_RUST}}
+### Rust
+1. `cargo fmt --check` — Format check
+2. `cargo clippy -- -D warnings` — Lint
+{{/IF_RUST}}
+
+## Step 2: AI Review
+
+After linters pass, delegate to the **quality-reviewer** agent to review changed files for logic issues, security problems, and best practice violations that linters miss.
+
+Report combined results from both steps.

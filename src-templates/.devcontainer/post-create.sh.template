@@ -1,0 +1,298 @@
+#!/bin/bash
+# Generated from template - do not edit directly
+# Regenerate with: ./scripts/bootstrap/bootstrap.sh
+
+set -e
+
+# Colors for output
+CYAN='\033[36m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+RED='\033[31m'
+RESET='\033[0m'
+
+echo ""
+echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${RESET}"
+echo -e "${CYAN}║                                                            ║${RESET}"
+echo -e "${CYAN}║     🚀 Setting up {{PROJECT_NAME}} development environment${RESET}"
+echo -e "${CYAN}║                                                            ║${RESET}"
+echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${RESET}"
+echo ""
+
+cd /workspaces/{{PROJECT_NAME}} || exit 1
+
+# ============================================================================
+# Wait for Services
+# ============================================================================
+
+{{#IF_POSTGRES}}
+echo -e "${CYAN}⏳ Waiting for PostgreSQL...${RESET}"
+for i in {1..30}; do
+    if pg_isready -h db -p 5432 -U {{DB_USER}} > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ PostgreSQL is ready${RESET}"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo -e "${YELLOW}⚠️  PostgreSQL not ready after 30 seconds${RESET}"
+    fi
+    sleep 1
+done
+
+{{/IF_POSTGRES}}
+{{#IF_REDIS}}
+echo -e "${CYAN}⏳ Waiting for Redis...${RESET}"
+for i in {1..30}; do
+    if redis-cli -h redis -p 6379 ping > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ Redis is ready${RESET}"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo -e "${YELLOW}⚠️  Redis not ready after 30 seconds${RESET}"
+    fi
+    sleep 1
+done
+
+{{/IF_REDIS}}
+# ============================================================================
+# Language-Specific Setup
+# ============================================================================
+
+{{#IF_GO}}
+echo -e "${CYAN}🔧 Installing Go development tools...${RESET}"
+go install github.com/air-verse/air@latest 2>/dev/null || true
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest 2>/dev/null || true
+go install golang.org/x/tools/cmd/goimports@latest 2>/dev/null || true
+go install github.com/go-delve/delve/cmd/dlv@latest 2>/dev/null || true
+echo -e "${GREEN}✅ Go tools installed${RESET}"
+
+{{/IF_GO}}
+{{#IF_PYTHON}}
+echo -e "${CYAN}🐍 Setting up Python environment...${RESET}"
+pip install --upgrade pip --quiet
+
+# Install common dev tools (versions synced with .template/config/versions.yaml)
+pip install --quiet \
+    "ruff>=0.8.0" \
+    "mypy>=1.8.0" \
+    "pytest>=8.0.0" \
+    pytest-cov \
+    pytest-asyncio \
+    httpx \
+    pyyaml
+
+# Install project dependencies if pyproject.toml exists
+if [ -f "pyproject.toml" ]; then
+    echo -e "${CYAN}   Installing project dependencies...${RESET}"
+    pip install -e ".[dev]" --quiet 2>/dev/null || pip install -e . --quiet 2>/dev/null || true
+fi
+
+# Install requirements.txt if it exists
+if [ -f "requirements.txt" ]; then
+    echo -e "${CYAN}   Installing requirements.txt...${RESET}"
+    pip install -r requirements.txt --quiet
+fi
+
+if [ -f "requirements-dev.txt" ]; then
+    echo -e "${CYAN}   Installing requirements-dev.txt...${RESET}"
+    pip install -r requirements-dev.txt --quiet
+fi
+
+echo -e "${GREEN}✅ Python environment ready${RESET}"
+
+{{/IF_PYTHON}}
+{{#IF_NODE}}
+echo -e "${CYAN}📦 Setting up Node.js environment...${RESET}"
+
+# Install global tools
+npm install -g npm@latest --silent 2>/dev/null || true
+
+# Install project dependencies if package.json exists
+if [ -f "package.json" ]; then
+    echo -e "${CYAN}   Installing npm dependencies...${RESET}"
+    npm install --silent 2>/dev/null || true
+fi
+
+echo -e "${GREEN}✅ Node.js environment ready${RESET}"
+
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+echo -e "${CYAN}⚡ Setting up Next.js frontend...${RESET}"
+
+# Check if frontend directory exists
+if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
+    echo -e "${CYAN}   Installing frontend dependencies...${RESET}"
+    (cd frontend && npm install --silent 2>/dev/null) || true
+    echo -e "${GREEN}✅ Next.js frontend ready${RESET}"
+    echo -e "   ${CYAN}Run: cd frontend && npm run dev${RESET}"
+else
+    # Scaffold Next.js app if not created during bootstrap (npx wasn't available)
+    echo -e "${CYAN}   Scaffolding Next.js app...${RESET}"
+    if npx --yes create-next-app@latest frontend \
+        --yes \
+        --typescript \
+        --tailwind \
+        --eslint \
+        --app \
+        --src-dir \
+        --import-alias "@/*" \
+        --use-npm 2>&1; then
+        echo -e "${GREEN}✅ Next.js frontend created${RESET}"
+        echo -e "   ${CYAN}Run: cd frontend && npm run dev${RESET}"
+    else
+        echo -e "${RED}❌ Failed to create Next.js app${RESET}"
+        echo -e "   ${YELLOW}Try manually: npx create-next-app@latest frontend${RESET}"
+    fi
+fi
+
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+echo -e "${CYAN}🦀 Setting up Rust environment...${RESET}"
+
+# Update rust and install common tools
+rustup update stable --quiet 2>/dev/null || true
+rustup component add rustfmt clippy --quiet 2>/dev/null || true
+cargo install cargo-watch --quiet 2>/dev/null || true
+
+echo -e "${GREEN}✅ Rust environment ready${RESET}"
+
+{{/IF_RUST}}
+# ============================================================================
+# Additional Tools
+# ============================================================================
+
+{{#IF_GH_CLI}}
+echo -e "${CYAN}🐙 Installing GitHub CLI...${RESET}"
+if ! command -v gh &> /dev/null; then
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null \
+    && sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && sudo apt update -qq \
+    && sudo apt install gh -y -qq
+    echo -e "${GREEN}✅ GitHub CLI installed${RESET}"
+else
+    echo -e "${GREEN}✅ GitHub CLI already installed${RESET}"
+fi
+
+{{/IF_GH_CLI}}
+{{#IF_PULUMI}}
+echo -e "${CYAN}☁️  Installing Pulumi...${RESET}"
+if ! command -v pulumi &> /dev/null; then
+    curl -fsSL https://get.pulumi.com | sh -s -- --no-edit-path 2>/dev/null
+    echo 'export PATH="$PATH:$HOME/.pulumi/bin"' >> ~/.bashrc
+    echo -e "${GREEN}✅ Pulumi installed${RESET}"
+else
+    echo -e "${GREEN}✅ Pulumi already installed${RESET}"
+fi
+
+{{/IF_PULUMI}}
+{{#IF_GCLOUD}}
+echo -e "${CYAN}☁️  Installing Google Cloud SDK...${RESET}"
+if ! command -v gcloud &> /dev/null; then
+    curl -fsSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir=$HOME 2>/dev/null
+    echo 'source ~/google-cloud-sdk/path.bash.inc' >> ~/.bashrc
+    echo 'source ~/google-cloud-sdk/completion.bash.inc' >> ~/.bashrc
+    export PATH="$PATH:$HOME/google-cloud-sdk/bin"
+    echo -e "${GREEN}✅ Google Cloud SDK installed${RESET}"
+else
+    echo -e "${GREEN}✅ Google Cloud SDK already installed${RESET}"
+fi
+
+{{/IF_GCLOUD}}
+{{#IF_CLAUDE_CODE}}
+echo -e "${CYAN}🤖 Installing Claude Code CLI...${RESET}"
+if ! command -v claude &> /dev/null; then
+    curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null || true
+    echo -e "${GREEN}✅ Claude Code CLI installed${RESET}"
+else
+    echo -e "${GREEN}✅ Claude Code CLI already installed${RESET}"
+fi
+
+{{/IF_CLAUDE_CODE}}
+{{#IF_INFISICAL}}
+echo -e "${CYAN}🔐 Installing Infisical CLI...${RESET}"
+if ! command -v infisical &> /dev/null; then
+    curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash 2>/dev/null
+    sudo apt-get update -qq && sudo apt-get install -y -qq infisical
+    echo -e "${GREEN}✅ Infisical CLI installed${RESET}"
+else
+    echo -e "${GREEN}✅ Infisical CLI already installed${RESET}"
+fi
+
+{{/IF_INFISICAL}}
+{{#IF_PRECOMMIT}}
+echo -e "${CYAN}🪝 Setting up pre-commit hooks...${RESET}"
+if command -v pre-commit &> /dev/null; then
+    if [ -f ".pre-commit-config.yaml" ]; then
+        pre-commit install --install-hooks 2>/dev/null || true
+        echo -e "${GREEN}✅ Pre-commit hooks installed${RESET}"
+    fi
+else
+    pip install pre-commit --quiet
+    if [ -f ".pre-commit-config.yaml" ]; then
+        pre-commit install --install-hooks 2>/dev/null || true
+        echo -e "${GREEN}✅ Pre-commit hooks installed${RESET}"
+    fi
+fi
+
+{{/IF_PRECOMMIT}}
+# ============================================================================
+# Git Configuration
+# ============================================================================
+
+echo -e "${CYAN}🔧 Configuring Git...${RESET}"
+
+git config --global init.defaultBranch main
+git config --global pull.rebase false
+git config --global core.autocrlf input
+git config --global --add safe.directory /workspaces/{{PROJECT_NAME}}
+
+echo -e "${GREEN}✅ Git configured${RESET}"
+
+# ============================================================================
+# Shell Aliases
+# ============================================================================
+
+if ! grep -q "# {{PROJECT_NAME}} aliases" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc << 'ALIASES'
+
+# {{PROJECT_NAME}} aliases
+alias ll='ls -alF'
+alias la='ls -A'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ws='cd /workspaces/{{PROJECT_NAME}}'
+alias mh='make help'
+alias mt='make test'
+alias mq='make quality'
+alias mc='make check'
+ALIASES
+fi
+
+# ============================================================================
+# Done!
+# ============================================================================
+
+echo ""
+echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${RESET}"
+echo -e "${GREEN}║     ✨ Development environment is ready!                  ║${RESET}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${RESET}"
+echo ""
+echo -e "${CYAN}🎯 Next steps:${RESET}"
+echo ""
+echo "   • Run ${CYAN}make doctor${RESET} to verify your setup"
+echo "   • Run ${CYAN}make help${RESET} to see available commands"
+{{#IF_AI_SESSIONS}}
+echo "   • Run ${CYAN}make session-start${RESET} to begin an AI-assisted dev session"
+{{/IF_AI_SESSIONS}}
+echo "   • Run ${CYAN}make test${RESET} to run tests"
+echo "   • Run ${CYAN}make quality${RESET} to check code quality"
+echo ""
+{{#IF_POSTGRES}}
+echo -e "${CYAN}📊 Database:${RESET} postgresql://{{DB_USER}}:{{DB_PASSWORD}}@db:5432/{{DB_NAME}}"
+{{/IF_POSTGRES}}
+{{#IF_REDIS}}
+echo -e "${CYAN}📦 Redis:${RESET} redis://redis:6379"
+{{/IF_REDIS}}
+echo ""
+echo -e "${GREEN}Happy coding! 🚀${RESET}"
+echo ""

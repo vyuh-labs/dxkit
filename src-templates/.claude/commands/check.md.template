@@ -1,0 +1,43 @@
+---
+description: Full pre-commit validation (quality + tests + coverage)
+---
+
+Run full pre-commit validation. All steps must pass before committing.
+
+## Step 1: Linters
+
+{{#IF_NODE}}
+- `npx eslint .`
+- `npx tsc --noEmit`
+{{/IF_NODE}}
+{{#IF_PYTHON}}
+- `ruff check .`
+- `ruff format --check .`
+- `mypy .`
+{{/IF_PYTHON}}
+{{#IF_GO}}
+- `golangci-lint run ./...`
+- `go vet ./...`
+{{/IF_GO}}
+{{#IF_CSHARP}}
+- `dotnet format --verify-no-changes`
+- `dotnet build --no-restore -warnaserror`
+{{/IF_CSHARP}}
+{{#IF_RUST}}
+- `cargo fmt --check`
+- `cargo clippy -- -D warnings`
+{{/IF_RUST}}
+
+## Step 2: Tests
+
+Run: `{{TEST_COMMAND}}`
+
+Coverage threshold: **{{COVERAGE_THRESHOLD}}%**
+
+## Step 3: AI Review
+
+Delegate to the **quality-reviewer** agent to review changed files for issues linters miss.
+
+## Verdict
+
+Report: **PASS** (safe to commit) or **FAIL** (list what needs fixing).

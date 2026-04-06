@@ -1,0 +1,57 @@
+# Default versions for languages and services
+# Update this file to change default versions across all new projects
+
+languages:
+  python:
+    default: "3.12"
+    lts: "3.11"
+    description: "Python programming language"
+    note: "LTS = 3.11 (until Oct 2027), Latest = 3.12"
+
+  go:
+    default: "1.24.0"
+    description: "Go programming language"
+    note: "Go uses semantic versioning (e.g., 1.24.0)"
+
+  nodejs:
+    default: "20"
+    lts: "20"
+    description: "Node.js JavaScript runtime"
+    note: "LTS = 20 (until Apr 2026), Current = 21"
+
+  rust:
+    default: "stable"
+    description: "Rust programming language"
+    note: "Options: stable, beta, nightly, or specific version"
+
+infrastructure:
+  postgresql:
+    default: "16"
+    lts: "15"
+    description: "PostgreSQL database"
+    note: "LTS = 15 (until Nov 2027), Latest = 16"
+
+  redis:
+    default: "7"
+    description: "Redis cache"
+    note: "Latest stable = 7"
+
+# Python tools
+tools:
+  ruff:
+    default: "0.8.0"
+    min: "0.8.0"
+    description: "Python linter and formatter"
+    note: "Fast Python linter, written in Rust"
+
+  mypy:
+    default: "1.8.0"
+    min: "1.8.0"
+    description: "Python static type checker"
+
+  pytest:
+    default: "8.0.0"
+    min: "7.0.0"
+    description: "Python testing framework"
+
+# Last updated: 2025-01-26

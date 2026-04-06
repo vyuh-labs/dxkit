@@ -1,0 +1,43 @@
+{
+  "name": "@vyuhlabs/dxkit",
+  "version": "1.1.0",
+  "description": "AI-native developer experience toolkit for any repository",
+  "license": "MIT",
+  "bin": {
+    "vyuh-dxkit": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/copy-templates.js && tsc",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "keywords": [
+    "vyuh",
+    "dxkit",
+    "claude",
+    "copilot",
+    "codex",
+    "cursor",
+    "dx",
+    "developer-experience",
+    "ai",
+    "skills"
+  ]
+}

@@ -1,0 +1,399 @@
+# Generated from template - CI/CD Pipeline
+# This workflow runs tests for all enabled languages
+# Configuration is loaded from .project.yaml via project_config.py
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Validate project configuration exists
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate .project.yaml exists
+        run: |
+          if [ ! -f ".project.yaml" ]; then
+            echo "::error::Missing .project.yaml - run 'make init' or bootstrap the project"
+            exit 1
+          fi
+          echo "✓ .project.yaml found"
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Validate configuration
+        run: |
+          python3 .project/config/project_config.py info
+          echo ""
+          echo "Configuration validated successfully"
+
+{{#IF_PYTHON}}
+  test-python:
+    name: Python {{PYTHON_VERSION}} Tests
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python {{PYTHON_VERSION}}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "{{PYTHON_VERSION}}"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml  # For config loading
+          if [ -f pyproject.toml ]; then
+            pip install -e .[dev]
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          # Load from .project.yaml via project_config.py (primary source)
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export python)"
+            echo "coverage_threshold=${PYTHON_COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+            echo "lint_enabled=${PYTHON_LINT_ENABLED:-true}" >> $GITHUB_OUTPUT
+          # Fallback to legacy .quality.env
+          elif [ -f .quality.env ]; then
+            source .quality.env
+            echo "coverage_threshold=${COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "coverage_threshold={{COVERAGE_THRESHOLD}}" >> $GITHUB_OUTPUT
+            echo "lint_enabled=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run tests with pytest
+        run: |
+          THRESHOLD=${{ steps.quality.outputs.coverage_threshold }}
+          if [ "$THRESHOLD" = "0" ]; then
+            pytest --cov=. --cov-report=xml --cov-report=term
+          else
+            pytest --cov=. --cov-report=xml --cov-report=term --cov-fail-under=$THRESHOLD
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: python
+          name: python-{{PYTHON_VERSION}}
+
+{{/IF_PYTHON}}
+{{#IF_GO}}
+  test-go:
+    name: Go {{GO_VERSION}} Tests
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go {{GO_VERSION}}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "{{GO_VERSION}}"
+          cache: true
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          # Load from .project.yaml via project_config.py (primary source)
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export go)"
+            echo "coverage_threshold=${GO_COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          # Fallback to legacy .quality.env
+          elif [ -f .quality.env ]; then
+            source .quality.env
+            echo "coverage_threshold=${COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          else
+            echo "coverage_threshold={{COVERAGE_THRESHOLD}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+{{#IF_COVERAGE_ENABLED}}
+      - name: Check coverage threshold
+        run: |
+          THRESHOLD=${{ steps.quality.outputs.coverage_threshold }}
+
+          if [ "$THRESHOLD" = "0" ]; then
+            echo "Coverage check skipped (threshold=0)"
+            exit 0
+          fi
+
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Total coverage: ${COVERAGE}%"
+          echo "Required threshold: ${THRESHOLD}%"
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+          echo "Coverage check passed!"
+
+{{/IF_COVERAGE_ENABLED}}
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: go
+          name: go-{{GO_VERSION}}
+
+{{/IF_GO}}
+{{#IF_NODE}}
+  test-node:
+    name: Node.js {{NODE_VERSION}} Tests
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js {{NODE_VERSION}}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: 'npm'
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          # Load from .project.yaml via project_config.py (primary source)
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export node)"
+            echo "coverage_threshold=${NODE_COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          # Fallback to legacy .quality.env
+          elif [ -f .quality.env ]; then
+            source .quality.env
+            echo "coverage_threshold=${COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          else
+            echo "coverage_threshold={{COVERAGE_THRESHOLD}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: |
+          THRESHOLD=${{ steps.quality.outputs.coverage_threshold }}
+          if [ "$THRESHOLD" = "0" ]; then
+            npm test -- --coverage
+          else
+            npm test -- --coverage --coverageThreshold='{"global":{"branches":'$THRESHOLD',"functions":'$THRESHOLD',"lines":'$THRESHOLD',"statements":'$THRESHOLD'}}'
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/coverage-final.json
+          flags: node
+          name: node-{{NODE_VERSION}}
+
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+  build-nextjs:
+    name: Next.js Build & Test
+    runs-on: ubuntu-latest
+    needs: validate
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js {{NODE_VERSION}}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run type checking
+        run: npx tsc --noEmit
+
+      - name: Build Next.js app
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
+      - name: Determine coverage threshold
+        id: quality
+        run: |
+          if [ -f "../.project.yaml" ]; then
+            echo "coverage_threshold=${NEXTJS_COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          else
+            echo "coverage_threshold={{COVERAGE_THRESHOLD}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run tests with coverage
+        run: |
+          THRESHOLD=${{ steps.quality.outputs.coverage_threshold }}
+          if grep -q '"test"' package.json; then
+{{#IF_COVERAGE_ENABLED}}
+            npm test -- --coverage --passWithNoTests --coverageThreshold='{"global":{"branches":'$THRESHOLD',"functions":'$THRESHOLD',"lines":'$THRESHOLD',"statements":'$THRESHOLD'}}'
+{{#ELSE}}
+            npm test -- --passWithNoTests
+{{/IF_COVERAGE_ENABLED}}
+          else
+            echo "No test script configured, skipping"
+          fi
+
+{{#IF_COVERAGE_ENABLED}}
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./frontend/coverage/coverage-final.json
+          flags: nextjs
+          fail_ci_if_error: false
+{{/IF_COVERAGE_ENABLED}}
+
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+  test-rust:
+    name: Rust {{RUST_VERSION}} Tests
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust {{RUST_VERSION}}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: {{RUST_VERSION}}
+          override: true
+          components: rustfmt, clippy
+
+      - name: Set up Python for config
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Load quality configuration
+        id: quality
+        run: |
+          # Load from .project.yaml via project_config.py (primary source)
+          if [ -f .project/config/project_config.py ]; then
+            eval "$(python3 .project/config/project_config.py export rust)"
+            echo "coverage_threshold=${RUST_COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          # Fallback to legacy .quality.env
+          elif [ -f .quality.env ]; then
+            source .quality.env
+            echo "coverage_threshold=${COVERAGE_THRESHOLD:-{{COVERAGE_THRESHOLD}}}" >> $GITHUB_OUTPUT
+          else
+            echo "coverage_threshold={{COVERAGE_THRESHOLD}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Generate coverage
+        run: |
+          cargo install cargo-tarpaulin
+          cargo tarpaulin --out Xml
+{{#IF_COVERAGE_ENABLED}}
+      - name: Check coverage threshold
+        run: |
+          THRESHOLD=${{ steps.quality.outputs.coverage_threshold }}
+
+          if [ "$THRESHOLD" = "0" ]; then
+            echo "Coverage check skipped (threshold=0)"
+            exit 0
+          fi
+
+          COVERAGE=$(grep -oP 'line-rate="\K[^"]+' cobertura.xml | head -1)
+          COVERAGE_PCT=$(echo "$COVERAGE * 100" | bc)
+          echo "Total coverage: ${COVERAGE_PCT}%"
+          echo "Required threshold: ${THRESHOLD}%"
+          if (( $(echo "$COVERAGE_PCT < $THRESHOLD" | bc -l) )); then
+            echo "Coverage ${COVERAGE_PCT}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+          echo "Coverage check passed!"
+{{/IF_COVERAGE_ENABLED}}
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./cobertura.xml
+          flags: rust
+          name: rust-{{RUST_VERSION}}
+
+{{/IF_RUST}}

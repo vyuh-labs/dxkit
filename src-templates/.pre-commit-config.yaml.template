@@ -1,0 +1,106 @@
+# Generated from template - Pre-commit hooks configuration
+# Install pre-commit: pip install pre-commit
+# Setup hooks: pre-commit install
+
+# Exclude template and framework directories from all hooks
+exclude: ^(\.template/|\.project/)
+
+repos:
+{{#IF_PYTHON}}
+  # Python - Ruff linter and formatter (check-only, use 'make fix' to auto-fix)
+  # Version synced with .template/config/versions.yaml
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+      - id: ruff-format
+        args: [--check]
+
+  # Python - Type checking with mypy (sync with make quality)
+  # Version synced with .template/config/versions.yaml
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports]
+        additional_dependencies: []
+
+{{/IF_PYTHON}}
+{{#IF_GO}}
+  # Go - Formatting and linting (check-only, use 'make fix' to auto-fix)
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.55.2
+    hooks:
+      - id: golangci-lint
+        args: [--timeout=5m]
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-imports
+
+{{/IF_GO}}
+{{#IF_NODE}}
+  # Node.js - ESLint and Prettier (check-only, use 'make fix' to auto-fix)
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v8.56.0
+    hooks:
+      - id: eslint
+        files: \.(js|ts|jsx|tsx)$
+        types: [file]
+        additional_dependencies:
+          - eslint@8.56.0
+          - '@typescript-eslint/parser@6.19.0'
+          - '@typescript-eslint/eslint-plugin@6.19.0'
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        args: [--check]
+        types_or: [javascript, jsx, ts, tsx, json, yaml, markdown]
+
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+  # Next.js - ESLint and TypeScript for frontend directory
+  - repo: local
+    hooks:
+      - id: nextjs-lint
+        name: Next.js ESLint
+        entry: bash -c 'cd frontend && npm run lint'
+        language: system
+        files: ^frontend/.*\.(js|jsx|ts|tsx)$
+        pass_filenames: false
+
+      - id: nextjs-typecheck
+        name: Next.js TypeScript
+        entry: bash -c 'cd frontend && npx tsc --noEmit'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+  # Rust - Formatting and linting (check-only, use 'make fix' to auto-fix)
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        args: [--manifest-path, Cargo.toml, --, --check]
+      - id: clippy
+        args: [--manifest-path, Cargo.toml, --, -D, warnings]
+
+{{/IF_RUST}}
+  # Universal hooks - validation only (no auto-fix)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key

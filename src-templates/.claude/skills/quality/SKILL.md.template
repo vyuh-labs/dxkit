@@ -1,0 +1,108 @@
+---
+name: quality
+description: Run code quality checks, linting, formatting, and auto-fixing. Use when asked to check code quality, fix lint errors, format code, or run pre-commit checks.
+---
+
+# Code Quality
+
+## Commands
+- `make quality` - Run all quality checks (report: `tmp/reports/quality-report.md`)
+- `make quality-fix` - Auto-fix all fixable issues
+- `make lint` - Lint only
+- `make format` - Format all code
+- `make fix` - Fix + format (shorthand)
+- `make check` - Full pre-commit check (validate + quality + test)
+- `make format-check` - Check formatting without modifying
+
+## Quality Presets
+- `make quality-strict` - 90% coverage, all checks
+- `make quality-standard` - 80% coverage (default)
+- `make quality-relaxed` - 50% coverage
+- `make quality-off` - Disable checks
+- `make quality-config` - Show current settings
+
+{{#IF_PYTHON}}
+## Python
+
+**Tools:** ruff (lint + format), mypy (types)
+**Config:** `ruff.toml`, `pyproject.toml`
+**Script:** `.project/scripts/quality/lint-python.sh`
+
+Common fixes:
+```bash
+ruff check --fix .
+ruff format .
+mypy src/
+```
+
+Key ruff rules: pycodestyle (E), pyflakes (F), isort (I), mccabe (C90), bugbear (B).
+Per-file ignores configured in `ruff.toml` for tests (assertions, fixtures).
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go
+
+**Tools:** golangci-lint (27 linters), gofmt, goimports
+**Config:** `.golangci.yml`
+**Script:** `.project/scripts/quality/lint-go.sh`
+
+Common fixes:
+```bash
+gofmt -w .
+goimports -w .
+golangci-lint run --fix
+```
+{{/IF_GO}}
+
+{{#IF_NODE}}
+## Node.js
+
+**Tools:** ESLint, Prettier
+Common fixes:
+```bash
+npx prettier --write .
+npx eslint --fix .
+```
+{{/IF_NODE}}
+
+{{#IF_NEXTJS}}
+## Next.js
+
+**Directory:** `frontend/`
+```bash
+cd frontend && npm run lint
+cd frontend && npx prettier --write .
+cd frontend && npx tsc --noEmit  # type check
+```
+{{/IF_NEXTJS}}
+
+{{#IF_RUST}}
+## Rust
+
+**Tools:** clippy, rustfmt
+```bash
+cargo fmt
+cargo clippy --fix --allow-dirty
+```
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C#
+
+**Tools:** dotnet format, Roslyn Analyzers, StyleCop Analyzers
+**Config:** `.editorconfig`, `Directory.Build.props`
+
+Common fixes:
+```bash
+dotnet format                          # auto-fix formatting
+dotnet format --verify-no-changes      # CI check (no modifications)
+```
+{{/IF_CSHARP}}
+
+## Gotchas
+
+See [references/gotchas.md](references/gotchas.md) for known quality issues.
+
+## Security
+
+Never disable security-related lint rules. If a rule seems wrong, investigate before suppressing.

@@ -1,0 +1,131 @@
+---
+name: deploy
+description: Deploy services, release to production, push to cloud. Use when asked about deployment, releases, shipping to production, or CI/CD.
+---
+
+# Deployment
+
+## Commands
+- `make deploy` - Deploy services (configure deployment target first)
+- `make build` - Build before deploying
+- `make check` - Run full validation before deploying
+
+## Pre-Deployment Checklist
+- [ ] `make check` passes (quality + tests + validation)
+- [ ] All changes committed and pushed
+- [ ] PR reviewed and approved
+{{#IF_INFISICAL}}
+- [ ] Secrets pulled: `make secrets-pull`
+{{/IF_INFISICAL}}
+- [ ] No hardcoded secrets in code or config
+
+## Deployment Safety
+
+**CRITICAL: Never auto-approve destructive deployment operations.**
+
+- Always preview/dry-run before applying changes
+- Require explicit user confirmation for production deployments
+- Never force-push or skip CI checks before deploying
+{{#IF_INFISICAL}}
+
+## Secrets for Deployment
+
+Pull secrets before deploying:
+```bash
+make secrets-pull     # fetch from Infisical to .env
+make secrets-show     # verify configuration (masked values)
+```
+
+**Never pass secrets as CLI arguments** — use environment variables or secret managers.
+{{/IF_INFISICAL}}
+
+{{#IF_GCLOUD}}
+## Google Cloud Deployment
+
+### Cloud Run
+```bash
+# Build and push container
+gcloud builds submit --tag gcr.io/$PROJECT_ID/<service-name>
+
+# Deploy (ALWAYS review before confirming)
+gcloud run deploy <service-name> \
+  --image gcr.io/$PROJECT_ID/<service-name> \
+  --region <region> \
+  --platform managed
+```
+
+### GKE
+```bash
+# Build image
+docker build -t gcr.io/$PROJECT_ID/<service-name> .
+docker push gcr.io/$PROJECT_ID/<service-name>
+
+# Apply manifests (review first)
+kubectl apply -f k8s/ --dry-run=client  # preview
+kubectl apply -f k8s/                    # apply
+```
+
+**Security:** Use Workload Identity for GCP auth in production — never embed service account keys.
+{{/IF_GCLOUD}}
+
+{{#IF_PULUMI}}
+## Pulumi Deployment
+
+```bash
+# ALWAYS preview first
+pulumi preview
+
+# Review the diff carefully, then apply
+pulumi up
+
+# Check outputs
+pulumi stack output
+```
+
+**Security:** Use `pulumi config set --secret` for sensitive config — never plain-text.
+
+**Never run `pulumi destroy` without explicit confirmation** — it deletes all resources.
+{{/IF_PULUMI}}
+
+{{#IF_DOCKER}}
+## Docker Deployment
+
+```bash
+# Build images
+docker-compose build
+
+# Push to registry
+docker-compose push
+
+# Deploy (depends on orchestration platform)
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+**Security:** Never copy `.env` files into Docker images. Use runtime environment variables.
+{{/IF_DOCKER}}
+
+{{#IF_CSHARP}}
+## C# Deployment
+
+```bash
+# Framework-dependent (requires .NET runtime on target)
+dotnet publish -c Release -o out/ --self-contained false
+
+# Self-contained (no runtime needed on target)
+dotnet publish -c Release -r linux-x64 --self-contained true
+```
+
+For Docker, use multi-stage builds:
+- Build stage: `mcr.microsoft.com/dotnet/sdk:{{CSHARP_VERSION}}`
+- Runtime stage: `mcr.microsoft.com/dotnet/aspnet:{{CSHARP_VERSION}}`
+{{/IF_CSHARP}}
+
+## CI/CD
+
+CI pipeline (`.github/workflows/ci.yml`) runs automatically on PR:
+- Validation, quality checks, tests per enabled language
+- Coverage enforcement at {{COVERAGE_THRESHOLD}}%
+
+## Gotchas
+
+See [references/gotchas.md](references/gotchas.md) for known deployment issues.

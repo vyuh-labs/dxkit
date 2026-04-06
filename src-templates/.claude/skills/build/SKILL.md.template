@@ -1,0 +1,98 @@
+---
+name: build
+description: Build code, compile binaries, install dependencies, clean artifacts. Use when asked to build, compile, install, or clean the project.
+---
+
+# Build
+
+## Commands
+- `make build` - Build all services
+- `make clean` - Remove build artifacts (bin/, pyc, coverage, tmp/)
+- `make dev` - Start all services (docker-compose up)
+- `make stop` - Stop all services (docker-compose down)
+
+{{#IF_PYTHON}}
+## Python Build
+
+Python services use editable installs:
+```bash
+pip install -e services/python/<service-name>/
+```
+
+Build checks:
+- Syntax: `python3 -m py_compile <file>`
+- Types: `mypy src/`
+- Package: `python3 -m build` (if pyproject.toml has build-system)
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go Build
+
+Go services compile to `bin/`:
+```bash
+go build -o bin/<service-name> ./services/go/<service-name>/
+```
+
+Build flags:
+- `CGO_ENABLED=0` for static binaries (container-friendly)
+- `-ldflags="-s -w"` to strip debug info (smaller binary)
+- `GOOS=linux GOARCH=amd64` for cross-compilation
+{{/IF_GO}}
+
+{{#IF_NODE}}
+## Node.js Build
+
+```bash
+npm install          # install dependencies
+npm run build        # compile TypeScript / bundle
+```
+{{/IF_NODE}}
+
+{{#IF_NEXTJS}}
+## Next.js Build
+
+```bash
+cd frontend
+npm install
+npm run build        # production build (checks for errors)
+npm run dev          # development server
+```
+
+The build step catches TypeScript errors and missing imports — run it before deploying.
+{{/IF_NEXTJS}}
+
+{{#IF_RUST}}
+## Rust Build
+
+```bash
+cargo build              # debug build
+cargo build --release    # optimized build
+```
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C# Build
+
+```bash
+dotnet restore                       # restore NuGet packages
+dotnet build                         # debug build
+dotnet build --configuration Release # release build
+dotnet publish -c Release -o out/    # publish for deployment
+```
+{{/IF_CSHARP}}
+
+{{#IF_DOCKER}}
+## Docker Build
+
+```bash
+docker-compose build              # build all services
+docker-compose build <service>    # build specific service
+docker-compose up --build         # rebuild and start
+```
+{{/IF_DOCKER}}
+
+## Security
+
+- **Never include secrets in build args or Dockerfiles**
+- Use multi-stage builds to avoid leaking build-time dependencies
+- Don't copy `.env` files into Docker images

@@ -1,0 +1,64 @@
+# Generated from template - Pytest configuration
+# See: https://docs.pytest.org/en/stable/reference/customize.html
+
+[pytest]
+# Test discovery patterns
+python_files = test_*.py *_test.py
+python_classes = Test*
+python_functions = test_*
+
+# Test paths - flexible to support various project structures
+testpaths = tests test .
+
+# Minimum Python version
+minversion = 7.0
+
+# Pytest options
+addopts =
+    # Show extra test summary info
+    -ra
+    # Strict markers (all markers must be registered)
+    --strict-markers
+    # Strict config (warnings on unknown config options)
+    --strict-config
+    # Show local variables in tracebacks
+    -l
+    # Verbose output
+    -v
+    # Stop on first failure (comment out for CI)
+    # -x
+    # Coverage: uncomment and adjust path when ready
+    # --cov=src --cov-report=term-missing
+
+# Markers (register custom markers here)
+markers =
+    slow: marks tests as slow (deselect with '-m "not slow"')
+    integration: marks tests as integration tests
+    unit: marks tests as unit tests
+    smoke: marks tests as smoke tests
+
+# Coverage options
+[coverage:run]
+# Adjust source path to match your project structure
+source = .
+omit =
+    */tests/*
+    */test/*
+    */test_*.py
+    */__pycache__/*
+    */site-packages/*
+    .project/*
+
+[coverage:report]
+exclude_lines =
+    # Standard pragma
+    pragma: no cover
+    # Don't complain about missing debug-only code
+    def __repr__
+    # Don't complain if tests don't hit defensive assertion code
+    raise AssertionError
+    raise NotImplementedError
+    # Don't complain if non-runnable code isn't run
+    if __name__ == .__main__.:
+    # Don't complain about abstract methods
+    @abstractmethod

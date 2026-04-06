@@ -1,0 +1,184 @@
+{
+  "name": "{{PROJECT_NAME}} Development Environment",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev-environment",
+  "workspaceFolder": "/workspaces/{{PROJECT_NAME}}",
+  "shutdownAction": "stopCompose",
+
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest",
+      "ppa": false
+    }{{#IF_DOCKER}},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }{{/IF_DOCKER}}
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-vscode.makefile-tools",
+        "EditorConfig.EditorConfig",
+        "eamodio.gitlens",
+        "usernamehw.errorlens",
+        "gruntfuggly.todo-tree",
+{{#IF_CLAUDE_CODE}}
+        "anthropic.claude-code",
+{{/IF_CLAUDE_CODE}}
+{{#IF_PYTHON}}
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.black-formatter",
+{{/IF_PYTHON}}
+{{#IF_GO}}
+        "golang.go",
+{{/IF_GO}}
+{{#IF_NODE}}
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+        "bradlc.vscode-tailwindcss",
+        "csstools.postcss",
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+        "rust-lang.rust-analyzer",
+{{/IF_RUST}}
+{{#IF_POSTGRES}}
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+{{/IF_POSTGRES}}
+{{#IF_REDIS}}
+        "cweijan.vscode-redis-client",
+{{/IF_REDIS}}
+        "redhat.vscode-yaml",
+        "yzhang.markdown-all-in-one"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.scrollback": 10000,
+        "editor.formatOnSave": true,
+        "editor.rulers": [88, 120],
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true,
+{{#IF_PYTHON}}
+        "python.defaultInterpreterPath": "/usr/bin/python{{PYTHON_VERSION}}",
+        "python.formatting.provider": "none",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        },
+{{/IF_PYTHON}}
+{{#IF_GO}}
+        "go.gopath": "/go",
+        "go.goroot": "/usr/local/go",
+        "go.formatTool": "goimports",
+        "go.lintTool": "golangci-lint",
+        "go.lintOnSave": "package",
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+{{/IF_GO}}
+{{#IF_NODE}}
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+{{/IF_NODE}}
+{{#IF_NEXTJS}}
+        "[typescriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[css]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "tailwindCSS.includeLanguages": {
+          "typescript": "javascript",
+          "typescriptreact": "javascript"
+        },
+{{/IF_NEXTJS}}
+{{#IF_RUST}}
+        "[rust]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        },
+        "rust-analyzer.checkOnSave.command": "clippy",
+{{/IF_RUST}}
+{{#IF_POSTGRES}}
+        "sqltools.connections": [
+          {
+            "name": "{{PROJECT_NAME}} Dev DB",
+            "driver": "PostgreSQL",
+            "server": "db",
+            "port": 5432,
+            "database": "{{DB_NAME}}",
+            "username": "{{DB_USER}}",
+            "password": "{{DB_PASSWORD}}"
+          }
+        ],
+{{/IF_POSTGRES}}
+        "files.associations": {
+          "*.env*": "dotenv",
+          "Makefile*": "makefile"
+        }
+      }
+    }
+  },
+
+  "forwardPorts": [
+    8080,
+    3000{{#IF_POSTGRES}},
+    5432{{/IF_POSTGRES}}{{#IF_REDIS}},
+    6379{{/IF_REDIS}}
+  ],
+
+  "portsAttributes": {
+    "8080": {
+      "label": "API Server",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "Frontend Dev Server",
+      "onAutoForward": "notify"
+    }{{#IF_POSTGRES}},
+    "5432": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    }{{/IF_POSTGRES}}{{#IF_REDIS}},
+    "6379": {
+      "label": "Redis",
+      "onAutoForward": "silent"
+    }{{/IF_REDIS}}
+  },
+
+  "containerEnv": {
+    "PROJECT_NAME": "{{PROJECT_NAME}}",
+    "ENVIRONMENT": "development"
+  },
+
+  "remoteUser": "vscode"
+}

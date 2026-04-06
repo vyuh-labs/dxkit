@@ -1,0 +1,123 @@
+---
+name: scaffold
+description: Scaffold new code — services, packages, modules, components. Use when asked to create new files, modules, project structure, or boilerplate.
+---
+
+# Code Scaffolding
+
+## Project Structure
+- `.project.yaml` - Central config (edit via `make config`, view via `make info`)
+- `.project/` - Framework tooling and scripts
+- `.ai/` - AI session management and checkpoints
+
+## Language Management
+- `make lang-list` - Show enabled languages
+- `make lang-add LANG=<name>` - Enable a language
+- `make lang-remove LANG=<name>` - Disable a language
+- `make sync` - Sync `.project.yaml` to language config files
+- `make sync-preview` - Preview sync changes (dry run)
+
+{{#IF_PYTHON}}
+## Python Structure
+```
+services/python/<service-name>/
+├── pyproject.toml
+├── src/
+│   ├── __init__.py
+│   ├── app.py          # Entry point / app factory
+│   ├── models.py       # Data models (Pydantic)
+│   └── routes.py       # API endpoints (if web)
+└── tests/
+    ├── __init__.py
+    └── test_app.py
+```
+
+**Patterns:**
+- FastAPI for web APIs (app factory pattern)
+- Pydantic for data validation
+- pytest for testing
+- See `.template/examples/python-api/` and `.template/examples/python-cli/` for reference
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go Structure
+```
+services/go/<service-name>/
+├── go.mod
+├── main.go             # Entry point
+├── handlers.go         # HTTP handlers
+├── handlers_test.go    # Handler tests
+└── internal/           # Private packages
+```
+
+**Patterns:**
+- Standard library `net/http` for HTTP
+- `httptest` for handler testing
+- See `.template/examples/go-service/` for reference
+{{/IF_GO}}
+
+{{#IF_NEXTJS}}
+## Next.js Structure
+```
+frontend/
+├── src/
+│   ├── app/            # App Router pages
+│   ├── components/     # React components
+│   └── lib/            # Utilities
+├── public/             # Static assets
+├── package.json
+└── tsconfig.json
+```
+{{/IF_NEXTJS}}
+
+{{#IF_NODE}}
+## Node.js Structure
+```
+services/node/<service-name>/
+├── package.json
+├── tsconfig.json
+├── src/
+│   └── index.ts
+└── tests/
+    └── index.test.ts
+```
+{{/IF_NODE}}
+
+{{#IF_RUST}}
+## Rust Structure
+```
+services/rust/<service-name>/
+├── Cargo.toml
+├── src/
+│   ├── main.rs         # Binary entry
+│   └── lib.rs          # Library code
+└── tests/
+    └── integration.rs
+```
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C# Structure
+```
+src/<ProjectName>/
+├── <ProjectName>.csproj
+├── Program.cs
+├── Controllers/      # API controllers
+├── Models/           # Data models
+├── Services/         # Business logic
+└── appsettings.json  # Configuration
+tests/<ProjectName>.Tests/
+├── <ProjectName>.Tests.csproj
+└── UnitTests/
+```
+
+**Patterns:**
+- ASP.NET Core for web APIs (minimal APIs or controllers)
+- Entity Framework Core for data access
+- xUnit + Moq for testing
+{{/IF_CSHARP}}
+
+## After Scaffolding
+1. Run `make sync` to update config files
+2. Run `make doctor` to verify setup
+3. Run `make test` to confirm everything works

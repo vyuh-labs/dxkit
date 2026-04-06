@@ -1,0 +1,32 @@
+---
+description: Auto-fix all quality and formatting issues
+---
+
+Auto-fix quality and formatting issues.
+
+{{#IF_NODE}}
+## Node / TypeScript
+1. `npx eslint . --fix` — Fix lint issues
+2. `npx prettier --write .` — Format
+{{/IF_NODE}}
+{{#IF_PYTHON}}
+## Python
+1. `ruff check . --fix` — Fix lint issues
+2. `ruff format .` — Format
+{{/IF_PYTHON}}
+{{#IF_GO}}
+## Go
+1. `gofmt -w .` — Format
+2. `goimports -w .` — Fix imports
+{{/IF_GO}}
+{{#IF_CSHARP}}
+## C#
+1. `dotnet format` — Format and fix
+{{/IF_CSHARP}}
+{{#IF_RUST}}
+## Rust
+1. `cargo fmt` — Format
+2. `cargo clippy --fix --allow-dirty` — Fix lint issues
+{{/IF_RUST}}
+
+Report what was fixed. If any issues remain, provide manual fix instructions.

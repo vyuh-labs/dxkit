@@ -1,0 +1,40 @@
+---
+description: Run tests with coverage reporting
+---
+
+Run tests with coverage. Enforce minimum coverage threshold.
+
+{{#IF_NODE}}
+## Node / TypeScript ({{TEST_FRAMEWORK}})
+Run: `{{TEST_COMMAND}}`
+{{#ELSE}}
+{{#IF_PYTHON}}
+## Python
+Run: `pytest --cov --cov-report=term-missing --cov-fail-under={{COVERAGE_THRESHOLD}}`
+{{/IF_PYTHON}}
+{{#IF_GO}}
+## Go
+Run: `go test -coverprofile=coverage.out -covermode=atomic ./...`
+Then: `go tool cover -func=coverage.out`
+Check that total coverage is at least **{{COVERAGE_THRESHOLD}}%**.
+{{/IF_GO}}
+{{#IF_CSHARP}}
+## C#
+Run: `dotnet test --collect:"XPlat Code Coverage"`
+{{/IF_CSHARP}}
+{{#IF_RUST}}
+## Rust
+Run: `cargo test`
+{{/IF_RUST}}
+{{/IF_NODE}}
+
+**Coverage threshold: {{COVERAGE_THRESHOLD}}%**
+
+## Report
+
+Summarize:
+- Total tests: passed / failed / skipped
+- Coverage: X% (threshold: {{COVERAGE_THRESHOLD}}%)
+- Uncovered critical files (if any)
+
+If coverage is below threshold, list the files with lowest coverage that should be prioritized.

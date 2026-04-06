@@ -1,0 +1,255 @@
+# {{PROJECT_NAME}}
+
+{{PROJECT_DESCRIPTION}}
+
+## Architecture
+
+- Monorepo with make-based task runner
+- Configuration driven by `.project.yaml` (single source of truth)
+- Quality checks, testing, and formatting enforced via `make check`
+
+## Quick Reference
+
+### Setup & Diagnostics
+- `make setup` - Interactive setup for new developers
+- `make doctor` - Diagnose common setup issues
+- `make info` - Show project configuration dashboard
+- `make config` - Interactive configuration editor
+
+### Code Quality
+- `make quality` - Run all quality checks (report: tmp/reports/quality-report.md)
+- `make quality-fix` - Auto-fix issues
+- `make lint` - Lint all code
+- `make format` - Format all code
+- `make fix` - Fix all auto-fixable issues (quality-fix + format)
+- `make check` - Full pre-commit check (validate + quality + test)
+
+### Testing
+- `make test` - Run all tests (report: tmp/reports/test-report.md)
+- `make test-unit` - Fast unit tests only
+- `make test-coverage` - Detailed coverage report
+- Coverage threshold: {{COVERAGE_THRESHOLD}}%
+
+### Build & Development
+- `make build` - Build all services
+- `make clean` - Remove build artifacts
+- `make dev` - Start all services (docker-compose up)
+- `make stop` - Stop all services
+
+### Session Workflow
+- `make session-start` - Start AI-assisted development session
+- `make session-end` - End session and create checkpoint
+- `make session-commit` - Commit with quality checks
+- `make session-push` - Push to remote
+- `make session-pr` - Create PR with auto-generated content
+
+{{#IF_INFISICAL}}
+### Secrets Management
+- `make secrets-pull` - Pull secrets from Infisical to .env
+- `make secrets-show` - Show Infisical configuration (no secrets displayed)
+{{/IF_INFISICAL}}
+
+### Configuration
+- `make lang-list` - Show enabled languages
+- `make lang-add LANG=<name>` - Enable a language
+- `make lang-remove LANG=<name>` - Disable a language
+- `make sync` - Sync .project.yaml to language config files
+
+### Code Generation
+- `make generate` - Generate all code
+- `make validate` - Validate generated code is up-to-date
+
+{{#IF_PYTHON}}
+## Python {{PYTHON_VERSION}}
+
+- **Source:** `src/` or `services/python/`
+- **Linter/Formatter:** ruff (config: `ruff.toml`, `pyproject.toml`)
+- **Type checker:** mypy
+- **Tests:** pytest (config: `pytest.ini`)
+- **Package config:** `pyproject.toml`
+- Run quality: `.project/scripts/quality/lint-python.sh`
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go {{GO_VERSION}}
+
+- **Source:** `services/go/`
+- **Linter:** golangci-lint (config: `.golangci.yml`)
+- **Formatter:** gofmt + goimports
+- **Tests:** `go test ./...`
+- **Module:** `go.mod`
+- Run quality: `.project/scripts/quality/lint-go.sh`
+{{/IF_GO}}
+
+{{#IF_NODE}}
+## Node.js {{NODE_VERSION}}
+
+- **Package:** `package.json`, `tsconfig.json`
+- **Linter:** ESLint
+- **Formatter:** Prettier
+- **Tests:** npm test
+{{/IF_NODE}}
+
+{{#IF_NEXTJS}}
+## Next.js
+
+- **Directory:** `frontend/`
+- **Stack:** App Router + TypeScript + Tailwind CSS
+- **Build:** `cd frontend && npm run build`
+- **Lint:** `cd frontend && npm run lint`
+{{/IF_NEXTJS}}
+
+{{#IF_RUST}}
+## Rust {{RUST_VERSION}}
+
+- **Package:** `Cargo.toml`
+- **Linter:** clippy
+- **Formatter:** rustfmt
+- **Tests:** `cargo test`
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C# {{CSHARP_VERSION}}
+
+- **Source:** `src/` or `services/csharp/`
+- **Solution:** `*.sln`
+- **Project:** `*.csproj`
+- **Linter/Analyzer:** Roslyn Analyzers, StyleCop Analyzers
+- **Formatter:** `dotnet format`
+- **Tests:** `dotnet test` (xUnit)
+{{/IF_CSHARP}}
+
+{{#IF_GCLOUD}}
+## Google Cloud
+
+- **Auth:** `gcloud auth login` (interactive setup via `make setup`)
+- **Project:** Set in `.env` as `GOOGLE_CLOUD_PROJECT`
+- **SDK:** Installed via devcontainer post-create script
+{{/IF_GCLOUD}}
+
+{{#IF_PULUMI}}
+## Pulumi
+
+- **Auth:** `pulumi login`
+- **Workflow:** Always `pulumi preview` before `pulumi up`
+- **Secrets:** Use `pulumi config set --secret` for sensitive values
+{{/IF_PULUMI}}
+
+## Claude Code Integration
+
+### Skills (`.claude/skills/`)
+Domain-specific context loaded on demand. Check skill descriptions before starting work.
+- `.claude/skills/learned/references/gotchas.md` - Known project gotchas
+- `.claude/skills/learned/references/conventions.md` - Team conventions
+
+### Commands (`.claude/commands/`)
+Slash commands for common workflows. Run `/help` to list all with descriptions.
+- `/session-start` - Start dev session
+- `/session-end` - End session with checkpoint
+- `/ask <question>` - Ask about the codebase
+- `/explore-codebase` - Deep architecture exploration
+- `/onboarding` - Generate first-day developer guide
+- `/enable-agent <name>` - Activate a dormant agent
+- `/help` - List all commands and agents
+- `/quality` - Run quality checks (language-aware)
+- `/setup-hooks` - Install git pre-commit/pre-push hooks
+- `/learn` - Capture a gotcha, convention, or thing to avoid
+- `/test` - Run tests
+- `/setup-pr-review` - Set up automated PR review with Claude Code
+- `/test-gaps` - Find critical untested code paths
+- `/deps` - Map dependencies ("what breaks if I change X?")
+- `/health` - Comprehensive codebase health audit
+- `/vulnerabilities` - Scan dependencies and code for security issues
+- `/dev-report` - Developer activity and code quality report
+- `/docs` - Audit, write, or improve documentation
+- `/plan` - Generate improvement plans with KPIs from reports (fix loop)
+- `/execute-plan` - Execute a plan task by task with session management
+- `/feature` - Design and plan a new feature
+- `/build-feature` - Build a feature from a plan with tests
+- `/dashboard` - Generate HTML dashboard from all reports
+- `/stealth-mode` - Gitignore DXKit files + install smart scoped git hooks
+- `/export-pdf` - Convert markdown reports to PDF
+- `/fix-issue <number>` - Investigate and fix a GitHub issue
+
+### Rules (`.claude/rules/`)
+Language-specific conventions that activate automatically when editing matching files.
+
+### Agents
+**Active** (`.claude/agents/`) — auto-triggered when your question matches:
+- `knowledge-bot` — Answers codebase questions with file:line references (sonnet, read-only)
+- `onboarding` — Interactive onboarding buddy for new developers (sonnet, read-only)
+- `quality-reviewer` — Reviews changed code for issues before committing (sonnet)
+- `doc-writer` — Audits docs, identifies gaps, writes/improves documentation (sonnet)
+
+**Dormant** (`.claude/agents-available/`) — activate with `/enable-agent <name>`:
+- `codebase-explorer` — Deep architecture analysis, generates codebase skill (sonnet, read-only)
+- `code-reviewer` — Read-only PR review and security audit (sonnet, no write access)
+- `test-writer` — Writes tests for existing code (sonnet)
+- `test-gap-finder` — Identifies critical untested code paths (sonnet, read-only)
+- `dependency-mapper` — Maps import chains and blast radius (sonnet, read-only)
+- `health-auditor` — Comprehensive codebase health audit (sonnet, read-only)
+- `vulnerability-scanner` — Dependency and code vulnerability analysis (sonnet)
+- `dev-report` — Developer activity, quality patterns, security attribution (sonnet)
+- `dashboard-builder` — Generates HTML dashboard from all reports (sonnet)
+- `strategic-planner` — Analyzes reports, proposes KPIs, generates improvement plans (sonnet)
+- `plan-executor` — Executes plans task by task with session checkpoints (sonnet)
+- `feature-planner` — Designs new features, generates implementation plans (sonnet)
+- `feature-builder` — Implements features from plans with tests and conventions (sonnet)
+- `hooks-configurator` — Configures scoped git hooks from DXKit commands (sonnet)
+- `doc-writer` — Audits docs, identifies gaps, writes/improves documentation (sonnet)
+- `debugger` — Traces root causes systematically (sonnet, no file edits)
+
+## AI-Assisted Development Workflow
+
+```
+# 1. Start a session
+/session-start
+
+# 2. Create a feature branch
+git checkout -b feature/your-feature
+
+# 3. Ask questions as you go
+/ask How does the auth middleware work?
+
+# 4. Develop — Claude has full project context via skills
+
+# 5. Run checks before committing
+/quality
+/test
+
+# 6. Commit and push
+git add -A && git commit -m "feat: your feature"
+git push -u origin feature/your-feature
+
+# 7. End session (creates checkpoint + evolves skills)
+/session-end
+```
+
+## Security
+
+**Critical rules — never violate these:**
+
+1. **Never output, log, or commit secrets** — no API keys, tokens, passwords, or credentials in code, commits, checkpoints, or skill files
+2. **Never read `.env` directly** — use `make secrets-show` (which masks values) to check configuration
+3. **Never pass secrets as CLI arguments** — they appear in process lists and shell history
+4. **Never include secrets in build args or Dockerfiles**
+5. **Sensitive files are gitignored:** `.env`, `.env.*`, `.env.secrets`, `.claude/settings.local.json`
+6. **Before committing:** verify no secrets in staged files (`git diff --cached`)
+{{#IF_INFISICAL}}
+7. **Infisical tokens:** never output `INFISICAL_TOKEN` values; use `make secrets-show` to verify config
+{{/IF_INFISICAL}}
+{{#IF_GCLOUD}}
+8. **GCP credentials:** never output `gcloud auth print-access-token` or service account JSON keys
+{{/IF_GCLOUD}}
+
+## Conventions
+
+- Run quality checks before committing (`/quality` or `make quality`)
+- Use `/session-start` to begin work, `/session-end` to checkpoint
+- All code changes should pass quality + test checks
+{{#IF_PRECOMMIT}}
+- Pre-commit hooks run automatically on `git commit`
+{{/IF_PRECOMMIT}}
+- Keep session checkpoints in `.ai/sessions/<developer>/<date>/`
+- Skills evolve over time — gotchas and conventions are captured during `/session-end`
+- Check `/help` for all available commands and agents

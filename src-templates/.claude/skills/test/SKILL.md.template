@@ -1,0 +1,109 @@
+---
+name: test
+description: Run tests, check coverage, debug test failures. Use when asked to run tests, write tests, investigate test failures, or check coverage.
+---
+
+# Testing
+
+## Commands
+- `make test` - Run all tests (report: `tmp/reports/test-report.md`)
+- `make test-unit` - Fast unit tests only (no coverage)
+- `make test-quick` - Alias for test-unit
+- `make test-integration` - Integration tests only
+- `make test-coverage` - Detailed coverage report
+- Coverage threshold: **{{COVERAGE_THRESHOLD}}%**
+
+{{#IF_PYTHON}}
+## Python
+
+**Framework:** pytest (config: `pytest.ini`, `pyproject.toml`)
+**Coverage:** pytest-cov
+**Pattern:** `tests/` directories alongside source
+
+```bash
+pytest tests/ -v                    # run all
+pytest tests/test_foo.py -v         # run specific
+pytest tests/ -k "test_name" -v    # run by name
+pytest tests/ --cov=src --cov-report=term-missing  # with coverage
+```
+
+Writing tests:
+- Use fixtures for setup/teardown
+- Use `@pytest.mark.parametrize` for data-driven tests
+- Mock external dependencies with `unittest.mock` or `pytest-mock`
+- Use dependency injection for testability
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go
+
+**Framework:** `go test`
+**Coverage:** `go test -coverprofile`
+**Pattern:** `_test.go` files alongside source
+
+```bash
+go test ./... -v                          # run all
+go test ./pkg/mypackage/ -v               # run specific
+go test ./... -run TestName -v            # run by name
+go test ./... -coverprofile=coverage.out  # with coverage
+go tool cover -html=coverage.out          # view coverage
+```
+
+Writing tests:
+- Use table-driven tests for multiple cases
+- Use `httptest` for HTTP handler tests
+- Use `testify/assert` if available, otherwise standard `testing`
+{{/IF_GO}}
+
+{{#IF_NEXTJS}}
+## Next.js
+
+**Framework:** Jest (if configured)
+**Directory:** `frontend/`
+
+```bash
+cd frontend && npm test
+cd frontend && npm test -- --coverage
+```
+{{/IF_NEXTJS}}
+
+{{#IF_RUST}}
+## Rust
+
+```bash
+cargo test                    # run all
+cargo test test_name          # run specific
+cargo test -- --nocapture     # show output
+```
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C#
+
+**Framework:** xUnit (preferred), NUnit, MSTest
+**Coverage:** coverlet
+**Pattern:** `*.Tests` projects alongside source
+
+```bash
+dotnet test                                              # run all
+dotnet test --filter "FullyQualifiedName~TestName"       # run specific
+dotnet test --collect:"XPlat Code Coverage"              # with coverage
+```
+
+Writing tests:
+- Use `[Fact]` for single assertions, `[Theory]` with `[InlineData]` for data-driven
+- Use dependency injection + mocking (Moq, NSubstitute)
+- Follow Arrange-Act-Assert pattern
+{{/IF_CSHARP}}
+
+## Writing Tests
+
+- Every new feature should include tests
+- Aim for coverage threshold ({{COVERAGE_THRESHOLD}}%)
+- Use dependency injection for mockability
+- Test edge cases and error paths, not just happy paths
+- Integration tests go in separate directories/files from unit tests
+
+## Gotchas
+
+See [references/gotchas.md](references/gotchas.md) for known test issues.

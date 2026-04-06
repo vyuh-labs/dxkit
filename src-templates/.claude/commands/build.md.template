@@ -1,0 +1,30 @@
+---
+description: Build the project
+---
+
+Build the project. Run these commands:
+
+{{#IF_NODE}}
+## Node / TypeScript
+1. `npm install` — Install dependencies (if node_modules is missing)
+2. `npm run build` — Build/compile
+{{/IF_NODE}}
+{{#IF_PYTHON}}
+## Python
+1. `pip install -e .` — Install in development mode (if not already)
+{{/IF_PYTHON}}
+{{#IF_GO}}
+## Go
+1. `go build ./...` — Build all packages
+{{/IF_GO}}
+{{#IF_CSHARP}}
+## C#
+1. `dotnet restore` — Restore dependencies
+2. `dotnet build` — Build
+{{/IF_CSHARP}}
+{{#IF_RUST}}
+## Rust
+1. `cargo build` — Build
+{{/IF_RUST}}
+
+Report build results. If there are errors, diagnose and suggest fixes.
