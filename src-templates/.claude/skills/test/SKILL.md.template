@@ -1,6 +1,19 @@
 ---
 name: test
 description: Run tests, check coverage, debug test failures. Use when asked to run tests, write tests, investigate test failures, or check coverage.
+paths:
+  - '**/*.test.ts'
+  - '**/*.test.tsx'
+  - '**/*.test.js'
+  - '**/*.test.jsx'
+  - '**/*.spec.ts'
+  - '**/*.spec.tsx'
+  - '**/*.spec.js'
+  - '**/*_test.go'
+  - '**/test_*.py'
+  - '**/*_test.py'
+  - '**/tests/**'
+  - '**/__tests__/**'
 ---
 
 # Testing

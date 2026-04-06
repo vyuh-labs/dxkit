@@ -1,6 +1,11 @@
 ---
 name: gcloud
 description: Google Cloud Platform operations — gcloud CLI, Cloud Run, GKE, BigQuery, IAM, GCS. Use when asked about GCP, Google Cloud, gcloud commands, or cloud infrastructure.
+paths:
+  - '**/cloudbuild.yaml'
+  - '**/cloudbuild.yml'
+  - '**/.gcloudignore'
+  - '**/app.yaml'
 ---
 
 # Google Cloud (gcloud)

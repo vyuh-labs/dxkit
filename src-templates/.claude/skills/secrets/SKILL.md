@@ -1,6 +1,13 @@
 ---
 name: secrets
 description: Manage secrets via Infisical. Use when asked about secrets, environment variables, API keys, .env configuration, or credential management.
+paths:
+  - '.env'
+  - '.env.*'
+  - '**/.env'
+  - '**/.env.*'
+  - '.infisical.json'
+  - '**/.infisical.json'
 ---
 
 # Secrets Management (Infisical)

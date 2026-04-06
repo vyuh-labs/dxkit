@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Path-scoped auto-activation** (`paths:` frontmatter) on four shipped
+  skills, so they auto-load whenever Claude Code is touching a matching
+  file — even if the user's prompt doesn't name the tool:
+  - `gcloud` — `**/cloudbuild.{yaml,yml}`, `**/.gcloudignore`, `**/app.yaml`
+  - `pulumi` — `Pulumi.{yaml,yml}` and stack variants
+  - `secrets` — `**/.env*`, `**/.infisical.json`
+  - `test` — common test file patterns across TypeScript, JavaScript,
+    Go, Python (`**/*.test.*`, `**/*_test.go`, `**/test_*.py`,
+    `**/__tests__/**`, `**/tests/**`)
+
+  This is additive — descriptions still drive activation for everything
+  else, and the eight intent-driven skills (`build`, `deploy`, `doctor`,
+  `learned`, `quality`, `review`, `scaffold`, `session`) remain
+  description-only, since path-scoping would over- or under-trigger them.
 - **Test suite** (Vitest). Unit tests for `detect()` against fixture project
   trees, plus an integration test that runs the built CLI against a tmp dir
   and asserts on the generated `.claude/` tree.

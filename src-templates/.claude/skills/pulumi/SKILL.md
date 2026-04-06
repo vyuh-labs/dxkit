@@ -1,6 +1,12 @@
 ---
 name: pulumi
 description: Pulumi infrastructure as code — stacks, previews, deployments, config. Use when asked about IaC, Pulumi, cloud resources, infrastructure provisioning, or stack management.
+paths:
+  - 'Pulumi.yaml'
+  - 'Pulumi.yml'
+  - 'Pulumi.*.yaml'
+  - '**/Pulumi.yaml'
+  - '**/Pulumi.*.yaml'
 ---
 
 # Pulumi (Infrastructure as Code)
