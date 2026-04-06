@@ -1,0 +1,8 @@
+{
+  "name": "fixture-next",
+  "description": "A nextjs fixture for dxkit detect tests",
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0"
+  }
+}

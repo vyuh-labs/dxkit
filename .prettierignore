@@ -1,0 +1,7 @@
+dist/
+templates/
+src-templates/
+node_modules/
+coverage/
+package-lock.json
+CHANGELOG.md

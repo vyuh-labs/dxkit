@@ -1,0 +1,9 @@
+# Revisions listed here are skipped by `git blame` so the actual authors of
+# each line are surfaced instead of bulk-formatting commits.
+#
+# Configure git locally to honor this file:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# This is also honored automatically by GitHub's blame view.
+
+# chore: prettier baseline + register .git-blame-ignore-revs (PLACEHOLDER — see history)

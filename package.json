@@ -32,12 +32,37 @@
   "scripts": {
     "build": "node scripts/copy-templates.js && tsc",
     "prepublishOnly": "npm run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest",
+    "test:run": "npm run build && vitest run",
+    "test:changed": "vitest run --changed",
+    "prepare": "husky || true"
   },
-  "dependencies": {},
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
   "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^17.4.0",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
     "typescript": "^5.4.0",
-    "@types/node": "^20.0.0"
+    "typescript-eslint": "^8.11.0",
+    "vitest": "^2.1.4"
   },
   "keywords": [
     "vyuh",

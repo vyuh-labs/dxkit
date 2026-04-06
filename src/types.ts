@@ -28,8 +28,8 @@ export interface DetectedStack {
     csharp?: string;
   };
   testRunner?: {
-    command: string;    // e.g., "npx jest", "npx mocha", "npm test"
-    framework: string;  // e.g., "jest", "mocha", "vitest", "pytest"
+    command: string; // e.g., "npx jest", "npx mocha", "npm test"
+    framework: string; // e.g., "jest", "mocha", "vitest", "pytest"
     coverageCommand?: string; // e.g., "npx jest --coverage", "npx c8 npm test"
   };
   framework?: string; // e.g., "loopback", "express", "fastapi", "gin"

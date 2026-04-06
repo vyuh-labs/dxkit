@@ -55,13 +55,13 @@ CLAUDE.md                # Main context file for Claude Code
 
 ## Supported Languages
 
-| Language | Detection | Linters | Test Runner |
-|---|---|---|---|
-| Node.js / TypeScript | `package.json` | ESLint, Prettier, tsc | Auto-detected (Jest, Mocha, Vitest, Ava, Tap) |
-| Python | `pyproject.toml`, `setup.py`, `*.py` | ruff, mypy | pytest |
-| Go | `go.mod` | golangci-lint, go vet | go test |
-| C# | `*.csproj`, `*.sln` | dotnet format, Roslyn | dotnet test |
-| Rust | `Cargo.toml` | clippy, rustfmt | cargo test |
+| Language             | Detection                            | Linters               | Test Runner                                   |
+| -------------------- | ------------------------------------ | --------------------- | --------------------------------------------- |
+| Node.js / TypeScript | `package.json`                       | ESLint, Prettier, tsc | Auto-detected (Jest, Mocha, Vitest, Ava, Tap) |
+| Python               | `pyproject.toml`, `setup.py`, `*.py` | ruff, mypy            | pytest                                        |
+| Go                   | `go.mod`                             | golangci-lint, go vet | go test                                       |
+| C#                   | `*.csproj`, `*.sln`                  | dotnet format, Roslyn | dotnet test                                   |
+| Rust                 | `Cargo.toml`                         | clippy, rustfmt       | cargo test                                    |
 
 Multi-language repos fully supported — detects and generates rules/commands for all languages present.
 
@@ -87,66 +87,74 @@ Auto-detected and integrated when present:
 ## Commands (30)
 
 ### Development Workflow
-| Command | Description |
-|---|---|
-| `/session-start` | Start an AI-assisted dev session |
-| `/session-end` | End session, create checkpoint, evolve skills |
+
+| Command           | Description                                         |
+| ----------------- | --------------------------------------------------- |
+| `/session-start`  | Start an AI-assisted dev session                    |
+| `/session-end`    | End session, create checkpoint, evolve skills       |
 | `/ask <question>` | Ask about the codebase (delegates to knowledge-bot) |
-| `/learn` | Capture a gotcha, convention, or thing to avoid |
+| `/learn`          | Capture a gotcha, convention, or thing to avoid     |
 
 ### Quality & Testing
-| Command | Description |
-|---|---|
-| `/quality` | Run language-specific linters + AI review |
-| `/test` | Run tests (auto-detected runner) |
-| `/check` | Full pre-commit validation (quality + tests + AI review) |
-| `/fix` | Auto-fix formatting and lint issues |
-| `/build` | Build the project |
-| `/test-gaps` | Find critical untested code paths |
+
+| Command      | Description                                              |
+| ------------ | -------------------------------------------------------- |
+| `/quality`   | Run language-specific linters + AI review                |
+| `/test`      | Run tests (auto-detected runner)                         |
+| `/check`     | Full pre-commit validation (quality + tests + AI review) |
+| `/fix`       | Auto-fix formatting and lint issues                      |
+| `/build`     | Build the project                                        |
+| `/test-gaps` | Find critical untested code paths                        |
 
 ### Analysis & Reports
-| Command | Description | Output |
-|---|---|---|
-| `/health` | 6-dimension codebase health audit | `.ai/reports/health-audit-*.md` |
+
+| Command            | Description                                    | Output                                |
+| ------------------ | ---------------------------------------------- | ------------------------------------- |
+| `/health`          | 6-dimension codebase health audit              | `.ai/reports/health-audit-*.md`       |
 | `/vulnerabilities` | CWE-classified security scan (Snyk-comparable) | `.ai/reports/vulnerability-scan-*.md` |
-| `/dev-report` | Developer activity + security attribution | `.ai/reports/developer-report-*.md` |
-| `/docs audit` | Documentation gap analysis | `.ai/reports/docs-audit-*.md` |
-| `/deps` | Dependency map + blast radius | `.ai/reports/dependency-map-*.md` |
-| `/dashboard` | Generate HTML dashboard from all reports | `.ai/reports/dashboard.html` |
-| `/export-pdf` | Convert markdown reports to PDF | `.ai/reports/*.pdf` |
+| `/dev-report`      | Developer activity + security attribution      | `.ai/reports/developer-report-*.md`   |
+| `/docs audit`      | Documentation gap analysis                     | `.ai/reports/docs-audit-*.md`         |
+| `/deps`            | Dependency map + blast radius                  | `.ai/reports/dependency-map-*.md`     |
+| `/dashboard`       | Generate HTML dashboard from all reports       | `.ai/reports/dashboard.html`          |
+| `/export-pdf`      | Convert markdown reports to PDF                | `.ai/reports/*.pdf`                   |
 
 ### Planning & Execution — Fix Loop
-| Command | Description | Output |
-|---|---|---|
-| `/plan` | Analyze reports → propose KPIs → generate improvement plans | `.ai/plans/` |
-| `/execute-plan <name>` | Execute a fix plan task by task with session checkpoints | `.ai/plans/progress/`, `.ai/sessions/` |
+
+| Command                | Description                                                 | Output                                 |
+| ---------------------- | ----------------------------------------------------------- | -------------------------------------- |
+| `/plan`                | Analyze reports → propose KPIs → generate improvement plans | `.ai/plans/`                           |
+| `/execute-plan <name>` | Execute a fix plan task by task with session checkpoints    | `.ai/plans/progress/`, `.ai/sessions/` |
 
 ### Feature Development Loop
-| Command | Description | Output |
-|---|---|---|
-| `/feature <description>` | Design new feature → implementation plan | `.ai/features/` |
-| `/build-feature <slug>` | Build feature from plan with tests and conventions | `.ai/features/progress/`, `.ai/sessions/` |
+
+| Command                  | Description                                        | Output                                    |
+| ------------------------ | -------------------------------------------------- | ----------------------------------------- |
+| `/feature <description>` | Design new feature → implementation plan           | `.ai/features/`                           |
+| `/build-feature <slug>`  | Build feature from plan with tests and conventions | `.ai/features/progress/`, `.ai/sessions/` |
 
 ### Exploration & Onboarding
-| Command | Description |
-|---|---|
-| `/onboarding` | Interactive onboarding buddy for new developers |
-| `/explore-codebase` | Deep architecture exploration |
-| `/help` | List all commands and agents |
+
+| Command             | Description                                     |
+| ------------------- | ----------------------------------------------- |
+| `/onboarding`       | Interactive onboarding buddy for new developers |
+| `/explore-codebase` | Deep architecture exploration                   |
+| `/help`             | List all commands and agents                    |
 
 ### Setup & Hooks
-| Command | Description |
-|---|---|
-| `/setup-hooks` | Configure git hooks (quality, test, vulnerability) — consistent with DXKit reports |
-| `/stealth-mode` | Gitignore DXKit files + install hooks (DXKit local-only, hooks for all devs) |
-| `/setup-pr-review` | Set up automated PR review GitHub Action |
-| `/fix-issue <number>` | Investigate and fix a GitHub issue |
-| `/doctor` | Diagnose environment issues |
-| `/enable-agent <name>` | Activate a dormant agent |
+
+| Command                | Description                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `/setup-hooks`         | Configure git hooks (quality, test, vulnerability) — consistent with DXKit reports |
+| `/stealth-mode`        | Gitignore DXKit files + install hooks (DXKit local-only, hooks for all devs)       |
+| `/setup-pr-review`     | Set up automated PR review GitHub Action                                           |
+| `/fix-issue <number>`  | Investigate and fix a GitHub issue                                                 |
+| `/doctor`              | Diagnose environment issues                                                        |
+| `/enable-agent <name>` | Activate a dormant agent                                                           |
 
 ## Agents
 
 ### Active by Default (4)
+
 These agents auto-trigger when Claude detects a matching question:
 
 - **knowledge-bot** — "How does auth work?" "Where are payments handled?"
@@ -155,6 +163,7 @@ These agents auto-trigger when Claude detects a matching question:
 - **doc-writer** — "What needs documentation?" "Help me write docs"
 
 ### Dormant (16) — activate with `/enable-agent`
+
 - **codebase-explorer** — Deep architecture analysis, generates documentation
 - **code-reviewer** — PR review and security audit (read-only)
 - **test-writer** — Writes tests for existing code
@@ -186,6 +195,7 @@ All analysis commands save timestamped reports to `.ai/reports/`:
 ```
 
 Export options:
+
 - **HTML dashboard**: `/dashboard` — beautiful dark-themed dashboard with sidebar navigation
 - **PDF**: `/export-pdf all` — converts all reports to PDF
 
@@ -228,6 +238,7 @@ PR      → CI workflow  → full quality + tests + security (thorough, ~3m)
 ### Stealth Mode
 
 `/stealth-mode` keeps DXKit local-only:
+
 - `.claude/`, `.ai/`, `CLAUDE.md` gitignored — not committed
 - `.githooks/` committed — all devs get the hooks
 - One-time setup: `git config core.hooksPath .githooks`
@@ -236,17 +247,17 @@ PR      → CI workflow  → full quality + tests + security (thorough, ~3m)
 
 The `/vulnerabilities` command runs a comprehensive security scan with CWE classification:
 
-| Category | CWE | What It Checks |
-|---|---|---|
-| Command Injection | CWE-78 | `exec()`, `child_process`, unsanitized input |
-| Decompression Bomb | CWE-409 | zlib/tar/decompress without size limits |
-| Uncontrolled Recursion | CWE-674 | JSON/XML/YAML parsers without depth limits |
-| Arbitrary File Upload | CWE-434 | multer/formidable/busboy without validation |
-| Buffer Overflow | CWE-120 | Native modules (binding.gyp, .node files) |
-| Resource Exhaustion | CWE-770 | Missing rate limits, body size limits, WebSocket payload |
-| Hardcoded Secrets | CWE-798 | Passwords, API keys, tokens in source |
-| Prototype Pollution | CWE-1321 | Via dependency audit CWE extraction |
-| + 15 more CWE categories | | Parsed from `npm audit --json` CWE fields |
+| Category                 | CWE      | What It Checks                                           |
+| ------------------------ | -------- | -------------------------------------------------------- |
+| Command Injection        | CWE-78   | `exec()`, `child_process`, unsanitized input             |
+| Decompression Bomb       | CWE-409  | zlib/tar/decompress without size limits                  |
+| Uncontrolled Recursion   | CWE-674  | JSON/XML/YAML parsers without depth limits               |
+| Arbitrary File Upload    | CWE-434  | multer/formidable/busboy without validation              |
+| Buffer Overflow          | CWE-120  | Native modules (binding.gyp, .node files)                |
+| Resource Exhaustion      | CWE-770  | Missing rate limits, body size limits, WebSocket payload |
+| Hardcoded Secrets        | CWE-798  | Passwords, API keys, tokens in source                    |
+| Prototype Pollution      | CWE-1321 | Via dependency audit CWE extraction                      |
+| + 15 more CWE categories |          | Parsed from `npm audit --json` CWE fields                |
 
 Reports include a **Findings by CWE Category** table for direct comparison with Snyk/Sonar output.
 
@@ -271,15 +282,15 @@ npx @vyuhlabs/dxkit doctor               # Verify setup
 
 ### Init Options
 
-| Flag | Description |
-|---|---|
-| `--detect` | Auto-detect stack, minimal prompts |
-| `--yes` | Accept all defaults |
-| `--dx-only` | Just `.claude/` + `CLAUDE.md` (default) |
-| `--full` | Everything: DX + quality + hooks + CI |
-| `--force` | Overwrite existing files (except evolved) |
-| `--name <n>` | Override project name |
-| `--no-scan` | Skip codebase analysis |
+| Flag         | Description                               |
+| ------------ | ----------------------------------------- |
+| `--detect`   | Auto-detect stack, minimal prompts        |
+| `--yes`      | Accept all defaults                       |
+| `--dx-only`  | Just `.claude/` + `CLAUDE.md` (default)   |
+| `--full`     | Everything: DX + quality + hooks + CI     |
+| `--force`    | Overwrite existing files (except evolved) |
+| `--name <n>` | Override project name                     |
+| `--no-scan`  | Skip codebase analysis                    |
 
 ## Example: Node.js/TypeScript Project
 
@@ -289,6 +300,7 @@ npx @vyuhlabs/dxkit init --detect --yes
 ```
 
 Output:
+
 ```
 ✓ Languages: node
 ✓ Framework: loopback
@@ -297,6 +309,7 @@ Output:
 ```
 
 Then in Claude Code:
+
 ```
 /help                                    # See everything
 /ask How does the auth middleware work?   # Codebase Q&A
@@ -315,6 +328,7 @@ npx @vyuhlabs/dxkit init --detect --yes
 ```
 
 Generates:
+
 - Quality commands with `npx eslint .` + `ruff check .` + `golangci-lint run`
 - Test commands with `npm test` + `pytest` + `go test`
 - Path-scoped rules for `.ts`, `.py`, and `.go` files

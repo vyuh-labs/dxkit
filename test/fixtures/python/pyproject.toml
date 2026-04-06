@@ -1,0 +1,7 @@
+[project]
+name = "fixture-py"
+description = "A python fixture for dxkit detect tests"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

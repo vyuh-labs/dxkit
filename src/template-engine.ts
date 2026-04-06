@@ -14,10 +14,7 @@ export class TemplateEngine {
   private variables: Record<string, string>;
   private conditions: Record<string, boolean>;
 
-  constructor(
-    variables: Record<string, string>,
-    conditions: Record<string, boolean>,
-  ) {
+  constructor(variables: Record<string, string>, conditions: Record<string, boolean>) {
     this.variables = variables;
     this.conditions = conditions;
   }

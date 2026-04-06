@@ -45,14 +45,12 @@ export function makeExecutable(filePath: string): void {
   try {
     const stat = fs.statSync(filePath);
     fs.chmodSync(filePath, stat.mode | 0o111);
-  } catch { /* ignore on Windows */ }
+  } catch {
+    /* ignore on Windows */
+  }
 }
 
-export function copyDirectory(
-  src: string,
-  dest: string,
-  opts: { force: boolean },
-): number {
+export function copyDirectory(src: string, dest: string, opts: { force: boolean }): number {
   let count = 0;
   if (!fs.existsSync(src)) return count;
 

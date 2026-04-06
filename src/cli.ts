@@ -77,8 +77,12 @@ export async function run(argv: string[]): Promise<void> {
       // Detect stack
       logger.info('Detecting stack...');
       const detected = detect(cwd);
-      const langs = Object.entries(detected.languages).filter(([, v]) => v).map(([k]) => k);
-      const tools = Object.entries(detected.tools).filter(([, v]) => v).map(([k]) => k);
+      const langs = Object.entries(detected.languages)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      const tools = Object.entries(detected.tools)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
 
       if (langs.length === 0) {
         logger.warn('No languages detected. Generating with minimal config.');
@@ -87,7 +91,8 @@ export async function run(argv: string[]): Promise<void> {
       }
       if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
       if (detected.framework) logger.success(`Framework: ${detected.framework}`);
-      if (detected.testRunner) logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);
+      if (detected.testRunner)
+        logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);
       console.log('');
 
       // Resolve config
@@ -111,14 +116,15 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       // Generate
-      const finalMode = values.full ? 'full' : (values['dx-only'] ? 'dx-only' : mode);
+      const finalMode = values.full ? 'full' : values['dx-only'] ? 'dx-only' : mode;
       const result = await generate(cwd, config, finalMode, !!values.force, !!values['no-scan']);
 
       // Summary
       console.log('');
       logger.header('Summary');
       if (result.created.length) logger.success(`Created: ${result.created.length} files`);
-      if (result.skipped.length) logger.warn(`Skipped: ${result.skipped.length} files (already exist)`);
+      if (result.skipped.length)
+        logger.warn(`Skipped: ${result.skipped.length} files (already exist)`);
       if (result.overwritten.length) logger.info(`Overwritten: ${result.overwritten.length} files`);
       console.log('');
       logger.info('Manifest written to .vyuh-dxkit.json');

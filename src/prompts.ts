@@ -4,12 +4,20 @@ import { DetectedStack, ResolvedConfig, GenerationMode } from './types';
 import { DEFAULT_COVERAGE } from './constants';
 import * as logger from './logger';
 
-async function ask(rl: readline.Interface, question: string, defaultValue: string): Promise<string> {
+async function ask(
+  rl: readline.Interface,
+  question: string,
+  defaultValue: string,
+): Promise<string> {
   const answer = await rl.question(`  ${question} [${defaultValue}]: `);
   return answer.trim() || defaultValue;
 }
 
-async function confirm(rl: readline.Interface, question: string, defaultYes: boolean): Promise<boolean> {
+async function confirm(
+  rl: readline.Interface,
+  question: string,
+  defaultYes: boolean,
+): Promise<boolean> {
   const hint = defaultYes ? 'Y/n' : 'y/N';
   const answer = await rl.question(`  ${question} [${hint}]: `);
   if (!answer.trim()) return defaultYes;
@@ -67,8 +75,12 @@ export async function promptForConfig(
       }
     }
 
-    const projectName = options.name || await ask(rl, 'Project name?', detected.projectName);
-    const includeFull = await confirm(rl, 'Include quality infrastructure (CI, hooks, linters)?', true);
+    const projectName = options.name || (await ask(rl, 'Project name?', detected.projectName));
+    const includeFull = await confirm(
+      rl,
+      'Include quality infrastructure (CI, hooks, linters)?',
+      true,
+    );
     const mode: GenerationMode = includeFull ? 'full' : 'dx-only';
 
     let coverageThreshold = DEFAULT_COVERAGE;

@@ -56,7 +56,12 @@ export async function runDoctor(cwd: string): Promise<void> {
   track(check('.claude/skills/', fs.existsSync(path.join(cwd, '.claude', 'skills'))));
   track(check('.claude/commands/', fs.existsSync(path.join(cwd, '.claude', 'commands'))));
   track(check('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
-  track(check('.claude/agents-available/', fs.existsSync(path.join(cwd, '.claude', 'agents-available'))));
+  track(
+    check(
+      '.claude/agents-available/',
+      fs.existsSync(path.join(cwd, '.claude', 'agents-available')),
+    ),
+  );
 
   // 3. Settings.json validity
   const settingsPath = path.join(cwd, '.claude', 'settings.json');
@@ -72,9 +77,26 @@ export async function runDoctor(cwd: string): Promise<void> {
   // 4. Evolved files
   console.log('');
   logger.info('Evolving files:');
-  track(check('learned/gotchas.md', fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'gotchas.md'))));
-  track(check('learned/conventions.md', fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'conventions.md'))));
-  track(check('deny-recommendations.md', fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'deny-recommendations.md'))));
+  track(
+    check(
+      'learned/gotchas.md',
+      fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'gotchas.md')),
+    ),
+  );
+  track(
+    check(
+      'learned/conventions.md',
+      fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'conventions.md')),
+    ),
+  );
+  track(
+    check(
+      'deny-recommendations.md',
+      fs.existsSync(
+        path.join(cwd, '.claude', 'skills', 'learned', 'references', 'deny-recommendations.md'),
+      ),
+    ),
+  );
 
   // 5. Full mode checks
   if (manifest?.mode === 'full') {

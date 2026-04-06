@@ -1,0 +1,13 @@
+{
+  "name": "fixture-node",
+  "description": "A node fixture for dxkit detect tests",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}

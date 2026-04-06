@@ -1,0 +1,6 @@
+# Run affected tests if there's an upstream to diff against, otherwise full suite.
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  npx vitest run --changed '@{u}'
+else
+  npx vitest run
+fi

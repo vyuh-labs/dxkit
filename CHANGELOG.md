@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Test suite** (Vitest). Unit tests for `detect()` against fixture project
+  trees, plus an integration test that runs the built CLI against a tmp dir
+  and asserts on the generated `.claude/` tree.
+- **Lint + format toolchain.** ESLint flat config with `typescript-eslint`,
+  Prettier, and `eslint-config-prettier`. CI enforces both with
+  `--max-warnings 0`.
+- **Git hooks** via husky + lint-staged. Pre-commit auto-fixes staged files
+  and runs `tsc --noEmit`. Pre-push runs affected tests
+  (`vitest run --changed @{u}`) with a graceful fallback to the full suite.
+- **`.git-blame-ignore-revs`** so formatting commits don't pollute blame.
+
+### Changed
+- **GitHub Actions Node version bumped from 20 → 22** in both `ci.yml` and
+  `publish.yml`. Removes the Node 20 deprecation warning ahead of the
+  2026-06-02 runner cutoff. `.nvmrc` updated to match. The package's
+  `engines.node: ">=18"` constraint is unchanged — consumers on Node 18+
+  are unaffected.
+- **One-time Prettier baseline** applied across the existing source. The
+  baseline commit is registered in `.git-blame-ignore-revs`.
+
+### Fixed
+- Removed three unused-variable / unused-import dead-code spots in
+  `src/generator.ts` and `src/codebase-scanner.ts` that ESLint flagged.
+
 ## [1.2.1] - 2026-04-06
 
 ### Fixed

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ResolvedConfig, GenerationMode, Manifest, FileEntry } from './types';
-import { buildVariables, buildConditions, EVOLVING_FILES, VERSION } from './constants';
+import { ResolvedConfig, GenerationMode, Manifest } from './types';
+import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { writeFile, copyFile, sha256, makeExecutable, copyDirectory } from './files';
 import { scanCodebase, renderCodebaseSkill, renderArchitectureRef } from './codebase-scanner';
@@ -21,46 +21,85 @@ function readTemplate(templatePath: string): string {
 
 function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, boolean>): string {
   const perms: string[] = [
-    'Bash(make test:*)', 'Bash(make test-unit:*)', 'Bash(make test-coverage:*)',
-    'Bash(make quality:*)', 'Bash(make quality-fix:*)', 'Bash(make lint:*)',
-    'Bash(make format:*)', 'Bash(make check:*)', 'Bash(make fix:*)',
-    'Bash(make doctor:*)', 'Bash(make info:*)', 'Bash(make validate:*)',
-    'Bash(make generate:*)', 'Bash(make build:*)', 'Bash(make clean:*)',
-    'Bash(make docs:*)', 'Bash(make sync:*)', 'Bash(make sync-preview:*)',
+    'Bash(make test:*)',
+    'Bash(make test-unit:*)',
+    'Bash(make test-coverage:*)',
+    'Bash(make quality:*)',
+    'Bash(make quality-fix:*)',
+    'Bash(make lint:*)',
+    'Bash(make format:*)',
+    'Bash(make check:*)',
+    'Bash(make fix:*)',
+    'Bash(make doctor:*)',
+    'Bash(make info:*)',
+    'Bash(make validate:*)',
+    'Bash(make generate:*)',
+    'Bash(make build:*)',
+    'Bash(make clean:*)',
+    'Bash(make docs:*)',
+    'Bash(make sync:*)',
+    'Bash(make sync-preview:*)',
     'Bash(make lang-list:*)',
-    'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git branch:*)',
+    'Bash(git status:*)',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git branch:*)',
   ];
 
   if (conditions.IF_PYTHON) perms.push('Bash(python3:*)', 'Bash(pytest:*)', 'Bash(ruff:*)');
-  if (conditions.IF_GO) perms.push('Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)');
-  if (conditions.IF_NODE || conditions.IF_NEXTJS) perms.push('Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)');
-  if (conditions.IF_RUST) perms.push('Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)');
-  if (conditions.IF_CSHARP) perms.push('Bash(dotnet test:*)', 'Bash(dotnet build:*)', 'Bash(dotnet format:*)', 'Bash(dotnet run:*)');
+  if (conditions.IF_GO)
+    perms.push('Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)');
+  if (conditions.IF_NODE || conditions.IF_NEXTJS)
+    perms.push('Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)');
+  if (conditions.IF_RUST)
+    perms.push('Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)');
+  if (conditions.IF_CSHARP)
+    perms.push(
+      'Bash(dotnet test:*)',
+      'Bash(dotnet build:*)',
+      'Bash(dotnet format:*)',
+      'Bash(dotnet run:*)',
+    );
   if (conditions.IF_INFISICAL) perms.push('Bash(make secrets-pull:*)', 'Bash(make secrets-show:*)');
-  if (conditions.IF_DOCKER) perms.push('Bash(docker ps:*)', 'Bash(docker-compose ps:*)', 'Bash(docker-compose logs:*)');
-  if (conditions.IF_GCLOUD) perms.push('Bash(gcloud config:*)', 'Bash(gcloud projects list:*)', 'Bash(gcloud services list:*)', 'Bash(gcloud run services list:*)');
-  if (conditions.IF_PULUMI) perms.push('Bash(pulumi preview:*)', 'Bash(pulumi stack:*)', 'Bash(pulumi config:*)');
+  if (conditions.IF_DOCKER)
+    perms.push('Bash(docker ps:*)', 'Bash(docker-compose ps:*)', 'Bash(docker-compose logs:*)');
+  if (conditions.IF_GCLOUD)
+    perms.push(
+      'Bash(gcloud config:*)',
+      'Bash(gcloud projects list:*)',
+      'Bash(gcloud services list:*)',
+      'Bash(gcloud run services list:*)',
+    );
+  if (conditions.IF_PULUMI)
+    perms.push('Bash(pulumi preview:*)', 'Bash(pulumi stack:*)', 'Bash(pulumi config:*)');
 
-  return JSON.stringify({
-    $schema: 'https://json.schemastore.org/claude-code-settings.json',
-    permissions: {
-      allow: perms,
-      deny: [],
-    },
-    hooks: {
-      Stop: [
-        {
-          matcher: '',
-          hooks: [
+  return (
+    JSON.stringify(
+      {
+        $schema: 'https://json.schemastore.org/claude-code-settings.json',
+        permissions: {
+          allow: perms,
+          deny: [],
+        },
+        hooks: {
+          Stop: [
             {
-              type: 'command',
-              command: 'echo "If this conversation involved debugging, fixing issues, or discovering patterns — consider running /learn to capture it for future sessions."',
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command:
+                    'echo "If this conversation involved debugging, fixing issues, or discovering patterns — consider running /learn to capture it for future sessions."',
+                },
+              ],
             },
           ],
         },
-      ],
-    },
-  }, null, 2) + '\n';
+      },
+      null,
+      2,
+    ) + '\n'
+  );
 }
 
 interface GenerateResult {
@@ -96,14 +135,19 @@ export async function generate(
 
   const opts = (evolving: boolean) => ({ force, evolving, skipIfExists: !force });
 
-  function track(outputPath: string, content: string | null, writeResult: string, evolving: boolean) {
+  function track(
+    outputPath: string,
+    content: string | null,
+    writeResult: string,
+    evolving: boolean,
+  ) {
     const rel = path.relative(targetDir, outputPath);
     if (writeResult === 'created') result.created.push(rel);
     else if (writeResult === 'skipped') result.skipped.push(rel);
     else if (writeResult === 'overwritten') result.overwritten.push(rel);
 
     result.manifest.files[rel] = {
-      hash: evolving ? null : (content ? sha256(content) : null),
+      hash: evolving ? null : content ? sha256(content) : null,
       evolving,
     };
   }
@@ -144,7 +188,10 @@ export async function generate(
 
   // 3. Skills — template-processed
   for (const skill of ['quality', 'test', 'build', 'review', 'scaffold']) {
-    await writeTemplate(`.claude/skills/${skill}/SKILL.md.template`, `.claude/skills/${skill}/SKILL.md`);
+    await writeTemplate(
+      `.claude/skills/${skill}/SKILL.md.template`,
+      `.claude/skills/${skill}/SKILL.md`,
+    );
   }
 
   // Skills — static (always)
@@ -154,7 +201,11 @@ export async function generate(
 
   // Deploy skill (template + references)
   await writeTemplate('.claude/skills/deploy/SKILL.md.template', '.claude/skills/deploy/SKILL.md');
-  copyStatic('.claude/skills/deploy/references/gotchas.md', '.claude/skills/deploy/references/gotchas.md', true);
+  copyStatic(
+    '.claude/skills/deploy/references/gotchas.md',
+    '.claude/skills/deploy/references/gotchas.md',
+    true,
+  );
 
   // Evolving reference files
   for (const skill of ['quality', 'test', 'learned']) {
@@ -173,7 +224,11 @@ export async function generate(
   }
   if (conditions.IF_GCLOUD) {
     copyStatic('.claude/skills/gcloud/SKILL.md', '.claude/skills/gcloud/SKILL.md');
-    copyStatic('.claude/skills/gcloud/references/gotchas.md', '.claude/skills/gcloud/references/gotchas.md', true);
+    copyStatic(
+      '.claude/skills/gcloud/references/gotchas.md',
+      '.claude/skills/gcloud/references/gotchas.md',
+      true,
+    );
   }
   if (conditions.IF_PULUMI) {
     copyStatic('.claude/skills/pulumi/SKILL.md', '.claude/skills/pulumi/SKILL.md');
@@ -187,8 +242,10 @@ export async function generate(
   if (conditions.IF_RUST) copyStatic('.claude/rules/rust.md', '.claude/rules/rust.md');
   if (conditions.IF_CSHARP) copyStatic('.claude/rules/csharp.md', '.claude/rules/csharp.md');
   // Framework-specific rules
-  if (config.framework === 'loopback') copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
-  if (config.framework === 'express') copyStatic('.claude/rules/express.md', '.claude/rules/express.md');
+  if (config.framework === 'loopback')
+    copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
+  if (config.framework === 'express')
+    copyStatic('.claude/rules/express.md', '.claude/rules/express.md');
   logger.success('.claude/rules/');
 
   // 5. Commands (static .md copied as-is, .md.template processed through engine)
@@ -242,13 +299,24 @@ export async function generate(
     track(skillPath, null, skillRes, true);
 
     const refContent = renderArchitectureRef(analysis);
-    const refPath = path.join(targetDir, '.claude', 'skills', 'codebase', 'references', 'architecture.md');
+    const refPath = path.join(
+      targetDir,
+      '.claude',
+      'skills',
+      'codebase',
+      'references',
+      'architecture.md',
+    );
     const refRes = await writeFile(refPath, refContent, opts(true));
     track(refPath, null, refRes, true);
 
-    logger.success(`.claude/skills/codebase/ (${analysis.fileCount} files, ${analysis.entryPoints.length} entry points, ${analysis.apiEndpoints.length} API routes)`);
+    logger.success(
+      `.claude/skills/codebase/ (${analysis.fileCount} files, ${analysis.entryPoints.length} entry points, ${analysis.apiEndpoints.length} API routes)`,
+    );
     if (analysis.testFileCount < 5 && analysis.sourceFileCount > 20) {
-      logger.warn(`Minimal tests: ${analysis.testFileCount} test files for ${analysis.sourceFileCount} source files`);
+      logger.warn(
+        `Minimal tests: ${analysis.testFileCount} test files for ${analysis.sourceFileCount} source files`,
+      );
     }
   }
 
@@ -311,7 +379,10 @@ export async function generate(
     const ciTemplate = path.join(templatesDir, '.github', 'workflows', 'ci.yml.template');
     if (fs.existsSync(ciTemplate)) {
       await writeTemplate('.github/workflows/ci.yml.template', '.github/workflows/ci.yml');
-      await writeTemplate('.github/workflows/quality.yml.template', '.github/workflows/quality.yml');
+      await writeTemplate(
+        '.github/workflows/quality.yml.template',
+        '.github/workflows/quality.yml',
+      );
       logger.success('.github/workflows/');
     }
 

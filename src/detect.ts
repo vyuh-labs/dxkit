@@ -19,7 +19,7 @@ function readFileOr(cwd: string, filePath: string, fallback: string): string {
 function globExists(cwd: string, pattern: string): boolean {
   try {
     const entries = fs.readdirSync(cwd);
-    return entries.some(e => e.match(new RegExp(pattern)));
+    return entries.some((e) => e.match(new RegExp(pattern)));
   } catch {
     return false;
   }
@@ -70,7 +70,9 @@ function extractNodeVersion(cwd: string): string | undefined {
       const match = nodeEngine.match(/(\d+)/);
       if (match) return match[1];
     }
-  } catch { /* ignore parse errors */ }
+  } catch {
+    /* ignore parse errors */
+  }
 
   return undefined;
 }
@@ -94,7 +96,11 @@ function findFileRecursive(cwd: string, pattern: RegExp, maxDepth = 3): string |
     if (depth > maxDepth) return null;
     try {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || ['node_modules', 'vendor', 'bin', 'obj', 'target'].includes(entry.name)) continue;
+        if (
+          entry.name.startsWith('.') ||
+          ['node_modules', 'vendor', 'bin', 'obj', 'target'].includes(entry.name)
+        )
+          continue;
         const full = path.join(dir, entry.name);
         if (entry.isFile() && pattern.test(entry.name)) return full;
         if (entry.isDirectory()) {
@@ -102,7 +108,9 @@ function findFileRecursive(cwd: string, pattern: RegExp, maxDepth = 3): string |
           if (found) return found;
         }
       }
-    } catch { /* permission error, skip */ }
+    } catch {
+      /* permission error, skip */
+    }
     return null;
   }
   return search(cwd, 0);
@@ -124,7 +132,9 @@ function extractCsharpVersion(cwd: string): string | undefined {
       const parsed = JSON.parse(globalJson);
       const ver = parsed?.sdk?.version;
       if (ver) return ver.split('.').slice(0, 2).join('.');
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   return undefined;
@@ -132,7 +142,12 @@ function extractCsharpVersion(cwd: string): string | undefined {
 
 function detectNextjs(cwd: string): boolean {
   if (globExists(cwd, '^next\\.config\\.')) return true;
-  if (fileExists(cwd, 'frontend', 'next.config.js') || fileExists(cwd, 'frontend', 'next.config.mjs') || fileExists(cwd, 'frontend', 'next.config.ts')) return true;
+  if (
+    fileExists(cwd, 'frontend', 'next.config.js') ||
+    fileExists(cwd, 'frontend', 'next.config.mjs') ||
+    fileExists(cwd, 'frontend', 'next.config.ts')
+  )
+    return true;
 
   const pkg = readFileOr(cwd, 'package.json', '{}');
   try {
@@ -159,7 +174,9 @@ function detectProjectName(cwd: string): string {
     const parsed = JSON.parse(pkg);
     if (parsed.name && !parsed.name.startsWith('@')) return parsed.name;
     if (parsed.name) return parsed.name.split('/').pop() || path.basename(cwd);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Try go.mod module name
   const goMod = readFileOr(cwd, 'go.mod', '');
@@ -180,7 +197,9 @@ function detectProjectDescription(cwd: string): string {
   try {
     const parsed = JSON.parse(pkg);
     if (parsed.description) return parsed.description;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   const pyproject = readFileOr(cwd, 'pyproject.toml', '');
   const match = pyproject.match(/description\s*=\s*"([^"]+)"/);
@@ -199,12 +218,22 @@ function detectTestRunner(cwd: string): DetectedStack['testRunner'] {
 
     // Check for specific test frameworks in deps and scripts
     if (deps.vitest || testScript.includes('vitest')) {
-      return { command: 'npx vitest', framework: 'vitest', coverageCommand: 'npx vitest --coverage' };
+      return {
+        command: 'npx vitest',
+        framework: 'vitest',
+        coverageCommand: 'npx vitest --coverage',
+      };
     }
     if (deps.jest || deps['ts-jest'] || testScript.includes('jest')) {
       return { command: 'npx jest', framework: 'jest', coverageCommand: 'npx jest --coverage' };
     }
-    if (deps.mocha || deps['lb-mocha'] || deps['@loopback/testlab'] || testScript.includes('mocha') || testScript.includes('lb-mocha')) {
+    if (
+      deps.mocha ||
+      deps['lb-mocha'] ||
+      deps['@loopback/testlab'] ||
+      testScript.includes('mocha') ||
+      testScript.includes('lb-mocha')
+    ) {
       const hasNyc = !!deps.nyc || !!deps.c8;
       const coverageCmd = hasNyc ? (deps.c8 ? 'npx c8 npm test' : 'npx nyc npm test') : undefined;
       return { command: 'npm test', framework: 'mocha', coverageCommand: coverageCmd };
@@ -213,25 +242,39 @@ function detectTestRunner(cwd: string): DetectedStack['testRunner'] {
       return { command: 'npx ava', framework: 'ava', coverageCommand: 'npx c8 npx ava' };
     }
     if (deps.tap || testScript.includes('tap')) {
-      return { command: 'npx tap', framework: 'tap', coverageCommand: 'npx tap --coverage-report=text' };
+      return {
+        command: 'npx tap',
+        framework: 'tap',
+        coverageCommand: 'npx tap --coverage-report=text',
+      };
     }
     // Fallback: if there's a test script, use npm test
     if (testScript && testScript !== 'echo "Error: no test specified" && exit 1') {
       return { command: 'npm test', framework: 'unknown', coverageCommand: undefined };
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Python
   if (fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py')) {
     const pyproject = readFileOr(cwd, 'pyproject.toml', '');
     if (pyproject.includes('pytest')) {
-      return { command: 'pytest', framework: 'pytest', coverageCommand: 'pytest --cov --cov-report=term-missing' };
+      return {
+        command: 'pytest',
+        framework: 'pytest',
+        coverageCommand: 'pytest --cov --cov-report=term-missing',
+      };
     }
   }
 
   // Go
   if (fileExists(cwd, 'go.mod')) {
-    return { command: 'go test ./...', framework: 'go-test', coverageCommand: 'go test -coverprofile=coverage.out ./...' };
+    return {
+      command: 'go test ./...',
+      framework: 'go-test',
+      coverageCommand: 'go test -coverprofile=coverage.out ./...',
+    };
   }
 
   // Rust
@@ -241,7 +284,11 @@ function detectTestRunner(cwd: string): DetectedStack['testRunner'] {
 
   // C#
   if (findFileRecursive(cwd, /\.csproj$/)) {
-    return { command: 'dotnet test', framework: 'dotnet-test', coverageCommand: 'dotnet test --collect:"XPlat Code Coverage"' };
+    return {
+      command: 'dotnet test',
+      framework: 'dotnet-test',
+      coverageCommand: 'dotnet test --collect:"XPlat Code Coverage"',
+    };
   }
 
   return undefined;
@@ -260,7 +307,9 @@ function detectFramework(cwd: string): string | undefined {
     if (deps['fastify']) return 'fastify';
     if (deps['koa']) return 'koa';
     if (deps['hapi'] || deps['@hapi/hapi']) return 'hapi';
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Python
   const pyproject = readFileOr(cwd, 'pyproject.toml', '');
@@ -285,14 +334,21 @@ export function detect(cwd: string): DetectedStack {
 
   return {
     languages: {
-      python: fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py') ||
-              fileExists(cwd, 'requirements.txt') || fileExists(cwd, 'Pipfile') ||
-              !!findFileRecursive(cwd, /\.py$/, 2),
+      python:
+        fileExists(cwd, 'pyproject.toml') ||
+        fileExists(cwd, 'setup.py') ||
+        fileExists(cwd, 'requirements.txt') ||
+        fileExists(cwd, 'Pipfile') ||
+        !!findFileRecursive(cwd, /\.py$/, 2),
       go: fileExists(cwd, 'go.mod'),
       node: fileExists(cwd, 'package.json') && !isNextjs,
       nextjs: isNextjs,
       rust: fileExists(cwd, 'Cargo.toml'),
-      csharp: fileExists(cwd, '*.sln') || globExists(cwd, '\\.csproj$') || globExists(cwd, '\\.sln$') || !!findFileRecursive(cwd, /\.csproj$/),
+      csharp:
+        fileExists(cwd, '*.sln') ||
+        globExists(cwd, '\\.csproj$') ||
+        globExists(cwd, '\\.sln$') ||
+        !!findFileRecursive(cwd, /\.csproj$/),
     },
     infrastructure: {
       docker: fileExists(cwd, 'Dockerfile') || composeContent.length > 0,
