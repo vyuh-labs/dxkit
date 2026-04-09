@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-09
+
 ### Added
+- **Library entry point** (`src/lib.ts`). Exports `detect()`,
+  `processTemplate()`, `TemplateEngine`, and `DetectedStack` for
+  programmatic consumption by downstream packages like
+  `@vyuhlabs/create-devstack`. The npm `exports` and `main` fields now
+  point to `dist/lib.js` so `import { detect } from '@vyuhlabs/dxkit'`
+  works. The CLI binary (`vyuh-dxkit`) is unaffected.
 - **Path-scoped auto-activation** (`paths:` frontmatter) on four shipped
   skills, so they auto-load whenever Claude Code is touching a matching
   file — even if the user's prompt doesn't name the tool:
