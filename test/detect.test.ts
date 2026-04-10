@@ -92,6 +92,28 @@ describe('detect()', () => {
     });
   });
 
+  describe('node-exact fixture (^20)', () => {
+    const stack = detect(FIX('node-exact'));
+
+    it('extracts version 20 from exact pin ^20', () => {
+      expect(stack.versions.node).toBe('20');
+    });
+  });
+
+  describe('node-range fixture (>=10)', () => {
+    const stack = detect(FIX('node-range'));
+
+    it('prefers installed Node version over range minimum', () => {
+      // >=10 is a range — should use installed version, not "10"
+      const installedMajor = process.version.replace(/^v/, '').split('.')[0];
+      expect(stack.versions.node).toBe(installedMajor);
+    });
+
+    it('does not return "10" for >=10 range', () => {
+      expect(stack.versions.node).not.toBe('10');
+    });
+  });
+
   describe('empty fixture', () => {
     const stack = detect(FIX('empty'));
 

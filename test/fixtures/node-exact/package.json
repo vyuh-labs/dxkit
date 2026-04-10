@@ -1,0 +1,6 @@
+{
+  "name": "fixture-node-exact",
+  "engines": {
+    "node": "^20"
+  }
+}

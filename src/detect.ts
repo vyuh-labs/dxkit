@@ -4,6 +4,17 @@ import { execSync } from 'child_process';
 import { DetectedStack } from './types';
 import { DEFAULT_VERSIONS } from './constants';
 
+function getInstalledNodeVersion(): string | undefined {
+  try {
+    const output = execSync('node --version', { stdio: 'pipe' }).toString().trim();
+    const match = output.replace(/^v/, '').match(/^(\d+)/);
+    if (match) return match[1];
+  } catch {
+    /* node not installed */
+  }
+  return undefined;
+}
+
 function fileExists(cwd: string, ...segments: string[]): boolean {
   return fs.existsSync(path.join(cwd, ...segments));
 }
@@ -55,24 +66,49 @@ function extractGoVersion(cwd: string): string | undefined {
 }
 
 function extractNodeVersion(cwd: string): string | undefined {
-  // Try .nvmrc
+  // 1. Try .nvmrc (explicit pin — most authoritative)
   if (fileExists(cwd, '.nvmrc')) {
     const ver = readFileOr(cwd, '.nvmrc', '').trim().replace(/^v/, '');
     if (ver.match(/^\d+/)) return ver.split('.')[0];
   }
 
-  // Try package.json engines.node
+  // 2. Try package.json volta.node (pinned version manager)
   const pkg = readFileOr(cwd, 'package.json', '{}');
   try {
     const parsed = JSON.parse(pkg);
+
+    const voltaNode = parsed?.volta?.node;
+    if (voltaNode) {
+      const match = voltaNode.match(/^(\d+)/);
+      if (match) return match[1];
+    }
+
+    // 3. Try engines.node
     const nodeEngine = parsed?.engines?.node;
     if (nodeEngine) {
+      // Exact pins: "20", "20.x", "^20", "~20" → use directly
+      const isRange = /[>|]/.test(nodeEngine);
+      if (!isRange) {
+        const match = nodeEngine.match(/(\d+)/);
+        if (match) return match[1];
+      }
+
+      // For ranges like ">=10", ">=18", prefer installed version
+      // but fall back to the range minimum if node isn't installed
+      const installedVersion = getInstalledNodeVersion();
+      if (installedVersion) return installedVersion;
+
+      // Last resort: extract from range
       const match = nodeEngine.match(/(\d+)/);
       if (match) return match[1];
     }
   } catch {
     /* ignore parse errors */
   }
+
+  // 4. Try installed Node version (no package.json or no engines field)
+  const installed = getInstalledNodeVersion();
+  if (installed) return installed;
 
   return undefined;
 }
