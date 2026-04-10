@@ -346,15 +346,16 @@ npx @vyuhlabs/dxkit doctor               # Verify setup
 
 ### Init Options
 
-| Flag         | Description                               |
-| ------------ | ----------------------------------------- |
-| `--detect`   | Auto-detect stack, minimal prompts        |
-| `--yes`      | Accept all defaults                       |
-| `--dx-only`  | Just `.claude/` + `CLAUDE.md` (default)   |
-| `--full`     | Everything: DX + quality + hooks + CI     |
-| `--force`    | Overwrite existing files (except evolved) |
-| `--name <n>` | Override project name                     |
-| `--no-scan`  | Skip codebase analysis                    |
+| Flag         | Description                                           |
+| ------------ | ----------------------------------------------------- |
+| `--detect`   | Auto-detect stack, minimal prompts                    |
+| `--yes`      | Accept all defaults                                   |
+| `--dx-only`  | Just `.claude/` + `CLAUDE.md` (default)               |
+| `--full`     | Everything: DX + quality + hooks + CI                 |
+| `--force`    | Overwrite existing files (except evolved)             |
+| `--stealth`  | Gitignore generated files (local-only, not committed) |
+| `--name <n>` | Override project name                                 |
+| `--no-scan`  | Skip codebase analysis                                |
 
 ### Config Source Priority
 
