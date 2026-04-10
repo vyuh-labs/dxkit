@@ -7,4 +7,5 @@
 
 export { detect } from './detect';
 export { processTemplate, TemplateEngine } from './template-engine';
-export type { DetectedStack } from './types';
+export { hasProjectYaml, readProjectYaml } from './project-yaml';
+export type { DetectedStack, ResolvedConfig } from './types';

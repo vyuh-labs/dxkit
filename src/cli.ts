@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig } from './prompts';
+import { hasProjectYaml, readProjectYaml } from './project-yaml';
 import { runUpdate } from './update';
 import { runDoctor } from './doctor';
 import { VERSION } from './constants';
@@ -74,49 +75,62 @@ export async function run(argv: string[]): Promise<void> {
     case 'init': {
       logger.header('vyuh-dxkit init');
 
-      // Detect stack
-      logger.info('Detecting stack...');
-      const detected = detect(cwd);
-      const langs = Object.entries(detected.languages)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      const tools = Object.entries(detected.tools)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-
-      if (langs.length === 0) {
-        logger.warn('No languages detected. Generating with minimal config.');
-      } else {
-        logger.success(`Languages: ${langs.join(', ')}`);
-      }
-      if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
-      if (detected.framework) logger.success(`Framework: ${detected.framework}`);
-      if (detected.testRunner)
-        logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);
-      console.log('');
-
-      // Resolve config
-      const mode: GenerationMode = values.full ? 'full' : 'dx-only';
       let config;
+      let finalMode: GenerationMode;
 
-      if (values.yes || values.detect) {
-        const result = await promptForConfig(detected, {
-          yes: true,
+      // If .project.yaml exists (written by create-devstack), use it as config source
+      if (hasProjectYaml(cwd)) {
+        logger.info('Found .project.yaml — using as config source.');
+        config = readProjectYaml(cwd);
+
+        const langs = Object.entries(config.languages)
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+        const tools = Object.entries(config.tools)
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+
+        if (langs.length) logger.success(`Languages: ${langs.join(', ')}`);
+        if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
+        console.log('');
+
+        // .project.yaml implies full mode (create-devstack handles the wizard)
+        finalMode = values['dx-only'] ? 'dx-only' : 'full';
+      } else {
+        // No .project.yaml — detect stack and prompt as before
+        logger.info('Detecting stack...');
+        const detected = detect(cwd);
+        const langs = Object.entries(detected.languages)
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+        const tools = Object.entries(detected.tools)
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+
+        if (langs.length === 0) {
+          logger.warn('No languages detected. Generating with minimal config.');
+        } else {
+          logger.success(`Languages: ${langs.join(', ')}`);
+        }
+        if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
+        if (detected.framework) logger.success(`Framework: ${detected.framework}`);
+        if (detected.testRunner)
+          logger.success(
+            `Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`,
+          );
+        console.log('');
+
+        // Resolve config via prompts
+        const promptOpts = {
+          yes: !!(values.yes || values.detect),
           detect: !!values.detect,
           name: values.name as string | undefined,
-        });
+        };
+        const result = await promptForConfig(detected, promptOpts);
         config = result.config;
-      } else {
-        const result = await promptForConfig(detected, {
-          yes: false,
-          detect: false,
-          name: values.name as string | undefined,
-        });
-        config = result.config;
-      }
 
-      // Generate
-      const finalMode = values.full ? 'full' : values['dx-only'] ? 'dx-only' : mode;
+        finalMode = values.full ? 'full' : values['dx-only'] ? 'dx-only' : result.mode;
+      }
       const result = await generate(cwd, config, finalMode, !!values.force, !!values['no-scan']);
 
       // Summary
