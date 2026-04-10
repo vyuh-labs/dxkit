@@ -4,3 +4,8 @@ templates/
 *.log
 .DS_Store
 *.tgz
+.env
+.env.*
+tmp/
+.dxkit-agents.json
+coverage/
