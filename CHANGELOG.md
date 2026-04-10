@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-04-10
+
+### Fixed
+- **`make setup` no longer aborts on npm install failure.** Peer dependency
+  conflicts now show a helpful message instead of killing the entire script.
+- **`--stealth` flag** for `dxkit init` — gitignore only files created in
+  this run.
+
 ## [1.5.0] - 2026-04-10
 
 ### Fixed
