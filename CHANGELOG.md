@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-10
+
+### Fixed
+- **Node version detection** no longer returns the minimum from
+  `engines.node` ranges. `">=10"` previously returned `10`; now
+  prefers the installed Node version. Exact pins (`"^20"`, `"20"`)
+  still work directly. Priority: `.nvmrc` > `volta.node` >
+  `engines.node` (exact pin) > installed version > range minimum >
+  default.
+
 ## [1.4.0] - 2026-04-09
 
 ### Added
