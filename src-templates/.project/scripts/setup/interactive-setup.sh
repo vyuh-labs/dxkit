@@ -98,8 +98,12 @@ if [ "$NODE_ENABLED" = "true" ] && command -v npm &> /dev/null; then
     echo -e "${CYAN}Node.js tools:${RESET}"
     if [ -f "package.json" ]; then
         echo -e "  ${CYAN}→${RESET} Installing npm dependencies..."
-        npm install --silent 2>/dev/null
-        echo -e "  ${GREEN}✓${RESET} npm dependencies installed"
+        if npm install --silent 2>/dev/null; then
+            echo -e "  ${GREEN}✓${RESET} npm dependencies installed"
+        else
+            echo -e "  ${YELLOW}!${RESET} npm install failed (peer dependency conflicts?)"
+            echo -e "  ${DIM}  Try: npm install --legacy-peer-deps${RESET}"
+        fi
     fi
     echo ""
 fi
