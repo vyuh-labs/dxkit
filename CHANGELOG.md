@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-04-09
+
+### Added
+- **`.project.yaml` config source.** When `.project.yaml` exists in the
+  target directory (typically written by `@vyuhlabs/create-devstack`),
+  `dxkit init` reads it and uses it as the config source — skipping
+  both `detect()` and interactive prompts. This enables greenfield
+  projects where no language files exist yet. If the file is malformed
+  or missing `project.name`, dxkit falls back to detection + prompts.
+- **Library exports**: `hasProjectYaml()` and `readProjectYaml()` from
+  the `@vyuhlabs/dxkit` package entry point.
+- **README**: `.project.yaml` documentation, library API section, and
+  config source priority.
+
 ## [1.3.0] - 2026-04-09
 
 ### Added
