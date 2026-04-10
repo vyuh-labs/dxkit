@@ -357,11 +357,40 @@ npx @vyuhlabs/dxkit doctor               # Verify setup
 | `--name <n>` | Override project name                                 |
 | `--no-scan`  | Skip codebase analysis                                |
 
+### Update Options
+
+| Flag       | Description                               |
+| ---------- | ----------------------------------------- |
+| `--force`  | Overwrite modified files (except evolved) |
+| `--rescan` | Re-run codebase analysis                  |
+
+### Commands
+
+| Command  | Description                           |
+| -------- | ------------------------------------- |
+| `init`   | Initialize dxkit in a repo            |
+| `update` | Re-generate (preserves evolved files) |
+| `doctor` | Verify setup and diagnose issues      |
+
 ### Config Source Priority
 
 1. `.project.yaml` (if present) — used as-is, no prompts
 2. `--detect` — auto-detect from filesystem, minimal prompts
 3. Interactive — prompt for all settings
+
+### Stealth Mode
+
+Use `--stealth` to keep generated files local. Only files created in this run are added to `.gitignore` — existing files are never touched.
+
+```bash
+# DX layer only, local-only
+npx @vyuhlabs/dxkit init --detect --stealth
+
+# Everything, local-only
+npx @vyuhlabs/dxkit init --full --yes --stealth
+```
+
+When used via `create-devstack --stealth`, the flag is passed through automatically.
 
 ## Example: Node.js/TypeScript Project
 
