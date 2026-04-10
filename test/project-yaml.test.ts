@@ -40,6 +40,25 @@ describe('readProjectYaml', () => {
     fs.writeFileSync(path.join(tmpDir, '.project.yaml'), content);
   }
 
+  it('returns null for empty file', () => {
+    writeYaml('');
+    expect(readProjectYaml(tmpDir)).toBeNull();
+  });
+
+  it('returns null when project.name is missing', () => {
+    writeYaml(`
+project:
+  description: 'no name'
+`);
+    expect(readProjectYaml(tmpDir)).toBeNull();
+  });
+
+  it('returns null for malformed YAML', () => {
+    writeYaml('this is not valid yaml: [[[');
+    // Should not throw — returns null
+    expect(readProjectYaml(tmpDir)).toBeNull();
+  });
+
   it('reads project name and description', () => {
     writeYaml(`
 project:
@@ -49,9 +68,10 @@ languages: {}
 infrastructure: {}
 tools: {}
 `);
-    const config = readProjectYaml(tmpDir);
-    expect(config.projectName).toBe('my-app');
-    expect(config.projectDescription).toBe('A web API');
+    const config = readProjectYaml(tmpDir)!;
+    expect(config).not.toBeNull();
+    expect(config!.projectName).toBe('my-app');
+    expect(config!.projectDescription).toBe('A web API');
   });
 
   it('maps enabled languages to DetectedStack flags', () => {
@@ -69,7 +89,7 @@ languages:
     enabled: false
     version: '20'
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
     expect(config.languages.python).toBe(true);
     expect(config.languages.go).toBe(true);
     expect(config.languages.node).toBe(false);
@@ -90,7 +110,7 @@ infrastructure:
     enabled: false
     version: '7'
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
     expect(config.infrastructure.postgres).toBe(true);
     expect(config.infrastructure.redis).toBe(false);
   });
@@ -108,7 +128,7 @@ tools:
   pulumi: false
   infisical: false
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
     expect(config.claudeCode).toBe(true);
     expect(config.tools.ghCli).toBe(true);
     expect(config.infrastructure.docker).toBe(true);
@@ -129,7 +149,7 @@ languages:
       coverage: 95
       lint: true
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
     expect(config.coverageThreshold).toBe('95');
   });
 
@@ -142,7 +162,7 @@ languages:
     enabled: true
     version: '3.12'
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
     expect(config.coverageThreshold).toBe('80');
   });
 
@@ -182,7 +202,7 @@ tools:
   pulumi: false
   infisical: false
 `);
-    const config = readProjectYaml(tmpDir);
+    const config = readProjectYaml(tmpDir)!;
 
     // Project
     expect(config.projectName).toBe('inventory-api');

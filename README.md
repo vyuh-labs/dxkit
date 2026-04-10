@@ -269,6 +269,70 @@ Reports include a **Findings by CWE Category** table for direct comparison with 
 - **Multi-language** — Detects all languages including Python from `.py` files (no config file required)
 - **Language breakdown** — Shows file count per language in codebase skill for accurate analysis
 
+## Using with create-devstack
+
+[`@vyuhlabs/create-devstack`](https://github.com/vyuh-labs/create-devstack) scaffolds dev environments (devcontainers, `.project.yaml`) and delegates to dxkit for everything else.
+
+When `create-devstack` writes a `.project.yaml` before calling `dxkit init`, dxkit reads it as the config source — skipping detection and prompts. This enables greenfield projects where no language files exist yet:
+
+```bash
+# create-devstack writes .project.yaml + .devcontainer/, then calls dxkit
+npm create @vyuhlabs/devstack my-project
+
+# Or manually: write .project.yaml first, then run dxkit
+npx @vyuhlabs/dxkit init --full
+# → dxkit reads .project.yaml, generates Makefile, configs, CI, .claude/
+```
+
+### .project.yaml schema
+
+```yaml
+project:
+  name: my-project
+  description: A web API
+languages:
+  python:
+    enabled: true
+    version: '3.12'
+    quality:
+      coverage: 80
+      lint: true
+  go:
+    enabled: true
+    version: '1.24.0'
+infrastructure:
+  postgres:
+    enabled: true
+    version: '16'
+tools:
+  claude_code: true
+  precommit: true
+  docker: true
+  gcloud: false
+```
+
+When `.project.yaml` is present, dxkit uses it to determine which languages, tools, and quality settings to generate. When absent, dxkit falls back to filesystem detection + interactive prompts as before.
+
+## Library API
+
+dxkit exports functions for programmatic use by other packages:
+
+```typescript
+import { detect, processTemplate, TemplateEngine } from '@vyuhlabs/dxkit';
+import { hasProjectYaml, readProjectYaml } from '@vyuhlabs/dxkit';
+
+// Detect stack from filesystem
+const stack = detect('/path/to/project');
+
+// Read .project.yaml as ResolvedConfig
+if (hasProjectYaml('/path/to/project')) {
+  const config = readProjectYaml('/path/to/project');
+}
+
+// Process templates
+const output = processTemplate('Hello {{PROJECT_NAME}}', vars, conditions);
+```
+
 ## CLI Reference
 
 ```bash
@@ -291,6 +355,12 @@ npx @vyuhlabs/dxkit doctor               # Verify setup
 | `--force`    | Overwrite existing files (except evolved) |
 | `--name <n>` | Override project name                     |
 | `--no-scan`  | Skip codebase analysis                    |
+
+### Config Source Priority
+
+1. `.project.yaml` (if present) — used as-is, no prompts
+2. `--detect` — auto-detect from filesystem, minimal prompts
+3. Interactive — prompt for all settings
 
 ## Example: Node.js/TypeScript Project
 

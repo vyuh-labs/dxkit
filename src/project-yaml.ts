@@ -52,13 +52,30 @@ export function hasProjectYaml(cwd: string): boolean {
  * Read .project.yaml and build a ResolvedConfig from it.
  * This is the primary config source when create-devstack has already
  * written the file — dxkit skips detect() and prompts in this case.
+ *
+ * Returns null if the file is malformed or missing required fields
+ * (project.name). The caller should fall back to detect() + prompts.
  */
-export function readProjectYaml(cwd: string): ResolvedConfig {
+export function readProjectYaml(cwd: string): ResolvedConfig | null {
   const filePath = path.join(cwd, '.project.yaml');
-  const raw = fs.readFileSync(filePath, 'utf-8');
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
 
-  // Parse YAML manually (simple key-value parsing to avoid adding a yaml dep)
-  const yaml = parseSimpleYaml(raw);
+  let yaml: ProjectYaml;
+  try {
+    yaml = parseSimpleYaml(raw);
+  } catch {
+    return null;
+  }
+
+  // project.name is required
+  if (!yaml.project?.name) {
+    return null;
+  }
 
   const langs = yaml.languages ?? {};
   const infra = yaml.infrastructure ?? {};

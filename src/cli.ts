@@ -76,27 +76,35 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit init');
 
       let config;
-      let finalMode: GenerationMode;
+      let finalMode: GenerationMode = values.full ? 'full' : 'dx-only';
 
-      // If .project.yaml exists (written by create-devstack), use it as config source
+      // If .project.yaml exists (written by create-devstack), try using it as config source
       if (hasProjectYaml(cwd)) {
-        logger.info('Found .project.yaml — using as config source.');
-        config = readProjectYaml(cwd);
+        const yamlConfig = readProjectYaml(cwd);
 
-        const langs = Object.entries(config.languages)
-          .filter(([, v]) => v)
-          .map(([k]) => k);
-        const tools = Object.entries(config.tools)
-          .filter(([, v]) => v)
-          .map(([k]) => k);
+        if (yamlConfig) {
+          logger.info('Found .project.yaml — using as config source.');
+          config = yamlConfig;
 
-        if (langs.length) logger.success(`Languages: ${langs.join(', ')}`);
-        if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
-        console.log('');
+          const langs = Object.entries(config.languages)
+            .filter(([, v]) => v)
+            .map(([k]) => k);
+          const tools = Object.entries(config.tools)
+            .filter(([, v]) => v)
+            .map(([k]) => k);
 
-        // .project.yaml implies full mode (create-devstack handles the wizard)
-        finalMode = values['dx-only'] ? 'dx-only' : 'full';
-      } else {
+          if (langs.length) logger.success(`Languages: ${langs.join(', ')}`);
+          if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
+          console.log('');
+
+          // .project.yaml implies full mode (create-devstack handles the wizard)
+          finalMode = values['dx-only'] ? 'dx-only' : 'full';
+        } else {
+          logger.warn('Found .project.yaml but it is malformed — falling back to detection.');
+        }
+      }
+
+      if (!config) {
         // No .project.yaml — detect stack and prompt as before
         logger.info('Detecting stack...');
         const detected = detect(cwd);
