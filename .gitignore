@@ -9,3 +9,5 @@ templates/
 tmp/
 .dxkit-agents.json
 coverage/
+graphify-out/
+.ai/reports/

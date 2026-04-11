@@ -122,6 +122,7 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
       rust: langs.rust?.version ?? DEFAULT_VERSIONS.rust,
       csharp: langs.csharp?.version ?? DEFAULT_VERSIONS.csharp,
     },
+    requiredTools: [],
   };
 
   return {

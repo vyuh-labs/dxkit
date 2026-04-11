@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { DetectedStack } from './types';
+import { DetectedStack, ToolRequirement } from './types';
 import { DEFAULT_VERSIONS } from './constants';
 
 function getInstalledNodeVersion(): string | undefined {
@@ -364,28 +364,154 @@ function detectFramework(cwd: string): string | undefined {
   return undefined;
 }
 
+function detectRequiredTools(languages: DetectedStack['languages']): ToolRequirement[] {
+  const tools: ToolRequirement[] = [
+    // Universal — every stack benefits from these
+    {
+      name: 'cloc',
+      description: 'Count lines of code per language',
+      install: 'npm install -g cloc',
+      check: 'cloc --version',
+      for: 'all',
+      layer: 'universal',
+    },
+    {
+      name: 'gitleaks',
+      description: 'Secret scanning with 800+ patterns',
+      install: 'brew install gitleaks',
+      check: 'gitleaks version',
+      for: 'all',
+      layer: 'universal',
+    },
+    // Optional — enhanced AST analysis
+    {
+      name: 'graphify',
+      description: 'Deterministic AST extraction via tree-sitter',
+      install: 'pip install graphifyy',
+      check: 'graphify --help',
+      for: 'all',
+      layer: 'optional',
+    },
+  ];
+
+  if (languages.node || languages.nextjs) {
+    tools.push(
+      {
+        name: 'eslint',
+        description: 'JavaScript/TypeScript linting',
+        install: 'npm install eslint',
+        check: 'npx eslint --version',
+        for: 'node',
+        layer: 'language',
+      },
+      {
+        name: 'npm-audit',
+        description: 'Dependency vulnerability scanning',
+        install: 'builtin',
+        check: 'npm audit --help',
+        for: 'node',
+        layer: 'language',
+      },
+    );
+  }
+  if (languages.python) {
+    tools.push(
+      {
+        name: 'ruff',
+        description: 'Python linting and formatting',
+        install: 'pip install ruff',
+        check: 'ruff --version',
+        for: 'python',
+        layer: 'language',
+      },
+      {
+        name: 'pip-audit',
+        description: 'Python dependency vulnerability scanning',
+        install: 'pip install pip-audit',
+        check: 'pip-audit --version',
+        for: 'python',
+        layer: 'language',
+      },
+    );
+  }
+  if (languages.go) {
+    tools.push(
+      {
+        name: 'golangci-lint',
+        description: 'Go linting',
+        install: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest',
+        check: 'golangci-lint --version',
+        for: 'go',
+        layer: 'language',
+      },
+      {
+        name: 'govulncheck',
+        description: 'Go vulnerability scanning',
+        install: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
+        check: 'govulncheck -version',
+        for: 'go',
+        layer: 'language',
+      },
+    );
+  }
+  if (languages.rust) {
+    tools.push(
+      {
+        name: 'clippy',
+        description: 'Rust linting',
+        install: 'rustup component add clippy',
+        check: 'cargo clippy --version',
+        for: 'rust',
+        layer: 'language',
+      },
+      {
+        name: 'cargo-audit',
+        description: 'Rust dependency vulnerability scanning',
+        install: 'cargo install cargo-audit',
+        check: 'cargo audit --version',
+        for: 'rust',
+        layer: 'language',
+      },
+    );
+  }
+  if (languages.csharp) {
+    tools.push({
+      name: 'dotnet-format',
+      description: 'C# formatting and linting',
+      install: 'builtin',
+      check: 'dotnet format --version',
+      for: 'csharp',
+      layer: 'language',
+    });
+  }
+
+  return tools;
+}
+
 export function detect(cwd: string): DetectedStack {
   const composeContent = detectDockerComposeContent(cwd);
   const isNextjs = detectNextjs(cwd);
 
+  const languages = {
+    python:
+      fileExists(cwd, 'pyproject.toml') ||
+      fileExists(cwd, 'setup.py') ||
+      fileExists(cwd, 'requirements.txt') ||
+      fileExists(cwd, 'Pipfile') ||
+      !!findFileRecursive(cwd, /\.py$/, 2),
+    go: fileExists(cwd, 'go.mod'),
+    node: fileExists(cwd, 'package.json') && !isNextjs,
+    nextjs: isNextjs,
+    rust: fileExists(cwd, 'Cargo.toml'),
+    csharp:
+      fileExists(cwd, '*.sln') ||
+      globExists(cwd, '\\.csproj$') ||
+      globExists(cwd, '\\.sln$') ||
+      !!findFileRecursive(cwd, /\.csproj$/),
+  };
+
   return {
-    languages: {
-      python:
-        fileExists(cwd, 'pyproject.toml') ||
-        fileExists(cwd, 'setup.py') ||
-        fileExists(cwd, 'requirements.txt') ||
-        fileExists(cwd, 'Pipfile') ||
-        !!findFileRecursive(cwd, /\.py$/, 2),
-      go: fileExists(cwd, 'go.mod'),
-      node: fileExists(cwd, 'package.json') && !isNextjs,
-      nextjs: isNextjs,
-      rust: fileExists(cwd, 'Cargo.toml'),
-      csharp:
-        fileExists(cwd, '*.sln') ||
-        globExists(cwd, '\\.csproj$') ||
-        globExists(cwd, '\\.sln$') ||
-        !!findFileRecursive(cwd, /\.csproj$/),
-    },
+    languages,
     infrastructure: {
       docker: fileExists(cwd, 'Dockerfile') || composeContent.length > 0,
       postgres: composeContent.includes('postgres'),
@@ -408,5 +534,6 @@ export function detect(cwd: string): DetectedStack {
     },
     testRunner: detectTestRunner(cwd),
     framework: detectFramework(cwd),
+    requiredTools: detectRequiredTools(languages),
   };
 }

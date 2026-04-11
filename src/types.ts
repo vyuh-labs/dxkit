@@ -1,3 +1,13 @@
+/** Tool required for analysis — consumed by devstack for devcontainer packaging. */
+export interface ToolRequirement {
+  name: string;
+  description: string;
+  install: string;
+  check: string;
+  for: string;
+  layer: 'universal' | 'language' | 'optional';
+}
+
 export interface DetectedStack {
   languages: {
     python: boolean;
@@ -33,6 +43,7 @@ export interface DetectedStack {
     coverageCommand?: string; // e.g., "npx jest --coverage", "npx c8 npm test"
   };
   framework?: string; // e.g., "loopback", "express", "fastapi", "gin"
+  requiredTools: ToolRequirement[];
 }
 
 export interface ResolvedConfig extends DetectedStack {

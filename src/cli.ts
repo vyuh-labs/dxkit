@@ -19,6 +19,7 @@ function printUsage(): void {
     vyuh-dxkit init [options]    Initialize Claude Code DX in this repo
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
     vyuh-dxkit doctor            Verify setup
+    vyuh-dxkit health [path]     Run deterministic health analysis
 
   ${logger.bold('Init options:')}
     --dx-only    Just .claude/ + CLAUDE.md (default)
@@ -58,6 +59,7 @@ export async function run(argv: string[]): Promise<void> {
       name: { type: 'string' },
       'no-scan': { type: 'boolean', default: false },
       rescan: { type: 'boolean', default: false },
+      json: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -179,11 +181,171 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'health': {
+      const targetPath = positionals[1] || cwd;
+      const { analyzeHealth } = await import('./analyzers');
+      logger.header('vyuh-dxkit health');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = analyzeHealth(targetPath);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        // Console output
+        console.log('');
+        console.log(
+          `  ${logger.bold('Overall:')} ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+        );
+        console.log('');
+        const dims = report.dimensions;
+        const order: Array<[string, typeof dims.testing]> = [
+          ['Testing', dims.testing],
+          ['Code Quality', dims.quality],
+          ['Documentation', dims.documentation],
+          ['Security', dims.security],
+          ['Maintainability', dims.maintainability],
+          ['Developer Experience', dims.developerExperience],
+        ];
+        for (const [name, dim] of order) {
+          const bar =
+            '█'.repeat(Math.round(dim.score / 5)) + '░'.repeat(20 - Math.round(dim.score / 5));
+          console.log(
+            `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.status}`,
+          );
+        }
+        console.log('');
+        logger.dim('Tools: ' + report.toolsUsed.join(', '));
+        if (report.toolsUnavailable.length > 0) {
+          logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
+        }
+        logger.dim(`Completed in ${elapsed}s`);
+
+        // Save markdown report
+        const reportDir = path.join(targetPath, '.ai', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `health-audit-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
+        console.log('');
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      }
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       printUsage();
       process.exit(1);
   }
+}
+
+function formatMarkdownReport(
+  report: import('./analyzers/types').HealthReport,
+  elapsed: string,
+): string {
+  const lines: string[] = [];
+  lines.push('# Codebase Health Audit');
+  lines.push('');
+  lines.push(`**Date:** ${report.analyzedAt.slice(0, 10)}`);
+  lines.push(`**Repository:** ${report.repo}`);
+  lines.push(`**Branch:** ${report.branch}`);
+  lines.push(`**Commit:** ${report.commitSha}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+  lines.push(
+    `## Overall Health Score: ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+  );
+  lines.push('');
+  lines.push('| Dimension | Score | Status |');
+  lines.push('|---|---|---|');
+
+  const dimNames: Record<string, string> = {
+    testing: 'Tests',
+    quality: 'Code Quality',
+    documentation: 'Documentation',
+    security: 'Security',
+    maintainability: 'Maintainability',
+    developerExperience: 'Developer Experience (DX)',
+  };
+
+  for (const [key, dim] of Object.entries(report.dimensions)) {
+    const name = dimNames[key] || key;
+    lines.push(
+      `| ${name} | ${dim.score}/100 | ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)} |`,
+    );
+  }
+
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  // Dimension details
+  for (const [key, dim] of Object.entries(report.dimensions)) {
+    const name = dimNames[key] || key;
+    lines.push(
+      `## ${name} (${dim.score}/100) -- ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)}`,
+    );
+    lines.push('');
+    lines.push(dim.details);
+    lines.push('');
+    lines.push('| Metric | Value |');
+    lines.push('|---|---|');
+    for (const [mk, mv] of Object.entries(dim.metrics)) {
+      if (mv !== null && mv !== undefined) {
+        lines.push(`| ${mk} | ${mv} |`);
+      }
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  // Score calculation table
+  lines.push('## Score Calculation');
+  lines.push('');
+  lines.push('| Dimension | Weight | Score | Weighted |');
+  lines.push('|---|---|---|---|');
+
+  const weights: Record<string, number> = {
+    testing: 0.25,
+    quality: 0.2,
+    documentation: 0.1,
+    security: 0.2,
+    maintainability: 0.1,
+    developerExperience: 0.15,
+  };
+
+  for (const [key, dim] of Object.entries(report.dimensions)) {
+    const name = dimNames[key] || key;
+    const w = weights[key] || 0;
+    lines.push(
+      `| ${name} | ${(w * 100).toFixed(0)}% | ${dim.score} | ${(dim.score * w).toFixed(2)} |`,
+    );
+  }
+  lines.push(`| **Overall** | **100%** | | **${report.summary.overallScore}** |`);
+  lines.push('');
+
+  // Footer
+  lines.push('---');
+  lines.push('');
+  if (report.languages.length > 0) {
+    lines.push(
+      '**Languages:** ' + report.languages.map((l) => `${l.name} (${l.percentage}%)`).join(', '),
+    );
+    lines.push('');
+  }
+  lines.push(`**Tools used:** ${report.toolsUsed.join(', ')}`);
+  if (report.toolsUnavailable.length > 0) {
+    lines.push(`**Tools unavailable:** ${report.toolsUnavailable.join(', ')}`);
+  }
+  lines.push(`**Analysis time:** ${elapsed}s`);
+  lines.push('');
+  lines.push('*Generated by [VyuhLabs DXKit](https://www.npmjs.com/package/@vyuhlabs/dxkit)*');
+
+  return lines.join('\n');
 }
 
 const STEALTH_HEADER = '# dxkit (stealth mode — local only, not committed)';
