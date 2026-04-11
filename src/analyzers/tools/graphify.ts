@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import { HealthMetrics } from '../types';
 import { run } from './runner';
+import { findTool, TOOL_DEFS } from './tool-registry';
 
 interface GraphifyResult {
   functionCount: number;
@@ -193,20 +194,8 @@ export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
   }
 }
 
-/** Find a working python3 that has graphify installed. */
+/** Find a working python3 that has graphify installed. Delegates to tool-registry. */
 function findPython(cwd: string): string | null {
-  // Check common paths: venv, system, pipx
-  // Check common python paths where graphify might be installed
-  const home = run('echo $HOME', cwd) || '/root';
-  const candidates = ['/tmp/graphify-venv/bin/python', `${home}/.local/bin/python3`, 'python3'];
-
-  for (const cmd of candidates) {
-    // Verify python exists AND graphify is importable
-    const check = run(`${cmd} -c "import graphify; print('ok')" 2>/dev/null`, cwd);
-    if (check === 'ok') {
-      return cmd;
-    }
-  }
-
-  return null;
+  const status = findTool(TOOL_DEFS.graphify, cwd);
+  return status.available ? status.path : null;
 }

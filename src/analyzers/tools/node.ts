@@ -26,38 +26,15 @@ export function gatherNodeMetrics(cwd: string): Partial<HealthMetrics> {
     toolsUnavailable: [],
   };
 
-  // ESLint — try multiple approaches to match project's config
-  const eslintBins = [
-    './node_modules/.bin/lb-eslint', // LoopBack
-    './node_modules/.bin/eslint', // standard
-  ];
-  let eslintDone = false;
-  for (const bin of eslintBins) {
-    if (!fileExists(cwd, bin.replace('./', ''))) continue;
-    const eslintResult = runJSON<EslintFileResult[]>(
-      `${bin} . --format json 2>/dev/null`,
-      cwd,
-      120000,
-    );
-    if (eslintResult && Array.isArray(eslintResult)) {
-      let errors = 0;
-      let warnings = 0;
-      for (const file of eslintResult) {
-        for (const msg of file.messages || []) {
-          if (msg.severity === 2) errors++;
-          else warnings++;
-        }
-      }
-      metrics.lintErrors = errors;
-      metrics.lintWarnings = warnings;
-      metrics.lintTool = 'eslint';
-      metrics.toolsUsed!.push('eslint');
-      eslintDone = true;
-      break;
-    }
-  }
-  if (!eslintDone) {
-    metrics.toolsUnavailable!.push('eslint');
+  // ESLint — pick the right binary and config format, skip gracefully if mismatched
+  const eslintStatus = runEslint(cwd);
+  if (eslintStatus.ran) {
+    metrics.lintErrors = eslintStatus.errors;
+    metrics.lintWarnings = eslintStatus.warnings;
+    metrics.lintTool = 'eslint';
+    metrics.toolsUsed!.push('eslint');
+  } else {
+    metrics.toolsUnavailable!.push(`eslint (${eslintStatus.reason})`);
   }
 
   // npm audit -- handles both v1 and v2+ formats
@@ -131,4 +108,100 @@ export function gatherNodeMetrics(cwd: string): Partial<HealthMetrics> {
   }
 
   return metrics;
+}
+
+interface EslintRunResult {
+  ran: boolean;
+  errors: number;
+  warnings: number;
+  reason: string;
+}
+
+/**
+ * Run eslint with config-aware binary selection and graceful failure.
+ *
+ * Compatibility matrix:
+ * - ESLint v9+: needs eslint.config.{js,mjs,cjs,ts} (flat config)
+ * - ESLint v8: needs .eslintrc.{js,json,yml,yaml,cjs}
+ * - LoopBack projects: use lb-eslint binary with embedded config
+ */
+function runEslint(cwd: string): EslintRunResult {
+  // Prefer lb-eslint if present (LoopBack embeds its own config)
+  const lbEslintPath = 'node_modules/.bin/lb-eslint';
+  const eslintPath = 'node_modules/.bin/eslint';
+
+  const hasLbEslint = fileExists(cwd, lbEslintPath);
+  const hasEslint = fileExists(cwd, eslintPath);
+
+  if (!hasLbEslint && !hasEslint) {
+    return { ran: false, errors: 0, warnings: 0, reason: 'not installed' };
+  }
+
+  // Detect config format
+  const hasFlatConfig = fileExists(
+    cwd,
+    'eslint.config.js',
+    'eslint.config.mjs',
+    'eslint.config.cjs',
+    'eslint.config.ts',
+  );
+  const hasLegacyConfig = fileExists(
+    cwd,
+    '.eslintrc',
+    '.eslintrc.js',
+    '.eslintrc.json',
+    '.eslintrc.yml',
+    '.eslintrc.yaml',
+    '.eslintrc.cjs',
+  );
+
+  // Get eslint version to check compatibility
+  const binToCheck = hasEslint ? `./${eslintPath}` : `./${lbEslintPath}`;
+  const versionOutput = run(`${binToCheck} --version 2>/dev/null`, cwd);
+  const majorMatch = versionOutput.match(/v?(\d+)/);
+  const major = majorMatch ? parseInt(majorMatch[1]) : 0;
+
+  // Config compatibility check
+  if (major >= 9 && !hasFlatConfig) {
+    // v9+ needs flat config
+    if (hasLbEslint) {
+      // lb-eslint may provide its own config; try it
+      // (fall through to actual run)
+    } else if (hasLegacyConfig) {
+      return {
+        ran: false,
+        errors: 0,
+        warnings: 0,
+        reason: `v${major} but project uses legacy .eslintrc`,
+      };
+    } else {
+      return {
+        ran: false,
+        errors: 0,
+        warnings: 0,
+        reason: 'no eslint config found',
+      };
+    }
+  }
+
+  // Prefer lb-eslint first if available, then standard eslint
+  const bins = hasLbEslint ? [`./${lbEslintPath}`, `./${eslintPath}`] : [`./${eslintPath}`];
+
+  for (const bin of bins) {
+    if (!fileExists(cwd, bin.replace('./', ''))) continue;
+    const result = runJSON<EslintFileResult[]>(`${bin} . --format json 2>/dev/null`, cwd, 120000);
+    if (result && Array.isArray(result)) {
+      let errors = 0;
+      let warnings = 0;
+      for (const file of result) {
+        for (const msg of file.messages || []) {
+          if (msg.severity === 2) errors++;
+          else warnings++;
+        }
+      }
+      return { ran: true, errors, warnings, reason: '' };
+    }
+  }
+
+  return { ran: false, errors: 0, warnings: 0, reason: 'config error' };
 }

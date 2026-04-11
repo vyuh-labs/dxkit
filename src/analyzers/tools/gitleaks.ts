@@ -3,7 +3,8 @@
  * Layer 2 (optional): requires `gitleaks` binary.
  */
 import { HealthMetrics } from '../types';
-import { run, commandExists } from './runner';
+import { run } from './runner';
+import { findTool, TOOL_DEFS } from './tool-registry';
 
 interface GitleaksFinding {
   RuleID: string;
@@ -67,7 +68,6 @@ export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
 }
 
 function findGitleaks(cwd: string): string | null {
-  if (commandExists('gitleaks', cwd)) return 'gitleaks';
-  if (run('/tmp/gitleaks version 2>/dev/null', cwd)) return '/tmp/gitleaks';
-  return null;
+  const status = findTool(TOOL_DEFS.gitleaks, cwd);
+  return status.available ? status.path : null;
 }

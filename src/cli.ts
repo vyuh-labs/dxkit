@@ -20,6 +20,8 @@ function printUsage(): void {
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis
+    vyuh-dxkit tools [path]      Show required analysis tools status
+    vyuh-dxkit tools install     Interactively install missing tools
 
   ${logger.bold('Init options:')}
     --dx-only    Just .claude/ + CLAUDE.md (default)
@@ -230,7 +232,27 @@ export async function run(argv: string[]): Promise<void> {
         fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
         console.log('');
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+        // Hint about missing tools (exclude project-side config errors)
+        const PROJECT_ISSUES = ['config error', 'legacy .eslintrc', 'no eslint config'];
+        const trulyMissing = report.toolsUnavailable.filter(
+          (t) => !PROJECT_ISSUES.some((p) => t.includes(p)),
+        );
+        if (trulyMissing.length > 0) {
+          console.log('');
+          logger.dim(
+            '💡 Run `vyuh-dxkit tools install` to install missing tools for more accurate results.',
+          );
+        }
       }
+      break;
+    }
+
+    case 'tools': {
+      const subCommand = positionals[1];
+      const targetPath = positionals[2] || cwd;
+      const { runToolsCommand } = await import('./tools-cli');
+      await runToolsCommand(targetPath, subCommand, !!values.yes);
       break;
     }
 

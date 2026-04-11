@@ -15,20 +15,15 @@ const SKIP_KEYS = new Set(['header', 'SUM']);
 
 /** Gather metrics from cloc --json. */
 export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
-  // Try system cloc first (faster), then npx (installs on demand)
+  // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
   const excludeDirs = 'node_modules,dist,.git,vendor,build,__pycache__,public,assets,static';
-  const result = runJSON<ClocOutput>(
-    `cloc . --json --exclude-dir=${excludeDirs} 2>/dev/null`,
-    cwd,
-    120000,
-  );
+  const flags = `--json --timeout 0 --exclude-dir=${excludeDirs}`;
+
+  // Try system cloc first (faster), then npx as fallback
+  const result = runJSON<ClocOutput>(`cloc . ${flags} 2>/dev/null`, cwd, 180000);
 
   if (!result || !result.SUM) {
-    const fallback = runJSON<ClocOutput>(
-      `npx cloc . --json --exclude-dir=${excludeDirs} 2>/dev/null`,
-      cwd,
-      120000,
-    );
+    const fallback = runJSON<ClocOutput>(`npx cloc . ${flags} 2>/dev/null`, cwd, 180000);
     if (!fallback || !fallback.SUM) {
       return { toolsUnavailable: ['cloc'] };
     }
