@@ -26,10 +26,16 @@ export function gatherNodeMetrics(cwd: string): Partial<HealthMetrics> {
     toolsUnavailable: [],
   };
 
-  // ESLint — prefer project-local version to match the project's config format
-  if (fileExists(cwd, 'node_modules/.bin/eslint')) {
+  // ESLint — try multiple approaches to match project's config
+  const eslintBins = [
+    './node_modules/.bin/lb-eslint', // LoopBack
+    './node_modules/.bin/eslint', // standard
+  ];
+  let eslintDone = false;
+  for (const bin of eslintBins) {
+    if (!fileExists(cwd, bin.replace('./', ''))) continue;
     const eslintResult = runJSON<EslintFileResult[]>(
-      './node_modules/.bin/eslint . --format json 2>/dev/null',
+      `${bin} . --format json 2>/dev/null`,
       cwd,
       120000,
     );
@@ -46,10 +52,11 @@ export function gatherNodeMetrics(cwd: string): Partial<HealthMetrics> {
       metrics.lintWarnings = warnings;
       metrics.lintTool = 'eslint';
       metrics.toolsUsed!.push('eslint');
-    } else {
-      metrics.toolsUnavailable!.push('eslint (failed to run)');
+      eslintDone = true;
+      break;
     }
-  } else {
+  }
+  if (!eslintDone) {
     metrics.toolsUnavailable!.push('eslint');
   }
 

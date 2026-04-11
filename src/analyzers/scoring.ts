@@ -271,15 +271,13 @@ export function scoreMaintainability(m: HealthMetrics): DimensionScore {
   if (m.sourceFiles < 50) score += 10;
   if (m.sourceFiles < 20) score += 5;
 
-  // AST enhancements
-  if (m.godNodeCount !== null && m.godNodeCount > 5) score -= 10;
-  if (
-    m.orphanModuleCount !== null &&
-    m.sourceFiles > 0 &&
-    m.orphanModuleCount / m.sourceFiles > 0.3
-  )
-    score -= 5;
-  if (m.avgCohesion !== null && m.avgCohesion < 0.2) score -= 5;
+  // AST enhancements (calibrated for real-world repos)
+  if (m.godNodeCount !== null) {
+    const godRatio = m.godNodeCount / Math.max(m.sourceFiles, 1);
+    if (godRatio > 0.1) score -= 10;
+    else if (godRatio > 0.05) score -= 5;
+  }
+  if (m.avgCohesion !== null && m.avgCohesion < 0.15) score -= 5;
 
   score = clamp(score);
   return {

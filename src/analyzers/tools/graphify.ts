@@ -23,9 +23,12 @@ interface GraphifyResult {
   sourceFilesInGraph: number;
 }
 
-const GRAPHIFY_SCRIPT = `import json, sys, os
+const GRAPHIFY_SCRIPT = `import json, sys, os, tempfile
 from pathlib import Path
 from collections import Counter
+
+# Redirect graphify cache to /tmp so we don't pollute the target repo
+_cache_dir = Path(tempfile.mkdtemp(prefix='dxkit-graphify-'))
 
 try:
     from graphify.extract import extract, collect_files
@@ -46,7 +49,17 @@ if not files:
     print(json.dumps({"error": "no files found"}))
     sys.exit(0)
 
+# Monkey-patch cache to use /tmp instead of target repo
+import graphify.cache as _gc
+_gc.cache_dir = lambda root=None: _cache_dir / "cache"
+(_cache_dir / "cache").mkdir(parents=True, exist_ok=True)
+
+# Suppress progress output by redirecting stdout during extraction
+import io
+_real_stdout = sys.stdout
+sys.stdout = io.StringIO()
 result = extract(files)
+sys.stdout = _real_stdout
 G = build([result], directed=True)
 communities = cluster(G)
 
@@ -103,6 +116,10 @@ total_src = len(source_files_set)
 empty_files = total_src - len(files_with_nodes)
 commented_ratio = empty_files / total_src if total_src > 0 else 0.0
 
+# Clean up temp cache
+import shutil
+shutil.rmtree(str(_cache_dir), ignore_errors=True)
+
 print(json.dumps({
     "functionCount": len(functions),
     "classCount": len([n for n, d in modules if any(
@@ -131,7 +148,8 @@ export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
   // Write script to temp file to avoid shell escaping issues
   const scriptPath = `/tmp/dxkit-graphify-${Date.now()}.py`;
   fs.writeFileSync(scriptPath, GRAPHIFY_SCRIPT);
-  const output = run(`${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`, cwd, 120000);
+  // Redirect stderr to suppress progress output, run from /tmp to avoid writing to target
+  const output = run(`cd /tmp && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`, cwd, 120000);
   try {
     fs.unlinkSync(scriptPath);
   } catch {
@@ -142,8 +160,17 @@ export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
     return { toolsUnavailable: ['graphify (failed to run)'] };
   }
 
+  // Graphify prints progress to stdout before the JSON — extract only the JSON line
+  const jsonLine = output
+    .split('\n')
+    .filter((l) => l.startsWith('{'))
+    .pop();
+  if (!jsonLine) {
+    return { toolsUnavailable: ['graphify (no JSON output)'] };
+  }
+
   try {
-    const data = JSON.parse(output) as GraphifyResult & { error?: string };
+    const data = JSON.parse(jsonLine) as GraphifyResult & { error?: string };
     if (data.error) {
       return { toolsUnavailable: [`graphify (${data.error})`] };
     }
