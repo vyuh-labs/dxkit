@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
+import { getPythonExcludeSet } from './exclusions';
 
 interface GraphifyResult {
   functionCount: number;
@@ -24,7 +25,8 @@ interface GraphifyResult {
   sourceFilesInGraph: number;
 }
 
-const GRAPHIFY_SCRIPT = `import json, sys, os, tempfile
+const GRAPHIFY_SCRIPT = `# Exclusion set derived from src/analyzers/tools/exclusions.ts
+import json, sys, os, tempfile
 from pathlib import Path
 from collections import Counter
 
@@ -43,7 +45,7 @@ except ImportError:
 target = Path(sys.argv[1])
 
 # collect_files doesn't exclude node_modules etc, so filter manually
-EXCLUDE_DIRS = {'node_modules', 'dist', '.git', 'vendor', 'build', '__pycache__', 'public', 'assets', 'static', '.next', 'coverage', '.tox', 'venv', '.venv'}
+EXCLUDE_DIRS = ${getPythonExcludeSet()}
 all_files = collect_files(target)
 files = [f for f in all_files if not any(ex in f.parts for ex in EXCLUDE_DIRS)]
 if not files:

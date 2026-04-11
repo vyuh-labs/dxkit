@@ -501,6 +501,40 @@ export function getToolDef(name: string): ToolDefinition | undefined {
   return TOOL_DEFS[name];
 }
 
+/**
+ * Map detected languages to the corresponding semgrep ruleset IDs.
+ *
+ * Semgrep ruleset naming follows `p/<language-or-pack>`. Not every language
+ * has a ruleset (e.g., `p/go` does NOT exist; the gosec rules live under
+ * `p/gosec`). This function encodes those mappings so callers never hardcode.
+ *
+ * Adding a new language:
+ * 1. Add it to detect.ts `DetectedStack.languages`
+ * 2. Add a case here if semgrep has a ruleset for it
+ *
+ * @see https://semgrep.dev/explore for the full ruleset registry
+ */
+export function getSemgrepRulesets(languages: DetectedStack['languages']): string[] {
+  // Always include the baseline audit ruleset — covers OWASP Top 10 patterns
+  // across all languages. Safe to combine with language-specific rulesets.
+  const rulesets: string[] = ['p/security-audit'];
+
+  if (languages.node || languages.nextjs) {
+    rulesets.push('p/javascript', 'p/typescript');
+  }
+  if (languages.python) {
+    rulesets.push('p/python');
+  }
+  if (languages.go) {
+    // p/go does not exist; gosec rules live under p/gosec
+    rulesets.push('p/gosec');
+  }
+  // Rust: no dedicated semgrep ruleset yet. Covered by p/security-audit.
+  // C#: p/csharp exists but is sparse; skip for now.
+
+  return rulesets;
+}
+
 /** Check status of all required tools for a stack. */
 export function checkAllTools(languages: DetectedStack['languages'], cwd?: string): ToolStatus[] {
   const required = buildRequiredTools(languages);

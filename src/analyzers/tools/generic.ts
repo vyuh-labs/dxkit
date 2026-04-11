@@ -6,6 +6,13 @@
 import * as fs from 'fs';
 import { HealthMetrics } from '../types';
 import { run, countLines, fileExists } from './runner';
+import { getFindExcludeFlags } from './exclusions';
+
+// grepCount uses a narrow filter (node_modules, dist, __pycache__, .d.ts) to
+// preserve pre-refactor byte-equality. The broader EXCLUDED_DIRS list from
+// exclusions.ts is used for find-based counts. Widening this filter would
+// change legitimate metric totals and should be a separate, intentional change.
+const GREP_PIPELINE_FILTER = 'grep -v node_modules | grep -v dist | grep -v __pycache__';
 
 /** Reliable grep count that avoids shell escaping issues by writing pattern to a temp file. */
 function grepCount(cwd: string, pattern: string, includes: string[]): number {
@@ -13,7 +20,7 @@ function grepCount(cwd: string, pattern: string, includes: string[]): number {
   fs.writeFileSync(patternFile, pattern);
   const includeFlags = includes.map((i) => `--include='${i}'`).join(' ');
   const result = run(
-    `grep -rEf '${patternFile}' ${includeFlags} . 2>/dev/null | grep -v node_modules | grep -v dist | grep -v __pycache__ | grep -v '.d.ts' | wc -l`,
+    `grep -rEf '${patternFile}' ${includeFlags} . 2>/dev/null | ${GREP_PIPELINE_FILTER} | grep -v '.d.ts' | wc -l`,
     cwd,
   );
   try {
@@ -24,10 +31,7 @@ function grepCount(cwd: string, pattern: string, includes: string[]): number {
   return parseInt(result) || 0;
 }
 
-const EXCLUDE =
-  '-not -path "*/node_modules/*" -not -path "*/dist/*" -not -path "*/.git/*" ' +
-  '-not -path "*/vendor/*" -not -path "*/build/*" -not -path "*/__pycache__/*" ' +
-  '-not -path "*/public/assets/*" -not -path "*/static/js/*"';
+const EXCLUDE = getFindExcludeFlags();
 
 const SOURCE_EXTS =
   '\\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" ' +

@@ -4,6 +4,7 @@
  */
 import { HealthMetrics } from '../types';
 import { runJSON } from './runner';
+import { getClocExcludeDirs } from './exclusions';
 
 interface ClocOutput {
   header: { n_files: number; n_lines: number };
@@ -16,7 +17,8 @@ const SKIP_KEYS = new Set(['header', 'SUM']);
 /** Gather metrics from cloc --json. */
 export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
-  const excludeDirs = 'node_modules,dist,.git,vendor,build,__pycache__,public,assets,static';
+  // cloc uses basename matching for --exclude-dir, so use dir names without slashes
+  const excludeDirs = getClocExcludeDirs();
   const flags = `--json --timeout 0 --exclude-dir=${excludeDirs}`;
 
   // Try system cloc first (faster), then npx as fallback
