@@ -15,15 +15,13 @@ import { gatherNodeMetrics } from './tools/node';
 import { gatherClocMetrics } from './tools/cloc';
 import { gatherGitleaksMetrics } from './tools/gitleaks';
 import { gatherGraphifyMetrics } from './tools/graphify';
-import {
-  scoreTest,
-  scoreQuality,
-  scoreDocumentation,
-  scoreSecurity,
-  scoreMaintainability,
-  scoreDeveloperExperience,
-  computeOverall,
-} from './scoring';
+import { scoreTestsDimension } from './tests/shallow';
+import { scoreQualityDimension } from './quality/shallow';
+import { scoreDocsDimension } from './docs/shallow';
+import { scoreSecurityDimension } from './security/shallow';
+import { scoreMaintainabilityDimension } from './maintainability/shallow';
+import { scoreDxDimension } from './dx/shallow';
+import { computeOverall } from './scoring';
 import { run } from './tools/runner';
 
 /** Default values for all HealthMetrics fields. */
@@ -135,12 +133,12 @@ export function analyzeHealth(repoPath: string): HealthReport {
 
   // Step 3: Score
   const dimensions = {
-    testing: scoreTest(metrics),
-    quality: scoreQuality(metrics),
-    documentation: scoreDocumentation(metrics),
-    security: scoreSecurity(metrics),
-    maintainability: scoreMaintainability(metrics),
-    developerExperience: scoreDeveloperExperience(metrics),
+    testing: scoreTestsDimension(metrics),
+    quality: scoreQualityDimension(metrics),
+    documentation: scoreDocsDimension(metrics),
+    security: scoreSecurityDimension(metrics),
+    maintainability: scoreMaintainabilityDimension(metrics),
+    developerExperience: scoreDxDimension(metrics),
   };
   const { overallScore, grade } = computeOverall(dimensions);
 
