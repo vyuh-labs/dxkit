@@ -20,6 +20,7 @@ function printUsage(): void {
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis
+    vyuh-dxkit vulnerabilities [path]  Run deep security scan
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -253,6 +254,48 @@ export async function run(argv: string[]): Promise<void> {
       const targetPath = positionals[2] || cwd;
       const { runToolsCommand } = await import('./tools-cli');
       await runToolsCommand(targetPath, subCommand, !!values.yes);
+      break;
+    }
+
+    case 'vulnerabilities':
+    case 'vuln': {
+      const targetPath = positionals[1] || cwd;
+      const { analyzeSecurity, formatSecurityReport } = await import('./analyzers/security');
+      logger.header('vyuh-dxkit vulnerabilities');
+      logger.info(`Scanning ${targetPath}...`);
+      const startTime = Date.now();
+      const report = analyzeSecurity(targetPath);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        const s = report.summary.findings;
+        const d = report.summary.dependencies;
+        console.log('');
+        console.log(`  ${logger.bold('Code findings:')}`);
+        console.log(
+          `    CRITICAL: ${s.critical}  HIGH: ${s.high}  MEDIUM: ${s.medium}  LOW: ${s.low}  Total: ${s.total}`,
+        );
+        if (d.tool) {
+          console.log(`  ${logger.bold('Dependency vulns:')}`);
+          console.log(`    ${d.critical}C ${d.high}H ${d.medium}M ${d.low}L (${d.total} total)`);
+        }
+        console.log('');
+        logger.dim('Tools: ' + report.toolsUsed.join(', '));
+        if (report.toolsUnavailable.length > 0) {
+          logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
+        }
+        logger.dim(`Completed in ${elapsed}s`);
+
+        const reportDir = path.join(targetPath, '.ai', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
+        console.log('');
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      }
       break;
     }
 

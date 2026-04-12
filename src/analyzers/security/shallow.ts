@@ -1,8 +1,9 @@
 /**
  * Security dimension — shallow score for health aggregation.
  *
- * Phase 3: delegates to scoring.ts (identical behavior).
- * Phase 4: will be replaced with dedicated security analyzer logic.
+ * Computes the DimensionScore using the same formula as scoring.ts
+ * (delegating to it), but Phase 4b+ can switch to using the deep
+ * analyzer's findings for more accurate scoring.
  */
 import { HealthMetrics, DimensionScore } from '../types';
 import { scoreSecurity } from '../scoring';

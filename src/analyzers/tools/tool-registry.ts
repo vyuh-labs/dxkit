@@ -308,6 +308,24 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'pip install --user graphifyy',
     },
   },
+  semgrep: {
+    name: 'semgrep',
+    description: 'Static analysis security scanner (SAST)',
+    install: 'pip install semgrep',
+    check: 'semgrep --version',
+    for: 'all',
+    layer: 'universal',
+    binaries: ['semgrep'],
+    probePaths: ['/tmp/graphify-venv/bin'],
+    versionCheck: 'semgrep --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q semgrep && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/semgrep ~/.local/bin/semgrep',
+      linux:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q semgrep && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/semgrep ~/.local/bin/semgrep',
+      windows: 'pip install --user semgrep',
+    },
+  },
   eslint: {
     name: 'eslint',
     description: 'JavaScript/TypeScript linting',
@@ -463,6 +481,7 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
     // Universal
     'cloc',
     'gitleaks',
+    'semgrep',
     'graphify',
   ];
 
