@@ -22,6 +22,7 @@ function printUsage(): void {
     vyuh-dxkit health [path]     Run deterministic health analysis
     vyuh-dxkit vulnerabilities [path]  Run deep security scan
     vyuh-dxkit test-gaps [path]  Analyze test coverage gaps
+    vyuh-dxkit quality [path]    Code quality + slop detection
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -333,6 +334,67 @@ export async function run(argv: string[]): Promise<void> {
         const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
+        console.log('');
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      }
+      break;
+    }
+
+    case 'quality': {
+      const targetPath = positionals[1] || cwd;
+      const { analyzeQuality, formatQualityReport } = await import('./analyzers/quality');
+      logger.header('vyuh-dxkit quality');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = analyzeQuality(targetPath);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        const m = report.metrics;
+        const slopLabel =
+          report.slopScore >= 80
+            ? 'clean'
+            : report.slopScore >= 60
+              ? 'fair'
+              : report.slopScore >= 40
+                ? 'messy'
+                : 'sloppy';
+        console.log('');
+        console.log(`  ${logger.bold('Slop Score:')} ${report.slopScore}/100 (${slopLabel})`);
+        console.log('');
+        if (m.duplication) {
+          console.log(
+            `  Duplication:    ${m.duplication.percentage}% (${m.duplication.cloneCount} clones)`,
+          );
+        }
+        if (m.commentRatio !== null) {
+          console.log(`  Comment ratio:  ${(m.commentRatio * 100).toFixed(1)}%`);
+        }
+        console.log(`  Lint:           ${m.lintErrors} errors, ${m.lintWarnings} warnings`);
+        console.log(`  TODO/FIXME/HACK: ${m.todoCount}/${m.fixmeCount}/${m.hackCount}`);
+        console.log(`  Console stmts:  ${m.consoleLogCount}`);
+        if (m.functionCount !== null) {
+          console.log(
+            `  Functions:      ${m.functionCount} (max ${m.maxFunctionsInFile} in one file)`,
+          );
+        }
+        if (m.deadImportCount !== null) {
+          console.log(`  Dead imports:   ${m.deadImportCount}`);
+        }
+        console.log('');
+        logger.dim('Tools: ' + report.toolsUsed.join(', '));
+        if (report.toolsUnavailable.length > 0) {
+          logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
+        }
+        logger.dim(`Completed in ${elapsed}s`);
+
+        const reportDir = path.join(targetPath, '.ai', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `quality-review-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
         console.log('');
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
       }

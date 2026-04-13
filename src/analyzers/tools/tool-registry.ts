@@ -308,6 +308,23 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'pip install --user graphifyy',
     },
   },
+  jscpd: {
+    name: 'jscpd',
+    description: 'Copy-paste / duplicate code detector',
+    install: 'npm install -g jscpd',
+    check: 'jscpd --version',
+    for: 'all',
+    layer: 'universal',
+    binaries: ['jscpd'],
+    versionCheck: 'jscpd --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
+      linux:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
+      windows: 'npm install -g jscpd',
+    },
+  },
   semgrep: {
     name: 'semgrep',
     description: 'Static analysis security scanner (SAST)',
@@ -481,6 +498,7 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
     // Universal
     'cloc',
     'gitleaks',
+    'jscpd',
     'semgrep',
     'graphify',
   ];
@@ -552,6 +570,55 @@ export function getSemgrepRulesets(languages: DetectedStack['languages']): strin
   // C#: p/csharp exists but is sparse; skip for now.
 
   return rulesets;
+}
+
+/**
+ * Run a registered tool and return its stdout.
+ *
+ * ENFORCEMENT: This is the ONLY sanctioned way to execute an external tool
+ * in analyzer code. It verifies the tool exists in TOOL_DEFS before running.
+ * If you need to run a tool that's not registered, add it to TOOL_DEFS first.
+ *
+ * Builtins (grep, find, wc, git, node) don't go through this — they're
+ * always available and don't need detection/install. Only tools that:
+ * - Need to be discovered (multi-path detection)
+ * - Need to be installed by `vyuh-dxkit tools install`
+ * - Appear in `vyuh-dxkit tools list`
+ * must be registered and invoked via this function or findTool().
+ *
+ * @param toolName — must match a key in TOOL_DEFS
+ * @param buildCmd — function that receives the resolved binary path and returns the shell command
+ * @param cwd — working directory
+ * @param timeoutMs — command timeout
+ * @returns stdout string, or null if tool unavailable
+ */
+export function runRegisteredTool(
+  toolName: string,
+  buildCmd: (binPath: string) => string,
+  cwd: string,
+  timeoutMs = 60000,
+): { output: string | null; available: boolean; path: string | null } {
+  const def = TOOL_DEFS[toolName];
+  if (!def) {
+    throw new Error(
+      `Tool "${toolName}" is not registered in TOOL_DEFS. ` +
+        'Add it to src/analyzers/tools/tool-registry.ts before using.',
+    );
+  }
+  const status = findTool(def, cwd);
+  if (!status.available || !status.path) {
+    return { output: null, available: false, path: null };
+  }
+  const cmd = buildCmd(status.path);
+  const result =
+    quickRun(cmd) ||
+    execSync(cmd, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    }).trim();
+  return { output: result || null, available: true, path: status.path };
 }
 
 /** Check status of all required tools for a stack. */
