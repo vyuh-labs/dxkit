@@ -1,0 +1,144 @@
+/**
+ * Test gap analyzer — public API.
+ */
+import * as path from 'path';
+import { detect } from '../../detect';
+import { run } from '../tools/runner';
+import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
+import { TestGapsReport, SourceFile, TestFile } from './types';
+
+export type { TestGapsReport, SourceFile, TestFile } from './types';
+
+export function analyzeTestGaps(repoPath: string): TestGapsReport {
+  const stack = detect(repoPath);
+  const toolsUsed: string[] = ['find', 'grep', 'git'];
+  const toolsUnavailable: string[] = [];
+
+  const testFiles = gatherTestFiles(repoPath);
+  const sourceFiles = gatherSourceFiles(repoPath);
+  matchTestsToSource(testFiles, sourceFiles);
+
+  const activeTests = testFiles.filter((t) => t.status === 'active');
+  const commentedOut = testFiles.filter((t) => t.status === 'commented-out');
+  const untested = sourceFiles.filter((s) => !s.hasMatchingTest);
+
+  const untestedByRisk = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const s of untested) untestedByRisk[s.risk]++;
+
+  // Effective coverage: % of source files that have active matching tests
+  const effectiveCoverage =
+    sourceFiles.length > 0
+      ? Math.round((sourceFiles.filter((s) => s.hasMatchingTest).length / sourceFiles.length) * 100)
+      : 0;
+
+  return {
+    repo: stack.projectName || path.basename(repoPath),
+    analyzedAt: new Date().toISOString(),
+    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
+    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    summary: {
+      testFiles: testFiles.length,
+      activeTestFiles: activeTests.length,
+      commentedOutFiles: commentedOut.length,
+      effectiveCoverage,
+      sourceFiles: sourceFiles.length,
+      untestedCritical: untestedByRisk.critical,
+      untestedHigh: untestedByRisk.high,
+      untestedMedium: untestedByRisk.medium,
+      untestedLow: untestedByRisk.low,
+    },
+    testFiles,
+    gaps: untested.sort((a, b) => {
+      const R = { critical: 0, high: 1, medium: 2, low: 3 };
+      if (R[a.risk] !== R[b.risk]) return R[a.risk] - R[b.risk];
+      return b.lines - a.lines; // largest first within same risk
+    }),
+    toolsUsed,
+    toolsUnavailable,
+  };
+}
+
+export function formatTestGapsReport(report: TestGapsReport, elapsed: string): string {
+  const L: string[] = [];
+  L.push('# Test Gap Analysis');
+  L.push('');
+  L.push(`**Date:** ${report.analyzedAt.slice(0, 10)}`);
+  L.push(`**Repository:** ${report.repo}`);
+  L.push(`**Branch:** ${report.branch} (${report.commitSha})`);
+  L.push('');
+  L.push('---');
+  L.push('');
+
+  // Executive summary
+  const s = report.summary;
+  L.push('## Executive Summary');
+  L.push('');
+  L.push('| Metric | Value |');
+  L.push('|--------|-------|');
+  L.push(`| Test files found | ${s.testFiles} |`);
+  L.push(`| Active test files | ${s.activeTestFiles} |`);
+  L.push(`| Commented-out test files | ${s.commentedOutFiles} |`);
+  L.push(`| Effective coverage | **${s.effectiveCoverage}%** |`);
+  L.push(`| Source files | ${s.sourceFiles} |`);
+  L.push(`| Untested (CRITICAL) | ${s.untestedCritical} |`);
+  L.push(`| Untested (HIGH) | ${s.untestedHigh} |`);
+  L.push(`| Untested (MEDIUM) | ${s.untestedMedium} |`);
+  L.push(`| Untested (LOW) | ${s.untestedLow} |`);
+  L.push('');
+  L.push('---');
+  L.push('');
+
+  // Test inventory
+  L.push('## Test Inventory');
+  L.push('');
+  if (report.testFiles.length === 0) {
+    L.push('No test files found.');
+  } else {
+    L.push('| File | Status | Framework |');
+    L.push('|------|--------|-----------|');
+    for (const t of report.testFiles) {
+      L.push(`| \`${t.path}\` | ${t.status.toUpperCase()} | ${t.framework || '-'} |`);
+    }
+  }
+  L.push('');
+  L.push('---');
+  L.push('');
+
+  // Gaps by risk tier
+  const tiers: Array<{ risk: SourceFile['risk']; title: string }> = [
+    { risk: 'critical', title: 'CRITICAL (Security/auth risk)' },
+    { risk: 'high', title: 'HIGH (Business logic/large files)' },
+    { risk: 'medium', title: 'MEDIUM (Standard controllers/services)' },
+    { risk: 'low', title: 'LOW (Models/utilities)' },
+  ];
+
+  L.push('## Critical Gaps');
+  L.push('');
+
+  for (const tier of tiers) {
+    const items = report.gaps.filter((g) => g.risk === tier.risk);
+    if (items.length === 0) continue;
+    L.push(`### Priority: ${tier.title}`);
+    L.push('');
+    L.push('| File | Type | Lines | Risk |');
+    L.push('|------|------|-------|------|');
+    for (const g of items.slice(0, 30)) {
+      L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} | ${g.risk.toUpperCase()} |`);
+    }
+    if (items.length > 30) {
+      L.push(`| ... | ... | ... | ${items.length - 30} more |`);
+    }
+    L.push('');
+  }
+
+  L.push('---');
+  L.push('');
+  L.push(`**Tools used:** ${report.toolsUsed.join(', ')}`);
+  if (report.toolsUnavailable.length > 0) {
+    L.push(`**Tools unavailable:** ${report.toolsUnavailable.join(', ')}`);
+  }
+  L.push(`**Analysis time:** ${elapsed}s`);
+  L.push('');
+  L.push('*Generated by [VyuhLabs DXKit](https://www.npmjs.com/package/@vyuhlabs/dxkit)*');
+  return L.join('\n');
+}

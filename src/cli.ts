@@ -21,6 +21,7 @@ function printUsage(): void {
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis
     vyuh-dxkit vulnerabilities [path]  Run deep security scan
+    vyuh-dxkit test-gaps [path]  Analyze test coverage gaps
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -293,6 +294,45 @@ export async function run(argv: string[]): Promise<void> {
         const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
+        console.log('');
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      }
+      break;
+    }
+
+    case 'test-gaps': {
+      const targetPath = positionals[1] || cwd;
+      const { analyzeTestGaps, formatTestGapsReport } = await import('./analyzers/tests');
+      logger.header('vyuh-dxkit test-gaps');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = analyzeTestGaps(targetPath);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        const s = report.summary;
+        console.log('');
+        console.log(`  ${logger.bold('Effective coverage:')} ${s.effectiveCoverage}%`);
+        console.log(
+          `  Test files: ${s.testFiles} (${s.activeTestFiles} active, ${s.commentedOutFiles} commented-out)`,
+        );
+        console.log(`  Source files: ${s.sourceFiles}`);
+        console.log('');
+        console.log(`  ${logger.bold('Untested by risk:')}`);
+        console.log(
+          `    CRITICAL: ${s.untestedCritical}  HIGH: ${s.untestedHigh}  MEDIUM: ${s.untestedMedium}  LOW: ${s.untestedLow}`,
+        );
+        console.log('');
+        logger.dim('Tools: ' + report.toolsUsed.join(', '));
+        logger.dim(`Completed in ${elapsed}s`);
+
+        const reportDir = path.join(targetPath, '.ai', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
         console.log('');
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
       }
