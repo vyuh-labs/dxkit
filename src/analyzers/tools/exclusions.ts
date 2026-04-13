@@ -83,6 +83,15 @@ export function getGrepVFilters(): string {
 }
 
 /**
+ * Build grep `--exclude-dir` flags for grep's own directory exclusion.
+ * More efficient than piping through `grep -v` — grep skips dirs at traversal time.
+ * Usage: `grep -rE ${getGrepExcludeDirFlags()} --include='*.ts' pattern .`
+ */
+export function getGrepExcludeDirFlags(): string {
+  return EXCLUDED_DIRS.map((d) => `--exclude-dir='${d}'`).join(' ');
+}
+
+/**
  * Build cloc `--exclude-dir` argument value (comma-separated basenames).
  * cloc matches on directory BASENAMES only, not full paths.
  * So `public/assets` becomes `public,assets` — cloc will exclude any dir

@@ -15,6 +15,7 @@
 import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
+import { getGrepExcludeDirFlags } from '../tools/exclusions';
 import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { gatherNodeMetrics } from '../tools/node';
@@ -159,9 +160,10 @@ export function gatherHygieneMarkers(cwd: string): {
   function grepCountSimple(pattern: string): number {
     const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
     fs.writeFileSync(patternFile, pattern);
-    // grep -r traverses node_modules before the pipe filters it — use --exclude-dir to avoid
+    // grep --exclude-dir prevents traversing node_modules etc. at search time (fast)
+    const excludeDirs = getGrepExcludeDirFlags();
     const result = run(
-      `grep -rEf '${patternFile}' --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=vendor --exclude-dir=build --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null | wc -l`,
+      `grep -rEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null | wc -l`,
       cwd,
       60000,
     );
