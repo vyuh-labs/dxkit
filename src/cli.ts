@@ -23,6 +23,7 @@ function printUsage(): void {
     vyuh-dxkit vulnerabilities [path]  Run deep security scan
     vyuh-dxkit test-gaps [path]  Analyze test coverage gaps
     vyuh-dxkit quality [path]    Code quality + slop detection
+    vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -65,6 +66,7 @@ export async function run(argv: string[]): Promise<void> {
       'no-scan': { type: 'boolean', default: false },
       rescan: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
+      since: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -395,6 +397,52 @@ export async function run(argv: string[]): Promise<void> {
         const reportPath = path.join(reportDir, `quality-review-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
+        console.log('');
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      }
+      break;
+    }
+
+    case 'dev-report': {
+      const targetPath = positionals[1] || cwd;
+      const sinceFlag = (values as Record<string, unknown>).since as string | undefined;
+      const { analyzeDevActivity, formatDevReport } = await import('./analyzers/developer');
+      logger.header('vyuh-dxkit dev-report');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = analyzeDevActivity(targetPath, sinceFlag);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        const s = report.summary;
+        console.log('');
+        console.log(`  ${logger.bold('Period:')} ${report.period.since} to ${report.period.until}`);
+        console.log(
+          `  ${logger.bold('Commits:')} ${s.totalCommits} (${s.nonMergeCommits} non-merge, ${s.mergeCommits} merge)`,
+        );
+        console.log(`  ${logger.bold('Contributors:')} ${s.contributors}`);
+        console.log(`  ${logger.bold('Merge ratio:')} ${(s.mergeRatio * 100).toFixed(1)}%`);
+        console.log(
+          `  ${logger.bold('Conventional commits:')} ${report.commitQuality.conventionalPercent}%`,
+        );
+        console.log('');
+        if (report.hotFiles.length > 0) {
+          console.log(`  ${logger.bold('Hot files:')}`);
+          for (const f of report.hotFiles.slice(0, 5)) {
+            console.log(`    ${f.changes.toString().padStart(3)} changes  ${f.path}`);
+          }
+        }
+        console.log('');
+        logger.dim('Tools: ' + report.toolsUsed.join(', '));
+        logger.dim(`Completed in ${elapsed}s`);
+
+        const reportDir = path.join(targetPath, '.ai', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `developer-report-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
         console.log('');
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
       }
