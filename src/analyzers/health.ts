@@ -12,6 +12,10 @@ import { DetectedStack } from '../types';
 import { HealthMetrics, HealthReport } from './types';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherNodeMetrics } from './tools/node';
+import { gatherPythonMetrics } from './tools/python';
+import { gatherGoMetrics } from './tools/go';
+import { gatherRustMetrics } from './tools/rust';
+import { gatherDotnetMetrics } from './tools/dotnet';
 import { gatherClocMetrics } from './tools/cloc';
 import { gatherGitleaksMetrics } from './tools/gitleaks';
 import { gatherGraphifyMetrics } from './tools/graphify';
@@ -104,9 +108,18 @@ export function analyzeHealth(repoPath: string): HealthReport {
   if (stack.languages.node || stack.languages.nextjs) {
     mergeMetrics(metrics, gatherNodeMetrics(repoPath));
   }
-  // TODO: Python, Go, Rust runners
-  // if (stack.languages.python) mergeMetrics(metrics, gatherPythonMetrics(repoPath));
-  // if (stack.languages.go) mergeMetrics(metrics, gatherGoMetrics(repoPath));
+  if (stack.languages.python) {
+    mergeMetrics(metrics, gatherPythonMetrics(repoPath));
+  }
+  if (stack.languages.go) {
+    mergeMetrics(metrics, gatherGoMetrics(repoPath));
+  }
+  if (stack.languages.rust) {
+    mergeMetrics(metrics, gatherRustMetrics(repoPath));
+  }
+  if (stack.languages.csharp) {
+    mergeMetrics(metrics, gatherDotnetMetrics(repoPath));
+  }
 
   // Layer 2: Optional enhanced tools
   mergeMetrics(metrics, gatherClocMetrics(repoPath));
