@@ -16,9 +16,7 @@ import { gatherPythonMetrics } from './tools/python';
 import { gatherGoMetrics } from './tools/go';
 import { gatherRustMetrics } from './tools/rust';
 import { gatherDotnetMetrics } from './tools/dotnet';
-import { gatherClocMetrics } from './tools/cloc';
-import { gatherGitleaksMetrics } from './tools/gitleaks';
-import { gatherGraphifyMetrics } from './tools/graphify';
+import { gatherLayer2Parallel } from './tools/parallel';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -121,10 +119,8 @@ export function analyzeHealth(repoPath: string): HealthReport {
     mergeMetrics(metrics, gatherDotnetMetrics(repoPath));
   }
 
-  // Layer 2: Optional enhanced tools
-  mergeMetrics(metrics, gatherClocMetrics(repoPath));
-  mergeMetrics(metrics, gatherGitleaksMetrics(repoPath));
-  mergeMetrics(metrics, gatherGraphifyMetrics(repoPath));
+  // Layer 2: Optional enhanced tools (run in parallel for speed)
+  mergeMetrics(metrics, gatherLayer2Parallel(repoPath));
 
   // Language breakdown -- prefer cloc data, fall back to detection
   metrics.languages = metrics.clocLanguages
