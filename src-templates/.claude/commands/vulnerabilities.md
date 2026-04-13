@@ -2,9 +2,43 @@
 description: Scan dependencies and code for security vulnerabilities
 ---
 
-Delegate to the **vulnerability-scanner** agent. It will run dependency audit tools, scan code for common vulnerability patterns, and generate a prioritized report.
+## Step 1: Check for Existing Report
 
-**Saves report to `.ai/reports/vulnerability-scan-YYYY-MM-DD.md`**
+```bash
+ls .ai/reports/vulnerability-scan-*.md 2>/dev/null | tail -1
+```
+
+**If a report exists**: Read it. The findings and severity counts are deterministic — do not change them. Skip to Step 3.
+
+**If no report exists**: Proceed to Step 2.
+
+## Step 2: Generate Deterministic Report
+
+```bash
+npx vyuh-dxkit vulnerabilities . --json 2>/dev/null
+```
+
+**If the command succeeds**: Read the saved report from `.ai/reports/vulnerability-scan-YYYY-MM-DD.md`. Proceed to Step 3.
+
+**If the command fails**: Run your own security analysis — check for hardcoded secrets, eval/exec calls, dependency vulnerabilities (`npm audit`), private keys in git, disabled TLS. Note: "Findings are AI-estimated. Install `@vyuhlabs/dxkit` for deterministic scanning with gitleaks + semgrep."
+
+## Step 3: Enrich with Narrative
+
+Using the findings, add for each vulnerability:
+
+- **Risk explanation** — what an attacker could do with this
+- **Exploitation context** — is it remotely exploitable? requires repo access?
+- **Remediation steps** — specific code changes, commands, or migrations needed
+- **Priority rationale** — why fix this before others
+
+Add a **Remediation Plan** section:
+- Immediate (today) — rotate compromised credentials, remove private keys from git
+- This week — fix critical code vulnerabilities (eval, exec, TLS)
+- This sprint — address high/medium dependency CVEs
+
+**Do not change severity counts or finding details from the deterministic report.**
+
+Save to `.ai/reports/vulnerability-scan-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

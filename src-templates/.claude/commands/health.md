@@ -2,9 +2,52 @@
 description: Run a comprehensive codebase health audit (tests, quality, docs, security, DX)
 ---
 
-Delegate to the **health-auditor** agent. It will audit the codebase across 6 dimensions and provide an honest score with actionable recommendations.
+## Step 1: Check for Existing Report
 
-**Save the report to `.ai/reports/health-audit-YYYY-MM-DD.md`** (use today's date) so it can be tracked over time.
+Check if a deterministic report already exists:
+
+```bash
+ls .ai/reports/health-audit-*.md 2>/dev/null | tail -1
+```
+
+**If a report exists**: Read it. The scores and metrics are deterministic ground truth — do not change them. Skip to Step 3.
+
+**If no report exists**: Proceed to Step 2.
+
+## Step 2: Generate Deterministic Report
+
+Try the DXKit CLI first:
+
+```bash
+npx vyuh-dxkit health . --json 2>/dev/null
+```
+
+**If the command succeeds** (returns JSON with `summary.overallScore`):
+- The CLI saves a report to `.ai/reports/health-audit-YYYY-MM-DD.md`
+- Read that report. Proceed to Step 3.
+
+**If the command fails** (not installed or errors):
+- Run your own analysis: read source files, count tests, check for security issues, review documentation
+- Score each dimension 0-100 using your best judgment
+- Note in the report: "Scores are AI-estimated. Install `@vyuhlabs/dxkit` for deterministic reproducible scores."
+- Proceed to Step 3.
+
+## Step 3: Enrich with Narrative
+
+Using the metrics (from the existing report, CLI, or your own analysis), add to each dimension section:
+
+- **Strengths** — what's working (cite specific files and counts from the report)
+- **Weaknesses** — what needs attention (cite specific files and counts)
+- **Recommendations** — actionable fixes, ordered by urgency (Critical → High → Medium → Low)
+
+Add a **Prioritized Action Items** section at the end:
+- Immediate (week 1) — critical security and testing gaps
+- Short-term (weeks 2-4) — quality and documentation
+- Medium-term (months 2-3) — architecture and maintainability
+
+**If you have deterministic scores: keep all numbers exactly as reported. Add context and explanations only — do not re-score.**
+
+Save the enriched report to `.ai/reports/health-audit-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

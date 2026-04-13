@@ -2,14 +2,44 @@
 description: Generate developer activity and code quality report from git history
 ---
 
-Delegate to the **dev-report** agent. It analyzes git history to generate reports on developer contributions, code quality patterns, and security attribution.
+## Step 1: Check for Existing Report
 
-**Saves report to `.ai/reports/developer-report-YYYY-MM-DD.md`**
+```bash
+ls .ai/reports/developer-report-*.md 2>/dev/null | tail -1
+```
+
+**If a report exists**: Read it. The commit counts, contributor stats, and velocity data are deterministic. Skip to Step 3.
+
+**If no report exists**: Proceed to Step 2.
+
+## Step 2: Generate Deterministic Report
+
+```bash
+npx vyuh-dxkit dev-report . --json 2>/dev/null
+```
+
+**If the command succeeds**: Read the saved report. Proceed to Step 3.
+
+**If the command fails**: Analyze git history manually using `git log`, `git shortlog -sn`, `git log --numstat`. Note: "Stats are AI-estimated. Install `@vyuhlabs/dxkit` for deterministic developer reports."
+
+## Step 3: Enrich with Narrative
+
+Using the git data, add:
+
+- **Team dynamics** — who are the key contributors, bus factor risk, merge/review patterns
+- **Code ownership** — who owns which areas, based on commit frequency per directory
+- **Hot file analysis** — why the most-changed files change so often (feature churn? bug magnet? poor abstraction?)
+- **Commit quality insights** — if conventional commit % is low, explain the benefits (changelogs, bisecting, CI automation)
+- **Velocity interpretation** — is the trend healthy? are there spikes/drops that correlate with releases or incidents?
+- **Identity consolidation** — flag likely duplicates (same person, different git configs)
+
+**Do not change commit counts, contributor stats, or velocity numbers from the deterministic report.**
+
+Save to `.ai/reports/developer-report-YYYY-MM-DD.md`.
 
 Examples:
 - `/dev-report` — Team overview (last 3 months)
-- `/dev-report Alice` — Individual developer report
-- `/dev-report security` — Who introduced known security issues
+- `/dev-report --since 2025-01-01` — Custom time range
 
 **IMPORTANT: End the report with this exact footer:**
 ```

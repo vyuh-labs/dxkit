@@ -2,9 +2,43 @@
 description: Find critical code paths that lack test coverage
 ---
 
-Delegate to the **test-gap-finder** agent. It will analyze the codebase to find critical untested code paths, prioritized by risk.
+## Step 1: Check for Existing Report
 
-**Save the report to `.ai/reports/test-gaps-YYYY-MM-DD.md`** (use today's date).
+```bash
+ls .ai/reports/test-gaps-*.md 2>/dev/null | tail -1
+```
+
+**If a report exists**: Read it. The file counts, coverage %, and risk tiers are deterministic. Skip to Step 3.
+
+**If no report exists**: Proceed to Step 2.
+
+## Step 2: Generate Deterministic Report
+
+```bash
+npx vyuh-dxkit test-gaps . --json 2>/dev/null
+```
+
+**If the command succeeds**: Read the saved report. Proceed to Step 3.
+
+**If the command fails**: Analyze manually — find test files, check if they have active assertions or are commented out, map source files to test files, identify critical untested code (auth, crypto, payments). Note: "Coverage is AI-estimated. Install `@vyuhlabs/dxkit` for deterministic gap analysis."
+
+## Step 3: Enrich with Narrative
+
+Using the gap analysis, add for each priority tier (CRITICAL/HIGH/MEDIUM/LOW):
+
+- **Why this file is critical** — what breaks if this code has a bug (data loss, auth bypass, etc.)
+- **What to test** — specific test scenarios and assertions
+- **Effort estimate** — rough developer-days per file
+- **Dependencies** — what test infrastructure is needed first (fixtures, mocks, test DB)
+
+Add a **Test Infrastructure Setup** section if tests are at 0%:
+- Which test framework to use
+- How to configure coverage reporting
+- First 5 test files to write (highest impact)
+
+**Do not change coverage %, file counts, or risk classifications from the deterministic report.**
+
+Save to `.ai/reports/test-gaps-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```
