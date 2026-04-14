@@ -200,11 +200,16 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'health': {
       const targetPath = positionals[1] || cwd;
-      const { analyzeHealth } = await import('./analyzers');
+      const { analyzeHealth, analyzeHealthWithMetrics } = await import('./analyzers/health');
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeHealth(targetPath, { verbose: !!values.verbose });
+      // Detailed mode needs HealthMetrics for remediation planning; pull both.
+      const healthResult = values.detailed
+        ? analyzeHealthWithMetrics(targetPath, { verbose: !!values.verbose })
+        : { report: analyzeHealth(targetPath, { verbose: !!values.verbose }), metrics: null };
+      const report = healthResult.report;
+      const healthMetrics = healthResult.metrics;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -248,6 +253,18 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
           console.log('');
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed && healthMetrics) {
+            const { buildHealthDetailed, formatHealthDetailedMarkdown } =
+              await import('./analyzers/health/detailed');
+            const detailed = buildHealthDetailed(report, healthMetrics);
+            const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
 
         // Hint about missing tools (exclude project-side config errors)

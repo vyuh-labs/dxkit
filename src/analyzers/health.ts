@@ -100,8 +100,28 @@ export interface AnalyzeHealthOptions {
   verbose?: boolean;
 }
 
+/**
+ * Run a full health analysis on a repository, returning both the summary
+ * report and the underlying metrics. Used by --detailed to feed the
+ * remediation planner without re-running the tool gather.
+ */
+export function analyzeHealthWithMetrics(
+  repoPath: string,
+  options: AnalyzeHealthOptions = {},
+): { report: HealthReport; metrics: HealthMetrics } {
+  const report = analyzeHealthInternal(repoPath, options);
+  return report;
+}
+
 /** Run a full health analysis on a repository. */
 export function analyzeHealth(repoPath: string, options: AnalyzeHealthOptions = {}): HealthReport {
+  return analyzeHealthInternal(repoPath, options).report;
+}
+
+function analyzeHealthInternal(
+  repoPath: string,
+  options: AnalyzeHealthOptions = {},
+): { report: HealthReport; metrics: HealthMetrics } {
   const verbose = !!options.verbose;
 
   // Step 1: Detect stack
@@ -182,7 +202,7 @@ export function analyzeHealth(repoPath: string, options: AnalyzeHealthOptions = 
   const commitSha = run('git rev-parse --short HEAD 2>/dev/null', repoPath);
   const branch = run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath);
 
-  return {
+  const report: HealthReport = {
     repo: stack.projectName || path.basename(repoPath),
     analyzedAt: new Date().toISOString(),
     commitSha,
@@ -193,6 +213,7 @@ export function analyzeHealth(repoPath: string, options: AnalyzeHealthOptions = 
     toolsUsed: metrics.toolsUsed,
     toolsUnavailable: metrics.toolsUnavailable,
   };
+  return { report, metrics };
 }
 
 /** Merge language-specific metrics into the base, preferring non-null values. */
