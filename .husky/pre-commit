@@ -1,1 +1,1 @@
-bash scripts/check-architecture.sh && npx lint-staged && npm run typecheck
+bash scripts/check-architecture.sh && bash scripts/check-slop.sh && npx lint-staged && npm run typecheck
