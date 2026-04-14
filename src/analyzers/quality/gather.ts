@@ -15,7 +15,7 @@
 import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
-import { getGrepExcludeDirFlags } from '../tools/exclusions';
+import { getGrepExcludeDirFlags, EXCLUDED_SOURCE_PATHS } from '../tools/exclusions';
 import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { gatherNodeMetrics } from '../tools/node';
@@ -156,14 +156,17 @@ export function gatherHygieneMarkers(cwd: string): {
   staleFiles: string[];
   mixedLanguages: boolean;
 } {
-  // Use the grepCount pattern from generic.ts approach — write pattern to file
+  // Sum match counts across source files, excluding vendored paths.
+  // grep --exclude-dir handles basename dirs (node_modules etc.) at traversal.
+  // Path-based exclusions (public/assets, static/js) are post-filtered because
+  // grep's --exclude-dir only matches basenames, not paths.
   function grepCountSimple(pattern: string): number {
     const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
     fs.writeFileSync(patternFile, pattern);
-    // grep --exclude-dir prevents traversing node_modules etc. at search time (fast)
     const excludeDirs = getGrepExcludeDirFlags();
+    // grep -c gives `file:count`; sum counts for files outside vendored paths.
     const result = run(
-      `grep -rEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null | wc -l`,
+      `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
       cwd,
       60000,
     );
@@ -172,7 +175,18 @@ export function gatherHygieneMarkers(cwd: string): {
     } catch {
       /* ignore */
     }
-    return parseInt(result) || 0;
+    if (!result) return 0;
+    let total = 0;
+    for (const line of result.split('\n')) {
+      const idx = line.lastIndexOf(':');
+      if (idx < 0) continue;
+      const file = line.slice(0, idx);
+      const count = parseInt(line.slice(idx + 1), 10);
+      if (!count || !file) continue;
+      if (EXCLUDED_SOURCE_PATHS.some((p) => file.includes(p))) continue;
+      total += count;
+    }
+    return total;
   }
 
   // Stale files: vim swap, backup, temp files tracked in git
