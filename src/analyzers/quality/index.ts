@@ -21,7 +21,7 @@ export interface AnalyzeQualityOptions {
 }
 
 /** Compute slop score (0-100, higher = cleaner). */
-function computeSlopScore(m: QualityMetrics): number {
+export function computeSlopScore(m: QualityMetrics): number {
   let score = 100;
 
   // Duplication
