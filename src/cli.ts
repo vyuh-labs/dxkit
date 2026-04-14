@@ -368,6 +368,18 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
           console.log('');
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed) {
+            const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
+              await import('./analyzers/tests/detailed');
+            const detailed = buildTestGapsDetailed(report);
+            const detailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatTestGapsDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
       }
       break;
