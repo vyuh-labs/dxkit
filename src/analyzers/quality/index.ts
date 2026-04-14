@@ -4,6 +4,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
+import { timed } from '../tools/timing';
 import {
   gatherDuplication,
   gatherStructuralMetrics,
@@ -14,6 +15,10 @@ import {
 import { QualityReport, QualityMetrics } from './types';
 
 export type { QualityReport, QualityMetrics } from './types';
+
+export interface AnalyzeQualityOptions {
+  verbose?: boolean;
+}
 
 /** Compute slop score (0-100, higher = cleaner). */
 function computeSlopScore(m: QualityMetrics): number {
@@ -62,31 +67,35 @@ function computeSlopScore(m: QualityMetrics): number {
   return Math.max(0, Math.min(100, score));
 }
 
-export function analyzeQuality(repoPath: string): QualityReport {
+export function analyzeQuality(
+  repoPath: string,
+  options: AnalyzeQualityOptions = {},
+): QualityReport {
+  const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['grep', 'find'];
   const toolsUnavailable: string[] = [];
 
   // 1. Duplication (jscpd)
-  const dup = gatherDuplication(repoPath);
+  const dup = timed('jscpd', verbose, () => gatherDuplication(repoPath));
   if (dup.toolUsed) toolsUsed.push(dup.toolUsed);
   else toolsUnavailable.push('jscpd');
 
   // 2. Structural complexity (graphify)
-  const structure = gatherStructuralMetrics(repoPath);
+  const structure = timed('graphify', verbose, () => gatherStructuralMetrics(repoPath));
   if (structure.toolUsed) toolsUsed.push(structure.toolUsed);
   else toolsUnavailable.push('graphify');
 
   // 3. Comment ratio (cloc)
-  const comments = gatherCommentRatio(repoPath);
+  const comments = timed('cloc', verbose, () => gatherCommentRatio(repoPath));
   if (comments.toolUsed) toolsUsed.push(comments.toolUsed);
   else toolsUnavailable.push('cloc');
 
   // 4. Hygiene markers (grep)
-  const hygiene = gatherHygieneMarkers(repoPath);
+  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
 
   // 5. Lint (eslint/ruff)
-  const lint = gatherLintMetrics(repoPath);
+  const lint = timed('lint', verbose, () => gatherLintMetrics(repoPath));
   if (lint.tool) toolsUsed.push(lint.tool);
 
   const metrics: QualityMetrics = {

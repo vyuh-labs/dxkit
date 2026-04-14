@@ -41,6 +41,12 @@ function printUsage(): void {
     --force      Overwrite modified files (except evolved)
     --rescan     Re-run codebase analysis
 
+  ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report):')}
+    --json       Print report as JSON to stdout
+    --verbose    Print per-tool timing to stderr
+    --no-save    Skip writing the markdown report file
+    --since      Dev-report: start date (YYYY-MM-DD)
+
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
     npx vyuh-dxkit init --detect         # Auto-detect, just DX
@@ -67,6 +73,8 @@ export async function run(argv: string[]): Promise<void> {
       rescan: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       since: { type: 'string' },
+      verbose: { type: 'boolean', default: false },
+      'no-save': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -194,7 +202,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeHealth(targetPath);
+      const report = analyzeHealth(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -229,14 +237,16 @@ export async function run(argv: string[]): Promise<void> {
         }
         logger.dim(`Completed in ${elapsed}s`);
 
-        // Save markdown report
-        const reportDir = path.join(targetPath, '.ai', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
-        const reportPath = path.join(reportDir, `health-audit-${date}.md`);
-        fs.mkdirSync(reportDir, { recursive: true });
-        fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
-        console.log('');
-        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        // Save markdown report (unless --no-save)
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `health-audit-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
+          console.log('');
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        }
 
         // Hint about missing tools (exclude project-side config errors)
         const PROJECT_ISSUES = ['config error', 'legacy .eslintrc', 'no eslint config'];
@@ -268,7 +278,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit vulnerabilities');
       logger.info(`Scanning ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeSecurity(targetPath);
+      const report = analyzeSecurity(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -292,13 +302,15 @@ export async function run(argv: string[]): Promise<void> {
         }
         logger.dim(`Completed in ${elapsed}s`);
 
-        const reportDir = path.join(targetPath, '.ai', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
-        const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
-        fs.mkdirSync(reportDir, { recursive: true });
-        fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
-        console.log('');
-        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
+          console.log('');
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        }
       }
       break;
     }
@@ -309,7 +321,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit test-gaps');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeTestGaps(targetPath);
+      const report = analyzeTestGaps(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -331,13 +343,15 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
 
-        const reportDir = path.join(targetPath, '.ai', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
-        const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
-        fs.mkdirSync(reportDir, { recursive: true });
-        fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
-        console.log('');
-        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
+          console.log('');
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        }
       }
       break;
     }
@@ -348,7 +362,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit quality');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeQuality(targetPath);
+      const report = analyzeQuality(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -392,13 +406,15 @@ export async function run(argv: string[]): Promise<void> {
         }
         logger.dim(`Completed in ${elapsed}s`);
 
-        const reportDir = path.join(targetPath, '.ai', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
-        const reportPath = path.join(reportDir, `quality-review-${date}.md`);
-        fs.mkdirSync(reportDir, { recursive: true });
-        fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
-        console.log('');
-        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `quality-review-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
+          console.log('');
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        }
       }
       break;
     }
@@ -410,7 +426,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit dev-report');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeDevActivity(targetPath, sinceFlag);
+      const report = analyzeDevActivity(targetPath, sinceFlag, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -438,13 +454,15 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
 
-        const reportDir = path.join(targetPath, '.ai', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
-        const reportPath = path.join(reportDir, `developer-report-${date}.md`);
-        fs.mkdirSync(reportDir, { recursive: true });
-        fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
-        console.log('');
-        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `developer-report-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
+          console.log('');
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+        }
       }
       break;
     }

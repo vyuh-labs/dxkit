@@ -17,6 +17,7 @@ import { gatherGoMetrics } from './tools/go';
 import { gatherRustMetrics } from './tools/rust';
 import { gatherDotnetMetrics } from './tools/dotnet';
 import { gatherLayer2Parallel } from './tools/parallel';
+import { timed } from './tools/timing';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -93,34 +94,60 @@ function defaultMetrics(): HealthMetrics {
   };
 }
 
+/** Options for analyzeHealth. */
+export interface AnalyzeHealthOptions {
+  /** Print per-tool timing to stderr. */
+  verbose?: boolean;
+}
+
 /** Run a full health analysis on a repository. */
-export function analyzeHealth(repoPath: string): HealthReport {
+export function analyzeHealth(repoPath: string, options: AnalyzeHealthOptions = {}): HealthReport {
+  const verbose = !!options.verbose;
+
   // Step 1: Detect stack
-  const stack = detect(repoPath);
+  const stack = timed('detect', verbose, () => detect(repoPath));
 
   // Step 2: Gather metrics -- generic first, then language-specific, then optional
-  const generic = gatherGenericMetrics(repoPath);
+  const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
   // Layer 1: Language-specific tools
   if (stack.languages.node || stack.languages.nextjs) {
-    mergeMetrics(metrics, gatherNodeMetrics(repoPath));
+    mergeMetrics(
+      metrics,
+      timed('node (Layer 1)', verbose, () => gatherNodeMetrics(repoPath)),
+    );
   }
   if (stack.languages.python) {
-    mergeMetrics(metrics, gatherPythonMetrics(repoPath));
+    mergeMetrics(
+      metrics,
+      timed('python (Layer 1)', verbose, () => gatherPythonMetrics(repoPath)),
+    );
   }
   if (stack.languages.go) {
-    mergeMetrics(metrics, gatherGoMetrics(repoPath));
+    mergeMetrics(
+      metrics,
+      timed('go (Layer 1)', verbose, () => gatherGoMetrics(repoPath)),
+    );
   }
   if (stack.languages.rust) {
-    mergeMetrics(metrics, gatherRustMetrics(repoPath));
+    mergeMetrics(
+      metrics,
+      timed('rust (Layer 1)', verbose, () => gatherRustMetrics(repoPath)),
+    );
   }
   if (stack.languages.csharp) {
-    mergeMetrics(metrics, gatherDotnetMetrics(repoPath));
+    mergeMetrics(
+      metrics,
+      timed('dotnet (Layer 1)', verbose, () => gatherDotnetMetrics(repoPath)),
+    );
   }
 
   // Layer 2: Optional enhanced tools (run in parallel for speed)
-  mergeMetrics(metrics, gatherLayer2Parallel(repoPath));
+  mergeMetrics(
+    metrics,
+    timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose)),
+  );
 
   // Language breakdown -- prefer cloc data, fall back to detection
   metrics.languages = metrics.clocLanguages

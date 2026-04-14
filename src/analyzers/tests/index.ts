@@ -4,19 +4,28 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
+import { timed } from '../tools/timing';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
 import { TestGapsReport, SourceFile, TestFile } from './types';
 
 export type { TestGapsReport, SourceFile, TestFile } from './types';
 
-export function analyzeTestGaps(repoPath: string): TestGapsReport {
+export interface AnalyzeTestGapsOptions {
+  verbose?: boolean;
+}
+
+export function analyzeTestGaps(
+  repoPath: string,
+  options: AnalyzeTestGapsOptions = {},
+): TestGapsReport {
+  const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['find', 'grep', 'git'];
   const toolsUnavailable: string[] = [];
 
-  const testFiles = gatherTestFiles(repoPath);
-  const sourceFiles = gatherSourceFiles(repoPath);
-  matchTestsToSource(testFiles, sourceFiles);
+  const testFiles = timed('test-files', verbose, () => gatherTestFiles(repoPath));
+  const sourceFiles = timed('source-files', verbose, () => gatherSourceFiles(repoPath));
+  timed('match', verbose, () => matchTestsToSource(testFiles, sourceFiles));
 
   const activeTests = testFiles.filter((t) => t.status === 'active');
   const commentedOut = testFiles.filter((t) => t.status === 'commented-out');

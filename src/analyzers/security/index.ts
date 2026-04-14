@@ -4,10 +4,15 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
+import { timed } from '../tools/timing';
 import { gatherSecrets, gatherFileFindings, gatherCodePatterns, gatherDepVulns } from './gather';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 
 export type { SecurityReport, SecurityFinding } from './types';
+
+export interface AnalyzeSecurityOptions {
+  verbose?: boolean;
+}
 
 function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> {
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -15,26 +20,30 @@ function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> 
   return counts;
 }
 
-export function analyzeSecurity(repoPath: string): SecurityReport {
+export function analyzeSecurity(
+  repoPath: string,
+  options: AnalyzeSecurityOptions = {},
+): SecurityReport {
+  const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['find', 'git'];
   const toolsUnavailable: string[] = [];
 
   // 1. Secrets (gitleaks)
-  const secrets = gatherSecrets(repoPath);
+  const secrets = timed('gitleaks', verbose, () => gatherSecrets(repoPath));
   if (secrets.toolUsed) toolsUsed.push(secrets.toolUsed);
   else toolsUnavailable.push('gitleaks');
 
   // 2. File findings (private keys, .env)
-  const files = gatherFileFindings(repoPath);
+  const files = timed('file-findings', verbose, () => gatherFileFindings(repoPath));
 
   // 3. Code patterns (semgrep)
-  const code = gatherCodePatterns(repoPath);
+  const code = timed('semgrep', verbose, () => gatherCodePatterns(repoPath));
   if (code.toolUsed) toolsUsed.push(code.toolUsed);
   else toolsUnavailable.push('semgrep');
 
   // 4. Dependency CVEs (npm audit)
-  const deps = gatherDepVulns(repoPath);
+  const deps = timed('dep-audit', verbose, () => gatherDepVulns(repoPath));
   if (deps.tool) toolsUsed.push(deps.tool);
   else toolsUnavailable.push('npm-audit');
 

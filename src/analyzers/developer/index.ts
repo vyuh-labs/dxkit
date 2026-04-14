@@ -5,6 +5,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
+import { timed } from '../tools/timing';
 import {
   gatherContributors,
   gatherCommitQuality,
@@ -16,17 +17,30 @@ import { DevReport, ContributorStats } from './types';
 
 export type { DevReport, ContributorStats, HotFile, CommitQuality, WeeklyVelocity } from './types';
 
-export function analyzeDevActivity(repoPath: string, since?: string): DevReport {
+export interface AnalyzeDevActivityOptions {
+  verbose?: boolean;
+}
+
+export function analyzeDevActivity(
+  repoPath: string,
+  since?: string,
+  options: AnalyzeDevActivityOptions = {},
+): DevReport {
+  const verbose = !!options.verbose;
   const stack = detect(repoPath);
   // Default: last 3 months
   const sinceDate =
     since || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const summary = gatherSummary(repoPath, sinceDate);
-  const contributors = gatherContributors(repoPath, sinceDate);
-  const commitQuality = gatherCommitQuality(repoPath, sinceDate);
-  const hotFiles = gatherHotFiles(repoPath, sinceDate);
-  const velocity = gatherVelocity(repoPath, sinceDate);
+  const summary = timed('summary', verbose, () => gatherSummary(repoPath, sinceDate));
+  const contributors = timed('contributors', verbose, () =>
+    gatherContributors(repoPath, sinceDate),
+  );
+  const commitQuality = timed('commit-quality', verbose, () =>
+    gatherCommitQuality(repoPath, sinceDate),
+  );
+  const hotFiles = timed('hot-files', verbose, () => gatherHotFiles(repoPath, sinceDate));
+  const velocity = timed('velocity', verbose, () => gatherVelocity(repoPath, sinceDate));
 
   const nonMerge = summary.totalCommits - summary.mergeCommits;
   const mergeRatio =
