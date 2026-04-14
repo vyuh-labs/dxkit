@@ -45,6 +45,7 @@ function printUsage(): void {
     --json       Print report as JSON to stdout
     --verbose    Print per-tool timing to stderr
     --no-save    Skip writing the markdown report file
+    --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
     --since      Dev-report: start date (YYYY-MM-DD)
 
   ${logger.bold('Examples:')}
@@ -75,6 +76,7 @@ export async function run(argv: string[]): Promise<void> {
       since: { type: 'string' },
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
+      detailed: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -362,7 +364,10 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit quality');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeQuality(targetPath, { verbose: !!values.verbose });
+      const report = analyzeQuality(targetPath, {
+        verbose: !!values.verbose,
+        detailed: !!values.detailed,
+      });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -414,6 +419,18 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
           console.log('');
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed) {
+            const { buildQualityDetailed, formatQualityDetailedMarkdown } =
+              await import('./analyzers/quality/detailed');
+            const detailed = buildQualityDetailed(report);
+            const detailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `quality-review-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatQualityDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
       }
       break;

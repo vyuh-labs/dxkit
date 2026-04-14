@@ -19,9 +19,16 @@ import { getGrepExcludeDirFlags, EXCLUDED_SOURCE_PATHS } from '../tools/exclusio
 import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { gatherNodeMetrics } from '../tools/node';
-import { DuplicationStats } from './types';
+import { CloneGroup, DuplicationStats, FileOffender } from './types';
 
 // ─── jscpd: duplicate code ──────────────────────────────────────────────────
+
+interface JscpdDuplicate {
+  lines?: number;
+  tokens?: number;
+  firstFile?: { name?: string; start?: number; end?: number };
+  secondFile?: { name?: string; start?: number; end?: number };
+}
 
 interface JscpdReport {
   statistics: {
@@ -31,7 +38,29 @@ interface JscpdReport {
       percentage: number;
     };
   };
-  duplicates: Array<unknown>;
+  duplicates: JscpdDuplicate[];
+}
+
+/** Extract top N clone pairs sorted by size descending. */
+function topClonesFrom(duplicates: JscpdDuplicate[], limit = 15): CloneGroup[] {
+  return duplicates
+    .filter((d) => d.firstFile?.name && d.secondFile?.name && d.lines)
+    .map((d) => ({
+      lines: d.lines || 0,
+      tokens: d.tokens || 0,
+      a: {
+        file: d.firstFile!.name!,
+        startLine: d.firstFile!.start || 0,
+        endLine: d.firstFile!.end || 0,
+      },
+      b: {
+        file: d.secondFile!.name!,
+        startLine: d.secondFile!.start || 0,
+        endLine: d.secondFile!.end || 0,
+      },
+    }))
+    .sort((x, y) => y.lines - x.lines)
+    .slice(0, limit);
 }
 
 export function gatherDuplication(cwd: string): {
@@ -63,18 +92,58 @@ export function gatherDuplication(cwd: string): {
     const t = data.statistics?.total;
     if (!t) return { stats: null, toolUsed: 'jscpd' };
 
+    const duplicates = data.duplicates || [];
     return {
       stats: {
         totalLines: t.lines,
         duplicatedLines: t.duplicatedLines,
         percentage: Math.round(t.percentage * 100) / 100,
-        cloneCount: (data.duplicates || []).length,
+        cloneCount: duplicates.length,
+        topClones: topClonesFrom(duplicates),
       },
       toolUsed: 'jscpd',
     };
   } catch {
     return { stats: null, toolUsed: 'jscpd' };
   }
+}
+
+// ─── grep: per-file hygiene offender counts ─────────────────────────────────
+
+/**
+ * Count matches per file and return the top N offenders.
+ * Uses `grep -rc` which emits `file:count` per matched file.
+ */
+function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
+  const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
+  fs.writeFileSync(patternFile, pattern);
+  const excludeDirs = getGrepExcludeDirFlags();
+  const raw = run(
+    `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
+    cwd,
+    60000,
+  );
+  try {
+    fs.unlinkSync(patternFile);
+  } catch {
+    /* ignore */
+  }
+  if (!raw) return [];
+  const offenders: FileOffender[] = [];
+  for (const line of raw.split('\n')) {
+    const idx = line.lastIndexOf(':');
+    if (idx < 0) continue;
+    const file = line.slice(0, idx);
+    const count = parseInt(line.slice(idx + 1), 10);
+    if (!count || !file) continue;
+    // Skip vendored source paths (public/assets, static/js, etc.) — grep's
+    // --exclude-dir only matches basenames, so path-based exclusions are
+    // applied here as a post-filter.
+    if (EXCLUDED_SOURCE_PATHS.some((p) => file.includes(p))) continue;
+    offenders.push({ file, count });
+  }
+  offenders.sort((a, b) => b.count - a.count);
+  return offenders.slice(0, limit);
 }
 
 // ─── graphify: structural complexity ────────────────────────────────────────
@@ -147,6 +216,17 @@ export function gatherCommentRatio(cwd: string): {
 }
 
 // ─── grep: hygiene markers ──────────────────────────────────────────────────
+
+/** Collect per-file top offenders for detailed reports. Slow — only call when needed. */
+export function gatherHygieneTopOffenders(cwd: string): {
+  topConsoleFiles: FileOffender[];
+  topTodoFiles: FileOffender[];
+} {
+  return {
+    topConsoleFiles: grepPerFile(cwd, 'console\\.(log|error|warn)'),
+    topTodoFiles: grepPerFile(cwd, '(TODO|FIXME|HACK)'),
+  };
+}
 
 export function gatherHygieneMarkers(cwd: string): {
   todoCount: number;

@@ -10,6 +10,7 @@ import {
   gatherStructuralMetrics,
   gatherCommentRatio,
   gatherHygieneMarkers,
+  gatherHygieneTopOffenders,
   gatherLintMetrics,
 } from './gather';
 import { QualityReport, QualityMetrics } from './types';
@@ -18,6 +19,8 @@ export type { QualityReport, QualityMetrics } from './types';
 
 export interface AnalyzeQualityOptions {
   verbose?: boolean;
+  /** Populate top-offender lists for detailed reports (slower). */
+  detailed?: boolean;
 }
 
 /** Compute slop score (0-100, higher = cleaner). */
@@ -94,6 +97,11 @@ export function analyzeQuality(
   // 4. Hygiene markers (grep)
   const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
 
+  // 4b. Top hygiene offenders — only when --detailed (extra grep pass)
+  const topOffenders = options.detailed
+    ? timed('hygiene top offenders', verbose, () => gatherHygieneTopOffenders(repoPath))
+    : { topConsoleFiles: undefined, topTodoFiles: undefined };
+
   // 5. Lint (eslint/ruff)
   const lint = timed('lint', verbose, () => gatherLintMetrics(repoPath));
   if (lint.tool) toolsUsed.push(lint.tool);
@@ -118,6 +126,8 @@ export function analyzeQuality(
     staleFiles: hygiene.staleFiles,
     mixedLanguages: hygiene.mixedLanguages,
     slopScore: 0, // computed below
+    topConsoleFiles: topOffenders.topConsoleFiles,
+    topTodoFiles: topOffenders.topTodoFiles,
   };
 
   metrics.slopScore = computeSlopScore(metrics);
