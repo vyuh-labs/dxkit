@@ -176,6 +176,28 @@ export function gatherVelocity(cwd: string, since: string): WeeklyVelocity[] {
     .sort((a, b) => a.week.localeCompare(b.week));
 }
 
+// ─── Vague commit examples (for detailed report) ──────────────────────────
+
+const VAGUE_RE_EXPORT = /^(update|fix|change|wip|tmp|test|minor|misc|stuff|cleanup|tweaks?)$/i;
+
+export function gatherVagueCommitExamples(cwd: string, since: string, limit = 15): string[] {
+  const messages = run(
+    `git log --format='%s' --no-merges --since='${since}' HEAD 2>/dev/null`,
+    cwd,
+    30000,
+  );
+  if (!messages) return [];
+  const vague: string[] = [];
+  for (const msg of messages.split('\n').filter((l) => l.trim())) {
+    const trimmed = msg.trim();
+    if (VAGUE_RE_EXPORT.test(trimmed) || trimmed.split(/\s+/).length <= 2) {
+      vague.push(trimmed);
+      if (vague.length >= limit) break;
+    }
+  }
+  return vague;
+}
+
 // ─── Summary counts ─────────────────────────────────────────────────────────
 
 export function gatherSummary(

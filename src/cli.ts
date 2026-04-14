@@ -506,6 +506,23 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
           console.log('');
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed) {
+            const { buildDevDetailed, formatDevDetailedMarkdown } =
+              await import('./analyzers/developer/detailed');
+            const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
+            const sinceDate =
+              sinceFlag ||
+              new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const vague = gatherVagueCommitExamples(targetPath, sinceDate);
+            const detailed = buildDevDetailed(report, vague);
+            const detailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatDevDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
       }
       break;
