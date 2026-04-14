@@ -312,6 +312,21 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
           console.log('');
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed) {
+            const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
+              await import('./analyzers/security/detailed');
+            const detailed = buildSecurityDetailed(report);
+            const detailedMdPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.md`);
+            const detailedJsonPath = path.join(
+              reportDir,
+              `vulnerability-scan-${date}-detailed.json`,
+            );
+            fs.writeFileSync(detailedMdPath, formatSecurityDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
       }
       break;
