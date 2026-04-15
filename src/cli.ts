@@ -92,6 +92,9 @@ export async function run(argv: string[]): Promise<void> {
     return;
   }
 
+  // Route logger output to stderr in --json mode so stdout stays pure JSON.
+  logger.setJsonMode(!!values.json);
+
   const command = positionals[0] || 'init';
   const cwd = process.cwd();
 
