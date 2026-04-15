@@ -5,10 +5,11 @@ import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { timed } from '../tools/timing';
+import { loadCoverage } from '../tools/coverage';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
-import { TestGapsReport, SourceFile, TestFile } from './types';
+import { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
 
-export type { TestGapsReport, SourceFile, TestFile } from './types';
+export type { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
 
 export interface AnalyzeTestGapsOptions {
   verbose?: boolean;
@@ -27,6 +28,18 @@ export function analyzeTestGaps(
   const sourceFiles = timed('source-files', verbose, () => gatherSourceFiles(repoPath));
   timed('match', verbose, () => matchTestsToSource(testFiles, sourceFiles));
 
+  // Prefer real coverage from the project's test runner over filename matching.
+  // Any covered line for a source file implies `hasMatchingTest`, which
+  // rescues well-tested files whose test filenames don't match the source.
+  const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
+  if (coverage) {
+    toolsUsed.push(`coverage:${coverage.source}`);
+    for (const s of sourceFiles) {
+      const fc = coverage.files.get(s.path);
+      if (fc && fc.covered > 0) s.hasMatchingTest = true;
+    }
+  }
+
   const activeTests = testFiles.filter((t) => t.status === 'active');
   const commentedOut = testFiles.filter((t) => t.status === 'commented-out');
   const untested = sourceFiles.filter((s) => !s.hasMatchingTest);
@@ -34,11 +47,20 @@ export function analyzeTestGaps(
   const untestedByRisk = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const s of untested) untestedByRisk[s.risk]++;
 
-  // Effective coverage: % of source files that have active matching tests
-  const effectiveCoverage =
-    sourceFiles.length > 0
-      ? Math.round((sourceFiles.filter((s) => s.hasMatchingTest).length / sourceFiles.length) * 100)
-      : 0;
+  let coverageSource: CoverageSource = 'filename-match';
+  let effectiveCoverage: number;
+  if (coverage) {
+    coverageSource = coverage.source;
+    effectiveCoverage = Math.round(coverage.linePercent);
+  } else {
+    // Fallback: % of source files that have an active name-matched test.
+    effectiveCoverage =
+      sourceFiles.length > 0
+        ? Math.round(
+            (sourceFiles.filter((s) => s.hasMatchingTest).length / sourceFiles.length) * 100,
+          )
+        : 0;
+  }
 
   return {
     repo: stack.projectName || path.basename(repoPath),
@@ -50,6 +72,8 @@ export function analyzeTestGaps(
       activeTestFiles: activeTests.length,
       commentedOutFiles: commentedOut.length,
       effectiveCoverage,
+      coverageSource,
+      coverageSourceFile: coverage?.sourceFile,
       sourceFiles: sourceFiles.length,
       untestedCritical: untestedByRisk.critical,
       untestedHigh: untestedByRisk.high,
@@ -65,6 +89,20 @@ export function analyzeTestGaps(
     toolsUsed,
     toolsUnavailable,
   };
+}
+
+function coverageSourceLabel(source: CoverageSource, file?: string): string {
+  switch (source) {
+    case 'filename-match':
+      return 'filename match — install coverage pipeline for line-level truth';
+    case 'istanbul-summary':
+    case 'istanbul-final':
+      return `from ${file ?? 'istanbul artifact'}`;
+    case 'coverage-py':
+      return `from ${file ?? 'coverage.py'}`;
+    case 'go':
+      return `from ${file ?? 'go coverprofile'}`;
+  }
 }
 
 export function formatTestGapsReport(report: TestGapsReport, elapsed: string): string {
@@ -87,7 +125,9 @@ export function formatTestGapsReport(report: TestGapsReport, elapsed: string): s
   L.push(`| Test files found | ${s.testFiles} |`);
   L.push(`| Active test files | ${s.activeTestFiles} |`);
   L.push(`| Commented-out test files | ${s.commentedOutFiles} |`);
-  L.push(`| Effective coverage | **${s.effectiveCoverage}%** |`);
+  L.push(
+    `| Effective coverage | **${s.effectiveCoverage}%** (${coverageSourceLabel(s.coverageSource, s.coverageSourceFile)}) |`,
+  );
   L.push(`| Source files | ${s.sourceFiles} |`);
   L.push(`| Untested (CRITICAL) | ${s.untestedCritical} |`);
   L.push(`| Untested (HIGH) | ${s.untestedHigh} |`);

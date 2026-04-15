@@ -17,6 +17,7 @@ import { gatherGoMetrics } from './tools/go';
 import { gatherRustMetrics } from './tools/rust';
 import { gatherDotnetMetrics } from './tools/dotnet';
 import { gatherLayer2Parallel } from './tools/parallel';
+import { loadCoverage } from './tools/coverage';
 import { timed } from './tools/timing';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
@@ -168,6 +169,15 @@ function analyzeHealthInternal(
     metrics,
     timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose)),
   );
+
+  // Import real coverage when the project's test runner has produced an
+  // artifact. Lets the Testing dimension score against line-level truth
+  // instead of the filename-only fallback.
+  const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
+  if (coverage) {
+    metrics.coveragePercent = Math.round(coverage.linePercent);
+    metrics.toolsUsed.push(`coverage:${coverage.source}`);
+  }
 
   // Language breakdown -- prefer cloc data, fall back to detection
   metrics.languages = metrics.clocLanguages

@@ -18,6 +18,14 @@ export interface SourceFile {
   hasMatchingTest: boolean;
 }
 
+/** Where the `effectiveCoverage` number came from. */
+export type CoverageSource =
+  | 'filename-match' // No artifact found; inferred from test-file naming
+  | 'istanbul-summary'
+  | 'istanbul-final'
+  | 'coverage-py'
+  | 'go';
+
 export interface TestGapsReport {
   repo: string;
   analyzedAt: string;
@@ -27,7 +35,16 @@ export interface TestGapsReport {
     testFiles: number;
     activeTestFiles: number;
     commentedOutFiles: number;
-    effectiveCoverage: number; // 0-100 percentage
+    /**
+     * Headline coverage 0-100. When `coverageSource` is `filename-match`, this
+     * is the share of source files with a name-matched test. Otherwise it's
+     * the line-coverage percentage read from the artifact.
+     */
+    effectiveCoverage: number;
+    /** Which signal produced `effectiveCoverage`. */
+    coverageSource: CoverageSource;
+    /** Project-relative path of the artifact, when one was used. */
+    coverageSourceFile?: string;
     sourceFiles: number;
     untestedCritical: number;
     untestedHigh: number;
