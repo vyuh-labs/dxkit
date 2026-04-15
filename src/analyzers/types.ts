@@ -40,6 +40,8 @@ export interface HealthMetrics {
 
   secretFindings: number;
   secretDetails: Array<{ file: string; line: number; rule: string; severity: string }>;
+  /** Count of gitleaks findings filtered by `.dxkit-suppressions.json`. */
+  secretSuppressed?: number;
   evalCount: number;
   privateKeyFiles: number;
   envFilesInGit: number;

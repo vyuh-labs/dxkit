@@ -6,6 +6,7 @@ import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
+import { applySuppressions, loadSuppressions } from './suppressions';
 
 interface GitleaksFinding {
   RuleID: string;
@@ -57,9 +58,20 @@ export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
     // via the centralized isExcludedPath() predicate.
     const filtered = secretDetails.filter((d) => !isExcludedPath(cwd, d.file));
 
+    // Apply user-defined suppressions from `.dxkit-suppressions.json` so
+    // known-false positives (test fixtures, approved exceptions) don't count.
+    const suppressions = loadSuppressions(cwd);
+    const { kept, suppressed } = applySuppressions(
+      filtered,
+      suppressions.gitleaks,
+      (d) => d.rule,
+      (d) => d.file,
+    );
+
     return {
-      secretFindings: filtered.length,
-      secretDetails: filtered,
+      secretFindings: kept.length,
+      secretDetails: kept,
+      secretSuppressed: suppressed.length,
       toolsUsed: ['gitleaks'],
     };
   } catch {
