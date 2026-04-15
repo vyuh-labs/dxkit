@@ -12,7 +12,7 @@ import * as path from 'path';
 import { detect } from '../../detect';
 import { run, fileExists } from '../tools/runner';
 import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';
-import { getFindExcludeFlags, getSemgrepExcludeFlags } from '../tools/exclusions';
+import { getFindExcludeFlags, getSemgrepExcludeFlags, isExcludedPath } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 
 // ─── gitleaks: secrets ───────────────────────────────────────────────────────
@@ -46,13 +46,13 @@ export function gatherSecrets(cwd: string): {
     const entries = JSON.parse(raw) as GitleaksEntry[];
     if (!Array.isArray(entries)) return { findings: [], toolUsed: 'gitleaks' };
 
+    // Post-filter via the centralized exclusions predicate so we never drift
+    // between tools on what counts as "ignored".
     const findings: SecurityFinding[] = entries
-      .filter(
-        (e) =>
-          !e.File.includes('/node_modules/') &&
-          !e.File.includes('/dist/') &&
-          !e.File.includes('.min.'),
-      )
+      .filter((e) => {
+        const relPath = e.File.replace(cwd + '/', '').replace(cwd, '');
+        return !isExcludedPath(cwd, relPath);
+      })
       .map((e) => ({
         severity: e.RuleID === 'private-key' ? ('critical' as const) : ('high' as const),
         category: 'secret' as const,
@@ -74,7 +74,7 @@ export function gatherSecrets(cwd: string): {
 
 export function gatherFileFindings(cwd: string): SecurityFinding[] {
   const findings: SecurityFinding[] = [];
-  const EXCLUDE = getFindExcludeFlags(false); // don't exclude source paths for security scanning
+  const EXCLUDE = getFindExcludeFlags(cwd, false); // don't exclude source paths for security scanning
 
   // Private key / cert files on disk
   const keyFiles = run(`find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE} 2>/dev/null`, cwd);
@@ -155,7 +155,7 @@ export function gatherCodePatterns(cwd: string): {
   const stack = detect(cwd);
   const rulesets = getSemgrepRulesets(stack.languages);
   const configs = rulesets.map((r) => `--config ${r}`).join(' ');
-  const excludes = getSemgrepExcludeFlags();
+  const excludes = getSemgrepExcludeFlags(cwd);
 
   const reportPath = `/tmp/dxkit-semgrep-${Date.now()}.json`;
   run(

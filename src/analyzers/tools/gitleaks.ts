@@ -5,6 +5,7 @@
 import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
+import { isExcludedPath } from './exclusions';
 
 interface GitleaksFinding {
   RuleID: string;
@@ -51,11 +52,10 @@ export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
       severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
     }));
 
-    // Filter out dist/ and node_modules/ findings
-    const filtered = secretDetails.filter(
-      (d) =>
-        !d.file.includes('node_modules/') && !d.file.includes('dist/') && !d.file.includes('.min.'),
-    );
+    // Post-filter using project exclusions. Gitleaks --no-git scans everything
+    // on disk (ignores .gitignore), so we re-apply the resolved exclusion set
+    // via the centralized isExcludedPath() predicate.
+    const filtered = secretDetails.filter((d) => !isExcludedPath(cwd, d.file));
 
     return {
       secretFindings: filtered.length,

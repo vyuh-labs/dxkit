@@ -25,7 +25,9 @@ interface GraphifyResult {
   sourceFilesInGraph: number;
 }
 
-const GRAPHIFY_SCRIPT = `# Exclusion set derived from src/analyzers/tools/exclusions.ts
+/** Build the graphify Python script with cwd-specific exclusions baked in. */
+function buildGraphifyScript(cwd: string): string {
+  return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
 import json, sys, os, tempfile
 from pathlib import Path
 from collections import Counter
@@ -45,7 +47,7 @@ except ImportError:
 target = Path(sys.argv[1])
 
 # collect_files doesn't exclude node_modules etc, so filter manually
-EXCLUDE_DIRS = ${getPythonExcludeSet()}
+EXCLUDE_DIRS = ${getPythonExcludeSet(cwd)}
 all_files = collect_files(target)
 files = [f for f in all_files if not any(ex in f.parts for ex in EXCLUDE_DIRS)]
 if not files:
@@ -139,6 +141,7 @@ print(json.dumps({
     "sourceFilesInGraph": total_src,
 }))
 `;
+}
 
 /** Gather AST-derived metrics via graphify. */
 export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
@@ -150,7 +153,7 @@ export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
 
   // Write script to temp file to avoid shell escaping issues
   const scriptPath = `/tmp/dxkit-graphify-${Date.now()}.py`;
-  fs.writeFileSync(scriptPath, GRAPHIFY_SCRIPT);
+  fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
   // Redirect stderr to suppress progress output, run from /tmp to avoid writing to target
   const output = run(`cd /tmp && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`, cwd, 120000);
   try {

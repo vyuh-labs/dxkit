@@ -18,7 +18,7 @@ const SKIP_KEYS = new Set(['header', 'SUM']);
 export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
   // cloc uses basename matching for --exclude-dir, so use dir names without slashes
-  const excludeDirs = getClocExcludeDirs();
+  const excludeDirs = getClocExcludeDirs(cwd);
   const flags = `--json --timeout 0 --exclude-dir=${excludeDirs}`;
 
   // Try system cloc first (faster), then npx as fallback

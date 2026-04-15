@@ -11,7 +11,8 @@ import { run, countLines } from '../tools/runner';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { TestFile, SourceFile, RiskTier } from './types';
 
-const EXCLUDE = getFindExcludeFlags();
+// EXCLUDE is computed per-cwd inside each gather function to honor
+// project-specific .gitignore / .dxkit-ignore entries.
 
 // Patterns for security-critical files (CRITICAL risk)
 const CRITICAL_PATTERNS = [
@@ -36,6 +37,7 @@ const CRITICAL_PATTERNS = [
 // ─── Test file discovery ────────────────────────────────────────────────────
 
 export function gatherTestFiles(cwd: string): TestFile[] {
+  const EXCLUDE = getFindExcludeFlags(cwd);
   // Find test files by naming convention
   const testPatterns =
     '\\( -name "*.test.*" -o -name "*.spec.*" -o -name "*_test.*" -o -name "test_*" \\)';
@@ -135,6 +137,7 @@ function detectTestFramework(fullPath: string): string | null {
 // ─── Source file discovery + risk classification ────────────────────────────
 
 export function gatherSourceFiles(cwd: string): SourceFile[] {
+  const EXCLUDE = getFindExcludeFlags(cwd);
   const SOURCE_EXTS =
     '\\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" ' +
     '-o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.cs" \\)';

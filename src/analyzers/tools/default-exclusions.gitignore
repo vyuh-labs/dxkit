@@ -1,0 +1,56 @@
+# Default exclusions for dxkit analyzers — gitignore format.
+# Shipped with dxkit; always applied. Union'd with the project's .gitignore
+# and optional .dxkit-ignore.
+#
+# Edit this file (or add entries to a project-local .dxkit-ignore) to tune
+# what gets scanned. Rules:
+#   - Blank lines and `#` comments are ignored.
+#   - `foo/`         → directory (matches any `foo` dir anywhere in the tree)
+#   - `foo/bar/`     → multi-segment path (matches the nested path exactly)
+#   - `*.log`        → file-glob pattern
+#   - Lines starting with `!` (negations) are not currently supported.
+
+# ─── Package managers & build artifacts ───────────────────────────────────
+node_modules/
+dist/
+build/
+vendor/
+target/
+bin/
+obj/
+
+# ─── VCS & caches ─────────────────────────────────────────────────────────
+.git/
+.cache/
+.next/
+.nuxt/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+coverage/
+
+# ─── Python environments & bytecode ───────────────────────────────────────
+__pycache__/
+.venv/
+venv/
+
+# ─── Scaffold / starter / template dirs ───────────────────────────────────
+# These contain code copied into user projects (not host project source).
+templates/
+src-templates/
+scaffold/
+scaffolds/
+
+# ─── Vendored front-end asset bundles ────────────────────────────────────
+public/assets/
+static/js/
+public/static/
+
+# ─── Minified / generated files ───────────────────────────────────────────
+*.min.js
+*.min.css
+*.bundle.js
+*.chunk.js
+*.generated.ts
+*.d.ts

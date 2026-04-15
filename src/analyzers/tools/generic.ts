@@ -31,7 +31,8 @@ function grepCount(cwd: string, pattern: string, includes: string[]): number {
   return parseInt(result) || 0;
 }
 
-const EXCLUDE = getFindExcludeFlags();
+// EXCLUDE moved inside gatherGenericMetrics() — must be computed per-cwd now
+// so it picks up project-specific .gitignore / .dxkit-ignore entries.
 
 const SOURCE_EXTS =
   '\\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" ' +
@@ -43,6 +44,8 @@ const TEST_PATTERNS =
 
 /** Gather metrics using only built-in Unix tools. */
 export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
+  const EXCLUDE = getFindExcludeFlags(cwd);
+
   // File counts
   const sourceFiles = countLines(`find . -type f ${SOURCE_EXTS} ${EXCLUDE}`, cwd);
   const testFiles = countLines(`find . -type f ${TEST_PATTERNS} ${EXCLUDE}`, cwd);
