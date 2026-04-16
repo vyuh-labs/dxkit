@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SUMMARY="coverage/coverage-summary.json"
-THRESHOLD="${DXKIT_COVERAGE_THRESHOLD:-30}"
+THRESHOLD="${DXKIT_COVERAGE_THRESHOLD:-50}"
 
 if [ ! -f "$SUMMARY" ]; then
   echo "⚠  No coverage report at $SUMMARY — run 'npm run test:coverage' first."

@@ -1,9 +1,11 @@
 /**
  * Integration tests for the 5 analyzer entry points.
  *
- * Creates a minimal but realistic temp repo and runs each analyzer against
- * it. This exercises the full pipeline (detect → gather → score → format)
- * and gives coverage across many modules in a single pass.
+ * Creates a minimal but realistic temp repo once, runs each analyzer once,
+ * and shares the report across all assertions — both the "does the
+ * analyzer return a valid report" tests and the formatter tests use the
+ * same cached report. This avoids double-paying the gitleaks/jscpd/etc.
+ * execution cost.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -11,7 +13,26 @@ import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 
+import { analyzeHealth, analyzeHealthWithMetrics } from '../../src/analyzers/health';
+import { HealthReport, HealthMetrics } from '../../src/analyzers/types';
+import { analyzeTestGaps, formatTestGapsReport } from '../../src/analyzers/tests';
+import { TestGapsReport } from '../../src/analyzers/tests/types';
+import { analyzeSecurity, formatSecurityReport } from '../../src/analyzers/security';
+import { SecurityReport } from '../../src/analyzers/security/types';
+import { analyzeQuality, formatQualityReport } from '../../src/analyzers/quality';
+import { QualityReport } from '../../src/analyzers/quality/types';
+import { analyzeDevActivity, formatDevReport } from '../../src/analyzers/developer';
+import { DevReport } from '../../src/analyzers/developer/types';
+
 let tmp: string;
+
+// One run per analyzer, shared across all `it` blocks.
+let healthReport: HealthReport;
+let healthMetrics: HealthMetrics;
+let testGapsReport: TestGapsReport;
+let securityReport: SecurityReport;
+let qualityReport: QualityReport;
+let devReport: DevReport;
 
 function writeFile(relPath: string, content: string): void {
   const abs = path.join(tmp, relPath);
@@ -67,155 +88,128 @@ beforeAll(() => {
     'import { describe, it } from "vitest";\ndescribe("auth", () => { it("works", () => {}); });\n',
   );
 
-  // README
   writeFile('README.md', '# Test Project\n\nA test project.\n');
-
-  // CI config
   writeFile(
     '.github/workflows/ci.yml',
     'name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n',
   );
-
-  // Docker
   writeFile('Dockerfile', 'FROM node:20\nCOPY . .\n');
-
-  // .env.example
   writeFile('.env.example', 'DATABASE_URL=postgres://...\n');
-
-  // Makefile
   writeFile('Makefile', 'build:\n\tnpm run build\n');
 
-  // Initial commit so git log works
   execSync('git add -A && git commit -m "init"', { cwd: tmp, stdio: 'pipe' });
-});
+
+  // Run each analyzer ONCE. Subsequent tests read the cached result.
+  // `analyzeHealthWithMetrics` gives us both the report and the metrics;
+  // the plain report is identical, so one call covers both.
+  const h = analyzeHealthWithMetrics(tmp);
+  healthReport = h.report;
+  healthMetrics = h.metrics;
+  testGapsReport = analyzeTestGaps(tmp);
+  securityReport = analyzeSecurity(tmp);
+  qualityReport = analyzeQuality(tmp);
+  devReport = analyzeDevActivity(tmp);
+}, 120000);
 
 afterAll(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 describe('analyzeHealth', () => {
-  it('produces a complete health report', async () => {
-    const { analyzeHealth } = await import('../../src/analyzers/health');
-    const report = analyzeHealth(tmp);
+  it('produces a complete health report', () => {
+    expect(healthReport.summary.overallScore).toBeGreaterThan(0);
+    expect(healthReport.summary.overallScore).toBeLessThanOrEqual(100);
+    expect(healthReport.summary.grade).toMatch(/^[A-F]$/);
 
-    expect(report.summary.overallScore).toBeGreaterThan(0);
-    expect(report.summary.overallScore).toBeLessThanOrEqual(100);
-    expect(report.summary.grade).toMatch(/^[A-F]$/);
+    expect(healthReport.dimensions.testing).toBeDefined();
+    expect(healthReport.dimensions.quality).toBeDefined();
+    expect(healthReport.dimensions.documentation).toBeDefined();
+    expect(healthReport.dimensions.security).toBeDefined();
+    expect(healthReport.dimensions.maintainability).toBeDefined();
+    expect(healthReport.dimensions.developerExperience).toBeDefined();
 
-    expect(report.dimensions.testing).toBeDefined();
-    expect(report.dimensions.quality).toBeDefined();
-    expect(report.dimensions.documentation).toBeDefined();
-    expect(report.dimensions.security).toBeDefined();
-    expect(report.dimensions.maintainability).toBeDefined();
-    expect(report.dimensions.developerExperience).toBeDefined();
-
-    for (const dim of Object.values(report.dimensions)) {
+    for (const dim of Object.values(healthReport.dimensions)) {
       expect(dim.score).toBeGreaterThanOrEqual(0);
       expect(dim.score).toBeLessThanOrEqual(100);
       expect(dim.status).toBeTruthy();
     }
 
-    expect(report.toolsUsed.length).toBeGreaterThan(0);
-    expect(report.toolsUsed).toContain('grep');
-    expect(report.toolsUsed).toContain('find');
+    expect(healthReport.toolsUsed.length).toBeGreaterThan(0);
+    expect(healthReport.toolsUsed).toContain('grep');
+    expect(healthReport.toolsUsed).toContain('find');
   });
 
-  it('produces health report with metrics for --detailed', async () => {
-    const { analyzeHealthWithMetrics } = await import('../../src/analyzers/health');
-    const { report, metrics } = analyzeHealthWithMetrics(tmp);
-    expect(report.summary.overallScore).toBeGreaterThan(0);
-    expect(metrics).toBeDefined();
-    expect(metrics!.sourceFiles).toBeGreaterThan(0);
-    expect(metrics!.testFiles).toBeGreaterThan(0);
-    expect(metrics!.readmeExists).toBe(true);
+  it('metrics struct has expected fields', () => {
+    expect(healthMetrics).toBeDefined();
+    expect(healthMetrics.sourceFiles).toBeGreaterThan(0);
+    expect(healthMetrics.testFiles).toBeGreaterThan(0);
+    expect(healthMetrics.readmeExists).toBe(true);
   });
 });
 
 describe('analyzeTestGaps', () => {
-  it('produces a test gaps report', async () => {
-    const { analyzeTestGaps } = await import('../../src/analyzers/tests');
-    const report = analyzeTestGaps(tmp);
+  it('produces a test gaps report', () => {
+    expect(testGapsReport.summary.sourceFiles).toBeGreaterThan(0);
+    expect(testGapsReport.summary.testFiles).toBeGreaterThan(0);
+    expect(testGapsReport.summary.activeTestFiles).toBeGreaterThan(0);
+    expect(testGapsReport.summary.effectiveCoverage).toBeGreaterThanOrEqual(0);
+    expect(testGapsReport.summary.effectiveCoverage).toBeLessThanOrEqual(100);
+    expect(testGapsReport.summary.coverageSource).toBeTruthy();
+    expect(testGapsReport.testFiles.length).toBeGreaterThan(0);
+    expect(testGapsReport.toolsUsed).toContain('find');
+  });
 
-    expect(report.summary.sourceFiles).toBeGreaterThan(0);
-    expect(report.summary.testFiles).toBeGreaterThan(0);
-    expect(report.summary.activeTestFiles).toBeGreaterThan(0);
-    expect(report.summary.effectiveCoverage).toBeGreaterThanOrEqual(0);
-    expect(report.summary.effectiveCoverage).toBeLessThanOrEqual(100);
-    expect(report.summary.coverageSource).toBeTruthy();
-    expect(report.testFiles.length).toBeGreaterThan(0);
-    expect(report.toolsUsed).toContain('find');
+  it('formatTestGapsReport produces valid markdown', () => {
+    const md = formatTestGapsReport(testGapsReport, '1.0');
+    expect(md).toContain('# Test Gap');
+    expect(md.length).toBeGreaterThan(100);
   });
 });
 
 describe('analyzeSecurity', () => {
-  it('produces a security report', async () => {
-    const { analyzeSecurity } = await import('../../src/analyzers/security');
-    const report = analyzeSecurity(tmp);
+  it('produces a security report', () => {
+    expect(securityReport.summary).toBeDefined();
+    expect(securityReport.summary.findings).toBeDefined();
+    expect(typeof securityReport.summary.findings.total).toBe('number');
+    expect(securityReport.toolsUsed.length).toBeGreaterThan(0);
+    expect(securityReport.toolsUsed).toContain('find');
+  });
 
-    expect(report.summary).toBeDefined();
-    expect(report.summary.findings).toBeDefined();
-    expect(typeof report.summary.findings.total).toBe('number');
-    expect(report.toolsUsed.length).toBeGreaterThan(0);
-    expect(report.toolsUsed).toContain('find');
+  it('formatSecurityReport produces valid markdown', () => {
+    const md = formatSecurityReport(securityReport, '1.0');
+    expect(md).toContain('Vulnerability');
+    expect(md.length).toBeGreaterThan(100);
   });
 });
 
 describe('analyzeQuality', () => {
-  it('produces a quality report with slop score', async () => {
-    const { analyzeQuality } = await import('../../src/analyzers/quality');
-    const report = analyzeQuality(tmp);
+  it('produces a quality report with slop score', () => {
+    expect(qualityReport.slopScore).toBeGreaterThanOrEqual(0);
+    expect(qualityReport.slopScore).toBeLessThanOrEqual(100);
+    expect(qualityReport.metrics).toBeDefined();
+    expect(typeof qualityReport.metrics.lintErrors).toBe('number');
+    expect(typeof qualityReport.metrics.consoleLogCount).toBe('number'); // slop-ok: testing console counting
+    expect(qualityReport.toolsUsed.length).toBeGreaterThan(0);
+  });
 
-    expect(report.slopScore).toBeGreaterThanOrEqual(0);
-    expect(report.slopScore).toBeLessThanOrEqual(100);
-    expect(report.metrics).toBeDefined();
-    expect(typeof report.metrics.lintErrors).toBe('number');
-    expect(typeof report.metrics.consoleLogCount).toBe('number'); // slop-ok: testing console counting
-    expect(report.toolsUsed.length).toBeGreaterThan(0);
+  it('formatQualityReport produces valid markdown', () => {
+    const md = formatQualityReport(qualityReport, '1.0');
+    expect(md).toContain('Quality');
+    expect(md.length).toBeGreaterThan(100);
   });
 });
 
 describe('analyzeDevActivity', () => {
-  it('produces a developer activity report', async () => {
-    const { analyzeDevActivity } = await import('../../src/analyzers/developer');
-    const report = analyzeDevActivity(tmp);
-
-    expect(report.summary.totalCommits).toBeGreaterThan(0);
-    expect(report.summary.contributors).toBeGreaterThan(0);
-    expect(report.toolsUsed).toContain('git');
-    expect(report.period.since).toBeTruthy();
-    expect(report.period.until).toBeTruthy();
-  });
-});
-
-describe('formatters', () => {
-  it('formatTestGapsReport produces valid markdown', async () => {
-    const { analyzeTestGaps, formatTestGapsReport } = await import('../../src/analyzers/tests');
-    const report = analyzeTestGaps(tmp);
-    const md = formatTestGapsReport(report, '1.0');
-    expect(md).toContain('# Test Gap');
-    expect(md.length).toBeGreaterThan(100);
+  it('produces a developer activity report', () => {
+    expect(devReport.summary.totalCommits).toBeGreaterThan(0);
+    expect(devReport.summary.contributors).toBeGreaterThan(0);
+    expect(devReport.toolsUsed).toContain('git');
+    expect(devReport.period.since).toBeTruthy();
+    expect(devReport.period.until).toBeTruthy();
   });
 
-  it('formatSecurityReport produces valid markdown', async () => {
-    const { analyzeSecurity, formatSecurityReport } = await import('../../src/analyzers/security');
-    const report = analyzeSecurity(tmp);
-    const md = formatSecurityReport(report, '1.0');
-    expect(md).toContain('Vulnerability');
-    expect(md.length).toBeGreaterThan(100);
-  });
-
-  it('formatQualityReport produces valid markdown', async () => {
-    const { analyzeQuality, formatQualityReport } = await import('../../src/analyzers/quality');
-    const report = analyzeQuality(tmp);
-    const md = formatQualityReport(report, '1.0');
-    expect(md).toContain('Quality');
-    expect(md.length).toBeGreaterThan(100);
-  });
-
-  it('formatDevReport produces valid markdown', async () => {
-    const { analyzeDevActivity, formatDevReport } = await import('../../src/analyzers/developer');
-    const report = analyzeDevActivity(tmp);
-    const md = formatDevReport(report, '1.0');
+  it('formatDevReport produces valid markdown', () => {
+    const md = formatDevReport(devReport, '1.0');
     expect(md).toContain('Developer');
     expect(md.length).toBeGreaterThan(100);
   });
