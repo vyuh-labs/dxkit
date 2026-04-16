@@ -95,7 +95,7 @@ afterAll(() => {
 
 describe('analyzeHealth', () => {
   it('produces a complete health report', async () => {
-    const { analyzeHealth } = await import('../src/analyzers/health');
+    const { analyzeHealth } = await import('../../src/analyzers/health');
     const report = analyzeHealth(tmp);
 
     expect(report.summary.overallScore).toBeGreaterThan(0);
@@ -121,7 +121,7 @@ describe('analyzeHealth', () => {
   });
 
   it('produces health report with metrics for --detailed', async () => {
-    const { analyzeHealthWithMetrics } = await import('../src/analyzers/health');
+    const { analyzeHealthWithMetrics } = await import('../../src/analyzers/health');
     const { report, metrics } = analyzeHealthWithMetrics(tmp);
     expect(report.summary.overallScore).toBeGreaterThan(0);
     expect(metrics).toBeDefined();
@@ -133,7 +133,7 @@ describe('analyzeHealth', () => {
 
 describe('analyzeTestGaps', () => {
   it('produces a test gaps report', async () => {
-    const { analyzeTestGaps } = await import('../src/analyzers/tests');
+    const { analyzeTestGaps } = await import('../../src/analyzers/tests');
     const report = analyzeTestGaps(tmp);
 
     expect(report.summary.sourceFiles).toBeGreaterThan(0);
@@ -149,7 +149,7 @@ describe('analyzeTestGaps', () => {
 
 describe('analyzeSecurity', () => {
   it('produces a security report', async () => {
-    const { analyzeSecurity } = await import('../src/analyzers/security');
+    const { analyzeSecurity } = await import('../../src/analyzers/security');
     const report = analyzeSecurity(tmp);
 
     expect(report.summary).toBeDefined();
@@ -162,7 +162,7 @@ describe('analyzeSecurity', () => {
 
 describe('analyzeQuality', () => {
   it('produces a quality report with slop score', async () => {
-    const { analyzeQuality } = await import('../src/analyzers/quality');
+    const { analyzeQuality } = await import('../../src/analyzers/quality');
     const report = analyzeQuality(tmp);
 
     expect(report.slopScore).toBeGreaterThanOrEqual(0);
@@ -176,7 +176,7 @@ describe('analyzeQuality', () => {
 
 describe('analyzeDevActivity', () => {
   it('produces a developer activity report', async () => {
-    const { analyzeDevActivity } = await import('../src/analyzers/developer');
+    const { analyzeDevActivity } = await import('../../src/analyzers/developer');
     const report = analyzeDevActivity(tmp);
 
     expect(report.summary.totalCommits).toBeGreaterThan(0);
@@ -189,7 +189,7 @@ describe('analyzeDevActivity', () => {
 
 describe('formatters', () => {
   it('formatTestGapsReport produces valid markdown', async () => {
-    const { analyzeTestGaps, formatTestGapsReport } = await import('../src/analyzers/tests');
+    const { analyzeTestGaps, formatTestGapsReport } = await import('../../src/analyzers/tests');
     const report = analyzeTestGaps(tmp);
     const md = formatTestGapsReport(report, '1.0');
     expect(md).toContain('# Test Gap');
@@ -197,7 +197,7 @@ describe('formatters', () => {
   });
 
   it('formatSecurityReport produces valid markdown', async () => {
-    const { analyzeSecurity, formatSecurityReport } = await import('../src/analyzers/security');
+    const { analyzeSecurity, formatSecurityReport } = await import('../../src/analyzers/security');
     const report = analyzeSecurity(tmp);
     const md = formatSecurityReport(report, '1.0');
     expect(md).toContain('Vulnerability');
@@ -205,7 +205,7 @@ describe('formatters', () => {
   });
 
   it('formatQualityReport produces valid markdown', async () => {
-    const { analyzeQuality, formatQualityReport } = await import('../src/analyzers/quality');
+    const { analyzeQuality, formatQualityReport } = await import('../../src/analyzers/quality');
     const report = analyzeQuality(tmp);
     const md = formatQualityReport(report, '1.0');
     expect(md).toContain('Quality');
@@ -213,7 +213,7 @@ describe('formatters', () => {
   });
 
   it('formatDevReport produces valid markdown', async () => {
-    const { analyzeDevActivity, formatDevReport } = await import('../src/analyzers/developer');
+    const { analyzeDevActivity, formatDevReport } = await import('../../src/analyzers/developer');
     const report = analyzeDevActivity(tmp);
     const md = formatDevReport(report, '1.0');
     expect(md).toContain('Developer');

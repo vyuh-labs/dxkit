@@ -1,8 +1,9 @@
-# Run tests with coverage, then enforce the threshold.
+# Build, run the unit suite with coverage, enforce threshold.
+# Integration tests live under test/integration/ and run via
+# `npm run test:integration` (or in CI) — too slow for every push.
+#
+# Coverage threshold reflects the full unit suite, not --changed scope,
+# so the number is meaningful (a partial run would underreport).
 npm run build
-if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-  npx vitest run --coverage --changed '@{u}'
-else
-  npx vitest run --coverage
-fi
+npx vitest run --coverage
 bash scripts/check-coverage.sh
