@@ -6,6 +6,7 @@ import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { timed } from '../tools/timing';
 import { loadCoverage } from '../tools/coverage';
+import { buildReachable } from './import-graph';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
 import { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
 
@@ -28,9 +29,12 @@ export function analyzeTestGaps(
   const sourceFiles = timed('source-files', verbose, () => gatherSourceFiles(repoPath));
   timed('match', verbose, () => matchTestsToSource(testFiles, sourceFiles));
 
-  // Prefer real coverage from the project's test runner over filename matching.
-  // Any covered line for a source file implies `hasMatchingTest`, which
-  // rescues well-tested files whose test filenames don't match the source.
+  // Signal precedence for test coverage:
+  //   1. Real coverage artifact (line-level truth from CI)
+  //   2. Import-graph reachability (which source files a test imports)
+  //   3. Filename match (the `matchTestsToSource` call above)
+  //
+  // Each higher layer rescues files from the gaps list when it has evidence.
   const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
   if (coverage) {
     toolsUsed.push(`coverage:${coverage.source}`);
@@ -38,6 +42,20 @@ export function analyzeTestGaps(
       const fc = coverage.files.get(s.path);
       if (fc && fc.covered > 0) s.hasMatchingTest = true;
     }
+  }
+
+  // Import-graph: a source file reachable from any active test file via
+  // direct or transitive imports counts as tested. Complements filename
+  // matching — credits integration tests, shared fixtures, and tests named
+  // by behavior rather than by module.
+  const activeTestPaths = testFiles.filter((t) => t.status === 'active').map((t) => t.path);
+  const reached = timed('import-graph', verbose, () => buildReachable(activeTestPaths, repoPath));
+  const importGraphUsable = reached.size > 0;
+  if (importGraphUsable) {
+    for (const s of sourceFiles) {
+      if (reached.has(s.path)) s.hasMatchingTest = true;
+    }
+    toolsUsed.push('import-graph');
   }
 
   const activeTests = testFiles.filter((t) => t.status === 'active');
@@ -53,7 +71,10 @@ export function analyzeTestGaps(
     coverageSource = coverage.source;
     effectiveCoverage = Math.round(coverage.linePercent);
   } else {
-    // Fallback: % of source files that have an active name-matched test.
+    // No artifact — count the share of source files with any test signal.
+    // Label as 'import-graph' whenever we had usable import data, since it's
+    // the stronger signal (filename-match is a heuristic fallback).
+    if (importGraphUsable) coverageSource = 'import-graph';
     effectiveCoverage =
       sourceFiles.length > 0
         ? Math.round(
@@ -95,6 +116,8 @@ function coverageSourceLabel(source: CoverageSource, file?: string): string {
   switch (source) {
     case 'filename-match':
       return 'filename match — install coverage pipeline for line-level truth';
+    case 'import-graph':
+      return 'import-graph reachability — install coverage pipeline for line-level truth';
     case 'istanbul-summary':
     case 'istanbul-final':
       return `from ${file ?? 'istanbul artifact'}`;

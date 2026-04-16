@@ -20,7 +20,8 @@ export interface SourceFile {
 
 /** Where the `effectiveCoverage` number came from. */
 export type CoverageSource =
-  | 'filename-match' // No artifact found; inferred from test-file naming
+  | 'filename-match' // No artifact and no import-graph data available
+  | 'import-graph' // Derived from test files' import edges (up to N hops)
   | 'istanbul-summary'
   | 'istanbul-final'
   | 'coverage-py'
