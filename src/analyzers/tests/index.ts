@@ -29,31 +29,44 @@ export function analyzeTestGaps(
   const sourceFiles = timed('source-files', verbose, () => gatherSourceFiles(repoPath));
   timed('match', verbose, () => matchTestsToSource(testFiles, sourceFiles));
 
-  // Signal precedence for test coverage:
-  //   1. Real coverage artifact (line-level truth from CI)
-  //   2. Import-graph reachability (which source files a test imports)
-  //   3. Filename match (the `matchTestsToSource` call above)
+  // Signal precedence for test coverage (strongest wins for files it covers):
   //
-  // Each higher layer rescues files from the gaps list when it has evidence.
+  //   1. Coverage artifact — authoritative for files it has data for. If V8
+  //      says a file has 0 covered lines, the file is untested, even if the
+  //      filename heuristic or an import edge would suggest otherwise.
+  //   2. Import-graph reachability — credits files V8 didn't see (configs,
+  //      modules outside the coverage `include` glob).
+  //   3. Filename match (`matchTestsToSource` above) — last-resort heuristic
+  //      for files neither V8 nor the import graph has an opinion on.
+  //
+  // The coverage step OVERRIDES the prior filename-match decision rather
+  // than ORing with it; otherwise files like `cli.ts` get falsely credited
+  // by basename similarity to `cli-init.test.ts`, even though V8 measured
+  // them at 0%.
   const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
   if (coverage) {
     toolsUsed.push(`coverage:${coverage.source}`);
     for (const s of sourceFiles) {
       const fc = coverage.files.get(s.path);
-      if (fc && fc.covered > 0) s.hasMatchingTest = true;
+      if (fc !== undefined) {
+        s.hasMatchingTest = fc.covered > 0;
+      }
+      // Files not in the artifact fall through to import-graph below.
     }
   }
 
   // Import-graph: a source file reachable from any active test file via
-  // direct or transitive imports counts as tested. Complements filename
-  // matching — credits integration tests, shared fixtures, and tests named
-  // by behavior rather than by module.
+  // direct or transitive imports counts as tested. Skips files V8 already
+  // measured (their decision is authoritative); credits the rest.
   const activeTestPaths = testFiles.filter((t) => t.status === 'active').map((t) => t.path);
   const reached = timed('import-graph', verbose, () => buildReachable(activeTestPaths, repoPath));
   const importGraphUsable = reached.size > 0;
   if (importGraphUsable) {
     for (const s of sourceFiles) {
-      if (reached.has(s.path)) s.hasMatchingTest = true;
+      const measuredByCoverage = coverage?.files.has(s.path) ?? false;
+      if (!measuredByCoverage && reached.has(s.path)) {
+        s.hasMatchingTest = true;
+      }
     }
     toolsUsed.push('import-graph');
   }
