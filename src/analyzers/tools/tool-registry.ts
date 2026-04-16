@@ -24,6 +24,12 @@ export interface ToolDefinition extends ToolRequirement {
   binaries: string[];
   /** Extra absolute paths to probe (e.g. venv, system locations). */
   probePaths?: string[];
+  /**
+   * For tools that are node packages without a CLI binary (e.g. vitest
+   * plugins). When set, detection checks for `node_modules/<pkg>/package.json`
+   * instead of scanning PATH / .bin. Takes precedence over binary search.
+   */
+  nodePackage?: string;
   /** Platform-specific install commands. */
   installCommands: {
     macos?: string;
@@ -125,6 +131,12 @@ function findInProjectNodeModules(binary: string, cwd: string): string | null {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+/** Check project-local node_modules for a package without a CLI binary. */
+function findNodePackage(pkg: string, cwd: string): string | null {
+  const candidate = path.join(cwd, 'node_modules', pkg, 'package.json');
+  return fs.existsSync(candidate) ? path.join(cwd, 'node_modules', pkg) : null;
+}
+
 /** Special-case: check if graphify Python module is importable. */
 function findGraphifyPython(cwd: string): string | null {
   const pythonCandidates = [
@@ -169,6 +181,21 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
         requirement: def,
       };
     }
+    return {
+      name: def.name,
+      available: false,
+      path: null,
+      version: null,
+      source: 'missing',
+      requirement: def,
+    };
+  }
+
+  // Node packages without a CLI binary (e.g. vitest plugins):
+  if (def.nodePackage && cwd) {
+    const pkgPath = findNodePackage(def.nodePackage, cwd);
+    if (pkgPath) return makeStatus(def, pkgPath, 'probe');
+    // Nothing more to check — the package has no binary.
     return {
       name: def.name,
       available: false,
@@ -483,6 +510,43 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'winget install Microsoft.DotNet.SDK.8',
     },
   },
+
+  // ── Coverage providers ──────────────────────────────────────────────────
+  'vitest-coverage': {
+    name: 'vitest-coverage',
+    description: 'Vitest V8 coverage provider (produces Istanbul-compatible JSON)',
+    install: 'npm install --save-dev @vitest/coverage-v8',
+    check: 'node -e "require(\'@vitest/coverage-v8\')"',
+    for: 'node',
+    layer: 'language',
+    binaries: [],
+    nodePackage: '@vitest/coverage-v8',
+    installCommands: {
+      // Version must match installed vitest major — auto-detect it.
+      macos:
+        "npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
+      linux:
+        "npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
+      windows: 'npm install --save-dev @vitest/coverage-v8',
+    },
+  },
+  'coverage-py': {
+    name: 'coverage-py',
+    description: 'Python line-level coverage (produces coverage.json)',
+    install: 'pip install coverage',
+    check: 'coverage --version',
+    for: 'python',
+    layer: 'language',
+    binaries: ['coverage'],
+    versionCheck: 'coverage --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install coverage && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/coverage ~/.local/bin/coverage',
+      linux:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install coverage && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/coverage ~/.local/bin/coverage',
+      windows: 'pip install --user coverage',
+    },
+  },
 };
 
 // =============================================================================
@@ -504,10 +568,10 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
   ];
 
   if (languages.node || languages.nextjs) {
-    names.push('eslint', 'npm-audit');
+    names.push('eslint', 'npm-audit', 'vitest-coverage');
   }
   if (languages.python) {
-    names.push('ruff', 'pip-audit');
+    names.push('ruff', 'pip-audit', 'coverage-py');
   }
   if (languages.go) {
     names.push('golangci-lint', 'govulncheck');

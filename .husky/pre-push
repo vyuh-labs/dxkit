@@ -1,6 +1,8 @@
-# Run affected tests if there's an upstream to diff against, otherwise full suite.
+# Run tests with coverage, then enforce the threshold.
+npm run build
 if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-  npx vitest run --changed '@{u}'
+  npx vitest run --coverage --changed '@{u}'
 else
-  npx vitest run
+  npx vitest run --coverage
 fi
+bash scripts/check-coverage.sh
