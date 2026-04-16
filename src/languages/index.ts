@@ -1,10 +1,11 @@
 import type { LanguageId, LanguageSupport } from './types';
+import { csharp } from './csharp';
 import { python } from './python';
 import { typescript } from './typescript';
 
 export type { LanguageId, LanguageSupport, LintSeverity } from './types';
 
-export const LANGUAGES: readonly LanguageSupport[] = [python, typescript];
+export const LANGUAGES: readonly LanguageSupport[] = [python, typescript, csharp];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {
   return LANGUAGES.find((l) => l.id === id);

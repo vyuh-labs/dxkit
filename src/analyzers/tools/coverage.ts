@@ -19,7 +19,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export type CoverageSource = 'istanbul-summary' | 'istanbul-final' | 'coverage-py' | 'go';
+export type CoverageSource =
+  | 'istanbul-summary'
+  | 'istanbul-final'
+  | 'coverage-py'
+  | 'go'
+  | 'cobertura';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */

@@ -138,6 +138,8 @@ function coverageSourceLabel(source: CoverageSource, file?: string): string {
       return `from ${file ?? 'coverage.py'}`;
     case 'go':
       return `from ${file ?? 'go coverprofile'}`;
+    case 'cobertura':
+      return `from ${file ?? 'cobertura.xml'}`;
   }
 }
 
