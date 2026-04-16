@@ -7,6 +7,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This release transforms dxkit from a scaffolder into an analyzer-and-scaffolder.
+Five native CLI commands run deterministic analyses against any repo — no LLM
+required, reproducible scores, agent-consumable JSON output. The scaffolding
+capability is unchanged.
+
+### Added
+
+#### Native analyzer CLI (new primary capability)
+
+- **`vyuh-dxkit health [path]`** — 6-dimension score (Testing, Code Quality,
+  Documentation, Security, Maintainability, Developer Experience) with
+  overall grade A–F. Runs in 10–20s on mid-size repos.
+- **`vyuh-dxkit vulnerabilities [path]`** — gitleaks secret scan + semgrep SAST
+  + `npm audit` / `pip-audit` / `govulncheck` / `cargo-audit` dependency
+  vulnerabilities. Findings grouped by rule with severity + CWE category.
+- **`vyuh-dxkit test-gaps [path]`** — coverage artifact import with
+  import-graph reachability fallback. Ranks untested files by risk tier
+  (CRITICAL for auth/security, HIGH for large services, etc.).
+- **`vyuh-dxkit quality [path]`** — Slop score (0–100) combining lint errors,
+  `: any` density, console statements, TODO/FIXME, duplication % (jscpd),
+  comment ratio, and hygiene markers. Ranked remediation actions.
+- **`vyuh-dxkit dev-report [path]`** — git activity: commits, contributors,
+  hot files, merge ratio, conventional-commit compliance, weekly velocity.
+- **`--detailed` flag** on all analyzers — writes paired `<name>-detailed.md`
+  + `<name>-detailed.json` with Evidence (file, line, rule, tool) and
+  `RemediationAction<M>` entries ranked by projected score delta.
+- **`--json` flag** — pure JSON on stdout, logs on stderr for clean piping.
+- **`--verbose` flag** — per-tool timing to stderr.
+- **`--no-save` flag** — skip markdown output.
+- **`--since <date>`** (dev-report only) — bound the git activity window.
+
+#### Tool registry and installer
+
+- **`vyuh-dxkit tools`** — list detection status for all tools required by
+  the detected stack. Multi-path detection (PATH → brew → npm-g → pipx →
+  cargo → go → project `node_modules` → system probes).
+- **`vyuh-dxkit tools install [--yes]`** — interactive or non-interactive
+  install of missing tools via platform-specific commands (brew on macOS,
+  user-local on Linux). No `sudo` required; tools install to `~/.local/bin`
+  or equivalent.
+- **20 tools integrated** across 6 languages:
+  - Universal: `cloc`, `gitleaks`, `semgrep`, `jscpd`, `graphify`
+  - Node/TS: `eslint`, `npm audit`, `@vitest/coverage-v8`
+  - Python: `ruff`, `pip-audit`, `coverage` (coverage.py)
+  - Go: `golangci-lint`, `govulncheck`
+  - Rust: `clippy`, `cargo-audit`
+  - C#: `dotnet-format`
+- **`nodePackage` field** on `ToolDefinition` — detects Node packages that
+  have no CLI binary (e.g. vitest plugins) via `node_modules/<pkg>/package.json`.
+- **`runRegisteredTool()`** — sanctioned path to run any registered tool,
+  ensures all tool invocation goes through detection instead of hardcoded
+  binary paths.
+
+#### Coverage artifact import
+
+- **Istanbul** (`coverage/coverage-summary.json` + `coverage-final.json`) —
+  used by vitest, nyc, c8. Parses per-file line coverage + overall %.
+- **coverage.py** (`coverage.json`) — Python.
+- **Go coverprofile** (`coverage.out` / `cover.out`) — text format with
+  module-prefix path resolution.
+- Rust and C# planned.
+
+#### Import-graph test matching
+
+- **TS/JS extractor** — static imports, `import(...)` dynamic, `require()`,
+  `export * from` re-exports, multi-line imports, comment-stripping.
+- **Python extractor** — `import X`, `from X import Y`, relative-dot imports.
+- **Resolver** — relative-path resolution with extension fallback and
+  directory-as-`index.ts` probing (TS/JS) or `__init__.py` (Python).
+- **BFS walker** — up to 3 hops transitively, cycle-safe. External packages
+  are correctly skipped.
+- Go, Rust, C# extractors planned for next release.
+
+#### Suppressions
+
+- **`.dxkit-suppressions.json`** — silence known-false positives per tool
+  without editing code. Format:
+  ```json
+  {
+    "gitleaks": [
+      { "rule": "generic-api-key", "paths": ["test/fixtures/**"], "reason": "..." }
+    ]
+  }
+  ```
+- Glob matcher supports `**`, `*`, `?`. A finding is suppressed when rule
+  matches (exact or `*`) AND at least one path glob matches.
+- Wired to gitleaks. Semgrep and slop-hook integrations follow.
+
+#### CI + hooks hardening
+
+- **CI enforces everything pre-push does, plus slop-vs-base diff.**
+  `.github/workflows/ci.yml` now runs architecture check, slop check
+  (diffing against the PR base branch via `DXKIT_SLOP_BASE`), tests with
+  coverage, and coverage-threshold enforcement. `--no-verify` can no longer
+  ship code that introduces slop.
+- **`scripts/check-coverage.sh`** — reads `coverage/coverage-summary.json`,
+  fails if line coverage below threshold (default 50%, configurable via
+  `DXKIT_COVERAGE_THRESHOLD`). Wired into `.husky/pre-push` and CI.
+- **`scripts/check-slop.sh` CI mode** — when `DXKIT_SLOP_BASE` env var is
+  set, diffs against that ref instead of `--cached`. Pre-commit behavior
+  unchanged.
+
+#### Dogfood
+
+- dxkit's own line coverage raised from ~19% to 57% in the course of
+  building these analyzers. 284 tests across 15 files, all passing.
+  Coverage threshold of 50% enforced on every push and PR.
+
+### Changed
+
+- **`vitest.config.ts`** now generates Istanbul summary + JSON reporters when
+  `--coverage` is passed. Coverage output in `coverage/`.
+- **Signal precedence in `test-gaps`** — coverage artifact now *overrides*
+  filename match for files it measured. Previously all three signals OR'd
+  together, which wrongly credited files like `cli.ts` when a test had a
+  similar basename but didn't actually import the module. Now: artifact
+  authoritative where present, import-graph for files it didn't see,
+  filename-match as last resort.
+- **`.husky/pre-push`** — now runs `npm run build && vitest run --coverage &&
+  bash scripts/check-coverage.sh`. Previously ran `vitest run --changed @{u}`
+  without coverage.
+- **`--json` output** — clean JSON on stdout now. Previously the logger
+  header (`━━━ vyuh-dxkit ...`) leaked into stdout before the JSON payload.
+
+### Fixed
+
+- **`--json` stdout pollution** — `logger.header/info/success/warn/fail/dim/
+  detected` route to stderr when JSON mode is active.
+- **Filename matcher false positives** — `cli-init.test.ts` used to credit
+  `cli.ts` via basename similarity even though it doesn't import it in
+  process (uses `execFileSync`). After the precedence fix and import-graph
+  matcher, dxkit's `test-gaps` agrees with V8 on every measured file.
+- **Unused import warnings** — cleaned up six pre-existing unused imports
+  that CI's `--max-warnings 0` would now catch.
+
+### Internal / Architecture
+
+- New modules: `src/analyzers/tools/coverage.ts`, `tools/suppressions.ts`,
+  `tests/import-graph.ts`.
+- `HealthMetrics.coveragePercent` now populated from the imported artifact
+  when present; the existing Testing-dimension coverage bonus fires against
+  line-level truth instead of being null.
+- `HealthMetrics.secretSuppressed` — count of gitleaks findings filtered by
+  `.dxkit-suppressions.json`.
+- `ToolDefinition.nodePackage` — optional field for Node packages detected
+  via `node_modules/<pkg>/package.json` rather than a binary in `.bin`.
+- `vitest.integration.config.ts` — separate config for running only the
+  `test/integration/**` suite (kept for developers who want to run the slow
+  integration tests without the rest of the suite).
+
 ## [1.5.1] - 2026-04-10
 
 ### Fixed

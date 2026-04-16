@@ -1,350 +1,190 @@
 # @vyuhlabs/dxkit
 
-AI-native developer experience toolkit for any repository. Adds Claude Code agents, skills, commands, and quality hooks to existing projects in seconds.
+AI-native analyzer and scaffolder for any repository. Two modes in one CLI:
+
+1. **Analyze** any repo deterministically — health, security, test gaps, code quality, developer activity — in seconds, no LLM required.
+2. **Scaffold** `.claude/` agents, skills, commands, and hooks tuned to your stack.
+
+Built so agent-written code has deterministic guardrails before it ships. Scores don't move just because an LLM had a different mood today.
 
 ## Quick Start
 
+**Analyze an existing repo:**
+
 ```bash
-# Auto-detect your stack and set up everything
-npx @vyuhlabs/dxkit init --detect
-
-# Interactive mode (prompts for config)
-npx @vyuhlabs/dxkit init
-
-# Full mode (DX + quality + hooks + CI)
-npx @vyuhlabs/dxkit init --full --yes
+cd your-repo
+npx @vyuhlabs/dxkit tools install --yes      # one-time: install cloc, gitleaks, etc.
+npx @vyuhlabs/dxkit health --detailed         # 5-dimension score + remediation plan
+npx @vyuhlabs/dxkit vulnerabilities           # secret + SAST + dep-audit scan
+npx @vyuhlabs/dxkit test-gaps                 # import-graph + coverage-aware
 ```
 
-## What It Does
+**Scaffold AI tooling into a repo:**
 
-Running `init` auto-detects your tech stack and generates a complete `.claude/` directory with:
+```bash
+npx @vyuhlabs/dxkit init --detect             # auto-detect stack, minimal prompts
+npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks + CI
+```
+
+The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
+
+---
+
+## Analyzer CLI (`vyuh-dxkit <command>`)
+
+Five deterministic analyzers. Each emits a markdown report to `.ai/reports/` and optional structured JSON.
+
+| Command           | What it does                                                    | Runtime | Output                                     |
+| ----------------- | --------------------------------------------------------------- | ------- | ------------------------------------------ |
+| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX) | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
+| `vulnerabilities` | gitleaks + semgrep + `npm audit` / `pip-audit`                  | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
+| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)    | <1s     | `.ai/reports/test-gaps-<date>.md`          |
+| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene          | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
+| `dev-report`      | Commits, contributors, hot files, velocity, conventional %      | <1s     | `.ai/reports/developer-report-<date>.md`   |
+
+### Flags (apply to all analyzer commands)
+
+| Flag             | Effect                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions |
+| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                       |
+| `--verbose`      | Print per-tool timing to stderr                                                       |
+| `--no-save`      | Skip writing markdown; useful with `--json`                                           |
+| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                          |
+
+### Detailed mode — evidence + ranked fixes
+
+`--detailed` writes a second pair of files with:
+
+- **Per-dimension plans** with a prioritized fix list
+- **Evidence** for every finding (file, line, rule ID, tool, snippet)
+- **Projected score delta** for each remediation action — so you know which fix moves the needle most
+- **Canonical JSON** (`schemaVersion`) that agents or dashboards can consume
+
+### Signal precedence (for `test-gaps` and the Testing dimension in `health`)
+
+Three signals, strongest wins for files it covers:
+
+1. **Coverage artifact** — `coverage/coverage-summary.json` (Istanbul/nyc/c8/vitest), `coverage.json` (coverage.py), `coverage.out` (Go). If V8 measured a file, that decision is authoritative.
+2. **Import-graph reachability** — files transitively imported from an active test file (up to 3 hops). Rescues integration tests + behavior-named tests the filename matcher misses.
+3. **Filename match** — last-resort basename similarity.
+
+A file counts as "tested" when the strongest available signal says so.
+
+---
+
+## Tool Registry
+
+Analyzers delegate to established tools instead of reinventing them. `vyuh-dxkit tools` manages detection and installation across multiple methods (PATH, brew, npm-g, pipx, cargo, go, project `node_modules`, system probes).
+
+```bash
+vyuh-dxkit tools                              # list tool status for the detected stack
+vyuh-dxkit tools install --yes                # install all missing tools
+vyuh-dxkit tools install                      # interactive: prompts per tool
+```
+
+### Tools integrated
+
+| Layer     | Tools                                                    |
+| --------- | -------------------------------------------------------- |
+| Universal | `cloc`, `gitleaks`, `semgrep`, `jscpd`, `graphify` (AST) |
+| Node / TS | `eslint`, `npm audit`, `@vitest/coverage-v8`             |
+| Python    | `ruff`, `pip-audit`, `coverage` (coverage.py)            |
+| Go        | `golangci-lint`, `govulncheck`                           |
+| Rust      | `clippy`, `cargo-audit`                                  |
+| C#        | `dotnet-format` (via SDK)                                |
+
+Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
+
+---
+
+## Config Files
+
+### `.dxkit-ignore`
+
+Plain-text `.gitignore`-style file. Lines here are added to the analyzer's exclusion set on top of the bundled defaults and project `.gitignore`.
+
+```
+# .dxkit-ignore — override project exclusions for dxkit analyzers
+vendor-bundle/
+*.gen.ts
+```
+
+Three layers merge: bundled defaults → repo `.gitignore` → repo `.dxkit-ignore`.
+
+### `.dxkit-suppressions.json`
+
+Silence known-false positives without touching code. Currently wired to `gitleaks` (semgrep + slop-hook wiring in progress).
+
+```json
+{
+  "gitleaks": [
+    {
+      "rule": "generic-api-key",
+      "paths": ["test/fixtures/**", "**/*.test.ts"],
+      "reason": "Fake keys in test fixtures"
+    }
+  ]
+}
+```
+
+A finding is suppressed when its rule matches (exact string, or `*` for any) AND at least one path glob matches. Globs support `**`, `*`, `?`.
+
+### `.project.yaml` (optional, for scaffolding)
+
+When present (typically written by `@vyuhlabs/create-devstack`), `dxkit init` reads it as the config source — skipping detection and prompts. See [Scaffolding mode](#scaffolding-mode) below.
+
+---
+
+## Language Support
+
+| Language | Detection                            | Coverage import | Import-graph        | Native tools                       |
+| -------- | ------------------------------------ | --------------- | ------------------- | ---------------------------------- |
+| TS / JS  | `package.json`                       | ✅ Istanbul     | ✅                  | eslint, npm audit, vitest-coverage |
+| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py  | ✅                  | ruff, pip-audit, coverage          |
+| Go       | `go.mod`                             | ✅ coverprofile | ⚠ filename fallback | golangci-lint, govulncheck         |
+| Rust     | `Cargo.toml`                         | ⏳ planned      | ⚠ filename fallback | clippy, cargo-audit                |
+| C#       | `*.csproj`, `*.sln`                  | ⏳ planned      | ⚠ filename fallback | dotnet-format                      |
+
+✅ full support ⚠ partial (falls back to filename match) ⏳ planned
+
+Multi-language repos fully supported — every detected language's tools run. Language parity for Rust and C# is on the near roadmap.
+
+---
+
+## Scaffolding Mode
+
+Running `init` auto-detects your tech stack and generates a complete `.claude/` directory with 4 active + 17 opt-in agents, 30 slash commands, skills, path-scoped rules, and hooks.
 
 ```
 .claude/
-  settings.json          # Permissions, deny list, learning hooks
-  agents/                # Active agents (auto-trigger on matching questions)
-    knowledge-bot.md     # Answers codebase questions
-    onboarding.md        # Interactive onboarding buddy
-    quality-reviewer.md  # Reviews code before committing
-    doc-writer.md        # Audits and writes documentation
-  agents-available/      # Dormant agents (activate with /enable-agent)
-    codebase-explorer.md # Deep architecture analysis
-    code-reviewer.md     # PR review and security audit
-    test-writer.md       # Writes tests for existing code
-    test-gap-finder.md   # Identifies untested critical code
-    dependency-mapper.md # Maps import chains and blast radius
-    health-auditor.md    # 6-dimension codebase health audit
-    vulnerability-scanner.md # CWE-classified security scan (Snyk-comparable)
-    dev-report.md        # Developer activity + quality attribution
-    dashboard-builder.md # HTML dashboard from all reports
-    hooks-configurator.md # Git hooks from DXKit commands
-    debugger.md          # Root cause analysis
-  commands/              # 26 slash commands (see below)
-  skills/                # Domain knowledge
-    codebase/            # Auto-generated architecture overview
-    learned/             # Evolving gotchas, conventions, deny list
-  rules/                 # Path-scoped rules (per language + framework)
-CLAUDE.md                # Main context file for Claude Code
+  settings.json            # Permissions, deny list, learning hooks
+  agents/                  # Active agents (auto-trigger on matching questions)
+    knowledge-bot.md       # Answers codebase questions
+    onboarding.md          # Interactive onboarding buddy
+    quality-reviewer.md    # Reviews code before committing
+    doc-writer.md          # Audits and writes documentation
+  agents-available/        # 17 dormant agents (activate with /enable-agent)
+  commands/                # 30 slash commands
+  skills/                  # Domain knowledge
+  rules/                   # Path-scoped rules (per language + framework)
+CLAUDE.md                  # Main context file for Claude Code
 .ai/
-  sessions/              # Session checkpoints
-  reports/               # Generated reports (health, vulnerabilities, etc.)
-.github/
-  workflows/
-    pr-review.yml        # Automated PR review (opt-in)
+  sessions/                # Session checkpoints
+  reports/                 # Generated reports (health, vulnerabilities, etc.)
 ```
 
-## Supported Languages
+### Slash commands → native CLI delegation
 
-| Language             | Detection                            | Linters               | Test Runner                                   |
-| -------------------- | ------------------------------------ | --------------------- | --------------------------------------------- |
-| Node.js / TypeScript | `package.json`                       | ESLint, Prettier, tsc | Auto-detected (Jest, Mocha, Vitest, Ava, Tap) |
-| Python               | `pyproject.toml`, `setup.py`, `*.py` | ruff, mypy            | pytest                                        |
-| Go                   | `go.mod`                             | golangci-lint, go vet | go test                                       |
-| C#                   | `*.csproj`, `*.sln`                  | dotnet format, Roslyn | dotnet test                                   |
-| Rust                 | `Cargo.toml`                         | clippy, rustfmt       | cargo test                                    |
+The scaffolded slash commands (`/health`, `/vulnerabilities`, `/test-gaps`, `/quality`, `/dev-report`) use a three-tier fallback:
 
-Multi-language repos fully supported — detects and generates rules/commands for all languages present.
+1. **Check for an existing report** in `.ai/reports/` from today
+2. **Run `vyuh-dxkit <command>`** — deterministic, fast, same output
+3. **Fall back to LLM analysis** only if the CLI isn't available
 
-## Supported Frameworks
+This means slash commands return the same report whether invoked by a human or an agent — and the analysis is reproducible across runs.
 
-Auto-detected with framework-specific path-scoped rules:
-
-- **LoopBack** — Controller/model/repository patterns, decorator conventions
-- **Express** — Middleware/routing conventions, error handling patterns
-- **NestJS**, **Fastify**, **Koa**, **Hapi** — Detected (rules coming soon)
-- **FastAPI**, **Django**, **Flask** — Detected (rules coming soon)
-- **Gin**, **Echo**, **Fiber** — Detected (rules coming soon)
-
-## Supported Tools
-
-Auto-detected and integrated when present:
-
-- **Google Cloud** (gcloud) — SDK commands, security rules
-- **Infisical** — Secrets management, never-leak rules
-- **Pulumi** — IaC with preview-before-apply safety
-- **Docker** — Container commands
-
-## Commands (30)
-
-### Development Workflow
-
-| Command           | Description                                         |
-| ----------------- | --------------------------------------------------- |
-| `/session-start`  | Start an AI-assisted dev session                    |
-| `/session-end`    | End session, create checkpoint, evolve skills       |
-| `/ask <question>` | Ask about the codebase (delegates to knowledge-bot) |
-| `/learn`          | Capture a gotcha, convention, or thing to avoid     |
-
-### Quality & Testing
-
-| Command      | Description                                              |
-| ------------ | -------------------------------------------------------- |
-| `/quality`   | Run language-specific linters + AI review                |
-| `/test`      | Run tests (auto-detected runner)                         |
-| `/check`     | Full pre-commit validation (quality + tests + AI review) |
-| `/fix`       | Auto-fix formatting and lint issues                      |
-| `/build`     | Build the project                                        |
-| `/test-gaps` | Find critical untested code paths                        |
-
-### Analysis & Reports
-
-| Command            | Description                                    | Output                                |
-| ------------------ | ---------------------------------------------- | ------------------------------------- |
-| `/health`          | 6-dimension codebase health audit              | `.ai/reports/health-audit-*.md`       |
-| `/vulnerabilities` | CWE-classified security scan (Snyk-comparable) | `.ai/reports/vulnerability-scan-*.md` |
-| `/dev-report`      | Developer activity + security attribution      | `.ai/reports/developer-report-*.md`   |
-| `/docs audit`      | Documentation gap analysis                     | `.ai/reports/docs-audit-*.md`         |
-| `/deps`            | Dependency map + blast radius                  | `.ai/reports/dependency-map-*.md`     |
-| `/dashboard`       | Generate HTML dashboard from all reports       | `.ai/reports/dashboard.html`          |
-| `/export-pdf`      | Convert markdown reports to PDF                | `.ai/reports/*.pdf`                   |
-
-### Planning & Execution — Fix Loop
-
-| Command                | Description                                                 | Output                                 |
-| ---------------------- | ----------------------------------------------------------- | -------------------------------------- |
-| `/plan`                | Analyze reports → propose KPIs → generate improvement plans | `.ai/plans/`                           |
-| `/execute-plan <name>` | Execute a fix plan task by task with session checkpoints    | `.ai/plans/progress/`, `.ai/sessions/` |
-
-### Feature Development Loop
-
-| Command                  | Description                                        | Output                                    |
-| ------------------------ | -------------------------------------------------- | ----------------------------------------- |
-| `/feature <description>` | Design new feature → implementation plan           | `.ai/features/`                           |
-| `/build-feature <slug>`  | Build feature from plan with tests and conventions | `.ai/features/progress/`, `.ai/sessions/` |
-
-### Exploration & Onboarding
-
-| Command             | Description                                     |
-| ------------------- | ----------------------------------------------- |
-| `/onboarding`       | Interactive onboarding buddy for new developers |
-| `/explore-codebase` | Deep architecture exploration                   |
-| `/help`             | List all commands and agents                    |
-
-### Setup & Hooks
-
-| Command                | Description                                                                        |
-| ---------------------- | ---------------------------------------------------------------------------------- |
-| `/setup-hooks`         | Configure git hooks (quality, test, vulnerability) — consistent with DXKit reports |
-| `/stealth-mode`        | Gitignore DXKit files + install hooks (DXKit local-only, hooks for all devs)       |
-| `/setup-pr-review`     | Set up automated PR review GitHub Action                                           |
-| `/fix-issue <number>`  | Investigate and fix a GitHub issue                                                 |
-| `/doctor`              | Diagnose environment issues                                                        |
-| `/enable-agent <name>` | Activate a dormant agent                                                           |
-
-## Agents
-
-### Active by Default (4)
-
-These agents auto-trigger when Claude detects a matching question:
-
-- **knowledge-bot** — "How does auth work?" "Where are payments handled?"
-- **onboarding** — "I'm new, help me get started" "What does this project do?"
-- **quality-reviewer** — "Review my changes" "Check quality before I commit"
-- **doc-writer** — "What needs documentation?" "Help me write docs"
-
-### Dormant (16) — activate with `/enable-agent`
-
-- **codebase-explorer** — Deep architecture analysis, generates documentation
-- **code-reviewer** — PR review and security audit (read-only)
-- **test-writer** — Writes tests for existing code
-- **test-gap-finder** — Identifies critical untested code paths, prioritized by risk
-- **dependency-mapper** — Maps import chains and blast radius of changes
-- **health-auditor** — Comprehensive codebase health audit (scores 6 dimensions)
-- **vulnerability-scanner** — CWE-classified security scan with Snyk-comparable depth
-- **dev-report** — Developer activity, quality patterns, security attribution
-- **dashboard-builder** — Generates HTML dashboard from all reports
-- **strategic-planner** — Analyzes reports, proposes KPIs, generates improvement plans
-- **plan-executor** — Executes fix plans task by task with session checkpoints
-- **feature-planner** — Designs new features, generates implementation plans
-- **feature-builder** — Implements features from plans with tests and conventions
-- **hooks-configurator** — Configures scoped git hooks from DXKit commands
-- **debugger** — Systematic root cause analysis
-
-## Reports
-
-All analysis commands save timestamped reports to `.ai/reports/`:
-
-```bash
-.ai/reports/
-  health-audit-2026-03-30.md          # Scores: tests, quality, docs, security, DX
-  vulnerability-scan-2026-03-30.md     # CVEs, hardcoded secrets, dependency risks
-  developer-report-2026-03-30.md       # Team activity, ownership, security attribution
-  test-gaps-2026-03-30.md              # Critical untested code, prioritized by risk
-  docs-audit-2026-03-30.md             # Documentation gaps and recommendations
-  dependency-map-2026-03-30.md         # Import chains, most-depended-on files
-```
-
-Export options:
-
-- **HTML dashboard**: `/dashboard` — beautiful dark-themed dashboard with sidebar navigation
-- **PDF**: `/export-pdf all` — converts all reports to PDF
-
-## Learning System
-
-DXKit includes a continuous learning system that improves over time:
-
-1. **Stop Hook** — After each conversation, Claude is reminded to capture learnings
-2. **`/learn` command** — Explicitly save gotchas, conventions, or things to avoid
-3. **`/session-end`** — Creates checkpoint and evolves skill files
-4. **Evolving files** — Append-only, never overwritten even with `--force`:
-   - `.claude/skills/learned/references/gotchas.md`
-   - `.claude/skills/learned/references/conventions.md`
-   - `.claude/skills/learned/references/deny-recommendations.md`
-
-## PR Review Automation
-
-DXKit generates a GitHub Action that automatically reviews PRs using Claude Code:
-
-1. Set `ENABLE_AI_REVIEW=true` as a GitHub Actions variable
-2. Add `ANTHROPIC_API_KEY` to repo secrets
-
-Reviews appear as PR comments with issues rated as critical/warning/suggestion.
-
-## Git Hooks (Consistent with Reports)
-
-`/setup-hooks` configures git hooks that run the **exact same tools** as your DXKit reports:
-
-```
-commit  → pre-commit  → lint staged files only         (fast, ~5s)
-push    → pre-push    → test affected areas only        (medium, ~30s)
-PR      → CI workflow  → full quality + tests + security (thorough, ~3m)
-```
-
-- User chooses which checks to enable: quality, test, vulnerability
-- Hooks read from your `/quality`, `/test`, `/vulnerabilities` commands — no hardcoded tools
-- Supports scoped testing: Jest `--changedSince`, Vitest `--changed`, pytest `--testmon`
-- Works for all devs (plain bash, no Claude Code needed at runtime)
-
-### Stealth Mode
-
-`/stealth-mode` keeps DXKit local-only:
-
-- `.claude/`, `.ai/`, `CLAUDE.md` gitignored — not committed
-- `.githooks/` committed — all devs get the hooks
-- One-time setup: `git config core.hooksPath .githooks`
-
-## Vulnerability Scanner (Snyk-Comparable)
-
-The `/vulnerabilities` command runs a comprehensive security scan with CWE classification:
-
-| Category                 | CWE      | What It Checks                                           |
-| ------------------------ | -------- | -------------------------------------------------------- |
-| Command Injection        | CWE-78   | `exec()`, `child_process`, unsanitized input             |
-| Decompression Bomb       | CWE-409  | zlib/tar/decompress without size limits                  |
-| Uncontrolled Recursion   | CWE-674  | JSON/XML/YAML parsers without depth limits               |
-| Arbitrary File Upload    | CWE-434  | multer/formidable/busboy without validation              |
-| Buffer Overflow          | CWE-120  | Native modules (binding.gyp, .node files)                |
-| Resource Exhaustion      | CWE-770  | Missing rate limits, body size limits, WebSocket payload |
-| Hardcoded Secrets        | CWE-798  | Passwords, API keys, tokens in source                    |
-| Prototype Pollution      | CWE-1321 | Via dependency audit CWE extraction                      |
-| + 15 more CWE categories |          | Parsed from `npm audit --json` CWE fields                |
-
-Reports include a **Findings by CWE Category** table for direct comparison with Snyk/Sonar output.
-
-## Smart Detection
-
-- **Test runner** — Detects Jest, Mocha, Vitest, Ava, Tap, pytest, go test from scripts and dependencies
-- **Framework** — Detects LoopBack, Express, NestJS, FastAPI, Gin, etc. with framework-specific rules
-- **Test presence** — Counts test files vs source files, warns about minimal coverage
-- **Multi-language** — Detects all languages including Python from `.py` files (no config file required)
-- **Language breakdown** — Shows file count per language in codebase skill for accurate analysis
-
-## Using with create-devstack
-
-[`@vyuhlabs/create-devstack`](https://github.com/vyuh-labs/create-devstack) scaffolds dev environments (devcontainers, `.project.yaml`) and delegates to dxkit for everything else.
-
-When `create-devstack` writes a `.project.yaml` before calling `dxkit init`, dxkit reads it as the config source — skipping detection and prompts. This enables greenfield projects where no language files exist yet:
-
-```bash
-# create-devstack writes .project.yaml + .devcontainer/, then calls dxkit
-npm create @vyuhlabs/devstack my-project
-
-# Or manually: write .project.yaml first, then run dxkit
-npx @vyuhlabs/dxkit init --full
-# → dxkit reads .project.yaml, generates Makefile, configs, CI, .claude/
-```
-
-### .project.yaml schema
-
-```yaml
-project:
-  name: my-project
-  description: A web API
-languages:
-  python:
-    enabled: true
-    version: '3.12'
-    quality:
-      coverage: 80
-      lint: true
-  go:
-    enabled: true
-    version: '1.24.0'
-infrastructure:
-  postgres:
-    enabled: true
-    version: '16'
-tools:
-  claude_code: true
-  precommit: true
-  docker: true
-  gcloud: false
-```
-
-When `.project.yaml` is present, dxkit uses it to determine which languages, tools, and quality settings to generate. When absent, dxkit falls back to filesystem detection + interactive prompts as before.
-
-## Library API
-
-dxkit exports functions for programmatic use by other packages:
-
-```typescript
-import { detect, processTemplate, TemplateEngine } from '@vyuhlabs/dxkit';
-import { hasProjectYaml, readProjectYaml } from '@vyuhlabs/dxkit';
-
-// Detect stack from filesystem
-const stack = detect('/path/to/project');
-
-// Read .project.yaml as ResolvedConfig
-if (hasProjectYaml('/path/to/project')) {
-  const config = readProjectYaml('/path/to/project');
-}
-
-// Process templates
-const output = processTemplate('Hello {{PROJECT_NAME}}', vars, conditions);
-```
-
-## CLI Reference
-
-```bash
-npx @vyuhlabs/dxkit init --detect        # Auto-detect, minimal prompts
-npx @vyuhlabs/dxkit init                  # Interactive
-npx @vyuhlabs/dxkit init --full --yes     # Everything, no prompts
-npx @vyuhlabs/dxkit update               # Re-generate (preserves evolved files)
-npx @vyuhlabs/dxkit update --rescan      # Re-run codebase analysis
-npx @vyuhlabs/dxkit doctor               # Verify setup
-```
-
-### Init Options
+### Init flags
 
 | Flag         | Description                                           |
 | ------------ | ----------------------------------------------------- |
@@ -352,105 +192,91 @@ npx @vyuhlabs/dxkit doctor               # Verify setup
 | `--yes`      | Accept all defaults                                   |
 | `--dx-only`  | Just `.claude/` + `CLAUDE.md` (default)               |
 | `--full`     | Everything: DX + quality + hooks + CI                 |
-| `--force`    | Overwrite existing files (except evolved)             |
+| `--force`    | Overwrite existing files (except evolving ones)       |
 | `--stealth`  | Gitignore generated files (local-only, not committed) |
 | `--name <n>` | Override project name                                 |
 | `--no-scan`  | Skip codebase analysis                                |
 
-### Update Options
+### Stealth mode
 
-| Flag       | Description                               |
-| ---------- | ----------------------------------------- |
-| `--force`  | Overwrite modified files (except evolved) |
-| `--rescan` | Re-run codebase analysis                  |
+`--stealth` keeps DXKit local: `.claude/`, `.ai/`, `CLAUDE.md` added to `.gitignore`, only `.githooks/` committed so all devs get the hooks without committing the scaffold.
 
-### Commands
+---
 
-| Command  | Description                           |
-| -------- | ------------------------------------- |
-| `init`   | Initialize dxkit in a repo            |
-| `update` | Re-generate (preserves evolved files) |
-| `doctor` | Verify setup and diagnose issues      |
+## CI + Hooks
 
-### Config Source Priority
-
-1. `.project.yaml` (if present) — used as-is, no prompts
-2. `--detect` — auto-detect from filesystem, minimal prompts
-3. Interactive — prompt for all settings
-
-### Stealth Mode
-
-Use `--stealth` to keep generated files local. Only files created in this run are added to `.gitignore` — existing files are never touched.
-
-```bash
-# DX layer only, local-only
-npx @vyuhlabs/dxkit init --detect --stealth
-
-# Everything, local-only
-npx @vyuhlabs/dxkit init --full --yes --stealth
-```
-
-When used via `create-devstack --stealth`, the flag is passed through automatically.
-
-## Example: Node.js/TypeScript Project
-
-```bash
-cd my-loopback-app
-npx @vyuhlabs/dxkit init --detect --yes
-```
-
-Output:
+### Pre-commit (set up automatically by `init --full` or husky)
 
 ```
-✓ Languages: node
-✓ Framework: loopback
-✓ Tests: mocha (npm test)
-✓ Created: 61 files
+architecture check    → validates imports + tool-registry + exclusions rules
+slop check            → blocks new console.log, `: any`, debugger, committed temp files
+lint-staged           → eslint --fix + prettier --write on changed files
+typecheck             → tsc --noEmit
 ```
 
-Then in Claude Code:
+### Pre-push
 
 ```
-/help                                    # See everything
-/ask How does the auth middleware work?   # Codebase Q&A
-/health                                  # Full health audit
-/vulnerabilities                         # Security scan
-/dev-report                              # Team activity report
-/quality                                 # ESLint + AI review
-/onboarding                              # New developer guide
+build                 → ensure dist/ is current
+tests with coverage   → vitest run --coverage (or equivalent per language)
+coverage threshold    → scripts/check-coverage.sh; fails below configurable threshold
 ```
 
-## Example: Multi-Language Repo (Python + Go + TypeScript)
+### PR CI (`.github/workflows/ci.yml`)
 
-```bash
-cd my-monorepo
-npx @vyuhlabs/dxkit init --detect --yes
+Mirrors pre-push but also runs the slop check against the PR base branch, so `--no-verify` can't ship code that introduces slop. `DXKIT_SLOP_BASE=origin/<base_ref>` flips `check-slop.sh` into diff-vs-base mode.
+
+---
+
+## Quality Gates for Agent-Written Code
+
+dxkit's guiding principle: **deterministic guardrails that catch bad output regardless of who wrote it.** Scaffolded hooks + CI give every repo:
+
+1. **Pre-commit** — fast local checks (architecture, slop, lint, typecheck)
+2. **Pre-push** — thorough local checks (full suite + coverage threshold)
+3. **PR CI** — unbypassable server-side checks (everything above + slop-vs-base + pack-dry)
+4. **Coverage threshold** — enforced at both local and CI tiers; agents can't silently lower it
+
+The same pattern is what dxkit itself uses. See `scripts/check-coverage.sh` + `scripts/check-slop.sh`.
+
+---
+
+## Library API
+
+dxkit exports functions for programmatic use by downstream packages (e.g. `@vyuhlabs/create-devstack`):
+
+```typescript
+import { detect, processTemplate, TemplateEngine } from '@vyuhlabs/dxkit';
+import { hasProjectYaml, readProjectYaml } from '@vyuhlabs/dxkit';
+
+const stack = detect('/path/to/project');
+
+if (hasProjectYaml('/path/to/project')) {
+  const config = readProjectYaml('/path/to/project');
+}
+
+const output = processTemplate('Hello {{PROJECT_NAME}}', vars, conditions);
 ```
 
-Generates:
+The CLI binary (`vyuh-dxkit`) is separate; the library import is for build-time and programmatic consumers.
 
-- Quality commands with `npx eslint .` + `ruff check .` + `golangci-lint run`
-- Test commands with `npm test` + `pytest` + `go test`
-- Path-scoped rules for `.ts`, `.py`, and `.go` files
-- Language breakdown in codebase skill: "TypeScript: 200, Python: 50, Go: 30"
+---
 
-## Two Workflows: Fix Loop and Feature Loop
+## Two Workflows
 
 ### Fix Loop: Reports → KPIs → Plans → Execution
 
-For improving existing code (security fixes, quality improvements, test coverage):
-
-```
-# 1. Init DXKit
+```bash
+# 1. Scaffold into an existing repo
 npx @vyuhlabs/dxkit init --detect --yes
 
-# 2. Generate reports
+# 2. Run analyzers (any of these work standalone too)
 /health                                 # Codebase health (6 dimensions)
-/vulnerabilities                        # Security scan (CWE-classified)
+/vulnerabilities                        # Security scan
 /test-gaps                              # Untested critical code
 
 # 3. Generate improvement plans
-/plan                                   # Propose KPIs + actionable plans
+/plan                                   # Proposes KPIs + actionable plans
 
 # 4. Execute plans with session management
 /execute-plan security                  # Work through security fixes
@@ -461,48 +287,102 @@ npx @vyuhlabs/dxkit init --detect --yes
 
 ### Feature Loop: Description → Design → Plan → Build
 
-For developing new features:
-
-```
-# 1. Design a new feature
+```bash
 /feature add user roles with admin, editor, viewer tiers
-
 # Agent reads codebase, finds similar patterns, generates:
 # .ai/features/user-roles.md with full implementation plan
 
-# 2. Review and adjust the plan (edit the md file if needed)
-
-# 3. Build the feature
 /build-feature user-roles
-
 # Agent executes tasks: model → migration → repository → service → tests → controller
 # Session checkpoints after each task
-# Progress tracked in .ai/features/progress/user-roles.md
 ```
 
 Both loops use the session framework — checkpoints, skill evolution, progress tracking.
 
-## Daily Development Workflow
+---
+
+## Reports
+
+All analyzer commands save timestamped reports to `.ai/reports/`:
 
 ```
-/session-start                          # Load context, plan work
-git checkout -b feature/my-feature      # Create branch
-/ask How does the payment flow work?    # Understand the code
-# ... develop with full context ...
-/quality                                # Lint + AI review
-/test                                   # Tests
-/learn auth tokens expire after 24h     # Capture gotcha
-git add -A && git commit                # Commit
-/session-end                            # Checkpoint + evolve skills
+.ai/reports/
+  health-audit-<date>.md
+  health-audit-<date>-detailed.md           # with --detailed
+  health-audit-<date>-detailed.json         # agent-consumable
+  vulnerability-scan-<date>.md
+  test-gaps-<date>.md
+  quality-review-<date>.md
+  developer-report-<date>.md
 ```
+
+Export options:
+
+- **HTML dashboard**: `/dashboard` (Claude Code slash command) — dark-themed sidebar navigation
+- **PDF**: `/export-pdf all` — converts all reports to PDF
+- **Structured JSON**: `--detailed` on any command emits a canonical JSON schema
+
+---
+
+## Using with create-devstack
+
+[`@vyuhlabs/create-devstack`](https://github.com/vyuh-labs/create-devstack) scaffolds dev environments (devcontainers, `.project.yaml`) and delegates to dxkit for everything else.
+
+```bash
+npm create @vyuhlabs/devstack my-project        # devcontainer + .project.yaml + dxkit init
+```
+
+When create-devstack writes `.project.yaml` before calling dxkit, detection and prompts are skipped.
+
+---
+
+## Smart Detection
+
+- **Test runner** — Jest, Mocha, Vitest, Ava, Tap, pytest, go test
+- **Framework** — LoopBack, Express, NestJS, FastAPI, Gin, etc. with framework-specific rules
+- **Test presence** — counts + classifies (active, commented-out, empty, schema-only)
+- **Multi-language** — detects all languages including Python from `.py` files (no config required)
+- **Language breakdown** — file count per language via `cloc`
+
+---
+
+## CLI Reference
+
+```bash
+# Analyzer commands
+vyuh-dxkit health [path]              # 6-dimension score
+vyuh-dxkit vulnerabilities [path]     # Security scan
+vyuh-dxkit test-gaps [path]           # Coverage + gaps + actions
+vyuh-dxkit quality [path]             # Slop + duplication + lint
+vyuh-dxkit dev-report [path]          # Git activity report
+
+# Tool management
+vyuh-dxkit tools                      # status
+vyuh-dxkit tools install [--yes]      # install missing
+
+# Scaffolding
+vyuh-dxkit init [--detect|--yes|--full|--stealth|--force|--name <n>]
+vyuh-dxkit update [--force|--rescan]  # re-generate (preserves evolving files)
+vyuh-dxkit doctor                     # diagnose environment
+
+# Meta
+vyuh-dxkit --help
+vyuh-dxkit --version
+```
+
+---
 
 ## How It Works
 
-1. **Detection** — Scans for config files, source files, and tools to determine languages, frameworks, and test runners
-2. **Template Processing** — Processes `.md.template` files through a conditional engine, generating language-specific commands
-3. **Codebase Scanning** — Analyzes source files to find entry points, API routes (including LoopBack/Express/FastAPI decorators), test patterns, and language breakdown
-4. **Generation** — Writes 60+ files non-destructively (never overwrites without `--force`, evolving files always preserved)
-5. **Manifest** — Saves state to `.vyuh-dxkit.json` for `update` and `doctor` commands
+1. **Detection** — scans for config files, source files, and tools to determine languages, frameworks, and test runners
+2. **Tool resolution** — `findTool()` checks PATH → brew → npm-g → pipx → cargo → go → project `node_modules` → system probes (first match wins)
+3. **Gather metrics** — each analyzer calls its registered tools and parses structured output (JSON wherever possible)
+4. **Score** — deterministic formulas map metrics to 0–100 per dimension
+5. **Report** — markdown for humans, JSON for agents
+
+No LLM in the analysis path. Scores are reproducible: same repo state → same report.
+
+---
 
 ## License
 
