@@ -7,8 +7,6 @@
  *   semgrep   → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
  *   npm audit → dependency CVEs
  */
-import * as fs from 'fs';
-import * as path from 'path';
 import { detect } from '../../detect';
 import { run, fileExists } from '../tools/runner';
 import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';

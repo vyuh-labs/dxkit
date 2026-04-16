@@ -1,13 +1,18 @@
 #!/bin/bash
-# Slop checks — run in pre-commit hook on STAGED changes only.
+# Slop checks — runs in pre-commit hook on STAGED changes, or in CI against
+# the PR diff when DXKIT_SLOP_BASE is set.
 #
-# Blocks commits that introduce:
+# Blocks changes that introduce:
 #   - Committed temp/backup files (.pyc, .swp, .bak, .orig, .tmp, .pyo)
 #   - New console.log / console.error / console.warn in source
 #   - New `: any` type annotations in TypeScript
 #   - New `debugger;` statements
 #
-# Scope: only changes being committed, not the whole repo. Fast (<1s).
+# Modes:
+#   (default, pre-commit)  scans `git diff --cached`
+#   (CI, PR job)           scans `git diff $DXKIT_SLOP_BASE...HEAD`
+#                          — set DXKIT_SLOP_BASE=origin/main (or similar)
+#
 # Escape hatch: prefix a line with `// slop-ok` or `# slop-ok` to suppress
 # the check on that line.
 
@@ -15,41 +20,58 @@ set -o pipefail
 
 ERRORS=0
 
-# ─── 1. Stale files staged for commit ───────────────────────────────────────
-STALE_STAGED=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null \
-  | grep -E '\.(pyc|pyo|swp|swo|bak|orig|tmp)$|__pycache__/')
-if [ -n "$STALE_STAGED" ]; then
-  echo "❌ Slop check: staging temp/backup files:"
-  echo "$STALE_STAGED" | sed 's/^/   /'
-  echo "   → Add these patterns to .gitignore and unstage with \`git restore --staged\`."
+# Resolve diff source once; everything below uses $DIFF_BASE / $DIFF_MODE.
+if [ -n "${DXKIT_SLOP_BASE:-}" ]; then
+  DIFF_BASE="$DXKIT_SLOP_BASE"
+  DIFF_MODE="range"
+  FILE_LIST=$(git diff --name-only --diff-filter=AM "$DIFF_BASE"...HEAD 2>/dev/null)
+else
+  DIFF_BASE=""
+  DIFF_MODE="cached"
+  FILE_LIST=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null)
+fi
+
+# ─── 1. Stale files being committed ────────────────────────────────────────
+STALE=$(echo "$FILE_LIST" | grep -E '\.(pyc|pyo|swp|swo|bak|orig|tmp)$|__pycache__/' || true)
+if [ -n "$STALE" ]; then
+  echo "❌ Slop check: committing temp/backup files:"
+  echo "$STALE" | sed 's/^/   /'
+  echo "   → Add these patterns to .gitignore and remove from the change set."
   ERRORS=$((ERRORS + 1))
 fi
 
-# Collect staged source files we want to scan for added-line patterns.
-STAGED_SOURCE=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null \
+# Collect source files we want to scan for added-line patterns.
+SOURCE=$(echo "$FILE_LIST" \
   | grep -E '\.(ts|tsx|js|jsx|py|go)$' \
   | grep -vE '(^|/)(public/assets|static/js|public/static)/' \
   || true)
 
-if [ -z "$STAGED_SOURCE" ]; then
+if [ -z "$SOURCE" ]; then
   exit $ERRORS
 fi
 
-# Helper: grep added lines (prefixed with + but not ++, the file header) of
-# staged source files for a pattern. Skips lines with `slop-ok` marker.
+# Helper: grep added lines (prefixed with + but not ++, the file header) for
+# a pattern. Skips lines with `slop-ok` marker.
 check_added() {
   local label="$1"
   local pattern="$2"
   local hint="$3"
   local hits
-  # --unified=0 so context lines don't contaminate the grep.
-  hits=$(git diff --cached --unified=0 -- $STAGED_SOURCE 2>/dev/null \
-    | grep -E "^\+[^+]" \
-    | grep -vE 'slop-ok' \
-    | grep -E "$pattern" \
-    || true)
+  if [ "$DIFF_MODE" = "range" ]; then
+    hits=$(git diff --unified=0 "$DIFF_BASE"...HEAD -- $SOURCE 2>/dev/null \
+      | grep -E "^\+[^+]" \
+      | grep -vE 'slop-ok' \
+      | grep -E "$pattern" \
+      || true)
+  else
+    hits=$(git diff --cached --unified=0 -- $SOURCE 2>/dev/null \
+      | grep -E "^\+[^+]" \
+      | grep -vE 'slop-ok' \
+      | grep -E "$pattern" \
+      || true)
+  fi
   if [ -n "$hits" ]; then
-    echo "❌ Slop check: new ${label} in staged changes:"
+    echo "❌ Slop check: new ${label} in ${DIFF_MODE} changes:"
     echo "$hits" | head -10 | sed 's/^/   /'
     local total
     total=$(echo "$hits" | wc -l)
@@ -65,7 +87,7 @@ check_added() {
 check_added \
   "console statement(s)" \
   'console\.(log|error|warn)' \
-  "Use a logger or remove before committing. Suppress per-line with // slop-ok."
+  "Use a logger or remove. Suppress per-line with // slop-ok."
 
 # ─── 3. `: any` TypeScript escape hatches ──────────────────────────────────
 check_added \

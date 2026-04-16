@@ -8,7 +8,7 @@ import { timed } from '../tools/timing';
 import { loadCoverage } from '../tools/coverage';
 import { buildReachable } from './import-graph';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
-import { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
+import { TestGapsReport, SourceFile, CoverageSource } from './types';
 
 export type { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
 

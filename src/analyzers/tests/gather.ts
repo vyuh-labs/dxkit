@@ -7,7 +7,7 @@
  *   wc    → line counts for risk classification
  */
 import * as fs from 'fs';
-import { run, countLines } from '../tools/runner';
+import { run } from '../tools/runner';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { TestFile, SourceFile, RiskTier } from './types';
 

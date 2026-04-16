@@ -10,18 +10,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Need full history + base branch so slop check can diff against it.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run typecheck
+
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Lint
         run: npx eslint . --max-warnings 0
+
       - name: Format check
         run: npx prettier --check .
-      - run: npm run build
-      - name: Test
-        run: npx vitest run
+
+      - name: Architecture rules
+        run: bash scripts/check-architecture.sh
+
+      - name: Slop check (vs base branch)
+        if: github.event_name == 'pull_request'
+        env:
+          DXKIT_SLOP_BASE: origin/${{ github.base_ref }}
+        run: bash scripts/check-slop.sh
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests with coverage
+        run: npx vitest run --coverage
+
+      - name: Coverage threshold
+        run: bash scripts/check-coverage.sh
+
       - name: Verify pack
         run: npm pack --dry-run

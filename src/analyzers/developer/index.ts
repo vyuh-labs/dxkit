@@ -13,7 +13,7 @@ import {
   gatherVelocity,
   gatherSummary,
 } from './gather';
-import { DevReport, ContributorStats } from './types';
+import { DevReport } from './types';
 
 export type { DevReport, ContributorStats, HotFile, CommitQuality, WeeklyVelocity } from './types';
 

@@ -13,7 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 
-import { analyzeHealth, analyzeHealthWithMetrics } from '../../src/analyzers/health';
+import { analyzeHealthWithMetrics } from '../../src/analyzers/health';
 import { HealthReport, HealthMetrics } from '../../src/analyzers/types';
 import { analyzeTestGaps, formatTestGapsReport } from '../../src/analyzers/tests';
 import { TestGapsReport } from '../../src/analyzers/tests/types';
