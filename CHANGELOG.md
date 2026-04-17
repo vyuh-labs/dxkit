@@ -47,12 +47,12 @@ capability is unchanged.
   install of missing tools via platform-specific commands (brew on macOS,
   user-local on Linux). No `sudo` required; tools install to `~/.local/bin`
   or equivalent.
-- **20 tools integrated** across 6 languages:
+- **21 tools integrated** across 6 languages:
   - Universal: `cloc`, `gitleaks`, `semgrep`, `jscpd`, `graphify`
   - Node/TS: `eslint`, `npm audit`, `@vitest/coverage-v8`
   - Python: `ruff`, `pip-audit`, `coverage` (coverage.py)
   - Go: `golangci-lint`, `govulncheck`
-  - Rust: `clippy`, `cargo-audit`
+  - Rust: `clippy`, `cargo-audit`, `cargo-llvm-cov`
   - C#: `dotnet-format`
 - **`nodePackage` field** on `ToolDefinition` — detects Node packages that
   have no CLI binary (e.g. vitest plugins) via `node_modules/<pkg>/package.json`.
@@ -67,18 +67,24 @@ capability is unchanged.
 - **coverage.py** (`coverage.json`) — Python.
 - **Go coverprofile** (`coverage.out` / `cover.out`) — text format with
   module-prefix path resolution.
-- Rust and C# planned.
+- **Cobertura XML** (`coverage.cobertura.xml`, `TestResults/<guid>/...`) —
+  C# (coverlet) and Rust (`cargo llvm-cov --cobertura`).
+- **lcov** (`lcov.info`) — Rust (`cargo llvm-cov --lcov`).
 
 #### Import-graph test matching
 
 - **TS/JS extractor** — static imports, `import(...)` dynamic, `require()`,
   `export * from` re-exports, multi-line imports, comment-stripping.
 - **Python extractor** — `import X`, `from X import Y`, relative-dot imports.
+- **Go extractor** — single-line `import "fmt"` + multi-line `import (...)`
+  blocks with alias support. Module-based resolution via `go.mod`.
+- **Rust extractor** — `use std::io`, nested paths, block `use std::{io, fs}`.
+- **C# extractor** — `using X.Y;`, `using static`, `using Alias = X.Y;`.
 - **Resolver** — relative-path resolution with extension fallback and
   directory-as-`index.ts` probing (TS/JS) or `__init__.py` (Python).
+  Go resolves internal module paths via `go.mod` module prefix.
 - **BFS walker** — up to 3 hops transitively, cycle-safe. External packages
   are correctly skipped.
-- Go, Rust, C# extractors planned for next release.
 
 #### Suppressions
 
@@ -111,9 +117,32 @@ capability is unchanged.
 
 #### Dogfood
 
-- dxkit's own line coverage raised from ~19% to 57% in the course of
-  building these analyzers. 284 tests across 15 files, all passing.
+- dxkit's own line coverage raised from ~19% to 59% in the course of
+  building these analyzers. 423 tests across 21 files, all passing.
   Coverage threshold of 50% enforced on every push and PR.
+
+#### Language-pack rearchitecture (10d.1.6)
+
+- **`LanguageSupport` interface** — single-file-per-language architecture.
+  Each language implements: detection, tool bindings, semgrep rulesets,
+  coverage parsing, import extraction/resolution, metric gathering, and
+  lint severity mapping. `src/languages/{python,typescript,csharp,go,rust}.ts`.
+- **Registry dispatch** — `health.ts`, `tool-registry.ts`, `import-graph.ts`,
+  `gather.ts`, and `quality/gather.ts` all dispatch through
+  `detectActiveLanguages()` instead of per-language if-chains.
+- **Old scattered code deleted** — `src/analyzers/tools/{node,python,go,
+  rust,dotnet}.ts` removed (~583 LOC). Net reduction despite adding 5
+  language packs + coverage parsers + import extractors.
+- **Ruff severity mapping** — Python lint results now bucket ruff codes by
+  prefix: S→critical, F/B→high, E/C→medium, W/N/D/I→low. Previously all
+  results were counted as errors regardless of code.
+- **C# `*Tests.cs` pattern** — test-gap analyzer now recognizes the C#
+  naming convention (`FooTests.cs`, `Foo.Tests.cs`) that the old
+  `*.test.*`/`*.spec.*`-only patterns missed.
+- **`cargo-llvm-cov`** registered in TOOL_DEFS with detection + install.
+- **Contract tests** — 46 tests validate every language pack: TOOL_DEFS
+  key validity, extension format, wildcard patterns, detect() idempotency,
+  completeness (all 5 required IDs registered).
 
 ### Changed
 

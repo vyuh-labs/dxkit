@@ -65,7 +65,7 @@ Five deterministic analyzers. Each emits a markdown report to `.ai/reports/` and
 
 Three signals, strongest wins for files it covers:
 
-1. **Coverage artifact** — `coverage/coverage-summary.json` (Istanbul/nyc/c8/vitest), `coverage.json` (coverage.py), `coverage.out` (Go). If V8 measured a file, that decision is authoritative.
+1. **Coverage artifact** — Istanbul JSON (TS/JS), `coverage.json` (Python), `coverage.out` (Go), cobertura XML (C#/Rust), `lcov.info` (Rust). If the tool measured a file, that decision is authoritative.
 2. **Import-graph reachability** — files transitively imported from an active test file (up to 3 hops). Rescues integration tests + behavior-named tests the filename matcher misses.
 3. **Filename match** — last-resort basename similarity.
 
@@ -91,7 +91,7 @@ vyuh-dxkit tools install                      # interactive: prompts per tool
 | Node / TS | `eslint`, `npm audit`, `@vitest/coverage-v8`             |
 | Python    | `ruff`, `pip-audit`, `coverage` (coverage.py)            |
 | Go        | `golangci-lint`, `govulncheck`                           |
-| Rust      | `clippy`, `cargo-audit`                                  |
+| Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                |
 | C#        | `dotnet-format` (via SDK)                                |
 
 Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
@@ -138,17 +138,17 @@ When present (typically written by `@vyuhlabs/create-devstack`), `dxkit init` re
 
 ## Language Support
 
-| Language | Detection                            | Coverage import | Import-graph        | Native tools                       |
-| -------- | ------------------------------------ | --------------- | ------------------- | ---------------------------------- |
-| TS / JS  | `package.json`                       | ✅ Istanbul     | ✅                  | eslint, npm audit, vitest-coverage |
-| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py  | ✅                  | ruff, pip-audit, coverage          |
-| Go       | `go.mod`                             | ✅ coverprofile | ⚠ filename fallback | golangci-lint, govulncheck         |
-| Rust     | `Cargo.toml`                         | ⏳ planned      | ⚠ filename fallback | clippy, cargo-audit                |
-| C#       | `*.csproj`, `*.sln`                  | ⏳ planned      | ⚠ filename fallback | dotnet-format                      |
+Each language is a single `LanguageSupport` implementation in `src/languages/`. Adding a new language is one file — detection, tools, coverage parsing, import extraction, and lint severity mapping in one place.
 
-✅ full support ⚠ partial (falls back to filename match) ⏳ planned
+| Language | Detection                            | Coverage import     | Import-graph                | Native tools                                |
+| -------- | ------------------------------------ | ------------------- | --------------------------- | ------------------------------------------- |
+| TS / JS  | `package.json`                       | ✅ Istanbul         | ✅ import/require/re-export | eslint, npm audit, vitest-coverage          |
+| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py      | ✅ import/from              | ruff (severity-mapped), pip-audit, coverage |
+| Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks            | golangci-lint, govulncheck                  |
+| Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ✅ use statements           | clippy, cargo-audit, cargo-llvm-cov         |
+| C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ✅ using declarations       | dotnet-format                               |
 
-Multi-language repos fully supported — every detected language's tools run. Language parity for Rust and C# is on the near roadmap.
+✅ full support. Multi-language repos fully supported — every detected language's tools run.
 
 ---
 
