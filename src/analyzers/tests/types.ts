@@ -26,7 +26,8 @@ export type CoverageSource =
   | 'istanbul-final'
   | 'coverage-py'
   | 'go'
-  | 'cobertura';
+  | 'cobertura'
+  | 'lcov';
 
 export interface TestGapsReport {
   repo: string;

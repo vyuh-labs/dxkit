@@ -530,6 +530,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'npm install --save-dev @vitest/coverage-v8',
     },
   },
+  'cargo-llvm-cov': {
+    name: 'cargo-llvm-cov',
+    description: 'Rust line-level coverage via LLVM instrumentation (produces lcov/cobertura)',
+    install: 'cargo install cargo-llvm-cov',
+    check: 'cargo llvm-cov --version',
+    for: 'rust',
+    layer: 'language',
+    binaries: ['cargo-llvm-cov'],
+    versionCheck: 'cargo llvm-cov --version 2>/dev/null',
+    installCommands: {
+      macos: 'cargo install cargo-llvm-cov',
+      linux: 'cargo install cargo-llvm-cov',
+      windows: 'cargo install cargo-llvm-cov',
+    },
+  },
   'coverage-py': {
     name: 'coverage-py',
     description: 'Python line-level coverage (produces coverage.json)',

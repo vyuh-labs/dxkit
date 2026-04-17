@@ -24,7 +24,8 @@ export type CoverageSource =
   | 'istanbul-final'
   | 'coverage-py'
   | 'go'
-  | 'cobertura';
+  | 'cobertura'
+  | 'lcov';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */
