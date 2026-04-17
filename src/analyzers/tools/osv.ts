@@ -11,6 +11,8 @@
  * The analyzer must never fail because OSV was slow.
  */
 
+import { parseCvssV4BaseScore } from './cvss-v4';
+
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'unknown';
 
 export interface OsvVuln {
@@ -86,19 +88,27 @@ export function parseCvssV3BaseScore(vector: string): number | null {
 
 /** Classify a single OSV record. Prefers CVSS vector, then database_specific string. */
 export function classifyOsvSeverity(vuln: OsvVuln): Severity {
-  // Look for CVSS_V3 at top level or inside affected[].severity[].
-  const cvssEntries: string[] = [];
-  for (const s of vuln.severity ?? []) {
-    if (s.type === 'CVSS_V3' && s.score) cvssEntries.push(s.score);
-  }
-  for (const a of vuln.affected ?? []) {
-    for (const s of a.severity ?? []) {
-      if (s.type === 'CVSS_V3' && s.score) cvssEntries.push(s.score);
+  // Collect CVSS_V4 + CVSS_V3 entries (top level and inside affected[].severity[]).
+  // V4 is preferred when available since modern CVEs (2025+) increasingly use V4 only.
+  const v4: string[] = [];
+  const v3: string[] = [];
+  const collect = (entries?: Array<{ type: string; score: string }>) => {
+    for (const s of entries ?? []) {
+      if (!s.score) continue;
+      if (s.type === 'CVSS_V4') v4.push(s.score);
+      else if (s.type === 'CVSS_V3') v3.push(s.score);
     }
-  }
+  };
+  collect(vuln.severity);
+  for (const a of vuln.affected ?? []) collect(a.severity);
+
   let maxScore = -1;
-  for (const v of cvssEntries) {
-    const score = parseCvssV3BaseScore(v);
+  for (const vec of v4) {
+    const score = parseCvssV4BaseScore(vec);
+    if (score !== null && score > maxScore) maxScore = score;
+  }
+  for (const vec of v3) {
+    const score = parseCvssV3BaseScore(vec);
     if (score !== null && score > maxScore) maxScore = score;
   }
   if (maxScore >= 0) return scoreToTier(maxScore);
@@ -115,14 +125,24 @@ export function classifyOsvSeverity(vuln: OsvVuln): Severity {
 /** Signature of the fetcher — swapped in tests to avoid real network. */
 export type OsvFetcher = (id: string) => Promise<OsvVuln | null>;
 
+/**
+ * Per-request timeout. Must be generous enough that concurrent analyzer tools
+ * (gitleaks, semgrep, cloc) don't starve the fetches — 5s proved too aggressive
+ * under full-analyzer load. Unreachable hosts still fail fast via AbortSignal.
+ */
+const OSV_REQUEST_TIMEOUT_MS = 10000;
+
 const DEFAULT_FETCHER: OsvFetcher = async (id) => {
   try {
     const res = await fetch(`https://api.osv.dev/v1/vulns/${encodeURIComponent(id)}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(OSV_REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     return (await res.json()) as OsvVuln;
-  } catch {
+  } catch (err) {
+    if (process.env.DXKIT_DEBUG_OSV) {
+      process.stderr.write(`[dxkit-osv] ${id}: ${(err as Error).message}\n`);
+    }
     return null;
   }
 };
