@@ -17,6 +17,8 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { getLanguage } from '../../languages';
+import type { LanguageId } from '../../languages';
 import { DetectedStack, ToolRequirement } from '../../types';
 
 export interface ToolDefinition extends ToolRequirement {
@@ -582,20 +584,24 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
     'graphify',
   ];
 
-  if (languages.node || languages.nextjs) {
-    names.push('eslint', 'npm-audit', 'vitest-coverage');
-  }
-  if (languages.python) {
-    names.push('ruff', 'pip-audit', 'coverage-py');
-  }
-  if (languages.go) {
-    names.push('golangci-lint', 'govulncheck');
-  }
-  if (languages.rust) {
-    names.push('clippy', 'cargo-audit');
-  }
-  if (languages.csharp) {
-    names.push('dotnet-format');
+  // Language-specific tools dispatched through the language registry.
+  // Maps DetectedStack keys to LanguageId (handles node/nextjs → typescript).
+  const langMap: Record<string, string> = {
+    node: 'typescript',
+    nextjs: 'typescript',
+    python: 'python',
+    go: 'go',
+    rust: 'rust',
+    csharp: 'csharp',
+  };
+  const seen = new Set<string>();
+  for (const [key, active] of Object.entries(languages)) {
+    if (!active) continue;
+    const id = langMap[key];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const lang = getLanguage(id as LanguageId);
+    if (lang) names.push(...lang.tools);
   }
 
   return names.map((n) => {
@@ -635,18 +641,24 @@ export function getSemgrepRulesets(languages: DetectedStack['languages']): strin
   // across all languages. Safe to combine with language-specific rulesets.
   const rulesets: string[] = ['p/security-audit'];
 
-  if (languages.node || languages.nextjs) {
-    rulesets.push('p/javascript', 'p/typescript');
+  // Language-specific rulesets from the language registry.
+  const langMap: Record<string, string> = {
+    node: 'typescript',
+    nextjs: 'typescript',
+    python: 'python',
+    go: 'go',
+    rust: 'rust',
+    csharp: 'csharp',
+  };
+  const seen = new Set<string>();
+  for (const [key, active] of Object.entries(languages)) {
+    if (!active) continue;
+    const id = langMap[key];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const lang = getLanguage(id as LanguageId);
+    if (lang) rulesets.push(...lang.semgrepRulesets);
   }
-  if (languages.python) {
-    rulesets.push('p/python');
-  }
-  if (languages.go) {
-    // p/go does not exist; gosec rules live under p/gosec
-    rulesets.push('p/gosec');
-  }
-  // Rust: no dedicated semgrep ruleset yet. Covered by p/security-audit.
-  // C#: p/csharp exists but is sparse; skip for now.
 
   return rulesets;
 }

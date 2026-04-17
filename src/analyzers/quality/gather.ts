@@ -18,7 +18,7 @@ import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
 import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
-import { gatherNodeMetrics } from '../tools/node';
+import { detectActiveLanguages } from '../../languages';
 import { CloneGroup, DuplicationStats, FileOffender } from './types';
 
 // ─── jscpd: duplicate code ──────────────────────────────────────────────────
@@ -296,18 +296,24 @@ export function gatherHygieneMarkers(cwd: string): {
   };
 }
 
-// ─── eslint: lint errors (via node.ts) ──────────────────────────────────────
+// ─── lint errors (via language registry) ─────────────────────────────────────
 
 export function gatherLintMetrics(cwd: string): {
   errors: number;
   warnings: number;
   tool: string | null;
 } {
-  // Reuse node.ts gatherNodeMetrics which already handles eslint/lb-eslint
-  const result = gatherNodeMetrics(cwd);
-  return {
-    errors: result.lintErrors ?? 0,
-    warnings: result.lintWarnings ?? 0,
-    tool: result.lintTool ?? null,
-  };
+  // Dispatch through language registry — first language with a lint result wins.
+  for (const lang of detectActiveLanguages(cwd)) {
+    if (!lang.gatherMetrics) continue;
+    const result = lang.gatherMetrics(cwd);
+    if (result.lintTool) {
+      return {
+        errors: result.lintErrors ?? 0,
+        warnings: result.lintWarnings ?? 0,
+        tool: result.lintTool ?? null,
+      };
+    }
+  }
+  return { errors: 0, warnings: 0, tool: null };
 }

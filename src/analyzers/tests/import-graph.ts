@@ -25,6 +25,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { LANGUAGES } from '../../languages';
 
 export interface ImportGraphOptions {
   /** Transitive depth. 0 = direct imports only. Default 3. */
@@ -72,7 +73,10 @@ export function extractImports(relPath: string, cwd: string): string[] {
   } catch {
     return [];
   }
-  if (relPath.endsWith('.py')) return extractPyImports(content);
+  // Dispatch through language registry first; fall back to TS/JS.
+  const ext = path.extname(relPath);
+  const lang = LANGUAGES.find((l) => l.sourceExtensions.includes(ext));
+  if (lang?.extractImports) return lang.extractImports(content);
   return extractTsJsImports(content);
 }
 
@@ -138,7 +142,10 @@ export function extractPyImports(content: string): string[] {
  * if it's external or unresolvable.
  */
 export function resolveImport(fromFile: string, spec: string, cwd: string): string | null {
-  if (fromFile.endsWith('.py')) return resolvePyImport(fromFile, spec, cwd);
+  // Dispatch through language registry first; fall back to TS/JS.
+  const ext = path.extname(fromFile);
+  const lang = LANGUAGES.find((l) => l.sourceExtensions.includes(ext));
+  if (lang?.resolveImport) return lang.resolveImport(fromFile, spec, cwd);
   return resolveTsJsImport(fromFile, spec, cwd);
 }
 

@@ -7,6 +7,7 @@
  *   wc    → line counts for risk classification
  */
 import * as fs from 'fs';
+import { LANGUAGES } from '../../languages';
 import { run } from '../tools/runner';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { TestFile, SourceFile, RiskTier } from './types';
@@ -138,9 +139,8 @@ function detectTestFramework(fullPath: string): string | null {
 
 export function gatherSourceFiles(cwd: string): SourceFile[] {
   const EXCLUDE = getFindExcludeFlags(cwd);
-  const SOURCE_EXTS =
-    '\\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" ' +
-    '-o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.cs" \\)';
+  const exts = LANGUAGES.flatMap((l) => l.sourceExtensions);
+  const SOURCE_EXTS = '\\( ' + exts.map((e) => `-name "*${e}"`).join(' -o ') + ' \\)';
 
   const raw = run(`find . -type f ${SOURCE_EXTS} ${EXCLUDE} 2>/dev/null`, cwd);
   if (!raw) return [];

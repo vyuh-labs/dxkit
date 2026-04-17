@@ -11,13 +11,9 @@ import { detect } from '../detect';
 import { DetectedStack } from '../types';
 import { HealthMetrics, HealthReport } from './types';
 import { gatherGenericMetrics } from './tools/generic';
-import { gatherNodeMetrics } from './tools/node';
-import { gatherPythonMetrics } from './tools/python';
-import { gatherGoMetrics } from './tools/go';
-import { gatherRustMetrics } from './tools/rust';
-import { gatherDotnetMetrics } from './tools/dotnet';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
+import { detectActiveLanguages } from '../languages';
 import { timed } from './tools/timing';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
@@ -132,36 +128,14 @@ function analyzeHealthInternal(
   const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
-  // Layer 1: Language-specific tools
-  if (stack.languages.node || stack.languages.nextjs) {
-    mergeMetrics(
-      metrics,
-      timed('node (Layer 1)', verbose, () => gatherNodeMetrics(repoPath)),
-    );
-  }
-  if (stack.languages.python) {
-    mergeMetrics(
-      metrics,
-      timed('python (Layer 1)', verbose, () => gatherPythonMetrics(repoPath)),
-    );
-  }
-  if (stack.languages.go) {
-    mergeMetrics(
-      metrics,
-      timed('go (Layer 1)', verbose, () => gatherGoMetrics(repoPath)),
-    );
-  }
-  if (stack.languages.rust) {
-    mergeMetrics(
-      metrics,
-      timed('rust (Layer 1)', verbose, () => gatherRustMetrics(repoPath)),
-    );
-  }
-  if (stack.languages.csharp) {
-    mergeMetrics(
-      metrics,
-      timed('dotnet (Layer 1)', verbose, () => gatherDotnetMetrics(repoPath)),
-    );
+  // Layer 1: Language-specific tools (dispatched through language registry)
+  for (const lang of detectActiveLanguages(repoPath)) {
+    if (lang.gatherMetrics) {
+      mergeMetrics(
+        metrics,
+        timed(`${lang.id} (Layer 1)`, verbose, () => lang.gatherMetrics!(repoPath)),
+      );
+    }
   }
 
   // Layer 2: Optional enhanced tools (run in parallel for speed)
@@ -173,7 +147,14 @@ function analyzeHealthInternal(
   // Import real coverage when the project's test runner has produced an
   // artifact. Lets the Testing dimension score against line-level truth
   // instead of the filename-only fallback.
-  const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
+  let coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
+  if (!coverage) {
+    // Fall back to language-specific coverage parsers (cobertura, lcov, etc.)
+    for (const lang of detectActiveLanguages(repoPath)) {
+      coverage = lang.parseCoverage?.(repoPath) ?? null;
+      if (coverage) break;
+    }
+  }
   if (coverage) {
     metrics.coveragePercent = Math.round(coverage.linePercent);
     metrics.toolsUsed.push(`coverage:${coverage.source}`);
