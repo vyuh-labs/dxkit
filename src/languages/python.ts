@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { parseCoveragePy } from '../analyzers/tools/coverage';
+import { enrichSeverities } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
@@ -198,16 +199,39 @@ export const python: LanguageSupport = {
       if (raw) {
         try {
           const data = JSON.parse(raw) as PipAuditReport;
-          let medium = 0;
+          const vulnIds: string[] = [];
           for (const dep of data.dependencies || []) {
-            medium += (dep.vulns || []).length;
+            for (const v of dep.vulns || []) {
+              if (v.id) vulnIds.push(v.id);
+            }
           }
-          metrics.depVulnCritical = 0;
-          metrics.depVulnHigh = 0;
+          // pip-audit doesn't carry severity per vuln — look up via OSV.dev.
+          // Unknown/unreachable IDs fall back to medium (pip-audit's legacy default).
+          const severities = await enrichSeverities(vulnIds);
+          let critical = 0;
+          let high = 0;
+          let medium = 0;
+          let low = 0;
+          let enrichedCount = 0;
+          for (const id of vulnIds) {
+            const sev = severities.get(id);
+            if (sev && sev !== 'unknown') {
+              enrichedCount++;
+              if (sev === 'critical') critical++;
+              else if (sev === 'high') high++;
+              else if (sev === 'medium') medium++;
+              else low++;
+            } else {
+              medium++;
+            }
+          }
+          metrics.depVulnCritical = critical;
+          metrics.depVulnHigh = high;
           metrics.depVulnMedium = medium;
-          metrics.depVulnLow = 0;
+          metrics.depVulnLow = low;
           metrics.depAuditTool = 'pip-audit';
           metrics.toolsUsed!.push('pip-audit');
+          if (enrichedCount > 0) metrics.toolsUsed!.push('osv.dev');
         } catch {
           metrics.toolsUnavailable!.push('pip-audit (parse error)');
         }
