@@ -25,7 +25,7 @@ import { computeOverall } from './scoring';
 import { run } from './tools/runner';
 
 /** Default values for all HealthMetrics fields. */
-function defaultMetrics(): HealthMetrics {
+export function defaultMetrics(): HealthMetrics {
   return {
     sourceFiles: 0,
     testFiles: 0,
@@ -210,8 +210,20 @@ async function analyzeHealthInternal(
   return { report, metrics };
 }
 
+/**
+ * Dependency-vulnerability counts accumulate across language packs so a mixed
+ * repo (e.g. Node + Python) reports pip-audit + npm-audit + govulncheck results
+ * together. Before this, the last-merged pack silently overwrote earlier ones.
+ */
+const AGGREGATED_VULN_FIELDS = [
+  'depVulnCritical',
+  'depVulnHigh',
+  'depVulnMedium',
+  'depVulnLow',
+] as const;
+
 /** Merge language-specific metrics into the base, preferring non-null values. */
-function mergeMetrics(base: HealthMetrics, overlay: Partial<HealthMetrics>): void {
+export function mergeMetrics(base: HealthMetrics, overlay: Partial<HealthMetrics>): void {
   for (const key of Object.keys(overlay)) {
     const value = (overlay as Record<string, unknown>)[key];
     if (value === undefined || value === null) continue;
@@ -220,6 +232,15 @@ function mergeMetrics(base: HealthMetrics, overlay: Partial<HealthMetrics>): voi
       base.toolsUsed.push(...(value as string[]));
     } else if (key === 'toolsUnavailable' && Array.isArray(value)) {
       base.toolsUnavailable.push(...(value as string[]));
+    } else if (
+      AGGREGATED_VULN_FIELDS.includes(key as (typeof AGGREGATED_VULN_FIELDS)[number]) &&
+      typeof value === 'number'
+    ) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (base as any)[key] = ((base as any)[key] ?? 0) + value;
+    } else if (key === 'depAuditTool' && typeof value === 'string') {
+      // Multiple packs may contribute — join with commas for clarity.
+      base.depAuditTool = base.depAuditTool ? `${base.depAuditTool}, ${value}` : value;
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (base as any)[key] = value;
