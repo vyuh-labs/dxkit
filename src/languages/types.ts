@@ -28,6 +28,6 @@ export interface LanguageSupport {
   parseCoverage?(cwd: string): Coverage | null;
   extractImports?(content: string): string[];
   resolveImport?(from: string, spec: string, cwd: string): string | null;
-  gatherMetrics?(cwd: string): Partial<HealthMetrics>;
+  gatherMetrics?(cwd: string): Promise<Partial<HealthMetrics>>;
   mapLintSeverity?(code: string): LintSeverity;
 }

@@ -298,15 +298,15 @@ export function gatherHygieneMarkers(cwd: string): {
 
 // ─── lint errors (via language registry) ─────────────────────────────────────
 
-export function gatherLintMetrics(cwd: string): {
+export async function gatherLintMetrics(cwd: string): Promise<{
   errors: number;
   warnings: number;
   tool: string | null;
-} {
+}> {
   // Dispatch through language registry — first language with a lint result wins.
   for (const lang of detectActiveLanguages(cwd)) {
     if (!lang.gatherMetrics) continue;
-    const result = lang.gatherMetrics(cwd);
+    const result = await lang.gatherMetrics(cwd);
     if (result.lintTool) {
       return {
         errors: result.lintErrors ?? 0,

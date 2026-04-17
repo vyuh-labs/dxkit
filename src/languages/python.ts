@@ -154,7 +154,7 @@ export const python: LanguageSupport = {
     return null;
   },
 
-  gatherMetrics(cwd) {
+  async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {
       toolsUsed: [],
       toolsUnavailable: [],

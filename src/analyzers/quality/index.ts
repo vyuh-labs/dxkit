@@ -4,7 +4,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { timed } from '../tools/timing';
+import { timed, timedAsync } from '../tools/timing';
 import {
   gatherDuplication,
   gatherStructuralMetrics,
@@ -70,10 +70,10 @@ export function computeSlopScore(m: QualityMetrics): number {
   return Math.max(0, Math.min(100, score));
 }
 
-export function analyzeQuality(
+export async function analyzeQuality(
   repoPath: string,
   options: AnalyzeQualityOptions = {},
-): QualityReport {
+): Promise<QualityReport> {
   const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['grep', 'find'];
@@ -103,7 +103,7 @@ export function analyzeQuality(
     : { topConsoleFiles: undefined, topTodoFiles: undefined };
 
   // 5. Lint (eslint/ruff)
-  const lint = timed('lint', verbose, () => gatherLintMetrics(repoPath));
+  const lint = await timedAsync('lint', verbose, () => gatherLintMetrics(repoPath));
   if (lint.tool) toolsUsed.push(lint.tool);
 
   const metrics: QualityMetrics = {

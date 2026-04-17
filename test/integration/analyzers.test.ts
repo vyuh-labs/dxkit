@@ -40,7 +40,7 @@ function writeFile(relPath: string, content: string): void {
   fs.writeFileSync(abs, content);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-integ-'));
 
   // Init a real git repo (some analyzers need git)
@@ -102,12 +102,12 @@ beforeAll(() => {
   // Run each analyzer ONCE. Subsequent tests read the cached result.
   // `analyzeHealthWithMetrics` gives us both the report and the metrics;
   // the plain report is identical, so one call covers both.
-  const h = analyzeHealthWithMetrics(tmp);
+  const h = await analyzeHealthWithMetrics(tmp);
   healthReport = h.report;
   healthMetrics = h.metrics;
   testGapsReport = analyzeTestGaps(tmp);
   securityReport = analyzeSecurity(tmp);
-  qualityReport = analyzeQuality(tmp);
+  qualityReport = await analyzeQuality(tmp);
   devReport = analyzeDevActivity(tmp);
 }, 120000);
 

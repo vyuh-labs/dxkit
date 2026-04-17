@@ -129,7 +129,7 @@ export const rust: LanguageSupport = {
   // resolveImport intentionally omitted: Rust's module system uses crate/mod.rs
   // hierarchy which requires parsing Cargo.toml + mod declarations. Out of scope.
 
-  gatherMetrics(cwd) {
+  async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {
       toolsUsed: [],
       toolsUnavailable: [],

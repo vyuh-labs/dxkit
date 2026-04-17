@@ -148,7 +148,7 @@ export const csharp: LanguageSupport = {
   // can declare many namespaces. Internal edges are best inferred via the
   // project assembly graph, which is out of scope here.
 
-  gatherMetrics(cwd) {
+  async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {
       toolsUsed: [],
       toolsUnavailable: [],

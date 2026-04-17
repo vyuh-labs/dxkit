@@ -14,7 +14,7 @@ import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { detectActiveLanguages } from '../languages';
-import { timed } from './tools/timing';
+import { timed, timedAsync } from './tools/timing';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -102,23 +102,25 @@ export interface AnalyzeHealthOptions {
  * report and the underlying metrics. Used by --detailed to feed the
  * remediation planner without re-running the tool gather.
  */
-export function analyzeHealthWithMetrics(
+export async function analyzeHealthWithMetrics(
   repoPath: string,
   options: AnalyzeHealthOptions = {},
-): { report: HealthReport; metrics: HealthMetrics } {
-  const report = analyzeHealthInternal(repoPath, options);
-  return report;
+): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
+  return analyzeHealthInternal(repoPath, options);
 }
 
 /** Run a full health analysis on a repository. */
-export function analyzeHealth(repoPath: string, options: AnalyzeHealthOptions = {}): HealthReport {
-  return analyzeHealthInternal(repoPath, options).report;
-}
-
-function analyzeHealthInternal(
+export async function analyzeHealth(
   repoPath: string,
   options: AnalyzeHealthOptions = {},
-): { report: HealthReport; metrics: HealthMetrics } {
+): Promise<HealthReport> {
+  return (await analyzeHealthInternal(repoPath, options)).report;
+}
+
+async function analyzeHealthInternal(
+  repoPath: string,
+  options: AnalyzeHealthOptions = {},
+): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
   const verbose = !!options.verbose;
 
   // Step 1: Detect stack
@@ -128,14 +130,15 @@ function analyzeHealthInternal(
   const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
-  // Layer 1: Language-specific tools (dispatched through language registry)
-  for (const lang of detectActiveLanguages(repoPath)) {
-    if (lang.gatherMetrics) {
-      mergeMetrics(
-        metrics,
-        timed(`${lang.id} (Layer 1)`, verbose, () => lang.gatherMetrics!(repoPath)),
-      );
-    }
+  // Layer 1: Language-specific tools run in parallel — packs are independent.
+  const langPacks = detectActiveLanguages(repoPath).filter((l) => l.gatherMetrics);
+  const langResults = await Promise.all(
+    langPacks.map((lang) =>
+      timedAsync(`${lang.id} (Layer 1)`, verbose, () => lang.gatherMetrics!(repoPath)),
+    ),
+  );
+  for (const result of langResults) {
+    mergeMetrics(metrics, result);
   }
 
   // Layer 2: Optional enhanced tools (run in parallel for speed)

@@ -209,8 +209,11 @@ export async function run(argv: string[]): Promise<void> {
       const startTime = Date.now();
       // Detailed mode needs HealthMetrics for remediation planning; pull both.
       const healthResult = values.detailed
-        ? analyzeHealthWithMetrics(targetPath, { verbose: !!values.verbose })
-        : { report: analyzeHealth(targetPath, { verbose: !!values.verbose }), metrics: null };
+        ? await analyzeHealthWithMetrics(targetPath, { verbose: !!values.verbose })
+        : {
+            report: await analyzeHealth(targetPath, { verbose: !!values.verbose }),
+            metrics: null,
+          };
       const report = healthResult.report;
       const healthMetrics = healthResult.metrics;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -411,7 +414,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit quality');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeQuality(targetPath, {
+      const report = await analyzeQuality(targetPath, {
         verbose: !!values.verbose,
         detailed: !!values.detailed,
       });
