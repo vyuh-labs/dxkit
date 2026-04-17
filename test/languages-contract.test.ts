@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages';
 import type { LanguageId, LanguageSupport } from '../src/languages';
+import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 
 const REQUIRED_IDS: LanguageId[] = ['typescript', 'python', 'go', 'rust', 'csharp'];
 
@@ -46,5 +47,12 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   it('tools and semgrepRulesets are arrays', () => {
     expect(Array.isArray(lang.tools)).toBe(true);
     expect(Array.isArray(lang.semgrepRulesets)).toBe(true);
+  });
+
+  it('every tool ID references a valid TOOL_DEFS key', () => {
+    const validKeys = Object.keys(TOOL_DEFS);
+    for (const toolId of lang.tools) {
+      expect(validKeys, `${lang.id} references unknown tool "${toolId}"`).toContain(toolId);
+    }
   });
 });

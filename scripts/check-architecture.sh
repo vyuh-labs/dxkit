@@ -15,9 +15,9 @@ if [ -n "$GRAPHIFY_DUPS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
-# Rule 1: No hardcoded tool binary paths in analyzer code.
+# Rule 1: No hardcoded tool binary paths in analyzer or language-pack code.
 # Tool paths should come from findTool(TOOL_DEFS.xxx), not hardcoded strings.
-HARDCODED_BINS=$(grep -rnE "(execSync|run)\(.*'(gitleaks|semgrep|cloc|jscpd|ruff|pip-audit|golangci-lint|govulncheck|clippy|cargo.audit)" src/analyzers/ 2>/dev/null | grep -v "tool-registry.ts" | grep -v "parallel.ts" | grep -v "// hardcoded-ok")
+HARDCODED_BINS=$(grep -rnE "(execSync|run)\(.*'(gitleaks|semgrep|cloc|jscpd|ruff|pip-audit|golangci-lint|govulncheck|clippy|cargo.audit)" src/analyzers/ src/languages/ 2>/dev/null | grep -v "tool-registry.ts" | grep -v "parallel.ts" | grep -v "// hardcoded-ok")
 if [ -n "$HARDCODED_BINS" ]; then
   echo "❌ Architecture violation: hardcoded tool binary in analyzer code:"
   echo "$HARDCODED_BINS"
