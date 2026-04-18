@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { parseGoCoverProfile } from '../analyzers/tools/coverage';
+import { classifyOsvSeverity, enrichSeverities, type OsvVuln } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
@@ -128,22 +129,67 @@ export const go: LanguageSupport = {
       const raw = run(`${vuln.path} -json ./... 2>/dev/null`, cwd, 120000);
       if (raw) {
         try {
-          let vulnCount = 0;
+          // govulncheck emits ndjson with three relevant shapes:
+          //   { "osv": { ...full OSV record... } }   — the advisory detail
+          //   { "finding": { "osv": "GO-YYYY-NNNN", "trace": [...] } }  — a call-site hit
+          //   { "config": ... } / { "progress": ... } — ignored
+          const findingIds = new Set<string>();
+          const embeddedOsv = new Map<string, OsvVuln>();
           for (const line of raw.split('\n')) {
             if (!line.trim()) continue;
             try {
-              const obj = JSON.parse(line);
-              if (obj.finding) vulnCount++;
+              const obj = JSON.parse(line) as {
+                finding?: { osv?: string };
+                osv?: OsvVuln & { id?: string };
+              };
+              if (obj.finding?.osv) findingIds.add(obj.finding.osv);
+              if (obj.osv?.id) embeddedOsv.set(obj.osv.id, obj.osv);
             } catch {
               /* skip non-JSON lines */
             }
           }
-          metrics.depVulnHigh = vulnCount;
-          metrics.depVulnCritical = 0;
-          metrics.depVulnMedium = 0;
-          metrics.depVulnLow = 0;
+
+          // Prefer severity from the embedded OSV record (already in the
+          // govulncheck output, no extra API call). Fall back to an OSV.dev
+          // lookup for IDs without embedded data. Fall back to 'high' (the
+          // legacy govulncheck default) for anything still unknown.
+          const ids = [...findingIds];
+          const needsLookup = ids.filter((id) => {
+            const rec = embeddedOsv.get(id);
+            if (!rec) return true;
+            return classifyOsvSeverity(rec) === 'unknown';
+          });
+          const lookedUp = needsLookup.length > 0 ? await enrichSeverities(needsLookup) : new Map();
+
+          let critical = 0;
+          let high = 0;
+          let medium = 0;
+          let low = 0;
+          let enrichedCount = 0;
+          for (const id of ids) {
+            const rec = embeddedOsv.get(id);
+            let sev = rec ? classifyOsvSeverity(rec) : 'unknown';
+            if (sev === 'unknown') sev = lookedUp.get(id) ?? 'unknown';
+            if (sev !== 'unknown') {
+              enrichedCount++;
+              if (sev === 'critical') critical++;
+              else if (sev === 'high') high++;
+              else if (sev === 'medium') medium++;
+              else low++;
+            } else {
+              high++; // govulncheck legacy default
+            }
+          }
+
+          metrics.depVulnCritical = critical;
+          metrics.depVulnHigh = high;
+          metrics.depVulnMedium = medium;
+          metrics.depVulnLow = low;
           metrics.depAuditTool = 'govulncheck';
           metrics.toolsUsed!.push('govulncheck');
+          if (enrichedCount > 0 && needsLookup.length > 0) {
+            metrics.toolsUsed!.push('osv.dev');
+          }
         } catch {
           metrics.toolsUnavailable!.push('govulncheck (parse error)');
         }
