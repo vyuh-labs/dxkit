@@ -140,15 +140,19 @@ When present (typically written by `@vyuhlabs/create-devstack`), `dxkit init` re
 
 Each language is a single `LanguageSupport` implementation in `src/languages/`. Adding a new language is one file — detection, tools, coverage parsing, import extraction, and lint severity mapping in one place.
 
-| Language | Detection                            | Coverage import     | Import-graph                | Native tools                                |
-| -------- | ------------------------------------ | ------------------- | --------------------------- | ------------------------------------------- |
-| TS / JS  | `package.json`                       | ✅ Istanbul         | ✅ import/require/re-export | eslint, npm audit, vitest-coverage          |
-| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py      | ✅ import/from              | ruff (severity-mapped), pip-audit, coverage |
-| Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks            | golangci-lint, govulncheck                  |
-| Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ✅ use statements           | clippy, cargo-audit, cargo-llvm-cov         |
-| C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ✅ using declarations       | dotnet-format                               |
+| Language | Detection                            | Coverage import     | Import-graph                | Native tools                        | Lint severity tiers    | Vuln severity tiers                 |
+| -------- | ------------------------------------ | ------------------- | --------------------------- | ----------------------------------- | ---------------------- | ----------------------------------- |
+| TS / JS  | `package.json`                       | ✅ Istanbul         | ✅ import/require/re-export | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                 |
+| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py      | ✅ import/from              | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4) |
+| Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks            | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev   |
+| Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ✅ use statements           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
+| C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ✅ using declarations       | dotnet-format                       | — (formatter)          | ✅ dotnet list --vulnerable         |
 
-✅ full support. Multi-language repos fully supported — every detected language's tools run.
+✅ full support. Multi-language repos fully supported — every detected language's tools run, and `depVuln*` counts aggregate across all language packs (pip-audit findings don't silently replace npm-audit ones).
+
+**Severity enrichment.** Scanners that don't publish per-finding severity (pip-audit, govulncheck) are enriched via the OSV.dev API. DXKit ships a complete CVSS v4.0 base-score calculator (macrovector lookup + severity-distance refinement, ported from [FIRST's reference implementation](https://github.com/FIRSTdotorg/cvss-v4-calculator)) since modern CVEs (2025+) increasingly publish v4 vectors exclusively. Unreachable IDs keep the scanner's legacy default bucket — the analyzer never fails because OSV was slow.
+
+**Lint severity tiering.** Every lint finding is categorized into critical/high/medium/low by rule ID, linter name, or lint group. For backward compatibility, `gatherMetrics` collapses tiers to the existing `lintErrors` (critical + high) / `lintWarnings` (medium + low) fields, so scoring behavior is preserved. The tiered data is available for future analyzers that want finer granularity.
 
 ---
 

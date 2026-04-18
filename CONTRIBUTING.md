@@ -142,13 +142,51 @@ Today's shape: one directory under `src/analyzers/<name>/` with `types.ts`,
 
 ### Adding a new language
 
-**Work in progress.** The pattern for onboarding a new language is being
-consolidated into a single `LanguageSupport` interface (one file per
-language in `src/languages/`) as part of Phase 10d.1.6. Until that lands,
-adding a language requires touching ~5-9 files across `detect.ts`,
-`tool-registry.ts`, `tests/gather.ts`, `tests/import-graph.ts`,
-`tools/coverage.ts`, and creating a `tools/<lang>.ts` runner. If you need
-to add a language before 10d.1.6 lands, open an issue first.
+Adding a language is **one file** — `src/languages/<name>.ts` implementing
+the `LanguageSupport` interface (`src/languages/types.ts`). Register it in
+`src/languages/index.ts` and the dispatch fans out automatically through
+`health`, `quality`, `test-gaps`, and the tool registry.
+
+What the pack provides (all but `detect`, `sourceExtensions`,
+`testFilePatterns`, `tools`, and `semgrepRulesets` are optional):
+
+- `detect(cwd)` — return `true` when this language is present
+- `sourceExtensions: string[]` — file extensions to treat as source
+- `testFilePatterns: string[]` — glob patterns for test files
+- `extraExcludes?: string[]` — dirs to exclude beyond the defaults
+- `tools: string[]` — TOOL_DEFS keys the pack invokes (must match)
+- `semgrepRulesets: string[]` — semgrep `--config` values to add
+- `parseCoverage?(cwd)` — parse a coverage artifact to a `Coverage` result
+- `extractImports?(content)` — string[] of import specifiers in a file
+- `resolveImport?(fromFile, spec, cwd)` — resolve specifier → project path
+- `gatherMetrics?(cwd)` — **async** — populate lint + vuln + testFramework
+  fields of `HealthMetrics`. May call `enrichSeverities` from `src/
+analyzers/tools/osv.ts` for scanners that don't emit tiered severity.
+- `mapLintSeverity?(ruleId)` — tier lint rules into critical/high/medium/low
+
+Contract tests in `test/languages-contract.test.ts` and
+`test/languages-<name>.test.ts` exercise each method.
+
+### Enriching dependency-vulnerability severity
+
+Scanners that don't publish per-finding severity tiers (pip-audit,
+govulncheck) can be enriched via OSV.dev. The utility lives in
+`src/analyzers/tools/osv.ts`:
+
+```ts
+import { enrichSeverities, classifyOsvSeverity } from '../analyzers/tools/osv';
+
+// For per-ID lookup:
+const severities = await enrichSeverities(['CVE-2025-X', 'GHSA-Y']);
+
+// When the scanner already embeds the advisory (like govulncheck):
+const sev = classifyOsvSeverity(embeddedOsvRecord);
+```
+
+Both paths handle CVSS v3, CVSS v4, and the `database_specific.severity`
+string. Unreachable IDs fall back to `'unknown'` — callers should bucket
+unknowns into their scanner's legacy default (pip-audit → medium,
+govulncheck → high).
 
 ## Testing changes
 

@@ -40,8 +40,22 @@ Before writing a regex or grep pattern, check if an established tool handles it:
 - Line counts → cloc (not wc)
 - AST → graphify (not regex)
 - Duplicates → jscpd (not custom)
+- CVSS scoring → `src/analyzers/tools/cvss-v4.ts` (ported from FIRST's reference)
 
 Our code only stitches tools together and computes scores.
+
+### 6. Language capabilities live in one file per language
+
+Every language-specific concern (detection, tool list, semgrep rulesets,
+coverage parsing, import extraction/resolution, metric gathering, lint
+severity mapping) lives in a single `LanguageSupport` implementation in
+`src/languages/{python,typescript,go,rust,csharp}.ts`. Dispatch everywhere
+goes through `detectActiveLanguages()` or `getLanguage()` — never
+per-language `if (stack.python)` chains in report code.
+
+Reports, analyzers, and tool registries **must not** grow language-specific
+branches. If you find yourself writing one, the right answer is almost
+always to add the capability to `LanguageSupport` and let the pack provide it.
 
 ## Build & Test
 
@@ -69,7 +83,12 @@ vyuh-dxkit tools [list|install]   # Tool status & installation
 
 - `src/detect.ts` — stack detection (languages, frameworks, tools)
 - `src/types.ts` — DetectedStack, ToolRequirement
+- `src/languages/types.ts` — `LanguageSupport` interface (the contract)
+- `src/languages/{python,typescript,go,rust,csharp}.ts` — one file per language
+- `src/languages/index.ts` — `LANGUAGES` registry, `getLanguage`, `detectActiveLanguages`
 - `src/analyzers/tools/tool-registry.ts` — tool definitions, detection, install
 - `src/analyzers/tools/exclusions.ts` — centralized exclusion paths
-- `src/analyzers/health.ts` — health orchestrator
+- `src/analyzers/tools/osv.ts` — OSV.dev severity enrichment (session cache + offline fallback)
+- `src/analyzers/tools/cvss-v4.ts` — CVSS v4.0 base-score calculator (FIRST reference port)
+- `src/analyzers/health.ts` — health orchestrator (async, `Promise.all` over packs)
 - `src/analyzers/{security,tests,quality,developer}/` — deep analyzers

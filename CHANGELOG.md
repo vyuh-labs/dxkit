@@ -144,6 +144,89 @@ capability is unchanged.
   key validity, extension format, wildcard patterns, detect() idempotency,
   completeness (all 5 required IDs registered).
 
+#### OSV.dev severity enrichment + CVSS v4 (10d.2)
+
+- **OSV.dev integration** — `src/analyzers/tools/osv.ts` looks up
+  vulnerability IDs against `https://api.osv.dev/v1/vulns/{id}` and
+  classifies them into critical/high/medium/low tiers. Session-scoped
+  in-memory cache. 10s per-request timeout with offline fallback.
+- **Full CVSS v4.0 calculator** — `src/analyzers/tools/cvss-v4.ts` with
+  the 270-entry macrovector → base-score lookup table (BSD-2-Clause,
+  ported verbatim from FIRST.ORG's reference implementation, attributed
+  in `THIRD_PARTY_NOTICES.md`). Handles equivalence-class computation,
+  severity-distance refinement, and rounding per spec. Critical for
+  modern CVEs (2025+) that publish v4 vectors exclusively.
+- **Python pack (`pip-audit`)** — previously bucketed every finding as
+  medium. Now extracts vuln IDs and looks each up via OSV. Unknown or
+  unreachable IDs keep the legacy medium bucket. Verified on
+  CVE-2025-8869 (pip tar symlink → v4 5.9 → medium, matches NVD).
+- **Go pack (`govulncheck`)** — ndjson findings reference OSV IDs.
+  We now prefer the advisory's embedded severity (govulncheck inlines
+  the full OSV record), only falling back to the OSV.dev API when
+  severity data is missing. Unknown IDs bucket as high (govulncheck's
+  legacy default).
+
+#### Lint severity tiers across all packs
+
+Each language pack now exposes `mapLintSeverity(ruleId)` that tiers
+findings into critical/high/medium/low. `gatherMetrics` still collapses
+to the legacy `lintErrors`/`lintWarnings` fields (critical+high →
+errors, medium+low → warnings) for backcompat.
+
+- **TypeScript (ESLint)** — security plugins (`security/*`,
+  `security-node/*`) and code-injection built-ins (`no-eval`,
+  `no-new-func`, `@typescript-eslint/no-unsafe-eval`) → critical;
+  correctness bugs (`no-undef`, `no-unreachable`, `no-dupe-*`,
+  `@typescript-eslint/no-unsafe-*`, `react-hooks/rules-of-hooks`) → high;
+  best practices (`no-console`, `prefer-const`,
+  `@typescript-eslint/no-explicit-any|no-unused-vars`,
+  `react-hooks/exhaustive-deps`) → medium; style plugins
+  (`prettier/*`, `import/*`, `react/*`, `jsx-a11y/*`, `unicorn/*`) → low.
+  Unknown rules fall back to ESLint's severity floor.
+- **Go (golangci-lint)** — tier by `FromLinter`: `gosec` → critical;
+  `govet`/`staticcheck`/`typecheck`/`errorlint`/`ineffassign`/`unused`/
+  `bodyclose`/`sqlclosecheck`/`noctx` → high; `errcheck`/`gocritic`/
+  `revive`/`gocyclo`/`gosimple`/`unparam`/`gocognit` → medium; `gofmt`/
+  `goimports`/`stylecheck`/`whitespace`/`misspell`/`lll` → low.
+- **Rust (clippy)** — hand-catalogued correctness-group lints:
+  15 memory-safety / UB lints (`uninit_*`, `transmuting_null`, `cast_ref_to_mut`,
+  `invalid_atomic_ordering`, …) → critical; 35+ correctness-bug lints
+  (`panicking_unwrap`, `never_loop`, `out_of_bounds_indexing`,
+  `ifs_same_cond`, `logic_bug`, …) → high; rustc-native lints → medium;
+  all other clippy groups (style, perf, pedantic, nursery, cargo) → low.
+- **C#** — `mapLintSeverity` intentionally omitted: `dotnet-format` is
+  a formatter, not a tiered linter. Documented in pack source with a
+  TODO pointer to a future `dotnet build --verbosity quiet` integration
+  that would extract CS*/CA*/IDE* diagnostic codes.
+
+#### Dep-vuln aggregation across language packs
+
+- **`mergeMetrics` now sums `depVuln*` counts** instead of overwriting.
+  Mixed-stack repos (e.g. Node + Python) previously had whichever pack
+  ran last silently clobber earlier packs' vuln counts. Now pip-audit
+  and npm-audit findings add together. `depAuditTool` likewise joins
+  with `, ` (e.g. `"pip-audit, npm-audit"`).
+- **Meta-tool classifier fix** — `src/analyzers/security/*.ts` files
+  matched `CRITICAL_PATTERNS` by name (`/security/i`) and showed up in
+  test-gaps as critical untested code. They're analyzer modules, not
+  app security code. Added path-prefix exception (`^src/analyzers/`,
+  `^tmp/`, `^scripts/`) that downgrades these to their structural tier.
+- **C# dotnet-format violations** reclassified from `lintErrors` to
+  `lintWarnings` — they're formatting issues (indentation, spacing),
+  not correctness errors. No longer inflates the quality/slop error
+  count.
+
+#### Async language-pack contract
+
+- **`gatherMetrics` is now async** (`Promise<Partial<HealthMetrics>>`).
+  Enables network-dependent enrichment (OSV lookups). The full analyzer
+  chain — `analyzeHealth`, `analyzeQuality`, and the CLI commands —
+  threads async end-to-end. Bonus: the 5 language packs now run through
+  `Promise.all` in health.ts instead of sequentially.
+- **`timedAsync`** helper added alongside existing `timed` in
+  `src/analyzers/tools/timing.ts` for per-tool verbose timing of
+  async gatherers.
+
 ### Changed
 
 - **`vitest.config.ts`** now generates Istanbul summary + JSON reporters when
