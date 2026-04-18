@@ -142,3 +142,63 @@ describe('typescript registration', () => {
     expect(typescript.semgrepRulesets).toEqual(['p/javascript', 'p/typescript']);
   });
 });
+
+describe('typescript.mapLintSeverity', () => {
+  const map = typescript.mapLintSeverity!;
+
+  it('maps security-plugin rules to critical', () => {
+    expect(map('security/detect-eval-with-expression')).toBe('critical');
+    expect(map('security-node/detect-crlf')).toBe('critical');
+  });
+
+  it('maps code-injection built-ins to critical', () => {
+    expect(map('no-eval')).toBe('critical');
+    expect(map('no-implied-eval')).toBe('critical');
+    expect(map('no-new-func')).toBe('critical');
+    expect(map('no-script-url')).toBe('critical');
+  });
+
+  it('maps @typescript-eslint unsafe-eval to critical', () => {
+    expect(map('@typescript-eslint/no-unsafe-eval')).toBe('critical');
+  });
+
+  it('maps correctness-bug rules to high', () => {
+    expect(map('no-undef')).toBe('high');
+    expect(map('no-unreachable')).toBe('high');
+    expect(map('no-dupe-keys')).toBe('high');
+    expect(map('use-isnan')).toBe('high');
+    expect(map('no-cond-assign')).toBe('high');
+  });
+
+  it('maps @typescript-eslint/no-unsafe-* family to high', () => {
+    expect(map('@typescript-eslint/no-unsafe-assignment')).toBe('high');
+    expect(map('@typescript-eslint/no-unsafe-member-access')).toBe('high');
+  });
+
+  it('maps react-hooks/rules-of-hooks to high', () => {
+    expect(map('react-hooks/rules-of-hooks')).toBe('high');
+  });
+
+  it('maps best-practice rules to medium', () => {
+    expect(map('no-console')).toBe('medium');
+    expect(map('no-debugger')).toBe('medium');
+    expect(map('prefer-const')).toBe('medium');
+    expect(map('eqeqeq')).toBe('medium');
+    expect(map('@typescript-eslint/no-explicit-any')).toBe('medium');
+    expect(map('@typescript-eslint/no-unused-vars')).toBe('medium');
+    expect(map('react-hooks/exhaustive-deps')).toBe('medium');
+  });
+
+  it('maps style/formatting plugin rules to low', () => {
+    expect(map('prettier/prettier')).toBe('low');
+    expect(map('import/order')).toBe('low');
+    expect(map('react/display-name')).toBe('low');
+    expect(map('jsx-a11y/alt-text')).toBe('low');
+  });
+
+  it('maps unknown and null rules to low', () => {
+    expect(map(null)).toBe('low');
+    expect(map(undefined)).toBe('low');
+    expect(map('some-random-plugin/weird-rule')).toBe('low');
+  });
+});

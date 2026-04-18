@@ -4,12 +4,93 @@ import * as path from 'path';
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import type { HealthMetrics } from '../analyzers/types';
-import type { LanguageSupport } from './types';
+import type { LanguageSupport, LintSeverity } from './types';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
 interface EslintFileResult {
-  messages: Array<{ severity: number }>;
+  messages: Array<{ severity: number; ruleId?: string | null }>;
+}
+
+/**
+ * Tier an ESLint rule ID into the four-tier severity model.
+ *
+ * Priority is rule-name pattern first (security plugins, known-dangerous
+ * rules), falling back to the rule's ESLint severity (2=error → high,
+ * 1=warning → medium) for rules we don't recognize.
+ *
+ * Unknown rules default to 'low' so unfamiliar plugins don't inflate the
+ * error count. Callers that also have the ESLint severity should prefer
+ * mapLintMessageSeverity below.
+ */
+export function mapEslintRuleSeverity(ruleId: string | null | undefined): LintSeverity {
+  if (!ruleId) return 'low';
+
+  // Security plugins — both eslint-plugin-security and eslint-plugin-security-node.
+  if (/^security(-node)?\//.test(ruleId)) return 'critical';
+
+  // Known-dangerous built-in rules: anything that permits code injection.
+  if (
+    ruleId === 'no-eval' ||
+    ruleId === 'no-implied-eval' ||
+    ruleId === 'no-new-func' ||
+    ruleId === 'no-script-url' ||
+    ruleId === 'no-proto'
+  ) {
+    return 'critical';
+  }
+  if (/^@typescript-eslint\/no-unsafe-(eval|function-type)/.test(ruleId)) return 'critical';
+
+  // Correctness / type-safety — bugs, not style.
+  if (
+    ruleId === 'no-undef' ||
+    ruleId === 'no-unreachable' ||
+    ruleId === 'no-duplicate-case' ||
+    ruleId === 'no-dupe-keys' ||
+    ruleId === 'no-dupe-args' ||
+    ruleId === 'valid-typeof' ||
+    ruleId === 'use-isnan' ||
+    ruleId === 'no-cond-assign' ||
+    ruleId === 'no-unsafe-negation' ||
+    ruleId === 'no-obj-calls'
+  ) {
+    return 'high';
+  }
+  if (/^@typescript-eslint\/no-unsafe-/.test(ruleId)) return 'high';
+  if (/^react-hooks\/rules-of-hooks$/.test(ruleId)) return 'high';
+
+  // Best-practice / maintenance — not buggy but worth flagging.
+  if (
+    ruleId === 'no-console' ||
+    ruleId === 'no-debugger' ||
+    ruleId === 'no-var' ||
+    ruleId === 'prefer-const' ||
+    ruleId === 'eqeqeq'
+  ) {
+    return 'medium';
+  }
+  if (/^@typescript-eslint\/(no-explicit-any|no-unused-vars|ban-types)/.test(ruleId))
+    return 'medium';
+  if (/^react-hooks\/exhaustive-deps$/.test(ruleId)) return 'medium';
+
+  // Style / formatting plugins default to low.
+  if (/^(prettier|import|react|jsx-a11y|unicorn)\//.test(ruleId)) return 'low';
+
+  return 'low';
+}
+
+/** Combine a rule-based tier with ESLint's own severity for unknown rules. */
+function tierEslintMessage(
+  ruleId: string | null | undefined,
+  eslintSeverity: number,
+): LintSeverity {
+  const tiered = mapEslintRuleSeverity(ruleId);
+  // For unknown rules (→ 'low'), use ESLint's own severity as a floor.
+  if (tiered === 'low' && ruleId) {
+    if (eslintSeverity === 2) return 'high';
+    if (eslintSeverity === 1) return 'medium';
+  }
+  return tiered;
 }
 
 interface AuditV1 {
@@ -100,11 +181,14 @@ function runEslint(cwd: string): EslintRunResult {
     if (!fileExists(cwd, bin.replace('./', ''))) continue;
     const result = runJSON<EslintFileResult[]>(`${bin} . --format json 2>/dev/null`, cwd, 120000);
     if (result && Array.isArray(result)) {
+      // Tier each message, then collapse to errors/warnings for backcompat:
+      // critical + high → errors, medium + low → warnings.
       let errors = 0;
       let warnings = 0;
       for (const file of result) {
         for (const msg of file.messages || []) {
-          if (msg.severity === 2) errors++;
+          const tier = tierEslintMessage(msg.ruleId, msg.severity);
+          if (tier === 'critical' || tier === 'high') errors++;
           else warnings++;
         }
       }
@@ -138,6 +222,8 @@ export const typescript: LanguageSupport = {
   detect(cwd) {
     return fileExists(cwd, 'package.json');
   },
+
+  mapLintSeverity: mapEslintRuleSeverity,
 
   tools: ['eslint', 'npm-audit', 'vitest-coverage'],
   semgrepRulesets: ['p/javascript', 'p/typescript'],
