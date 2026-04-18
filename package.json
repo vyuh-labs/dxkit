@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "AI-native developer experience toolkit for any repository",
   "license": "MIT",
   "author": "Vyuh Labs",
@@ -34,7 +34,8 @@
     "templates/",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "node scripts/copy-templates.js && tsc",

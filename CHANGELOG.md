@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-04-18
+
 This release transforms dxkit from a scaffolder into an analyzer-and-scaffolder.
 Five native CLI commands run deterministic analyses against any repo — no LLM
 required, reproducible scores, agent-consumable JSON output. The scaffolding
