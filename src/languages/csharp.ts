@@ -148,6 +148,17 @@ export const csharp: LanguageSupport = {
   // can declare many namespaces. Internal edges are best inferred via the
   // project assembly graph, which is out of scope here.
 
+  // mapLintSeverity intentionally omitted: dotnet-format is a formatter,
+  // not a tiered linter. It emits binary pass/fail per file and doesn't
+  // expose per-rule codes that could be categorized into
+  // critical/high/medium/low. Matching the parity of ruff (Python),
+  // ESLint (TypeScript), golangci-lint (Go), and clippy (Rust) would
+  // require integrating a different tool — parsing `dotnet build
+  // --verbosity quiet` output for CS*/CA*/IDE* diagnostic codes and
+  // mapping each to a tier. That's deferred until a C# test project
+  // is available to validate the integration; see architecture-redesign
+  // plan for the capability-based approach this will live in.
+
   async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {
       toolsUsed: [],
@@ -163,8 +174,13 @@ export const csharp: LanguageSupport = {
       } else {
         const raw = run('dotnet format --verify-no-changes 2>&1', cwd, 120000);
         const violations = raw ? raw.split('\n').filter((l) => l.includes('Formatted')).length : 1;
-        metrics.lintErrors = violations;
-        metrics.lintWarnings = 0;
+        // dotnet-format findings are formatting violations (indentation,
+        // spacing) — style issues, not correctness errors. Report them as
+        // warnings so they don't inflate the "lint errors" count that
+        // drives Quality/Slop scoring. A future upgrade to parse
+        // `dotnet build` diagnostics can populate lintErrors properly.
+        metrics.lintErrors = 0;
+        metrics.lintWarnings = violations;
       }
       metrics.lintTool = 'dotnet-format';
       metrics.toolsUsed!.push('dotnet-format');
