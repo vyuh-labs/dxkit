@@ -6,10 +6,93 @@ import { classifyOsvSeverity, enrichSeverities, type OsvVuln } from '../analyzer
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
-import type { LanguageSupport } from './types';
+import type { LanguageSupport, LintSeverity } from './types';
+
+interface GolangciIssue {
+  FromLinter?: string;
+  Severity?: string;
+  Text?: string;
+}
 
 interface GolangciResult {
-  Issues?: Array<{ Severity: string; Text: string }>;
+  Issues?: GolangciIssue[];
+}
+
+/**
+ * Tier a golangci-lint finding by the linter that produced it.
+ *
+ * golangci-lint bundles ~60 linters with different character. The
+ * `FromLinter` field identifies which one fired. `Severity` (often empty)
+ * is used only as a fallback floor for unknown linters.
+ */
+export function mapGolangciLinterSeverity(linter: string | undefined): LintSeverity {
+  if (!linter) return 'low';
+
+  // Security — gosec exclusively flags vuln patterns.
+  if (linter === 'gosec') return 'critical';
+
+  // Correctness bugs — go vet, staticcheck analyses, type errors, etc.
+  if (
+    linter === 'govet' ||
+    linter === 'staticcheck' ||
+    linter === 'typecheck' ||
+    linter === 'errorlint' ||
+    linter === 'ineffassign' ||
+    linter === 'unused' ||
+    linter === 'nilerr' ||
+    linter === 'bodyclose' ||
+    linter === 'rowserrcheck' ||
+    linter === 'sqlclosecheck' ||
+    linter === 'noctx'
+  ) {
+    return 'high';
+  }
+
+  // Best practices / maintenance
+  if (
+    linter === 'errcheck' ||
+    linter === 'gocritic' ||
+    linter === 'revive' ||
+    linter === 'goconst' ||
+    linter === 'gocyclo' ||
+    linter === 'funlen' ||
+    linter === 'dupl' ||
+    linter === 'gosimple' ||
+    linter === 'unconvert' ||
+    linter === 'unparam' ||
+    linter === 'prealloc' ||
+    linter === 'gocognit'
+  ) {
+    return 'medium';
+  }
+
+  // Style / formatting
+  if (
+    linter === 'gofmt' ||
+    linter === 'gofumpt' ||
+    linter === 'goimports' ||
+    linter === 'stylecheck' ||
+    linter === 'whitespace' ||
+    linter === 'misspell' ||
+    linter === 'godot' ||
+    linter === 'lll'
+  ) {
+    return 'low';
+  }
+
+  return 'low';
+}
+
+function tierGolangciIssue(issue: GolangciIssue): LintSeverity {
+  const byLinter = mapGolangciLinterSeverity(issue.FromLinter);
+  // For unknown linters we fell through to 'low' — but golangci-lint's
+  // own Severity field may say otherwise. Use it as a floor.
+  if (byLinter === 'low' && issue.FromLinter) {
+    const sev = (issue.Severity || '').toLowerCase();
+    if (sev === 'error') return 'high';
+    if (sev === 'warning') return 'medium';
+  }
+  return byLinter;
 }
 
 export const go: LanguageSupport = {
@@ -25,6 +108,8 @@ export const go: LanguageSupport = {
 
   tools: ['golangci-lint', 'govulncheck'],
   semgrepRulesets: ['p/gosec'],
+
+  mapLintSeverity: mapGolangciLinterSeverity,
 
   parseCoverage(cwd) {
     for (const file of ['coverage.out', 'cover.out']) {
@@ -105,8 +190,15 @@ export const go: LanguageSupport = {
         try {
           const data = JSON.parse(raw) as GolangciResult;
           const issues = data.Issues || [];
-          const errors = issues.filter((i) => i.Severity === 'error').length;
-          const warnings = issues.length - errors;
+          // Tier each issue by its FromLinter, then collapse:
+          // critical + high → errors, medium + low → warnings.
+          let errors = 0;
+          let warnings = 0;
+          for (const issue of issues) {
+            const tier = tierGolangciIssue(issue);
+            if (tier === 'critical' || tier === 'high') errors++;
+            else warnings++;
+          }
           metrics.lintErrors = errors;
           metrics.lintWarnings = warnings;
           metrics.lintTool = 'golangci-lint';

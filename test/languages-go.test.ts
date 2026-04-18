@@ -135,3 +135,45 @@ describe('go registration', () => {
     expect(go.semgrepRulesets).toEqual(['p/gosec']);
   });
 });
+
+describe('go.mapLintSeverity', () => {
+  const map = go.mapLintSeverity!;
+
+  it('maps gosec to critical', () => {
+    expect(map('gosec')).toBe('critical');
+  });
+
+  it('maps correctness linters to high', () => {
+    expect(map('govet')).toBe('high');
+    expect(map('staticcheck')).toBe('high');
+    expect(map('typecheck')).toBe('high');
+    expect(map('errorlint')).toBe('high');
+    expect(map('ineffassign')).toBe('high');
+    expect(map('unused')).toBe('high');
+    expect(map('bodyclose')).toBe('high');
+    expect(map('sqlclosecheck')).toBe('high');
+  });
+
+  it('maps best-practice linters to medium', () => {
+    expect(map('errcheck')).toBe('medium');
+    expect(map('gocritic')).toBe('medium');
+    expect(map('revive')).toBe('medium');
+    expect(map('gocyclo')).toBe('medium');
+    expect(map('gosimple')).toBe('medium');
+    expect(map('unparam')).toBe('medium');
+  });
+
+  it('maps style linters to low', () => {
+    expect(map('gofmt')).toBe('low');
+    expect(map('goimports')).toBe('low');
+    expect(map('stylecheck')).toBe('low');
+    expect(map('whitespace')).toBe('low');
+    expect(map('misspell')).toBe('low');
+    expect(map('lll')).toBe('low');
+  });
+
+  it('maps unknown and undefined to low', () => {
+    expect(map(undefined)).toBe('low');
+    expect(map('some-random-linter')).toBe('low');
+  });
+});
