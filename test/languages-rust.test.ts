@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { rust, parseLcov } from '../src/languages/rust';
+import { rust, parseLcov, mapClippyLintSeverity } from '../src/languages/rust';
 
 let tmp: string;
 
@@ -119,5 +119,45 @@ describe('rust registration', () => {
 
   it('does not implement resolveImport', () => {
     expect(rust.resolveImport).toBeUndefined();
+  });
+});
+
+describe('rust.mapLintSeverity (clippy)', () => {
+  const map = mapClippyLintSeverity;
+
+  it('maps memory-safety clippy lints to critical', () => {
+    expect(map('clippy::uninit_assumed_init')).toBe('critical');
+    expect(map('clippy::uninit_vec')).toBe('critical');
+    expect(map('clippy::transmuting_null')).toBe('critical');
+    expect(map('clippy::not_unsafe_ptr_arg_deref')).toBe('critical');
+    expect(map('clippy::cast_ref_to_mut')).toBe('critical');
+    expect(map('clippy::invalid_atomic_ordering')).toBe('critical');
+  });
+
+  it('maps correctness-bug clippy lints to high', () => {
+    expect(map('clippy::panicking_unwrap')).toBe('high');
+    expect(map('clippy::never_loop')).toBe('high');
+    expect(map('clippy::while_immutable_condition')).toBe('high');
+    expect(map('clippy::out_of_bounds_indexing')).toBe('high');
+    expect(map('clippy::logic_bug')).toBe('high');
+    expect(map('clippy::cmp_nan')).toBe('high');
+  });
+
+  it('maps rustc-native lints to medium', () => {
+    expect(map('unused_variables')).toBe('medium');
+    expect(map('dead_code')).toBe('medium');
+    expect(map('deprecated')).toBe('medium');
+  });
+
+  it('maps other clippy groups (style, perf, pedantic) to low', () => {
+    expect(map('clippy::needless_pass_by_value')).toBe('low');
+    expect(map('clippy::redundant_closure')).toBe('low');
+    expect(map('clippy::too_many_arguments')).toBe('low');
+    expect(map('clippy::module_name_repetitions')).toBe('low');
+  });
+
+  it('maps undefined and empty string to low', () => {
+    expect(map(undefined)).toBe('low');
+    expect(map('')).toBe('low');
   });
 });

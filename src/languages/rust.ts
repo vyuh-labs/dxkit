@@ -6,11 +6,104 @@ import { parseCoberturaXml } from './csharp';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
-import type { LanguageSupport } from './types';
+import type { LanguageSupport, LintSeverity } from './types';
 
 interface CargoMessage {
   reason: string;
-  message?: { level: string; message: string };
+  message?: { level: string; message: string; code?: { code?: string } };
+}
+
+/**
+ * Clippy lints that indicate definite undefined behavior or memory
+ * corruption. These are denied by default in clippy::correctness.
+ */
+const CRITICAL_CLIPPY = new Set<string>([
+  'clippy::mem_replace_with_uninit',
+  'clippy::uninit_assumed_init',
+  'clippy::uninit_vec',
+  'clippy::transmuting_null',
+  'clippy::not_unsafe_ptr_arg_deref',
+  'clippy::cast_ref_to_mut',
+  'clippy::invalid_atomic_ordering',
+  'clippy::mut_from_ref',
+  'clippy::size_of_in_element_count',
+  'clippy::drop_copy',
+  'clippy::drop_ref',
+  'clippy::forget_copy',
+  'clippy::forget_ref',
+  'clippy::undropped_manually_drops',
+]);
+
+/**
+ * Clippy lints that flag likely bugs / correctness issues (not UB but
+ * definitely wrong). Bulk of the clippy::correctness group.
+ */
+const HIGH_CLIPPY = new Set<string>([
+  'clippy::absurd_extreme_comparisons',
+  'clippy::bad_bit_mask',
+  'clippy::cmp_nan',
+  'clippy::deprecated_semver',
+  'clippy::erasing_op',
+  'clippy::fn_address_comparisons',
+  'clippy::if_let_redundant_pattern_matching',
+  'clippy::ifs_same_cond',
+  'clippy::infinite_iter',
+  'clippy::invalid_regex',
+  'clippy::iter_next_loop',
+  'clippy::iterator_step_by_zero',
+  'clippy::let_underscore_lock',
+  'clippy::logic_bug',
+  'clippy::match_on_vec_items',
+  'clippy::match_str_case_mismatch',
+  'clippy::min_max',
+  'clippy::mismatched_target_os',
+  'clippy::modulo_one',
+  'clippy::never_loop',
+  'clippy::nonsensical_open_options',
+  'clippy::option_env_unwrap',
+  'clippy::out_of_bounds_indexing',
+  'clippy::overly_complex_bool_expr',
+  'clippy::panicking_unwrap',
+  'clippy::possible_missing_comma',
+  'clippy::reversed_empty_ranges',
+  'clippy::self_assignment',
+  'clippy::serde_api_misuse',
+  'clippy::suspicious_splitn',
+  'clippy::unit_cmp',
+  'clippy::unit_hash',
+  'clippy::unit_return_expecting_ord',
+  'clippy::unsound_collection_transmute',
+  'clippy::vec_resize_to_zero',
+  'clippy::vtable_address_comparisons',
+  'clippy::while_immutable_condition',
+  'clippy::zst_offset',
+]);
+
+/**
+ * Tier a clippy or rustc lint by its code name.
+ *
+ * clippy lint codes look like `clippy::needless_pass_by_value`.
+ * rustc lint codes look like `unused_variables`, `dead_code`, etc.
+ *
+ * Most clippy lints are style / best-practice suggestions → low.
+ * Only the correctness-group lints (hand-catalogued above) are
+ * serious. rustc lints default to medium since `unused_*` and
+ * `deprecated` are meaningful but rarely critical.
+ */
+export function mapClippyLintSeverity(code: string | undefined): LintSeverity {
+  if (!code) return 'low';
+  if (CRITICAL_CLIPPY.has(code)) return 'critical';
+  if (HIGH_CLIPPY.has(code)) return 'high';
+  if (!code.startsWith('clippy::')) return 'medium'; // rustc-native lint
+  return 'low'; // other clippy groups: style, perf, complexity, pedantic, nursery, cargo
+}
+
+function tierCargoMessage(msg: CargoMessage['message']): LintSeverity {
+  if (!msg) return 'low';
+  const tier = mapClippyLintSeverity(msg.code?.code);
+  // rustc compile errors (no code.code) are real errors — bump from low to high.
+  if (tier === 'low' && msg.level === 'error') return 'high';
+  return tier;
 }
 
 interface CargoAuditResult {
@@ -85,6 +178,8 @@ export const rust: LanguageSupport = {
   // No dedicated semgrep Rust ruleset; covered by p/security-audit.
   semgrepRulesets: [],
 
+  mapLintSeverity: mapClippyLintSeverity,
+
   parseCoverage(cwd) {
     // Try lcov.info first (common default for cargo llvm-cov --lcov)
     for (const file of ['lcov.info', 'coverage/lcov.info']) {
@@ -139,16 +234,21 @@ export const rust: LanguageSupport = {
     if (clippy.available) {
       const raw = run('cargo clippy --message-format json 2>/dev/null', cwd, 120000);
       if (raw) {
+        // Tier by clippy lint code (clippy::*) or rustc lint name.
+        // Collapse: critical + high → errors, medium + low → warnings.
         let errors = 0;
         let warnings = 0;
         for (const line of raw.split('\n')) {
           if (!line.trim()) continue;
           try {
             const msg = JSON.parse(line) as CargoMessage;
-            if (msg.reason === 'compiler-message' && msg.message) {
-              if (msg.message.level === 'error') errors++;
-              else if (msg.message.level === 'warning') warnings++;
-            }
+            if (msg.reason !== 'compiler-message' || !msg.message) continue;
+            // Upstream emits multiple levels (error, warning, note, help).
+            // Skip note/help — they're context, not findings.
+            if (msg.message.level !== 'error' && msg.message.level !== 'warning') continue;
+            const tier = tierCargoMessage(msg.message);
+            if (tier === 'critical' || tier === 'high') errors++;
+            else warnings++;
           } catch {
             /* skip non-JSON lines */
           }
