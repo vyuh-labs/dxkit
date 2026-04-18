@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages';
 import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
@@ -85,6 +87,35 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     const validKeys = Object.keys(TOOL_DEFS);
     for (const toolId of lang.tools) {
       expect(validKeys, `${lang.id} references unknown tool "${toolId}"`).toContain(toolId);
+    }
+  });
+
+  it('every tool invoked via findTool(TOOL_DEFS.X) is declared in tools[]', () => {
+    // Scan the pack's source file for TOOL_DEFS.X / TOOL_DEFS['X'] patterns.
+    // Every X found must appear in lang.tools — otherwise a new tool call
+    // slipped in without being declared as a dependency.
+    //
+    // The reverse direction (every declared tool is invoked) is intentionally
+    // NOT checked: some tools are "artifact-generating" — the user runs them
+    // externally to produce files dxkit reads (e.g. coverage-py → coverage.json,
+    // cargo-llvm-cov → lcov.info). Those are legitimately declared so
+    // `vyuh-dxkit tools install` can set them up, even though gatherMetrics
+    // never invokes them as CLI binaries.
+    const srcPath = path.resolve(__dirname, '..', 'src', 'languages', `${lang.id}.ts`);
+    const src = fs.readFileSync(srcPath, 'utf-8');
+    const invokedToolIds = new Set<string>();
+    const dotRe = /\bTOOL_DEFS\.([A-Za-z_][A-Za-z0-9_]*)\b/g;
+    const bracketRe = /\bTOOL_DEFS\[\s*['"]([^'"]+)['"]\s*\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = dotRe.exec(src)) !== null) invokedToolIds.add(m[1]);
+    while ((m = bracketRe.exec(src)) !== null) invokedToolIds.add(m[1]);
+
+    const declared = new Set(lang.tools);
+    for (const id of invokedToolIds) {
+      expect(
+        declared,
+        `${lang.id}: "${id}" invoked via TOOL_DEFS but missing from tools[]`,
+      ).toContain(id);
     }
   });
 
