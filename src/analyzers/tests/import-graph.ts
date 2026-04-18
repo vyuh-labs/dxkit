@@ -176,45 +176,6 @@ function resolveTsJsImport(fromFile: string, spec: string, cwd: string): string 
   return null;
 }
 
-/**
- * Python resolution. Handles:
- *   from .foo import X           → fromDir/foo.py or fromDir/foo/__init__.py
- *   from ..foo import X          → fromDir/../foo.py
- *   from pkg.sub import X        → cwd/pkg/sub.py or cwd/pkg/sub/__init__.py
- *
- * External packages (stdlib, site-packages) return null.
- */
-function resolvePyImport(fromFile: string, spec: string, cwd: string): string | null {
-  const fromDir = path.dirname(path.join(cwd, fromFile));
-
-  // Count leading dots for relative imports.
-  const dotMatch = spec.match(/^(\.+)(.*)$/);
-  let baseDir: string;
-  let remainder: string;
-
-  if (dotMatch) {
-    const dots = dotMatch[1].length;
-    remainder = dotMatch[2];
-    baseDir = fromDir;
-    for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
-  } else {
-    baseDir = cwd;
-    remainder = spec;
-  }
-
-  if (!remainder) return null; // `from . import X` — too ambiguous
-  const parts = remainder.split('.').filter(Boolean);
-  const candidate = path.join(baseDir, ...parts);
-
-  // `candidate.py`
-  if (fileExists(candidate + '.py')) return toRel(candidate + '.py', cwd);
-  // `candidate/__init__.py`
-  const init = path.join(candidate, '__init__.py');
-  if (fileExists(init)) return toRel(init, cwd);
-
-  return null;
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function fileExists(p: string): boolean {

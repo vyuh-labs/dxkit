@@ -12,6 +12,9 @@ export default [
       'node_modules/**',
       'coverage/**',
       'test/fixtures/**',
+      // tmp/ holds gitignored ephemeral scripts (regression harness,
+      // one-off migration scripts). Not part of the shipped code.
+      'tmp/**',
     ],
   },
   js.configs.recommended,
