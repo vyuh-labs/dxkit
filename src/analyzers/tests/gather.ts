@@ -196,11 +196,26 @@ function classifyFileType(filePath: string): SourceFile['type'] {
   return 'other';
 }
 
+/**
+ * Path prefixes for "meta-tools" — files that analyze security rather than
+ * implement it. A file in `src/analyzers/security/` matches CRITICAL_PATTERNS
+ * on name ("security") but it's an analyzer module, not app security code.
+ * Downgrade these to their structural tier (usually LOW).
+ */
+const META_TOOL_PATH_PREFIXES = [/^src\/analyzers\//, /^tmp\//, /^scripts\//];
+
 function classifyRisk(filePath: string, type: SourceFile['type'], lines: number): RiskTier {
   const lower = filePath.toLowerCase();
 
+  // Meta-tool exception: security analyzer code matches CRITICAL_PATTERNS by
+  // name alone (e.g. src/analyzers/security/gather.ts), but it's tooling, not
+  // application security. Skip the pattern check so it falls through to the
+  // size/type tiering below. Relative-path match — deliberately strict so we
+  // don't accidentally downgrade real app code in an `analyzers` module.
+  const isMetaTool = META_TOOL_PATH_PREFIXES.some((p) => p.test(filePath));
+
   // Security-critical files are always CRITICAL regardless of size
-  if (CRITICAL_PATTERNS.some((p) => p.test(lower))) return 'critical';
+  if (!isMetaTool && CRITICAL_PATTERNS.some((p) => p.test(lower))) return 'critical';
 
   // Large controllers/services are HIGH
   if ((type === 'controller' || type === 'service') && lines > 500) return 'high';
