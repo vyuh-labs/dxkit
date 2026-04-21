@@ -6,6 +6,7 @@ import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
+  CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   LintGatherOutcome,
@@ -255,6 +256,41 @@ const tsLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+/**
+ * Single source of truth for the typescript pack's coverage gathering.
+ * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
+ * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ */
+function gatherTsCoverageResult(cwd: string): CoverageResult | null {
+  const candidates = [
+    { file: 'coverage/coverage-summary.json', parser: parseIstanbulSummary },
+    { file: 'coverage/coverage-final.json', parser: parseIstanbulFinal },
+  ] as const;
+  for (const c of candidates) {
+    const abs = path.join(cwd, c.file);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    try {
+      const coverage = c.parser(raw, c.file, cwd);
+      return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    return gatherTsCoverageResult(cwd);
+  },
+};
+
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
@@ -287,28 +323,13 @@ export const typescript: LanguageSupport = {
   capabilities: {
     depVulns: tsDepVulnsProvider,
     lint: tsLintProvider,
+    coverage: tsCoverageProvider,
   },
 
+  // LEGACY: delegates to capabilities.coverage's helper.
+  // Method removed in Phase 10e.B.3.6.
   parseCoverage(cwd) {
-    const candidates = [
-      { file: 'coverage/coverage-summary.json', parser: parseIstanbulSummary },
-      { file: 'coverage/coverage-final.json', parser: parseIstanbulFinal },
-    ] as const;
-    for (const c of candidates) {
-      const abs = path.join(cwd, c.file);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(abs, 'utf-8');
-      } catch {
-        continue;
-      }
-      try {
-        return c.parser(raw, c.file, cwd);
-      } catch {
-        continue;
-      }
-    }
-    return null;
+    return gatherTsCoverageResult(cwd)?.coverage ?? null;
   },
 
   extractImports(content) {
