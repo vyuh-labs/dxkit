@@ -106,7 +106,7 @@ beforeAll(async () => {
   healthReport = h.report;
   healthMetrics = h.metrics;
   testGapsReport = analyzeTestGaps(tmp);
-  securityReport = analyzeSecurity(tmp);
+  securityReport = await analyzeSecurity(tmp);
   qualityReport = await analyzeQuality(tmp);
   devReport = analyzeDevActivity(tmp);
 }, 120000);

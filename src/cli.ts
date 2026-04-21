@@ -303,7 +303,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit vulnerabilities');
       logger.info(`Scanning ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeSecurity(targetPath, { verbose: !!values.verbose });
+      const report = await analyzeSecurity(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {

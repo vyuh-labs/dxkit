@@ -2,16 +2,22 @@
  * Security finding gatherers — one function per tool, no overlap.
  *
  * Tool boundaries:
- *   gitleaks  → secrets (hardcoded credentials, API keys, private keys in source)
- *   find/git  → private key files on disk (.key, .pem), .env tracked in git
- *   semgrep   → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
- *   npm audit → dependency CVEs
+ *   gitleaks   → secrets (hardcoded credentials, API keys, private keys in source)
+ *   find/git   → private key files on disk (.key, .pem), .env tracked in git
+ *   semgrep    → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
+ *   dispatcher → dependency CVEs across every active language pack
+ *                (Phase 10e.B.1 — was hardcoded to npm-audit only)
  */
 import { detect } from '../../detect';
-import { run, fileExists } from '../tools/runner';
+import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';
 import { getFindExcludeFlags, getSemgrepExcludeFlags, isExcludedPath } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
+import { defaultDispatcher } from '../dispatcher';
+import { detectActiveLanguages } from '../../languages';
+import { DEP_VULNS } from '../../languages/capabilities/descriptors';
+import type { CapabilityProvider } from '../../languages/capabilities/provider';
+import type { DepVulnResult } from '../../languages/capabilities/types';
 
 // ─── gitleaks: secrets ───────────────────────────────────────────────────────
 
@@ -193,57 +199,43 @@ export function gatherCodePatterns(cwd: string): {
   }
 }
 
-// ─── npm audit: dependency CVEs ─────────────────────────────────────────────
+// ─── dependency CVEs via the capabilities dispatcher ────────────────────────
 
-interface NpmAuditV1 {
-  metadata?: {
-    vulnerabilities?: { critical?: number; high?: number; moderate?: number; low?: number };
-  };
-}
-interface NpmAuditV2 {
-  vulnerabilities?: Record<string, { severity: string }>;
-}
+const EMPTY_DEP_VULNS: DepVulnSummary = {
+  critical: 0,
+  high: 0,
+  medium: 0,
+  low: 0,
+  total: 0,
+  tool: null,
+};
 
-function parseAuditJson(raw: string): { c: number; h: number; m: number; l: number } | null {
-  try {
-    const data = JSON.parse(raw) as NpmAuditV1 & NpmAuditV2;
-    if (data.metadata?.vulnerabilities) {
-      const v = data.metadata.vulnerabilities;
-      return { c: v.critical || 0, h: v.high || 0, m: v.moderate || 0, l: v.low || 0 };
-    }
-    if (data.vulnerabilities) {
-      let c = 0,
-        h = 0,
-        m = 0,
-        l = 0;
-      for (const v of Object.values(data.vulnerabilities)) {
-        if (v.severity === 'critical') c++;
-        else if (v.severity === 'high') h++;
-        else if (v.severity === 'moderate') m++;
-        else if (v.severity === 'low') l++;
-      }
-      return { c, h, m, l };
-    }
-    return null;
-  } catch {
-    return null;
+/**
+ * Aggregates dependency vulnerabilities across every active language pack
+ * via the capability dispatcher. Replaces the prior hardcoded `npm audit`
+ * implementation that silently ignored Python/Go/Rust/C# deps.
+ *
+ * Returns `EMPTY_DEP_VULNS` when no active pack exposes a depVulns
+ * provider, or when every provider returned null (no tool installed
+ * / nothing to audit).
+ */
+export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
+  const providers: CapabilityProvider<DepVulnResult>[] = [];
+  for (const lang of detectActiveLanguages(cwd)) {
+    if (lang.capabilities?.depVulns) providers.push(lang.capabilities.depVulns);
   }
-}
+  if (providers.length === 0) return EMPTY_DEP_VULNS;
 
-export function gatherDepVulns(cwd: string): DepVulnSummary {
-  if (!fileExists(cwd, 'package.json'))
-    return { critical: 0, high: 0, medium: 0, low: 0, total: 0, tool: null };
+  const envelope = await defaultDispatcher.gather(cwd, DEP_VULNS, providers);
+  if (!envelope) return EMPTY_DEP_VULNS;
 
-  const raw = run('npm audit --json 2>&1', cwd, 60000);
-  const result = raw ? parseAuditJson(raw) : null;
-  if (!result) return { critical: 0, high: 0, medium: 0, low: 0, total: 0, tool: null };
-
+  const { critical, high, medium, low } = envelope.counts;
   return {
-    critical: result.c,
-    high: result.h,
-    medium: result.m,
-    low: result.l,
-    total: result.c + result.h + result.m + result.l,
-    tool: 'npm-audit',
+    critical,
+    high,
+    medium,
+    low,
+    total: critical + high + medium + low,
+    tool: envelope.tool,
   };
 }

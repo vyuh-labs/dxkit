@@ -4,7 +4,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { timed } from '../tools/timing';
+import { timed, timedAsync } from '../tools/timing';
 import { gatherSecrets, gatherFileFindings, gatherCodePatterns, gatherDepVulns } from './gather';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 
@@ -20,10 +20,10 @@ function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> 
   return counts;
 }
 
-export function analyzeSecurity(
+export async function analyzeSecurity(
   repoPath: string,
   options: AnalyzeSecurityOptions = {},
-): SecurityReport {
+): Promise<SecurityReport> {
   const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['find', 'git'];
@@ -42,10 +42,15 @@ export function analyzeSecurity(
   if (code.toolUsed) toolsUsed.push(code.toolUsed);
   else toolsUnavailable.push('semgrep');
 
-  // 4. Dependency CVEs (npm audit)
-  const deps = timed('dep-audit', verbose, () => gatherDepVulns(repoPath));
-  if (deps.tool) toolsUsed.push(deps.tool);
-  else toolsUnavailable.push('npm-audit');
+  // 4. Dependency CVEs — capability dispatcher across every active language
+  //    pack. The envelope's tool field already joins multiple sources
+  //    ('pip-audit, npm-audit'); split it back out for toolsUsed.
+  const deps = await timedAsync('dep-audit', verbose, () => gatherDepVulns(repoPath));
+  if (deps.tool) {
+    for (const t of deps.tool.split(', ')) toolsUsed.push(t);
+  } else {
+    toolsUnavailable.push('dep-audit');
+  }
 
   const allFindings = [...secrets.findings, ...files, ...code.findings];
   const counts = countBySeverity(allFindings);
