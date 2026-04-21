@@ -98,6 +98,15 @@ export async function run(argv: string[]): Promise<void> {
   const command = positionals[0] || 'init';
   const cwd = process.cwd();
 
+  /**
+   * Resolve a user-supplied repo path to an absolute one. Analyzers
+   * propagate this value into child worker processes (Layer 2 parallel
+   * cloc/gitleaks/graphify) that run from a different cwd, so a bare
+   * "." would resolve against the child's cwd — yielding bogus scans
+   * of dxkit's own dist/ output. Always absolutize at the boundary.
+   */
+  const resolveRepoPath = (raw?: string): string => path.resolve(raw || cwd);
+
   switch (command) {
     case 'init': {
       logger.header('vyuh-dxkit init');
@@ -202,7 +211,7 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'health': {
-      const targetPath = positionals[1] || cwd;
+      const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeHealth, analyzeHealthWithMetrics } = await import('./analyzers/health');
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
@@ -290,7 +299,7 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'tools': {
       const subCommand = positionals[1];
-      const targetPath = positionals[2] || cwd;
+      const targetPath = resolveRepoPath(positionals[2]);
       const { runToolsCommand } = await import('./tools-cli');
       await runToolsCommand(targetPath, subCommand, !!values.yes);
       break;
@@ -298,7 +307,7 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'vulnerabilities':
     case 'vuln': {
-      const targetPath = positionals[1] || cwd;
+      const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeSecurity, formatSecurityReport } = await import('./analyzers/security');
       logger.header('vyuh-dxkit vulnerabilities');
       logger.info(`Scanning ${targetPath}...`);
@@ -356,7 +365,7 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'test-gaps': {
-      const targetPath = positionals[1] || cwd;
+      const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeTestGaps, formatTestGapsReport } = await import('./analyzers/tests');
       logger.header('vyuh-dxkit test-gaps');
       logger.info(`Analyzing ${targetPath}...`);
@@ -409,7 +418,7 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'quality': {
-      const targetPath = positionals[1] || cwd;
+      const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeQuality, formatQualityReport } = await import('./analyzers/quality');
       logger.header('vyuh-dxkit quality');
       logger.info(`Analyzing ${targetPath}...`);
@@ -487,7 +496,7 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'dev-report': {
-      const targetPath = positionals[1] || cwd;
+      const targetPath = resolveRepoPath(positionals[1]);
       const sinceFlag = (values as Record<string, unknown>).since as string | undefined;
       const { analyzeDevActivity, formatDevReport } = await import('./analyzers/developer');
       logger.header('vyuh-dxkit dev-report');
