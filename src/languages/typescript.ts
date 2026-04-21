@@ -4,6 +4,8 @@ import * as path from 'path';
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import type { HealthMetrics } from '../analyzers/types';
+import type { CapabilityProvider } from './capabilities/provider';
+import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -102,6 +104,56 @@ interface AuditV1 {
 interface AuditV2 {
   vulnerabilities?: Record<string, { severity: string }>;
 }
+
+/**
+ * Single source of truth for the typescript pack's dep-vuln gathering.
+ * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this
+ * — the legacy decomposition in `gatherMetrics` is the bridge that goes
+ * away in Phase 10e.C.
+ */
+async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  if (!fileExists(cwd, 'package.json')) return { kind: 'tool-missing' };
+  const auditRaw = run('npm audit --json 2>&1', cwd, 60000);
+  if (!auditRaw) return { kind: 'no-output' };
+  try {
+    const auditData = JSON.parse(auditRaw) as AuditV1 & AuditV2;
+    let critical = 0;
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    if (auditData.metadata?.vulnerabilities) {
+      const v = auditData.metadata.vulnerabilities;
+      critical = v.critical || 0;
+      high = v.high || 0;
+      medium = v.moderate || 0;
+      low = v.low || 0;
+    } else if (auditData.vulnerabilities) {
+      for (const v of Object.values(auditData.vulnerabilities)) {
+        if (v.severity === 'critical') critical++;
+        else if (v.severity === 'high') high++;
+        else if (v.severity === 'moderate') medium++;
+        else if (v.severity === 'low') low++;
+      }
+    }
+    const envelope: DepVulnResult = {
+      schemaVersion: 1,
+      tool: 'npm-audit',
+      enrichment: null,
+      counts: { critical, high, medium, low },
+    };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'parse-error' };
+  }
+}
+
+const tsDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    const outcome = await gatherTsDepVulnsResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
 
 function stripTsJsComments(src: string): string {
   let out = src.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -228,6 +280,10 @@ export const typescript: LanguageSupport = {
   tools: ['eslint', 'npm-audit', 'vitest-coverage'],
   semgrepRulesets: ['p/javascript', 'p/typescript'],
 
+  capabilities: {
+    depVulns: tsDepVulnsProvider,
+  },
+
   parseCoverage(cwd) {
     const candidates = [
       { file: 'coverage/coverage-summary.json', parser: parseIstanbulSummary },
@@ -302,38 +358,20 @@ export const typescript: LanguageSupport = {
       metrics.toolsUnavailable!.push(`eslint (${eslintStatus.reason})`);
     }
 
-    const auditRaw = run('npm audit --json 2>&1', cwd, 60000);
-    if (auditRaw) {
-      try {
-        const auditData = JSON.parse(auditRaw) as AuditV1 & AuditV2;
-        let critical = 0;
-        let high = 0;
-        let medium = 0;
-        let low = 0;
-        if (auditData.metadata?.vulnerabilities) {
-          const v = auditData.metadata.vulnerabilities;
-          critical = v.critical || 0;
-          high = v.high || 0;
-          medium = v.moderate || 0;
-          low = v.low || 0;
-        } else if (auditData.vulnerabilities) {
-          for (const v of Object.values(auditData.vulnerabilities)) {
-            if (v.severity === 'critical') critical++;
-            else if (v.severity === 'high') high++;
-            else if (v.severity === 'moderate') medium++;
-            else if (v.severity === 'low') low++;
-          }
-        }
-        metrics.depVulnCritical = critical;
-        metrics.depVulnHigh = high;
-        metrics.depVulnMedium = medium;
-        metrics.depVulnLow = low;
-        metrics.depAuditTool = 'npm-audit';
-        metrics.toolsUsed!.push('npm-audit');
-      } catch {
-        metrics.toolsUnavailable!.push('npm-audit (parse error)');
-      }
-    } else {
+    // LEGACY: depVuln* fields populated from capabilities.depVulns;
+    // removed in Phase 10e.C when reports stop reading these.
+    const dvOutcome = await gatherTsDepVulnsResult(cwd);
+    if (dvOutcome.kind === 'success') {
+      const e = dvOutcome.envelope;
+      metrics.depVulnCritical = e.counts.critical;
+      metrics.depVulnHigh = e.counts.high;
+      metrics.depVulnMedium = e.counts.medium;
+      metrics.depVulnLow = e.counts.low;
+      metrics.depAuditTool = e.tool;
+      metrics.toolsUsed!.push('npm-audit');
+    } else if (dvOutcome.kind === 'parse-error') {
+      metrics.toolsUnavailable!.push('npm-audit (parse error)');
+    } else if (dvOutcome.kind === 'no-output' || dvOutcome.kind === 'tool-missing') {
       metrics.toolsUnavailable!.push('npm-audit');
     }
 

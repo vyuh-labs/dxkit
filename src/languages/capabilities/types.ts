@@ -72,3 +72,21 @@ export interface TestFrameworkResult extends CapabilityEnvelope {
   /** Lower-case framework id: 'vitest', 'jest', 'pytest', 'go-test', 'cargo-test', 'dotnet-test'. */
   name: string;
 }
+
+/**
+ * Internal outcome shape used by language packs while bridging from the
+ * legacy `gatherMetrics` channel to the capability dispatcher in Phase
+ * 10e.B.1. Each pack has a private `gatherDepVulnsResult(cwd)` helper
+ * that returns this; the pack's `capabilities.depVulns.gather()` thinly
+ * unwraps the envelope, and `gatherMetrics` decomposes it back into
+ * legacy `depVuln*` + `toolsUsed`/`toolsUnavailable` strings.
+ *
+ * The discriminated union captures every distinction `gatherMetrics`
+ * historically made: ran-and-parsed, tool-missing, ran-but-parse-error,
+ * ran-but-empty-output. Removed in Phase 10e.C when the legacy fields go.
+ */
+export type DepVulnGatherOutcome =
+  | { kind: 'success'; envelope: DepVulnResult }
+  | { kind: 'tool-missing' }
+  | { kind: 'parse-error' }
+  | { kind: 'no-output' };
