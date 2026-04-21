@@ -6,6 +6,8 @@ import { enrichSeverities } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
+import type { CapabilityProvider } from './capabilities/provider';
+import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 interface RuffResult {
@@ -58,6 +60,67 @@ function hasPyFileWithinDepth(cwd: string, maxDepth = 2): boolean {
   return search(cwd, 0);
 }
 
+/**
+ * Single source of truth for the python pack's dep-vuln gathering.
+ * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
+ * The legacy decomposition in `gatherMetrics` is the bridge that goes
+ * away in Phase 10e.C.
+ */
+async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
+  if (!pipAudit.available || !pipAudit.path) return { kind: 'tool-missing' };
+
+  const raw = run(`${pipAudit.path} --format json 2>/dev/null`, cwd, 120000);
+  if (!raw) return { kind: 'no-output' };
+
+  try {
+    const data = JSON.parse(raw) as PipAuditReport;
+    const vulnIds: string[] = [];
+    for (const dep of data.dependencies || []) {
+      for (const v of dep.vulns || []) {
+        if (v.id) vulnIds.push(v.id);
+      }
+    }
+    // pip-audit doesn't carry severity per vuln — look up via OSV.dev.
+    // Unknown/unreachable IDs fall back to medium (pip-audit's legacy default).
+    const severities = await enrichSeverities(vulnIds);
+    let critical = 0;
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    let enrichedCount = 0;
+    for (const id of vulnIds) {
+      const sev = severities.get(id);
+      if (sev && sev !== 'unknown') {
+        enrichedCount++;
+        if (sev === 'critical') critical++;
+        else if (sev === 'high') high++;
+        else if (sev === 'medium') medium++;
+        else low++;
+      } else {
+        medium++;
+      }
+    }
+    const envelope: DepVulnResult = {
+      schemaVersion: 1,
+      tool: 'pip-audit',
+      enrichment: enrichedCount > 0 ? 'osv.dev' : null,
+      counts: { critical, high, medium, low },
+    };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'parse-error' };
+  }
+}
+
+const pyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'python',
+  async gather(cwd) {
+    const outcome = await gatherPyDepVulnsResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 function mapRuffSeverity(code: string): LintSeverity {
   const prefix = code.match(/^[A-Z]+/)?.[0] ?? '';
   switch (prefix) {
@@ -93,6 +156,10 @@ export const python: LanguageSupport = {
 
   tools: ['ruff', 'pip-audit', 'coverage-py'],
   semgrepRulesets: ['p/python'],
+
+  capabilities: {
+    depVulns: pyDepVulnsProvider,
+  },
 
   parseCoverage(cwd) {
     const file = path.join(cwd, 'coverage.json');
@@ -193,52 +260,25 @@ export const python: LanguageSupport = {
       metrics.toolsUnavailable!.push('ruff');
     }
 
-    const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
-    if (pipAudit.available && pipAudit.path) {
-      const raw = run(`${pipAudit.path} --format json 2>/dev/null`, cwd, 120000);
-      if (raw) {
-        try {
-          const data = JSON.parse(raw) as PipAuditReport;
-          const vulnIds: string[] = [];
-          for (const dep of data.dependencies || []) {
-            for (const v of dep.vulns || []) {
-              if (v.id) vulnIds.push(v.id);
-            }
-          }
-          // pip-audit doesn't carry severity per vuln — look up via OSV.dev.
-          // Unknown/unreachable IDs fall back to medium (pip-audit's legacy default).
-          const severities = await enrichSeverities(vulnIds);
-          let critical = 0;
-          let high = 0;
-          let medium = 0;
-          let low = 0;
-          let enrichedCount = 0;
-          for (const id of vulnIds) {
-            const sev = severities.get(id);
-            if (sev && sev !== 'unknown') {
-              enrichedCount++;
-              if (sev === 'critical') critical++;
-              else if (sev === 'high') high++;
-              else if (sev === 'medium') medium++;
-              else low++;
-            } else {
-              medium++;
-            }
-          }
-          metrics.depVulnCritical = critical;
-          metrics.depVulnHigh = high;
-          metrics.depVulnMedium = medium;
-          metrics.depVulnLow = low;
-          metrics.depAuditTool = 'pip-audit';
-          metrics.toolsUsed!.push('pip-audit');
-          if (enrichedCount > 0) metrics.toolsUsed!.push('osv.dev');
-        } catch {
-          metrics.toolsUnavailable!.push('pip-audit (parse error)');
-        }
-      }
-    } else {
+    // LEGACY: depVuln* fields populated from capabilities.depVulns;
+    // removed in Phase 10e.C when reports stop reading these.
+    const dvOutcome = await gatherPyDepVulnsResult(cwd);
+    if (dvOutcome.kind === 'success') {
+      const e = dvOutcome.envelope;
+      metrics.depVulnCritical = e.counts.critical;
+      metrics.depVulnHigh = e.counts.high;
+      metrics.depVulnMedium = e.counts.medium;
+      metrics.depVulnLow = e.counts.low;
+      metrics.depAuditTool = e.tool;
+      metrics.toolsUsed!.push('pip-audit');
+      if (e.enrichment === 'osv.dev') metrics.toolsUsed!.push('osv.dev');
+    } else if (dvOutcome.kind === 'parse-error') {
+      metrics.toolsUnavailable!.push('pip-audit (parse error)');
+    } else if (dvOutcome.kind === 'tool-missing') {
       metrics.toolsUnavailable!.push('pip-audit');
     }
+    // 'no-output' was previously silent (raw was empty so the if (raw) block
+    // didn't run and nothing was pushed); preserve that behavior.
 
     if (fileExists(cwd, 'pytest.ini', 'conftest.py') || fileExists(cwd, 'pyproject.toml')) {
       const pyproject = run('cat pyproject.toml 2>/dev/null', cwd);
