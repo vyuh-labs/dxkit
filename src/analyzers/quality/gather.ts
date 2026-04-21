@@ -19,6 +19,10 @@ import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
 import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { detectActiveLanguages } from '../../languages';
+import { defaultDispatcher } from '../dispatcher';
+import { LINT } from '../../languages/capabilities/descriptors';
+import type { CapabilityProvider } from '../../languages/capabilities/provider';
+import type { LintResult } from '../../languages/capabilities/types';
 import { CloneGroup, DuplicationStats, FileOffender } from './types';
 
 // ─── jscpd: duplicate code ──────────────────────────────────────────────────
@@ -296,24 +300,41 @@ export function gatherHygieneMarkers(cwd: string): {
   };
 }
 
-// ─── lint errors (via language registry) ─────────────────────────────────────
+// ─── lint errors (via capability dispatcher) ─────────────────────────────────
 
+/**
+ * Aggregates lint tier counts across every active language pack via the
+ * capability dispatcher. Phase 10e.B.2 replaced an earlier loop that ran
+ * each pack's full `gatherMetrics` (lint + deps + testFramework) and
+ * returned the first pack's lint with a non-null `lintTool`. Two fixes:
+ *
+ *   1. First-wins → sum: a Python + Node repo now reports combined
+ *      eslint + ruff counts, not just the first one detected.
+ *   2. Only the lint provider runs per pack, not the full `gatherMetrics`,
+ *      so the quality analyzer no longer incidentally triggers npm-audit
+ *      and pip-audit when asking about lint.
+ *
+ * Collapse: critical + high → errors, medium + low → warnings, matching
+ * the prior `lintErrors`/`lintWarnings` contract.
+ */
 export async function gatherLintMetrics(cwd: string): Promise<{
   errors: number;
   warnings: number;
   tool: string | null;
 }> {
-  // Dispatch through language registry — first language with a lint result wins.
+  const providers: CapabilityProvider<LintResult>[] = [];
   for (const lang of detectActiveLanguages(cwd)) {
-    if (!lang.gatherMetrics) continue;
-    const result = await lang.gatherMetrics(cwd);
-    if (result.lintTool) {
-      return {
-        errors: result.lintErrors ?? 0,
-        warnings: result.lintWarnings ?? 0,
-        tool: result.lintTool ?? null,
-      };
-    }
+    if (lang.capabilities?.lint) providers.push(lang.capabilities.lint);
   }
-  return { errors: 0, warnings: 0, tool: null };
+  if (providers.length === 0) return { errors: 0, warnings: 0, tool: null };
+
+  const envelope = await defaultDispatcher.gather(cwd, LINT, providers);
+  if (!envelope) return { errors: 0, warnings: 0, tool: null };
+
+  const c = envelope.counts;
+  return {
+    errors: c.critical + c.high,
+    warnings: c.medium + c.low,
+    tool: envelope.tool,
+  };
 }
