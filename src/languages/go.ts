@@ -16,6 +16,7 @@ import type {
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
+  TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
@@ -369,6 +370,23 @@ const goImportsProvider: CapabilityProvider<ImportsResult> = {
   },
 };
 
+/**
+ * Go ships with a single test runner (`go test`) and every module
+ * using it is identified by `go.mod` at the root — detection is a
+ * single file-existence check.
+ */
+function gatherGoTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  if (!fileExists(cwd, 'go.mod')) return null;
+  return { schemaVersion: 1, tool: 'go', name: 'go-test' };
+}
+
+const goTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'go',
+  async gather(cwd) {
+    return gatherGoTestFrameworkResult(cwd);
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -388,6 +406,7 @@ export const go: LanguageSupport = {
     lint: goLintProvider,
     coverage: goCoverageProvider,
     imports: goImportsProvider,
+    testFramework: goTestFrameworkProvider,
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
@@ -436,9 +455,10 @@ export const go: LanguageSupport = {
     // 'no-output' was previously silent (raw was empty so the if (raw) block
     // didn't run and nothing was pushed); preserve that behavior.
 
-    if (fileExists(cwd, 'go.mod')) {
-      metrics.testFramework = 'go-test';
-    }
+    // LEGACY: testFramework populated from capabilities.testFramework;
+    // removed in Phase 10e.B.5.6.
+    const tfResult = gatherGoTestFrameworkResult(cwd);
+    if (tfResult) metrics.testFramework = tfResult.name;
 
     return metrics;
   },
