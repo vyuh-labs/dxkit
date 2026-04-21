@@ -14,6 +14,7 @@ import type {
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
+  TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
@@ -396,6 +397,40 @@ const tsImportsProvider: CapabilityProvider<ImportsResult> = {
   },
 };
 
+/**
+ * Detect the JS/TS test framework by inspecting the `scripts.test`
+ * entry of `package.json` — that's the contract runners publish
+ * themselves by and is cheap/deterministic. Returns null when there's
+ * no package.json or no recognizable runner; 'unknown' is NOT returned
+ * to the dispatcher because an 'unknown' string is worse than null
+ * (the last-wins aggregate would prefer it over another pack's real
+ * answer).
+ */
+function gatherTsTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  const testScript = run(
+    "node -e \"const p=require('./package.json'); console.log(p.scripts?.test || '')\" 2>/dev/null", // slop-ok
+    cwd,
+  );
+  if (!testScript || testScript === 'echo "Error: no test specified" && exit 1') return null;
+
+  let name: string | null = null;
+  if (testScript.includes('vitest')) name = 'vitest';
+  else if (testScript.includes('jest')) name = 'jest';
+  else if (testScript.includes('mocha') || testScript.includes('lb-mocha')) name = 'mocha';
+  else if (testScript.includes('ava')) name = 'ava';
+  else if (testScript.includes('tap')) name = 'tap';
+
+  if (!name) return null;
+  return { schemaVersion: 1, tool: 'typescript', name };
+}
+
+const tsTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    return gatherTsTestFrameworkResult(cwd);
+  },
+};
+
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
@@ -430,6 +465,7 @@ export const typescript: LanguageSupport = {
     lint: tsLintProvider,
     coverage: tsCoverageProvider,
     imports: tsImportsProvider,
+    testFramework: tsTestFrameworkProvider,
   },
 
   async gatherMetrics(cwd) {
@@ -469,19 +505,10 @@ export const typescript: LanguageSupport = {
       metrics.toolsUnavailable!.push('npm-audit');
     }
 
-    const testScript = run(
-      "node -e \"const p=require('./package.json'); console.log(p.scripts?.test || '')\" 2>/dev/null", // slop-ok
-      cwd,
-    );
-    if (testScript && testScript !== 'echo "Error: no test specified" && exit 1') {
-      let framework = 'unknown';
-      if (testScript.includes('vitest')) framework = 'vitest';
-      else if (testScript.includes('jest')) framework = 'jest';
-      else if (testScript.includes('mocha') || testScript.includes('lb-mocha')) framework = 'mocha';
-      else if (testScript.includes('ava')) framework = 'ava';
-      else if (testScript.includes('tap')) framework = 'tap';
-      metrics.testFramework = framework;
-    }
+    // LEGACY: testFramework populated from capabilities.testFramework;
+    // removed in Phase 10e.B.5.6 when health.ts wires the dispatcher.
+    const tfResult = gatherTsTestFrameworkResult(cwd);
+    if (tfResult) metrics.testFramework = tfResult.name;
 
     const scriptsOutput = run(
       'node -e "const p=require(\'./package.json\'); console.log(Object.keys(p.scripts||{}).length)" 2>/dev/null', // slop-ok
