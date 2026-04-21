@@ -7,6 +7,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
+  CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   LintGatherOutcome,
@@ -209,6 +210,35 @@ const csharpLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+/**
+ * Single source of truth for the csharp pack's coverage gathering.
+ * Locates the Cobertura artifact across known layouts (explicit `coverage/`
+ * dir or `dotnet test --collect`'s TestResults/<guid>/ subtree). Both
+ * `capabilities.coverage.gather()` and `parseCoverage` (legacy) consume
+ * this. parseCoverage method removed in Phase 10e.B.3.6.
+ */
+function gatherCsharpCoverageResult(cwd: string): CoverageResult | null {
+  const artifact = findCoberturaArtifact(cwd);
+  if (!artifact) return null;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(artifact, 'utf-8');
+  } catch {
+    return null;
+  }
+  const rel = path.relative(cwd, artifact).split(path.sep).join('/');
+  const coverage = parseCoberturaXml(raw, rel, cwd);
+  if (!coverage) return null;
+  return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+}
+
+const csharpCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    return gatherCsharpCoverageResult(cwd);
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -231,19 +261,13 @@ export const csharp: LanguageSupport = {
   capabilities: {
     depVulns: csharpDepVulnsProvider,
     lint: csharpLintProvider,
+    coverage: csharpCoverageProvider,
   },
 
+  // LEGACY: delegates to capabilities.coverage's helper.
+  // Method removed in Phase 10e.B.3.6.
   parseCoverage(cwd) {
-    const artifact = findCoberturaArtifact(cwd);
-    if (!artifact) return null;
-    let raw: string;
-    try {
-      raw = fs.readFileSync(artifact, 'utf-8');
-    } catch {
-      return null;
-    }
-    const rel = path.relative(cwd, artifact).split(path.sep).join('/');
-    return parseCoberturaXml(raw, rel, cwd);
+    return gatherCsharpCoverageResult(cwd)?.coverage ?? null;
   },
 
   extractImports(content) {
