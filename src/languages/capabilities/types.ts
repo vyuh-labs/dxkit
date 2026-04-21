@@ -11,12 +11,12 @@
  *   - `tool`: which underlying tool produced this result. Required for
  *     attribution in reports and for the `toolsUsed` aggregation.
  *
- * Only the envelopes whose shape is stable today are defined here.
- * `ImportsResult` is deferred until Phase 10e.B.4 (imports migration)
- * because the import-graph refactor will fix the shape; defining it
- * speculatively would carry slop forward. Same for the global-gatherer
- * envelopes (`SecretsResult`, `CodePatternsResult`, ...) — those land
- * in Phase 10e.B.6+.
+ * `ImportsResult` landed in Phase 10e.B.4 — a pack pre-computes the full
+ * per-pack import graph (extracted specifiers + resolved edges) for every
+ * source file matching its `sourceExtensions`, and the dispatcher unions
+ * the per-pack graphs so `buildReachable` can BFS over the unified edge
+ * map. Global-gatherer envelopes (`SecretsResult`, `CodePatternsResult`,
+ * ...) land in Phase 10e.B.6+.
  */
 
 import type { Coverage } from '../../analyzers/tools/coverage';
@@ -71,6 +71,32 @@ export interface CoverageResult extends CapabilityEnvelope {
 export interface TestFrameworkResult extends CapabilityEnvelope {
   /** Lower-case framework id: 'vitest', 'jest', 'pytest', 'go-test', 'cargo-test', 'dotnet-test'. */
   name: string;
+}
+
+/**
+ * Pre-computed import graph for one language pack, the imports capability.
+ *
+ * Every key in `extracted` and `edges` is a project-relative source file
+ * path matching one of `sourceExtensions`. Keys are disjoint across packs
+ * (a pack only owns files whose extension it declares), so the descriptor
+ * aggregates by plain union.
+ *
+ * `extracted` carries the raw specifiers captured from each file (e.g.
+ * `'./foo'`, `'lodash'`, `'../bar/baz'`). `edges` carries only the
+ * specifiers the pack could resolve to an in-project file; external
+ * packages and unresolvable specifiers are dropped. `buildReachable`
+ * consumes `edges`; future analyses (unused-imports, dead-code) can
+ * consume `extracted` without re-parsing source.
+ *
+ * Packs whose language has no file-based import resolution (Rust uses
+ * `mod`/crate paths, C# uses namespaces) still emit a result: `extracted`
+ * is populated for completeness and `edges` is empty. The union of an
+ * empty edges map is a no-op.
+ */
+export interface ImportsResult extends CapabilityEnvelope {
+  readonly sourceExtensions: ReadonlyArray<string>;
+  readonly extracted: ReadonlyMap<string, ReadonlyArray<string>>;
+  readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /**

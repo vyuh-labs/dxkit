@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   COVERAGE,
   DEP_VULNS,
+  IMPORTS,
   LINT,
   TEST_FRAMEWORK,
 } from '../src/languages/capabilities/descriptors';
 import type {
   CoverageResult,
   DepVulnResult,
+  ImportsResult,
   LintResult,
   TestFrameworkResult,
 } from '../src/languages/capabilities/types';
@@ -178,5 +180,66 @@ describe('TEST_FRAMEWORK descriptor', () => {
     const a: TestFrameworkResult = { schemaVersion: 1, tool: 'typescript', name: 'vitest' };
     const b: TestFrameworkResult = { schemaVersion: 1, tool: 'python', name: 'pytest' };
     expect(TEST_FRAMEWORK.aggregate([a, b])).toBe(b);
+  });
+});
+
+describe('IMPORTS descriptor', () => {
+  it('id is "imports"', () => {
+    expect(IMPORTS.id).toBe('imports');
+  });
+
+  it('unions sourceExtensions across packs without duplicates', () => {
+    const ts: ImportsResult = {
+      schemaVersion: 1,
+      tool: 'ts-imports',
+      sourceExtensions: ['.ts', '.tsx'],
+      extracted: new Map(),
+      edges: new Map(),
+    };
+    const py: ImportsResult = {
+      schemaVersion: 1,
+      tool: 'python-imports',
+      sourceExtensions: ['.py'],
+      extracted: new Map(),
+      edges: new Map(),
+    };
+    const out = IMPORTS.aggregate([ts, py]);
+    expect([...out.sourceExtensions].sort()).toEqual(['.py', '.ts', '.tsx']);
+    expect(out.tool).toBe('ts-imports, python-imports');
+  });
+
+  it('unions extracted and edges across packs', () => {
+    const ts: ImportsResult = {
+      schemaVersion: 1,
+      tool: 'ts-imports',
+      sourceExtensions: ['.ts'],
+      extracted: new Map([['src/a.ts', ['./b']]]),
+      edges: new Map([['src/a.ts', new Set(['src/b.ts'])]]),
+    };
+    const py: ImportsResult = {
+      schemaVersion: 1,
+      tool: 'python-imports',
+      sourceExtensions: ['.py'],
+      extracted: new Map([['app/main.py', ['.helpers']]]),
+      edges: new Map([['app/main.py', new Set(['app/helpers.py'])]]),
+    };
+    const out = IMPORTS.aggregate([ts, py]);
+    expect(out.extracted.get('src/a.ts')).toEqual(['./b']);
+    expect(out.extracted.get('app/main.py')).toEqual(['.helpers']);
+    expect(out.edges.get('src/a.ts')).toEqual(new Set(['src/b.ts']));
+    expect(out.edges.get('app/main.py')).toEqual(new Set(['app/helpers.py']));
+  });
+
+  it('handles a pack with empty edges (Rust/C# style) without error', () => {
+    const rust: ImportsResult = {
+      schemaVersion: 1,
+      tool: 'rust-imports',
+      sourceExtensions: ['.rs'],
+      extracted: new Map([['src/lib.rs', ['crate::util']]]),
+      edges: new Map(),
+    };
+    const out = IMPORTS.aggregate([rust]);
+    expect(out.edges.size).toBe(0);
+    expect(out.extracted.get('src/lib.rs')).toEqual(['crate::util']);
   });
 });

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
@@ -9,6 +10,7 @@ import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
+  ImportsResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -181,6 +183,54 @@ function toRel(abs: string, cwd: string): string {
 }
 
 /**
+ * Module-level TS/JS import extraction. Shared by the pack's legacy
+ * `extractImports` method and the imports capability's batch gatherer so
+ * both paths see byte-identical specifiers; when the legacy method goes
+ * away in Phase 10e.C this becomes the sole call site.
+ */
+function extractTsImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  const stripped = stripTsJsComments(content);
+  const importRe = /\bimport\s+(?:[^'";]*?from\s+)?['"]([^'"]+)['"]/g;
+  const reexportRe = /\bexport\s+(?:[^'";]*?from\s+)['"]([^'"]+)['"]/g;
+  const dynRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const reqRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (const re of [importRe, reexportRe, dynRe, reqRe]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(stripped)) !== null) {
+      out.push(m[1]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Module-level TS/JS import resolution. Mirrors `extractTsImportsRaw`:
+ * shared between the legacy `resolveImport` method and the capability
+ * gatherer. Only relative specifiers resolve to an in-project file —
+ * bare imports ('react', 'lodash') are external and return null.
+ */
+function resolveTsImportRaw(fromFile: string, spec: string, cwd: string): string | null {
+  if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
+  const fromDir = path.dirname(path.join(cwd, fromFile));
+  const baseAbs = path.resolve(fromDir, spec);
+
+  for (const ext of TS_JS_EXT) {
+    if (baseAbs.endsWith(ext) && isFile(baseAbs)) {
+      return toRel(baseAbs, cwd);
+    }
+  }
+  for (const ext of TS_JS_EXT) {
+    if (isFile(baseAbs + ext)) return toRel(baseAbs + ext, cwd);
+  }
+  for (const ext of TS_JS_EXT) {
+    const idx = path.join(baseAbs, 'index' + ext);
+    if (isFile(idx)) return toRel(idx, cwd);
+  }
+  return null;
+}
+
+/**
  * Single source of truth for the typescript pack's lint gathering.
  * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
  * The legacy decomposition (collapse tier counts → errors/warnings) lives
@@ -291,6 +341,62 @@ const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+/**
+ * Enumerate TS/JS source files under cwd and pre-compute the pack's
+ * per-file imports (raw specifiers) and resolved edges. `find` is the
+ * enumerator to stay consistent with `gatherSourceFiles`; exclusions
+ * come from the project's `.gitignore` + `.dxkit-ignore` via the
+ * shared `getFindExcludeFlags` helper.
+ *
+ * Returns null when the repo has no TS/JS source, so the dispatcher
+ * can skip this provider cleanly on pure Python/Go/Rust/C# trees.
+ */
+function gatherTsImportsResult(cwd: string): ImportsResult | null {
+  const exts = TS_JS_EXT.map((e) => `-name "*${e}"`).join(' -o ');
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f \\( ${exts} \\) ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+  const edges = new Map<string, ReadonlySet<string>>();
+
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    const specs = extractTsImportsRaw(content);
+    extracted.set(rel, specs);
+    const targets = new Set<string>();
+    for (const spec of specs) {
+      const resolved = resolveTsImportRaw(rel, spec, cwd);
+      if (resolved) targets.add(resolved);
+    }
+    if (targets.size > 0) edges.set(rel, targets);
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'ts-imports',
+    sourceExtensions: TS_JS_EXT,
+    extracted,
+    edges,
+  };
+}
+
+const tsImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    return gatherTsImportsResult(cwd);
+  },
+};
+
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
@@ -324,42 +430,18 @@ export const typescript: LanguageSupport = {
     depVulns: tsDepVulnsProvider,
     lint: tsLintProvider,
     coverage: tsCoverageProvider,
+    imports: tsImportsProvider,
   },
 
+  // LEGACY: delegates to module-level helpers shared with the imports
+  // capability. Both method and field are removed in Phase 10e.B.4.6
+  // when `import-graph.ts` switches to the dispatcher.
   extractImports(content) {
-    const out: string[] = [];
-    const stripped = stripTsJsComments(content);
-    const importRe = /\bimport\s+(?:[^'";]*?from\s+)?['"]([^'"]+)['"]/g;
-    const reexportRe = /\bexport\s+(?:[^'";]*?from\s+)['"]([^'"]+)['"]/g;
-    const dynRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    const reqRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    for (const re of [importRe, reexportRe, dynRe, reqRe]) {
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(stripped)) !== null) {
-        out.push(m[1]);
-      }
-    }
-    return out;
+    return extractTsImportsRaw(content);
   },
 
   resolveImport(fromFile, spec, cwd) {
-    if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
-    const fromDir = path.dirname(path.join(cwd, fromFile));
-    const baseAbs = path.resolve(fromDir, spec);
-
-    for (const ext of TS_JS_EXT) {
-      if (baseAbs.endsWith(ext) && isFile(baseAbs)) {
-        return toRel(baseAbs, cwd);
-      }
-    }
-    for (const ext of TS_JS_EXT) {
-      if (isFile(baseAbs + ext)) return toRel(baseAbs + ext, cwd);
-    }
-    for (const ext of TS_JS_EXT) {
-      const idx = path.join(baseAbs, 'index' + ext);
-      if (isFile(idx)) return toRel(idx, cwd);
-    }
-    return null;
+    return resolveTsImportRaw(fromFile, spec, cwd);
   },
 
   async gatherMetrics(cwd) {

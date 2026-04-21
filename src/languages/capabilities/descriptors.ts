@@ -18,6 +18,7 @@ import type {
   CapabilityEnvelope,
   CoverageResult,
   DepVulnResult,
+  ImportsResult,
   LintResult,
   TestFrameworkResult,
 } from './types';
@@ -102,6 +103,35 @@ export const TEST_FRAMEWORK: CapabilityDescriptor<TestFrameworkResult> = {
   },
 };
 
+export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
+  id: 'imports',
+  aggregate(results) {
+    // Keys are disjoint between packs (each pack owns its source extensions),
+    // so plain-union merge is sound. We still defensively skip later-writer
+    // collisions so an accidental overlap would be visible in logs rather
+    // than silently dropping edges.
+    const extensions = new Set<string>();
+    const extracted = new Map<string, ReadonlyArray<string>>();
+    const edges = new Map<string, ReadonlySet<string>>();
+    for (const r of results) {
+      for (const ext of r.sourceExtensions) extensions.add(ext);
+      for (const [file, specs] of r.extracted) {
+        if (!extracted.has(file)) extracted.set(file, specs);
+      }
+      for (const [file, targets] of r.edges) {
+        if (!edges.has(file)) edges.set(file, targets);
+      }
+    }
+    return {
+      schemaVersion: 1,
+      tool: uniqueJoin(results.map((r) => r.tool)),
+      sourceExtensions: [...extensions],
+      extracted,
+      edges,
+    };
+  },
+};
+
 /**
  * Single registry of descriptors keyed by their `LanguagePackCapabilities`
  * slot name. The contract test enforces that every key here matches a slot
@@ -113,6 +143,7 @@ export const CAPABILITY_REGISTRY = {
   lint: LINT,
   coverage: COVERAGE,
   testFramework: TEST_FRAMEWORK,
+  imports: IMPORTS,
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_REGISTRY;
