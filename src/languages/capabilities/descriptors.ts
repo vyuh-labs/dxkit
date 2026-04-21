@@ -101,3 +101,18 @@ export const TEST_FRAMEWORK: CapabilityDescriptor<TestFrameworkResult> = {
     return results[results.length - 1];
   },
 };
+
+/**
+ * Single registry of descriptors keyed by their `LanguagePackCapabilities`
+ * slot name. The contract test enforces that every key here matches a slot
+ * on the type, and every descriptor.id matches its key — so the type, the
+ * descriptor, and the runtime never drift.
+ */
+export const CAPABILITY_REGISTRY = {
+  depVulns: DEP_VULNS,
+  lint: LINT,
+  coverage: COVERAGE,
+  testFramework: TEST_FRAMEWORK,
+} as const;
+
+export type CapabilityId = keyof typeof CAPABILITY_REGISTRY;
