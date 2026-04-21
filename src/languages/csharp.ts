@@ -5,6 +5,8 @@ import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
+import type { CapabilityProvider } from './capabilities/provider';
+import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 function dirHasMatching(dir: string, regex: RegExp): boolean {
@@ -99,6 +101,69 @@ export function parseCoberturaXml(raw: string, sourceFile: string, cwd: string):
   return { source: 'cobertura', sourceFile: rel || sourceFile, linePercent, files };
 }
 
+/**
+ * Single source of truth for the csharp pack's dep-vuln gathering.
+ * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
+ *
+ * Note: previously the vuln check was nested inside the `dotnet-format`
+ * availability gate in gatherMetrics — a quirk that meant a project
+ * with `dotnet` but no `dotnet-format` saw zero vuln data. The capability
+ * provider runs independently, fixing that incidentally. The legacy
+ * decomposition in gatherMetrics now also runs unconditionally.
+ */
+async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  const vulnRaw = run('dotnet list package --vulnerable --format json 2>/dev/null', cwd, 120000);
+  if (!vulnRaw) return { kind: 'no-output' };
+
+  try {
+    const data = JSON.parse(vulnRaw) as {
+      projects?: Array<{
+        frameworks?: Array<{
+          topLevelPackages?: Array<{
+            resolvedVersion: string;
+            advisories?: Array<{ severity: string }>;
+          }>;
+        }>;
+      }>;
+    };
+    let critical = 0;
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    for (const proj of data.projects || []) {
+      for (const fw of proj.frameworks || []) {
+        for (const pkg of fw.topLevelPackages || []) {
+          for (const adv of pkg.advisories || []) {
+            const sev = adv.severity?.toLowerCase();
+            if (sev === 'critical') critical++;
+            else if (sev === 'high') high++;
+            else if (sev === 'moderate' || sev === 'medium') medium++;
+            else low++;
+          }
+        }
+      }
+    }
+    if (critical + high + medium + low === 0) return { kind: 'no-output' };
+    const envelope: DepVulnResult = {
+      schemaVersion: 1,
+      tool: 'dotnet-vulnerable',
+      enrichment: null,
+      counts: { critical, high, medium, low },
+    };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'parse-error' };
+  }
+}
+
+const csharpDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    const outcome = await gatherCsharpDepVulnsResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -117,6 +182,10 @@ export const csharp: LanguageSupport = {
   tools: ['dotnet-format'],
   // p/csharp semgrep ruleset is sparse — skip until it matures.
   semgrepRulesets: [],
+
+  capabilities: {
+    depVulns: csharpDepVulnsProvider,
+  },
 
   parseCoverage(cwd) {
     const artifact = findCoberturaArtifact(cwd);
@@ -184,56 +253,28 @@ export const csharp: LanguageSupport = {
       }
       metrics.lintTool = 'dotnet-format';
       metrics.toolsUsed!.push('dotnet-format');
-
-      const vulnRaw = run(
-        'dotnet list package --vulnerable --format json 2>/dev/null',
-        cwd,
-        120000,
-      );
-      if (vulnRaw) {
-        try {
-          const data = JSON.parse(vulnRaw) as {
-            projects?: Array<{
-              frameworks?: Array<{
-                topLevelPackages?: Array<{
-                  resolvedVersion: string;
-                  advisories?: Array<{ severity: string }>;
-                }>;
-              }>;
-            }>;
-          };
-          let critical = 0;
-          let high = 0;
-          let medium = 0;
-          let low = 0;
-          for (const proj of data.projects || []) {
-            for (const fw of proj.frameworks || []) {
-              for (const pkg of fw.topLevelPackages || []) {
-                for (const adv of pkg.advisories || []) {
-                  const sev = adv.severity?.toLowerCase();
-                  if (sev === 'critical') critical++;
-                  else if (sev === 'high') high++;
-                  else if (sev === 'moderate' || sev === 'medium') medium++;
-                  else low++;
-                }
-              }
-            }
-          }
-          if (critical + high + medium + low > 0) {
-            metrics.depVulnCritical = critical;
-            metrics.depVulnHigh = high;
-            metrics.depVulnMedium = medium;
-            metrics.depVulnLow = low;
-            metrics.depAuditTool = 'dotnet-vulnerable';
-            metrics.toolsUsed!.push('dotnet-vulnerable');
-          }
-        } catch {
-          metrics.toolsUnavailable!.push('dotnet-vulnerable (parse error)');
-        }
-      }
     } else {
       metrics.toolsUnavailable!.push('dotnet-format');
     }
+
+    // LEGACY: depVuln* fields populated from capabilities.depVulns;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Phase 10e.B.1.5 also decoupled this from the dotnet-format
+    // availability gate (which had no logical reason to gate vulns).
+    const dvOutcome = await gatherCsharpDepVulnsResult(cwd);
+    if (dvOutcome.kind === 'success') {
+      const e = dvOutcome.envelope;
+      metrics.depVulnCritical = e.counts.critical;
+      metrics.depVulnHigh = e.counts.high;
+      metrics.depVulnMedium = e.counts.medium;
+      metrics.depVulnLow = e.counts.low;
+      metrics.depAuditTool = e.tool;
+      metrics.toolsUsed!.push('dotnet-vulnerable');
+    } else if (dvOutcome.kind === 'parse-error') {
+      metrics.toolsUnavailable!.push('dotnet-vulnerable (parse error)');
+    }
+    // 'tool-missing' (n/a — provider always tries dotnet) and 'no-output'
+    // (zero vulns OR dotnet missing) are silent, matching prior behavior.
 
     if (fileExists(cwd, '*.csproj') || findMatchingRecursive(cwd, /\.csproj$/, 3)) {
       const csproj = run(
