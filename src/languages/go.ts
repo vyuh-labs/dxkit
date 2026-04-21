@@ -7,7 +7,13 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
+import type {
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+} from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 interface GolangciIssue {
@@ -185,6 +191,43 @@ const goDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
   },
 };
 
+/**
+ * Single source of truth for the go pack's lint gathering.
+ * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ */
+function gatherGoLintResult(cwd: string): LintGatherOutcome {
+  const lint = findTool(TOOL_DEFS['golangci-lint'], cwd);
+  if (!lint.available || !lint.path) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+
+  const raw = run(`${lint.path} run --out-format json ./... 2>/dev/null`, cwd, 120000);
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  if (!raw) {
+    // Empty output = golangci-lint ran with no issues. Matches prior behavior.
+    const envelope: LintResult = { schemaVersion: 1, tool: 'golangci-lint', counts };
+    return { kind: 'success', envelope };
+  }
+  try {
+    const data = JSON.parse(raw) as GolangciResult;
+    for (const issue of data.Issues || []) {
+      counts[tierGolangciIssue(issue)]++;
+    }
+    const envelope: LintResult = { schemaVersion: 1, tool: 'golangci-lint', counts };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'unavailable', reason: 'parse error' };
+  }
+}
+
+const goLintProvider: CapabilityProvider<LintResult> = {
+  source: 'go',
+  async gather(cwd) {
+    const outcome = gatherGoLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -201,6 +244,7 @@ export const go: LanguageSupport = {
 
   capabilities: {
     depVulns: goDepVulnsProvider,
+    lint: goLintProvider,
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
@@ -277,37 +321,22 @@ export const go: LanguageSupport = {
       toolsUnavailable: [],
     };
 
-    const lint = findTool(TOOL_DEFS['golangci-lint'], cwd);
-    if (lint.available && lint.path) {
-      const raw = run(`${lint.path} run --out-format json ./... 2>/dev/null`, cwd, 120000);
-      if (raw) {
-        try {
-          const data = JSON.parse(raw) as GolangciResult;
-          const issues = data.Issues || [];
-          // Tier each issue by its FromLinter, then collapse:
-          // critical + high → errors, medium + low → warnings.
-          let errors = 0;
-          let warnings = 0;
-          for (const issue of issues) {
-            const tier = tierGolangciIssue(issue);
-            if (tier === 'critical' || tier === 'high') errors++;
-            else warnings++;
-          }
-          metrics.lintErrors = errors;
-          metrics.lintWarnings = warnings;
-          metrics.lintTool = 'golangci-lint';
-          metrics.toolsUsed!.push('golangci-lint');
-        } catch {
-          metrics.toolsUnavailable!.push('golangci-lint (parse error)');
-        }
-      } else {
-        metrics.lintErrors = 0;
-        metrics.lintWarnings = 0;
-        metrics.lintTool = 'golangci-lint';
-        metrics.toolsUsed!.push('golangci-lint');
-      }
+    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Collapse: critical + high → errors, medium + low → warnings.
+    const lintOutcome = gatherGoLintResult(cwd);
+    if (lintOutcome.kind === 'success') {
+      const c = lintOutcome.envelope.counts;
+      metrics.lintErrors = c.critical + c.high;
+      metrics.lintWarnings = c.medium + c.low;
+      metrics.lintTool = lintOutcome.envelope.tool;
+      metrics.toolsUsed!.push('golangci-lint');
     } else {
-      metrics.toolsUnavailable!.push('golangci-lint');
+      metrics.toolsUnavailable!.push(
+        lintOutcome.reason === 'not installed'
+          ? 'golangci-lint'
+          : `golangci-lint (${lintOutcome.reason})`,
+      );
     }
 
     // LEGACY: depVuln* fields populated from capabilities.depVulns;
