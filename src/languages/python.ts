@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { parseCoveragePy } from '../analyzers/tools/coverage';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichSeverities } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -11,6 +12,7 @@ import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
+  ImportsResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -212,6 +214,114 @@ const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+/**
+ * Module-level Python import extraction. Shared by the pack's legacy
+ * `extractImports` method and the imports capability's batch gatherer so
+ * both paths return byte-identical specifiers. The pack method is
+ * removed in Phase 10e.B.4.6.
+ */
+function extractPyImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  for (const line of stripPyComments(content).split('\n')) {
+    const trimmed = line.trim();
+    const fromMatch = trimmed.match(/^from\s+([.\w]+)\s+import\s+/);
+    if (fromMatch) {
+      out.push(fromMatch[1]);
+      continue;
+    }
+    const impMatch = trimmed.match(/^import\s+(.+)$/);
+    if (impMatch) {
+      for (const part of impMatch[1].split(',')) {
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)[0]
+          .trim();
+        if (name) out.push(name);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Module-level Python import resolution. Handles relative specifiers
+ * (leading dots) and absolute-from-project-root imports. Mirrors the
+ * structure of the TS raw resolver so both packs' capability gatherers
+ * follow the same pattern.
+ */
+function resolvePyImportRaw(fromFile: string, spec: string, cwd: string): string | null {
+  const fromDir = path.dirname(path.join(cwd, fromFile));
+  const dotMatch = spec.match(/^(\.+)(.*)$/);
+  let baseDir: string;
+  let remainder: string;
+  if (dotMatch) {
+    const dots = dotMatch[1].length;
+    remainder = dotMatch[2];
+    baseDir = fromDir;
+    for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
+  } else {
+    baseDir = cwd;
+    remainder = spec;
+  }
+  if (!remainder) return null;
+  const parts = remainder.split('.').filter(Boolean);
+  const candidate = path.join(baseDir, ...parts);
+  if (isFile(candidate + '.py')) return toRel(candidate + '.py', cwd);
+  const init = path.join(candidate, '__init__.py');
+  if (isFile(init)) return toRel(init, cwd);
+  return null;
+}
+
+/**
+ * Enumerate .py source files under cwd and pre-compute the pack's
+ * per-file imports + resolved edges. Shares enumeration strategy with
+ * the typescript pack (find + getFindExcludeFlags).
+ */
+function gatherPyImportsResult(cwd: string): ImportsResult | null {
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f -name "*.py" ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+  const edges = new Map<string, ReadonlySet<string>>();
+
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    const specs = extractPyImportsRaw(content);
+    extracted.set(rel, specs);
+    const targets = new Set<string>();
+    for (const spec of specs) {
+      const resolved = resolvePyImportRaw(rel, spec, cwd);
+      if (resolved) targets.add(resolved);
+    }
+    if (targets.size > 0) edges.set(rel, targets);
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'python-imports',
+    sourceExtensions: ['.py'],
+    extracted,
+    edges,
+  };
+}
+
+const pyImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'python',
+  async gather(cwd) {
+    return gatherPyImportsResult(cwd);
+  },
+};
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -236,52 +346,18 @@ export const python: LanguageSupport = {
     depVulns: pyDepVulnsProvider,
     lint: pyLintProvider,
     coverage: pyCoverageProvider,
+    imports: pyImportsProvider,
   },
 
+  // LEGACY: delegates to module-level helpers shared with the imports
+  // capability. Both method and field are removed in Phase 10e.B.4.6
+  // when `import-graph.ts` switches to the dispatcher.
   extractImports(content) {
-    const out: string[] = [];
-    for (const line of stripPyComments(content).split('\n')) {
-      const trimmed = line.trim();
-      const fromMatch = trimmed.match(/^from\s+([.\w]+)\s+import\s+/);
-      if (fromMatch) {
-        out.push(fromMatch[1]);
-        continue;
-      }
-      const impMatch = trimmed.match(/^import\s+(.+)$/);
-      if (impMatch) {
-        for (const part of impMatch[1].split(',')) {
-          const name = part
-            .trim()
-            .split(/\s+as\s+/)[0]
-            .trim();
-          if (name) out.push(name);
-        }
-      }
-    }
-    return out;
+    return extractPyImportsRaw(content);
   },
 
   resolveImport(fromFile, spec, cwd) {
-    const fromDir = path.dirname(path.join(cwd, fromFile));
-    const dotMatch = spec.match(/^(\.+)(.*)$/);
-    let baseDir: string;
-    let remainder: string;
-    if (dotMatch) {
-      const dots = dotMatch[1].length;
-      remainder = dotMatch[2];
-      baseDir = fromDir;
-      for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
-    } else {
-      baseDir = cwd;
-      remainder = spec;
-    }
-    if (!remainder) return null;
-    const parts = remainder.split('.').filter(Boolean);
-    const candidate = path.join(baseDir, ...parts);
-    if (isFile(candidate + '.py')) return toRel(candidate + '.py', cwd);
-    const init = path.join(candidate, '__init__.py');
-    if (isFile(init)) return toRel(init, cwd);
-    return null;
+    return resolvePyImportRaw(fromFile, spec, cwd);
   },
 
   async gatherMetrics(cwd) {
