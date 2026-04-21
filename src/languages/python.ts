@@ -16,6 +16,7 @@ import type {
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
+  TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
@@ -322,6 +323,33 @@ const pyImportsProvider: CapabilityProvider<ImportsResult> = {
   },
 };
 
+/**
+ * Detect pytest by the three signals it publishes: `pytest.ini`,
+ * `conftest.py`, or a `[tool.pytest]` table in `pyproject.toml`. Other
+ * Python runners (unittest, nose) don't self-announce and would need
+ * heuristic source-file scanning — out of scope until Phase 10f.1.
+ * Returns null when no signal is present.
+ */
+function gatherPyTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  const hasPytestConfigFile = fileExists(cwd, 'pytest.ini', 'conftest.py');
+  if (hasPytestConfigFile) return { schemaVersion: 1, tool: 'python', name: 'pytest' };
+
+  if (fileExists(cwd, 'pyproject.toml')) {
+    const pyproject = run('cat pyproject.toml 2>/dev/null', cwd);
+    if (pyproject?.includes('[tool.pytest')) {
+      return { schemaVersion: 1, tool: 'python', name: 'pytest' };
+    }
+  }
+  return null;
+}
+
+const pyTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'python',
+  async gather(cwd) {
+    return gatherPyTestFrameworkResult(cwd);
+  },
+};
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -347,6 +375,7 @@ export const python: LanguageSupport = {
     lint: pyLintProvider,
     coverage: pyCoverageProvider,
     imports: pyImportsProvider,
+    testFramework: pyTestFrameworkProvider,
   },
 
   async gatherMetrics(cwd) {
@@ -391,12 +420,10 @@ export const python: LanguageSupport = {
     // 'no-output' was previously silent (raw was empty so the if (raw) block
     // didn't run and nothing was pushed); preserve that behavior.
 
-    if (fileExists(cwd, 'pytest.ini', 'conftest.py') || fileExists(cwd, 'pyproject.toml')) {
-      const pyproject = run('cat pyproject.toml 2>/dev/null', cwd);
-      if (pyproject?.includes('[tool.pytest') || fileExists(cwd, 'pytest.ini', 'conftest.py')) {
-        metrics.testFramework = 'pytest';
-      }
-    }
+    // LEGACY: testFramework populated from capabilities.testFramework;
+    // removed in Phase 10e.B.5.6 when health.ts wires the dispatcher.
+    const tfResult = gatherPyTestFrameworkResult(cwd);
+    if (tfResult) metrics.testFramework = tfResult.name;
 
     return metrics;
   },
