@@ -8,6 +8,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
+  CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   LintGatherOutcome,
@@ -183,6 +184,34 @@ const pyLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+/**
+ * Single source of truth for the python pack's coverage gathering.
+ * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
+ * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ */
+function gatherPyCoverageResult(cwd: string): CoverageResult | null {
+  const file = path.join(cwd, 'coverage.json');
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+  try {
+    const coverage = parseCoveragePy(raw, 'coverage.json', cwd);
+    return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+  } catch {
+    return null;
+  }
+}
+
+const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'python',
+  async gather(cwd) {
+    return gatherPyCoverageResult(cwd);
+  },
+};
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -206,21 +235,13 @@ export const python: LanguageSupport = {
   capabilities: {
     depVulns: pyDepVulnsProvider,
     lint: pyLintProvider,
+    coverage: pyCoverageProvider,
   },
 
+  // LEGACY: delegates to capabilities.coverage's helper.
+  // Method removed in Phase 10e.B.3.6.
   parseCoverage(cwd) {
-    const file = path.join(cwd, 'coverage.json');
-    let raw: string;
-    try {
-      raw = fs.readFileSync(file, 'utf-8');
-    } catch {
-      return null;
-    }
-    try {
-      return parseCoveragePy(raw, 'coverage.json', cwd);
-    } catch {
-      return null;
-    }
+    return gatherPyCoverageResult(cwd)?.coverage ?? null;
   },
 
   extractImports(content) {
