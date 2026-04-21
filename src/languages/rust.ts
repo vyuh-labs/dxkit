@@ -7,7 +7,13 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
+import type {
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+} from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 interface CargoMessage {
@@ -164,6 +170,50 @@ const rustDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
   },
 };
 
+/**
+ * Single source of truth for the rust pack's lint gathering.
+ * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ *
+ * Previously, empty cargo output was silently skipped (nothing pushed
+ * to toolsUsed or toolsUnavailable). This helper aligns rust with the
+ * other packs: empty output = clean run with zero lint issues, pushed
+ * to toolsUsed. Strict improvement.
+ */
+function gatherRustLintResult(cwd: string): LintGatherOutcome {
+  const clippy = findTool(TOOL_DEFS.clippy, cwd);
+  if (!clippy.available) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+
+  const raw = run('cargo clippy --message-format json 2>/dev/null', cwd, 120000);
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line) as CargoMessage;
+      if (msg.reason !== 'compiler-message' || !msg.message) continue;
+      // Upstream emits multiple levels (error, warning, note, help).
+      // Skip note/help — they're context, not findings.
+      if (msg.message.level !== 'error' && msg.message.level !== 'warning') continue;
+      counts[tierCargoMessage(msg.message)]++;
+    } catch {
+      /* skip non-JSON lines */
+    }
+  }
+
+  const envelope: LintResult = { schemaVersion: 1, tool: 'clippy', counts };
+  return { kind: 'success', envelope };
+}
+
+const rustLintProvider: CapabilityProvider<LintResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    const outcome = gatherRustLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -230,6 +280,7 @@ export const rust: LanguageSupport = {
 
   capabilities: {
     depVulns: rustDepVulnsProvider,
+    lint: rustLintProvider,
   },
 
   mapLintSeverity: mapClippyLintSeverity,
@@ -284,36 +335,20 @@ export const rust: LanguageSupport = {
       toolsUnavailable: [],
     };
 
-    const clippy = findTool(TOOL_DEFS.clippy, cwd);
-    if (clippy.available) {
-      const raw = run('cargo clippy --message-format json 2>/dev/null', cwd, 120000);
-      if (raw) {
-        // Tier by clippy lint code (clippy::*) or rustc lint name.
-        // Collapse: critical + high → errors, medium + low → warnings.
-        let errors = 0;
-        let warnings = 0;
-        for (const line of raw.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line) as CargoMessage;
-            if (msg.reason !== 'compiler-message' || !msg.message) continue;
-            // Upstream emits multiple levels (error, warning, note, help).
-            // Skip note/help — they're context, not findings.
-            if (msg.message.level !== 'error' && msg.message.level !== 'warning') continue;
-            const tier = tierCargoMessage(msg.message);
-            if (tier === 'critical' || tier === 'high') errors++;
-            else warnings++;
-          } catch {
-            /* skip non-JSON lines */
-          }
-        }
-        metrics.lintErrors = errors;
-        metrics.lintWarnings = warnings;
-        metrics.lintTool = 'clippy';
-        metrics.toolsUsed!.push('clippy');
-      }
+    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Collapse: critical + high → errors, medium + low → warnings.
+    const lintOutcome = gatherRustLintResult(cwd);
+    if (lintOutcome.kind === 'success') {
+      const c = lintOutcome.envelope.counts;
+      metrics.lintErrors = c.critical + c.high;
+      metrics.lintWarnings = c.medium + c.low;
+      metrics.lintTool = lintOutcome.envelope.tool;
+      metrics.toolsUsed!.push('clippy');
     } else {
-      metrics.toolsUnavailable!.push('clippy');
+      metrics.toolsUnavailable!.push(
+        lintOutcome.reason === 'not installed' ? 'clippy' : `clippy (${lintOutcome.reason})`,
+      );
     }
 
     // LEGACY: depVuln* fields populated from capabilities.depVulns;
