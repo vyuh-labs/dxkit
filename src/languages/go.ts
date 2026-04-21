@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { parseGoCoverProfile } from '../analyzers/tools/coverage';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { classifyOsvSeverity, enrichSeverities, type OsvVuln } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -11,6 +12,7 @@ import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
+  ImportsResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -260,6 +262,112 @@ const goCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+/**
+ * Module-level Go import extraction. Shared by the pack's legacy
+ * `extractImports` method and the imports capability's batch gatherer so
+ * both paths return byte-identical specifiers. Removed in Phase 10e.B.4.6.
+ */
+function extractGoImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  const singleRe = /^\s*import\s+(?:[a-zA-Z_]\w*\s+)?"([^"]+)"/gm;
+  let m: RegExpExecArray | null;
+  while ((m = singleRe.exec(content)) !== null) {
+    out.push(m[1]);
+  }
+  const blockRe = /import\s*\(([\s\S]*?)\)/g;
+  while ((m = blockRe.exec(content)) !== null) {
+    const block = m[1];
+    const lineRe = /(?:[a-zA-Z_]\w*\s+)?"([^"]+)"/g;
+    let lm: RegExpExecArray | null;
+    while ((lm = lineRe.exec(block)) !== null) {
+      if (!out.includes(lm[1])) {
+        out.push(lm[1]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Module-level Go import resolution. Go imports are module-based, so a
+ * resolved specifier is the package directory relative to the module
+ * root. The BFS in `buildReachable` dead-ends there (readFile on a dir
+ * returns nothing), which is the pre-existing behavior we preserve.
+ */
+function resolveGoImportRaw(_fromFile: string, spec: string, cwd: string): string | null {
+  let goMod: string;
+  try {
+    goMod = fs.readFileSync(path.join(cwd, 'go.mod'), 'utf-8');
+  } catch {
+    return null;
+  }
+  const moduleMatch = goMod.match(/^module\s+(\S+)/m);
+  if (!moduleMatch) return null;
+  const modulePath = moduleMatch[1];
+  if (!spec.startsWith(modulePath + '/')) return null;
+  const rel = spec.slice(modulePath.length + 1);
+  const dir = path.join(cwd, rel);
+  try {
+    if (fs.statSync(dir).isDirectory()) {
+      return rel;
+    }
+  } catch {
+    // not found
+  }
+  return null;
+}
+
+/**
+ * Enumerate .go source files and pre-compute the pack's per-file imports
+ * + resolved edges. Edges point at package directories (Go's model), not
+ * individual files — consumers BFS-ing over them see the same dead-ends
+ * as the legacy path.
+ */
+function gatherGoImportsResult(cwd: string): ImportsResult | null {
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f -name "*.go" ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+  const edges = new Map<string, ReadonlySet<string>>();
+
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    const specs = extractGoImportsRaw(content);
+    extracted.set(rel, specs);
+    const targets = new Set<string>();
+    for (const spec of specs) {
+      const resolved = resolveGoImportRaw(rel, spec, cwd);
+      if (resolved) targets.add(resolved);
+    }
+    if (targets.size > 0) edges.set(rel, targets);
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'go-imports',
+    sourceExtensions: ['.go'],
+    extracted,
+    edges,
+  };
+}
+
+const goImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'go',
+  async gather(cwd) {
+    return gatherGoImportsResult(cwd);
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -278,56 +386,19 @@ export const go: LanguageSupport = {
     depVulns: goDepVulnsProvider,
     lint: goLintProvider,
     coverage: goCoverageProvider,
+    imports: goImportsProvider,
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
 
+  // LEGACY: delegates to module-level helpers shared with the imports
+  // capability. Removed in Phase 10e.B.4.6.
   extractImports(content) {
-    const out: string[] = [];
-    // Single-line: `import "fmt"` or `import foo "pkg/name"`
-    const singleRe = /^\s*import\s+(?:[a-zA-Z_]\w*\s+)?"([^"]+)"/gm;
-    let m: RegExpExecArray | null;
-    while ((m = singleRe.exec(content)) !== null) {
-      out.push(m[1]);
-    }
-    // Multi-line: `import (\n  "fmt"\n  alias "pkg"\n)`
-    const blockRe = /import\s*\(([\s\S]*?)\)/g;
-    while ((m = blockRe.exec(content)) !== null) {
-      const block = m[1];
-      const lineRe = /(?:[a-zA-Z_]\w*\s+)?"([^"]+)"/g;
-      let lm: RegExpExecArray | null;
-      while ((lm = lineRe.exec(block)) !== null) {
-        if (!out.includes(lm[1])) {
-          out.push(lm[1]);
-        }
-      }
-    }
-    return out;
+    return extractGoImportsRaw(content);
   },
 
   resolveImport(fromFile, spec, cwd) {
-    // Go import paths are module-based, not file-relative.
-    // Internal packages resolve as <module>/internal/... → cwd/internal/...
-    let goMod: string;
-    try {
-      goMod = fs.readFileSync(path.join(cwd, 'go.mod'), 'utf-8');
-    } catch {
-      return null;
-    }
-    const moduleMatch = goMod.match(/^module\s+(\S+)/m);
-    if (!moduleMatch) return null;
-    const modulePath = moduleMatch[1];
-    if (!spec.startsWith(modulePath + '/')) return null;
-    const rel = spec.slice(modulePath.length + 1);
-    const dir = path.join(cwd, rel);
-    try {
-      if (fs.statSync(dir).isDirectory()) {
-        return rel;
-      }
-    } catch {
-      // not found
-    }
-    return null;
+    return resolveGoImportRaw(fromFile, spec, cwd);
   },
 
   async gatherMetrics(cwd) {
