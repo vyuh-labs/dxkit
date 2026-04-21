@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -11,6 +12,7 @@ import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
+  ImportsResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -258,6 +260,65 @@ const rustCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+/**
+ * Module-level Rust import extraction. Shared by the pack's legacy
+ * `extractImports` method and the imports capability's batch gatherer.
+ * Removed in Phase 10e.B.4.6.
+ */
+function extractRustImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  const re = /^\s*use\s+([a-zA-Z_][\w:]*(?:::\{[^}]+\})?)\s*;/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Enumerate .rs source files and capture the pack's per-file imports.
+ * Rust has no resolveImport (the module/crate hierarchy requires parsing
+ * Cargo.toml + mod declarations — out of scope), so `edges` is always
+ * empty and the envelope carries only `extracted` for downstream
+ * consumers that want package-level import analysis.
+ */
+function gatherRustImportsResult(cwd: string): ImportsResult | null {
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f -name "*.rs" ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    extracted.set(rel, extractRustImportsRaw(content));
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'rust-imports',
+    sourceExtensions: ['.rs'],
+    extracted,
+    edges: new Map(),
+  };
+}
+
+const rustImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    return gatherRustImportsResult(cwd);
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -326,21 +387,15 @@ export const rust: LanguageSupport = {
     depVulns: rustDepVulnsProvider,
     lint: rustLintProvider,
     coverage: rustCoverageProvider,
+    imports: rustImportsProvider,
   },
 
   mapLintSeverity: mapClippyLintSeverity,
 
+  // LEGACY: delegates to the module-level helper shared with the imports
+  // capability. Removed in Phase 10e.B.4.6.
   extractImports(content) {
-    // Rust: `use std::io;`, `use std::collections::HashMap;`,
-    // `use crate::module;`, `use super::sibling;`
-    // Also block form: `use std::{io, fs};`
-    const out: string[] = [];
-    const re = /^\s*use\s+([a-zA-Z_][\w:]*(?:::\{[^}]+\})?)\s*;/gm;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(content)) !== null) {
-      out.push(m[1]);
-    }
-    return out;
+    return extractRustImportsRaw(content);
   },
 
   // resolveImport intentionally omitted: Rust's module system uses crate/mod.rs
