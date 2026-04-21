@@ -90,3 +90,14 @@ export type DepVulnGatherOutcome =
   | { kind: 'tool-missing' }
   | { kind: 'parse-error' }
   | { kind: 'no-output' };
+
+/**
+ * Internal outcome shape for the lint capability bridge in Phase 10e.B.2.
+ * Lint has simpler semantics than depVulns: either the linter ran and we
+ * have tier counts, or it didn't and we have a reason. The reason becomes
+ * the parenthetical in `toolsUnavailable` strings ('eslint (not installed)',
+ * 'ruff (parse error)', etc.) so legacy gatherMetrics text stays unchanged.
+ */
+export type LintGatherOutcome =
+  | { kind: 'success'; envelope: LintResult }
+  | { kind: 'unavailable'; reason: string };

@@ -5,7 +5,13 @@ import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/cov
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
+import type {
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+} from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -173,14 +179,13 @@ function toRel(abs: string, cwd: string): string {
   return path.relative(cwd, abs).split(path.sep).join('/');
 }
 
-interface EslintRunResult {
-  ran: boolean;
-  errors: number;
-  warnings: number;
-  reason: string;
-}
-
-function runEslint(cwd: string): EslintRunResult {
+/**
+ * Single source of truth for the typescript pack's lint gathering.
+ * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ * The legacy decomposition (collapse tier counts → errors/warnings) lives
+ * in gatherMetrics and goes away in Phase 10e.C.
+ */
+function gatherTsLintResult(cwd: string): LintGatherOutcome {
   const lbEslintPath = 'node_modules/.bin/lb-eslint';
   const eslintPath = 'node_modules/.bin/eslint';
 
@@ -188,7 +193,7 @@ function runEslint(cwd: string): EslintRunResult {
   const hasEslint = fileExists(cwd, eslintPath);
 
   if (!hasLbEslint && !hasEslint) {
-    return { ran: false, errors: 0, warnings: 0, reason: 'not installed' };
+    return { kind: 'unavailable', reason: 'not installed' };
   }
 
   const hasFlatConfig = fileExists(
@@ -217,14 +222,9 @@ function runEslint(cwd: string): EslintRunResult {
     if (hasLbEslint) {
       // lb-eslint may provide its own config; fall through to try it
     } else if (hasLegacyConfig) {
-      return {
-        ran: false,
-        errors: 0,
-        warnings: 0,
-        reason: `v${major} but project uses legacy .eslintrc`,
-      };
+      return { kind: 'unavailable', reason: `v${major} but project uses legacy .eslintrc` };
     } else {
-      return { ran: false, errors: 0, warnings: 0, reason: 'no eslint config found' };
+      return { kind: 'unavailable', reason: 'no eslint config found' };
     }
   }
 
@@ -233,23 +233,27 @@ function runEslint(cwd: string): EslintRunResult {
     if (!fileExists(cwd, bin.replace('./', ''))) continue;
     const result = runJSON<EslintFileResult[]>(`${bin} . --format json 2>/dev/null`, cwd, 120000);
     if (result && Array.isArray(result)) {
-      // Tier each message, then collapse to errors/warnings for backcompat:
-      // critical + high → errors, medium + low → warnings.
-      let errors = 0;
-      let warnings = 0;
+      const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
       for (const file of result) {
         for (const msg of file.messages || []) {
-          const tier = tierEslintMessage(msg.ruleId, msg.severity);
-          if (tier === 'critical' || tier === 'high') errors++;
-          else warnings++;
+          counts[tierEslintMessage(msg.ruleId, msg.severity)]++;
         }
       }
-      return { ran: true, errors, warnings, reason: '' };
+      const envelope: LintResult = { schemaVersion: 1, tool: 'eslint', counts };
+      return { kind: 'success', envelope };
     }
   }
 
-  return { ran: false, errors: 0, warnings: 0, reason: 'config error' };
+  return { kind: 'unavailable', reason: 'config error' };
 }
+
+const tsLintProvider: CapabilityProvider<LintResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    const outcome = gatherTsLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
 
 export const typescript: LanguageSupport = {
   id: 'typescript',
@@ -282,6 +286,7 @@ export const typescript: LanguageSupport = {
 
   capabilities: {
     depVulns: tsDepVulnsProvider,
+    lint: tsLintProvider,
   },
 
   parseCoverage(cwd) {
@@ -348,14 +353,18 @@ export const typescript: LanguageSupport = {
       toolsUnavailable: [],
     };
 
-    const eslintStatus = runEslint(cwd);
-    if (eslintStatus.ran) {
-      metrics.lintErrors = eslintStatus.errors;
-      metrics.lintWarnings = eslintStatus.warnings;
-      metrics.lintTool = 'eslint';
+    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Collapse: critical + high → errors, medium + low → warnings.
+    const lintOutcome = gatherTsLintResult(cwd);
+    if (lintOutcome.kind === 'success') {
+      const c = lintOutcome.envelope.counts;
+      metrics.lintErrors = c.critical + c.high;
+      metrics.lintWarnings = c.medium + c.low;
+      metrics.lintTool = lintOutcome.envelope.tool;
       metrics.toolsUsed!.push('eslint');
     } else {
-      metrics.toolsUnavailable!.push(`eslint (${eslintStatus.reason})`);
+      metrics.toolsUnavailable!.push(`eslint (${lintOutcome.reason})`);
     }
 
     // LEGACY: depVuln* fields populated from capabilities.depVulns;
