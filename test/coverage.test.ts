@@ -135,17 +135,24 @@ describe('loadCoverage (filesystem)', () => {
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-cov-'));
+    // Phase 10e.B.3.6: loadCoverage dispatches through language packs, so
+    // test fixtures need pack-detection triggers. Every test here gets
+    // package.json (→ typescript), pyproject.toml (→ python), go.mod (→
+    // go) so whichever artifact we write finds its owning pack active.
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"t"}');
+    fs.writeFileSync(path.join(tmp, 'pyproject.toml'), '');
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module t\n');
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('returns null when no artifact exists', () => {
-    expect(loadCoverage(tmp)).toBeNull();
+  it('returns null when no artifact exists', async () => {
+    expect(await loadCoverage(tmp)).toBeNull();
   });
 
-  it('prefers istanbul summary over other artifacts', () => {
+  it('prefers istanbul summary over other artifacts', async () => {
     fs.mkdirSync(path.join(tmp, 'coverage'), { recursive: true });
     fs.writeFileSync(
       path.join(tmp, 'coverage/coverage-summary.json'),
@@ -154,34 +161,34 @@ describe('loadCoverage (filesystem)', () => {
       }),
     );
     fs.writeFileSync(path.join(tmp, 'coverage.json'), '{"totals":{"percent_covered":50}}');
-    const c = loadCoverage(tmp);
+    const c = await loadCoverage(tmp);
     expect(c).not.toBeNull();
     expect(c!.source).toBe('istanbul-summary');
     expect(c!.linePercent).toBe(70);
   });
 
-  it('falls through to coverage-py when istanbul files are absent', () => {
+  it('falls through to coverage-py when istanbul files are absent', async () => {
     fs.writeFileSync(
       path.join(tmp, 'coverage.json'),
       JSON.stringify({ totals: { percent_covered: 44.4 }, files: {} }),
     );
-    const c = loadCoverage(tmp);
+    const c = await loadCoverage(tmp);
     expect(c).not.toBeNull();
     expect(c!.source).toBe('coverage-py');
     expect(c!.linePercent).toBe(44.4);
   });
 
-  it('falls through to go coverprofile as last resort', () => {
+  it('falls through to go coverprofile as last resort', async () => {
     fs.writeFileSync(path.join(tmp, 'coverage.out'), 'mode: set\npkg/foo.go:1.1,2.1 1 1\n');
-    const c = loadCoverage(tmp);
+    const c = await loadCoverage(tmp);
     expect(c).not.toBeNull();
     expect(c!.source).toBe('go');
   });
 
-  it('returns null on malformed JSON', () => {
+  it('returns null on malformed JSON', async () => {
     fs.mkdirSync(path.join(tmp, 'coverage'), { recursive: true });
     fs.writeFileSync(path.join(tmp, 'coverage/coverage-summary.json'), '{ not json');
     // With only the malformed summary, no other artifacts → null.
-    expect(loadCoverage(tmp)).toBeNull();
+    expect(await loadCoverage(tmp)).toBeNull();
   });
 });

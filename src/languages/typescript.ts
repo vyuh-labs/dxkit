@@ -326,12 +326,6 @@ export const typescript: LanguageSupport = {
     coverage: tsCoverageProvider,
   },
 
-  // LEGACY: delegates to capabilities.coverage's helper.
-  // Method removed in Phase 10e.B.3.6.
-  parseCoverage(cwd) {
-    return gatherTsCoverageResult(cwd)?.coverage ?? null;
-  },
-
   extractImports(content) {
     const out: string[] = [];
     const stripped = stripTsJsComments(content);

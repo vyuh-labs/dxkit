@@ -1,4 +1,3 @@
-import type { Coverage } from '../analyzers/tools/coverage';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
@@ -73,7 +72,6 @@ export interface LanguageSupport {
   tools: string[];
   semgrepRulesets: string[];
 
-  parseCoverage?(cwd: string): Coverage | null;
   extractImports?(content: string): string[];
   resolveImport?(from: string, spec: string, cwd: string): string | null;
   gatherMetrics?(cwd: string): Promise<Partial<LangMetrics>>;

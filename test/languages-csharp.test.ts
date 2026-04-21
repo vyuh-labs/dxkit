@@ -77,12 +77,12 @@ describe('csharp.extractImports', () => {
   });
 });
 
-describe('csharp.parseCoverage (cobertura)', () => {
-  it('returns null when no artifact exists', () => {
-    expect(csharp.parseCoverage!(tmp)).toBeNull();
+describe('csharp.capabilities.coverage (cobertura)', () => {
+  it('returns null when no artifact exists', async () => {
+    expect(await csharp.capabilities!.coverage!.gather(tmp)).toBeNull();
   });
 
-  it('parses coverage/coverage.cobertura.xml at the top level', () => {
+  it('parses coverage/coverage.cobertura.xml at the top level', async () => {
     fs.mkdirSync(path.join(tmp, 'coverage'));
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <coverage line-rate="0.85" lines-covered="340" lines-valid="400" timestamp="1">
@@ -96,22 +96,22 @@ describe('csharp.parseCoverage (cobertura)', () => {
   </packages>
 </coverage>`;
     fs.writeFileSync(path.join(tmp, 'coverage', 'coverage.cobertura.xml'), xml);
-    const cov = csharp.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.source).toBe('cobertura');
-    expect(cov!.linePercent).toBe(85);
-    expect(cov!.files.get('src/A.cs')?.pct).toBe(90);
-    expect(cov!.files.get('src/B.cs')?.pct).toBe(50);
+    const env = await csharp.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.source).toBe('cobertura');
+    expect(env!.coverage.linePercent).toBe(85);
+    expect(env!.coverage.files.get('src/A.cs')?.pct).toBe(90);
+    expect(env!.coverage.files.get('src/B.cs')?.pct).toBe(50);
   });
 
-  it('finds cobertura artifact nested under TestResults/<guid>/', () => {
+  it('finds cobertura artifact nested under TestResults/<guid>/', async () => {
     const nested = path.join(tmp, 'TestResults', '12345-abc');
     fs.mkdirSync(nested, { recursive: true });
     const xml = `<coverage line-rate="0.5" lines-covered="10" lines-valid="20"><packages/></coverage>`;
     fs.writeFileSync(path.join(nested, 'coverage.cobertura.xml'), xml);
-    const cov = csharp.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.linePercent).toBe(50);
+    const env = await csharp.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.linePercent).toBe(50);
   });
 
   it('falls back to line-rate attribute when lines-covered/valid missing', () => {

@@ -361,7 +361,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit test-gaps');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeTestGaps(targetPath, { verbose: !!values.verbose });
+      const report = await analyzeTestGaps(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {

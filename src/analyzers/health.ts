@@ -149,15 +149,9 @@ async function analyzeHealthInternal(
 
   // Import real coverage when the project's test runner has produced an
   // artifact. Lets the Testing dimension score against line-level truth
-  // instead of the filename-only fallback.
-  let coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
-  if (!coverage) {
-    // Fall back to language-specific coverage parsers (cobertura, lcov, etc.)
-    for (const lang of detectActiveLanguages(repoPath)) {
-      coverage = lang.parseCoverage?.(repoPath) ?? null;
-      if (coverage) break;
-    }
-  }
+  // instead of the filename-only fallback. Dispatcher handles every
+  // language pack's artifact formats — no per-language fallback needed.
+  const coverage = await timedAsync('coverage', verbose, () => loadCoverage(repoPath));
   if (coverage) {
     metrics.coveragePercent = Math.round(coverage.linePercent);
     metrics.toolsUsed.push(`coverage:${coverage.source}`);

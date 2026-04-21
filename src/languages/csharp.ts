@@ -264,12 +264,6 @@ export const csharp: LanguageSupport = {
     coverage: csharpCoverageProvider,
   },
 
-  // LEGACY: delegates to capabilities.coverage's helper.
-  // Method removed in Phase 10e.B.3.6.
-  parseCoverage(cwd) {
-    return gatherCsharpCoverageResult(cwd)?.coverage ?? null;
-  },
-
   extractImports(content) {
     // `using System;`, `using System.IO;`, `using static System.Math;`,
     // `using Alias = Foo.Bar;`. Captures the fully-qualified namespace.

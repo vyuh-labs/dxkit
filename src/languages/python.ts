@@ -238,12 +238,6 @@ export const python: LanguageSupport = {
     coverage: pyCoverageProvider,
   },
 
-  // LEGACY: delegates to capabilities.coverage's helper.
-  // Method removed in Phase 10e.B.3.6.
-  parseCoverage(cwd) {
-    return gatherPyCoverageResult(cwd)?.coverage ?? null;
-  },
-
   extractImports(content) {
     const out: string[] = [];
     for (const line of stripPyComments(content).split('\n')) {

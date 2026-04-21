@@ -282,12 +282,6 @@ export const go: LanguageSupport = {
 
   mapLintSeverity: mapGolangciLinterSeverity,
 
-  // LEGACY: delegates to capabilities.coverage's helper.
-  // Method removed in Phase 10e.B.3.6.
-  parseCoverage(cwd) {
-    return gatherGoCoverageResult(cwd)?.coverage ?? null;
-  },
-
   extractImports(content) {
     const out: string[] = [];
     // Single-line: `import "fmt"` or `import foo "pkg/name"`

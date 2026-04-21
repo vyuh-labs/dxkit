@@ -4,7 +4,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { timed } from '../tools/timing';
+import { timed, timedAsync } from '../tools/timing';
 import { loadCoverage } from '../tools/coverage';
 import { buildReachable } from './import-graph';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
@@ -16,10 +16,10 @@ export interface AnalyzeTestGapsOptions {
   verbose?: boolean;
 }
 
-export function analyzeTestGaps(
+export async function analyzeTestGaps(
   repoPath: string,
   options: AnalyzeTestGapsOptions = {},
-): TestGapsReport {
+): Promise<TestGapsReport> {
   const verbose = !!options.verbose;
   const stack = detect(repoPath);
   const toolsUsed: string[] = ['find', 'grep', 'git'];
@@ -43,7 +43,7 @@ export function analyzeTestGaps(
   // than ORing with it; otherwise files like `cli.ts` get falsely credited
   // by basename similarity to `cli-init.test.ts`, even though V8 measured
   // them at 0%.
-  const coverage = timed('coverage', verbose, () => loadCoverage(repoPath));
+  const coverage = await timedAsync('coverage', verbose, () => loadCoverage(repoPath));
   if (coverage) {
     toolsUsed.push(`coverage:${coverage.source}`);
     for (const s of sourceFiles) {

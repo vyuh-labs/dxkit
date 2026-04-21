@@ -5,19 +5,29 @@
  * so dxkit can report line-level truth instead of fabricating coverage from
  * filename matches.
  *
- * Supported formats (first match wins, in order):
- *   1. Istanbul summary  — `coverage/coverage-summary.json`  (nyc, c8, vitest)
- *   2. Istanbul detailed — `coverage/coverage-final.json`
- *   3. coverage.py JSON  — `coverage.json`                    (Python)
- *   4. Go coverprofile   — `coverage.out` / `cover.out`
+ * Supported formats per language pack (src/languages/*.ts):
+ *   - typescript  → Istanbul summary + final
+ *   - python      → coverage.py JSON
+ *   - go          → coverprofile (coverage.out / cover.out)
+ *   - rust        → lcov.info + cobertura XML (cargo llvm-cov)
+ *   - csharp      → cobertura (dotnet test --collect:XPlat)
  *
- * Returns a normalized `Coverage` object or `null` when no artifact exists
- * or the file is unparseable. Callers (tests analyzer) should treat a null
- * return as "fall back to filename matching."
+ * `loadCoverage` is a thin wrapper over the capability dispatcher —
+ * active language packs produce `CoverageResult` envelopes, the
+ * descriptor's aggregator (last-wins in mixed-stack repos) reduces to
+ * one, and we unwrap `.coverage` for callers. Returns null when no
+ * artifact exists or parsing fails; callers (tests analyzer) should
+ * treat a null return as "fall back to filename matching."
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { detectActiveLanguages } from '../../languages';
+import { COVERAGE } from '../../languages/capabilities/descriptors';
+import type { CapabilityProvider } from '../../languages/capabilities/provider';
+import type { CoverageResult } from '../../languages/capabilities/types';
+import { defaultDispatcher } from '../dispatcher';
 
 export type CoverageSource =
   | 'istanbul-summary'
@@ -50,43 +60,23 @@ export interface Coverage {
 }
 
 /**
- * Locate and parse a coverage artifact for the given repo root.
- * Returns null when nothing is found or parsing fails.
+ * Locate and parse a coverage artifact for the given repo root by
+ * dispatching to every active language pack's coverage capability.
+ * Returns null when no artifact is found or parsing fails.
+ *
+ * Mixed-stack repos: the COVERAGE descriptor's aggregator is
+ * last-wins — if Node + Python both produce artifacts the later
+ * provider wins. Cross-language coverage merging is out of scope for
+ * now (would need per-language file weighting).
  */
-export function loadCoverage(cwd: string): Coverage | null {
-  const candidates: Array<{ source: CoverageSource; file: string }> = [
-    { source: 'istanbul-summary', file: 'coverage/coverage-summary.json' },
-    { source: 'istanbul-final', file: 'coverage/coverage-final.json' },
-    { source: 'coverage-py', file: 'coverage.json' },
-    { source: 'go', file: 'coverage.out' },
-    { source: 'go', file: 'cover.out' },
-  ];
-
-  for (const c of candidates) {
-    const abs = path.join(cwd, c.file);
-    let raw: string;
-    try {
-      raw = fs.readFileSync(abs, 'utf-8');
-    } catch {
-      continue;
-    }
-    try {
-      switch (c.source) {
-        case 'istanbul-summary':
-          return parseIstanbulSummary(raw, c.file, cwd);
-        case 'istanbul-final':
-          return parseIstanbulFinal(raw, c.file, cwd);
-        case 'coverage-py':
-          return parseCoveragePy(raw, c.file, cwd);
-        case 'go':
-          return parseGoCoverProfile(raw, c.file, cwd);
-      }
-    } catch {
-      // Try the next candidate on parse failure.
-      continue;
-    }
+export async function loadCoverage(cwd: string): Promise<Coverage | null> {
+  const providers: CapabilityProvider<CoverageResult>[] = [];
+  for (const lang of detectActiveLanguages(cwd)) {
+    if (lang.capabilities?.coverage) providers.push(lang.capabilities.coverage);
   }
-  return null;
+  if (providers.length === 0) return null;
+  const envelope = await defaultDispatcher.gather(cwd, COVERAGE, providers);
+  return envelope?.coverage ?? null;
 }
 
 // ─── Parsers ────────────────────────────────────────────────────────────────

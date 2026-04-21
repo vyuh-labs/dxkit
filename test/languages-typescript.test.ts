@@ -99,33 +99,33 @@ describe('typescript.resolveImport', () => {
   });
 });
 
-describe('typescript.parseCoverage', () => {
-  it('returns null when no artifact exists', () => {
-    expect(typescript.parseCoverage!(tmp)).toBeNull();
+describe('typescript.capabilities.coverage', () => {
+  it('returns null when no artifact exists', async () => {
+    expect(await typescript.capabilities!.coverage!.gather(tmp)).toBeNull();
   });
 
-  it('parses coverage-summary.json', () => {
+  it('parses coverage-summary.json', async () => {
     fs.mkdirSync(path.join(tmp, 'coverage'));
     const summary = {
       total: { lines: { total: 100, covered: 75, skipped: 0, pct: 75 } },
       [`${tmp}/src/a.ts`]: { lines: { total: 50, covered: 40, skipped: 0, pct: 80 } },
     };
     fs.writeFileSync(path.join(tmp, 'coverage', 'coverage-summary.json'), JSON.stringify(summary));
-    const cov = typescript.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.source).toBe('istanbul-summary');
-    expect(cov!.linePercent).toBe(75);
+    const env = await typescript.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.source).toBe('istanbul-summary');
+    expect(env!.coverage.linePercent).toBe(75);
   });
 
-  it('prefers coverage-summary.json over coverage-final.json', () => {
+  it('prefers coverage-summary.json over coverage-final.json', async () => {
     fs.mkdirSync(path.join(tmp, 'coverage'));
     const summary = {
       total: { lines: { total: 100, covered: 80, skipped: 0, pct: 80 } },
     };
     fs.writeFileSync(path.join(tmp, 'coverage', 'coverage-summary.json'), JSON.stringify(summary));
     fs.writeFileSync(path.join(tmp, 'coverage', 'coverage-final.json'), '{}');
-    const cov = typescript.parseCoverage!(tmp);
-    expect(cov!.source).toBe('istanbul-summary');
+    const env = await typescript.capabilities!.coverage!.gather(tmp);
+    expect(env!.coverage.source).toBe('istanbul-summary');
   });
 });
 

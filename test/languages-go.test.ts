@@ -95,29 +95,29 @@ describe('go.resolveImport', () => {
   });
 });
 
-describe('go.parseCoverage', () => {
-  it('returns null when no artifact exists', () => {
-    expect(go.parseCoverage!(tmp)).toBeNull();
+describe('go.capabilities.coverage', () => {
+  it('returns null when no artifact exists', async () => {
+    expect(await go.capabilities!.coverage!.gather(tmp)).toBeNull();
   });
 
-  it('parses coverage.out', () => {
+  it('parses coverage.out', async () => {
     const raw = [
       'mode: set',
       'example.com/m/main.go:1.1,5.2 3 1',
       'example.com/m/main.go:6.1,9.1 2 0',
     ].join('\n');
     fs.writeFileSync(path.join(tmp, 'coverage.out'), raw);
-    const cov = go.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.source).toBe('go');
-    expect(cov!.linePercent).toBe(60);
+    const env = await go.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.source).toBe('go');
+    expect(env!.coverage.linePercent).toBe(60);
   });
 
-  it('prefers coverage.out over cover.out', () => {
+  it('prefers coverage.out over cover.out', async () => {
     fs.writeFileSync(path.join(tmp, 'coverage.out'), 'mode: set\nfoo.go:1.1,2.1 1 1\n');
     fs.writeFileSync(path.join(tmp, 'cover.out'), 'mode: set\nbar.go:1.1,2.1 1 0\n');
-    const cov = go.parseCoverage!(tmp);
-    expect(cov!.linePercent).toBe(100);
+    const env = await go.capabilities!.coverage!.gather(tmp);
+    expect(env!.coverage.linePercent).toBe(100);
   });
 });
 

@@ -330,12 +330,6 @@ export const rust: LanguageSupport = {
 
   mapLintSeverity: mapClippyLintSeverity,
 
-  // LEGACY: delegates to capabilities.coverage's helper.
-  // Method removed in Phase 10e.B.3.6.
-  parseCoverage(cwd) {
-    return gatherRustCoverageResult(cwd)?.coverage ?? null;
-  },
-
   extractImports(content) {
     // Rust: `use std::io;`, `use std::collections::HashMap;`,
     // `use crate::module;`, `use super::sibling;`

@@ -49,12 +49,12 @@ describe('rust.extractImports', () => {
   });
 });
 
-describe('rust.parseCoverage (lcov)', () => {
-  it('returns null when no artifact exists', () => {
-    expect(rust.parseCoverage!(tmp)).toBeNull();
+describe('rust.capabilities.coverage (lcov)', () => {
+  it('returns null when no artifact exists', async () => {
+    expect(await rust.capabilities!.coverage!.gather(tmp)).toBeNull();
   });
 
-  it('parses lcov.info at repo root', () => {
+  it('parses lcov.info at repo root', async () => {
     const lcov = [
       'SF:src/main.rs',
       'DA:1,5',
@@ -69,23 +69,23 @@ describe('rust.parseCoverage (lcov)', () => {
       'end_of_record',
     ].join('\n');
     fs.writeFileSync(path.join(tmp, 'lcov.info'), lcov);
-    const cov = rust.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.source).toBe('lcov');
+    const env = await rust.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.source).toBe('lcov');
     // 2 hit out of 3 total = 66.7%
-    expect(cov!.linePercent).toBe(66.7);
-    expect(cov!.files.size).toBe(2);
-    expect(cov!.files.get('src/main.rs')?.pct).toBe(50);
-    expect(cov!.files.get('src/lib.rs')?.pct).toBe(100);
+    expect(env!.coverage.linePercent).toBe(66.7);
+    expect(env!.coverage.files.size).toBe(2);
+    expect(env!.coverage.files.get('src/main.rs')?.pct).toBe(50);
+    expect(env!.coverage.files.get('src/lib.rs')?.pct).toBe(100);
   });
 
-  it('falls back to cobertura XML when no lcov exists', () => {
+  it('falls back to cobertura XML when no lcov exists', async () => {
     const xml = `<coverage line-rate="0.75" lines-covered="30" lines-valid="40"><packages/></coverage>`;
     fs.writeFileSync(path.join(tmp, 'coverage.cobertura.xml'), xml);
-    const cov = rust.parseCoverage!(tmp);
-    expect(cov).not.toBeNull();
-    expect(cov!.source).toBe('cobertura');
-    expect(cov!.linePercent).toBe(75);
+    const env = await rust.capabilities!.coverage!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.coverage.source).toBe('cobertura');
+    expect(env!.coverage.linePercent).toBe(75);
   });
 });
 
