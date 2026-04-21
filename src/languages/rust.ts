@@ -8,6 +8,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
+  CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   LintGatherOutcome,
@@ -214,6 +215,49 @@ const rustLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+/**
+ * Single source of truth for the rust pack's coverage gathering.
+ * Tries lcov first (cargo llvm-cov --lcov default), falls back to
+ * cobertura XML. Both `capabilities.coverage.gather()` and
+ * `parseCoverage` (legacy) consume this. parseCoverage removed in B.3.6.
+ */
+function gatherRustCoverageResult(cwd: string): CoverageResult | null {
+  for (const file of ['lcov.info', 'coverage/lcov.info']) {
+    const abs = path.join(cwd, file);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    const coverage = parseLcov(raw, file, cwd);
+    if (coverage) {
+      return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+    }
+  }
+  for (const file of ['coverage.cobertura.xml', 'coverage/coverage.cobertura.xml']) {
+    const abs = path.join(cwd, file);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    const coverage = parseCoberturaXml(raw, file, cwd);
+    if (coverage) {
+      return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+    }
+  }
+  return null;
+}
+
+const rustCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    return gatherRustCoverageResult(cwd);
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -281,36 +325,15 @@ export const rust: LanguageSupport = {
   capabilities: {
     depVulns: rustDepVulnsProvider,
     lint: rustLintProvider,
+    coverage: rustCoverageProvider,
   },
 
   mapLintSeverity: mapClippyLintSeverity,
 
+  // LEGACY: delegates to capabilities.coverage's helper.
+  // Method removed in Phase 10e.B.3.6.
   parseCoverage(cwd) {
-    // Try lcov.info first (common default for cargo llvm-cov --lcov)
-    for (const file of ['lcov.info', 'coverage/lcov.info']) {
-      const abs = path.join(cwd, file);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(abs, 'utf-8');
-      } catch {
-        continue;
-      }
-      const result = parseLcov(raw, file, cwd);
-      if (result) return result;
-    }
-    // Fall back to cobertura XML (cargo llvm-cov --cobertura)
-    for (const file of ['coverage.cobertura.xml', 'coverage/coverage.cobertura.xml']) {
-      const abs = path.join(cwd, file);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(abs, 'utf-8');
-      } catch {
-        continue;
-      }
-      const result = parseCoberturaXml(raw, file, cwd);
-      if (result) return result;
-    }
-    return null;
+    return gatherRustCoverageResult(cwd)?.coverage ?? null;
   },
 
   extractImports(content) {
