@@ -6,6 +6,8 @@ import { parseCoberturaXml } from './csharp';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
+import type { CapabilityProvider } from './capabilities/provider';
+import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 interface CargoMessage {
@@ -114,6 +116,54 @@ interface CargoAuditResult {
   };
 }
 
+/**
+ * Single source of truth for the rust pack's dep-vuln gathering.
+ * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
+ * The legacy decomposition in `gatherMetrics` is the bridge that goes
+ * away in Phase 10e.C.
+ */
+async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
+  if (!audit.available || !audit.path) return { kind: 'tool-missing' };
+
+  const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
+  if (!raw) return { kind: 'no-output' };
+
+  try {
+    const data = JSON.parse(raw) as CargoAuditResult;
+    if (!data.vulnerabilities) return { kind: 'no-output' };
+
+    let critical = 0;
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    for (const v of data.vulnerabilities.list || []) {
+      const sev = v.advisory?.severity?.toLowerCase();
+      if (sev === 'critical') critical++;
+      else if (sev === 'high') high++;
+      else if (sev === 'medium') medium++;
+      else low++;
+    }
+    const envelope: DepVulnResult = {
+      schemaVersion: 1,
+      tool: 'cargo-audit',
+      enrichment: null,
+      counts: { critical, high, medium, low },
+    };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'parse-error' };
+  }
+}
+
+const rustDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    const outcome = await gatherRustDepVulnsResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -177,6 +227,10 @@ export const rust: LanguageSupport = {
   tools: ['clippy', 'cargo-audit', 'cargo-llvm-cov'],
   // No dedicated semgrep Rust ruleset; covered by p/security-audit.
   semgrepRulesets: [],
+
+  capabilities: {
+    depVulns: rustDepVulnsProvider,
+  },
 
   mapLintSeverity: mapClippyLintSeverity,
 
@@ -262,38 +316,24 @@ export const rust: LanguageSupport = {
       metrics.toolsUnavailable!.push('clippy');
     }
 
-    const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
-    if (audit.available && audit.path) {
-      const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
-      if (raw) {
-        try {
-          const data = JSON.parse(raw) as CargoAuditResult;
-          if (data.vulnerabilities) {
-            let critical = 0;
-            let high = 0;
-            let medium = 0;
-            let low = 0;
-            for (const v of data.vulnerabilities.list || []) {
-              const sev = v.advisory?.severity?.toLowerCase();
-              if (sev === 'critical') critical++;
-              else if (sev === 'high') high++;
-              else if (sev === 'medium') medium++;
-              else low++;
-            }
-            metrics.depVulnCritical = critical;
-            metrics.depVulnHigh = high;
-            metrics.depVulnMedium = medium;
-            metrics.depVulnLow = low;
-            metrics.depAuditTool = 'cargo-audit';
-            metrics.toolsUsed!.push('cargo-audit');
-          }
-        } catch {
-          metrics.toolsUnavailable!.push('cargo-audit (parse error)');
-        }
-      }
-    } else {
+    // LEGACY: depVuln* fields populated from capabilities.depVulns;
+    // removed in Phase 10e.C when reports stop reading these.
+    const dvOutcome = await gatherRustDepVulnsResult(cwd);
+    if (dvOutcome.kind === 'success') {
+      const e = dvOutcome.envelope;
+      metrics.depVulnCritical = e.counts.critical;
+      metrics.depVulnHigh = e.counts.high;
+      metrics.depVulnMedium = e.counts.medium;
+      metrics.depVulnLow = e.counts.low;
+      metrics.depAuditTool = e.tool;
+      metrics.toolsUsed!.push('cargo-audit');
+    } else if (dvOutcome.kind === 'parse-error') {
+      metrics.toolsUnavailable!.push('cargo-audit (parse error)');
+    } else if (dvOutcome.kind === 'tool-missing') {
       metrics.toolsUnavailable!.push('cargo-audit');
     }
+    // 'no-output' was previously silent (raw was empty OR
+    // data.vulnerabilities was missing — neither pushed anything).
 
     if (fileExists(cwd, 'Cargo.toml')) {
       metrics.testFramework = 'cargo-test';
