@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
@@ -10,6 +11,7 @@ import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
+  ImportsResult,
   LintGatherOutcome,
   LintResult,
 } from './capabilities/types';
@@ -239,6 +241,63 @@ const csharpCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+/**
+ * Module-level C# using-directive extraction. Shared by the pack's
+ * legacy `extractImports` method and the imports capability's batch
+ * gatherer. Removed in Phase 10e.B.4.6.
+ */
+function extractCsharpImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  const re = /^\s*using\s+(?:static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_][\w.]*)\s*;/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Enumerate .cs source files and capture the pack's per-file imports.
+ * C# has no `resolveImport` (namespaces don't map to file paths
+ * deterministically), so `edges` is always empty.
+ */
+function gatherCsharpImportsResult(cwd: string): ImportsResult | null {
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f -name "*.cs" ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    extracted.set(rel, extractCsharpImportsRaw(content));
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'csharp-imports',
+    sourceExtensions: ['.cs'],
+    extracted,
+    edges: new Map(),
+  };
+}
+
+const csharpImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    return gatherCsharpImportsResult(cwd);
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -262,18 +321,13 @@ export const csharp: LanguageSupport = {
     depVulns: csharpDepVulnsProvider,
     lint: csharpLintProvider,
     coverage: csharpCoverageProvider,
+    imports: csharpImportsProvider,
   },
 
+  // LEGACY: delegates to the module-level helper shared with the imports
+  // capability. Removed in Phase 10e.B.4.6.
   extractImports(content) {
-    // `using System;`, `using System.IO;`, `using static System.Math;`,
-    // `using Alias = Foo.Bar;`. Captures the fully-qualified namespace.
-    const out: string[] = [];
-    const re = /^\s*using\s+(?:static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_][\w.]*)\s*;/gm;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(content)) !== null) {
-      out.push(m[1]);
-    }
-    return out;
+    return extractCsharpImportsRaw(content);
   },
 
   // resolveImport intentionally omitted: C# namespaces don't map to file
