@@ -8,6 +8,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
+  CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   LintGatherOutcome,
@@ -228,6 +229,37 @@ const goLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+/**
+ * Single source of truth for the go pack's coverage gathering.
+ * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
+ * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ */
+function gatherGoCoverageResult(cwd: string): CoverageResult | null {
+  for (const file of ['coverage.out', 'cover.out']) {
+    const abs = path.join(cwd, file);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    try {
+      const coverage = parseGoCoverProfile(raw, file, cwd);
+      return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+const goCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'go',
+  async gather(cwd) {
+    return gatherGoCoverageResult(cwd);
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -245,26 +277,15 @@ export const go: LanguageSupport = {
   capabilities: {
     depVulns: goDepVulnsProvider,
     lint: goLintProvider,
+    coverage: goCoverageProvider,
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
 
+  // LEGACY: delegates to capabilities.coverage's helper.
+  // Method removed in Phase 10e.B.3.6.
   parseCoverage(cwd) {
-    for (const file of ['coverage.out', 'cover.out']) {
-      const abs = path.join(cwd, file);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(abs, 'utf-8');
-      } catch {
-        continue;
-      }
-      try {
-        return parseGoCoverProfile(raw, file, cwd);
-      } catch {
-        continue;
-      }
-    }
-    return null;
+    return gatherGoCoverageResult(cwd)?.coverage ?? null;
   },
 
   extractImports(content) {
