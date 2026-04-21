@@ -14,6 +14,7 @@ import type {
   ImportsResult,
   LintGatherOutcome,
   LintResult,
+  TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
@@ -300,6 +301,31 @@ const csharpImportsProvider: CapabilityProvider<ImportsResult> = {
   },
 };
 
+/**
+ * Detect C# test projects by the runner package referenced in the
+ * project's `.csproj` file — xunit, NUnit, and MSTest cover the
+ * dominant majority of .NET test projects. A repo without any
+ * `.csproj` referencing these returns null.
+ */
+function gatherCsharpTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  const hasCsproj = fileExists(cwd, '*.csproj') || !!findMatchingRecursive(cwd, /\.csproj$/, 3);
+  if (!hasCsproj) return null;
+
+  const csproj = run(
+    "find . -name '*.csproj' -exec grep -l 'xunit\\|nunit\\|MSTest' {} \\; 2>/dev/null | head -1",
+    cwd,
+  );
+  if (!csproj) return null;
+  return { schemaVersion: 1, tool: 'csharp', name: 'dotnet-test' };
+}
+
+const csharpTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    return gatherCsharpTestFrameworkResult(cwd);
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -324,6 +350,7 @@ export const csharp: LanguageSupport = {
     lint: csharpLintProvider,
     coverage: csharpCoverageProvider,
     imports: csharpImportsProvider,
+    testFramework: csharpTestFrameworkProvider,
   },
 
   // mapLintSeverity intentionally omitted: dotnet-format is a formatter,
@@ -383,15 +410,10 @@ export const csharp: LanguageSupport = {
     // 'tool-missing' (n/a — provider always tries dotnet) and 'no-output'
     // (zero vulns OR dotnet missing) are silent, matching prior behavior.
 
-    if (fileExists(cwd, '*.csproj') || findMatchingRecursive(cwd, /\.csproj$/, 3)) {
-      const csproj = run(
-        "find . -name '*.csproj' -exec grep -l 'xunit\\|nunit\\|MSTest' {} \\; 2>/dev/null | head -1",
-        cwd,
-      );
-      if (csproj) {
-        metrics.testFramework = 'dotnet-test';
-      }
-    }
+    // LEGACY: testFramework populated from capabilities.testFramework;
+    // removed in Phase 10e.B.5.6.
+    const tfResult = gatherCsharpTestFrameworkResult(cwd);
+    if (tfResult) metrics.testFramework = tfResult.name;
 
     return metrics;
   },
