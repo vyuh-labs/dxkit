@@ -6,7 +6,12 @@ import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
+import type {
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LintGatherOutcome,
+  LintResult,
+} from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 function dirHasMatching(dir: string, regex: RegExp): boolean {
@@ -164,6 +169,46 @@ const csharpDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
   },
 };
 
+/**
+ * Single source of truth for the csharp pack's lint gathering.
+ * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ *
+ * dotnet-format is a formatter, not a tiered linter — it emits binary
+ * pass/fail per file. Violations are formatting issues (indentation,
+ * spacing), not correctness. This helper reports them at `low` tier so
+ * they don't inflate the Quality/Slop score: gatherMetrics collapses
+ * C+H → lintErrors and M+L → lintWarnings, so low-tier counts flow
+ * into lintWarnings exclusively (matching the prior behavior).
+ */
+function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
+  const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
+  if (!dotnet.available) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+
+  const exitCode = runExitCode('dotnet format --verify-no-changes 2>/dev/null', cwd, 120000);
+  let violations = 0;
+  if (exitCode !== 0) {
+    const raw = run('dotnet format --verify-no-changes 2>&1', cwd, 120000);
+    violations = raw ? raw.split('\n').filter((l) => l.includes('Formatted')).length : 1;
+  }
+
+  const envelope: LintResult = {
+    schemaVersion: 1,
+    tool: 'dotnet-format',
+    counts: { critical: 0, high: 0, medium: 0, low: violations },
+  };
+  return { kind: 'success', envelope };
+}
+
+const csharpLintProvider: CapabilityProvider<LintResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    const outcome = gatherCsharpLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -185,6 +230,7 @@ export const csharp: LanguageSupport = {
 
   capabilities: {
     depVulns: csharpDepVulnsProvider,
+    lint: csharpLintProvider,
   },
 
   parseCoverage(cwd) {
@@ -234,27 +280,25 @@ export const csharp: LanguageSupport = {
       toolsUnavailable: [],
     };
 
-    const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
-    if (dotnet.available) {
-      const exitCode = runExitCode('dotnet format --verify-no-changes 2>/dev/null', cwd, 120000);
-      if (exitCode === 0) {
-        metrics.lintErrors = 0;
-        metrics.lintWarnings = 0;
-      } else {
-        const raw = run('dotnet format --verify-no-changes 2>&1', cwd, 120000);
-        const violations = raw ? raw.split('\n').filter((l) => l.includes('Formatted')).length : 1;
-        // dotnet-format findings are formatting violations (indentation,
-        // spacing) — style issues, not correctness errors. Report them as
-        // warnings so they don't inflate the "lint errors" count that
-        // drives Quality/Slop scoring. A future upgrade to parse
-        // `dotnet build` diagnostics can populate lintErrors properly.
-        metrics.lintErrors = 0;
-        metrics.lintWarnings = violations;
-      }
-      metrics.lintTool = 'dotnet-format';
+    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Collapse: critical + high → errors, medium + low → warnings.
+    // dotnet-format is binary pass/fail so all violations land in `low`,
+    // which collapses to lintWarnings — matches prior "style, not errors"
+    // classification that keeps Quality/Slop scoring honest.
+    const lintOutcome = gatherCsharpLintResult(cwd);
+    if (lintOutcome.kind === 'success') {
+      const c = lintOutcome.envelope.counts;
+      metrics.lintErrors = c.critical + c.high;
+      metrics.lintWarnings = c.medium + c.low;
+      metrics.lintTool = lintOutcome.envelope.tool;
       metrics.toolsUsed!.push('dotnet-format');
     } else {
-      metrics.toolsUnavailable!.push('dotnet-format');
+      metrics.toolsUnavailable!.push(
+        lintOutcome.reason === 'not installed'
+          ? 'dotnet-format'
+          : `dotnet-format (${lintOutcome.reason})`,
+      );
     }
 
     // LEGACY: depVuln* fields populated from capabilities.depVulns;
