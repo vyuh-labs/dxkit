@@ -7,7 +7,13 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnGatherOutcome, DepVulnResult } from './capabilities/types';
+import type {
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+} from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
 interface RuffResult {
@@ -137,6 +143,46 @@ function mapRuffSeverity(code: string): LintSeverity {
   }
 }
 
+/**
+ * Single source of truth for the python pack's lint gathering.
+ * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ */
+function gatherPyLintResult(cwd: string): LintGatherOutcome {
+  const ruff = findTool(TOOL_DEFS.ruff, cwd);
+  if (!ruff.available || !ruff.path) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+
+  const raw = run(`${ruff.path} check . --output-format json 2>/dev/null`, cwd, 60000);
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  if (!raw) {
+    // Empty output = ruff ran and found nothing, matching prior behavior.
+    const envelope: LintResult = { schemaVersion: 1, tool: 'ruff', counts };
+    return { kind: 'success', envelope };
+  }
+  try {
+    const results = JSON.parse(raw) as RuffResult[];
+    if (!Array.isArray(results)) {
+      return { kind: 'unavailable', reason: 'parse error' };
+    }
+    for (const r of results) {
+      counts[mapRuffSeverity(r.code)]++;
+    }
+    const envelope: LintResult = { schemaVersion: 1, tool: 'ruff', counts };
+    return { kind: 'success', envelope };
+  } catch {
+    return { kind: 'unavailable', reason: 'parse error' };
+  }
+}
+
+const pyLintProvider: CapabilityProvider<LintResult> = {
+  source: 'python',
+  async gather(cwd) {
+    const outcome = gatherPyLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -159,6 +205,7 @@ export const python: LanguageSupport = {
 
   capabilities: {
     depVulns: pyDepVulnsProvider,
+    lint: pyLintProvider,
   },
 
   parseCoverage(cwd) {
@@ -228,36 +275,20 @@ export const python: LanguageSupport = {
       toolsUnavailable: [],
     };
 
-    const ruff = findTool(TOOL_DEFS.ruff, cwd);
-    if (ruff.available && ruff.path) {
-      const raw = run(`${ruff.path} check . --output-format json 2>/dev/null`, cwd, 60000);
-      if (raw) {
-        try {
-          const results = JSON.parse(raw) as RuffResult[];
-          if (Array.isArray(results)) {
-            let errors = 0;
-            let warnings = 0;
-            for (const r of results) {
-              const sev = mapRuffSeverity(r.code);
-              if (sev === 'critical' || sev === 'high') errors++;
-              else warnings++;
-            }
-            metrics.lintErrors = errors;
-            metrics.lintWarnings = warnings;
-            metrics.lintTool = 'ruff';
-            metrics.toolsUsed!.push('ruff');
-          }
-        } catch {
-          metrics.toolsUnavailable!.push('ruff (parse error)');
-        }
-      } else {
-        metrics.lintErrors = 0;
-        metrics.lintWarnings = 0;
-        metrics.lintTool = 'ruff';
-        metrics.toolsUsed!.push('ruff');
-      }
+    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
+    // removed in Phase 10e.C when reports stop reading these.
+    // Collapse: critical + high → errors, medium + low → warnings.
+    const lintOutcome = gatherPyLintResult(cwd);
+    if (lintOutcome.kind === 'success') {
+      const c = lintOutcome.envelope.counts;
+      metrics.lintErrors = c.critical + c.high;
+      metrics.lintWarnings = c.medium + c.low;
+      metrics.lintTool = lintOutcome.envelope.tool;
+      metrics.toolsUsed!.push('ruff');
     } else {
-      metrics.toolsUnavailable!.push('ruff');
+      metrics.toolsUnavailable!.push(
+        lintOutcome.reason === 'not installed' ? 'ruff' : `ruff (${lintOutcome.reason})`,
+      );
     }
 
     // LEGACY: depVuln* fields populated from capabilities.depVulns;
