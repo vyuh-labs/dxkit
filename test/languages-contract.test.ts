@@ -129,9 +129,6 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   });
 
   it('optional methods have correct types when present', () => {
-    if (lang.parseCoverage) expect(typeof lang.parseCoverage).toBe('function');
-    if (lang.extractImports) expect(typeof lang.extractImports).toBe('function');
-    if (lang.resolveImport) expect(typeof lang.resolveImport).toBe('function');
     if (lang.gatherMetrics) expect(typeof lang.gatherMetrics).toBe('function');
     if (lang.mapLintSeverity) expect(typeof lang.mapLintSeverity).toBe('function');
   });

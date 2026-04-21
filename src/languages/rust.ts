@@ -261,11 +261,13 @@ const rustCoverageProvider: CapabilityProvider<CoverageResult> = {
 };
 
 /**
- * Module-level Rust import extraction. Shared by the pack's legacy
- * `extractImports` method and the imports capability's batch gatherer.
- * Removed in Phase 10e.B.4.6.
+ * Capture Rust `use` path specifiers from source text. Handles simple
+ * paths (`use std::io;`) and grouped (`use std::{io, fs};`). Rust has
+ * no file-level resolver — see note on the pack's capabilities slot —
+ * so this is the only raw helper the imports capability needs.
+ * Exported for unit tests.
  */
-function extractRustImportsRaw(content: string): string[] {
+export function extractRustImportsRaw(content: string): string[] {
   const out: string[] = [];
   const re = /^\s*use\s+([a-zA-Z_][\w:]*(?:::\{[^}]+\})?)\s*;/gm;
   let m: RegExpExecArray | null;
@@ -391,15 +393,6 @@ export const rust: LanguageSupport = {
   },
 
   mapLintSeverity: mapClippyLintSeverity,
-
-  // LEGACY: delegates to the module-level helper shared with the imports
-  // capability. Removed in Phase 10e.B.4.6.
-  extractImports(content) {
-    return extractRustImportsRaw(content);
-  },
-
-  // resolveImport intentionally omitted: Rust's module system uses crate/mod.rs
-  // hierarchy which requires parsing Cargo.toml + mod declarations. Out of scope.
 
   async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {

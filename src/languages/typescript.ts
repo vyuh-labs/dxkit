@@ -183,12 +183,11 @@ function toRel(abs: string, cwd: string): string {
 }
 
 /**
- * Module-level TS/JS import extraction. Shared by the pack's legacy
- * `extractImports` method and the imports capability's batch gatherer so
- * both paths see byte-identical specifiers; when the legacy method goes
- * away in Phase 10e.C this becomes the sole call site.
+ * Capture raw TS/JS module specifiers from source text. The imports
+ * capability batch-calls this while walking the pack's source extensions;
+ * unit tests exercise it directly for parse-correctness cases.
  */
-function extractTsImportsRaw(content: string): string[] {
+export function extractTsImportsRaw(content: string): string[] {
   const out: string[] = [];
   const stripped = stripTsJsComments(content);
   const importRe = /\bimport\s+(?:[^'";]*?from\s+)?['"]([^'"]+)['"]/g;
@@ -205,12 +204,12 @@ function extractTsImportsRaw(content: string): string[] {
 }
 
 /**
- * Module-level TS/JS import resolution. Mirrors `extractTsImportsRaw`:
- * shared between the legacy `resolveImport` method and the capability
- * gatherer. Only relative specifiers resolve to an in-project file —
- * bare imports ('react', 'lodash') are external and return null.
+ * Resolve a TS/JS module specifier to an in-project relative file path,
+ * or null for external packages and unresolvable specifiers. Exported so
+ * unit tests can exercise resolution directly; the imports capability
+ * calls it while building per-file edges.
  */
-function resolveTsImportRaw(fromFile: string, spec: string, cwd: string): string | null {
+export function resolveTsImportRaw(fromFile: string, spec: string, cwd: string): string | null {
   if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
   const fromDir = path.dirname(path.join(cwd, fromFile));
   const baseAbs = path.resolve(fromDir, spec);
@@ -431,17 +430,6 @@ export const typescript: LanguageSupport = {
     lint: tsLintProvider,
     coverage: tsCoverageProvider,
     imports: tsImportsProvider,
-  },
-
-  // LEGACY: delegates to module-level helpers shared with the imports
-  // capability. Both method and field are removed in Phase 10e.B.4.6
-  // when `import-graph.ts` switches to the dispatcher.
-  extractImports(content) {
-    return extractTsImportsRaw(content);
-  },
-
-  resolveImport(fromFile, spec, cwd) {
-    return resolveTsImportRaw(fromFile, spec, cwd);
   },
 
   async gatherMetrics(cwd) {

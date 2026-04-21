@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { csharp, parseCoberturaXml } from '../src/languages/csharp';
+import { csharp, extractCsharpImportsRaw, parseCoberturaXml } from '../src/languages/csharp';
 
 let tmp: string;
 
@@ -44,8 +44,8 @@ describe('csharp testFilePatterns', () => {
   });
 });
 
-describe('csharp.extractImports', () => {
-  const run = csharp.extractImports!;
+describe('extractCsharpImportsRaw', () => {
+  const run = extractCsharpImportsRaw;
 
   it('captures simple `using X;`', () => {
     expect(run('using System;\nusing System.IO;')).toEqual(['System', 'System.IO']);
@@ -146,7 +146,11 @@ describe('csharp registration', () => {
     );
   });
 
-  it('does not implement resolveImport (C# namespaces are not files)', () => {
-    expect(csharp.resolveImport).toBeUndefined();
+  it('imports capability has empty edges (C# namespaces are not files)', async () => {
+    fs.writeFileSync(path.join(tmp, 'A.cs'), 'using System;\n');
+    const env = await csharp.capabilities!.imports!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.edges.size).toBe(0);
+    expect(env!.extracted.get('A.cs')).toEqual(['System']);
   });
 });

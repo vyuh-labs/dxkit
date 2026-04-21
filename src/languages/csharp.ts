@@ -242,11 +242,13 @@ const csharpCoverageProvider: CapabilityProvider<CoverageResult> = {
 };
 
 /**
- * Module-level C# using-directive extraction. Shared by the pack's
- * legacy `extractImports` method and the imports capability's batch
- * gatherer. Removed in Phase 10e.B.4.6.
+ * Capture C# `using` directives from source text, including
+ * `using static Foo`, aliased (`using X = Foo.Bar`), and plain forms.
+ * C# has no deterministic file-level resolver (namespaces aren't files),
+ * so this is the only raw helper the imports capability needs. Exported
+ * for unit tests.
  */
-function extractCsharpImportsRaw(content: string): string[] {
+export function extractCsharpImportsRaw(content: string): string[] {
   const out: string[] = [];
   const re = /^\s*using\s+(?:static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_][\w.]*)\s*;/gm;
   let m: RegExpExecArray | null;
@@ -323,17 +325,6 @@ export const csharp: LanguageSupport = {
     coverage: csharpCoverageProvider,
     imports: csharpImportsProvider,
   },
-
-  // LEGACY: delegates to the module-level helper shared with the imports
-  // capability. Removed in Phase 10e.B.4.6.
-  extractImports(content) {
-    return extractCsharpImportsRaw(content);
-  },
-
-  // resolveImport intentionally omitted: C# namespaces don't map to file
-  // paths deterministically — one namespace can span many files, one file
-  // can declare many namespaces. Internal edges are best inferred via the
-  // project assembly graph, which is out of scope here.
 
   // mapLintSeverity intentionally omitted: dotnet-format is a formatter,
   // not a tiered linter. It emits binary pass/fail per file and doesn't

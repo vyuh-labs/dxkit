@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { rust, parseLcov, mapClippyLintSeverity } from '../src/languages/rust';
+import {
+  rust,
+  extractRustImportsRaw,
+  parseLcov,
+  mapClippyLintSeverity,
+} from '../src/languages/rust';
 
 let tmp: string;
 
@@ -25,8 +30,8 @@ describe('rust.detect', () => {
   });
 });
 
-describe('rust.extractImports', () => {
-  const run = rust.extractImports!;
+describe('extractRustImportsRaw', () => {
+  const run = extractRustImportsRaw;
 
   it('captures simple `use X;`', () => {
     expect(run('use std::io;')).toEqual(['std::io']);
@@ -117,8 +122,12 @@ describe('rust registration', () => {
     expect(rust.semgrepRulesets).toEqual([]);
   });
 
-  it('does not implement resolveImport', () => {
-    expect(rust.resolveImport).toBeUndefined();
+  it('imports capability has empty edges (no file-level resolver)', async () => {
+    fs.writeFileSync(path.join(tmp, 'main.rs'), 'use std::io;\n');
+    const env = await rust.capabilities!.imports!.gather(tmp);
+    expect(env).not.toBeNull();
+    expect(env!.edges.size).toBe(0);
+    expect(env!.extracted.get('main.rs')).toEqual(['std::io']);
   });
 });
 

@@ -74,8 +74,6 @@ export interface LanguageSupport {
   tools: string[];
   semgrepRulesets: string[];
 
-  extractImports?(content: string): string[];
-  resolveImport?(from: string, spec: string, cwd: string): string | null;
   gatherMetrics?(cwd: string): Promise<Partial<LangMetrics>>;
   mapLintSeverity?(code: string): LintSeverity;
 

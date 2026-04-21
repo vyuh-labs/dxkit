@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { typescript } from '../src/languages/typescript';
+import { typescript, extractTsImportsRaw, resolveTsImportRaw } from '../src/languages/typescript';
 
 let tmp: string;
 
@@ -25,8 +25,8 @@ describe('typescript.detect', () => {
   });
 });
 
-describe('typescript.extractImports', () => {
-  const run = typescript.extractImports!;
+describe('extractTsImportsRaw', () => {
+  const run = extractTsImportsRaw;
 
   it('captures static imports (with and without default/named)', () => {
     const src = `
@@ -63,18 +63,18 @@ describe('typescript.extractImports', () => {
   });
 });
 
-describe('typescript.resolveImport', () => {
+describe('resolveTsImportRaw', () => {
   it('resolves X + extension', () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), '');
     fs.writeFileSync(path.join(tmp, 'b.ts'), '');
-    expect(typescript.resolveImport!('a.ts', './b', tmp)).toBe('b.ts');
+    expect(resolveTsImportRaw('a.ts', './b', tmp)).toBe('b.ts');
   });
 
   it('resolves directory + index.ts', () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), '');
     fs.mkdirSync(path.join(tmp, 'pkg'));
     fs.writeFileSync(path.join(tmp, 'pkg', 'index.ts'), '');
-    expect(typescript.resolveImport!('a.ts', './pkg', tmp)).toBe('pkg/index.ts');
+    expect(resolveTsImportRaw('a.ts', './pkg', tmp)).toBe('pkg/index.ts');
   });
 
   it('resolves .tsx, .mjs, .cjs', () => {
@@ -82,20 +82,20 @@ describe('typescript.resolveImport', () => {
     fs.writeFileSync(path.join(tmp, 'x.tsx'), '');
     fs.writeFileSync(path.join(tmp, 'y.mjs'), '');
     fs.writeFileSync(path.join(tmp, 'z.cjs'), '');
-    expect(typescript.resolveImport!('a.ts', './x', tmp)).toBe('x.tsx');
-    expect(typescript.resolveImport!('a.ts', './y', tmp)).toBe('y.mjs');
-    expect(typescript.resolveImport!('a.ts', './z', tmp)).toBe('z.cjs');
+    expect(resolveTsImportRaw('a.ts', './x', tmp)).toBe('x.tsx');
+    expect(resolveTsImportRaw('a.ts', './y', tmp)).toBe('y.mjs');
+    expect(resolveTsImportRaw('a.ts', './z', tmp)).toBe('z.cjs');
   });
 
   it('returns null for external packages', () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), '');
-    expect(typescript.resolveImport!('a.ts', 'react', tmp)).toBeNull();
-    expect(typescript.resolveImport!('a.ts', '@scope/pkg', tmp)).toBeNull();
+    expect(resolveTsImportRaw('a.ts', 'react', tmp)).toBeNull();
+    expect(resolveTsImportRaw('a.ts', '@scope/pkg', tmp)).toBeNull();
   });
 
   it('returns null for unresolvable relative paths', () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), '');
-    expect(typescript.resolveImport!('a.ts', './missing', tmp)).toBeNull();
+    expect(resolveTsImportRaw('a.ts', './missing', tmp)).toBeNull();
   });
 });
 

@@ -156,12 +156,14 @@ What the pack provides (all but `detect`, `sourceExtensions`,
 - `extraExcludes?: string[]` — dirs to exclude beyond the defaults
 - `tools: string[]` — TOOL_DEFS keys the pack invokes (must match)
 - `semgrepRulesets: string[]` — semgrep `--config` values to add
-- `parseCoverage?(cwd)` — parse a coverage artifact to a `Coverage` result
-- `extractImports?(content)` — string[] of import specifiers in a file
-- `resolveImport?(fromFile, spec, cwd)` — resolve specifier → project path
-- `gatherMetrics?(cwd)` — **async** — populate lint + vuln + testFramework
-  fields of `HealthMetrics`. May call `enrichSeverities` from `src/
-analyzers/tools/osv.ts` for scanners that don't emit tiered severity.
+- `capabilities?: LanguagePackCapabilities` — typed providers (each
+  returns a `CapabilityEnvelope`) for depVulns, lint, coverage,
+  testFramework, and imports. The dispatcher fans out across all packs
+  whose `detect` matches, so adding a capability means implementing a
+  provider and slotting it here; see existing packs for the pattern.
+- `gatherMetrics?(cwd)` — **async** — shrinking legacy bridge that
+  still populates a few `HealthMetrics` fields the reports read today.
+  Being retired capability-by-capability; see Phase 10e roadmap.
 - `mapLintSeverity?(ruleId)` — tier lint rules into critical/high/medium/low
 
 Contract tests in `test/languages-contract.test.ts` and

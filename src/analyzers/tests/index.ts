@@ -59,7 +59,9 @@ export async function analyzeTestGaps(
   // direct or transitive imports counts as tested. Skips files V8 already
   // measured (their decision is authoritative); credits the rest.
   const activeTestPaths = testFiles.filter((t) => t.status === 'active').map((t) => t.path);
-  const reached = timed('import-graph', verbose, () => buildReachable(activeTestPaths, repoPath));
+  const reached = await timedAsync('import-graph', verbose, () =>
+    buildReachable(activeTestPaths, repoPath),
+  );
   const importGraphUsable = reached.size > 0;
   if (importGraphUsable) {
     for (const s of sourceFiles) {

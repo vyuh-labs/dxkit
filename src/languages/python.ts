@@ -215,12 +215,12 @@ const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
 };
 
 /**
- * Module-level Python import extraction. Shared by the pack's legacy
- * `extractImports` method and the imports capability's batch gatherer so
- * both paths return byte-identical specifiers. The pack method is
- * removed in Phase 10e.B.4.6.
+ * Capture Python module specifiers from source text. Handles both
+ * `from X import Y` and bare `import X, Y as Z` forms. Exported so
+ * unit tests can exercise it directly; the imports capability batches
+ * it across all .py files under the repo.
  */
-function extractPyImportsRaw(content: string): string[] {
+export function extractPyImportsRaw(content: string): string[] {
   const out: string[] = [];
   for (const line of stripPyComments(content).split('\n')) {
     const trimmed = line.trim();
@@ -244,12 +244,12 @@ function extractPyImportsRaw(content: string): string[] {
 }
 
 /**
- * Module-level Python import resolution. Handles relative specifiers
- * (leading dots) and absolute-from-project-root imports. Mirrors the
- * structure of the TS raw resolver so both packs' capability gatherers
- * follow the same pattern.
+ * Resolve a Python import specifier to an in-project file path, or null
+ * for unresolvable / stdlib / external references. Handles relative
+ * specifiers (leading dots) and absolute-from-project-root imports.
+ * Exported for unit testing.
  */
-function resolvePyImportRaw(fromFile: string, spec: string, cwd: string): string | null {
+export function resolvePyImportRaw(fromFile: string, spec: string, cwd: string): string | null {
   const fromDir = path.dirname(path.join(cwd, fromFile));
   const dotMatch = spec.match(/^(\.+)(.*)$/);
   let baseDir: string;
@@ -347,17 +347,6 @@ export const python: LanguageSupport = {
     lint: pyLintProvider,
     coverage: pyCoverageProvider,
     imports: pyImportsProvider,
-  },
-
-  // LEGACY: delegates to module-level helpers shared with the imports
-  // capability. Both method and field are removed in Phase 10e.B.4.6
-  // when `import-graph.ts` switches to the dispatcher.
-  extractImports(content) {
-    return extractPyImportsRaw(content);
-  },
-
-  resolveImport(fromFile, spec, cwd) {
-    return resolvePyImportRaw(fromFile, spec, cwd);
   },
 
   async gatherMetrics(cwd) {

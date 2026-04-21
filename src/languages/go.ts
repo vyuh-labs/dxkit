@@ -263,11 +263,12 @@ const goCoverageProvider: CapabilityProvider<CoverageResult> = {
 };
 
 /**
- * Module-level Go import extraction. Shared by the pack's legacy
- * `extractImports` method and the imports capability's batch gatherer so
- * both paths return byte-identical specifiers. Removed in Phase 10e.B.4.6.
+ * Capture Go module specifiers from source text. Handles both single-line
+ * `import "fmt"` and parenthesized multi-line blocks, including aliased
+ * imports. Exported for unit tests; the imports capability batches it
+ * across all .go files in the repo.
  */
-function extractGoImportsRaw(content: string): string[] {
+export function extractGoImportsRaw(content: string): string[] {
   const out: string[] = [];
   const singleRe = /^\s*import\s+(?:[a-zA-Z_]\w*\s+)?"([^"]+)"/gm;
   let m: RegExpExecArray | null;
@@ -289,12 +290,12 @@ function extractGoImportsRaw(content: string): string[] {
 }
 
 /**
- * Module-level Go import resolution. Go imports are module-based, so a
- * resolved specifier is the package directory relative to the module
- * root. The BFS in `buildReachable` dead-ends there (readFile on a dir
- * returns nothing), which is the pre-existing behavior we preserve.
+ * Resolve a Go import specifier to the in-project package directory,
+ * or null for stdlib / external modules. A resolved edge target is a
+ * directory (not a file), which naturally dead-ends the import-graph
+ * BFS. Exported for unit tests.
  */
-function resolveGoImportRaw(_fromFile: string, spec: string, cwd: string): string | null {
+export function resolveGoImportRaw(_fromFile: string, spec: string, cwd: string): string | null {
   let goMod: string;
   try {
     goMod = fs.readFileSync(path.join(cwd, 'go.mod'), 'utf-8');
@@ -390,16 +391,6 @@ export const go: LanguageSupport = {
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
-
-  // LEGACY: delegates to module-level helpers shared with the imports
-  // capability. Removed in Phase 10e.B.4.6.
-  extractImports(content) {
-    return extractGoImportsRaw(content);
-  },
-
-  resolveImport(fromFile, spec, cwd) {
-    return resolveGoImportRaw(fromFile, spec, cwd);
-  },
 
   async gatherMetrics(cwd) {
     const metrics: Partial<HealthMetrics> = {

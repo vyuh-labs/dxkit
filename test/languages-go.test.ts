@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { go } from '../src/languages/go';
+import { go, extractGoImportsRaw, resolveGoImportRaw } from '../src/languages/go';
 
 let tmp: string;
 
@@ -25,8 +25,8 @@ describe('go.detect', () => {
   });
 });
 
-describe('go.extractImports', () => {
-  const run = go.extractImports!;
+describe('extractGoImportsRaw', () => {
+  const run = extractGoImportsRaw;
 
   it('captures single-line import', () => {
     expect(run('import "fmt"')).toEqual(['fmt']);
@@ -74,24 +74,24 @@ import (
   });
 });
 
-describe('go.resolveImport', () => {
+describe('resolveGoImportRaw', () => {
   it('resolves internal module path to directory', () => {
     fs.writeFileSync(path.join(tmp, 'go.mod'), 'module example.com/mymod\n\ngo 1.21\n');
     fs.mkdirSync(path.join(tmp, 'internal', 'util'), { recursive: true });
     fs.writeFileSync(path.join(tmp, 'internal', 'util', 'helper.go'), 'package util\n');
-    expect(go.resolveImport!('main.go', 'example.com/mymod/internal/util', tmp)).toBe(
+    expect(resolveGoImportRaw('main.go', 'example.com/mymod/internal/util', tmp)).toBe(
       'internal/util',
     );
   });
 
   it('returns null for external packages', () => {
     fs.writeFileSync(path.join(tmp, 'go.mod'), 'module example.com/mymod\n\ngo 1.21\n');
-    expect(go.resolveImport!('main.go', 'github.com/pkg/errors', tmp)).toBeNull();
+    expect(resolveGoImportRaw('main.go', 'github.com/pkg/errors', tmp)).toBeNull();
   });
 
   it('returns null for stdlib packages', () => {
     fs.writeFileSync(path.join(tmp, 'go.mod'), 'module example.com/mymod\n\ngo 1.21\n');
-    expect(go.resolveImport!('main.go', 'fmt', tmp)).toBeNull();
+    expect(resolveGoImportRaw('main.go', 'fmt', tmp)).toBeNull();
   });
 });
 

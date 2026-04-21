@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { python } from '../src/languages/python';
+import { python, extractPyImportsRaw, resolvePyImportRaw } from '../src/languages/python';
 
 let tmp: string;
 
@@ -41,8 +41,8 @@ describe('python.detect', () => {
   });
 });
 
-describe('python.extractImports', () => {
-  const run = python.extractImports!;
+describe('extractPyImportsRaw', () => {
+  const run = extractPyImportsRaw;
 
   it('captures simple import', () => {
     expect(run('import os')).toEqual(['os']);
@@ -69,35 +69,35 @@ describe('python.extractImports', () => {
   });
 });
 
-describe('python.resolveImport', () => {
+describe('resolvePyImportRaw', () => {
   it('resolves package as X.py', () => {
     fs.writeFileSync(path.join(tmp, 'a.py'), '');
     fs.writeFileSync(path.join(tmp, 'b.py'), '');
-    expect(python.resolveImport!('a.py', 'b', tmp)).toBe('b.py');
+    expect(resolvePyImportRaw('a.py', 'b', tmp)).toBe('b.py');
   });
 
   it('resolves package as X/__init__.py', () => {
     fs.writeFileSync(path.join(tmp, 'a.py'), '');
     fs.mkdirSync(path.join(tmp, 'pkg'));
     fs.writeFileSync(path.join(tmp, 'pkg', '__init__.py'), '');
-    expect(python.resolveImport!('a.py', 'pkg', tmp)).toBe('pkg/__init__.py');
+    expect(resolvePyImportRaw('a.py', 'pkg', tmp)).toBe('pkg/__init__.py');
   });
 
   it('resolves relative import with single dot', () => {
     fs.mkdirSync(path.join(tmp, 'pkg'));
     fs.writeFileSync(path.join(tmp, 'pkg', 'a.py'), '');
     fs.writeFileSync(path.join(tmp, 'pkg', 'b.py'), '');
-    expect(python.resolveImport!('pkg/a.py', '.b', tmp)).toBe('pkg/b.py');
+    expect(resolvePyImportRaw('pkg/a.py', '.b', tmp)).toBe('pkg/b.py');
   });
 
   it('returns null for unresolvable external package', () => {
     fs.writeFileSync(path.join(tmp, 'a.py'), '');
-    expect(python.resolveImport!('a.py', 'requests', tmp)).toBeNull();
+    expect(resolvePyImportRaw('a.py', 'requests', tmp)).toBeNull();
   });
 
   it('returns null for `from . import X` (ambiguous)', () => {
     fs.writeFileSync(path.join(tmp, 'a.py'), '');
-    expect(python.resolveImport!('a.py', '.', tmp)).toBeNull();
+    expect(resolvePyImportRaw('a.py', '.', tmp)).toBeNull();
   });
 });
 
