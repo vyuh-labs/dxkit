@@ -16,6 +16,7 @@ import type {
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
+  TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 
@@ -321,6 +322,22 @@ const rustImportsProvider: CapabilityProvider<ImportsResult> = {
   },
 };
 
+/**
+ * Rust's canonical test runner is `cargo test`; any crate with a
+ * `Cargo.toml` has it available by default. No deeper detection needed.
+ */
+function gatherRustTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  if (!fileExists(cwd, 'Cargo.toml')) return null;
+  return { schemaVersion: 1, tool: 'rust', name: 'cargo-test' };
+}
+
+const rustTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    return gatherRustTestFrameworkResult(cwd);
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -390,6 +407,7 @@ export const rust: LanguageSupport = {
     lint: rustLintProvider,
     coverage: rustCoverageProvider,
     imports: rustImportsProvider,
+    testFramework: rustTestFrameworkProvider,
   },
 
   mapLintSeverity: mapClippyLintSeverity,
@@ -435,9 +453,10 @@ export const rust: LanguageSupport = {
     // 'no-output' was previously silent (raw was empty OR
     // data.vulnerabilities was missing — neither pushed anything).
 
-    if (fileExists(cwd, 'Cargo.toml')) {
-      metrics.testFramework = 'cargo-test';
-    }
+    // LEGACY: testFramework populated from capabilities.testFramework;
+    // removed in Phase 10e.B.5.6.
+    const tfResult = gatherRustTestFrameworkResult(cwd);
+    if (tfResult) metrics.testFramework = tfResult.name;
 
     return metrics;
   },
