@@ -20,96 +20,39 @@ import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
-import { LINT } from '../../languages/capabilities/descriptors';
+import { DUPLICATION, LINT } from '../../languages/capabilities/descriptors';
+import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { LintResult } from '../../languages/capabilities/types';
-import { CloneGroup, DuplicationStats, FileOffender } from './types';
+import { DuplicationStats, FileOffender } from './types';
 
-// ─── jscpd: duplicate code ──────────────────────────────────────────────────
+// ─── dispatcher-driven duplication gather (Phase 10e.B.8.3) ─────────────────
 
-interface JscpdDuplicate {
-  lines?: number;
-  tokens?: number;
-  firstFile?: { name?: string; start?: number; end?: number };
-  secondFile?: { name?: string; start?: number; end?: number };
-}
-
-interface JscpdReport {
-  statistics: {
-    total: {
-      lines: number;
-      duplicatedLines: number;
-      percentage: number;
-    };
-  };
-  duplicates: JscpdDuplicate[];
-}
-
-/** Extract top N clone pairs sorted by size descending. */
-function topClonesFrom(duplicates: JscpdDuplicate[], limit = 15): CloneGroup[] {
-  return duplicates
-    .filter((d) => d.firstFile?.name && d.secondFile?.name && d.lines)
-    .map((d) => ({
-      lines: d.lines || 0,
-      tokens: d.tokens || 0,
-      a: {
-        file: d.firstFile!.name!,
-        startLine: d.firstFile!.start || 0,
-        endLine: d.firstFile!.end || 0,
-      },
-      b: {
-        file: d.secondFile!.name!,
-        startLine: d.secondFile!.start || 0,
-        endLine: d.secondFile!.end || 0,
-      },
-    }))
-    .sort((x, y) => y.lines - x.lines)
-    .slice(0, limit);
-}
-
-export function gatherDuplication(cwd: string): {
+/**
+ * Duplication is a global capability: the DUPLICATION dispatcher routes
+ * to `jscpdProvider` (tools/jscpd.ts). This layer only reshapes the
+ * envelope into the legacy `DuplicationStats` shape for the quality
+ * report. Field names are 1:1 (topClones is already
+ * `DuplicationClone[]` which is structurally identical to the
+ * analyzer's `CloneGroup[]`).
+ */
+export async function gatherDuplication(cwd: string): Promise<{
   stats: DuplicationStats | null;
   toolUsed: string | null;
-} {
-  const status = findTool(TOOL_DEFS.jscpd, cwd);
-  if (!status.available || !status.path) return { stats: null, toolUsed: null };
+}> {
+  const result = await defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION));
+  if (!result) return { stats: null, toolUsed: null };
 
-  const reportDir = `/tmp/dxkit-jscpd-${Date.now()}`;
-
-  // Key flags:
-  // --gitignore: respect .gitignore (skips node_modules/dist/build if listed)
-  // --pattern: only scan source files (not configs, markdown, etc.)
-  // Without --gitignore, jscpd crawls into node_modules and OOMs on large repos.
-  run(
-    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '**/*.{ts,tsx,js,jsx,py,go,rs,cs}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
-    cwd,
-    300000,
-  );
-
-  const reportRaw = run(`cat '${reportDir}/jscpd-report.json' 2>/dev/null`, cwd);
-  run(`rm -rf '${reportDir}'`, cwd);
-
-  if (!reportRaw) return { stats: null, toolUsed: 'jscpd' };
-
-  try {
-    const data = JSON.parse(reportRaw) as JscpdReport;
-    const t = data.statistics?.total;
-    if (!t) return { stats: null, toolUsed: 'jscpd' };
-
-    const duplicates = data.duplicates || [];
-    return {
-      stats: {
-        totalLines: t.lines,
-        duplicatedLines: t.duplicatedLines,
-        percentage: Math.round(t.percentage * 100) / 100,
-        cloneCount: duplicates.length,
-        topClones: topClonesFrom(duplicates),
-      },
-      toolUsed: 'jscpd',
-    };
-  } catch {
-    return { stats: null, toolUsed: 'jscpd' };
-  }
+  return {
+    stats: {
+      totalLines: result.totalLines,
+      duplicatedLines: result.duplicatedLines,
+      percentage: result.percentage,
+      cloneCount: result.cloneCount,
+      topClones: [...result.topClones],
+    },
+    toolUsed: result.tool,
+  };
 }
 
 // ─── grep: per-file hygiene offender counts ─────────────────────────────────

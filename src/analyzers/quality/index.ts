@@ -79,8 +79,8 @@ export async function analyzeQuality(
   const toolsUsed: string[] = ['grep', 'find'];
   const toolsUnavailable: string[] = [];
 
-  // 1. Duplication (jscpd)
-  const dup = timed('jscpd', verbose, () => gatherDuplication(repoPath));
+  // 1. Duplication (jscpd) — dispatcher-driven via DUPLICATION capability.
+  const dup = await timedAsync('jscpd', verbose, () => gatherDuplication(repoPath));
   if (dup.toolUsed) toolsUsed.push(dup.toolUsed);
   else toolsUnavailable.push('jscpd');
 
