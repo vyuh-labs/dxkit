@@ -19,6 +19,7 @@ import type {
   CodePatternsResult,
   CoverageResult,
   DepVulnResult,
+  DuplicationResult,
   ImportsResult,
   LintResult,
   SecretsResult,
@@ -146,6 +147,48 @@ export const CODE_PATTERNS: CapabilityDescriptor<CodePatternsResult> = {
   },
 };
 
+export const DUPLICATION: CapabilityDescriptor<DuplicationResult> = {
+  id: 'duplication',
+  aggregate(results) {
+    // Multiple providers would appear if a future detector (pmd-cpd,
+    // sonar-cpd) joins jscpd. Sum the numerics; concat + re-sort
+    // topClones by line-count. Percentage is recomputed from summed
+    // totals rather than averaged (line counts may overlap across
+    // detectors, but a re-weighted mean would lie; summing totals is
+    // conservative).
+    let totalLines = 0;
+    let duplicatedLines = 0;
+    let cloneCount = 0;
+    const allClones: DuplicationResult['topClones'][number][] = [];
+    for (const r of results) {
+      totalLines += r.totalLines;
+      duplicatedLines += r.duplicatedLines;
+      cloneCount += r.cloneCount;
+      allClones.push(...r.topClones);
+    }
+    const percentage =
+      totalLines > 0 ? Math.round((duplicatedLines / totalLines) * 10000) / 100 : 0;
+    // De-dupe identical clone pairs by stable key, keep largest-first.
+    const seen = new Set<string>();
+    const merged: DuplicationResult['topClones'][number][] = [];
+    for (const c of allClones.sort((a, b) => b.lines - a.lines)) {
+      const key = `${c.a.file}:${c.a.startLine}-${c.a.endLine}|${c.b.file}:${c.b.startLine}-${c.b.endLine}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(c);
+    }
+    return {
+      schemaVersion: 1,
+      tool: uniqueJoin(results.map((r) => r.tool)),
+      totalLines,
+      duplicatedLines,
+      percentage,
+      cloneCount,
+      topClones: merged.slice(0, 15),
+    };
+  },
+};
+
 export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
   id: 'imports',
   aggregate(results) {
@@ -198,6 +241,7 @@ export const PER_PACK_REGISTRY = {
 export const GLOBAL_REGISTRY = {
   secrets: SECRETS,
   codePatterns: CODE_PATTERNS,
+  duplication: DUPLICATION,
 } as const;
 
 /**

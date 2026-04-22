@@ -151,6 +151,39 @@ export interface CodePatternsResult extends CapabilityEnvelope {
   suppressedCount: number;
 }
 
+/** One side of a duplicate block reported by a clone detector. */
+export interface DuplicationCloneSide {
+  file: string;
+  startLine: number;
+  endLine: number;
+}
+
+/** A single clone pair (two locations with matching content). */
+export interface DuplicationClone {
+  lines: number;
+  tokens: number;
+  a: DuplicationCloneSide;
+  b: DuplicationCloneSide;
+}
+
+/**
+ * Duplication metrics, the duplication capability. Produced by clone
+ * detectors (jscpd today) that tokenize every source file and emit
+ * pair-wise matches above configured thresholds. `topClones` is
+ * bounded (the detector sorts + truncates) so the envelope is safe
+ * to keep in reports.
+ */
+export interface DuplicationResult extends CapabilityEnvelope {
+  totalLines: number;
+  duplicatedLines: number;
+  /** Rounded to 2 decimal places. */
+  percentage: number;
+  /** Total clone pairs found (may exceed topClones.length after truncation). */
+  cloneCount: number;
+  /** Largest clone pairs first; typically capped at ~15. */
+  topClones: ReadonlyArray<DuplicationClone>;
+}
+
 /**
  * Internal outcome shape used by language packs while bridging from the
  * legacy `gatherMetrics` channel to the capability dispatcher in Phase

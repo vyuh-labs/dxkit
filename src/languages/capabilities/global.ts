@@ -20,12 +20,12 @@
 import { gitleaksProvider } from '../../analyzers/tools/gitleaks';
 import { semgrepProvider } from '../../analyzers/tools/semgrep';
 import type { CapabilityProvider } from './provider';
-import type { CodePatternsResult, SecretsResult } from './types';
+import type { CodePatternsResult, DuplicationResult, SecretsResult } from './types';
 
 export interface GlobalCapabilities {
   secrets?: CapabilityProvider<SecretsResult>;
   codePatterns?: CapabilityProvider<CodePatternsResult>;
-  // duplication?: CapabilityProvider<DuplicationResult>;    // Phase 10e.B.8
+  duplication?: CapabilityProvider<DuplicationResult>;
   // structural?: CapabilityProvider<StructuralResult>;      // Phase 10e.B.9
 }
 
@@ -38,5 +38,5 @@ export interface GlobalCapabilities {
 export const GLOBAL_CAPABILITIES: GlobalCapabilities = {
   secrets: gitleaksProvider,
   codePatterns: semgrepProvider,
-  // duplication registered in B.8; structural in B.9.
+  // duplication registered in B.8.2; structural in B.9.
 };

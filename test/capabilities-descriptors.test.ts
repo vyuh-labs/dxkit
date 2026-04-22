@@ -3,6 +3,7 @@ import {
   CODE_PATTERNS,
   COVERAGE,
   DEP_VULNS,
+  DUPLICATION,
   IMPORTS,
   LINT,
   TEST_FRAMEWORK,
@@ -11,6 +12,7 @@ import type {
   CodePatternsResult,
   CoverageResult,
   DepVulnResult,
+  DuplicationResult,
   ImportsResult,
   LintResult,
   TestFrameworkResult,
@@ -303,5 +305,128 @@ describe('CODE_PATTERNS descriptor', () => {
     const out = CODE_PATTERNS.aggregate([a, b]);
     expect(out.suppressedCount).toBe(5);
     expect(out.tool).toBe('semgrep'); // dedup
+  });
+});
+
+describe('DUPLICATION descriptor', () => {
+  it('id is "duplication"', () => {
+    expect(DUPLICATION.id).toBe('duplication');
+  });
+
+  it('aggregates a single result without recomputing', () => {
+    const single: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'jscpd',
+      totalLines: 1000,
+      duplicatedLines: 50,
+      percentage: 5.0,
+      cloneCount: 3,
+      topClones: [
+        {
+          lines: 20,
+          tokens: 120,
+          a: { file: 'a.ts', startLine: 1, endLine: 20 },
+          b: { file: 'b.ts', startLine: 5, endLine: 24 },
+        },
+      ],
+    };
+    const out = DUPLICATION.aggregate([single]);
+    expect(out.totalLines).toBe(1000);
+    expect(out.duplicatedLines).toBe(50);
+    expect(out.percentage).toBe(5.0);
+    expect(out.cloneCount).toBe(3);
+    expect(out.topClones).toHaveLength(1);
+    expect(out.tool).toBe('jscpd');
+  });
+
+  it('sums line counts and clone counts; recomputes percentage from totals', () => {
+    const a: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'jscpd',
+      totalLines: 800,
+      duplicatedLines: 40,
+      percentage: 5.0,
+      cloneCount: 2,
+      topClones: [],
+    };
+    const b: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'pmd-cpd',
+      totalLines: 200,
+      duplicatedLines: 20,
+      percentage: 10.0,
+      cloneCount: 1,
+      topClones: [],
+    };
+    const out = DUPLICATION.aggregate([a, b]);
+    expect(out.totalLines).toBe(1000);
+    expect(out.duplicatedLines).toBe(60);
+    expect(out.cloneCount).toBe(3);
+    // Re-weighted, not averaged: 60/1000 = 6.0%
+    expect(out.percentage).toBe(6.0);
+    expect(out.tool).toBe('jscpd, pmd-cpd');
+  });
+
+  it('merges topClones across providers, sorts by line count, de-dupes identical pairs', () => {
+    const makeClone = (file: string, lines: number) => ({
+      lines,
+      tokens: lines * 6,
+      a: { file, startLine: 1, endLine: lines },
+      b: { file: 'b.ts', startLine: 1, endLine: lines },
+    });
+    const a: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'jscpd',
+      totalLines: 0,
+      duplicatedLines: 0,
+      percentage: 0,
+      cloneCount: 3,
+      topClones: [makeClone('x.ts', 50), makeClone('y.ts', 30)],
+    };
+    const b: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'pmd-cpd',
+      totalLines: 0,
+      duplicatedLines: 0,
+      percentage: 0,
+      cloneCount: 2,
+      topClones: [makeClone('x.ts', 50), makeClone('z.ts', 80)], // x.ts is a dupe
+    };
+    const out = DUPLICATION.aggregate([a, b]);
+    expect(out.topClones.map((c) => c.a.file)).toEqual(['z.ts', 'x.ts', 'y.ts']);
+  });
+
+  it('caps topClones to 15 entries', () => {
+    const clones = Array.from({ length: 30 }, (_, i) => ({
+      lines: 100 - i, // descending so all are unique
+      tokens: 600,
+      a: { file: `a${i}.ts`, startLine: 1, endLine: 50 },
+      b: { file: `b${i}.ts`, startLine: 1, endLine: 50 },
+    }));
+    const r: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'jscpd',
+      totalLines: 0,
+      duplicatedLines: 0,
+      percentage: 0,
+      cloneCount: 30,
+      topClones: clones,
+    };
+    const out = DUPLICATION.aggregate([r]);
+    expect(out.topClones).toHaveLength(15);
+  });
+
+  it('percentage is 0 when totalLines is 0 (avoid NaN)', () => {
+    const r: DuplicationResult = {
+      schemaVersion: 1,
+      tool: 'jscpd',
+      totalLines: 0,
+      duplicatedLines: 0,
+      percentage: 0,
+      cloneCount: 0,
+      topClones: [],
+    };
+    const out = DUPLICATION.aggregate([r]);
+    expect(out.percentage).toBe(0);
   });
 });
