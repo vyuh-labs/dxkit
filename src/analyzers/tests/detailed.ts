@@ -17,7 +17,7 @@ export function buildTestGapsDetailed(report: TestGapsReport): TestGapsDetailedR
   const actions = rank(buildTestGapsActions(report), counts, scoreTestGapsCounts);
   return {
     ...report,
-    schemaVersion: '10c.1',
+    schemaVersion: '11',
     coverageScore: scoreTestGapsCounts(counts).score,
     actions,
   };

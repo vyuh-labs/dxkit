@@ -22,7 +22,7 @@ export function buildQualityDetailed(report: QualityReport): QualityDetailedRepo
   }));
   return {
     ...report,
-    schemaVersion: '10c.1',
+    schemaVersion: '11',
     actions,
   };
 }

@@ -70,7 +70,7 @@ export function buildHealthDetailed(
 
   return {
     ...report,
-    schemaVersion: '10c.1',
+    schemaVersion: '11',
     plans,
     projectedOverallScore: projected,
     projectedGrade,

@@ -17,7 +17,7 @@ export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedR
   const actions = rank(buildSecurityActions(report), counts, scoreSecurityCounts);
   return {
     ...report,
-    schemaVersion: '10c.1',
+    schemaVersion: '11',
     securityScore: scoreSecurityCounts(counts).score,
     actions,
   };

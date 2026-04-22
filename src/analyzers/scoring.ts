@@ -72,6 +72,10 @@ export function scoreTest(input: ScoreInput): DimensionScore {
   }
 
   score = clamp(score);
+  // Schema v11: `metrics` surfaces only the non-capability signals
+  // (filesystem counts, derived ratios). Capability-owned values live in
+  // `report.capabilities.coverage` / `testFramework` / `structural` so
+  // downstream consumers read them from one place.
   return {
     score,
     maxScore: 100,
@@ -81,10 +85,7 @@ export function scoreTest(input: ScoreInput): DimensionScore {
       testFiles: m.testFiles,
       testRatio: Math.round(testRatio * 100) / 100,
       testsPass: m.testsPass,
-      coveragePercent,
       coverageConfigExists: m.coverageConfigExists,
-      testFramework,
-      commentedCodeRatio,
     },
     details:
       m.testFiles === 0
@@ -141,22 +142,20 @@ export function scoreQuality(input: ScoreInput): DimensionScore {
   if (deadImportCount !== null && deadImportCount > 20) score -= 5;
 
   score = clamp(score);
+  // Schema v11: `metrics` surfaces only the non-capability signals.
+  // Lint counts + tool live in `report.capabilities.lint`; god-file +
+  // dead-import stats live in `report.capabilities.structural`.
   return {
     score,
     maxScore: 100,
     status: status(score),
     metrics: {
-      lintErrors,
-      lintWarnings,
-      lintTool,
       filesOver500Lines: m.filesOver500Lines,
       largestFileLines: m.largestFileLines,
       largestFilePath: m.largestFilePath,
       consoleLogCount: m.consoleLogCount,
       anyTypeCount: m.anyTypeCount,
       typeErrors: m.typeErrors,
-      maxFunctionsInFile,
-      deadImportCount,
     },
     details:
       `${lintErrors} lint errors, ${lintWarnings} warnings` +
@@ -254,17 +253,14 @@ export function scoreSecurity(input: ScoreInput): DimensionScore {
     score,
     maxScore: 100,
     status: status(score),
+    // Schema v11: `metrics` surfaces only the non-capability signals.
+    // Secret findings live in `report.capabilities.secrets`; dep-vuln
+    // counts + audit-tool name live in `report.capabilities.depVulns`.
     metrics: {
-      secretFindings,
       privateKeyFiles: m.privateKeyFiles,
       evalCount: m.evalCount,
       envFilesInGit: m.envFilesInGit,
       tlsDisabledCount: m.tlsDisabledCount,
-      depVulnCritical,
-      depVulnHigh,
-      depVulnMedium,
-      depVulnLow,
-      depAuditTool,
     },
     details:
       `${secretFindings} hardcoded secret patterns found` +
@@ -326,6 +322,9 @@ export function scoreMaintainability(input: ScoreInput): DimensionScore {
     score,
     maxScore: 100,
     status: status(score),
+    // Schema v11: `metrics` surfaces only the non-capability signals.
+    // AST-derived stats (god-node / community / cohesion / orphan module
+    // counts) live in `report.capabilities.structural`.
     metrics: {
       sourceFiles: m.sourceFiles,
       controllers: m.controllers,
@@ -334,10 +333,6 @@ export function scoreMaintainability(input: ScoreInput): DimensionScore {
       largestFileLines: m.largestFileLines,
       filesOver500Lines: m.filesOver500Lines,
       nodeEngineVersion: m.nodeEngineVersion,
-      godNodeCount,
-      communityCount,
-      avgCohesion,
-      orphanModuleCount,
     },
     details:
       `${m.sourceFiles} source files across ${m.directories} directories` +

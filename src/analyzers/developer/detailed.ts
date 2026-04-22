@@ -108,7 +108,7 @@ export function buildDevDetailed(
 ): DevDetailedReport {
   return {
     ...report,
-    schemaVersion: '10c.1',
+    schemaVersion: '11',
     vagueCommitExamples,
     observations: buildObservations(report),
   };
