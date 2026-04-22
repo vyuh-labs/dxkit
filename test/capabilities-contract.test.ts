@@ -41,7 +41,7 @@ describe('capability registry consistency', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('exposes the capability slots registered through Phase 10e.B.8', () => {
+  it('exposes the capability slots registered through Phase 10e.B.9', () => {
     const expected: CapabilityId[] = [
       'depVulns',
       'lint',
@@ -51,6 +51,7 @@ describe('capability registry consistency', () => {
       'secrets',
       'codePatterns',
       'duplication',
+      'structural',
     ];
     for (const id of expected) {
       expect(CAPABILITY_REGISTRY[id]).toBeDefined();

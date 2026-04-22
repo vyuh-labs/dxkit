@@ -23,6 +23,7 @@ import type {
   ImportsResult,
   LintResult,
   SecretsResult,
+  StructuralResult,
   TestFrameworkResult,
 } from './types';
 
@@ -189,6 +190,19 @@ export const DUPLICATION: CapabilityDescriptor<DuplicationResult> = {
   },
 };
 
+export const STRUCTURAL: CapabilityDescriptor<StructuralResult> = {
+  id: 'structural',
+  aggregate(results) {
+    // Last-wins — same strategy as COVERAGE and TEST_FRAMEWORK. Every
+    // field is a repo-level scalar produced by one graph pass; summing
+    // across providers would double-count the same functions/modules,
+    // and averaging would lie about the source of truth. If a second
+    // structural tool ever joins graphify, a proper merge would need
+    // per-tool weighting — out of scope until that exists.
+    return results[results.length - 1];
+  },
+};
+
 export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
   id: 'imports',
   aggregate(results) {
@@ -242,6 +256,7 @@ export const GLOBAL_REGISTRY = {
   secrets: SECRETS,
   codePatterns: CODE_PATTERNS,
   duplication: DUPLICATION,
+  structural: STRUCTURAL,
 } as const;
 
 /**

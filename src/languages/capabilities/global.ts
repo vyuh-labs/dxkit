@@ -21,13 +21,18 @@ import { gitleaksProvider } from '../../analyzers/tools/gitleaks';
 import { jscpdProvider } from '../../analyzers/tools/jscpd';
 import { semgrepProvider } from '../../analyzers/tools/semgrep';
 import type { CapabilityProvider } from './provider';
-import type { CodePatternsResult, DuplicationResult, SecretsResult } from './types';
+import type {
+  CodePatternsResult,
+  DuplicationResult,
+  SecretsResult,
+  StructuralResult,
+} from './types';
 
 export interface GlobalCapabilities {
   secrets?: CapabilityProvider<SecretsResult>;
   codePatterns?: CapabilityProvider<CodePatternsResult>;
   duplication?: CapabilityProvider<DuplicationResult>;
-  // structural?: CapabilityProvider<StructuralResult>;      // Phase 10e.B.9
+  structural?: CapabilityProvider<StructuralResult>;
 }
 
 /**
@@ -40,5 +45,5 @@ export const GLOBAL_CAPABILITIES: GlobalCapabilities = {
   secrets: gitleaksProvider,
   codePatterns: semgrepProvider,
   duplication: jscpdProvider,
-  // structural registered in B.9.
+  // structural registered in B.9.2.
 };

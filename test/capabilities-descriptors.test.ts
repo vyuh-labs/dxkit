@@ -6,6 +6,7 @@ import {
   DUPLICATION,
   IMPORTS,
   LINT,
+  STRUCTURAL,
   TEST_FRAMEWORK,
 } from '../src/languages/capabilities/descriptors';
 import type {
@@ -15,6 +16,7 @@ import type {
   DuplicationResult,
   ImportsResult,
   LintResult,
+  StructuralResult,
   TestFrameworkResult,
 } from '../src/languages/capabilities/types';
 
@@ -428,5 +430,38 @@ describe('DUPLICATION descriptor', () => {
     };
     const out = DUPLICATION.aggregate([r]);
     expect(out.percentage).toBe(0);
+  });
+});
+
+describe('STRUCTURAL descriptor', () => {
+  it('id is "structural"', () => {
+    expect(STRUCTURAL.id).toBe('structural');
+  });
+
+  const make = (tool: string, functionCount: number): StructuralResult => ({
+    schemaVersion: 1,
+    tool,
+    functionCount,
+    classCount: 10,
+    maxFunctionsInFile: 50,
+    maxFunctionsFilePath: 'src/big.ts',
+    godNodeCount: 2,
+    communityCount: 5,
+    avgCohesion: 0.75,
+    orphanModuleCount: 1,
+    deadImportCount: 3,
+    commentedCodeRatio: 0.05,
+  });
+
+  it('returns last result (last-wins, matches COVERAGE/TEST_FRAMEWORK strategy)', () => {
+    const a = make('graphify', 100);
+    const b = make('graphify-v2', 200);
+    expect(STRUCTURAL.aggregate([a, b])).toBe(b);
+    expect(STRUCTURAL.aggregate([b, a])).toBe(a);
+  });
+
+  it('single-input aggregate returns the input verbatim', () => {
+    const only = make('graphify', 42);
+    expect(STRUCTURAL.aggregate([only])).toBe(only);
   });
 });

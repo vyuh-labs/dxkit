@@ -185,6 +185,32 @@ export interface DuplicationResult extends CapabilityEnvelope {
 }
 
 /**
+ * Structural metrics, the structural capability. Produced by AST
+ * graph-builders (graphify today) that walk every source file via
+ * tree-sitter, build a call-graph, detect communities, and derive
+ * cohesion / dead-import / orphan signals.
+ *
+ * Every field is a repo-level scalar produced by one graph pass —
+ * summing them across providers would double-count the same real
+ * functions/modules, so the descriptor aggregate is last-wins
+ * (matches COVERAGE's strategy for the same reason).
+ */
+export interface StructuralResult extends CapabilityEnvelope {
+  functionCount: number;
+  classCount: number;
+  maxFunctionsInFile: number;
+  maxFunctionsFilePath: string;
+  godNodeCount: number;
+  communityCount: number;
+  /** Mean cohesion score across communities, 0-1 range, 3 decimal places. */
+  avgCohesion: number;
+  orphanModuleCount: number;
+  deadImportCount: number;
+  /** Share of source files with zero AST nodes — proxy for "mostly-commented" files. */
+  commentedCodeRatio: number;
+}
+
+/**
  * Internal outcome shape used by language packs while bridging from the
  * legacy `gatherMetrics` channel to the capability dispatcher in Phase
  * 10e.B.1. Each pack has a private `gatherDepVulnsResult(cwd)` helper
