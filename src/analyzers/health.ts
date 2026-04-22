@@ -36,7 +36,7 @@ import { scoreDocsDimension } from './docs/shallow';
 import { scoreSecurityDimension } from './security/shallow';
 import { scoreMaintainabilityDimension } from './maintainability/shallow';
 import { scoreDxDimension } from './dx/shallow';
-import { computeOverall } from './scoring';
+import { computeOverall, ScoreInput } from './scoring';
 import { run } from './tools/runner';
 
 /** Default values for all HealthMetrics fields. */
@@ -205,24 +205,25 @@ async function analyzeHealthInternal(
     }
   }
 
-  // Step 3: Score
-  const dimensions = {
-    testing: scoreTestsDimension(metrics),
-    quality: scoreQualityDimension(metrics),
-    documentation: scoreDocsDimension(metrics),
-    security: scoreSecurityDimension(metrics),
-    maintainability: scoreMaintainabilityDimension(metrics),
-    developerExperience: scoreDxDimension(metrics),
-  };
-  const { overallScore, grade } = computeOverall(dimensions);
-
   // Phase 10e.C.1: capability envelopes alongside legacy metrics. Dispatched
   // in parallel; providers the legacy path already ran are served from the
-  // dispatcher cache (free). C.2 rewires scorers onto this; C.5 removes the
-  // legacy path.
+  // dispatcher cache (free). Scorers read capability-owned fields from this
+  // bundle (C.2); C.5 removes the legacy gatherMetrics channel.
   const capabilities = await timedAsync('capabilities', verbose, () =>
     gatherCapabilityReport(repoPath),
   );
+
+  // Step 3: Score
+  const scoreInput: ScoreInput = { metrics, capabilities };
+  const dimensions = {
+    testing: scoreTestsDimension(scoreInput),
+    quality: scoreQualityDimension(scoreInput),
+    documentation: scoreDocsDimension(scoreInput),
+    security: scoreSecurityDimension(scoreInput),
+    maintainability: scoreMaintainabilityDimension(scoreInput),
+    developerExperience: scoreDxDimension(scoreInput),
+  };
+  const { overallScore, grade } = computeOverall(dimensions);
 
   // Step 4: Format report
   const commitSha = run('git rev-parse --short HEAD 2>/dev/null', repoPath);

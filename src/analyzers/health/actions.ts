@@ -1,15 +1,38 @@
 /**
- * Health remediation actions — one RemediationAction set per dimension,
- * ranked against that dimension's pure scorer from scoring.ts.
+ * Health remediation actions — one set per dimension, ranked against that
+ * dimension's pure scorer from `scoring.ts`.
  *
- * Because each scorer is pure over HealthMetrics, actions declare a patch
- * over HealthMetrics and rank() computes the score delta for the specific
- * dimension the action targets.
+ * Each scorer is pure over `ScoreInput` (metrics + capabilities), so
+ * actions declare a patch over `ScoreInput` and `rank()` computes the
+ * score delta for the specific dimension the action targets. Capability-
+ * owned fields (lint tier counts, dep-vuln counts, secret findings,
+ * structural stats) live under `input.capabilities.<id>`; surviving
+ * generic/grep-derived metrics (`consoleLogCount`, `filesOver500Lines`,
+ * `ciConfigCount`, etc.) stay under `input.metrics`.
+ *
+ * Patches that target a capability clone the specific envelope they
+ * mutate; `withCapability` preserves every other envelope by reference
+ * (envelopes are frozen in spirit — downstream consumers treat them as
+ * immutable). When a guard fires, the capability is guaranteed present,
+ * so `withCapability` never has to gracefully no-op inside an action's
+ * own patch.
  */
 import { Evidence } from '../evidence';
 import { RankedAction, RemediationAction, rank } from '../remediation';
-import { HealthMetrics } from '../types';
+import { CapabilityReport, HealthMetrics } from '../types';
+import type {
+  CodePatternsResult,
+  CoverageResult,
+  DepVulnResult,
+  DuplicationResult,
+  ImportsResult,
+  LintResult,
+  SecretsResult,
+  StructuralResult,
+  TestFrameworkResult,
+} from '../../languages/capabilities/types';
 import {
+  ScoreInput,
   scoreTest,
   scoreQuality,
   scoreDocumentation,
@@ -18,20 +41,72 @@ import {
   scoreDeveloperExperience,
 } from '../scoring';
 
-type HealthAction = RemediationAction<HealthMetrics>;
+type HealthAction = RemediationAction<ScoreInput>;
+
+/** Shallow-clone the metrics slice with `patch` merged on top. */
+function withMetrics(cur: ScoreInput, patch: Partial<HealthMetrics>): ScoreInput {
+  return { ...cur, metrics: { ...cur.metrics, ...patch } };
+}
+
+/**
+ * Per-capability envelope types — kept as a union so `withCapability` can
+ * infer the patch shape from the capability id.
+ */
+type CapabilityEnvelopes = {
+  depVulns: DepVulnResult;
+  lint: LintResult;
+  coverage: CoverageResult;
+  imports: ImportsResult;
+  testFramework: TestFrameworkResult;
+  secrets: SecretsResult;
+  codePatterns: CodePatternsResult;
+  duplication: DuplicationResult;
+  structural: StructuralResult;
+};
+
+/**
+ * Shallow-clone one capability envelope with `patch` merged on top.
+ * Returns `cur` unchanged when the envelope isn't present — the dispatcher
+ * only populates capabilities that had real data, and an action whose
+ * guard fired against a present envelope will never be asked to patch an
+ * absent one.
+ */
+function withCapability<K extends keyof CapabilityReport & keyof CapabilityEnvelopes>(
+  cur: ScoreInput,
+  key: K,
+  patch: Partial<CapabilityEnvelopes[K]>,
+): ScoreInput {
+  const existing = cur.capabilities[key] as CapabilityEnvelopes[K] | undefined;
+  if (!existing) return cur;
+  return {
+    ...cur,
+    capabilities: {
+      ...cur.capabilities,
+      [key]: { ...existing, ...patch },
+    },
+  };
+}
+
+/** Pull the legacy "error count" (critical + high) from the lint envelope. */
+function lintErrorsFrom(c: CapabilityReport): number {
+  return (c.lint?.counts.critical ?? 0) + (c.lint?.counts.high ?? 0);
+}
 
 // ─── Testing dimension ──────────────────────────────────────────────────────
 
-function testingActions(m: HealthMetrics): HealthAction[] {
+function testingActions(input: ScoreInput): HealthAction[] {
+  const { metrics: m, capabilities: c } = input;
   const actions: HealthAction[] = [];
-  if (m.commentedCodeRatio !== null && m.commentedCodeRatio > 0.5) {
+  const commentedCodeRatio = c.structural?.commentedCodeRatio ?? null;
+
+  if (commentedCodeRatio !== null && commentedCodeRatio > 0.5) {
     actions.push({
       id: 'health.testing.restore-commented-tests',
       title: 'Restore commented-out test files',
       rationale:
         'High commented-code ratio across test files indicates atrophied tests. See test-gaps-detailed.md.',
       evidence: [],
-      patch: (cur) => ({ ...cur, commentedCodeRatio: 0.1 }),
+      patch: (cur) => withCapability(cur, 'structural', { commentedCodeRatio: 0.1 }),
     });
   }
   if (m.testFiles < m.sourceFiles * 0.1 && m.sourceFiles > 0) {
@@ -42,7 +117,7 @@ function testingActions(m: HealthMetrics): HealthAction[] {
       rationale:
         'Under 10% test-to-source ratio is critical. Start with top CRITICAL untested files — see test-gaps-detailed.md for the ranked list.',
       evidence: [],
-      patch: (cur) => ({ ...cur, testFiles: target }),
+      patch: (cur) => withMetrics(cur, { testFiles: target }),
     });
   }
   if (!m.coverageConfigExists) {
@@ -52,7 +127,7 @@ function testingActions(m: HealthMetrics): HealthAction[] {
       rationale:
         'No coverage config (nyc/c8/jest.coverage/coverage.py). Configure + set threshold.',
       evidence: [],
-      patch: (cur) => ({ ...cur, coverageConfigExists: true }),
+      patch: (cur) => withMetrics(cur, { coverageConfigExists: true }),
     });
   }
   return actions;
@@ -60,8 +135,14 @@ function testingActions(m: HealthMetrics): HealthAction[] {
 
 // ─── Quality dimension ──────────────────────────────────────────────────────
 
-function qualityActions(m: HealthMetrics): HealthAction[] {
+function qualityActions(input: ScoreInput): HealthAction[] {
+  const { metrics: m, capabilities: c } = input;
   const actions: HealthAction[] = [];
+  const lintErrors = lintErrorsFrom(c);
+  const lintTool = c.lint?.tool ?? null;
+  const maxFunctionsInFile = c.structural?.maxFunctionsInFile ?? null;
+  const maxFunctionsFilePath = c.structural?.maxFunctionsFilePath ?? null;
+
   if (m.consoleLogCount > 20) {
     actions.push({
       id: 'health.quality.remove-console',
@@ -70,44 +151,54 @@ function qualityActions(m: HealthMetrics): HealthAction[] {
       evidence: m.largestFilePath
         ? [{ file: m.largestFilePath, rule: 'console-log', tool: 'grep' }]
         : [],
-      patch: (cur) => ({ ...cur, consoleLogCount: 10 }),
+      patch: (cur) => withMetrics(cur, { consoleLogCount: 10 }),
     });
   }
-  if (m.anyTypeCount > 100 && m.lintTool?.includes('eslint')) {
+  if (m.anyTypeCount > 100 && lintTool?.includes('eslint')) {
     actions.push({
       id: 'health.quality.remove-any-types',
       title: `Replace ${m.anyTypeCount} \`: any\` type annotations`,
       rationale: 'Loose any-types defeat TypeScript. Most can be inferred or narrowed.',
       evidence: [],
-      patch: (cur) => ({ ...cur, anyTypeCount: 50 }),
+      patch: (cur) => withMetrics(cur, { anyTypeCount: 50 }),
     });
   }
-  if (m.lintErrors > 10) {
+  if (lintErrors > 10) {
     actions.push({
       id: 'health.quality.fix-lint-errors',
-      title: `Fix ${m.lintErrors} lint errors`,
-      rationale: `Run \`${m.lintTool || 'lint'} --fix\` for auto-fixable ones.`,
+      title: `Fix ${lintErrors} lint errors`,
+      rationale: `Run \`${lintTool || 'lint'} --fix\` for auto-fixable ones.`,
       evidence: [],
-      patch: (cur) => ({ ...cur, lintErrors: 0 }),
+      // Zero out the "error" tier counts (critical + high); warnings (medium
+      // + low) stay as-is since this action only claims error-fixing.
+      patch: (cur) =>
+        withCapability(cur, 'lint', {
+          counts: {
+            critical: 0,
+            high: 0,
+            medium: cur.capabilities.lint?.counts.medium ?? 0,
+            low: cur.capabilities.lint?.counts.low ?? 0,
+          },
+        }),
     });
   }
-  if (m.maxFunctionsInFile !== null && m.maxFunctionsInFile > 50) {
-    const ev: Evidence[] = m.maxFunctionsFilePath
+  if (maxFunctionsInFile !== null && maxFunctionsInFile > 50) {
+    const ev: Evidence[] = maxFunctionsFilePath
       ? [
           {
-            file: m.maxFunctionsFilePath,
+            file: maxFunctionsFilePath,
             rule: 'god-file',
             tool: 'graphify',
-            message: `${m.maxFunctionsInFile} functions`,
+            message: `${maxFunctionsInFile} functions`,
           },
         ]
       : [];
     actions.push({
       id: 'health.quality.split-god-file',
-      title: `Split densest file (${m.maxFunctionsInFile} functions)`,
+      title: `Split densest file (${maxFunctionsInFile} functions)`,
       rationale: 'Files with 50+ functions are hard to test and review.',
       evidence: ev,
-      patch: (cur) => ({ ...cur, maxFunctionsInFile: 40 }),
+      patch: (cur) => withCapability(cur, 'structural', { maxFunctionsInFile: 40 }),
     });
   }
   return actions;
@@ -115,7 +206,8 @@ function qualityActions(m: HealthMetrics): HealthAction[] {
 
 // ─── Documentation dimension ────────────────────────────────────────────────
 
-function docsActions(m: HealthMetrics): HealthAction[] {
+function docsActions(input: ScoreInput): HealthAction[] {
+  const m = input.metrics;
   const actions: HealthAction[] = [];
   if (!m.readmeExists || m.readmeLines < 50) {
     actions.push({
@@ -125,7 +217,7 @@ function docsActions(m: HealthMetrics): HealthAction[] {
         : 'Create a README.md',
       rationale: 'README is the first impression. Target 50+ lines covering setup, run, test.',
       evidence: [],
-      patch: (cur) => ({ ...cur, readmeExists: true, readmeLines: 120 }),
+      patch: (cur) => withMetrics(cur, { readmeExists: true, readmeLines: 120 }),
     });
   }
   if (!m.contributingExists) {
@@ -134,7 +226,7 @@ function docsActions(m: HealthMetrics): HealthAction[] {
       title: 'Add CONTRIBUTING.md',
       rationale: 'Codifies contribution expectations, PR template, commit conventions.',
       evidence: [],
-      patch: (cur) => ({ ...cur, contributingExists: true }),
+      patch: (cur) => withMetrics(cur, { contributingExists: true }),
     });
   }
   if (!m.architectureDocsExist) {
@@ -143,7 +235,7 @@ function docsActions(m: HealthMetrics): HealthAction[] {
       title: 'Add architecture/ADR documentation',
       rationale: 'System design context prevents tribal-knowledge debt.',
       evidence: [],
-      patch: (cur) => ({ ...cur, architectureDocsExist: true }),
+      patch: (cur) => withMetrics(cur, { architectureDocsExist: true }),
     });
   }
   if (!m.apiDocsExist && (m.controllers > 0 || m.sourceFiles > 100)) {
@@ -152,7 +244,7 @@ function docsActions(m: HealthMetrics): HealthAction[] {
       title: 'Add API documentation',
       rationale: 'With controllers/routes present, API surface should be documented.',
       evidence: [],
-      patch: (cur) => ({ ...cur, apiDocsExist: true }),
+      patch: (cur) => withMetrics(cur, { apiDocsExist: true }),
     });
   }
   return actions;
@@ -160,16 +252,22 @@ function docsActions(m: HealthMetrics): HealthAction[] {
 
 // ─── Security dimension ─────────────────────────────────────────────────────
 
-function securityActions(m: HealthMetrics): HealthAction[] {
+function securityActions(input: ScoreInput): HealthAction[] {
+  const { metrics: m, capabilities: c } = input;
   const actions: HealthAction[] = [];
-  if (m.secretFindings > 0) {
+  const secretFindings = c.secrets?.findings.length ?? 0;
+  const depVulnCritical = c.depVulns?.counts.critical ?? 0;
+  const depVulnHigh = c.depVulns?.counts.high ?? 0;
+  const depAuditTool = c.depVulns?.tool ?? null;
+
+  if (secretFindings > 0) {
     actions.push({
       id: 'health.security.remove-secrets',
-      title: `Rotate & remove ${m.secretFindings} hardcoded secret${m.secretFindings === 1 ? '' : 's'}`,
+      title: `Rotate & remove ${secretFindings} hardcoded secret${secretFindings === 1 ? '' : 's'}`,
       rationale:
         'Git history retains secrets — rotate credentials AND purge via git-filter-repo. See vulnerability-scan-detailed.md.',
       evidence: [],
-      patch: (cur) => ({ ...cur, secretFindings: 0 }),
+      patch: (cur) => withCapability(cur, 'secrets', { findings: [] }),
     });
   }
   if (m.privateKeyFiles > 0) {
@@ -178,22 +276,19 @@ function securityActions(m: HealthMetrics): HealthAction[] {
       title: `Remove ${m.privateKeyFiles} private key file${m.privateKeyFiles === 1 ? '' : 's'} from git`,
       rationale: 'Private keys in git are compromised. Rotate + remove + add to .gitignore.',
       evidence: [],
-      patch: (cur) => ({ ...cur, privateKeyFiles: 0 }),
+      patch: (cur) => withMetrics(cur, { privateKeyFiles: 0 }),
     });
   }
-  if (m.depVulnCritical > 0 || m.depVulnHigh > 0) {
+  if (depVulnCritical > 0 || depVulnHigh > 0) {
     actions.push({
       id: 'health.security.update-deps',
-      title: `Update vulnerable dependencies (${m.depVulnCritical}C ${m.depVulnHigh}H)`,
-      rationale: `Run \`${m.depAuditTool || 'audit tool'} fix\` or bump affected packages.`,
+      title: `Update vulnerable dependencies (${depVulnCritical}C ${depVulnHigh}H)`,
+      rationale: `Run \`${depAuditTool || 'audit tool'} fix\` or bump affected packages.`,
       evidence: [],
-      patch: (cur) => ({
-        ...cur,
-        depVulnCritical: 0,
-        depVulnHigh: 0,
-        depVulnMedium: 0,
-        depVulnLow: 0,
-      }),
+      patch: (cur) =>
+        withCapability(cur, 'depVulns', {
+          counts: { critical: 0, high: 0, medium: 0, low: 0 },
+        }),
     });
   }
   if (m.evalCount > 0) {
@@ -202,7 +297,7 @@ function securityActions(m: HealthMetrics): HealthAction[] {
       title: `Remove ${m.evalCount} eval() call${m.evalCount === 1 ? '' : 's'}`,
       rationale: 'eval() enables arbitrary code execution. Replace with explicit parsing.',
       evidence: [],
-      patch: (cur) => ({ ...cur, evalCount: 0 }),
+      patch: (cur) => withMetrics(cur, { evalCount: 0 }),
     });
   }
   return actions;
@@ -210,7 +305,8 @@ function securityActions(m: HealthMetrics): HealthAction[] {
 
 // ─── Maintainability dimension ──────────────────────────────────────────────
 
-function maintainabilityActions(m: HealthMetrics): HealthAction[] {
+function maintainabilityActions(input: ScoreInput): HealthAction[] {
+  const m = input.metrics;
   const actions: HealthAction[] = [];
   if (m.largestFileLines > 2000) {
     actions.push({
@@ -220,7 +316,7 @@ function maintainabilityActions(m: HealthMetrics): HealthAction[] {
       evidence: m.largestFilePath
         ? [{ file: m.largestFilePath, rule: 'large-file', tool: 'wc' }]
         : [],
-      patch: (cur) => ({ ...cur, largestFileLines: 500 }),
+      patch: (cur) => withMetrics(cur, { largestFileLines: 500 }),
     });
   }
   if (m.nodeEngineVersion) {
@@ -231,7 +327,7 @@ function maintainabilityActions(m: HealthMetrics): HealthAction[] {
         title: `Upgrade Node engine (currently ${m.nodeEngineVersion})`,
         rationale: 'Node < 18 is out of LTS. Upgrade package.json engines.node.',
         evidence: [{ file: 'package.json', rule: 'outdated-node', tool: 'npm' }],
-        patch: (cur) => ({ ...cur, nodeEngineVersion: '>=20' }),
+        patch: (cur) => withMetrics(cur, { nodeEngineVersion: '>=20' }),
       });
     }
   }
@@ -241,7 +337,7 @@ function maintainabilityActions(m: HealthMetrics): HealthAction[] {
       title: `Reduce ${m.filesOver500Lines} files > 500 lines`,
       rationale: 'Large files are hard to navigate and review.',
       evidence: [],
-      patch: (cur) => ({ ...cur, filesOver500Lines: 5 }),
+      patch: (cur) => withMetrics(cur, { filesOver500Lines: 5 }),
     });
   }
   return actions;
@@ -249,7 +345,8 @@ function maintainabilityActions(m: HealthMetrics): HealthAction[] {
 
 // ─── Developer Experience dimension ─────────────────────────────────────────
 
-function dxActions(m: HealthMetrics): HealthAction[] {
+function dxActions(input: ScoreInput): HealthAction[] {
+  const m = input.metrics;
   const actions: HealthAction[] = [];
   if (m.ciConfigCount === 0) {
     actions.push({
@@ -258,7 +355,7 @@ function dxActions(m: HealthMetrics): HealthAction[] {
       rationale:
         'No CI on this branch — lint/test/typecheck should block merges. Add .github/workflows or equivalent.',
       evidence: [],
-      patch: (cur) => ({ ...cur, ciConfigCount: 1 }),
+      patch: (cur) => withMetrics(cur, { ciConfigCount: 1 }),
     });
   }
   if (m.dockerConfigCount === 0) {
@@ -267,7 +364,7 @@ function dxActions(m: HealthMetrics): HealthAction[] {
       title: 'Add Dockerfile / containerization',
       rationale: 'Containerized setup eliminates "works on my machine" onboarding friction.',
       evidence: [],
-      patch: (cur) => ({ ...cur, dockerConfigCount: 1 }),
+      patch: (cur) => withMetrics(cur, { dockerConfigCount: 1 }),
     });
   }
   if (m.precommitConfigCount === 0) {
@@ -276,7 +373,7 @@ function dxActions(m: HealthMetrics): HealthAction[] {
       title: 'Add pre-commit hooks (husky / pre-commit)',
       rationale: 'Catch lint/format issues before code leaves the developer machine.',
       evidence: [],
-      patch: (cur) => ({ ...cur, precommitConfigCount: 1 }),
+      patch: (cur) => withMetrics(cur, { precommitConfigCount: 1 }),
     });
   }
   if (!m.envExampleExists) {
@@ -285,7 +382,7 @@ function dxActions(m: HealthMetrics): HealthAction[] {
       title: 'Add .env.example',
       rationale: 'Documents required environment variables without leaking secrets.',
       evidence: [],
-      patch: (cur) => ({ ...cur, envExampleExists: true }),
+      patch: (cur) => withMetrics(cur, { envExampleExists: true }),
     });
   }
   return actions;
@@ -297,14 +394,14 @@ export interface DimensionPlan {
   dimension: string;
   baseline: number;
   ideal: number;
-  actions: RankedAction<HealthMetrics>[];
+  actions: RankedAction<ScoreInput>[];
 }
 
-export function buildHealthPlans(metrics: HealthMetrics): DimensionPlan[] {
+export function buildHealthPlans(input: ScoreInput): DimensionPlan[] {
   const dims: Array<{
     name: string;
-    scorer: (m: HealthMetrics) => { score: number };
-    build: (m: HealthMetrics) => HealthAction[];
+    scorer: (i: ScoreInput) => { score: number };
+    build: (i: ScoreInput) => HealthAction[];
   }> = [
     { name: 'Testing', scorer: scoreTest, build: testingActions },
     { name: 'Quality', scorer: scoreQuality, build: qualityActions },
@@ -314,10 +411,10 @@ export function buildHealthPlans(metrics: HealthMetrics): DimensionPlan[] {
     { name: 'Developer Experience', scorer: scoreDeveloperExperience, build: dxActions },
   ];
   return dims.map((d) => {
-    const baseline = d.scorer(metrics).score;
-    const actions = rank(d.build(metrics), metrics, d.scorer);
+    const baseline = d.scorer(input).score;
+    const actions = rank(d.build(input), input, d.scorer);
     // "Ideal" = apply every action's patch in sequence, then score.
-    let ideal = metrics;
+    let ideal = input;
     for (const a of actions) ideal = a.patch(ideal);
     return {
       dimension: d.name,

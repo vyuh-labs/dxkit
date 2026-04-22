@@ -4,9 +4,9 @@
  * Phase 3: delegates to scoring.ts (identical behavior).
  * Future: may expand with more AST-derived architectural metrics.
  */
-import { HealthMetrics, DimensionScore } from '../types';
-import { scoreMaintainability } from '../scoring';
+import { DimensionScore } from '../types';
+import { ScoreInput, scoreMaintainability } from '../scoring';
 
-export function scoreMaintainabilityDimension(m: HealthMetrics): DimensionScore {
-  return scoreMaintainability(m);
+export function scoreMaintainabilityDimension(input: ScoreInput): DimensionScore {
+  return scoreMaintainability(input);
 }

@@ -7,7 +7,7 @@
  */
 import { HealthReport, HealthMetrics } from '../types';
 import { buildHealthPlans, DimensionPlan } from './actions';
-import { computeOverall } from '../scoring';
+import { computeOverall, ScoreInput } from '../scoring';
 
 export interface HealthDetailedReport extends HealthReport {
   schemaVersion: string;
@@ -37,7 +37,11 @@ export function buildHealthDetailed(
   report: HealthReport,
   metrics: HealthMetrics,
 ): HealthDetailedReport {
-  const plans = buildHealthPlans(metrics);
+  // Plans depend on capability-owned fields too; pull them from the report
+  // (always populated on real runs, defaults to {} for hand-built fixtures
+  // until C.7 narrows the type).
+  const scoreInput: ScoreInput = { metrics, capabilities: report.capabilities ?? {} };
+  const plans = buildHealthPlans(scoreInput);
 
   // Build the "ideal" dimension scores by starting from the current report's
   // dimensions and swapping each dimension's score for its plan ideal.

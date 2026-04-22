@@ -47,8 +47,16 @@ import {
 import { SecurityReport } from '../src/analyzers/security/types';
 import { QualityReport, QualityMetrics } from '../src/analyzers/quality/types';
 import { TestGapsReport } from '../src/analyzers/tests/types';
-import { HealthReport, HealthMetrics } from '../src/analyzers/types';
+import { CapabilityReport, HealthReport, HealthMetrics } from '../src/analyzers/types';
+import { ScoreInput } from '../src/analyzers/scoring';
 import { DevReport } from '../src/analyzers/developer/types';
+import {
+  depVulnCapability,
+  lintCapability,
+  secretsCapabilityWithCount,
+  structuralCapability,
+  testFrameworkCapability,
+} from './fixtures/score-input';
 
 // ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -223,9 +231,43 @@ function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
   };
 }
 
-function healthReport(metrics: HealthMetrics): HealthReport {
+/**
+ * Capability fixture mirroring the legacy `healthMetrics()` signals: 3 lint
+ * errors / 8 warnings, vitest framework, 2 high + 5 medium + 1 low dep
+ * vulns, 1 gitleaks hit, graphify stats matching the legacy values.
+ */
+function healthCapabilities(overrides: Partial<CapabilityReport> = {}): CapabilityReport {
+  return {
+    lint: lintCapability(0, 3, 8, 0),
+    testFramework: testFrameworkCapability('vitest'),
+    depVulns: depVulnCapability(0, 2, 5, 1, 'npm-audit'),
+    secrets: secretsCapabilityWithCount(1, 'gitleaks'),
+    structural: structuralCapability({
+      functionCount: 100,
+      classCount: 20,
+      maxFunctionsInFile: 18,
+      maxFunctionsFilePath: 'src/util.ts',
+      godNodeCount: 1,
+      communityCount: 5,
+      avgCohesion: 0.4,
+      orphanModuleCount: 2,
+      deadImportCount: 4,
+      commentedCodeRatio: 0.05,
+    }),
+    ...overrides,
+  };
+}
+
+function healthInput(
+  metrics: HealthMetrics,
+  capabilities: CapabilityReport = healthCapabilities(),
+): ScoreInput {
+  return { metrics, capabilities };
+}
+
+function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): HealthReport {
   // Minimal report with placeholder dimension scores — actions/detailed
-  // builders look at metrics, the report is just for echo.
+  // builders look at metrics + capabilities, the report is just for echo.
   const dim = (score: number) => ({
     score,
     maxScore: 100,
@@ -249,6 +291,7 @@ function healthReport(metrics: HealthMetrics): HealthReport {
     languages: metrics.languages,
     toolsUsed: ['cloc', 'gitleaks'],
     toolsUnavailable: [],
+    capabilities: capabilities ?? healthCapabilities(),
   };
 }
 
@@ -428,7 +471,7 @@ describe('tests/detailed', () => {
 
 describe('health/actions', () => {
   it('buildHealthPlans returns one plan per dimension', () => {
-    const plans = buildHealthPlans(healthMetrics());
+    const plans = buildHealthPlans(healthInput(healthMetrics()));
     expect(plans.length).toBeGreaterThan(0);
     for (const p of plans) {
       expect(p.dimension).toBeTruthy();
@@ -437,16 +480,20 @@ describe('health/actions', () => {
   });
 
   it('buildHealthPlans includes more actions for problematic metrics', () => {
-    const bad = healthMetrics({
-      lintErrors: 100,
-      consoleLogCount: 500,
-      anyTypeCount: 200,
-      secretFindings: 5,
-      privateKeyFiles: 3,
-      depVulnCritical: 5,
-    });
-    const cleanPlans = buildHealthPlans(healthMetrics({ lintErrors: 0, consoleLogCount: 0 }));
-    const badPlans = buildHealthPlans(bad);
+    const badInput = healthInput(
+      healthMetrics({ consoleLogCount: 500, anyTypeCount: 200, privateKeyFiles: 3 }),
+      healthCapabilities({
+        lint: lintCapability(0, 100, 0, 0),
+        secrets: secretsCapabilityWithCount(5),
+        depVulns: depVulnCapability(5, 0, 0, 0, 'npm-audit'),
+      }),
+    );
+    const cleanInput = healthInput(
+      healthMetrics({ consoleLogCount: 0 }),
+      healthCapabilities({ lint: lintCapability(0, 0, 0, 0) }),
+    );
+    const cleanPlans = buildHealthPlans(cleanInput);
+    const badPlans = buildHealthPlans(badInput);
     const cleanCount = cleanPlans.reduce((sum, p) => sum + p.actions.length, 0);
     const badCount = badPlans.reduce((sum, p) => sum + p.actions.length, 0);
     expect(badCount).toBeGreaterThanOrEqual(cleanCount);

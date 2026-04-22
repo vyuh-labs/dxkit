@@ -4,9 +4,9 @@
  * Phase 3: delegates to scoring.ts (identical behavior).
  * Future: may expand with more DX indicators (devcontainer, IDE config, etc).
  */
-import { HealthMetrics, DimensionScore } from '../types';
-import { scoreDeveloperExperience } from '../scoring';
+import { DimensionScore } from '../types';
+import { ScoreInput, scoreDeveloperExperience } from '../scoring';
 
-export function scoreDxDimension(m: HealthMetrics): DimensionScore {
-  return scoreDeveloperExperience(m);
+export function scoreDxDimension(input: ScoreInput): DimensionScore {
+  return scoreDeveloperExperience(input);
 }

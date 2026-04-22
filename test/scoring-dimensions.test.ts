@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { HealthMetrics } from '../src/analyzers/types';
 
 import { scoreDocsDimension } from '../src/analyzers/docs/shallow';
 import { scoreMaintainabilityDimension } from '../src/analyzers/maintainability/shallow';
@@ -9,79 +8,20 @@ import { scoreQualityDimension } from '../src/analyzers/quality/shallow';
 import { scoreTestsDimension } from '../src/analyzers/tests/shallow';
 import { scoreSecurityCounts } from '../src/analyzers/security/scoring';
 import { scoreTestGapsCounts } from '../src/analyzers/tests/scoring';
-
-function baseMetrics(): HealthMetrics {
-  return {
-    sourceFiles: 100,
-    testFiles: 0,
-    totalLines: 0,
-    testsPass: null,
-    testsPassing: 0,
-    testsFailing: 0,
-    testFramework: null,
-    coveragePercent: null,
-    coverageConfigExists: false,
-    lintErrors: 0,
-    lintWarnings: 0,
-    lintTool: null,
-    typeErrors: null,
-    filesOver500Lines: 0,
-    largestFileLines: 0,
-    largestFilePath: '',
-    consoleLogCount: 0,
-    anyTypeCount: 0,
-    readmeExists: false,
-    readmeLines: 0,
-    docCommentFiles: 0,
-    apiDocsExist: false,
-    architectureDocsExist: false,
-    contributingExists: false,
-    changelogExists: false,
-    secretFindings: 0,
-    secretDetails: [],
-    evalCount: 0,
-    privateKeyFiles: 0,
-    envFilesInGit: 0,
-    tlsDisabledCount: 0,
-    depVulnCritical: 0,
-    depVulnHigh: 0,
-    depVulnMedium: 0,
-    depVulnLow: 0,
-    depAuditTool: null,
-    controllers: 0,
-    models: 0,
-    directories: 0,
-    languages: [],
-    nodeEngineVersion: null,
-    ciConfigCount: 0,
-    dockerConfigCount: 0,
-    precommitConfigCount: 0,
-    makefileExists: false,
-    envExampleExists: false,
-    npmScriptsCount: 0,
-    toolsUsed: [],
-    toolsUnavailable: [],
-    clocLanguages: null,
-    functionCount: null,
-    classCount: null,
-    maxFunctionsInFile: null,
-    maxFunctionsFilePath: null,
-    godNodeCount: null,
-    communityCount: null,
-    avgCohesion: null,
-    orphanModuleCount: null,
-    deadImportCount: null,
-    commentedCodeRatio: null,
-  };
-}
+import {
+  coverageCapability,
+  lintCapability,
+  secretsCapabilityWithCount,
+  withInput,
+} from './fixtures/score-input';
 
 // ── Shallow dimension scorers (all delegate to scoring.ts) ─────────────
 
 describe('shallow dimension scorers', () => {
-  const m = baseMetrics();
+  const baseInput = withInput();
 
   it('scoreDocsDimension returns a DimensionScore', () => {
-    const r = scoreDocsDimension(m);
+    const r = scoreDocsDimension(baseInput);
     expect(r).toHaveProperty('score');
     expect(r).toHaveProperty('maxScore', 100);
     expect(r).toHaveProperty('status');
@@ -89,76 +29,84 @@ describe('shallow dimension scorers', () => {
   });
 
   it('scoreMaintainabilityDimension returns a DimensionScore', () => {
-    const r = scoreMaintainabilityDimension(m);
+    const r = scoreMaintainabilityDimension(baseInput);
     expect(r.score).toBeGreaterThanOrEqual(0);
     expect(r.score).toBeLessThanOrEqual(100);
   });
 
   it('scoreDxDimension returns a DimensionScore', () => {
-    const r = scoreDxDimension(m);
+    const r = scoreDxDimension(baseInput);
     expect(r.score).toBeGreaterThanOrEqual(0);
     expect(r.score).toBeLessThanOrEqual(100);
   });
 
   it('scoreSecurityDimension returns a DimensionScore', () => {
-    const r = scoreSecurityDimension(m);
+    const r = scoreSecurityDimension(baseInput);
     expect(r.score).toBeGreaterThanOrEqual(0);
   });
 
   it('scoreQualityDimension returns a DimensionScore', () => {
-    const r = scoreQualityDimension(m);
+    const r = scoreQualityDimension(baseInput);
     expect(r.score).toBeGreaterThanOrEqual(0);
   });
 
   it('scoreTestsDimension returns a DimensionScore', () => {
-    const r = scoreTestsDimension(m);
+    const r = scoreTestsDimension(baseInput);
     expect(r.score).toBeGreaterThanOrEqual(0);
   });
 
   it('docs score improves with README + CONTRIBUTING', () => {
-    const good = { ...m, readmeExists: true, readmeLines: 100, contributingExists: true };
-    expect(scoreDocsDimension(good).score).toBeGreaterThan(scoreDocsDimension(m).score);
+    const good = withInput({
+      metrics: { readmeExists: true, readmeLines: 100, contributingExists: true },
+    });
+    expect(scoreDocsDimension(good).score).toBeGreaterThan(scoreDocsDimension(baseInput).score);
   });
 
   it('security score drops with secret findings', () => {
-    const bad = { ...m, secretFindings: 5, privateKeyFiles: 2, evalCount: 3 };
-    expect(scoreSecurityDimension(bad).score).toBeLessThan(scoreSecurityDimension(m).score);
+    const bad = withInput({
+      metrics: { privateKeyFiles: 2, evalCount: 3 },
+      capabilities: { secrets: secretsCapabilityWithCount(5) },
+    });
+    expect(scoreSecurityDimension(bad).score).toBeLessThan(scoreSecurityDimension(baseInput).score);
   });
 
   it('quality score drops with lint errors + large files', () => {
-    const bad = { ...m, lintErrors: 100, filesOver500Lines: 20, consoleLogCount: 200 };
-    expect(scoreQualityDimension(bad).score).toBeLessThan(scoreQualityDimension(m).score);
+    const bad = withInput({
+      metrics: { filesOver500Lines: 20, consoleLogCount: 200 },
+      capabilities: { lint: lintCapability(0, 100) },
+    });
+    expect(scoreQualityDimension(bad).score).toBeLessThan(scoreQualityDimension(baseInput).score);
   });
 
   it('maintainability score drops with huge god files', () => {
-    const bad = { ...m, largestFileLines: 10000, filesOver500Lines: 40, controllers: 200 };
+    const bad = withInput({
+      metrics: { largestFileLines: 10000, filesOver500Lines: 40, controllers: 200 },
+    });
     expect(scoreMaintainabilityDimension(bad).score).toBeLessThan(
-      scoreMaintainabilityDimension(m).score,
+      scoreMaintainabilityDimension(baseInput).score,
     );
   });
 
   it('dx score improves with CI + Docker + pre-commit', () => {
-    const good = {
-      ...m,
-      ciConfigCount: 2,
-      dockerConfigCount: 1,
-      precommitConfigCount: 1,
-      makefileExists: true,
-      envExampleExists: true,
-      npmScriptsCount: 8,
-    };
-    expect(scoreDxDimension(good).score).toBeGreaterThan(scoreDxDimension(m).score);
+    const good = withInput({
+      metrics: {
+        ciConfigCount: 2,
+        dockerConfigCount: 1,
+        precommitConfigCount: 1,
+        makefileExists: true,
+        envExampleExists: true,
+        npmScriptsCount: 8,
+      },
+    });
+    expect(scoreDxDimension(good).score).toBeGreaterThan(scoreDxDimension(baseInput).score);
   });
 
   it('test score improves with test files + passing tests', () => {
-    const good = {
-      ...m,
-      testFiles: 20,
-      testsPass: true,
-      coverageConfigExists: true,
-      coveragePercent: 80,
-    };
-    expect(scoreTestsDimension(good).score).toBeGreaterThan(scoreTestsDimension(m).score);
+    const good = withInput({
+      metrics: { testFiles: 20, testsPass: true, coverageConfigExists: true },
+      capabilities: { coverage: coverageCapability(80) },
+    });
+    expect(scoreTestsDimension(good).score).toBeGreaterThan(scoreTestsDimension(baseInput).score);
   });
 });
 

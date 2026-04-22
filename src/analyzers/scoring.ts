@@ -1,10 +1,27 @@
 /**
  * Deterministic scoring formulas.
  *
- * Every score is computed from metrics via fixed formulas.
- * Same metrics -> same score, every time.
+ * Every score is computed from `ScoreInput` (metrics + capabilities) via
+ * fixed formulas — same input, same score, every time.
+ *
+ * Phase 10e.C.2: scorers read capability-owned fields (lint counts,
+ * dep-vuln counts, coverage percent, test framework, structural stats,
+ * secret findings) from `input.capabilities`; metrics-owned fields
+ * (sourceFiles, readmeLines, filesOver500Lines, etc.) still come from
+ * `input.metrics`. The legacy `HealthMetrics` bridge is the source of
+ * truth until C.7/C.8 narrows the type and drops the legacy fields.
  */
-import { HealthMetrics, DimensionScore } from './types';
+import { CapabilityReport, DimensionScore, HealthMetrics } from './types';
+
+/**
+ * Bundle of every signal a dimension scorer can read. Passed through the
+ * shallow wrappers and `health/actions.ts` unchanged. Patches clone both
+ * halves as needed.
+ */
+export interface ScoreInput {
+  metrics: HealthMetrics;
+  capabilities: CapabilityReport;
+}
 
 function status(score: number): DimensionScore['status'] {
   if (score >= 80) return 'excellent';
@@ -18,10 +35,26 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.round(Math.max(min, Math.min(max, value)));
 }
 
+/**
+ * Round a capability's coverage percent to match the legacy integer contract.
+ * CoverageResult carries one decimal place; scoring thresholds and the
+ * `Coverage: XX%` detail string both expect an integer.
+ */
+function coveragePercentFrom(c: CapabilityReport): number | null {
+  const raw = c.coverage?.coverage.linePercent;
+  return raw === undefined ? null : Math.round(raw);
+}
+
 /** Testing: 0-100 */
-export function scoreTest(m: HealthMetrics): DimensionScore {
+export function scoreTest(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
+  const c = input.capabilities;
   const sourceCount = Math.max(m.sourceFiles, 1);
   const testRatio = m.testFiles / sourceCount;
+
+  const coveragePercent = coveragePercentFrom(c);
+  const testFramework = c.testFramework?.name ?? null;
+  const commentedCodeRatio = c.structural?.commentedCodeRatio ?? null;
 
   let score: number;
   if (m.testFiles === 0) {
@@ -30,12 +63,11 @@ export function scoreTest(m: HealthMetrics): DimensionScore {
     score = Math.min(testRatio * 200, 60);
     if (m.coverageConfigExists) score += 10;
     if (m.testsPass === true) score += 15;
-    if (m.coveragePercent !== null && m.coveragePercent >= 60) score += 10;
-    if (m.coveragePercent !== null && m.coveragePercent >= 80) score += 5;
+    if (coveragePercent !== null && coveragePercent >= 60) score += 10;
+    if (coveragePercent !== null && coveragePercent >= 80) score += 5;
   }
 
-  // AST enhancement: detect commented-out code files
-  if (m.commentedCodeRatio !== null && m.commentedCodeRatio > 0.5) {
+  if (commentedCodeRatio !== null && commentedCodeRatio > 0.5) {
     score -= 15;
   }
 
@@ -49,63 +81,64 @@ export function scoreTest(m: HealthMetrics): DimensionScore {
       testFiles: m.testFiles,
       testRatio: Math.round(testRatio * 100) / 100,
       testsPass: m.testsPass,
-      coveragePercent: m.coveragePercent,
+      coveragePercent,
       coverageConfigExists: m.coverageConfigExists,
-      testFramework: m.testFramework,
-      commentedCodeRatio: m.commentedCodeRatio,
+      testFramework,
+      commentedCodeRatio,
     },
     details:
       m.testFiles === 0
         ? `No test files found across ${m.sourceFiles} source files. 0% test coverage.`
         : `${m.testFiles} test files for ${m.sourceFiles} source files (ratio: ${(testRatio * 100).toFixed(1)}%). ` +
           `Tests ${m.testsPass === true ? 'pass' : m.testsPass === false ? 'fail' : 'not run'}. ` +
-          (m.coveragePercent !== null
-            ? `Coverage: ${m.coveragePercent}%. `
-            : 'No coverage data. ') +
-          (m.testFramework ? `Framework: ${m.testFramework}.` : '') +
-          (m.commentedCodeRatio !== null && m.commentedCodeRatio > 0.5
-            ? ` Warning: ${(m.commentedCodeRatio * 100).toFixed(0)}% of source files appear to contain only comments.`
+          (coveragePercent !== null ? `Coverage: ${coveragePercent}%. ` : 'No coverage data. ') +
+          (testFramework ? `Framework: ${testFramework}.` : '') +
+          (commentedCodeRatio !== null && commentedCodeRatio > 0.5
+            ? ` Warning: ${(commentedCodeRatio * 100).toFixed(0)}% of source files appear to contain only comments.`
             : ''),
   };
 }
 
 /** Code Quality: 0-100 */
-export function scoreQuality(m: HealthMetrics): DimensionScore {
+export function scoreQuality(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
+  const c = input.capabilities;
   const sourceCount = Math.max(m.sourceFiles, 1);
+
+  const lintErrors = (c.lint?.counts.critical ?? 0) + (c.lint?.counts.high ?? 0);
+  const lintWarnings = (c.lint?.counts.medium ?? 0) + (c.lint?.counts.low ?? 0);
+  const lintTool = c.lint?.tool ?? null;
+  const maxFunctionsInFile = c.structural?.maxFunctionsInFile ?? null;
+  const deadImportCount = c.structural?.deadImportCount ?? null;
+
   let score = 100;
 
-  // Lint errors
-  if (m.lintErrors > 0) {
-    const errorRatio = m.lintErrors / sourceCount;
+  if (lintErrors > 0) {
+    const errorRatio = lintErrors / sourceCount;
     score -= Math.min(errorRatio * 100, 40);
   }
 
-  // Large files
   if (m.filesOver500Lines > 5) score -= 10;
   if (m.filesOver500Lines > 20) score -= 10;
   if (m.largestFileLines > 5000) score -= 10;
   if (m.largestFileLines > 10000) score -= 10;
 
-  // Console/debug statements
   const consoleDensity = m.consoleLogCount / sourceCount;
   if (consoleDensity > 3) score -= 15;
   else if (consoleDensity > 1) score -= 10;
   else if (consoleDensity > 0.3) score -= 5;
 
-  // Loose typing
   const anyDensity = m.anyTypeCount / sourceCount;
   if (anyDensity > 10) score -= 15;
   else if (anyDensity > 5) score -= 10;
   else if (anyDensity > 1) score -= 5;
 
-  // Type errors
   if (m.typeErrors !== null && m.typeErrors > 0) {
     score -= Math.min((m.typeErrors / sourceCount) * 50, 15);
   }
 
-  // AST enhancements
-  if (m.maxFunctionsInFile !== null && m.maxFunctionsInFile > 50) score -= 10;
-  if (m.deadImportCount !== null && m.deadImportCount > 20) score -= 5;
+  if (maxFunctionsInFile !== null && maxFunctionsInFile > 50) score -= 10;
+  if (deadImportCount !== null && deadImportCount > 20) score -= 5;
 
   score = clamp(score);
   return {
@@ -113,32 +146,33 @@ export function scoreQuality(m: HealthMetrics): DimensionScore {
     maxScore: 100,
     status: status(score),
     metrics: {
-      lintErrors: m.lintErrors,
-      lintWarnings: m.lintWarnings,
-      lintTool: m.lintTool,
+      lintErrors,
+      lintWarnings,
+      lintTool,
       filesOver500Lines: m.filesOver500Lines,
       largestFileLines: m.largestFileLines,
       largestFilePath: m.largestFilePath,
       consoleLogCount: m.consoleLogCount,
       anyTypeCount: m.anyTypeCount,
       typeErrors: m.typeErrors,
-      maxFunctionsInFile: m.maxFunctionsInFile,
-      deadImportCount: m.deadImportCount,
+      maxFunctionsInFile,
+      deadImportCount,
     },
     details:
-      `${m.lintErrors} lint errors, ${m.lintWarnings} warnings` +
-      (m.lintTool ? ` (${m.lintTool})` : '') +
+      `${lintErrors} lint errors, ${lintWarnings} warnings` +
+      (lintTool ? ` (${lintTool})` : '') +
       `. ${m.filesOver500Lines} files exceed 500 lines` +
       `. Largest file: ${m.largestFilePath} (${m.largestFileLines} lines)` +
       `. ${m.consoleLogCount} console/debug statements` +
       (m.anyTypeCount > 0 ? `. ${m.anyTypeCount} loose type annotations` : '') +
-      (m.maxFunctionsInFile !== null ? `. Densest file: ${m.maxFunctionsInFile} functions` : '') +
+      (maxFunctionsInFile !== null ? `. Densest file: ${maxFunctionsInFile} functions` : '') +
       '.',
   };
 }
 
 /** Documentation: 0-100 */
-export function scoreDocumentation(m: HealthMetrics): DimensionScore {
+export function scoreDocumentation(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
   const sourceCount = Math.max(m.sourceFiles, 1);
   let score = 0;
 
@@ -185,31 +219,35 @@ export function scoreDocumentation(m: HealthMetrics): DimensionScore {
 }
 
 /** Security: 0-100 */
-export function scoreSecurity(m: HealthMetrics): DimensionScore {
+export function scoreSecurity(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
+  const c = input.capabilities;
+
+  const secretFindings = c.secrets?.findings.length ?? 0;
+  const depVulnCritical = c.depVulns?.counts.critical ?? 0;
+  const depVulnHigh = c.depVulns?.counts.high ?? 0;
+  const depVulnMedium = c.depVulns?.counts.medium ?? 0;
+  const depVulnLow = c.depVulns?.counts.low ?? 0;
+  const depAuditTool = c.depVulns?.tool ?? null;
+
   let score = 100;
 
-  // Hardcoded secrets (max -25)
-  if (m.secretFindings > 10) score -= 25;
-  else if (m.secretFindings > 5) score -= 20;
-  else if (m.secretFindings > 0) score -= 15;
+  if (secretFindings > 10) score -= 25;
+  else if (secretFindings > 5) score -= 20;
+  else if (secretFindings > 0) score -= 15;
 
-  // Private keys in repo (max -20)
   if (m.privateKeyFiles > 0) score -= 20;
 
-  // eval/exec (max -10)
   if (m.evalCount > 3) score -= 10;
   else if (m.evalCount > 0) score -= 5;
 
-  // .env in git (max -10)
   if (m.envFilesInGit > 0) score -= 10;
 
-  // TLS disabled (max -10)
   if (m.tlsDisabledCount > 0) score -= 10;
 
-  // Dependency vulnerabilities (max -25)
-  if (m.depVulnCritical > 0) score -= 15;
-  if (m.depVulnHigh > 5) score -= 10;
-  else if (m.depVulnHigh > 0) score -= 5;
+  if (depVulnCritical > 0) score -= 15;
+  if (depVulnHigh > 5) score -= 10;
+  else if (depVulnHigh > 0) score -= 5;
 
   score = clamp(score);
   return {
@@ -217,34 +255,41 @@ export function scoreSecurity(m: HealthMetrics): DimensionScore {
     maxScore: 100,
     status: status(score),
     metrics: {
-      secretFindings: m.secretFindings,
+      secretFindings,
       privateKeyFiles: m.privateKeyFiles,
       evalCount: m.evalCount,
       envFilesInGit: m.envFilesInGit,
       tlsDisabledCount: m.tlsDisabledCount,
-      depVulnCritical: m.depVulnCritical,
-      depVulnHigh: m.depVulnHigh,
-      depVulnMedium: m.depVulnMedium,
-      depVulnLow: m.depVulnLow,
-      depAuditTool: m.depAuditTool,
+      depVulnCritical,
+      depVulnHigh,
+      depVulnMedium,
+      depVulnLow,
+      depAuditTool,
     },
     details:
-      `${m.secretFindings} hardcoded secret patterns found` +
+      `${secretFindings} hardcoded secret patterns found` +
       `. ${m.privateKeyFiles} private key files in repo` +
       `. ${m.evalCount} eval/exec calls` +
       `. ${m.envFilesInGit} .env files tracked in git` +
       `. ${m.tlsDisabledCount} TLS verification disabled` +
-      `. Dependency vulns: ${m.depVulnCritical} critical, ${m.depVulnHigh} high, ${m.depVulnMedium} medium, ${m.depVulnLow} low` +
-      (m.depAuditTool ? ` (${m.depAuditTool})` : '') +
+      `. Dependency vulns: ${depVulnCritical} critical, ${depVulnHigh} high, ${depVulnMedium} medium, ${depVulnLow} low` +
+      (depAuditTool ? ` (${depAuditTool})` : '') +
       '.',
   };
 }
 
 /** Maintainability: 0-100 */
-export function scoreMaintainability(m: HealthMetrics): DimensionScore {
+export function scoreMaintainability(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
+  const c = input.capabilities;
+
+  const godNodeCount = c.structural?.godNodeCount ?? null;
+  const communityCount = c.structural?.communityCount ?? null;
+  const avgCohesion = c.structural?.avgCohesion ?? null;
+  const orphanModuleCount = c.structural?.orphanModuleCount ?? null;
+
   let score = 70;
 
-  // God files penalty
   if (m.largestFileLines > 10000) score -= 25;
   else if (m.largestFileLines > 5000) score -= 15;
   else if (m.largestFileLines > 2000) score -= 10;
@@ -257,7 +302,6 @@ export function scoreMaintainability(m: HealthMetrics): DimensionScore {
   if (m.consoleLogCount > 500) score -= 10;
   else if (m.consoleLogCount > 100) score -= 5;
 
-  // Outdated Node engine
   if (m.nodeEngineVersion) {
     const majorMatch = m.nodeEngineVersion.match(/(\d+)/);
     if (majorMatch) {
@@ -267,17 +311,15 @@ export function scoreMaintainability(m: HealthMetrics): DimensionScore {
     }
   }
 
-  // Small codebase bonus
   if (m.sourceFiles < 50) score += 10;
   if (m.sourceFiles < 20) score += 5;
 
-  // AST enhancements (calibrated for real-world repos)
-  if (m.godNodeCount !== null) {
-    const godRatio = m.godNodeCount / Math.max(m.sourceFiles, 1);
+  if (godNodeCount !== null) {
+    const godRatio = godNodeCount / Math.max(m.sourceFiles, 1);
     if (godRatio > 0.1) score -= 10;
     else if (godRatio > 0.05) score -= 5;
   }
-  if (m.avgCohesion !== null && m.avgCohesion < 0.15) score -= 5;
+  if (avgCohesion !== null && avgCohesion < 0.15) score -= 5;
 
   score = clamp(score);
   return {
@@ -292,10 +334,10 @@ export function scoreMaintainability(m: HealthMetrics): DimensionScore {
       largestFileLines: m.largestFileLines,
       filesOver500Lines: m.filesOver500Lines,
       nodeEngineVersion: m.nodeEngineVersion,
-      godNodeCount: m.godNodeCount,
-      communityCount: m.communityCount,
-      avgCohesion: m.avgCohesion,
-      orphanModuleCount: m.orphanModuleCount,
+      godNodeCount,
+      communityCount,
+      avgCohesion,
+      orphanModuleCount,
     },
     details:
       `${m.sourceFiles} source files across ${m.directories} directories` +
@@ -303,14 +345,15 @@ export function scoreMaintainability(m: HealthMetrics): DimensionScore {
       `. Largest file: ${m.largestFileLines} lines` +
       `. ${m.filesOver500Lines} files over 500 lines` +
       (m.nodeEngineVersion ? `. Node engine: ${m.nodeEngineVersion}` : '') +
-      (m.communityCount !== null ? `. ${m.communityCount} architectural communities` : '') +
-      (m.avgCohesion !== null ? `. Avg cohesion: ${m.avgCohesion.toFixed(2)}` : '') +
+      (communityCount !== null ? `. ${communityCount} architectural communities` : '') +
+      (avgCohesion !== null ? `. Avg cohesion: ${avgCohesion.toFixed(2)}` : '') +
       '.',
   };
 }
 
 /** Developer Experience: 0-100 */
-export function scoreDeveloperExperience(m: HealthMetrics): DimensionScore {
+export function scoreDeveloperExperience(input: ScoreInput): DimensionScore {
+  const m = input.metrics;
   let score = 0;
 
   if (m.ciConfigCount > 0) score += 20;
