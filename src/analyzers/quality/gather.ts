@@ -97,13 +97,14 @@ function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
  * Structural metrics are a global capability: the STRUCTURAL dispatcher
  * routes to `graphifyProvider` (tools/graphify.ts). Like COVERAGE, the
  * dispatcher caches per-(cwd, capability) so two analyzers in the same
- * run don't re-shell graphify (it takes ~60s on a medium repo).
+ * run don't re-shell graphify (it takes ~60s on a medium repo); the
+ * gatherGraphifyResult helper memoizes per-cwd below that, so the Layer
+ * 2 reshape path in `tools/parallel.ts` shares the same outcome.
  *
  * This layer reshapes the envelope into the analyzer's 7-field report
  * shape. The full envelope carries three additional fields
  * (classCount, godNodeCount, commentedCodeRatio) that the health
- * analyzer's Layer 2 path also reads — those are still populated via
- * the legacy `gatherGraphifyMetrics` bridge in parallel.ts until Phase C.
+ * report's `capabilities.structural` exposes directly.
  */
 export async function gatherStructuralMetrics(cwd: string): Promise<{
   maxFunctionsInFile: number | null;

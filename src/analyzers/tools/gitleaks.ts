@@ -1,22 +1,13 @@
 /**
- * Gitleaks integration -- secret scanning with 800+ patterns.
+ * Gitleaks integration — secret scanning with 800+ patterns.
  *
- * Two call shapes:
- *
- *   1. `gatherGitleaksResult(cwd)` — the canonical capability-shaped
- *      gather. Returns a `SecretsResult` envelope or a typed outcome
- *      describing why scanning was skipped/failed. Consumed by the
- *      `gitleaksProvider` capability wrapper and (via its `success`
- *      envelope) by the legacy Layer 2 decomposition.
- *
- *   2. `gatherGitleaksMetrics(cwd)` — thin bridge retained for
- *      `src/analyzers/tools/parallel.ts`, which loads gatherers by
- *      module name + function name in a child process. Decomposes the
- *      envelope into the legacy `HealthMetrics` fields
- *      (`secretFindings`, `secretDetails`, `secretSuppressed`) and
- *      goes away in Phase C.
+ * Exposes one gather helper — `gatherGitleaksResult(cwd)` — returning a
+ * typed outcome with either a `SecretsResult` envelope or the reason
+ * scanning was skipped. Consumed by the capability provider
+ * (`gitleaksProvider`) and by the Layer 2 legacy-field reshape path in
+ * `tools/parallel.ts`. Memoized per-cwd so both callers share one
+ * invocation per analyzer run.
  */
-import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
@@ -66,10 +57,9 @@ export function clearGitleaksCache(cwd?: string): void {
 
 /**
  * Single source of truth for secret-scanning via gitleaks. Consumed by
- * both `gitleaksProvider` (new capability path) and
- * `gatherGitleaksMetrics` (legacy Partial<HealthMetrics> shape) so both
- * paths produce byte-identical findings and suppression counts. Memoized
- * per-cwd so repeat calls within a single analyzer run are free.
+ * `gitleaksProvider` (capability dispatcher) and by the Layer 2 legacy
+ * reshape in `tools/parallel.ts` — both paths share the memoized
+ * per-cwd outcome so gitleaks shells out at most once per analyzer run.
  */
 export function gatherGitleaksResult(cwd: string): SecretsGatherOutcome {
   const cached = gitleaksOutcomeCache.get(cwd);
@@ -154,32 +144,6 @@ export const gitleaksProvider: CapabilityProvider<SecretsResult> = {
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
-
-/**
- * LEGACY bridge: returns Partial<HealthMetrics>. Consumed by
- * `src/analyzers/tools/parallel.ts`'s dynamic-require loader. Removed
- * in Phase 10e.C when Layer 2 parallel moves onto the dispatcher.
- */
-export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
-  const outcome = gatherGitleaksResult(cwd);
-  if (outcome.kind === 'unavailable') {
-    const reason = outcome.reason;
-    return {
-      toolsUnavailable: [reason === 'not installed' ? 'gitleaks' : `gitleaks (${reason})`],
-    };
-  }
-  return {
-    secretFindings: outcome.envelope.findings.length,
-    secretDetails: outcome.envelope.findings.map((f) => ({
-      file: f.file,
-      line: f.line,
-      rule: f.rule,
-      severity: f.severity,
-    })),
-    secretSuppressed: outcome.suppressedCount,
-    toolsUsed: ['gitleaks'],
-  };
-}
 
 function findGitleaks(cwd: string): string | null {
   const status = findTool(TOOL_DEFS.gitleaks, cwd);

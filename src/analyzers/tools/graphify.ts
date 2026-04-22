@@ -1,27 +1,19 @@
 /**
- * Graphify integration -- deterministic AST extraction via tree-sitter.
+ * Graphify integration — deterministic AST extraction via tree-sitter.
  * Layer 2 (optional): requires `pip install graphifyy`.
  *
- * Two call shapes:
- *
- *   1. `gatherGraphifyResult(cwd)` — the canonical capability-shaped
- *      gather. Returns a `StructuralResult` envelope or a typed outcome
- *      describing why it was skipped/failed. Consumed by the
- *      `graphifyProvider` capability wrapper and by the quality
- *      analyzer's dispatcher call.
- *
- *   2. `gatherGraphifyMetrics(cwd)` — thin bridge retained for
- *      `src/analyzers/tools/parallel.ts`, which loads gatherers by
- *      module name + function name in a child process. Decomposes the
- *      envelope into the legacy `HealthMetrics` subset and goes away
- *      in Phase C.
+ * Exposes one gather helper — `gatherGraphifyResult(cwd)` — returning a
+ * typed outcome with either a `StructuralResult` envelope or the reason
+ * extraction was skipped. Consumed by the capability provider
+ * (`graphifyProvider`) and by the Layer 2 legacy-field reshape path in
+ * `tools/parallel.ts`. Memoized per-cwd so both callers share one
+ * invocation per analyzer run.
  *
  * Known flake (Phase 10f.2): `/tmp/graphify-venv` race + `/tmp`
  * cleanup kills graphify ~50% of runs. Separate behavioral fix; this
  * file's structure is unaffected.
  */
 import * as fs from 'fs';
-import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeSet } from './exclusions';
@@ -190,9 +182,10 @@ export function clearGraphifyCache(cwd?: string): void {
 
 /**
  * Single source of truth for the graphify subprocess invocation.
- * `graphifyProvider` (new capability path) and `gatherGraphifyMetrics`
- * (legacy Layer 2 parallel path) both consume the envelope via this
- * helper — byte-identical output across both paths. Memoized per-cwd.
+ * Consumed by `graphifyProvider` (capability dispatcher) and by the
+ * Layer 2 legacy reshape in `tools/parallel.ts` — both paths share the
+ * memoized per-cwd outcome so graphify shells out at most once per
+ * analyzer run.
  */
 export function gatherGraphifyResult(cwd: string): StructuralGatherOutcome {
   const cached = graphifyOutcomeCache.get(cwd);
@@ -262,36 +255,6 @@ export const graphifyProvider: CapabilityProvider<StructuralResult> = {
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
-
-/**
- * LEGACY bridge: returns `Partial<HealthMetrics>`. Consumed by
- * `src/analyzers/tools/parallel.ts`'s dynamic-require loader. Removed
- * in Phase 10e.C when Layer 2 parallel moves onto the dispatcher.
- * Byte-identical strings to the pre-B.9.2 behavior, including the
- * exact `toolsUnavailable` phrasings: `graphify (not installed)`,
- * `graphify (failed to run)`, `graphify (no JSON output)`,
- * `graphify (parse error)`, `graphify (<inner error>)`.
- */
-export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
-  const outcome = gatherGraphifyResult(cwd);
-  if (outcome.kind === 'unavailable') {
-    return { toolsUnavailable: [`graphify (${outcome.reason})`] };
-  }
-  const e = outcome.envelope;
-  return {
-    functionCount: e.functionCount,
-    classCount: e.classCount,
-    maxFunctionsInFile: e.maxFunctionsInFile,
-    maxFunctionsFilePath: e.maxFunctionsFilePath,
-    godNodeCount: e.godNodeCount,
-    communityCount: e.communityCount,
-    avgCohesion: e.avgCohesion,
-    orphanModuleCount: e.orphanModuleCount,
-    deadImportCount: e.deadImportCount,
-    commentedCodeRatio: e.commentedCodeRatio,
-    toolsUsed: ['graphify'],
-  };
-}
 
 /** Find a working python3 that has graphify installed. Delegates to tool-registry. */
 function findPython(cwd: string): string | null {
