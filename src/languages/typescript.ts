@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import hostedGitInfo from 'hosted-git-info';
+
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
@@ -480,6 +482,23 @@ function readTsPackageMetadata(cwd: string, pkgName: string): TsPackageMetadata 
 }
 
 /**
+ * Canonicalise a repository URL via npm's `hosted-git-info`. Expands
+ * shorthand (`user/repo`, `github:user/repo`), converts SCP-like SSH
+ * (`git@github.com:user/repo.git`) to RFC (`git+ssh://...`), and emits
+ * `git+https://` for standard https input — matching the format the
+ * customer's benchmark xlsx records (Phase 10h.5). Preserves SSH intent
+ * when the source URL is an SSH scheme; falls through unchanged for
+ * non-GitHub/GitLab/Bitbucket hosts that hosted-git-info can't parse.
+ */
+function normalizeRepoUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const info = hostedGitInfo.fromUrl(raw);
+  if (!info) return raw;
+  const looksSsh = /^(git\+ssh:|ssh:|git@)/.test(raw.trim());
+  return looksSsh ? info.sshurl({ noCommittish: true }) : info.https({ noCommittish: true });
+}
+
+/**
  * Split license-checker's `${name}@${version}` key, preserving a leading
  * '@' on scoped packages. Returns null on malformed keys (no '@' past
  * position 0) so the caller can skip cleanly.
@@ -541,8 +560,9 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
       licenseType,
       licenseText,
       // Prefer raw repository.url (byte-identical to `npm view`) over
-      // license-checker's normalized form; fall back cleanly.
-      sourceUrl: meta.repositoryUrl || entry.repository || entry.url,
+      // license-checker's normalized form; normalise via hosted-git-info
+      // to expand shorthand and canonicalise across SCP/SSH/HTTPS.
+      sourceUrl: normalizeRepoUrl(meta.repositoryUrl || entry.repository || entry.url),
       description: meta.description,
       supplier: entry.publisher,
     });
