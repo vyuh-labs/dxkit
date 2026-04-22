@@ -11,6 +11,8 @@ import type {
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
+  LicenseFinding,
+  LicensesResult,
   LintGatherOutcome,
   LintResult,
   TestFrameworkResult,
@@ -318,6 +320,103 @@ const csharpTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/**
+ * Per-package shape emitted by `nuget-license -o JsonPretty`. Field
+ * names follow the tool's PascalCase convention. Optional fields are
+ * emitted as empty strings by the tool, not omitted — the mapping
+ * below normalises empties to undefined.
+ */
+interface NugetLicenseEntry {
+  PackageId: string;
+  PackageVersion: string;
+  License?: string;
+  LicenseUrl?: string;
+  PackageProjectUrl?: string;
+  Authors?: string;
+  Copyright?: string;
+  Description?: string;
+}
+
+/**
+ * Locate the best input for nuget-license. Prefers a `.sln` at repo
+ * root (covers every csproj in the solution in one pass), falls back
+ * to any `.csproj` found within three levels. Returns an absolute path
+ * or null — callers skip cleanly on null.
+ */
+function findCsharpLicenseInput(cwd: string): string | null {
+  // .sln in root first — one pass over the whole solution.
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(cwd, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const sln = entries.find((e) => e.isFile() && e.name.endsWith('.sln'));
+  if (sln) return path.join(cwd, sln.name);
+  // Fall back to first .csproj reachable within the standard depth.
+  return findMatchingRecursive(cwd, /\.csproj$/, 3);
+}
+
+/**
+ * Single source of truth for the csharp pack's license gathering.
+ * Consumed by `csharpLicensesProvider` (capability dispatcher).
+ *
+ * Delegates entirely to the `nuget-license` global .NET tool (OSS,
+ * MIT-licensed, established) — no custom .nuspec or project.assets.json
+ * parsing. Matches the pattern of the other four packs: one ecosystem
+ * tool, wrapped. Returns null cleanly when no .sln/.csproj is present
+ * or when the tool isn't installed.
+ */
+function gatherCsharpLicensesResult(cwd: string): LicensesResult | null {
+  const input = findCsharpLicenseInput(cwd);
+  if (!input) return null;
+
+  const status = findTool(TOOL_DEFS['nuget-license'], cwd);
+  if (!status.available || !status.path) return null;
+
+  const raw = run(`${status.path} -i "${input}" -o JsonPretty 2>/dev/null`, cwd, 180000);
+  if (!raw) return null;
+
+  let data: NugetLicenseEntry[];
+  try {
+    data = JSON.parse(raw) as NugetLicenseEntry[];
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) return null;
+
+  const findings: LicenseFinding[] = [];
+  for (const entry of data) {
+    if (!entry.PackageId || !entry.PackageVersion) continue;
+    const license = entry.License && entry.License.length > 0 ? entry.License : 'UNKNOWN';
+    findings.push({
+      package: entry.PackageId,
+      version: entry.PackageVersion,
+      licenseType: license,
+      sourceUrl:
+        (entry.PackageProjectUrl && entry.PackageProjectUrl.length > 0
+          ? entry.PackageProjectUrl
+          : entry.LicenseUrl) || undefined,
+      description:
+        entry.Description && entry.Description.length > 0 ? entry.Description : undefined,
+      supplier: entry.Authors && entry.Authors.length > 0 ? entry.Authors : undefined,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    tool: 'nuget-license',
+    findings,
+  };
+}
+
+const csharpLicensesProvider: CapabilityProvider<LicensesResult> = {
+  source: 'csharp',
+  async gather(cwd) {
+    return gatherCsharpLicensesResult(cwd);
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -333,7 +432,7 @@ export const csharp: LanguageSupport = {
     );
   },
 
-  tools: ['dotnet-format'],
+  tools: ['dotnet-format', 'nuget-license'],
   // p/csharp semgrep ruleset is sparse — skip until it matures.
   semgrepRulesets: [],
 
@@ -343,6 +442,7 @@ export const csharp: LanguageSupport = {
     coverage: csharpCoverageProvider,
     imports: csharpImportsProvider,
     testFramework: csharpTestFrameworkProvider,
+    licenses: csharpLicensesProvider,
   },
 
   // mapLintSeverity intentionally omitted: dotnet-format is a formatter,

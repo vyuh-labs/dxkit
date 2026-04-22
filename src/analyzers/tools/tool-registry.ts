@@ -577,6 +577,22 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'winget install Microsoft.DotNet.SDK.8',
     },
   },
+  'nuget-license': {
+    name: 'nuget-license',
+    description: 'License inventory for NuGet package references in .NET projects',
+    install: 'dotnet tool install --global nuget-license',
+    check: 'nuget-license --version',
+    for: 'csharp',
+    layer: 'language',
+    binaries: ['nuget-license'],
+    probePaths: ['~/.dotnet/tools'],
+    versionCheck: 'nuget-license --version 2>/dev/null',
+    installCommands: {
+      macos: 'dotnet tool install --global nuget-license',
+      linux: 'dotnet tool install --global nuget-license',
+      windows: 'dotnet tool install --global nuget-license',
+    },
+  },
 
   // ── Coverage providers ──────────────────────────────────────────────────
   'vitest-coverage': {

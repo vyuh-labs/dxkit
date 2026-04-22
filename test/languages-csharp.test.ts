@@ -132,8 +132,8 @@ describe('csharp registration', () => {
     expect(csharp.displayName).toBe('C#');
   });
 
-  it('declares dotnet-format tool only', () => {
-    expect(csharp.tools).toEqual(['dotnet-format']);
+  it('declares dotnet-format + nuget-license tools', () => {
+    expect(csharp.tools).toEqual(['dotnet-format', 'nuget-license']);
   });
 
   it('declares empty semgrep rulesets (p/csharp is sparse)', () => {
