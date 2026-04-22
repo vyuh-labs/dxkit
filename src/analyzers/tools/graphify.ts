@@ -171,12 +171,38 @@ export type StructuralGatherOutcome =
   | { kind: 'unavailable'; reason: string };
 
 /**
+ * Per-cwd memoization of the graphify outcome. Graphify is the heaviest
+ * external tool dxkit shells out to (~10-60s depending on repo size);
+ * memoizing ensures the Layer 2 reshape path + the capability
+ * dispatcher's `graphifyProvider` share one invocation per analyzer run.
+ * Tests reset via `clearGraphifyCache`.
+ *
+ * Same constraints as the gitleaks cache: module-scoped, no automatic
+ * invalidation, safe for the one-shot CLI shape.
+ */
+const graphifyOutcomeCache = new Map<string, StructuralGatherOutcome>();
+
+/** Reset memoized graphify outcomes. Test seam; no production callers. */
+export function clearGraphifyCache(cwd?: string): void {
+  if (cwd === undefined) graphifyOutcomeCache.clear();
+  else graphifyOutcomeCache.delete(cwd);
+}
+
+/**
  * Single source of truth for the graphify subprocess invocation.
  * `graphifyProvider` (new capability path) and `gatherGraphifyMetrics`
  * (legacy Layer 2 parallel path) both consume the envelope via this
- * helper — byte-identical output across both paths.
+ * helper — byte-identical output across both paths. Memoized per-cwd.
  */
 export function gatherGraphifyResult(cwd: string): StructuralGatherOutcome {
+  const cached = graphifyOutcomeCache.get(cwd);
+  if (cached) return cached;
+  const outcome = computeGraphifyOutcome(cwd);
+  graphifyOutcomeCache.set(cwd, outcome);
+  return outcome;
+}
+
+function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   const pythonCmd = findPython(cwd);
   if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
 

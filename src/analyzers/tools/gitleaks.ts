@@ -44,12 +44,42 @@ export type SecretsGatherOutcome =
   | { kind: 'unavailable'; reason: string };
 
 /**
+ * Per-cwd memoization of the gitleaks outcome. Gitleaks is a ~1-5s shell
+ * invocation; memoizing ensures the Layer 2 reshape path + the capability
+ * dispatcher's `gitleaksProvider` both hit the same computed outcome
+ * within one `analyzeHealth` call. Tests can reset via `clearGitleaksCache`.
+ *
+ * Cache is module-scoped and not invalidated automatically — safe for
+ * dxkit's one-shot CLI shape (single cwd per process) and for the one
+ * analyzer that exercises two paths to the same cwd (parallel.ts +
+ * gatherCapabilityReport). Future long-running modes (diff, daemon)
+ * that re-analyze the same cwd should call `clearGitleaksCache(cwd)`
+ * between runs.
+ */
+const gitleaksOutcomeCache = new Map<string, SecretsGatherOutcome>();
+
+/** Reset memoized gitleaks outcomes. Test seam; no production callers. */
+export function clearGitleaksCache(cwd?: string): void {
+  if (cwd === undefined) gitleaksOutcomeCache.clear();
+  else gitleaksOutcomeCache.delete(cwd);
+}
+
+/**
  * Single source of truth for secret-scanning via gitleaks. Consumed by
  * both `gitleaksProvider` (new capability path) and
  * `gatherGitleaksMetrics` (legacy Partial<HealthMetrics> shape) so both
- * paths produce byte-identical findings and suppression counts.
+ * paths produce byte-identical findings and suppression counts. Memoized
+ * per-cwd so repeat calls within a single analyzer run are free.
  */
 export function gatherGitleaksResult(cwd: string): SecretsGatherOutcome {
+  const cached = gitleaksOutcomeCache.get(cwd);
+  if (cached) return cached;
+  const outcome = computeGitleaksOutcome(cwd);
+  gitleaksOutcomeCache.set(cwd, outcome);
+  return outcome;
+}
+
+function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
   const gitleaksCmd = findGitleaks(cwd);
   if (!gitleaksCmd) return { kind: 'unavailable', reason: 'not installed' };
 

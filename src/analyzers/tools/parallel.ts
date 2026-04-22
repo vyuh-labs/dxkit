@@ -1,191 +1,115 @@
 /**
- * Parallel tool execution — run Layer 2 gather functions concurrently
- * by forking child processes that call the EXISTING gather functions.
+ * Layer 2 orchestrator — populates the legacy `HealthMetrics` fields that
+ * live outside the per-pack `gatherMetrics` channel (cloc line counts,
+ * gitleaks secret counts, graphify AST stats).
  *
- * Each child process requires the built dist/ module and calls the same
- * gather function that sequential mode uses. NO duplicated invocation logic.
+ * Phase 10e.C.3: rewritten from a child-process + bash orchestration into
+ * direct in-process calls to the memoized outcome helpers
+ * (`gatherGitleaksResult`, `gatherGraphifyResult`) + the synchronous
+ * `gatherClocMetrics`. Gitleaks and graphify are memoized per-cwd at the
+ * helper level, so the capability dispatcher's later `SECRETS` /
+ * `STRUCTURAL` calls in `gatherCapabilityReport` hit cached outcomes —
+ * each tool runs exactly once per analyzer run rather than twice (the
+ * pre-C.3 state shelled out once here via a child process and again from
+ * the dispatcher's provider).
  *
- * Architecture rule (CLAUDE.md #2): each tool has ONE gather function.
- * This module orchestrates, never reimplements.
+ * Tradeoff: we lose the OS-level parallelism the old bash `&` + `wait`
+ * scheme gave us. For dxkit-sized repos the heavy tool is graphify
+ * (~10-30s); cloc and gitleaks add a second or two on top. The three are
+ * now serial in one process. 10f will reintroduce parallelism via async
+ * runners when the underlying tool invocations themselves are
+ * event-loop-safe — the current blocking `execSync` calls defeat any
+ * `Promise.all` scheme without an out-of-process scheduler.
+ *
+ * Keeps the sync signature — callers in `analyzers/health.ts` wrap with
+ * `timed()`, not `timedAsync()`. Legacy field shape is byte-identical to
+ * pre-C.3, including the exact `toolsUnavailable` phrasings.
  */
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { execSync } from 'child_process';
 import { HealthMetrics } from '../types';
+import { gatherClocMetrics } from './cloc';
+import { gatherGitleaksResult, SecretsGatherOutcome } from './gitleaks';
+import { gatherGraphifyResult, StructuralGatherOutcome } from './graphify';
 
-interface GatherTask {
-  name: string;
-  /** Node.js require path + function call that returns Partial<HealthMetrics> */
-  modulePath: string;
-  functionName: string;
-}
+export function gatherLayer2Parallel(cwd: string, _verbose = false): Partial<HealthMetrics> {
+  const clocPartial = gatherClocMetrics(cwd);
+  const gitleaksOutcome = gatherGitleaksResult(cwd);
+  const graphifyOutcome = gatherGraphifyResult(cwd);
 
-/**
- * Run cloc + gitleaks + graphify gather functions in parallel child processes.
- * Each child calls the real gather function from the existing tool module.
- * Falls back to sequential on low memory (<1GB free).
- */
-export function gatherLayer2Parallel(cwd: string, verbose = false): Partial<HealthMetrics> {
-  const dxkitDist = path.resolve(__dirname, '..');
-
-  const tasks: GatherTask[] = [
-    {
-      name: 'cloc',
-      modulePath: './cloc',
-      functionName: 'gatherClocMetrics',
-    },
-    {
-      name: 'gitleaks',
-      modulePath: './gitleaks',
-      functionName: 'gatherGitleaksMetrics',
-    },
-    {
-      name: 'graphify',
-      modulePath: './graphify',
-      functionName: 'gatherGraphifyMetrics',
-    },
-  ];
-
-  // Check available memory — fall back to sequential if <1GB free
-  const freeMem = os.freemem();
-  const useParallel = freeMem >= 1024 * 1024 * 1024;
-
-  if (verbose && !useParallel) {
-    console.error(
-      `  [parallel] Low memory (${Math.round(freeMem / 1024 / 1024)}MB free), running sequentially`,
-    );
-  }
-
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-l2-'));
-  const startTime = Date.now();
-
-  if (useParallel) {
-    runTasksParallel(tasks, cwd, dxkitDist, tmpDir, verbose);
-  } else {
-    runTasksSequential(tasks, cwd, dxkitDist, tmpDir);
-  }
-
-  if (verbose) {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`  [parallel] Layer 2 completed in ${elapsed}s`);
-  }
-
-  // Merge all results
   const merged: Partial<HealthMetrics> = {
     toolsUsed: [],
     toolsUnavailable: [],
   };
-
-  for (let i = 0; i < tasks.length; i++) {
-    const resultFile = path.join(tmpDir, `${tasks[i].name}.json`);
-    try {
-      const raw = fs.readFileSync(resultFile, 'utf-8');
-      const partial = JSON.parse(raw) as Partial<HealthMetrics>;
-      // Merge arrays
-      if (partial.toolsUsed) {
-        (merged.toolsUsed as string[]).push(...partial.toolsUsed);
-        delete partial.toolsUsed;
-      }
-      if (partial.toolsUnavailable) {
-        (merged.toolsUnavailable as string[]).push(...partial.toolsUnavailable);
-        delete partial.toolsUnavailable;
-      }
-      // Merge non-null values
-      for (const [k, v] of Object.entries(partial)) {
-        if (v !== null && v !== undefined) {
-          (merged as Record<string, unknown>)[k] = v;
-        }
-      }
-    } catch {
-      // Tool didn't produce output — skip
-    }
-  }
-
-  // Cleanup
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-
+  mergePartial(merged, clocPartial);
+  mergePartial(merged, reshapeGitleaks(gitleaksOutcome));
+  mergePartial(merged, reshapeGraphify(graphifyOutcome));
   return merged;
 }
 
-/** Build the Node.js script that calls a gather function and writes result to file. */
-function buildWorkerScript(task: GatherTask, cwd: string, resultFile: string): string {
-  // The child process requires the SAME compiled module and calls the SAME function.
-  // No duplication — it's literally require('<abs-path>/tools/cloc').gatherClocMetrics(cwd).
-  // Use __dirname at build time to resolve the absolute path to dist/analyzers/.
-  const absModulePath = path.resolve(__dirname, task.modulePath);
-  return `
-    try {
-      var mod = require('${absModulePath.replace(/\\/g, '/')}');
-      var result = mod.${task.functionName}('${cwd.replace(/'/g, "\\'")}');
-      require('fs').writeFileSync('${resultFile}', JSON.stringify(result));
-    } catch (e) {
-      require('fs').writeFileSync('${resultFile}', JSON.stringify({
-        toolsUnavailable: ['${task.name} (child process error: ' + (e.message || '').slice(0, 100) + ')']
-      }));
+/**
+ * Merge a sub-result into the accumulator. Arrays (`toolsUsed`,
+ * `toolsUnavailable`) are appended; every other non-null field
+ * overwrites. Non-null-only rule matches the pre-C.3 parent-process
+ * merger behavior exactly.
+ */
+function mergePartial(merged: Partial<HealthMetrics>, partial: Partial<HealthMetrics>): void {
+  for (const [key, value] of Object.entries(partial)) {
+    if (value === null || value === undefined) continue;
+    if (key === 'toolsUsed' && Array.isArray(value)) {
+      (merged.toolsUsed as string[]).push(...(value as string[]));
+    } else if (key === 'toolsUnavailable' && Array.isArray(value)) {
+      (merged.toolsUnavailable as string[]).push(...(value as string[]));
+    } else {
+      (merged as Record<string, unknown>)[key] = value;
     }
-  `;
-}
-
-function runTasksParallel(
-  tasks: GatherTask[],
-  cwd: string,
-  dxkitDist: string,
-  tmpDir: string,
-  _verbose: boolean,
-): void {
-  // Write each task as a standalone Node script file, then run all via bash `&` + `wait`.
-  // This gives true OS-level parallelism without poll overhead.
-  const scriptPaths: string[] = [];
-
-  for (const task of tasks) {
-    const resultFile = path.join(tmpDir, `${task.name}.json`);
-    const workerScript = buildWorkerScript(task, cwd, resultFile);
-    const scriptPath = path.join(tmpDir, `${task.name}.js`);
-    fs.writeFileSync(scriptPath, workerScript);
-    scriptPaths.push(scriptPath);
-  }
-
-  // Bash script that backgrounds all node processes and waits
-  const bashLines = scriptPaths.map((sp) => `node '${sp}' &`);
-  bashLines.push('wait');
-  const bashScript = path.join(tmpDir, 'run-parallel.sh');
-  fs.writeFileSync(bashScript, '#!/bin/bash\n' + bashLines.join('\n') + '\n');
-  fs.chmodSync(bashScript, 0o755);
-
-  try {
-    execSync(bashScript, {
-      cwd: dxkitDist,
-      stdio: 'ignore',
-      timeout: 300000,
-      env: process.env,
-    });
-  } catch {
-    // Timeout or error — still try to read whatever completed
   }
 }
 
-function runTasksSequential(
-  tasks: GatherTask[],
-  cwd: string,
-  dxkitDist: string,
-  tmpDir: string,
-): void {
-  for (const task of tasks) {
-    const resultFile = path.join(tmpDir, `${task.name}.json`);
-    const script = buildWorkerScript(task, cwd, resultFile);
-    try {
-      execSync(`node -e '${script.replace(/'/g, "'\\''")}'`, {
-        cwd: dxkitDist,
-        stdio: 'ignore',
-        timeout: 180000,
-      });
-    } catch {
-      /* continue with next tool */
-    }
+/**
+ * Reshape a gitleaks outcome into the legacy `HealthMetrics` subset.
+ * Preserves the exact pre-C.3 strings for `toolsUnavailable`:
+ *   - `gitleaks` when not installed
+ *   - `gitleaks (<reason>)` for every other failure mode.
+ */
+function reshapeGitleaks(outcome: SecretsGatherOutcome): Partial<HealthMetrics> {
+  if (outcome.kind === 'unavailable') {
+    const label = outcome.reason === 'not installed' ? 'gitleaks' : `gitleaks (${outcome.reason})`;
+    return { toolsUnavailable: [label] };
   }
+  return {
+    secretFindings: outcome.envelope.findings.length,
+    secretDetails: outcome.envelope.findings.map((f) => ({
+      file: f.file,
+      line: f.line,
+      rule: f.rule,
+      severity: f.severity,
+    })),
+    secretSuppressed: outcome.suppressedCount,
+    toolsUsed: ['gitleaks'],
+  };
+}
+
+/**
+ * Reshape a graphify outcome into the legacy `HealthMetrics` subset.
+ * Preserves the exact pre-C.3 `toolsUnavailable` strings:
+ * `graphify (not installed)`, `graphify (failed to run)`,
+ * `graphify (no JSON output)`, `graphify (parse error)`, etc.
+ */
+function reshapeGraphify(outcome: StructuralGatherOutcome): Partial<HealthMetrics> {
+  if (outcome.kind === 'unavailable') {
+    return { toolsUnavailable: [`graphify (${outcome.reason})`] };
+  }
+  const e = outcome.envelope;
+  return {
+    functionCount: e.functionCount,
+    classCount: e.classCount,
+    maxFunctionsInFile: e.maxFunctionsInFile,
+    maxFunctionsFilePath: e.maxFunctionsFilePath,
+    godNodeCount: e.godNodeCount,
+    communityCount: e.communityCount,
+    avgCohesion: e.avgCohesion,
+    orphanModuleCount: e.orphanModuleCount,
+    deadImportCount: e.deadImportCount,
+    commentedCodeRatio: e.commentedCodeRatio,
+    toolsUsed: ['graphify'],
+  };
 }
