@@ -25,8 +25,11 @@ import type { LanguagePackCapabilities } from '../types';
  * aggregating.
  *
  * For global capabilities (secrets, codePatterns, duplication, structural):
- * a single-element array with the registered global provider, or empty
- * if nothing is wired yet.
+ * the registered provider array (Phase 10e.C.7.5). A slot may carry
+ * multiple providers — SECRETS stacks gitleaks + grep-secrets fallback,
+ * DEP_VULNS is set up for a future Snyk opt-in (Phase 10h.4). The
+ * descriptor's `aggregate` function merges envelopes across providers.
+ * Returns `[]` when the capability id isn't in either registry.
  */
 export function providersFor<T extends CapabilityEnvelope>(
   cap: CapabilityDescriptor<T>,
@@ -36,8 +39,8 @@ export function providersFor<T extends CapabilityEnvelope>(
   // implies the providers under that key produce exactly T. TypeScript can't
   // prove that across the two branches without heavier type-level machinery.
   if (cap.id in GLOBAL_REGISTRY) {
-    const p = GLOBAL_CAPABILITIES[cap.id as keyof GlobalCapabilities];
-    return p ? [p as unknown as CapabilityProvider<T>] : [];
+    const slot = GLOBAL_CAPABILITIES[cap.id as keyof GlobalCapabilities];
+    return (slot ?? []) as unknown as ReadonlyArray<CapabilityProvider<T>>;
   }
   if (cap.id in PER_PACK_REGISTRY) {
     const key = cap.id as keyof LanguagePackCapabilities;

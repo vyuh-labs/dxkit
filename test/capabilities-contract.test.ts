@@ -94,11 +94,17 @@ describe('global capabilities shape', () => {
   });
 
   it('every registered global provider has source + gather()', () => {
-    for (const [key, provider] of Object.entries(GLOBAL_CAPABILITIES)) {
-      if (!provider) continue;
-      expect(typeof provider.source, `global.${key}.source`).toBe('string');
-      expect((provider.source as string).length).toBeGreaterThan(0);
-      expect(typeof provider.gather, `global.${key}.gather`).toBe('function');
+    // Phase 10e.C.7.5: each slot holds an array of providers (multiple
+    // providers per capability — e.g. SECRETS stacks gitleaks + the
+    // grep-secrets fallback).
+    for (const [key, providers] of Object.entries(GLOBAL_CAPABILITIES)) {
+      if (!providers) continue;
+      expect(Array.isArray(providers), `global.${key} is an array`).toBe(true);
+      for (const provider of providers) {
+        expect(typeof provider.source, `global.${key}[].source`).toBe('string');
+        expect((provider.source as string).length).toBeGreaterThan(0);
+        expect(typeof provider.gather, `global.${key}[].gather`).toBe('function');
+      }
     }
   });
 });
@@ -110,11 +116,10 @@ describe('providersFor()', () => {
     expect(providers.length).toBe(LANGUAGES.length);
   });
 
-  it('returns the single global provider (or empty) for a global capability', () => {
+  it('returns the registered global providers for a global capability', () => {
+    // SECRETS stacks gitleaksProvider + grepSecretsProvider (Phase 10e.C.7.5).
     const providers = providersFor(SECRETS);
-    // B.6.2 registers gitleaksProvider; until then the array is empty.
-    // Either outcome is valid pre-B.6.2; what we assert is the array
-    // length stays ≤1 since one global provider per slot is the contract.
-    expect(providers.length).toBeLessThanOrEqual(1);
+    const sources = providers.map((p) => p.source).sort();
+    expect(sources).toEqual(['gitleaks', 'grep-secrets']);
   });
 });
