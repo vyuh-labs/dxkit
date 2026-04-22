@@ -8,15 +8,12 @@
  *   dispatcher → dependency CVEs across every active language pack
  *                (Phase 10e.B.1 — was hardcoded to npm-audit only)
  */
-import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';
-import { getFindExcludeFlags, getSemgrepExcludeFlags } from '../tools/exclusions';
-import { toProjectRelative } from '../tools/paths';
+import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
 import { detectActiveLanguages } from '../../languages';
-import { DEP_VULNS, SECRETS } from '../../languages/capabilities/descriptors';
+import { CODE_PATTERNS, DEP_VULNS, SECRETS } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
@@ -93,86 +90,33 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   return findings;
 }
 
-// ─── semgrep: code patterns ─────────────────────────────────────────────────
+// ─── dispatcher-driven codePatterns gather (Phase 10e.B.7.3) ────────────────
 
-interface SemgrepResult {
-  results: Array<{
-    check_id: string;
-    path: string;
-    start: { line: number };
-    extra: {
-      message: string;
-      severity: string;
-      metadata?: {
-        cwe?: string[];
-        confidence?: string;
-        impact?: string;
-      };
-    };
-  }>;
-}
-
-function mapSeverity(sgSeverity: string, impact?: string): SecurityFinding['severity'] {
-  // Primary: use semgrep's impact field (most meaningful)
-  const imp = (impact || '').toUpperCase();
-  if (imp === 'HIGH') return sgSeverity === 'ERROR' ? 'critical' : 'high';
-  if (imp === 'MEDIUM') return 'medium';
-  if (imp === 'LOW') return 'low';
-  // Fallback: semgrep severity
-  if (sgSeverity === 'ERROR') return 'high';
-  if (sgSeverity === 'WARNING') return 'medium';
-  return 'low';
-}
-
-export function gatherCodePatterns(cwd: string): {
+/**
+ * Code-pattern findings are a global capability: the CODE_PATTERNS
+ * dispatcher routes to `semgrepProvider` (tools/semgrep.ts) which
+ * applies exclusions, suppressions, and the low-confidence filter
+ * internally. This layer only reshapes the envelope into
+ * `SecurityFinding[]` for the security report.
+ */
+export async function gatherCodePatterns(cwd: string): Promise<{
   findings: SecurityFinding[];
   toolUsed: string | null;
-} {
-  const status = findTool(TOOL_DEFS.semgrep ?? ({} as never), cwd);
-  if (!status.available || !status.path) return { findings: [], toolUsed: null };
+}> {
+  const result = await defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS));
+  if (!result) return { findings: [], toolUsed: null };
 
-  // Derive rulesets from detected stack — not hardcoded
-  const stack = detect(cwd);
-  const rulesets = getSemgrepRulesets(stack.languages);
-  const configs = rulesets.map((r) => `--config ${r}`).join(' ');
-  const excludes = getSemgrepExcludeFlags(cwd);
-
-  const reportPath = `/tmp/dxkit-semgrep-${Date.now()}.json`;
-  run(
-    `${status.path} scan ${configs} --json --quiet --output '${reportPath}' ${excludes} '${cwd}' 2>/dev/null`,
-    cwd,
-    300000,
-  );
-  const raw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
-  run(`rm -f '${reportPath}'`, cwd);
-
-  if (!raw) return { findings: [], toolUsed: 'semgrep' };
-
-  try {
-    const data = JSON.parse(raw) as SemgrepResult;
-    if (!Array.isArray(data.results)) return { findings: [], toolUsed: 'semgrep' };
-
-    const findings: SecurityFinding[] = data.results
-      .filter((r) => {
-        // Skip LOW confidence to cut false positives
-        const conf = (r.extra.metadata?.confidence || '').toUpperCase();
-        return conf !== 'LOW';
-      })
-      .map((r) => ({
-        severity: mapSeverity(r.extra.severity, r.extra.metadata?.impact),
-        category: 'code' as const,
-        cwe: r.extra.metadata?.cwe?.[0]?.split(':')[0] || '',
-        rule: r.check_id.split('.').slice(-1)[0],
-        title: r.extra.message.split('\n')[0].slice(0, 200),
-        file: toProjectRelative(cwd, r.path),
-        line: r.start.line,
-        tool: 'semgrep',
-      }));
-
-    return { findings, toolUsed: 'semgrep' };
-  } catch {
-    return { findings: [], toolUsed: 'semgrep' };
-  }
+  const findings: SecurityFinding[] = result.findings.map((f) => ({
+    severity: f.severity,
+    category: 'code' as const,
+    cwe: f.cwe,
+    rule: f.rule,
+    title: f.title,
+    file: f.file,
+    line: f.line,
+    tool: result.tool,
+  }));
+  return { findings, toolUsed: result.tool };
 }
 
 // ─── dependency CVEs via the capabilities dispatcher ────────────────────────

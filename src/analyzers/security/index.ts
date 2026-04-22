@@ -37,8 +37,8 @@ export async function analyzeSecurity(
   // 2. File findings (private keys, .env)
   const files = timed('file-findings', verbose, () => gatherFileFindings(repoPath));
 
-  // 3. Code patterns (semgrep)
-  const code = timed('semgrep', verbose, () => gatherCodePatterns(repoPath));
+  // 3. Code patterns (semgrep) — dispatcher-driven via CODE_PATTERNS.
+  const code = await timedAsync('semgrep', verbose, () => gatherCodePatterns(repoPath));
   if (code.toolUsed) toolsUsed.push(code.toolUsed);
   else toolsUnavailable.push('semgrep');
 
