@@ -105,6 +105,8 @@ export interface SecretFinding {
   line: number;
   rule: string;
   severity: keyof SeverityCounts;
+  /** Human-readable description from the scanner (e.g. gitleaks' `Description` field). */
+  title?: string;
 }
 
 /**

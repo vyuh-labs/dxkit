@@ -86,6 +86,7 @@ export function gatherGitleaksResult(cwd: string): SecretsGatherOutcome {
     line: f.StartLine,
     rule: f.RuleID,
     severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
+    title: f.Description,
   }));
 
   // Gitleaks --no-git scans everything on disk (ignores .gitignore), so

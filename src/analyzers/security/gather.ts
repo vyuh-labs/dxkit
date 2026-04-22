@@ -11,67 +11,42 @@
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';
-import { getFindExcludeFlags, getSemgrepExcludeFlags, isExcludedPath } from '../tools/exclusions';
+import { getFindExcludeFlags, getSemgrepExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
 import { detectActiveLanguages } from '../../languages';
-import { DEP_VULNS } from '../../languages/capabilities/descriptors';
+import { DEP_VULNS, SECRETS } from '../../languages/capabilities/descriptors';
+import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
 
-// ─── gitleaks: secrets ───────────────────────────────────────────────────────
+// ─── dispatcher-driven secrets gather (Phase 10e.B.6.3) ──────────────────────
 
-interface GitleaksEntry {
-  RuleID: string;
-  Description: string;
-  File: string;
-  StartLine: number;
-}
-
-export function gatherSecrets(cwd: string): {
+/**
+ * Secrets are a global capability: one scanner (gitleaks today) runs once
+ * per repo and the dispatcher aggregates its envelope through the SECRETS
+ * descriptor. Exclusions + suppressions are already applied inside the
+ * provider (see tools/gitleaks.ts), so this layer only maps the envelope
+ * into the SecurityFinding shape used by the security report.
+ */
+export async function gatherSecrets(cwd: string): Promise<{
   findings: SecurityFinding[];
   toolUsed: string | null;
-} {
-  const status = findTool(TOOL_DEFS.gitleaks, cwd);
-  if (!status.available || !status.path) return { findings: [], toolUsed: null };
+}> {
+  const result = await defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS));
+  if (!result) return { findings: [], toolUsed: null };
 
-  const reportPath = `/tmp/dxkit-gitleaks-${Date.now()}.json`;
-  run(
-    `${status.path} detect --source '${cwd}' --report-format json --report-path '${reportPath}' --no-git --exit-code 0 2>/dev/null`,
-    cwd,
-    120000,
-  );
-  const raw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
-  run(`rm -f '${reportPath}'`, cwd);
-
-  if (!raw) return { findings: [], toolUsed: 'gitleaks' };
-
-  try {
-    const entries = JSON.parse(raw) as GitleaksEntry[];
-    if (!Array.isArray(entries)) return { findings: [], toolUsed: 'gitleaks' };
-
-    // Post-filter via the centralized exclusions predicate so we never drift
-    // between tools on what counts as "ignored".
-    const findings: SecurityFinding[] = entries
-      .filter((e) => {
-        const relPath = e.File.replace(cwd + '/', '').replace(cwd, '');
-        return !isExcludedPath(cwd, relPath);
-      })
-      .map((e) => ({
-        severity: e.RuleID === 'private-key' ? ('critical' as const) : ('high' as const),
-        category: 'secret' as const,
-        cwe: 'CWE-798',
-        rule: e.RuleID,
-        title: e.Description,
-        file: e.File.replace(cwd + '/', '').replace(cwd, ''),
-        line: e.StartLine,
-        tool: 'gitleaks',
-      }));
-
-    return { findings, toolUsed: 'gitleaks' };
-  } catch {
-    return { findings: [], toolUsed: 'gitleaks' };
-  }
+  const findings: SecurityFinding[] = result.findings.map((f) => ({
+    severity: f.severity,
+    category: 'secret' as const,
+    cwe: 'CWE-798',
+    rule: f.rule,
+    title: f.title ?? `Secret detected: ${f.rule}`,
+    file: f.file,
+    line: f.line,
+    tool: result.tool,
+  }));
+  return { findings, toolUsed: result.tool };
 }
 
 // ─── find/git: private key files, .env in git ───────────────────────────────

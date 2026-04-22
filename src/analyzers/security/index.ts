@@ -29,8 +29,8 @@ export async function analyzeSecurity(
   const toolsUsed: string[] = ['find', 'git'];
   const toolsUnavailable: string[] = [];
 
-  // 1. Secrets (gitleaks)
-  const secrets = timed('gitleaks', verbose, () => gatherSecrets(repoPath));
+  // 1. Secrets (gitleaks) — dispatcher-driven via the SECRETS capability.
+  const secrets = await timedAsync('gitleaks', verbose, () => gatherSecrets(repoPath));
   if (secrets.toolUsed) toolsUsed.push(secrets.toolUsed);
   else toolsUnavailable.push('gitleaks');
 
