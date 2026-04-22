@@ -123,6 +123,34 @@ export interface SecretsResult extends CapabilityEnvelope {
   suppressedCount: number;
 }
 
+/** Per-finding detail for the codePatterns capability. */
+export interface CodePatternFinding {
+  file: string;
+  line: number;
+  rule: string;
+  severity: keyof SeverityCounts;
+  /** Human-readable summary from the scanner (first line of semgrep's `message`). */
+  title: string;
+  /** CWE identifier when the scanner supplies one (e.g. `CWE-79`). Empty otherwise. */
+  cwe: string;
+}
+
+/**
+ * Code-pattern findings, the codePatterns capability. Produced by static
+ * analysis scanners (semgrep today) that consume rulesets per active
+ * language pack (`LanguageSupport.semgrepRulesets`). Running once per
+ * repo rather than per pack: the scanner takes a union of rulesets and
+ * emits findings attributed by file path.
+ *
+ * `suppressedCount` mirrors `SecretsResult` — the count dropped by
+ * `.dxkit-suppressions.json` so the UI can report "zero visible after
+ * suppression" separately from "zero real findings."
+ */
+export interface CodePatternsResult extends CapabilityEnvelope {
+  findings: ReadonlyArray<CodePatternFinding>;
+  suppressedCount: number;
+}
+
 /**
  * Internal outcome shape used by language packs while bridging from the
  * legacy `gatherMetrics` channel to the capability dispatcher in Phase

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CODE_PATTERNS,
   COVERAGE,
   DEP_VULNS,
   IMPORTS,
@@ -7,6 +8,7 @@ import {
   TEST_FRAMEWORK,
 } from '../src/languages/capabilities/descriptors';
 import type {
+  CodePatternsResult,
   CoverageResult,
   DepVulnResult,
   ImportsResult,
@@ -241,5 +243,65 @@ describe('IMPORTS descriptor', () => {
     const out = IMPORTS.aggregate([rust]);
     expect(out.edges.size).toBe(0);
     expect(out.extracted.get('src/lib.rs')).toEqual(['crate::util']);
+  });
+});
+
+describe('CODE_PATTERNS descriptor', () => {
+  it('id is "codePatterns"', () => {
+    expect(CODE_PATTERNS.id).toBe('codePatterns');
+  });
+
+  it('concatenates findings across providers', () => {
+    const a: CodePatternsResult = {
+      schemaVersion: 1,
+      tool: 'semgrep',
+      suppressedCount: 0,
+      findings: [
+        {
+          file: 'src/a.ts',
+          line: 10,
+          rule: 'no-eval',
+          severity: 'critical',
+          title: 'Dangerous eval()',
+          cwe: 'CWE-95',
+        },
+      ],
+    };
+    const b: CodePatternsResult = {
+      schemaVersion: 1,
+      tool: 'codeql',
+      suppressedCount: 0,
+      findings: [
+        {
+          file: 'src/b.ts',
+          line: 20,
+          rule: 'sqli',
+          severity: 'high',
+          title: 'SQL injection',
+          cwe: 'CWE-89',
+        },
+      ],
+    };
+    const out = CODE_PATTERNS.aggregate([a, b]);
+    expect(out.findings).toHaveLength(2);
+    expect(out.tool).toBe('semgrep, codeql');
+  });
+
+  it('sums suppressedCount across providers', () => {
+    const a: CodePatternsResult = {
+      schemaVersion: 1,
+      tool: 'semgrep',
+      findings: [],
+      suppressedCount: 3,
+    };
+    const b: CodePatternsResult = {
+      schemaVersion: 1,
+      tool: 'semgrep',
+      findings: [],
+      suppressedCount: 2,
+    };
+    const out = CODE_PATTERNS.aggregate([a, b]);
+    expect(out.suppressedCount).toBe(5);
+    expect(out.tool).toBe('semgrep'); // dedup
   });
 });

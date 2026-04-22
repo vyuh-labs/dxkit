@@ -16,6 +16,7 @@
 
 import type {
   CapabilityEnvelope,
+  CodePatternsResult,
   CoverageResult,
   DepVulnResult,
   ImportsResult,
@@ -125,6 +126,26 @@ export const SECRETS: CapabilityDescriptor<SecretsResult> = {
   },
 };
 
+export const CODE_PATTERNS: CapabilityDescriptor<CodePatternsResult> = {
+  id: 'codePatterns',
+  aggregate(results) {
+    // Same union strategy as SECRETS — multiple providers only enter the
+    // picture if a future SAST scanner (codeql, opengrep) joins semgrep.
+    const findings: CodePatternsResult['findings'][number][] = [];
+    let suppressedCount = 0;
+    for (const r of results) {
+      findings.push(...r.findings);
+      suppressedCount += r.suppressedCount;
+    }
+    return {
+      schemaVersion: 1,
+      tool: uniqueJoin(results.map((r) => r.tool)),
+      findings,
+      suppressedCount,
+    };
+  },
+};
+
 export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
   id: 'imports',
   aggregate(results) {
@@ -176,6 +197,7 @@ export const PER_PACK_REGISTRY = {
  */
 export const GLOBAL_REGISTRY = {
   secrets: SECRETS,
+  codePatterns: CODE_PATTERNS,
 } as const;
 
 /**

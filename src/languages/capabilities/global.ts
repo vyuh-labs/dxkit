@@ -19,11 +19,11 @@
 
 import { gitleaksProvider } from '../../analyzers/tools/gitleaks';
 import type { CapabilityProvider } from './provider';
-import type { SecretsResult } from './types';
+import type { CodePatternsResult, SecretsResult } from './types';
 
 export interface GlobalCapabilities {
   secrets?: CapabilityProvider<SecretsResult>;
-  // codePatterns?: CapabilityProvider<CodePatternsResult>;  // Phase 10e.B.7
+  codePatterns?: CapabilityProvider<CodePatternsResult>;
   // duplication?: CapabilityProvider<DuplicationResult>;    // Phase 10e.B.8
   // structural?: CapabilityProvider<StructuralResult>;      // Phase 10e.B.9
 }
@@ -36,5 +36,5 @@ export interface GlobalCapabilities {
  */
 export const GLOBAL_CAPABILITIES: GlobalCapabilities = {
   secrets: gitleaksProvider,
-  // codePatterns wired in B.7; duplication in B.8; structural in B.9.
+  // codePatterns registered in B.7.2; duplication in B.8; structural in B.9.
 };
