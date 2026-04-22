@@ -20,6 +20,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LintResult,
+  SecretsResult,
   TestFrameworkResult,
 } from './types';
 
@@ -103,6 +104,27 @@ export const TEST_FRAMEWORK: CapabilityDescriptor<TestFrameworkResult> = {
   },
 };
 
+export const SECRETS: CapabilityDescriptor<SecretsResult> = {
+  id: 'secrets',
+  aggregate(results) {
+    // Multiple providers only appear if a future global scanner joins
+    // gitleaks (e.g. trufflehog). Concat findings, sum suppression
+    // counts, unique-join tool names — identical strategy to DEP_VULNS.
+    const findings: SecretsResult['findings'][number][] = [];
+    let suppressedCount = 0;
+    for (const r of results) {
+      findings.push(...r.findings);
+      suppressedCount += r.suppressedCount;
+    }
+    return {
+      schemaVersion: 1,
+      tool: uniqueJoin(results.map((r) => r.tool)),
+      findings,
+      suppressedCount,
+    };
+  },
+};
+
 export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
   id: 'imports',
   aggregate(results) {
@@ -133,17 +155,38 @@ export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
 };
 
 /**
- * Single registry of descriptors keyed by their `LanguagePackCapabilities`
- * slot name. The contract test enforces that every key here matches a slot
- * on the type, and every descriptor.id matches its key — so the type, the
- * descriptor, and the runtime never drift.
+ * Per-language capabilities — one provider registered per language pack.
+ * Keys must match `keyof LanguagePackCapabilities`; the contract test
+ * enforces that symmetry.
  */
-export const CAPABILITY_REGISTRY = {
+export const PER_PACK_REGISTRY = {
   depVulns: DEP_VULNS,
   lint: LINT,
   coverage: COVERAGE,
   testFramework: TEST_FRAMEWORK,
   imports: IMPORTS,
+} as const;
+
+/**
+ * Global capabilities — tools that run once per repo (gitleaks, semgrep,
+ * jscpd, graphify), not per pack. Keys must match `keyof GlobalCapabilities`.
+ * Pack-dependent inputs (e.g. semgrep's rulesets from each active pack's
+ * `semgrepRulesets` declaration) are read by the provider itself via
+ * `detectActiveLanguages(cwd)` — the provider interface is uniform.
+ */
+export const GLOBAL_REGISTRY = {
+  secrets: SECRETS,
+} as const;
+
+/**
+ * Union of both registries — kept as the canonical "every descriptor"
+ * surface for tests and for callers that don't care about per-pack vs
+ * global distinction. `providersFor()` (src/languages/capabilities/index.ts)
+ * is the routing layer that picks the right source.
+ */
+export const CAPABILITY_REGISTRY = {
+  ...PER_PACK_REGISTRY,
+  ...GLOBAL_REGISTRY,
 } as const;
 
 export type CapabilityId = keyof typeof CAPABILITY_REGISTRY;

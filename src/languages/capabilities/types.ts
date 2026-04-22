@@ -99,6 +99,28 @@ export interface ImportsResult extends CapabilityEnvelope {
   readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
+/** Per-finding detail for the secrets capability. */
+export interface SecretFinding {
+  file: string;
+  line: number;
+  rule: string;
+  severity: keyof SeverityCounts;
+}
+
+/**
+ * Hardcoded-secret findings, the secrets capability. Produced by global
+ * scanners (gitleaks today, trufflehog-compatible in the future) that
+ * run once per repo rather than per language pack. `suppressedCount`
+ * is the count of findings the repo's `.dxkit-suppressions.json`
+ * acknowledged and dropped — reported separately so the UI can
+ * distinguish "zero findings" from "zero visible findings after
+ * suppression."
+ */
+export interface SecretsResult extends CapabilityEnvelope {
+  findings: ReadonlyArray<SecretFinding>;
+  suppressedCount: number;
+}
+
 /**
  * Internal outcome shape used by language packs while bridging from the
  * legacy `gatherMetrics` channel to the capability dispatcher in Phase
