@@ -113,37 +113,12 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   const contributingExists = fileExists(cwd, 'CONTRIBUTING.md');
   const changelogExists = fileExists(cwd, 'CHANGELOG.md', 'CHANGES.md');
 
-  // Security -- grep-based secret detection (Layer 0 fallback, overridden by gitleaks when available)
-  const secretPatterns = [
-    { pattern: 'password[[:space:]]*[:=]', rule: 'hardcoded-password' },
-    { pattern: 'api[_-]?key[[:space:]]*[:=]', rule: 'hardcoded-api-key' },
-    { pattern: 'secret[[:space:]]*[:=]', rule: 'hardcoded-secret' },
-    { pattern: 'BEGIN.*PRIVATE KEY', rule: 'private-key-in-source' },
-    { pattern: 'AKIA[0-9A-Z]{16}', rule: 'aws-access-key' },
-    { pattern: 'ghp_[a-zA-Z0-9]{36}', rule: 'github-token' },
-    { pattern: 'sk-ant-[a-zA-Z0-9]', rule: 'anthropic-api-key' },
-  ];
-
-  const secretDetails: HealthMetrics['secretDetails'] = [];
-  for (const sp of secretPatterns) {
-    const findings = run(
-      `grep -rnE '${sp.pattern}' --include='*.ts' --include='*.js' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist | grep -v '.d.ts' | head -20`,
-      cwd,
-    );
-    for (const line of findings.split('\n').filter((l) => l.trim())) {
-      const match = line.match(/^\.\/(.+?):(\d+):/);
-      if (match) {
-        secretDetails.push({
-          file: match[1],
-          line: parseInt(match[2]),
-          rule: sp.rule,
-          severity:
-            sp.rule.includes('private-key') || sp.rule.includes('password') ? 'critical' : 'high',
-        });
-      }
-    }
-  }
-
+  // Security — secret scanning lives entirely under the SECRETS capability
+  // (gitleaks, 800+ patterns). The 7-pattern grep fallback that used to
+  // live here was deleted in Phase 10e.C.7 along with the legacy
+  // `secretFindings` / `secretDetails` fields. When gitleaks is absent
+  // the report surfaces that fact through `toolsUnavailable` and the
+  // capability envelope is simply absent.
   const evalCount =
     parseInt(
       run(
@@ -225,8 +200,6 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
     architectureDocsExist,
     contributingExists,
     changelogExists,
-    secretFindings: secretDetails.length,
-    secretDetails,
     evalCount,
     privateKeyFiles,
     envFilesInGit,
@@ -239,7 +212,6 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
     precommitConfigCount,
     makefileExists,
     envExampleExists,
-    coveragePercent: null,
     toolsUsed: ['grep', 'find', 'wc', 'git'],
     toolsUnavailable: [],
   };

@@ -14,7 +14,6 @@ import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { gatherPackageJsonMetrics } from './tools/package-json';
-import { detectActiveLanguages } from '../languages';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
 import {
@@ -29,8 +28,6 @@ import {
   TEST_FRAMEWORK,
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
-import type { CapabilityProvider } from '../languages/capabilities/provider';
-import type { TestFrameworkResult } from '../languages/capabilities/types';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -49,12 +46,7 @@ export function defaultMetrics(): HealthMetrics {
     testsPass: null,
     testsPassing: 0,
     testsFailing: 0,
-    testFramework: null,
-    coveragePercent: null,
     coverageConfigExists: false,
-    lintErrors: 0,
-    lintWarnings: 0,
-    lintTool: null,
     typeErrors: null,
     filesOver500Lines: 0,
     largestFileLines: 0,
@@ -68,17 +60,10 @@ export function defaultMetrics(): HealthMetrics {
     architectureDocsExist: false,
     contributingExists: false,
     changelogExists: false,
-    secretFindings: 0,
-    secretDetails: [],
     evalCount: 0,
     privateKeyFiles: 0,
     envFilesInGit: 0,
     tlsDisabledCount: 0,
-    depVulnCritical: 0,
-    depVulnHigh: 0,
-    depVulnMedium: 0,
-    depVulnLow: 0,
-    depAuditTool: null,
     controllers: 0,
     models: 0,
     directories: 0,
@@ -92,18 +77,7 @@ export function defaultMetrics(): HealthMetrics {
     npmScriptsCount: 0,
     toolsUsed: [],
     toolsUnavailable: [],
-    // Layer 2 -- null until tools provide data
     clocLanguages: null,
-    functionCount: null,
-    classCount: null,
-    maxFunctionsInFile: null,
-    maxFunctionsFilePath: null,
-    godNodeCount: null,
-    communityCount: null,
-    avgCohesion: null,
-    orphanModuleCount: null,
-    deadImportCount: null,
-    commentedCodeRatio: null,
   };
 }
 
@@ -146,22 +120,6 @@ async function analyzeHealthInternal(
   const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
-  const activeLangs = detectActiveLanguages(repoPath);
-
-  // testFramework legacy-field populator: capability dispatcher resolves
-  // across active packs (last-wins aggregate) and we keep `metrics.testFramework`
-  // in sync for the handful of pre-2.0 consumers. C.7 narrows
-  // `HealthMetrics` and the capability envelope becomes the only source.
-  const tfProviders: CapabilityProvider<TestFrameworkResult>[] = [];
-  for (const lang of activeLangs) {
-    const p = lang.capabilities?.testFramework;
-    if (p) tfProviders.push(p);
-  }
-  const tfResult = await timedAsync('testFramework', verbose, () =>
-    defaultDispatcher.gather(repoPath, TEST_FRAMEWORK, tfProviders),
-  );
-  if (tfResult) metrics.testFramework = tfResult.name;
-
   // `package.json` metrics: npm-script count + `engines.node` pin. These
   // don't fit any capability (Node-specific by nature) and used to live
   // in the typescript pack's `gatherMetrics` body; extracted in C.5 into
@@ -177,13 +135,12 @@ async function analyzeHealthInternal(
   const layer2 = timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose));
   mergeLayer2(metrics, layer2);
 
-  // Import real coverage when the project's test runner has produced an
-  // artifact. Lets the Testing dimension score against line-level truth
-  // instead of the filename-only fallback. Dispatcher handles every
-  // language pack's artifact formats — no per-language fallback needed.
+  // Surface the coverage tool name in `toolsUsed` even though its data
+  // lives under `capabilities.coverage`. `loadCoverage` and the COVERAGE
+  // dispatcher share the same underlying providers — the call here is
+  // served from the dispatcher cache when `gatherCapabilityReport` runs.
   const coverage = await timedAsync('coverage', verbose, () => loadCoverage(repoPath));
   if (coverage) {
-    metrics.coveragePercent = Math.round(coverage.linePercent);
     metrics.toolsUsed.push(`coverage:${coverage.source}`);
   }
 

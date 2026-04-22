@@ -19,7 +19,16 @@ import type {
   TestFrameworkResult,
 } from '../languages/capabilities/types';
 
-/** Raw metrics gathered by tool runners. All values are exact counts -- no estimates. */
+/**
+ * Raw metrics gathered by tool runners — the non-capability signals that
+ * survive into 2.0. Every capability-owned field (lint, depVulns, coverage,
+ * secrets, structural, testFramework) moved to `HealthReport.capabilities`
+ * in Phase 10e.C.1/.2 and got deleted from this interface in C.7. What
+ * remains is counted-directly-from-the-filesystem data: file counts, line
+ * counts, grep-derived markers, doc file checks, config-file presence.
+ *
+ * All values are exact counts — no estimates.
+ */
 export interface HealthMetrics {
   sourceFiles: number;
   testFiles: number;
@@ -27,13 +36,8 @@ export interface HealthMetrics {
   testsPass: boolean | null;
   testsPassing: number;
   testsFailing: number;
-  testFramework: string | null;
-  coveragePercent: number | null;
   coverageConfigExists: boolean;
 
-  lintErrors: number;
-  lintWarnings: number;
-  lintTool: string | null;
   typeErrors: number | null;
 
   filesOver500Lines: number;
@@ -50,19 +54,10 @@ export interface HealthMetrics {
   contributingExists: boolean;
   changelogExists: boolean;
 
-  secretFindings: number;
-  secretDetails: Array<{ file: string; line: number; rule: string; severity: string }>;
-  /** Count of gitleaks findings filtered by `.dxkit-suppressions.json`. */
-  secretSuppressed?: number;
   evalCount: number;
   privateKeyFiles: number;
   envFilesInGit: number;
   tlsDisabledCount: number;
-  depVulnCritical: number;
-  depVulnHigh: number;
-  depVulnMedium: number;
-  depVulnLow: number;
-  depAuditTool: string | null;
 
   controllers: number;
   models: number;
@@ -80,7 +75,7 @@ export interface HealthMetrics {
   toolsUsed: string[];
   toolsUnavailable: string[];
 
-  // cloc-derived (Layer 2 -- replaces grep estimates when available)
+  // cloc-derived — feeds the language breakdown when available.
   clocLanguages: Array<{
     language: string;
     files: number;
@@ -88,18 +83,6 @@ export interface HealthMetrics {
     comment: number;
     blank: number;
   }> | null;
-
-  // graphify-derived (Layer 2 -- AST analysis)
-  functionCount: number | null;
-  classCount: number | null;
-  maxFunctionsInFile: number | null;
-  maxFunctionsFilePath: string | null;
-  godNodeCount: number | null;
-  communityCount: number | null;
-  avgCohesion: number | null;
-  orphanModuleCount: number | null;
-  deadImportCount: number | null;
-  commentedCodeRatio: number | null;
 }
 
 /** Score for a single dimension (0-100). */
