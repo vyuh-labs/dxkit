@@ -89,6 +89,7 @@
     "skills"
   ],
   "dependencies": {
+    "exceljs": "^4.4.0",
     "hosted-git-info": "^9.0.2"
   }
 }

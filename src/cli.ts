@@ -25,6 +25,7 @@ function printUsage(): void {
     vyuh-dxkit quality [path]    Code quality + slop detection
     vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit licenses [path]   Dependency license inventory
+    vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -78,6 +79,7 @@ export async function run(argv: string[]): Promise<void> {
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
+      output: { type: 'string', short: 'o' },
     },
     allowPositionals: true,
     strict: false,
@@ -617,6 +619,48 @@ export async function run(argv: string[]): Promise<void> {
           }
         }
       }
+      break;
+    }
+
+    case 'to-xlsx': {
+      const inputArg = positionals[1];
+      if (!inputArg) {
+        console.error('Usage: vyuh-dxkit to-xlsx <json-file> [--output <file.xlsx>]'); // slop-ok
+        process.exit(1);
+      }
+      const inputPath = path.resolve(inputArg);
+      const outputPath = values.output
+        ? path.resolve(values.output as string)
+        : inputPath.replace(/\.json$/, '') + '.xlsx';
+
+      logger.header('vyuh-dxkit to-xlsx');
+      logger.info(`Reading ${path.relative(cwd, inputPath)}...`);
+
+      let json: unknown;
+      try {
+        json = JSON.parse(fs.readFileSync(inputPath, 'utf-8'));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.fail(`Failed to read/parse input: ${msg}`);
+        process.exit(1);
+      }
+
+      const { detectReportKind, toXlsx } = await import('./analyzers/xlsx');
+      const kind = detectReportKind(json);
+      if (kind === 'unknown') {
+        logger.fail(
+          'Unrecognised report shape. Supported inputs: licenses (vyuh-dxkit licenses --detailed produces licenses-<date>-detailed.json).',
+        );
+        process.exit(1);
+      }
+
+      const startTime = Date.now();
+      const buf = await toXlsx(json);
+      fs.writeFileSync(outputPath, buf);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      logger.success(`Wrote ${path.relative(cwd, outputPath)} (${buf.length} bytes)`);
+      logger.dim(`Converted in ${elapsed}s · report kind: ${kind}`);
       break;
     }
 
