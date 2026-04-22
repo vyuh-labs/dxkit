@@ -20,6 +20,7 @@ import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
+import { toProjectRelative } from './paths';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
@@ -82,7 +83,7 @@ export function gatherGitleaksResult(cwd: string): SecretsGatherOutcome {
   }
 
   const raw: SecretFinding[] = parsed.map((f) => ({
-    file: f.File.replace(cwd + '/', '').replace(cwd, ''),
+    file: toProjectRelative(cwd, f.File),
     line: f.StartLine,
     rule: f.RuleID,
     severity: f.RuleID.includes('private-key') ? 'critical' : 'high',

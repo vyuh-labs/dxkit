@@ -12,6 +12,7 @@ import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS, getSemgrepRulesets } from '../tools/tool-registry';
 import { getFindExcludeFlags, getSemgrepExcludeFlags } from '../tools/exclusions';
+import { toProjectRelative } from '../tools/paths';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
 import { detectActiveLanguages } from '../../languages';
@@ -163,7 +164,7 @@ export function gatherCodePatterns(cwd: string): {
         cwe: r.extra.metadata?.cwe?.[0]?.split(':')[0] || '',
         rule: r.check_id.split('.').slice(-1)[0],
         title: r.extra.message.split('\n')[0].slice(0, 200),
-        file: r.path.replace(cwd + '/', '').replace(cwd, ''),
+        file: toProjectRelative(cwd, r.path),
         line: r.start.line,
         tool: 'semgrep',
       }));
