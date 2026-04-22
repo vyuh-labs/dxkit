@@ -7,6 +7,18 @@
  * - Tools are layered: always-available (grep/find/git) -> project tools -> optional tools
  */
 
+import type {
+  CodePatternsResult,
+  CoverageResult,
+  DepVulnResult,
+  DuplicationResult,
+  ImportsResult,
+  LintResult,
+  SecretsResult,
+  StructuralResult,
+  TestFrameworkResult,
+} from '../languages/capabilities/types';
+
 /** Raw metrics gathered by tool runners. All values are exact counts -- no estimates. */
 export interface HealthMetrics {
   sourceFiles: number;
@@ -99,6 +111,31 @@ export interface DimensionScore {
   details: string;
 }
 
+/**
+ * Aggregated capability envelopes attached to a HealthReport.
+ *
+ * Phase 10e.C.1 introduces this sub-object alongside the legacy `HealthMetrics`
+ * channel. Each field is the dispatched, aggregated envelope produced by one
+ * capability (see `src/languages/capabilities/descriptors.ts`). A field is
+ * absent only when every provider returned null — e.g. a repo with no active
+ * Python/Node/Go/Rust/C# pack, or a global tool that isn't installed.
+ *
+ * Optional through C.1–C.7 so the legacy path and test fixtures keep working.
+ * C.8 narrows HealthReport and removes the legacy fields; `capabilities`
+ * becomes the single source of truth in 2.0.0.
+ */
+export interface CapabilityReport {
+  depVulns?: DepVulnResult;
+  lint?: LintResult;
+  coverage?: CoverageResult;
+  imports?: ImportsResult;
+  testFramework?: TestFrameworkResult;
+  secrets?: SecretsResult;
+  codePatterns?: CodePatternsResult;
+  duplication?: DuplicationResult;
+  structural?: StructuralResult;
+}
+
 /** Complete health report. */
 export interface HealthReport {
   repo: string;
@@ -120,4 +157,11 @@ export interface HealthReport {
   languages: Array<{ name: string; files: number; lines: number; percentage: number }>;
   toolsUsed: string[];
   toolsUnavailable: string[];
+  /**
+   * Dispatched capability envelopes (Phase 10e.C.1).
+   * Optional until 2.0.0 — legacy `HealthMetrics` fields still carry the
+   * same data for scoring and actions. Populated by `analyzeHealthInternal`
+   * on every real run.
+   */
+  capabilities?: CapabilityReport;
 }

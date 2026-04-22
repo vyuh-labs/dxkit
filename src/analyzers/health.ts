@@ -9,14 +9,25 @@
 import * as path from 'path';
 import { detect } from '../detect';
 import { DetectedStack } from '../types';
-import { HealthMetrics, HealthReport } from './types';
+import { CapabilityReport, HealthMetrics, HealthReport } from './types';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { detectActiveLanguages } from '../languages';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
-import { TEST_FRAMEWORK } from '../languages/capabilities/descriptors';
+import {
+  CODE_PATTERNS,
+  COVERAGE,
+  DEP_VULNS,
+  DUPLICATION,
+  IMPORTS,
+  LINT,
+  SECRETS,
+  STRUCTURAL,
+  TEST_FRAMEWORK,
+} from '../languages/capabilities/descriptors';
+import { providersFor } from '../languages/capabilities';
 import type { CapabilityProvider } from '../languages/capabilities/provider';
 import type { TestFrameworkResult } from '../languages/capabilities/types';
 import { scoreTestsDimension } from './tests/shallow';
@@ -205,6 +216,14 @@ async function analyzeHealthInternal(
   };
   const { overallScore, grade } = computeOverall(dimensions);
 
+  // Phase 10e.C.1: capability envelopes alongside legacy metrics. Dispatched
+  // in parallel; providers the legacy path already ran are served from the
+  // dispatcher cache (free). C.2 rewires scorers onto this; C.5 removes the
+  // legacy path.
+  const capabilities = await timedAsync('capabilities', verbose, () =>
+    gatherCapabilityReport(repoPath),
+  );
+
   // Step 4: Format report
   const commitSha = run('git rev-parse --short HEAD 2>/dev/null', repoPath);
   const branch = run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath);
@@ -219,8 +238,52 @@ async function analyzeHealthInternal(
     languages: metrics.languages,
     toolsUsed: metrics.toolsUsed,
     toolsUnavailable: metrics.toolsUnavailable,
+    capabilities,
   };
   return { report, metrics };
+}
+
+/**
+ * Dispatch all 9 capabilities and bundle the non-null envelopes into a
+ * `CapabilityReport`. Each capability resolves a different provider set
+ * (per-pack capabilities union the active language packs; global
+ * capabilities hit a single registered provider). Dispatches run in
+ * parallel — the descriptor aggregates are pure, and the dispatcher
+ * isolates provider failures.
+ */
+async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
+  const [
+    depVulns,
+    lint,
+    coverage,
+    imports,
+    testFramework,
+    secrets,
+    codePatterns,
+    duplication,
+    structural,
+  ] = await Promise.all([
+    defaultDispatcher.gather(cwd, DEP_VULNS, providersFor(DEP_VULNS)),
+    defaultDispatcher.gather(cwd, LINT, providersFor(LINT)),
+    defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE)),
+    defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS)),
+    defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK)),
+    defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS)),
+    defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS)),
+    defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION)),
+    defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL)),
+  ]);
+  const report: CapabilityReport = {};
+  if (depVulns) report.depVulns = depVulns;
+  if (lint) report.lint = lint;
+  if (coverage) report.coverage = coverage;
+  if (imports) report.imports = imports;
+  if (testFramework) report.testFramework = testFramework;
+  if (secrets) report.secrets = secrets;
+  if (codePatterns) report.codePatterns = codePatterns;
+  if (duplication) report.duplication = duplication;
+  if (structural) report.structural = structural;
+  return report;
 }
 
 /**
