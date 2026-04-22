@@ -170,11 +170,12 @@ async function analyzeHealthInternal(
   metrics.npmScriptsCount = pkg.npmScriptsCount;
   metrics.nodeEngineVersion = pkg.nodeEngineVersion;
 
-  // Layer 2: Optional enhanced tools (run in parallel for speed)
-  mergeMetrics(
-    metrics,
-    timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose)),
-  );
+  // Layer 2: Optional enhanced tools — cloc line counts, gitleaks secret
+  // counts, graphify AST stats. Reshaped from the dispatcher's cached
+  // envelopes (`tools/parallel.ts`), so each tool shells out at most once
+  // per analyzer run.
+  const layer2 = timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose));
+  mergeLayer2(metrics, layer2);
 
   // Import real coverage when the project's test runner has produced an
   // artifact. Lets the Testing dimension score against line-level truth
@@ -327,36 +328,21 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
 }
 
 /**
- * Dependency-vulnerability counts accumulate across language packs so a mixed
- * repo (e.g. Node + Python) reports pip-audit + npm-audit + govulncheck results
- * together. Before this, the last-merged pack silently overwrote earlier ones.
+ * Merge `gatherLayer2Parallel` output (cloc + gitleaks + graphify reshape)
+ * into the accumulator. Layer 2 only writes non-capability fields and
+ * array-valued `toolsUsed` / `toolsUnavailable`; no depVuln* or depAuditTool
+ * aggregation is needed here since those live under `capabilities.depVulns`.
+ * Null / undefined values pass through unchanged so Layer 2 can signal
+ * "no data" per field.
  */
-const AGGREGATED_VULN_FIELDS = [
-  'depVulnCritical',
-  'depVulnHigh',
-  'depVulnMedium',
-  'depVulnLow',
-] as const;
-
-/** Merge language-specific metrics into the base, preferring non-null values. */
-export function mergeMetrics(base: HealthMetrics, overlay: Partial<HealthMetrics>): void {
+function mergeLayer2(base: HealthMetrics, overlay: Partial<HealthMetrics>): void {
   for (const key of Object.keys(overlay)) {
     const value = (overlay as Record<string, unknown>)[key];
     if (value === undefined || value === null) continue;
-
     if (key === 'toolsUsed' && Array.isArray(value)) {
       base.toolsUsed.push(...(value as string[]));
     } else if (key === 'toolsUnavailable' && Array.isArray(value)) {
       base.toolsUnavailable.push(...(value as string[]));
-    } else if (
-      AGGREGATED_VULN_FIELDS.includes(key as (typeof AGGREGATED_VULN_FIELDS)[number]) &&
-      typeof value === 'number'
-    ) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (base as any)[key] = ((base as any)[key] ?? 0) + value;
-    } else if (key === 'depAuditTool' && typeof value === 'string') {
-      // Multiple packs may contribute — join with commas for clarity.
-      base.depAuditTool = base.depAuditTool ? `${base.depAuditTool}, ${value}` : value;
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (base as any)[key] = value;
