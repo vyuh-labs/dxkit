@@ -2,14 +2,31 @@
  * Graphify integration -- deterministic AST extraction via tree-sitter.
  * Layer 2 (optional): requires `pip install graphifyy`.
  *
- * Runs graphify's Python API via subprocess, parses structured JSON output.
- * All metrics are derived from EXTRACTED confidence edges only (no LLM).
+ * Two call shapes:
+ *
+ *   1. `gatherGraphifyResult(cwd)` — the canonical capability-shaped
+ *      gather. Returns a `StructuralResult` envelope or a typed outcome
+ *      describing why it was skipped/failed. Consumed by the
+ *      `graphifyProvider` capability wrapper and by the quality
+ *      analyzer's dispatcher call.
+ *
+ *   2. `gatherGraphifyMetrics(cwd)` — thin bridge retained for
+ *      `src/analyzers/tools/parallel.ts`, which loads gatherers by
+ *      module name + function name in a child process. Decomposes the
+ *      envelope into the legacy `HealthMetrics` subset and goes away
+ *      in Phase C.
+ *
+ * Known flake (Phase 10f.2): `/tmp/graphify-venv` race + `/tmp`
+ * cleanup kills graphify ~50% of runs. Separate behavioral fix; this
+ * file's structure is unaffected.
  */
 import * as fs from 'fs';
 import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeSet } from './exclusions';
+import type { CapabilityProvider } from '../../languages/capabilities/provider';
+import type { StructuralResult } from '../../languages/capabilities/types';
 
 interface GraphifyResult {
   functionCount: number;
@@ -143,15 +160,26 @@ print(json.dumps({
 `;
 }
 
-/** Gather AST-derived metrics via graphify. */
-export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
-  // findPython already verifies graphify is importable
-  const pythonCmd = findPython(cwd);
-  if (!pythonCmd) {
-    return { toolsUnavailable: ['graphify (not installed)'] };
-  }
+/**
+ * Outcome union mirrors the other global wrappers (gitleaks, semgrep,
+ * jscpd). The capability provider collapses this to `StructuralResult
+ * | null`; the legacy bridge reads `unavailable.reason` so the
+ * `toolsUnavailable` strings stay byte-identical across the migration.
+ */
+export type StructuralGatherOutcome =
+  | { kind: 'success'; envelope: StructuralResult }
+  | { kind: 'unavailable'; reason: string };
 
-  // Write script to temp file to avoid shell escaping issues
+/**
+ * Single source of truth for the graphify subprocess invocation.
+ * `graphifyProvider` (new capability path) and `gatherGraphifyMetrics`
+ * (legacy Layer 2 parallel path) both consume the envelope via this
+ * helper — byte-identical output across both paths.
+ */
+export function gatherGraphifyResult(cwd: string): StructuralGatherOutcome {
+  const pythonCmd = findPython(cwd);
+  if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
+
   const scriptPath = `/tmp/dxkit-graphify-${Date.now()}.py`;
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
   // Redirect stderr to suppress progress output, run from /tmp to avoid writing to target
@@ -162,41 +190,81 @@ export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
     /* ignore */
   }
 
-  if (!output) {
-    return { toolsUnavailable: ['graphify (failed to run)'] };
-  }
+  if (!output) return { kind: 'unavailable', reason: 'failed to run' };
 
-  // Graphify prints progress to stdout before the JSON — extract only the JSON line
+  // Graphify prints progress to stdout before the JSON — extract only the JSON line.
   const jsonLine = output
     .split('\n')
     .filter((l) => l.startsWith('{'))
     .pop();
-  if (!jsonLine) {
-    return { toolsUnavailable: ['graphify (no JSON output)'] };
-  }
+  if (!jsonLine) return { kind: 'unavailable', reason: 'no JSON output' };
 
+  let data: GraphifyResult & { error?: string };
   try {
-    const data = JSON.parse(jsonLine) as GraphifyResult & { error?: string };
-    if (data.error) {
-      return { toolsUnavailable: [`graphify (${data.error})`] };
-    }
-
-    return {
-      functionCount: data.functionCount,
-      classCount: data.classCount,
-      maxFunctionsInFile: data.maxFunctionsInFile,
-      maxFunctionsFilePath: data.maxFunctionsFilePath,
-      godNodeCount: data.godNodeCount,
-      communityCount: data.communityCount,
-      avgCohesion: data.avgCohesion,
-      orphanModuleCount: data.orphanModuleCount,
-      deadImportCount: data.deadImportCount,
-      commentedCodeRatio: data.commentedCodeRatio,
-      toolsUsed: ['graphify'],
-    };
+    data = JSON.parse(jsonLine) as GraphifyResult & { error?: string };
   } catch {
-    return { toolsUnavailable: ['graphify (parse error)'] };
+    return { kind: 'unavailable', reason: 'parse error' };
   }
+  if (data.error) return { kind: 'unavailable', reason: data.error };
+
+  const envelope: StructuralResult = {
+    schemaVersion: 1,
+    tool: 'graphify',
+    functionCount: data.functionCount,
+    classCount: data.classCount,
+    maxFunctionsInFile: data.maxFunctionsInFile,
+    maxFunctionsFilePath: data.maxFunctionsFilePath,
+    godNodeCount: data.godNodeCount,
+    communityCount: data.communityCount,
+    avgCohesion: data.avgCohesion,
+    orphanModuleCount: data.orphanModuleCount,
+    deadImportCount: data.deadImportCount,
+    commentedCodeRatio: data.commentedCodeRatio,
+  };
+  return { kind: 'success', envelope };
+}
+
+/**
+ * Capability-shaped provider. Register in
+ * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.structural`
+ * so the dispatcher picks it up via `providersFor(STRUCTURAL)`.
+ */
+export const graphifyProvider: CapabilityProvider<StructuralResult> = {
+  source: 'graphify',
+  async gather(cwd) {
+    const outcome = gatherGraphifyResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
+/**
+ * LEGACY bridge: returns `Partial<HealthMetrics>`. Consumed by
+ * `src/analyzers/tools/parallel.ts`'s dynamic-require loader. Removed
+ * in Phase 10e.C when Layer 2 parallel moves onto the dispatcher.
+ * Byte-identical strings to the pre-B.9.2 behavior, including the
+ * exact `toolsUnavailable` phrasings: `graphify (not installed)`,
+ * `graphify (failed to run)`, `graphify (no JSON output)`,
+ * `graphify (parse error)`, `graphify (<inner error>)`.
+ */
+export function gatherGraphifyMetrics(cwd: string): Partial<HealthMetrics> {
+  const outcome = gatherGraphifyResult(cwd);
+  if (outcome.kind === 'unavailable') {
+    return { toolsUnavailable: [`graphify (${outcome.reason})`] };
+  }
+  const e = outcome.envelope;
+  return {
+    functionCount: e.functionCount,
+    classCount: e.classCount,
+    maxFunctionsInFile: e.maxFunctionsInFile,
+    maxFunctionsFilePath: e.maxFunctionsFilePath,
+    godNodeCount: e.godNodeCount,
+    communityCount: e.communityCount,
+    avgCohesion: e.avgCohesion,
+    orphanModuleCount: e.orphanModuleCount,
+    deadImportCount: e.deadImportCount,
+    commentedCodeRatio: e.commentedCodeRatio,
+    toolsUsed: ['graphify'],
+  };
 }
 
 /** Find a working python3 that has graphify installed. Delegates to tool-registry. */

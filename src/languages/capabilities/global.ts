@@ -18,6 +18,7 @@
  */
 
 import { gitleaksProvider } from '../../analyzers/tools/gitleaks';
+import { graphifyProvider } from '../../analyzers/tools/graphify';
 import { jscpdProvider } from '../../analyzers/tools/jscpd';
 import { semgrepProvider } from '../../analyzers/tools/semgrep';
 import type { CapabilityProvider } from './provider';
@@ -45,5 +46,5 @@ export const GLOBAL_CAPABILITIES: GlobalCapabilities = {
   secrets: gitleaksProvider,
   codePatterns: semgrepProvider,
   duplication: jscpdProvider,
-  // structural registered in B.9.2.
+  structural: graphifyProvider,
 };
