@@ -12,6 +12,8 @@ import type {
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
+  LicenseFinding,
+  LicensesResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -335,6 +337,75 @@ const rustTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/**
+ * Per-crate shape emitted by `cargo license --json`. Authors use
+ * cargo's pipe-separated convention (`"A <a@x>|B <b@y>"`), which we
+ * pass through verbatim — downstream formatters can split if they care.
+ */
+interface CargoLicenseEntry {
+  name: string;
+  version: string;
+  authors?: string;
+  repository?: string;
+  license?: string;
+  license_file?: string | null;
+  description?: string;
+}
+
+/**
+ * Single source of truth for the rust pack's license gathering.
+ * Consumed by `rustLicensesProvider` (capability dispatcher).
+ *
+ * cargo-license walks the Cargo.toml-resolved dep graph and emits every
+ * crate's license metadata in one pass — richer than go-licenses (has
+ * description + authors + version natively), simpler than the node path
+ * (no per-package disk read needed). Returns null cleanly when the repo
+ * isn't a Cargo workspace or the tool isn't installed.
+ */
+function gatherRustLicensesResult(cwd: string): LicensesResult | null {
+  if (!fileExists(cwd, 'Cargo.toml')) return null;
+
+  const status = findTool(TOOL_DEFS['cargo-license'], cwd);
+  if (!status.available || !status.path) return null;
+
+  const raw = run(`${status.path} --json 2>/dev/null`, cwd, 120000);
+  if (!raw) return null;
+
+  let data: CargoLicenseEntry[];
+  try {
+    data = JSON.parse(raw) as CargoLicenseEntry[];
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) return null;
+
+  const findings: LicenseFinding[] = [];
+  for (const entry of data) {
+    if (!entry.name || !entry.version) continue;
+    findings.push({
+      package: entry.name,
+      version: entry.version,
+      licenseType: entry.license && entry.license.length > 0 ? entry.license : 'UNKNOWN',
+      sourceUrl: entry.repository || undefined,
+      description: entry.description || undefined,
+      supplier: entry.authors || undefined,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    tool: 'cargo-license',
+    findings,
+  };
+}
+
+const rustLicensesProvider: CapabilityProvider<LicensesResult> = {
+  source: 'rust',
+  async gather(cwd) {
+    return gatherRustLicensesResult(cwd);
+  },
+};
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -395,7 +466,7 @@ export const rust: LanguageSupport = {
     return fileExists(cwd, 'Cargo.toml');
   },
 
-  tools: ['clippy', 'cargo-audit', 'cargo-llvm-cov'],
+  tools: ['clippy', 'cargo-audit', 'cargo-llvm-cov', 'cargo-license'],
   // No dedicated semgrep Rust ruleset; covered by p/security-audit.
   semgrepRulesets: [],
 
@@ -405,6 +476,7 @@ export const rust: LanguageSupport = {
     coverage: rustCoverageProvider,
     imports: rustImportsProvider,
     testFramework: rustTestFrameworkProvider,
+    licenses: rustLicensesProvider,
   },
 
   mapLintSeverity: mapClippyLintSeverity,

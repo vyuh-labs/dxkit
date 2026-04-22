@@ -115,7 +115,7 @@ describe('rust registration', () => {
   });
 
   it('declares expected tools', () => {
-    expect(rust.tools).toEqual(['clippy', 'cargo-audit', 'cargo-llvm-cov']);
+    expect(rust.tools).toEqual(['clippy', 'cargo-audit', 'cargo-llvm-cov', 'cargo-license']);
   });
 
   it('declares empty semgrep rulesets', () => {

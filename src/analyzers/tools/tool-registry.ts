@@ -547,6 +547,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'cargo install cargo-audit',
     },
   },
+  'cargo-license': {
+    name: 'cargo-license',
+    description: 'License inventory for Rust crate dependencies',
+    install: 'cargo install cargo-license',
+    check: 'cargo license --version',
+    for: 'rust',
+    layer: 'language',
+    binaries: ['cargo-license'],
+    versionCheck: 'cargo license --version 2>/dev/null',
+    installCommands: {
+      macos: 'cargo install cargo-license',
+      linux: 'cargo install cargo-license',
+      windows: 'cargo install cargo-license',
+    },
+  },
   'dotnet-format': {
     name: 'dotnet-format',
     description: 'C# formatting and linting',
