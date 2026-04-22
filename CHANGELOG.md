@@ -100,6 +100,39 @@ semgrep, jscpd, graphify) register under the same model. The legacy
   vulnerabilities`, `test-gaps`, `quality`, `dev-report` keep their
   report shapes unchanged.
 
+## [1.6.1] - 2026-04-21
+
+Patch release with two CLI bug fixes found while regenerating dxkit's own
+reports. No API or schema changes — drop-in upgrade from 1.6.0.
+
+### Fixed
+
+- **CLI positional paths are now resolved to absolute before analyzers run.**
+  Previously, `vyuh-dxkit health .` (or any other analyzer command invoked
+  with `.`) propagated the literal `"."` into Layer 2 child worker processes
+  (cloc, gitleaks, graphify), which run from `dist/analyzers/` rather than
+  the target repo. The `.` then resolved against the worker's cwd and cloc
+  happily scanned dxkit's own compiled `dist/*.js` output — producing
+  bogus language breakdowns like "JavaScript 90%, TypeScript 10%" on
+  TypeScript-only repos. The CLI now wraps all 6 positional-path sites
+  with `path.resolve()` at the boundary, so bare `.` / `./foo` / `../bar`
+  arguments work as users expect. Affects `health`, `vulnerabilities`,
+  `test-gaps`, `quality`, `dev-report`, and `tools`.
+- **Vulnerability report section numbers are now dynamic.** Previously,
+  empty finding categories (Secrets / Code Patterns / Config Issues /
+  Dependencies) were skipped but their hardcoded section numbers were
+  not renumbered, so a report with only secrets + dep vulns rendered as
+  `## 1.` → `## 4.` with 2 and 3 mysteriously missing. Sections are now
+  numbered with a running counter that advances only when a section
+  actually renders. Output is purely cosmetic-identical when all four
+  categories have findings; skipped categories no longer leave holes.
+
+### Internal
+
+- `chore: sync package-lock.json to 1.6.0` — the 1.6.0 release commit
+  bumped `package.json` but not the lockfile. Every `npm install` since
+  has surfaced as `M package-lock.json`. Now consistent.
+
 ## [1.6.0] - 2026-04-18
 
 This release transforms dxkit from a scaffolder into an analyzer-and-scaffolder.

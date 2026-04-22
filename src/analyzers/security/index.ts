@@ -103,21 +103,25 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // Findings grouped by category
+  // Findings grouped by category. Section numbers are assigned dynamically —
+  // empty categories are skipped entirely, so the rendered document never
+  // jumps from "## 1. ..." to "## 4. ..." when middle sections have no
+  // findings.
   const categories: Array<{ key: string; title: string }> = [
-    { key: 'secret', title: '1. Secrets & Credentials' },
-    { key: 'code', title: '2. Code Vulnerability Patterns' },
-    { key: 'config', title: '3. Configuration Issues' },
+    { key: 'secret', title: 'Secrets & Credentials' },
+    { key: 'code', title: 'Code Vulnerability Patterns' },
+    { key: 'config', title: 'Configuration Issues' },
   ];
   const SORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
+  let sectionNum = 1;
   for (const cat of categories) {
     const items = report.findings
       .filter((f) => f.category === cat.key)
       .sort((a, b) => SORDER[a.severity] - SORDER[b.severity]);
     if (items.length === 0) continue;
 
-    L.push(`## ${cat.title}`);
+    L.push(`## ${sectionNum}. ${cat.title}`);
     L.push('');
     for (const f of items) {
       L.push(`### ${f.severity.toUpperCase()}: ${f.title}`);
@@ -128,11 +132,12 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     }
     L.push('---');
     L.push('');
+    sectionNum++;
   }
 
   // Dependencies
   if (d.tool) {
-    L.push('## 4. Dependency Vulnerabilities');
+    L.push(`## ${sectionNum}. Dependency Vulnerabilities`);
     L.push('');
     L.push('| Severity | Count |');
     L.push('|----------|-------|');
