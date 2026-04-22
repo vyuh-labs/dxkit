@@ -12,6 +12,8 @@ import type {
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
+  LicenseFinding,
+  LicensesResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -383,6 +385,110 @@ const goTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/** Subset of `go list -m -json` per-module output we consume for versions. */
+interface GoListModule {
+  Path?: string;
+  Version?: string;
+  Main?: boolean;
+}
+
+/**
+ * Parse the NDJSON-ish stream emitted by `go list -m -json all`. The tool
+ * outputs concatenated `{...}` objects separated by no delimiter; each
+ * object starts with '{' and ends with '}' at column 0. Match each with
+ * a multiline regex and JSON.parse individually.
+ */
+function parseGoListModuleStream(raw: string): GoListModule[] {
+  const out: GoListModule[] = [];
+  const re = /^\{[\s\S]*?^\}/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    try {
+      out.push(JSON.parse(m[0]) as GoListModule);
+    } catch {
+      /* skip malformed block */
+    }
+  }
+  return out;
+}
+
+/**
+ * Find the module whose path is the longest prefix of a Go package path,
+ * returning its version. go-licenses reports at the package level
+ * (`github.com/x/y/subpkg`) while `go list -m all` reports at the module
+ * level (`github.com/x/y`); longest-prefix match bridges the two.
+ */
+function goVersionForPackage(pkgPath: string, modules: Map<string, string>): string {
+  let best = '';
+  for (const mod of modules.keys()) {
+    if ((pkgPath === mod || pkgPath.startsWith(mod + '/')) && mod.length > best.length) {
+      best = mod;
+    }
+  }
+  return modules.get(best) ?? '';
+}
+
+/**
+ * Single source of truth for the go pack's license gathering. Consumed
+ * by `goLicensesProvider` (capability dispatcher).
+ *
+ * Two-step merge: `go-licenses report .` emits per-package CSV
+ * (path,url,license) and `go list -m -json all` emits per-module
+ * versions. Modules and packages have different granularity in the
+ * Go module system, so we longest-prefix-match the package path
+ * against the module list. Returns null cleanly on any Go module
+ * without go-licenses installed, without go.mod, or when the tool
+ * fails (commonly because `go mod download` hasn't been run).
+ */
+function gatherGoLicensesResult(cwd: string): LicensesResult | null {
+  if (!fileExists(cwd, 'go.mod')) return null;
+
+  const status = findTool(TOOL_DEFS['go-licenses'], cwd);
+  if (!status.available || !status.path) return null;
+
+  const csvRaw = run(`${status.path} report . 2>/dev/null`, cwd, 180000);
+  if (!csvRaw) return null;
+
+  const listRaw = run('go list -m -json all 2>/dev/null', cwd, 60000);
+  const versions = new Map<string, string>();
+  if (listRaw) {
+    for (const mod of parseGoListModuleStream(listRaw)) {
+      if (mod.Main) continue;
+      if (mod.Path && mod.Version) versions.set(mod.Path, mod.Version);
+    }
+  }
+
+  const findings: LicenseFinding[] = [];
+  for (const line of csvRaw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(',');
+    if (parts.length < 3) continue;
+    const pkg = parts[0].trim();
+    const url = parts[1].trim();
+    const license = parts[2].trim();
+    findings.push({
+      package: pkg,
+      version: goVersionForPackage(pkg, versions),
+      licenseType: license || 'UNKNOWN',
+      sourceUrl: url || undefined,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    tool: 'go-licenses',
+    findings,
+  };
+}
+
+const goLicensesProvider: CapabilityProvider<LicensesResult> = {
+  source: 'go',
+  async gather(cwd) {
+    return gatherGoLicensesResult(cwd);
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -394,7 +500,7 @@ export const go: LanguageSupport = {
     return fileExists(cwd, 'go.mod');
   },
 
-  tools: ['golangci-lint', 'govulncheck'],
+  tools: ['golangci-lint', 'govulncheck', 'go-licenses'],
   semgrepRulesets: ['p/gosec'],
 
   capabilities: {
@@ -403,6 +509,7 @@ export const go: LanguageSupport = {
     coverage: goCoverageProvider,
     imports: goImportsProvider,
     testFramework: goTestFrameworkProvider,
+    licenses: goLicensesProvider,
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,

@@ -502,6 +502,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
     },
   },
+  'go-licenses': {
+    name: 'go-licenses',
+    description: 'License inventory for Go modules',
+    install: 'go install github.com/google/go-licenses@latest',
+    check: 'go-licenses --help',
+    for: 'go',
+    layer: 'language',
+    binaries: ['go-licenses'],
+    versionCheck: 'go-licenses --help 2>/dev/null | head -1',
+    installCommands: {
+      macos: 'go install github.com/google/go-licenses@latest',
+      linux: 'go install github.com/google/go-licenses@latest',
+      windows: 'go install github.com/google/go-licenses@latest',
+    },
+  },
   clippy: {
     name: 'clippy',
     description: 'Rust linting',

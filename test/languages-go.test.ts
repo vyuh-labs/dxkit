@@ -128,7 +128,7 @@ describe('go registration', () => {
   });
 
   it('declares expected tools', () => {
-    expect(go.tools).toEqual(['golangci-lint', 'govulncheck']);
+    expect(go.tools).toEqual(['golangci-lint', 'govulncheck', 'go-licenses']);
   });
 
   it('uses p/gosec semgrep ruleset', () => {
