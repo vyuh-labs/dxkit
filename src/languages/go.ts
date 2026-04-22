@@ -455,11 +455,6 @@ export const go: LanguageSupport = {
     // 'no-output' was previously silent (raw was empty so the if (raw) block
     // didn't run and nothing was pushed); preserve that behavior.
 
-    // LEGACY: testFramework populated from capabilities.testFramework;
-    // removed in Phase 10e.B.5.6.
-    const tfResult = gatherGoTestFrameworkResult(cwd);
-    if (tfResult) metrics.testFramework = tfResult.name;
-
     return metrics;
   },
 };

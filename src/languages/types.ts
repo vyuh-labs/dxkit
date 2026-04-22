@@ -32,7 +32,6 @@ export type LangMetrics = Pick<
   | 'depVulnMedium'
   | 'depVulnLow'
   | 'depAuditTool'
-  | 'testFramework'
   | 'toolsUsed'
   | 'toolsUnavailable'
   | 'npmScriptsCount'

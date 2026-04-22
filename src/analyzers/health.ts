@@ -15,6 +15,10 @@ import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { detectActiveLanguages } from '../languages';
 import { timed, timedAsync } from './tools/timing';
+import { defaultDispatcher } from './dispatcher';
+import { TEST_FRAMEWORK } from '../languages/capabilities/descriptors';
+import type { CapabilityProvider } from '../languages/capabilities/provider';
+import type { TestFrameworkResult } from '../languages/capabilities/types';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -131,7 +135,8 @@ async function analyzeHealthInternal(
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
   // Layer 1: Language-specific tools run in parallel — packs are independent.
-  const langPacks = detectActiveLanguages(repoPath).filter((l) => l.gatherMetrics);
+  const activeLangs = detectActiveLanguages(repoPath);
+  const langPacks = activeLangs.filter((l) => l.gatherMetrics);
   const langResults = await Promise.all(
     langPacks.map((lang) =>
       timedAsync(`${lang.id} (Layer 1)`, verbose, () => lang.gatherMetrics!(repoPath)),
@@ -140,6 +145,20 @@ async function analyzeHealthInternal(
   for (const result of langResults) {
     mergeMetrics(metrics, result);
   }
+
+  // testFramework comes from the capability dispatcher, not gatherMetrics.
+  // Descriptor aggregate is last-wins across packs; mixed-stack repos
+  // resolve to a single framework string exactly as they did in the
+  // legacy channel. Per-language reporting is future work (see Phase 10f).
+  const tfProviders: CapabilityProvider<TestFrameworkResult>[] = [];
+  for (const lang of activeLangs) {
+    const p = lang.capabilities?.testFramework;
+    if (p) tfProviders.push(p);
+  }
+  const tfResult = await timedAsync('testFramework', verbose, () =>
+    defaultDispatcher.gather(repoPath, TEST_FRAMEWORK, tfProviders),
+  );
+  if (tfResult) metrics.testFramework = tfResult.name;
 
   // Layer 2: Optional enhanced tools (run in parallel for speed)
   mergeMetrics(

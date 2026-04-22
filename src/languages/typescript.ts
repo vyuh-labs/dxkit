@@ -505,11 +505,6 @@ export const typescript: LanguageSupport = {
       metrics.toolsUnavailable!.push('npm-audit');
     }
 
-    // LEGACY: testFramework populated from capabilities.testFramework;
-    // removed in Phase 10e.B.5.6 when health.ts wires the dispatcher.
-    const tfResult = gatherTsTestFrameworkResult(cwd);
-    if (tfResult) metrics.testFramework = tfResult.name;
-
     const scriptsOutput = run(
       'node -e "const p=require(\'./package.json\'); console.log(Object.keys(p.scripts||{}).length)" 2>/dev/null', // slop-ok
       cwd,

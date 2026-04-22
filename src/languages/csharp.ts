@@ -410,11 +410,6 @@ export const csharp: LanguageSupport = {
     // 'tool-missing' (n/a — provider always tries dotnet) and 'no-output'
     // (zero vulns OR dotnet missing) are silent, matching prior behavior.
 
-    // LEGACY: testFramework populated from capabilities.testFramework;
-    // removed in Phase 10e.B.5.6.
-    const tfResult = gatherCsharpTestFrameworkResult(cwd);
-    if (tfResult) metrics.testFramework = tfResult.name;
-
     return metrics;
   },
 };

@@ -453,11 +453,6 @@ export const rust: LanguageSupport = {
     // 'no-output' was previously silent (raw was empty OR
     // data.vulnerabilities was missing — neither pushed anything).
 
-    // LEGACY: testFramework populated from capabilities.testFramework;
-    // removed in Phase 10e.B.5.6.
-    const tfResult = gatherRustTestFrameworkResult(cwd);
-    if (tfResult) metrics.testFramework = tfResult.name;
-
     return metrics;
   },
 };
