@@ -24,6 +24,7 @@ function printUsage(): void {
     vyuh-dxkit test-gaps [path]  Analyze test coverage gaps
     vyuh-dxkit quality [path]    Code quality + slop detection
     vyuh-dxkit dev-report [path] Developer activity analysis
+    vyuh-dxkit licenses [path]   Dependency license inventory
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
 
@@ -41,7 +42,7 @@ function printUsage(): void {
     --force      Overwrite modified files (except evolved)
     --rescan     Re-run codebase analysis
 
-  ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report):')}
+  ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses):')}
     --json       Print report as JSON to stdout
     --verbose    Print per-tool timing to stderr
     --no-save    Skip writing the markdown report file
@@ -555,6 +556,53 @@ export async function run(argv: string[]): Promise<void> {
             logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
             logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
           }
+        }
+      }
+      break;
+    }
+
+    case 'licenses': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { analyzeLicenses, formatLicensesReport } = await import('./analyzers/licenses');
+      logger.header('vyuh-dxkit licenses');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = await analyzeLicenses(targetPath, { verbose: !!values.verbose });
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2)); // slop-ok
+      } else {
+        const s = report.summary;
+        console.log(''); // slop-ok
+        console.log(`  ${logger.bold('Packages:')} ${s.totalPackages}`); // slop-ok
+        const licCount = Object.keys(s.byLicense).length;
+        console.log(`  ${logger.bold('License types:')} ${licCount} distinct`); // slop-ok
+        if (s.unknownCount > 0) {
+          console.log(`  ${logger.bold('Unknown license:')} ${s.unknownCount}`); // slop-ok
+        }
+        const top = Object.entries(s.byLicense)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5);
+        if (top.length > 0) {
+          console.log(''); // slop-ok
+          console.log(`  ${logger.bold('Top licenses:')}`); // slop-ok
+          for (const [lic, count] of top) {
+            console.log(`    ${count.toString().padStart(4)}  ${lic}`); // slop-ok
+          }
+        }
+        console.log(''); // slop-ok
+        logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
+        logger.dim(`Completed in ${elapsed}s`);
+
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `licenses-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
+          console.log(''); // slop-ok
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
         }
       }
       break;
