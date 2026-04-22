@@ -36,7 +36,7 @@ interface GolangciResult {
  * `FromLinter` field identifies which one fired. `Severity` (often empty)
  * is used only as a fallback floor for unknown linters.
  */
-export function mapGolangciLinterSeverity(linter: string | undefined): LintSeverity {
+function mapGolangciLinterSeverity(linter: string | undefined): LintSeverity {
   if (!linter) return 'low';
 
   // Security — gosec exclusively flags vuln patterns.
@@ -231,8 +231,7 @@ const goLintProvider: CapabilityProvider<LintResult> = {
 
 /**
  * Single source of truth for the go pack's coverage gathering.
- * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
- * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ * Consumed by `goCoverageProvider` (capability dispatcher).
  */
 function gatherGoCoverageResult(cwd: string): CoverageResult | null {
   for (const file of ['coverage.out', 'cover.out']) {

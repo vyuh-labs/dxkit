@@ -92,8 +92,8 @@ export const COVERAGE: CapabilityDescriptor<CoverageResult> = {
   aggregate(results) {
     // Multiple coverage providers in one repo are uncommon (mono-repos with
     // mixed stacks would hit this). Last-wins is the deterministic-but-lossy
-    // choice; a smarter merge needs per-language file weighting and lands
-    // with the coverage capability migration in Phase 10e.B.3.
+    // choice; a smarter merge needs per-language file weighting — future
+    // work when a real multi-pack case surfaces.
     return results[results.length - 1];
   },
 };

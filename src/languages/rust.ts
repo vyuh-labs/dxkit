@@ -218,8 +218,8 @@ const rustLintProvider: CapabilityProvider<LintResult> = {
 /**
  * Single source of truth for the rust pack's coverage gathering.
  * Tries lcov first (cargo llvm-cov --lcov default), falls back to
- * cobertura XML. Both `capabilities.coverage.gather()` and
- * `parseCoverage` (legacy) consume this. parseCoverage removed in B.3.6.
+ * cobertura XML. Consumed by `rustCoverageProvider` (capability
+ * dispatcher).
  */
 function gatherRustCoverageResult(cwd: string): CoverageResult | null {
   for (const file of ['lcov.info', 'coverage/lcov.info']) {

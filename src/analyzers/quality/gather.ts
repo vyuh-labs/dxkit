@@ -25,7 +25,7 @@ import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { LintResult } from '../../languages/capabilities/types';
 import { DuplicationStats, FileOffender } from './types';
 
-// ─── dispatcher-driven duplication gather (Phase 10e.B.8.3) ─────────────────
+// ─── dispatcher-driven duplication gather ───────────────────────────────────
 
 /**
  * Duplication is a global capability: the DUPLICATION dispatcher routes
@@ -91,7 +91,7 @@ function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
   return offenders.slice(0, limit);
 }
 
-// ─── dispatcher-driven structural gather (Phase 10e.B.9.3) ──────────────────
+// ─── dispatcher-driven structural gather ────────────────────────────────────
 
 /**
  * Structural metrics are a global capability: the STRUCTURAL dispatcher

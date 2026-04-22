@@ -158,12 +158,10 @@ What the pack provides (all but `detect`, `sourceExtensions`,
 - `semgrepRulesets: string[]` — semgrep `--config` values to add
 - `capabilities?: LanguagePackCapabilities` — typed providers (each
   returns a `CapabilityEnvelope`) for depVulns, lint, coverage,
-  testFramework, and imports. The dispatcher fans out across all packs
-  whose `detect` matches, so adding a capability means implementing a
-  provider and slotting it here; see existing packs for the pattern.
-- `gatherMetrics?(cwd)` — **async** — shrinking legacy bridge that
-  still populates a few `HealthMetrics` fields the reports read today.
-  Being retired capability-by-capability; see Phase 10e roadmap.
+  testFramework, and imports. This is the only data channel from a
+  pack to the analyzer layer — the dispatcher fans out across every
+  pack and filters nulls, so adding a capability means implementing a
+  provider and slotting it here. See existing packs for the pattern.
 - `mapLintSeverity?(ruleId)` — tier lint rules into critical/high/medium/low
 
 Contract tests in `test/languages-contract.test.ts` and

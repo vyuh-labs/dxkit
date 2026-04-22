@@ -111,12 +111,9 @@ export function parseCoberturaXml(raw: string, sourceFile: string, cwd: string):
 
 /**
  * Single source of truth for the csharp pack's dep-vuln gathering.
- * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
- *
- * Note: before Phase 10e.B.1.5, the vuln check was nested inside the
- * `dotnet-format` availability gate — a quirk that meant a project with
- * `dotnet` but no `dotnet-format` saw zero vuln data. The capability
- * provider runs independently, fixing that incidentally.
+ * Consumed by `csharpDepVulnsProvider` (capability dispatcher). Runs
+ * independently of `dotnet-format` availability — historical bug where
+ * projects with `dotnet` but no `dotnet-format` saw zero vuln data.
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vulnRaw = run('dotnet list package --vulnerable --format json 2>/dev/null', cwd, 120000);
@@ -212,9 +209,8 @@ const csharpLintProvider: CapabilityProvider<LintResult> = {
 /**
  * Single source of truth for the csharp pack's coverage gathering.
  * Locates the Cobertura artifact across known layouts (explicit `coverage/`
- * dir or `dotnet test --collect`'s TestResults/<guid>/ subtree). Both
- * `capabilities.coverage.gather()` and `parseCoverage` (legacy) consume
- * this. parseCoverage method removed in Phase 10e.B.3.6.
+ * dir or `dotnet test --collect`'s TestResults/<guid>/ subtree). Consumed
+ * by `csharpCoverageProvider` (capability dispatcher).
  */
 function gatherCsharpCoverageResult(cwd: string): CoverageResult | null {
   const artifact = findCoberturaArtifact(cwd);

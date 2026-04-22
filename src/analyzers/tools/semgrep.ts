@@ -55,10 +55,7 @@ export type CodePatternsGatherOutcome =
  * Priority: rule metadata `impact` (most meaningful — rule authors
  * tier by business impact) → fall back to semgrep's `severity`.
  */
-export function mapSemgrepSeverity(
-  sgSeverity: string,
-  impact?: string,
-): CodePatternFinding['severity'] {
+function mapSemgrepSeverity(sgSeverity: string, impact?: string): CodePatternFinding['severity'] {
   const imp = (impact || '').toUpperCase();
   if (imp === 'HIGH') return sgSeverity === 'ERROR' ? 'critical' : 'high';
   if (imp === 'MEDIUM') return 'medium';
@@ -85,8 +82,8 @@ function collectRulesets(cwd: string): string[] {
 }
 
 /**
- * Single source of truth for the semgrep invocation. The provider and
- * any future legacy bridge consume the same envelope.
+ * Single source of truth for the semgrep invocation. Consumed by
+ * `semgrepProvider` (capability dispatcher).
  */
 export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
   const status = findTool(TOOL_DEFS.semgrep, cwd);

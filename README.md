@@ -148,11 +148,11 @@ Each language is a single `LanguageSupport` implementation in `src/languages/`. 
 | Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ✅ use statements           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
 | C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ✅ using declarations       | dotnet-format                       | — (formatter)          | ✅ dotnet list --vulnerable         |
 
-✅ full support. Multi-language repos fully supported — every detected language's tools run, and `depVuln*` counts aggregate across all language packs (pip-audit findings don't silently replace npm-audit ones).
+✅ full support. Multi-language repos fully supported — every detected language's tools run, and dep-vuln counts aggregate across all language packs via the `depVulns` capability (pip-audit findings don't silently replace npm-audit ones).
 
 **Severity enrichment.** Scanners that don't publish per-finding severity (pip-audit, govulncheck) are enriched via the OSV.dev API. DXKit ships a complete CVSS v4.0 base-score calculator (macrovector lookup + severity-distance refinement, ported from [FIRST's reference implementation](https://github.com/FIRSTdotorg/cvss-v4-calculator)) since modern CVEs (2025+) increasingly publish v4 vectors exclusively. Unreachable IDs keep the scanner's legacy default bucket — the analyzer never fails because OSV was slow.
 
-**Lint severity tiering.** Every lint finding is categorized into critical/high/medium/low by rule ID, linter name, or lint group. For backward compatibility, `gatherMetrics` collapses tiers to the existing `lintErrors` (critical + high) / `lintWarnings` (medium + low) fields, so scoring behavior is preserved. The tiered data is available for future analyzers that want finer granularity.
+**Lint severity tiering.** Every lint finding is categorized into critical/high/medium/low by rule ID, linter name, or lint group. The `lint` capability envelope carries the tiered counts; `HealthReport.dimensions.quality.details` collapses them into an `"N errors, M warnings"` rendering (critical + high → errors, medium + low → warnings) for human readability. Consumers that want finer granularity read `report.capabilities.lint.counts` directly.
 
 ---
 

@@ -1,17 +1,15 @@
 /**
- * Capability dispatcher.
- *
- * Phase 10e: replaces the implicit `gatherMetrics` aggregation channel with
- * an explicit, typed dispatcher. Reports ask for a capability by descriptor;
- * the dispatcher runs every provider concurrently, filters out nulls and
- * rejections, and aggregates the rest using the descriptor's bespoke
- * aggregator.
+ * Capability dispatcher — the typed channel analyzers use to request a
+ * capability (lint, depVulns, coverage, …) by descriptor. The dispatcher
+ * runs every registered provider concurrently, filters nulls and
+ * rejections, and aggregates the survivors using the descriptor's
+ * bespoke aggregator.
  *
  * Caching is in-memory and per-dispatcher-instance: the same `(cwd, capId)`
  * request inside one analyzer run reuses the same Promise, so two reports
  * (e.g. `health` + `vulnerabilities`) sharing a process don't double-shell
- * out to `pip-audit`. Process exit clears the cache; persistent caching is
- * out of scope until the disk-cache discussion in Phase 10e.C.
+ * out to `pip-audit`. Process exit clears the cache; persistent caching
+ * is out of scope.
  *
  * Provider failures are isolated: one provider throwing does not abort the
  * dispatch. The thrown error is logged via the optional `onProviderError`

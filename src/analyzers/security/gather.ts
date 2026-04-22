@@ -5,8 +5,7 @@
  *   gitleaks   → secrets (hardcoded credentials, API keys, private keys in source)
  *   find/git   → private key files on disk (.key, .pem), .env tracked in git
  *   semgrep    → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
- *   dispatcher → dependency CVEs across every active language pack
- *                (Phase 10e.B.1 — was hardcoded to npm-audit only)
+ *   dispatcher → dependency CVEs unioned across every active language pack
  */
 import { run } from '../tools/runner';
 import { getFindExcludeFlags } from '../tools/exclusions';
@@ -18,7 +17,7 @@ import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
 
-// ─── dispatcher-driven secrets gather (Phase 10e.B.6.3) ──────────────────────
+// ─── dispatcher-driven secrets gather ────────────────────────────────────────
 
 /**
  * Secrets are a global capability: one scanner (gitleaks today) runs once
@@ -90,7 +89,7 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   return findings;
 }
 
-// ─── dispatcher-driven codePatterns gather (Phase 10e.B.7.3) ────────────────
+// ─── dispatcher-driven codePatterns gather ──────────────────────────────────
 
 /**
  * Code-pattern findings are a global capability: the CODE_PATTERNS

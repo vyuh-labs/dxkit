@@ -34,7 +34,7 @@ interface EslintFileResult {
  * error count. Callers that also have the ESLint severity should prefer
  * mapLintMessageSeverity below.
  */
-export function mapEslintRuleSeverity(ruleId: string | null | undefined): LintSeverity {
+function mapEslintRuleSeverity(ruleId: string | null | undefined): LintSeverity {
   if (!ruleId) return 'low';
 
   // Security plugins — both eslint-plugin-security and eslint-plugin-security-node.
@@ -303,8 +303,7 @@ const tsLintProvider: CapabilityProvider<LintResult> = {
 
 /**
  * Single source of truth for the typescript pack's coverage gathering.
- * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
- * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ * Consumed by `tsCoverageProvider` (capability dispatcher).
  */
 function gatherTsCoverageResult(cwd: string): CoverageResult | null {
   const candidates = [

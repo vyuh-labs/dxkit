@@ -25,10 +25,11 @@ interface GitleaksFinding {
 }
 
 /**
- * Outcome union mirroring the other capability bridge types in the
- * language packs. The capability provider collapses this to
- * `SecretsResult | null`; the legacy bridge reads the `unavailable`
- * reason so `toolsUnavailable` strings stay stable.
+ * Outcome union used by `gatherGitleaksResult`. The capability provider
+ * collapses this to `SecretsResult | null`; the Layer 2 reshape in
+ * `tools/parallel.ts` reads `unavailable.reason` so the
+ * `toolsUnavailable` strings carry install-missing vs parse-failure
+ * detail.
  */
 export type SecretsGatherOutcome =
   | { kind: 'success'; envelope: SecretsResult; suppressedCount: number }
@@ -38,22 +39,15 @@ export type SecretsGatherOutcome =
  * Per-cwd memoization of the gitleaks outcome. Gitleaks is a ~1-5s shell
  * invocation; memoizing ensures the Layer 2 reshape path + the capability
  * dispatcher's `gitleaksProvider` both hit the same computed outcome
- * within one `analyzeHealth` call. Tests can reset via `clearGitleaksCache`.
+ * within one `analyzeHealth` call.
  *
  * Cache is module-scoped and not invalidated automatically — safe for
  * dxkit's one-shot CLI shape (single cwd per process) and for the one
  * analyzer that exercises two paths to the same cwd (parallel.ts +
  * gatherCapabilityReport). Future long-running modes (diff, daemon)
- * that re-analyze the same cwd should call `clearGitleaksCache(cwd)`
- * between runs.
+ * that re-analyze the same cwd will need a clear-cache seam here.
  */
 const gitleaksOutcomeCache = new Map<string, SecretsGatherOutcome>();
-
-/** Reset memoized gitleaks outcomes. Test seam; no production callers. */
-export function clearGitleaksCache(cwd?: string): void {
-  if (cwd === undefined) gitleaksOutcomeCache.clear();
-  else gitleaksOutcomeCache.delete(cwd);
-}
 
 /**
  * Single source of truth for secret-scanning via gitleaks. Consumed by

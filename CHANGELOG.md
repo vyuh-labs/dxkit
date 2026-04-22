@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-22
+
+**BREAKING RELEASE.** The deterministic analyzer architecture introduced in
+1.6.0 matured through an explicit capability model during Phase 10e. Language
+packs now expose data exclusively through typed capability providers
+(depVulns, lint, coverage, testFramework, imports) routed through a
+`CapabilityDispatcher`; global scanners (gitleaks + grep-secrets fallback,
+semgrep, jscpd, graphify) register under the same model. The legacy
+`gatherMetrics` channel and its aggregation helpers are removed.
+
+### Breaking changes — JSON schema v10 → v11
+
+- Detailed reports now emit `"schemaVersion": "11"` (was `"10c.1"`).
+- `HealthReport.dimensions.*.metrics` shed all capability-data echoes
+  (`lintErrors`, `lintWarnings`, `lintTool`, `secretFindings`,
+  `depVulnCritical`/`High`/`Medium`/`Low`, `depAuditTool`,
+  `testFramework`, `coveragePercent`, `commentedCodeRatio`,
+  `maxFunctionsInFile`, `deadImportCount`, `godNodeCount`,
+  `communityCount`, `avgCohesion`, `orphanModuleCount`). Consumers read
+  these from `report.capabilities.*` now.
+- `HealthReport.capabilities` is the new canonical sub-object carrying
+  typed envelopes (`depVulns`, `lint`, `coverage`, `imports`,
+  `testFramework`, `secrets`, `codePatterns`, `duplication`,
+  `structural`).
+- `HealthMetrics` narrowed to ~30 non-capability fields (filesystem
+  counts, grep markers, doc / config flags, language breakdown).
+- `QualityReport`, `SecurityReport`, `TestGapsReport`, `DevReport` shapes
+  unchanged — their detailed variants still bump to v11 for release
+  consistency.
+
+### Added
+
+- Capability dispatcher (`src/analyzers/dispatcher.ts`) with per-`(cwd,
+  capId)` in-memory caching and provider-failure isolation.
+- Nine capability descriptors with bespoke aggregate functions
+  (depVulns/lint sum counts, coverage/testFramework last-wins,
+  secrets/codePatterns union findings, duplication sums + re-weights,
+  structural last-wins, imports unions per-pack graphs).
+- Multi-provider support per capability: `GlobalCapabilities` slots take
+  provider arrays, so fallbacks and opt-in scanners compose cleanly.
+- `grep-secrets` fallback provider: 7 regex patterns (hardcoded-password,
+  api-key, secret, private-key, AWS access key, GitHub token, Anthropic
+  key) that activate when `gitleaks` is absent. Preserves degraded-
+  environment secret coverage.
+- `src/analyzers/tools/package-json.ts`: direct `fs.readFileSync` +
+  `JSON.parse` helper for `npmScriptsCount` and `nodeEngineVersion`,
+  replacing the prior `node -e` subprocess pair.
+
+### Removed
+
+- `LanguageSupport.gatherMetrics` optional method — every pack now
+  exposes data through `capabilities`.
+- `LangMetrics` type and `mergeMetrics` / `AGGREGATED_VULN_FIELDS`
+  helpers.
+- `gatherGitleaksMetrics`, `gatherGraphifyMetrics` legacy bridge
+  functions (capability providers + memoized outcome helpers replace
+  them).
+- `getSemgrepRulesets`, `getToolDef`, `runRegisteredTool`,
+  `EVOLVING_FILES`, `src/analyzers/index.ts` barrel file — all
+  unreferenced after the refactor.
+- Pre-2.0 child-process + bash orchestration in `tools/parallel.ts`;
+  gitleaks and graphify now run in-process with per-cwd memoization.
+
+### Changed
+
+- Scorers consume a `ScoreInput = { metrics, capabilities }` bundle
+  (was: flat `HealthMetrics`). Same byte-identical scoring formulas.
+- `HealthReport.toolsUsed` synthesizes per-pack tool names
+  (`eslint`, `npm-audit`, `ruff`, `pip-audit`, `golangci-lint`,
+  `govulncheck`, …) directly from `capabilities.lint.tool` and
+  `capabilities.depVulns.tool` rather than from the deleted per-pack
+  gatherMetrics emissions.
+
+### Migration
+
+- Replace `report.dimensions.quality.metrics.lintErrors` →
+  `(report.capabilities.lint?.counts.critical ?? 0) +
+  (report.capabilities.lint?.counts.high ?? 0)`.
+- Replace `report.dimensions.security.metrics.secretFindings` →
+  `report.capabilities.secrets?.findings.length ?? 0`.
+- Replace `report.dimensions.security.metrics.depVulnCritical` →
+  `report.capabilities.depVulns?.counts.critical ?? 0` (and similarly
+  for high/medium/low).
+- Replace `report.dimensions.testing.metrics.coveragePercent` →
+  `Math.round(report.capabilities.coverage?.coverage.linePercent ?? 0)`.
+- Replace `report.dimensions.testing.metrics.testFramework` →
+  `report.capabilities.testFramework?.name`.
+- Replace `report.dimensions.quality.metrics.maxFunctionsInFile` →
+  `report.capabilities.structural?.maxFunctionsInFile`.
+- No changes required for non-`health` commands — `vyuh-dxkit
+  vulnerabilities`, `test-gaps`, `quality`, `dev-report` keep their
+  report shapes unchanged.
+
 ## [1.6.0] - 2026-04-18
 
 This release transforms dxkit from a scaffolder into an analyzer-and-scaffolder.

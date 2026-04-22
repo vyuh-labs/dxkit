@@ -155,8 +155,10 @@ print(json.dumps({
 /**
  * Outcome union mirrors the other global wrappers (gitleaks, semgrep,
  * jscpd). The capability provider collapses this to `StructuralResult
- * | null`; the legacy bridge reads `unavailable.reason` so the
- * `toolsUnavailable` strings stay byte-identical across the migration.
+ * | null`; the Layer 2 reshape in `tools/parallel.ts` reads
+ * `unavailable.reason` so `toolsUnavailable` surfaces the precise
+ * failure mode (`graphify (not installed)`, `graphify (failed to run)`,
+ * `graphify (parse error)`, …).
  */
 export type StructuralGatherOutcome =
   | { kind: 'success'; envelope: StructuralResult }
@@ -167,18 +169,11 @@ export type StructuralGatherOutcome =
  * external tool dxkit shells out to (~10-60s depending on repo size);
  * memoizing ensures the Layer 2 reshape path + the capability
  * dispatcher's `graphifyProvider` share one invocation per analyzer run.
- * Tests reset via `clearGraphifyCache`.
  *
  * Same constraints as the gitleaks cache: module-scoped, no automatic
  * invalidation, safe for the one-shot CLI shape.
  */
 const graphifyOutcomeCache = new Map<string, StructuralGatherOutcome>();
-
-/** Reset memoized graphify outcomes. Test seam; no production callers. */
-export function clearGraphifyCache(cwd?: string): void {
-  if (cwd === undefined) graphifyOutcomeCache.clear();
-  else graphifyOutcomeCache.delete(cwd);
-}
 
 /**
  * Single source of truth for the graphify subprocess invocation.

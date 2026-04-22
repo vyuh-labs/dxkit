@@ -4,12 +4,13 @@
  * Every score is computed from `ScoreInput` (metrics + capabilities) via
  * fixed formulas — same input, same score, every time.
  *
- * Phase 10e.C.2: scorers read capability-owned fields (lint counts,
- * dep-vuln counts, coverage percent, test framework, structural stats,
- * secret findings) from `input.capabilities`; metrics-owned fields
- * (sourceFiles, readmeLines, filesOver500Lines, etc.) still come from
- * `input.metrics`. The legacy `HealthMetrics` bridge is the source of
- * truth until C.7/C.8 narrows the type and drops the legacy fields.
+ * Each scorer pulls capability-owned fields (lint counts, dep-vuln
+ * counts, coverage percent, test framework, structural stats, secret
+ * findings) from `input.capabilities`; filesystem-derived fields
+ * (`sourceFiles`, `readmeLines`, `filesOver500Lines`, …) come from
+ * `input.metrics`. The `DimensionScore.metrics` sub-object returned
+ * here mirrors only the metrics-owned slice — consumers read the
+ * capability envelopes directly from `report.capabilities.*`.
  */
 import { CapabilityReport, DimensionScore, HealthMetrics } from './types';
 
@@ -282,7 +283,6 @@ export function scoreMaintainability(input: ScoreInput): DimensionScore {
   const godNodeCount = c.structural?.godNodeCount ?? null;
   const communityCount = c.structural?.communityCount ?? null;
   const avgCohesion = c.structural?.avgCohesion ?? null;
-  const orphanModuleCount = c.structural?.orphanModuleCount ?? null;
 
   let score = 70;
 

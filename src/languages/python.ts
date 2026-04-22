@@ -186,8 +186,7 @@ const pyLintProvider: CapabilityProvider<LintResult> = {
 
 /**
  * Single source of truth for the python pack's coverage gathering.
- * Both `capabilities.coverage.gather()` and `parseCoverage` (legacy)
- * consume this. The parseCoverage method is removed in Phase 10e.B.3.6.
+ * Consumed by `pyCoverageProvider` (capability dispatcher).
  */
 function gatherPyCoverageResult(cwd: string): CoverageResult | null {
   const file = path.join(cwd, 'coverage.json');

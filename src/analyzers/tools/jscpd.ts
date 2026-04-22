@@ -37,10 +37,10 @@ interface JscpdReport {
 }
 
 /**
- * Outcome union mirrors the other global wrappers (gitleaks, semgrep).
- * Collapses to `DuplicationResult | null` at the provider level; a
- * future legacy bridge can read `unavailable.reason` for
- * `toolsUnavailable` strings.
+ * Outcome union mirrors the other global wrappers (gitleaks, semgrep,
+ * graphify). Collapses to `DuplicationResult | null` at the provider
+ * level; keeping the `unavailable.reason` at this level lets internal
+ * callers distinguish install-missing from parse-failure if needed.
  */
 export type DuplicationGatherOutcome =
   | { kind: 'success'; envelope: DuplicationResult }
@@ -78,8 +78,7 @@ function topClonesFrom(duplicates: JscpdRawDuplicate[], limit = 15): Duplication
 
 /**
  * Single source of truth for the jscpd invocation. Consumed by
- * `jscpdProvider` (capability path); legacy bridges consume the
- * envelope rather than invoking jscpd directly.
+ * `jscpdProvider` (capability dispatcher).
  */
 export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
   const status = findTool(TOOL_DEFS.jscpd, cwd);

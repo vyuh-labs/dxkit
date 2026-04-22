@@ -14,19 +14,6 @@ export const DEFAULT_VERSIONS = {
 
 export const DEFAULT_COVERAGE = '80';
 
-/** Files that must NEVER be overwritten (user-accumulated knowledge). */
-export const EVOLVING_FILES = [
-  '.claude/skills/learned/references/gotchas.md',
-  '.claude/skills/learned/references/conventions.md',
-  '.claude/skills/learned/references/deny-recommendations.md',
-  '.claude/skills/quality/references/gotchas.md',
-  '.claude/skills/test/references/gotchas.md',
-  '.claude/skills/deploy/references/gotchas.md',
-  '.claude/skills/gcloud/references/gotchas.md',
-  '.claude/skills/codebase/SKILL.md',
-  '.claude/skills/codebase/references/architecture.md',
-];
-
 export function buildVariables(config: ResolvedConfig): Record<string, string> {
   const v: Record<string, string> = {
     PROJECT_NAME: config.projectName,

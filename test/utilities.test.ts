@@ -14,7 +14,6 @@ import * as logger from '../src/logger';
 import {
   getInstallCommand,
   buildRequiredTools,
-  getSemgrepRulesets,
   TOOL_DEFS,
   checkAllTools,
 } from '../src/analyzers/tools/tool-registry';
@@ -290,30 +289,6 @@ describe('buildRequiredTools', () => {
     const tools = buildRequiredTools({ csharp: true } as never);
     const names = tools.map((t) => t.name);
     expect(names).toContain('dotnet-format');
-  });
-});
-
-describe('getSemgrepRulesets', () => {
-  it('always returns the security-audit ruleset', () => {
-    const r = getSemgrepRulesets({ node: false } as never);
-    expect(r).toContain('p/security-audit');
-  });
-
-  it('adds js + ts rulesets for node', () => {
-    const r = getSemgrepRulesets({ node: true } as never);
-    expect(r).toContain('p/javascript');
-    expect(r).toContain('p/typescript');
-  });
-
-  it('adds python ruleset for python', () => {
-    const r = getSemgrepRulesets({ python: true } as never);
-    expect(r).toContain('p/python');
-  });
-
-  it('uses gosec (not p/go which does not exist) for go', () => {
-    const r = getSemgrepRulesets({ go: true } as never);
-    expect(r).toContain('p/gosec');
-    expect(r).not.toContain('p/go');
   });
 });
 
