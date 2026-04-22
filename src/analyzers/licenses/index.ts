@@ -97,7 +97,7 @@ export function formatLicensesReport(report: LicensesReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // Findings table
+  // Findings table — capped at 50 rows for readability; full list in *-detailed.md
   L.push('## Packages');
   L.push('');
   if (report.findings.length === 0) {
@@ -105,12 +105,21 @@ export function formatLicensesReport(report: LicensesReport, elapsed: string): s
       '_No packages detected. Ensure the project has a resolved dependency tree (e.g. `npm install`, `pip install`, `go mod download`, `cargo build`, `dotnet restore`) before running this analyzer._',
     );
   } else {
-    L.push('| Package | Version | License | Supplier |');
-    L.push('|---------|---------|---------|----------|');
+    const cap = 50;
     const rows = [...report.findings].sort((a, b) => a.package.localeCompare(b.package));
-    for (const f of rows) {
-      const supplier = (f.supplier || '').replace(/\|/g, '\\|');
-      L.push(`| \`${f.package}\` | ${f.version} | ${f.licenseType} | ${supplier} |`);
+    const shown = rows.slice(0, cap);
+    L.push('| Package | Version | License | Description | Source URL |');
+    L.push('|---------|---------|---------|-------------|------------|');
+    for (const f of shown) {
+      const desc = (f.description || '').replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 80);
+      const url = f.sourceUrl || '';
+      L.push(`| \`${f.package}\` | ${f.version} | ${f.licenseType} | ${desc} | ${url} |`);
+    }
+    if (rows.length > cap) {
+      L.push('');
+      L.push(
+        `_Showing ${cap} of ${rows.length} packages alphabetically. Run with \`--detailed\` for full inventory + risk review._`,
+      );
     }
   }
   L.push('');

@@ -603,6 +603,18 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
           console.log(''); // slop-ok
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed) {
+            const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
+              await import('./analyzers/licenses/detailed');
+            const detailed = buildLicensesDetailed(report);
+            const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
         }
       }
       break;
