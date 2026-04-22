@@ -99,6 +99,36 @@ export interface ImportsResult extends CapabilityEnvelope {
   readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
+/** Per-finding detail for the licenses capability. */
+export interface LicenseFinding {
+  package: string;
+  version: string;
+  /** Canonical SPDX identifier ('MIT', 'Apache-2.0', 'GPL-3.0') or 'UNKNOWN'. */
+  licenseType: string;
+  /** Full license text; present when the underlying tool ships it. */
+  licenseText?: string;
+  /** Repository URL from package metadata. */
+  sourceUrl?: string;
+  /** Short description from the ecosystem registry (npm/PyPI/crates/etc). */
+  description?: string;
+  /** Author or maintainer string. */
+  supplier?: string;
+  /** ISO 8601 release date; present when the registry exposes it. */
+  releaseDate?: string;
+}
+
+/**
+ * License inventory for one language pack, the licenses capability.
+ * Produced by per-pack providers wrapping the ecosystem's native license
+ * tool (license-checker-rseidelsohn for npm, pip-licenses for PyPI,
+ * go-licenses for Go modules, cargo-license for crates, NuGet metadata
+ * for .NET). Aggregate concats findings across packs so polyglot repos
+ * report a unified inventory.
+ */
+export interface LicensesResult extends CapabilityEnvelope {
+  findings: ReadonlyArray<LicenseFinding>;
+}
+
 /** Per-finding detail for the secrets capability. */
 export interface SecretFinding {
   file: string;

@@ -21,6 +21,7 @@ import type {
   DepVulnResult,
   DuplicationResult,
   ImportsResult,
+  LicensesResult,
   LintResult,
   SecretsResult,
   StructuralResult,
@@ -233,6 +234,24 @@ export const IMPORTS: CapabilityDescriptor<ImportsResult> = {
   },
 };
 
+export const LICENSES: CapabilityDescriptor<LicensesResult> = {
+  id: 'licenses',
+  aggregate(results) {
+    // Per-pack providers own disjoint package sets (npm vs PyPI vs crates
+    // vs Go modules vs NuGet) so concat-without-dedupe is sound in the
+    // common case. A rare polyglot collision (same package name + version
+    // in two ecosystems) keeps both rows; downstream formatters can
+    // disambiguate by ecosystem if needed.
+    const findings: LicensesResult['findings'][number][] = [];
+    for (const r of results) findings.push(...r.findings);
+    return {
+      schemaVersion: 1,
+      tool: uniqueJoin(results.map((r) => r.tool)),
+      findings,
+    };
+  },
+};
+
 /**
  * Per-language capabilities — one provider registered per language pack.
  * Keys must match `keyof LanguagePackCapabilities`; the contract test
@@ -244,6 +263,7 @@ export const PER_PACK_REGISTRY = {
   coverage: COVERAGE,
   testFramework: TEST_FRAMEWORK,
   imports: IMPORTS,
+  licenses: LICENSES,
 } as const;
 
 /**

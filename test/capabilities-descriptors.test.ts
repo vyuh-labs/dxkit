@@ -5,6 +5,7 @@ import {
   DEP_VULNS,
   DUPLICATION,
   IMPORTS,
+  LICENSES,
   LINT,
   STRUCTURAL,
   TEST_FRAMEWORK,
@@ -15,6 +16,7 @@ import type {
   DepVulnResult,
   DuplicationResult,
   ImportsResult,
+  LicensesResult,
   LintResult,
   StructuralResult,
   TestFrameworkResult,
@@ -247,6 +249,73 @@ describe('IMPORTS descriptor', () => {
     const out = IMPORTS.aggregate([rust]);
     expect(out.edges.size).toBe(0);
     expect(out.extracted.get('src/lib.rs')).toEqual(['crate::util']);
+  });
+});
+
+describe('LICENSES descriptor', () => {
+  it('id is "licenses"', () => {
+    expect(LICENSES.id).toBe('licenses');
+  });
+
+  it('aggregates a single result identically to its input shape', () => {
+    const single: LicensesResult = {
+      schemaVersion: 1,
+      tool: 'license-checker-rseidelsohn',
+      findings: [
+        {
+          package: 'lodash',
+          version: '4.17.21',
+          licenseType: 'MIT',
+          sourceUrl: 'git+https://github.com/lodash/lodash.git',
+        },
+      ],
+    };
+    const out = LICENSES.aggregate([single]);
+    expect(out.schemaVersion).toBe(1);
+    expect(out.tool).toBe('license-checker-rseidelsohn');
+    expect(out.findings).toHaveLength(1);
+    expect(out.findings[0].package).toBe('lodash');
+  });
+
+  it('concatenates findings across packs and joins tool names', () => {
+    const ts: LicensesResult = {
+      schemaVersion: 1,
+      tool: 'license-checker-rseidelsohn',
+      findings: [
+        { package: 'lodash', version: '4.17.21', licenseType: 'MIT' },
+        { package: 'react', version: '18.2.0', licenseType: 'MIT' },
+      ],
+    };
+    const py: LicensesResult = {
+      schemaVersion: 1,
+      tool: 'pip-licenses',
+      findings: [{ package: 'requests', version: '2.31.0', licenseType: 'Apache-2.0' }],
+    };
+    const out = LICENSES.aggregate([ts, py]);
+    expect(out.findings).toHaveLength(3);
+    expect(out.findings.map((f) => f.package)).toEqual(['lodash', 'react', 'requests']);
+    expect(out.tool).toBe('license-checker-rseidelsohn, pip-licenses');
+  });
+
+  it('deduplicates tool names when multiple packs use the same scanner', () => {
+    const a: LicensesResult = {
+      schemaVersion: 1,
+      tool: 'license-checker-rseidelsohn',
+      findings: [],
+    };
+    const b: LicensesResult = { ...a };
+    expect(LICENSES.aggregate([a, b]).tool).toBe('license-checker-rseidelsohn');
+  });
+
+  it('handles empty-findings packs without error', () => {
+    const empty: LicensesResult = {
+      schemaVersion: 1,
+      tool: 'go-licenses',
+      findings: [],
+    };
+    const out = LICENSES.aggregate([empty]);
+    expect(out.findings).toHaveLength(0);
+    expect(out.tool).toBe('go-licenses');
   });
 });
 

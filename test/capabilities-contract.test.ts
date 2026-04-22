@@ -41,13 +41,14 @@ describe('capability registry consistency', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('exposes the capability slots registered through Phase 10e.B.9', () => {
+  it('exposes the capability slots registered through Phase 10h.1.1', () => {
     const expected: CapabilityId[] = [
       'depVulns',
       'lint',
       'coverage',
       'testFramework',
       'imports',
+      'licenses',
       'secrets',
       'codePatterns',
       'duplication',

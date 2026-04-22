@@ -3,6 +3,7 @@ import type {
   CoverageResult,
   DepVulnResult,
   ImportsResult,
+  LicensesResult,
   LintResult,
   TestFrameworkResult,
 } from './capabilities/types';
@@ -24,6 +25,7 @@ export interface LanguagePackCapabilities {
   coverage?: CapabilityProvider<CoverageResult>;
   testFramework?: CapabilityProvider<TestFrameworkResult>;
   imports?: CapabilityProvider<ImportsResult>;
+  licenses?: CapabilityProvider<LicensesResult>;
 }
 
 /**
