@@ -211,18 +211,21 @@ async function analyzeHealthInternal(
 }
 
 /**
- * Extract user-facing tool names from the LINT + DEP_VULNS envelopes so
- * `metrics.toolsUsed` can continue to list them after C.5 deletes the
- * per-pack `gatherMetrics` channel. Other capability envelopes (imports,
- * testFramework, secrets, codePatterns, duplication, structural) aren't
- * mirrored here — some carry pseudo-tools (`ts-imports`, `typescript`)
- * that were never in `toolsUsed`; the real external tools (gitleaks,
- * graphify, jscpd, semgrep) land through their own code paths.
+ * Extract user-facing tool names from every capability envelope that
+ * represents a real external scanner. `metrics.toolsUsed` ends up as a
+ * complete mirror of what actually ran for the `health` report —
+ * external tools (lint, depVulns, secrets, codePatterns, duplication,
+ * structural) all contribute. Pseudo-tool envelopes (`imports.tool =
+ * 'ts-imports'`, `testFramework.tool = 'typescript'`) intentionally
+ * stay out — those are language-pack identifiers, not external tools
+ * that could appear in `vyuh-dxkit tools`.
  *
  * Splits comma-joined names the descriptor aggregate produces (e.g.
  * `"ruff, eslint, golangci-lint"`) back into individual entries. Also
- * includes `osv.dev` when depVulns enrichment used it — matches the
- * byte-identical pre-C.5 string the python/go/rust packs emitted.
+ * includes `osv.dev` when depVulns enrichment used it. The caller
+ * dedupes against entries already pushed by Layer 2 (`tools/parallel.ts`
+ * contributes `gitleaks` / `graphify` on the success path + reason
+ * strings on failure to `toolsUnavailable`).
  */
 function toolsFromCapabilities(caps: CapabilityReport): string[] {
   const names: string[] = [];
@@ -231,6 +234,10 @@ function toolsFromCapabilities(caps: CapabilityReport): string[] {
     names.push(...splitToolNames(caps.depVulns.tool));
     if (caps.depVulns.enrichment === 'osv.dev') names.push('osv.dev');
   }
+  if (caps.secrets) names.push(...splitToolNames(caps.secrets.tool));
+  if (caps.codePatterns) names.push(...splitToolNames(caps.codePatterns.tool));
+  if (caps.duplication) names.push(...splitToolNames(caps.duplication.tool));
+  if (caps.structural) names.push(...splitToolNames(caps.structural.tool));
   return names;
 }
 

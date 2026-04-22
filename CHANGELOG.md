@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-04-22
+
+Patch release following the 2.0.0 smoke-test. No API or schema changes —
+drop-in upgrade from 2.0.0.
+
+### Fixed
+
+- **`HealthReport.toolsUsed` now includes every external scanner that
+  actually ran.** Pre-2.0.1 the list was synthesized only from
+  `capabilities.lint` + `capabilities.depVulns`, so `semgrep` (code-
+  pattern scanner, `capabilities.codePatterns`) and `jscpd` (clone
+  detector, `capabilities.duplication`) didn't appear in the `health`
+  command's tool list even though they ran during
+  `gatherCapabilityReport`. `gitleaks` and `graphify` appeared only
+  because `tools/parallel.ts` pushed them separately. Now
+  `toolsFromCapabilities` mirrors all six external-scanner envelopes
+  (lint, depVulns, secrets, codePatterns, duplication, structural);
+  Layer 2's pushes dedupe via the existing `!includes(t)` guard.
+  Pseudo-tool envelopes (`imports.tool = 'ts-imports'`,
+  `testFramework.tool = 'typescript'`) stay out of the list — those
+  are language-pack identifiers, not external tools.
+
 ## [2.0.0] - 2026-04-22
 
 **BREAKING RELEASE.** The deterministic analyzer architecture introduced in
