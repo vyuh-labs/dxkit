@@ -17,6 +17,7 @@
  * needs zero structural change.
  */
 
+import { gitleaksProvider } from '../../analyzers/tools/gitleaks';
 import type { CapabilityProvider } from './provider';
 import type { SecretsResult } from './types';
 
@@ -34,5 +35,6 @@ export interface GlobalCapabilities {
  * other, so adding one is a pure registration edit.
  */
 export const GLOBAL_CAPABILITIES: GlobalCapabilities = {
-  // secrets wired in B.6.2; codePatterns in B.7; duplication in B.8; structural in B.9.
+  secrets: gitleaksProvider,
+  // codePatterns wired in B.7; duplication in B.8; structural in B.9.
 };

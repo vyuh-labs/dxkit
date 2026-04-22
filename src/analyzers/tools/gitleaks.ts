@@ -1,12 +1,28 @@
 /**
  * Gitleaks integration -- secret scanning with 800+ patterns.
- * Layer 2 (optional): requires `gitleaks` binary.
+ *
+ * Two call shapes:
+ *
+ *   1. `gatherGitleaksResult(cwd)` — the canonical capability-shaped
+ *      gather. Returns a `SecretsResult` envelope or a typed outcome
+ *      describing why scanning was skipped/failed. Consumed by the
+ *      `gitleaksProvider` capability wrapper and (via its `success`
+ *      envelope) by the legacy Layer 2 decomposition.
+ *
+ *   2. `gatherGitleaksMetrics(cwd)` — thin bridge retained for
+ *      `src/analyzers/tools/parallel.ts`, which loads gatherers by
+ *      module name + function name in a child process. Decomposes the
+ *      envelope into the legacy `HealthMetrics` fields
+ *      (`secretFindings`, `secretDetails`, `secretSuppressed`) and
+ *      goes away in Phase C.
  */
 import { HealthMetrics } from '../types';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
 import { applySuppressions, loadSuppressions } from './suppressions';
+import type { CapabilityProvider } from '../../languages/capabilities/provider';
+import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
 interface GitleaksFinding {
   RuleID: string;
@@ -16,67 +32,121 @@ interface GitleaksFinding {
   Secret: string;
 }
 
-/** Gather secret scanning metrics via gitleaks. */
-export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
-  const gitleaksCmd = findGitleaks(cwd);
-  if (!gitleaksCmd) {
-    return { toolsUnavailable: ['gitleaks'] };
-  }
+/**
+ * Outcome union mirroring the other capability bridge types in the
+ * language packs. The capability provider collapses this to
+ * `SecretsResult | null`; the legacy bridge reads the `unavailable`
+ * reason so `toolsUnavailable` strings stay stable.
+ */
+export type SecretsGatherOutcome =
+  | { kind: 'success'; envelope: SecretsResult; suppressedCount: number }
+  | { kind: 'unavailable'; reason: string };
 
-  // Run gitleaks with JSON report (--no-git scans files, not git history)
+/**
+ * Single source of truth for secret-scanning via gitleaks. Consumed by
+ * both `gitleaksProvider` (new capability path) and
+ * `gatherGitleaksMetrics` (legacy Partial<HealthMetrics> shape) so both
+ * paths produce byte-identical findings and suppression counts.
+ */
+export function gatherGitleaksResult(cwd: string): SecretsGatherOutcome {
+  const gitleaksCmd = findGitleaks(cwd);
+  if (!gitleaksCmd) return { kind: 'unavailable', reason: 'not installed' };
+
+  // Run gitleaks with JSON report (--no-git scans files, not git history).
   const reportPath = `/tmp/dxkit-gitleaks-${Date.now()}.json`;
   run(
     `${gitleaksCmd} detect --source '${cwd}' --report-format json --report-path '${reportPath}' --no-git --exit-code 0 2>/dev/null`,
     cwd,
     120000,
   );
-
-  // Read report file
   const reportRaw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
-  // Clean up
   run(`rm -f '${reportPath}'`, cwd);
 
-  if (!reportRaw) {
-    return { toolsUnavailable: ['gitleaks (no output)'] };
-  }
+  if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };
 
+  let parsed: GitleaksFinding[];
   try {
-    const findings = JSON.parse(reportRaw) as GitleaksFinding[];
-    if (!Array.isArray(findings)) {
-      return { toolsUsed: ['gitleaks'] };
-    }
-
-    const secretDetails: HealthMetrics['secretDetails'] = findings.map((f) => ({
-      file: f.File.replace(cwd + '/', '').replace(cwd, ''),
-      line: f.StartLine,
-      rule: f.RuleID,
-      severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
-    }));
-
-    // Post-filter using project exclusions. Gitleaks --no-git scans everything
-    // on disk (ignores .gitignore), so we re-apply the resolved exclusion set
-    // via the centralized isExcludedPath() predicate.
-    const filtered = secretDetails.filter((d) => !isExcludedPath(cwd, d.file));
-
-    // Apply user-defined suppressions from `.dxkit-suppressions.json` so
-    // known-false positives (test fixtures, approved exceptions) don't count.
-    const suppressions = loadSuppressions(cwd);
-    const { kept, suppressed } = applySuppressions(
-      filtered,
-      suppressions.gitleaks,
-      (d) => d.rule,
-      (d) => d.file,
-    );
-
-    return {
-      secretFindings: kept.length,
-      secretDetails: kept,
-      secretSuppressed: suppressed.length,
-      toolsUsed: ['gitleaks'],
-    };
+    parsed = JSON.parse(reportRaw) as GitleaksFinding[];
   } catch {
-    return { toolsUnavailable: ['gitleaks (parse error)'] };
+    return { kind: 'unavailable', reason: 'parse error' };
   }
+  if (!Array.isArray(parsed)) {
+    // gitleaks returned non-array JSON (malformed); treat as zero findings.
+    const envelope: SecretsResult = {
+      schemaVersion: 1,
+      tool: 'gitleaks',
+      findings: [],
+      suppressedCount: 0,
+    };
+    return { kind: 'success', envelope, suppressedCount: 0 };
+  }
+
+  const raw: SecretFinding[] = parsed.map((f) => ({
+    file: f.File.replace(cwd + '/', '').replace(cwd, ''),
+    line: f.StartLine,
+    rule: f.RuleID,
+    severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
+  }));
+
+  // Gitleaks --no-git scans everything on disk (ignores .gitignore), so
+  // we re-apply the resolved exclusion set via isExcludedPath().
+  const filtered = raw.filter((d) => !isExcludedPath(cwd, d.file));
+
+  // Apply `.dxkit-suppressions.json` so known-false positives don't count.
+  const suppressions = loadSuppressions(cwd);
+  const { kept, suppressed } = applySuppressions(
+    filtered,
+    suppressions.gitleaks,
+    (d) => d.rule,
+    (d) => d.file,
+  );
+
+  const envelope: SecretsResult = {
+    schemaVersion: 1,
+    tool: 'gitleaks',
+    findings: kept,
+    suppressedCount: suppressed.length,
+  };
+  return { kind: 'success', envelope, suppressedCount: suppressed.length };
+}
+
+/**
+ * Capability-shaped provider. Register in
+ * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES` so the
+ * dispatcher picks it up via `providersFor(SECRETS)`.
+ */
+export const gitleaksProvider: CapabilityProvider<SecretsResult> = {
+  source: 'gitleaks',
+  async gather(cwd) {
+    const outcome = gatherGitleaksResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
+/**
+ * LEGACY bridge: returns Partial<HealthMetrics>. Consumed by
+ * `src/analyzers/tools/parallel.ts`'s dynamic-require loader. Removed
+ * in Phase 10e.C when Layer 2 parallel moves onto the dispatcher.
+ */
+export function gatherGitleaksMetrics(cwd: string): Partial<HealthMetrics> {
+  const outcome = gatherGitleaksResult(cwd);
+  if (outcome.kind === 'unavailable') {
+    const reason = outcome.reason;
+    return {
+      toolsUnavailable: [reason === 'not installed' ? 'gitleaks' : `gitleaks (${reason})`],
+    };
+  }
+  return {
+    secretFindings: outcome.envelope.findings.length,
+    secretDetails: outcome.envelope.findings.map((f) => ({
+      file: f.file,
+      line: f.line,
+      rule: f.rule,
+      severity: f.severity,
+    })),
+    secretSuppressed: outcome.suppressedCount,
+    toolsUsed: ['gitleaks'],
+  };
 }
 
 function findGitleaks(cwd: string): string | null {
