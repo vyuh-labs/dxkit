@@ -16,11 +16,10 @@ import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
-import { gatherGraphifyMetrics } from '../tools/graphify';
 import { gatherClocMetrics } from '../tools/cloc';
 import { detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
-import { DUPLICATION, LINT } from '../../languages/capabilities/descriptors';
+import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { LintResult } from '../../languages/capabilities/types';
@@ -92,9 +91,21 @@ function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
   return offenders.slice(0, limit);
 }
 
-// ─── graphify: structural complexity ────────────────────────────────────────
+// ─── dispatcher-driven structural gather (Phase 10e.B.9.3) ──────────────────
 
-export function gatherStructuralMetrics(cwd: string): {
+/**
+ * Structural metrics are a global capability: the STRUCTURAL dispatcher
+ * routes to `graphifyProvider` (tools/graphify.ts). Like COVERAGE, the
+ * dispatcher caches per-(cwd, capability) so two analyzers in the same
+ * run don't re-shell graphify (it takes ~60s on a medium repo).
+ *
+ * This layer reshapes the envelope into the analyzer's 7-field report
+ * shape. The full envelope carries three additional fields
+ * (classCount, godNodeCount, commentedCodeRatio) that the health
+ * analyzer's Layer 2 path also reads — those are still populated via
+ * the legacy `gatherGraphifyMetrics` bridge in parallel.ts until Phase C.
+ */
+export async function gatherStructuralMetrics(cwd: string): Promise<{
   maxFunctionsInFile: number | null;
   maxFunctionsFilePath: string | null;
   avgCohesion: number | null;
@@ -103,36 +114,29 @@ export function gatherStructuralMetrics(cwd: string): {
   deadImportCount: number | null;
   orphanModuleCount: number | null;
   toolUsed: string | null;
-} {
-  // Reuse graphify data from health metrics if already gathered,
-  // otherwise just report null. Graphify runs during health orchestration,
-  // not re-run per deep analyzer (too slow to run twice).
-  // The quality report inherits these from the health pipeline.
-  // For standalone `vyuh-dxkit quality`, we gather them fresh.
-  const result = gatherGraphifyMetrics(cwd);
-
-  if (result.functionCount !== undefined && result.functionCount !== null) {
+}> {
+  const result = await defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL));
+  if (!result) {
     return {
-      maxFunctionsInFile: result.maxFunctionsInFile ?? null,
-      maxFunctionsFilePath: result.maxFunctionsFilePath ?? null,
-      avgCohesion: result.avgCohesion ?? null,
-      communityCount: result.communityCount ?? null,
-      functionCount: result.functionCount ?? null,
-      deadImportCount: result.deadImportCount ?? null,
-      orphanModuleCount: result.orphanModuleCount ?? null,
-      toolUsed: 'graphify',
+      maxFunctionsInFile: null,
+      maxFunctionsFilePath: null,
+      avgCohesion: null,
+      communityCount: null,
+      functionCount: null,
+      deadImportCount: null,
+      orphanModuleCount: null,
+      toolUsed: null,
     };
   }
-
   return {
-    maxFunctionsInFile: null,
-    maxFunctionsFilePath: null,
-    avgCohesion: null,
-    communityCount: null,
-    functionCount: null,
-    deadImportCount: null,
-    orphanModuleCount: null,
-    toolUsed: result.toolsUnavailable ? null : 'graphify',
+    maxFunctionsInFile: result.maxFunctionsInFile,
+    maxFunctionsFilePath: result.maxFunctionsFilePath,
+    avgCohesion: result.avgCohesion,
+    communityCount: result.communityCount,
+    functionCount: result.functionCount,
+    deadImportCount: result.deadImportCount,
+    orphanModuleCount: result.orphanModuleCount,
+    toolUsed: result.tool,
   };
 }
 

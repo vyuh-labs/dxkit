@@ -84,8 +84,8 @@ export async function analyzeQuality(
   if (dup.toolUsed) toolsUsed.push(dup.toolUsed);
   else toolsUnavailable.push('jscpd');
 
-  // 2. Structural complexity (graphify)
-  const structure = timed('graphify', verbose, () => gatherStructuralMetrics(repoPath));
+  // 2. Structural complexity (graphify) — dispatcher-driven via STRUCTURAL.
+  const structure = await timedAsync('graphify', verbose, () => gatherStructuralMetrics(repoPath));
   if (structure.toolUsed) toolsUsed.push(structure.toolUsed);
   else toolsUnavailable.push('graphify');
 
