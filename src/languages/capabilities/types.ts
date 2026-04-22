@@ -211,16 +211,12 @@ export interface StructuralResult extends CapabilityEnvelope {
 }
 
 /**
- * Internal outcome shape used by language packs while bridging from the
- * legacy `gatherMetrics` channel to the capability dispatcher in Phase
- * 10e.B.1. Each pack has a private `gatherDepVulnsResult(cwd)` helper
- * that returns this; the pack's `capabilities.depVulns.gather()` thinly
- * unwraps the envelope, and `gatherMetrics` decomposes it back into
- * legacy `depVuln*` + `toolsUsed`/`toolsUnavailable` strings.
- *
- * The discriminated union captures every distinction `gatherMetrics`
- * historically made: ran-and-parsed, tool-missing, ran-but-parse-error,
- * ran-but-empty-output. Removed in Phase 10e.C when the legacy fields go.
+ * Internal outcome shape used by language packs' `gatherDepVulnsResult`
+ * helpers. The pack's `capabilities.depVulns` provider unwraps the
+ * envelope (returning null for every non-success kind) so the dispatcher
+ * surface stays `T | null`; keeping the richer outcome here lets the
+ * pack's own code distinguish e.g. "tool missing" from "tool ran but
+ * produced no output" if a future caller needs that detail.
  */
 export type DepVulnGatherOutcome =
   | { kind: 'success'; envelope: DepVulnResult }
@@ -229,11 +225,10 @@ export type DepVulnGatherOutcome =
   | { kind: 'no-output' };
 
 /**
- * Internal outcome shape for the lint capability bridge in Phase 10e.B.2.
- * Lint has simpler semantics than depVulns: either the linter ran and we
- * have tier counts, or it didn't and we have a reason. The reason becomes
- * the parenthetical in `toolsUnavailable` strings ('eslint (not installed)',
- * 'ruff (parse error)', etc.) so legacy gatherMetrics text stays unchanged.
+ * Internal outcome shape for the lint capability. Simpler than depVulns:
+ * either the linter ran and we have tier counts, or it didn't and we
+ * have a reason. The pack's `capabilities.lint` provider unwraps
+ * `success` into the envelope and returns null otherwise.
  */
 export type LintGatherOutcome =
   | { kind: 'success'; envelope: LintResult }

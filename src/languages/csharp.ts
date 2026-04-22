@@ -5,7 +5,6 @@ import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -112,13 +111,12 @@ export function parseCoberturaXml(raw: string, sourceFile: string, cwd: string):
 
 /**
  * Single source of truth for the csharp pack's dep-vuln gathering.
- * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
+ * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
  *
- * Note: previously the vuln check was nested inside the `dotnet-format`
- * availability gate in gatherMetrics — a quirk that meant a project
- * with `dotnet` but no `dotnet-format` saw zero vuln data. The capability
- * provider runs independently, fixing that incidentally. The legacy
- * decomposition in gatherMetrics now also runs unconditionally.
+ * Note: before Phase 10e.B.1.5, the vuln check was nested inside the
+ * `dotnet-format` availability gate — a quirk that meant a project with
+ * `dotnet` but no `dotnet-format` saw zero vuln data. The capability
+ * provider runs independently, fixing that incidentally.
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vulnRaw = run('dotnet list package --vulnerable --format json 2>/dev/null', cwd, 120000);
@@ -175,14 +173,12 @@ const csharpDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
 
 /**
  * Single source of truth for the csharp pack's lint gathering.
- * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ * Consumed by `csharpLintProvider` (capability dispatcher).
  *
  * dotnet-format is a formatter, not a tiered linter — it emits binary
  * pass/fail per file. Violations are formatting issues (indentation,
  * spacing), not correctness. This helper reports them at `low` tier so
- * they don't inflate the Quality/Slop score: gatherMetrics collapses
- * C+H → lintErrors and M+L → lintWarnings, so low-tier counts flow
- * into lintWarnings exclusively (matching the prior behavior).
+ * they don't inflate the Quality/Slop score.
  */
 function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
   const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
@@ -363,53 +359,4 @@ export const csharp: LanguageSupport = {
   // mapping each to a tier. That's deferred until a C# test project
   // is available to validate the integration; see architecture-redesign
   // plan for the capability-based approach this will live in.
-
-  async gatherMetrics(cwd) {
-    const metrics: Partial<HealthMetrics> = {
-      toolsUsed: [],
-      toolsUnavailable: [],
-    };
-
-    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Collapse: critical + high → errors, medium + low → warnings.
-    // dotnet-format is binary pass/fail so all violations land in `low`,
-    // which collapses to lintWarnings — matches prior "style, not errors"
-    // classification that keeps Quality/Slop scoring honest.
-    const lintOutcome = gatherCsharpLintResult(cwd);
-    if (lintOutcome.kind === 'success') {
-      const c = lintOutcome.envelope.counts;
-      metrics.lintErrors = c.critical + c.high;
-      metrics.lintWarnings = c.medium + c.low;
-      metrics.lintTool = lintOutcome.envelope.tool;
-      metrics.toolsUsed!.push('dotnet-format');
-    } else {
-      metrics.toolsUnavailable!.push(
-        lintOutcome.reason === 'not installed'
-          ? 'dotnet-format'
-          : `dotnet-format (${lintOutcome.reason})`,
-      );
-    }
-
-    // LEGACY: depVuln* fields populated from capabilities.depVulns;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Phase 10e.B.1.5 also decoupled this from the dotnet-format
-    // availability gate (which had no logical reason to gate vulns).
-    const dvOutcome = await gatherCsharpDepVulnsResult(cwd);
-    if (dvOutcome.kind === 'success') {
-      const e = dvOutcome.envelope;
-      metrics.depVulnCritical = e.counts.critical;
-      metrics.depVulnHigh = e.counts.high;
-      metrics.depVulnMedium = e.counts.medium;
-      metrics.depVulnLow = e.counts.low;
-      metrics.depAuditTool = e.tool;
-      metrics.toolsUsed!.push('dotnet-vulnerable');
-    } else if (dvOutcome.kind === 'parse-error') {
-      metrics.toolsUnavailable!.push('dotnet-vulnerable (parse error)');
-    }
-    // 'tool-missing' (n/a — provider always tries dotnet) and 'no-output'
-    // (zero vulns OR dotnet missing) are silent, matching prior behavior.
-
-    return metrics;
-  },
 };

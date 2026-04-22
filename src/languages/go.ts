@@ -6,7 +6,6 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { classifyOsvSeverity, enrichSeverities, type OsvVuln } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -109,9 +108,7 @@ function tierGolangciIssue(issue: GolangciIssue): LintSeverity {
 
 /**
  * Single source of truth for the go pack's dep-vuln gathering.
- * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
- * The legacy decomposition in `gatherMetrics` is the bridge that goes
- * away in Phase 10e.C.
+ * Consumed by `goDepVulnsProvider` (capability dispatcher).
  */
 async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vuln = findTool(TOOL_DEFS.govulncheck, cwd);
@@ -197,7 +194,7 @@ const goDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
 
 /**
  * Single source of truth for the go pack's lint gathering.
- * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ * Consumed by `goLintProvider` (capability dispatcher).
  */
 function gatherGoLintResult(cwd: string): LintGatherOutcome {
   const lint = findTool(TOOL_DEFS['golangci-lint'], cwd);
@@ -410,51 +407,4 @@ export const go: LanguageSupport = {
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
-
-  async gatherMetrics(cwd) {
-    const metrics: Partial<HealthMetrics> = {
-      toolsUsed: [],
-      toolsUnavailable: [],
-    };
-
-    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Collapse: critical + high → errors, medium + low → warnings.
-    const lintOutcome = gatherGoLintResult(cwd);
-    if (lintOutcome.kind === 'success') {
-      const c = lintOutcome.envelope.counts;
-      metrics.lintErrors = c.critical + c.high;
-      metrics.lintWarnings = c.medium + c.low;
-      metrics.lintTool = lintOutcome.envelope.tool;
-      metrics.toolsUsed!.push('golangci-lint');
-    } else {
-      metrics.toolsUnavailable!.push(
-        lintOutcome.reason === 'not installed'
-          ? 'golangci-lint'
-          : `golangci-lint (${lintOutcome.reason})`,
-      );
-    }
-
-    // LEGACY: depVuln* fields populated from capabilities.depVulns;
-    // removed in Phase 10e.C when reports stop reading these.
-    const dvOutcome = await gatherGoDepVulnsResult(cwd);
-    if (dvOutcome.kind === 'success') {
-      const e = dvOutcome.envelope;
-      metrics.depVulnCritical = e.counts.critical;
-      metrics.depVulnHigh = e.counts.high;
-      metrics.depVulnMedium = e.counts.medium;
-      metrics.depVulnLow = e.counts.low;
-      metrics.depAuditTool = e.tool;
-      metrics.toolsUsed!.push('govulncheck');
-      if (e.enrichment === 'osv.dev') metrics.toolsUsed!.push('osv.dev');
-    } else if (dvOutcome.kind === 'parse-error') {
-      metrics.toolsUnavailable!.push('govulncheck (parse error)');
-    } else if (dvOutcome.kind === 'tool-missing') {
-      metrics.toolsUnavailable!.push('govulncheck');
-    }
-    // 'no-output' was previously silent (raw was empty so the if (raw) block
-    // didn't run and nothing was pushed); preserve that behavior.
-
-    return metrics;
-  },
 };

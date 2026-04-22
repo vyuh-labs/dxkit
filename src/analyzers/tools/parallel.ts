@@ -1,7 +1,7 @@
 /**
- * Layer 2 orchestrator — populates the legacy `HealthMetrics` fields that
- * live outside the per-pack `gatherMetrics` channel (cloc line counts,
- * gitleaks secret counts, graphify AST stats).
+ * Layer 2 orchestrator — populates the legacy `HealthMetrics` fields
+ * that carry non-capability data (cloc line counts) plus the reshape of
+ * gitleaks + graphify envelopes into their pre-C.5 shape.
  *
  * Phase 10e.C.3: rewritten from a child-process + bash orchestration into
  * direct in-process calls to the memoized outcome helpers

@@ -6,7 +6,6 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichSeverities } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -72,9 +71,7 @@ function hasPyFileWithinDepth(cwd: string, maxDepth = 2): boolean {
 
 /**
  * Single source of truth for the python pack's dep-vuln gathering.
- * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
- * The legacy decomposition in `gatherMetrics` is the bridge that goes
- * away in Phase 10e.C.
+ * Consumed by `pyDepVulnsProvider` (capability dispatcher).
  */
 async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
@@ -149,7 +146,7 @@ function mapRuffSeverity(code: string): LintSeverity {
 
 /**
  * Single source of truth for the python pack's lint gathering.
- * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ * Consumed by `pyLintProvider` (capability dispatcher).
  */
 function gatherPyLintResult(cwd: string): LintGatherOutcome {
   const ruff = findTool(TOOL_DEFS.ruff, cwd);
@@ -376,51 +373,6 @@ export const python: LanguageSupport = {
     coverage: pyCoverageProvider,
     imports: pyImportsProvider,
     testFramework: pyTestFrameworkProvider,
-  },
-
-  async gatherMetrics(cwd) {
-    const metrics: Partial<HealthMetrics> = {
-      toolsUsed: [],
-      toolsUnavailable: [],
-    };
-
-    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Collapse: critical + high → errors, medium + low → warnings.
-    const lintOutcome = gatherPyLintResult(cwd);
-    if (lintOutcome.kind === 'success') {
-      const c = lintOutcome.envelope.counts;
-      metrics.lintErrors = c.critical + c.high;
-      metrics.lintWarnings = c.medium + c.low;
-      metrics.lintTool = lintOutcome.envelope.tool;
-      metrics.toolsUsed!.push('ruff');
-    } else {
-      metrics.toolsUnavailable!.push(
-        lintOutcome.reason === 'not installed' ? 'ruff' : `ruff (${lintOutcome.reason})`,
-      );
-    }
-
-    // LEGACY: depVuln* fields populated from capabilities.depVulns;
-    // removed in Phase 10e.C when reports stop reading these.
-    const dvOutcome = await gatherPyDepVulnsResult(cwd);
-    if (dvOutcome.kind === 'success') {
-      const e = dvOutcome.envelope;
-      metrics.depVulnCritical = e.counts.critical;
-      metrics.depVulnHigh = e.counts.high;
-      metrics.depVulnMedium = e.counts.medium;
-      metrics.depVulnLow = e.counts.low;
-      metrics.depAuditTool = e.tool;
-      metrics.toolsUsed!.push('pip-audit');
-      if (e.enrichment === 'osv.dev') metrics.toolsUsed!.push('osv.dev');
-    } else if (dvOutcome.kind === 'parse-error') {
-      metrics.toolsUnavailable!.push('pip-audit (parse error)');
-    } else if (dvOutcome.kind === 'tool-missing') {
-      metrics.toolsUnavailable!.push('pip-audit');
-    }
-    // 'no-output' was previously silent (raw was empty so the if (raw) block
-    // didn't run and nothing was pushed); preserve that behavior.
-
-    return metrics;
   },
 
   mapLintSeverity: mapRuffSeverity,

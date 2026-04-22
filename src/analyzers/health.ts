@@ -13,6 +13,7 @@ import { CapabilityReport, HealthMetrics, HealthReport } from './types';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
+import { gatherPackageJsonMetrics } from './tools/package-json';
 import { detectActiveLanguages } from '../languages';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
@@ -145,22 +146,12 @@ async function analyzeHealthInternal(
   const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
-  // Layer 1: Language-specific tools run in parallel — packs are independent.
   const activeLangs = detectActiveLanguages(repoPath);
-  const langPacks = activeLangs.filter((l) => l.gatherMetrics);
-  const langResults = await Promise.all(
-    langPacks.map((lang) =>
-      timedAsync(`${lang.id} (Layer 1)`, verbose, () => lang.gatherMetrics!(repoPath)),
-    ),
-  );
-  for (const result of langResults) {
-    mergeMetrics(metrics, result);
-  }
 
-  // testFramework comes from the capability dispatcher, not gatherMetrics.
-  // Descriptor aggregate is last-wins across packs; mixed-stack repos
-  // resolve to a single framework string exactly as they did in the
-  // legacy channel. Per-language reporting is future work (see Phase 10f).
+  // testFramework legacy-field populator: capability dispatcher resolves
+  // across active packs (last-wins aggregate) and we keep `metrics.testFramework`
+  // in sync for the handful of pre-2.0 consumers. C.7 narrows
+  // `HealthMetrics` and the capability envelope becomes the only source.
   const tfProviders: CapabilityProvider<TestFrameworkResult>[] = [];
   for (const lang of activeLangs) {
     const p = lang.capabilities?.testFramework;
@@ -170,6 +161,14 @@ async function analyzeHealthInternal(
     defaultDispatcher.gather(repoPath, TEST_FRAMEWORK, tfProviders),
   );
   if (tfResult) metrics.testFramework = tfResult.name;
+
+  // `package.json` metrics: npm-script count + `engines.node` pin. These
+  // don't fit any capability (Node-specific by nature) and used to live
+  // in the typescript pack's `gatherMetrics` body; extracted in C.5 into
+  // a direct helper so they survive the per-pack channel deletion.
+  const pkg = timed('package.json', verbose, () => gatherPackageJsonMetrics(repoPath));
+  metrics.npmScriptsCount = pkg.npmScriptsCount;
+  metrics.nodeEngineVersion = pkg.nodeEngineVersion;
 
   // Layer 2: Optional enhanced tools (run in parallel for speed)
   mergeMetrics(
@@ -208,10 +207,19 @@ async function analyzeHealthInternal(
   // Phase 10e.C.1: capability envelopes alongside legacy metrics. Dispatched
   // in parallel; providers the legacy path already ran are served from the
   // dispatcher cache (free). Scorers read capability-owned fields from this
-  // bundle (C.2); C.5 removes the legacy gatherMetrics channel.
+  // bundle (C.2).
   const capabilities = await timedAsync('capabilities', verbose, () =>
     gatherCapabilityReport(repoPath),
   );
+
+  // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
+  // clippy, cargo-audit, golangci-lint, govulncheck, dotnet-format,
+  // dotnet-vulnerable) into `metrics.toolsUsed` from the LINT + DEP_VULNS
+  // envelopes. Pre-C.5 these came from each pack's `gatherMetrics`; now
+  // they come from the dispatcher's already-computed `tool` field.
+  for (const name of toolsFromCapabilities(capabilities)) {
+    if (!metrics.toolsUsed.includes(name)) metrics.toolsUsed.push(name);
+  }
 
   // Step 3: Score
   const scoreInput: ScoreInput = { metrics, capabilities };
@@ -242,6 +250,37 @@ async function analyzeHealthInternal(
     capabilities,
   };
   return { report, metrics };
+}
+
+/**
+ * Extract user-facing tool names from the LINT + DEP_VULNS envelopes so
+ * `metrics.toolsUsed` can continue to list them after C.5 deletes the
+ * per-pack `gatherMetrics` channel. Other capability envelopes (imports,
+ * testFramework, secrets, codePatterns, duplication, structural) aren't
+ * mirrored here — some carry pseudo-tools (`ts-imports`, `typescript`)
+ * that were never in `toolsUsed`; the real external tools (gitleaks,
+ * graphify, jscpd, semgrep) land through their own code paths.
+ *
+ * Splits comma-joined names the descriptor aggregate produces (e.g.
+ * `"ruff, eslint, golangci-lint"`) back into individual entries. Also
+ * includes `osv.dev` when depVulns enrichment used it — matches the
+ * byte-identical pre-C.5 string the python/go/rust packs emitted.
+ */
+function toolsFromCapabilities(caps: CapabilityReport): string[] {
+  const names: string[] = [];
+  if (caps.lint) names.push(...splitToolNames(caps.lint.tool));
+  if (caps.depVulns) {
+    names.push(...splitToolNames(caps.depVulns.tool));
+    if (caps.depVulns.enrichment === 'osv.dev') names.push('osv.dev');
+  }
+  return names;
+}
+
+function splitToolNames(tool: string): string[] {
+  return tool
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /**

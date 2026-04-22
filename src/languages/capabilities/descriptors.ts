@@ -101,8 +101,9 @@ export const COVERAGE: CapabilityDescriptor<CoverageResult> = {
 export const TEST_FRAMEWORK: CapabilityDescriptor<TestFrameworkResult> = {
   id: 'testFramework',
   aggregate(results) {
-    // Last-wins. Mixed-stack repos already resolve this via the language
-    // pack's gatherMetrics today; per-pack reporting lands in Phase 10e.B.5.
+    // Last-wins. Mixed-stack repos resolve to a single framework name
+    // deterministically by provider-registration order; per-language
+    // reporting is future work (see Phase 10f roadmap).
     return results[results.length - 1];
   },
 };

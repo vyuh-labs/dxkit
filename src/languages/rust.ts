@@ -6,7 +6,6 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -128,9 +127,7 @@ interface CargoAuditResult {
 
 /**
  * Single source of truth for the rust pack's dep-vuln gathering.
- * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this.
- * The legacy decomposition in `gatherMetrics` is the bridge that goes
- * away in Phase 10e.C.
+ * Consumed by `rustDepVulnsProvider` (capability dispatcher).
  */
 async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
@@ -176,12 +173,12 @@ const rustDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
 
 /**
  * Single source of truth for the rust pack's lint gathering.
- * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
+ * Consumed by `rustLintProvider` (capability dispatcher).
  *
  * Previously, empty cargo output was silently skipped (nothing pushed
  * to toolsUsed or toolsUnavailable). This helper aligns rust with the
- * other packs: empty output = clean run with zero lint issues, pushed
- * to toolsUsed. Strict improvement.
+ * other packs: empty output = clean run with zero lint issues. Strict
+ * improvement.
  */
 function gatherRustLintResult(cwd: string): LintGatherOutcome {
   const clippy = findTool(TOOL_DEFS.clippy, cwd);
@@ -411,48 +408,4 @@ export const rust: LanguageSupport = {
   },
 
   mapLintSeverity: mapClippyLintSeverity,
-
-  async gatherMetrics(cwd) {
-    const metrics: Partial<HealthMetrics> = {
-      toolsUsed: [],
-      toolsUnavailable: [],
-    };
-
-    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Collapse: critical + high → errors, medium + low → warnings.
-    const lintOutcome = gatherRustLintResult(cwd);
-    if (lintOutcome.kind === 'success') {
-      const c = lintOutcome.envelope.counts;
-      metrics.lintErrors = c.critical + c.high;
-      metrics.lintWarnings = c.medium + c.low;
-      metrics.lintTool = lintOutcome.envelope.tool;
-      metrics.toolsUsed!.push('clippy');
-    } else {
-      metrics.toolsUnavailable!.push(
-        lintOutcome.reason === 'not installed' ? 'clippy' : `clippy (${lintOutcome.reason})`,
-      );
-    }
-
-    // LEGACY: depVuln* fields populated from capabilities.depVulns;
-    // removed in Phase 10e.C when reports stop reading these.
-    const dvOutcome = await gatherRustDepVulnsResult(cwd);
-    if (dvOutcome.kind === 'success') {
-      const e = dvOutcome.envelope;
-      metrics.depVulnCritical = e.counts.critical;
-      metrics.depVulnHigh = e.counts.high;
-      metrics.depVulnMedium = e.counts.medium;
-      metrics.depVulnLow = e.counts.low;
-      metrics.depAuditTool = e.tool;
-      metrics.toolsUsed!.push('cargo-audit');
-    } else if (dvOutcome.kind === 'parse-error') {
-      metrics.toolsUnavailable!.push('cargo-audit (parse error)');
-    } else if (dvOutcome.kind === 'tool-missing') {
-      metrics.toolsUnavailable!.push('cargo-audit');
-    }
-    // 'no-output' was previously silent (raw was empty OR
-    // data.vulnerabilities was missing — neither pushed anything).
-
-    return metrics;
-  },
 };

@@ -1,4 +1,3 @@
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -13,37 +12,11 @@ export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp';
 export type LintSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 /**
- * The narrow subset of HealthMetrics fields a language pack is allowed to
- * produce. Every current pack only touches these — widening this type
- * without updating the contract test means new fields slip through review.
- *
- * Keep in sync with `mergeMetrics` aggregation rules in `src/analyzers/
- * health.ts`: fields in AGGREGATED_VULN_FIELDS are summed across packs,
- * depAuditTool is joined, array fields (toolsUsed, toolsUnavailable) are
- * appended, all others are last-wins.
- */
-export type LangMetrics = Pick<
-  HealthMetrics,
-  | 'lintErrors'
-  | 'lintWarnings'
-  | 'lintTool'
-  | 'depVulnCritical'
-  | 'depVulnHigh'
-  | 'depVulnMedium'
-  | 'depVulnLow'
-  | 'depAuditTool'
-  | 'toolsUsed'
-  | 'toolsUnavailable'
-  | 'npmScriptsCount'
-  | 'nodeEngineVersion'
->;
-
-/**
- * Capability providers a language pack may expose. Each is optional —
- * "not supported yet" is the default. Phase 10e.B migrates one capability
- * at a time from `gatherMetrics` (LangMetrics) into this dispatcher-driven
- * channel; until each capability lands here, the existing `gatherMetrics`
- * remains the source of truth.
+ * Capability providers a language pack may expose. Every data-producing
+ * surface lives here after Phase 10e.C.5 — the legacy `gatherMetrics`
+ * channel is gone, and the capability dispatcher is the only route from
+ * a language pack to the analyzer layer. Each provider is optional so a
+ * pack can ship incrementally as underlying tool support lands.
  */
 export interface LanguagePackCapabilities {
   depVulns?: CapabilityProvider<DepVulnResult>;
@@ -73,13 +46,8 @@ export interface LanguageSupport {
   tools: string[];
   semgrepRulesets: string[];
 
-  gatherMetrics?(cwd: string): Promise<Partial<LangMetrics>>;
   mapLintSeverity?(code: string): LintSeverity;
 
-  /**
-   * Phase 10e capability providers. Optional and additive — packs land
-   * each capability here as Phase B migrates them. Packs without this
-   * field stay on the legacy gatherMetrics path.
-   */
+  /** Capability providers for the dispatcher channel. */
   capabilities?: LanguagePackCapabilities;
 }

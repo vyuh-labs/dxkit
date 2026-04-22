@@ -252,18 +252,11 @@ export function gatherHygieneMarkers(cwd: string): {
 
 /**
  * Aggregates lint tier counts across every active language pack via the
- * capability dispatcher. Phase 10e.B.2 replaced an earlier loop that ran
- * each pack's full `gatherMetrics` (lint + deps + testFramework) and
- * returned the first pack's lint with a non-null `lintTool`. Two fixes:
- *
- *   1. First-wins → sum: a Python + Node repo now reports combined
- *      eslint + ruff counts, not just the first one detected.
- *   2. Only the lint provider runs per pack, not the full `gatherMetrics`,
- *      so the quality analyzer no longer incidentally triggers npm-audit
- *      and pip-audit when asking about lint.
+ * capability dispatcher. Mixed-stack repos sum contributions (Python +
+ * Node reports combined eslint + ruff counts).
  *
  * Collapse: critical + high → errors, medium + low → warnings, matching
- * the prior `lintErrors`/`lintWarnings` contract.
+ * the `lintErrors`/`lintWarnings` contract in the quality report shape.
  */
 export async function gatherLintMetrics(cwd: string): Promise<{
   errors: number;

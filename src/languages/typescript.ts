@@ -4,7 +4,6 @@ import * as path from 'path';
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
-import type { HealthMetrics } from '../analyzers/types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -117,9 +116,7 @@ interface AuditV2 {
 
 /**
  * Single source of truth for the typescript pack's dep-vuln gathering.
- * Both `capabilities.depVulns.gather()` and `gatherMetrics` consume this
- * — the legacy decomposition in `gatherMetrics` is the bridge that goes
- * away in Phase 10e.C.
+ * Consumed by `tsDepVulnsProvider` (capability dispatcher).
  */
 async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   if (!fileExists(cwd, 'package.json')) return { kind: 'tool-missing' };
@@ -232,9 +229,7 @@ export function resolveTsImportRaw(fromFile: string, spec: string, cwd: string):
 
 /**
  * Single source of truth for the typescript pack's lint gathering.
- * Both `capabilities.lint.gather()` and `gatherMetrics` consume this.
- * The legacy decomposition (collapse tier counts → errors/warnings) lives
- * in gatherMetrics and goes away in Phase 10e.C.
+ * Consumed by `tsLintProvider` (capability dispatcher).
  */
 function gatherTsLintResult(cwd: string): LintGatherOutcome {
   const lbEslintPath = 'node_modules/.bin/lb-eslint';
@@ -466,59 +461,5 @@ export const typescript: LanguageSupport = {
     coverage: tsCoverageProvider,
     imports: tsImportsProvider,
     testFramework: tsTestFrameworkProvider,
-  },
-
-  async gatherMetrics(cwd) {
-    const metrics: Partial<HealthMetrics> = {
-      toolsUsed: [],
-      toolsUnavailable: [],
-    };
-
-    // LEGACY: lintErrors/lintWarnings/lintTool populated from capabilities.lint;
-    // removed in Phase 10e.C when reports stop reading these.
-    // Collapse: critical + high → errors, medium + low → warnings.
-    const lintOutcome = gatherTsLintResult(cwd);
-    if (lintOutcome.kind === 'success') {
-      const c = lintOutcome.envelope.counts;
-      metrics.lintErrors = c.critical + c.high;
-      metrics.lintWarnings = c.medium + c.low;
-      metrics.lintTool = lintOutcome.envelope.tool;
-      metrics.toolsUsed!.push('eslint');
-    } else {
-      metrics.toolsUnavailable!.push(`eslint (${lintOutcome.reason})`);
-    }
-
-    // LEGACY: depVuln* fields populated from capabilities.depVulns;
-    // removed in Phase 10e.C when reports stop reading these.
-    const dvOutcome = await gatherTsDepVulnsResult(cwd);
-    if (dvOutcome.kind === 'success') {
-      const e = dvOutcome.envelope;
-      metrics.depVulnCritical = e.counts.critical;
-      metrics.depVulnHigh = e.counts.high;
-      metrics.depVulnMedium = e.counts.medium;
-      metrics.depVulnLow = e.counts.low;
-      metrics.depAuditTool = e.tool;
-      metrics.toolsUsed!.push('npm-audit');
-    } else if (dvOutcome.kind === 'parse-error') {
-      metrics.toolsUnavailable!.push('npm-audit (parse error)');
-    } else if (dvOutcome.kind === 'no-output' || dvOutcome.kind === 'tool-missing') {
-      metrics.toolsUnavailable!.push('npm-audit');
-    }
-
-    const scriptsOutput = run(
-      'node -e "const p=require(\'./package.json\'); console.log(Object.keys(p.scripts||{}).length)" 2>/dev/null', // slop-ok
-      cwd,
-    );
-    metrics.npmScriptsCount = parseInt(scriptsOutput) || 0;
-
-    const engineOutput = run(
-      "node -e \"const p=require('./package.json'); console.log(p.engines?.node || '')\" 2>/dev/null", // slop-ok
-      cwd,
-    );
-    if (engineOutput) {
-      metrics.nodeEngineVersion = engineOutput;
-    }
-
-    return metrics;
   },
 };
