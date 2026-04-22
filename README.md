@@ -14,7 +14,7 @@ Built so agent-written code has deterministic guardrails before it ships. Scores
 ```bash
 cd your-repo
 npx @vyuhlabs/dxkit tools install --yes      # one-time: install cloc, gitleaks, etc.
-npx @vyuhlabs/dxkit health --detailed         # 5-dimension score + remediation plan
+npx @vyuhlabs/dxkit health --detailed         # 6-dimension score + remediation plan
 npx @vyuhlabs/dxkit vulnerabilities           # secret + SAST + dep-audit scan
 npx @vyuhlabs/dxkit test-gaps                 # import-graph + coverage-aware
 ```

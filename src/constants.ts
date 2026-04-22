@@ -1,6 +1,26 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { ResolvedConfig } from './types';
 
-export const VERSION = '1.1.0';
+/**
+ * Package version — the single source of truth is `package.json` at the
+ * package root. Compiled output lives in `dist/`, so `__dirname` points
+ * to the installed `node_modules/@vyuhlabs/dxkit/dist/` and `../package.json`
+ * resolves to the shipped manifest. Falling back to `'0.0.0'` on unreadable
+ * package.json keeps the CLI from crashing if someone runs dxkit from a
+ * broken install; the fallback is unambiguous in bug reports.
+ */
+function readPackageVersion(): string {
+  try {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const raw = fs.readFileSync(pkgPath, 'utf-8');
+    return (JSON.parse(raw) as { version?: string }).version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+export const VERSION = readPackageVersion();
 
 export const DEFAULT_VERSIONS = {
   python: '3.12',
