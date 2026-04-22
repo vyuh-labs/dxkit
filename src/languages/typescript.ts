@@ -443,18 +443,39 @@ interface LicenseCheckerEntry {
 
 /**
  * Read the local `node_modules/<pkg>/package.json` for registry metadata
- * not in license-checker's output (description today; potentially
- * releaseDate in a future commit via `time` if we add npm-view fallback).
+ * not exposed (or lossily normalized) by license-checker.
+ *
+ *   - `description` — license-checker doesn't ship it.
+ *   - `repositoryUrl` — license-checker normalizes the URL (strips
+ *     `git+` prefix + `.git` suffix); we want the raw form to match
+ *     tools like `npm view repository.url` + the customer's existing
+ *     bom spreadsheet (Phase 10h.5 benchmark).
+ *
  * Disk-only, no network — stays sub-millisecond per package and works
- * offline. Returns {} if the package isn't installed locally.
+ * offline. Returns {} if the package isn't installed locally; callers
+ * fall back to license-checker's normalized URL in that case.
  */
-function readTsPackageDescription(cwd: string, pkgName: string): string | undefined {
+interface TsPackageMetadata {
+  description?: string;
+  repositoryUrl?: string;
+}
+
+function readTsPackageMetadata(cwd: string, pkgName: string): TsPackageMetadata {
   try {
     const raw = fs.readFileSync(path.join(cwd, 'node_modules', pkgName, 'package.json'), 'utf-8');
-    const parsed = JSON.parse(raw) as { description?: string };
-    return parsed.description;
+    const parsed = JSON.parse(raw) as {
+      description?: string;
+      repository?: string | { url?: string };
+    };
+    let repositoryUrl: string | undefined;
+    if (typeof parsed.repository === 'string') {
+      repositoryUrl = parsed.repository;
+    } else if (parsed.repository && typeof parsed.repository.url === 'string') {
+      repositoryUrl = parsed.repository.url;
+    }
+    return { description: parsed.description, repositoryUrl };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -513,13 +534,16 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
       }
     }
 
+    const meta = readTsPackageMetadata(cwd, split.package);
     findings.push({
       package: split.package,
       version: split.version,
       licenseType,
       licenseText,
-      sourceUrl: entry.repository || entry.url,
-      description: readTsPackageDescription(cwd, split.package),
+      // Prefer raw repository.url (byte-identical to `npm view`) over
+      // license-checker's normalized form; fall back cleanly.
+      sourceUrl: meta.repositoryUrl || entry.repository || entry.url,
+      description: meta.description,
       supplier: entry.publisher,
     });
   }
