@@ -4,12 +4,15 @@ import * as path from 'path';
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
+import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
+  LicenseFinding,
+  LicensesResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -425,6 +428,116 @@ const tsTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/**
+ * Raw shape emitted per-entry by license-checker-rseidelsohn's `--json`.
+ * Keys are `${name}@${version}` (scoped packages keep the leading '@').
+ * Fields are a loose union across versions — we only touch the ones we map.
+ */
+interface LicenseCheckerEntry {
+  licenses?: string | string[];
+  repository?: string;
+  publisher?: string;
+  url?: string;
+  licenseFile?: string;
+}
+
+/**
+ * Read the local `node_modules/<pkg>/package.json` for registry metadata
+ * not in license-checker's output (description today; potentially
+ * releaseDate in a future commit via `time` if we add npm-view fallback).
+ * Disk-only, no network — stays sub-millisecond per package and works
+ * offline. Returns {} if the package isn't installed locally.
+ */
+function readTsPackageDescription(cwd: string, pkgName: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, 'node_modules', pkgName, 'package.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { description?: string };
+    return parsed.description;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Split license-checker's `${name}@${version}` key, preserving a leading
+ * '@' on scoped packages. Returns null on malformed keys (no '@' past
+ * position 0) so the caller can skip cleanly.
+ */
+function splitTsLicenseCheckerKey(key: string): { package: string; version: string } | null {
+  const atIdx = key.lastIndexOf('@');
+  if (atIdx <= 0) return null;
+  return { package: key.slice(0, atIdx), version: key.slice(atIdx + 1) };
+}
+
+/**
+ * Single source of truth for the typescript pack's license gathering.
+ * Consumed by `tsLicensesProvider` (capability dispatcher).
+ *
+ * Returns null when the repo isn't a Node project OR the tool isn't
+ * available (so the dispatcher skips the pack cleanly rather than
+ * emitting an empty envelope). License-text is inlined by reading the
+ * `licenseFile` path on disk — the customer's existing workflow does
+ * the same thing (see `license-generation.sh` in vyuhlabs-platform).
+ */
+function gatherTsLicensesResult(cwd: string): LicensesResult | null {
+  if (!fileExists(cwd, 'package.json')) return null;
+
+  const status = findTool(TOOL_DEFS['license-checker-rseidelsohn'], cwd);
+  if (!status.available || !status.path) return null;
+
+  const raw = run(`${status.path} --json --excludePrivatePackages 2>/dev/null`, cwd, 120000);
+  if (!raw) return null;
+
+  let data: Record<string, LicenseCheckerEntry>;
+  try {
+    data = JSON.parse(raw) as Record<string, LicenseCheckerEntry>;
+  } catch {
+    return null;
+  }
+
+  const findings: LicenseFinding[] = [];
+  for (const [key, entry] of Object.entries(data)) {
+    const split = splitTsLicenseCheckerKey(key);
+    if (!split) continue;
+
+    const licenseType = Array.isArray(entry.licenses)
+      ? entry.licenses.join(' OR ')
+      : entry.licenses || 'UNKNOWN';
+
+    let licenseText: string | undefined;
+    if (entry.licenseFile) {
+      try {
+        licenseText = fs.readFileSync(entry.licenseFile, 'utf-8');
+      } catch {
+        // license file vanished between scan and read — skip silently
+      }
+    }
+
+    findings.push({
+      package: split.package,
+      version: split.version,
+      licenseType,
+      licenseText,
+      sourceUrl: entry.repository || entry.url,
+      description: readTsPackageDescription(cwd, split.package),
+      supplier: entry.publisher,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    tool: 'license-checker-rseidelsohn',
+    findings,
+  };
+}
+
+const tsLicensesProvider: CapabilityProvider<LicensesResult> = {
+  source: 'typescript',
+  async gather(cwd) {
+    return gatherTsLicensesResult(cwd);
+  },
+};
+
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
@@ -451,7 +564,7 @@ export const typescript: LanguageSupport = {
 
   mapLintSeverity: mapEslintRuleSeverity,
 
-  tools: ['eslint', 'npm-audit', 'vitest-coverage'],
+  tools: ['eslint', 'npm-audit', 'vitest-coverage', 'license-checker-rseidelsohn'],
   semgrepRulesets: ['p/javascript', 'p/typescript'],
 
   capabilities: {
@@ -460,5 +573,6 @@ export const typescript: LanguageSupport = {
     coverage: tsCoverageProvider,
     imports: tsImportsProvider,
     testFramework: tsTestFrameworkProvider,
+    licenses: tsLicensesProvider,
   },
 };

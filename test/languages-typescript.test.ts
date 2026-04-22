@@ -135,7 +135,12 @@ describe('typescript registration', () => {
   });
 
   it('declares expected tools', () => {
-    expect(typescript.tools).toEqual(['eslint', 'npm-audit', 'vitest-coverage']);
+    expect(typescript.tools).toEqual([
+      'eslint',
+      'npm-audit',
+      'vitest-coverage',
+      'license-checker-rseidelsohn',
+    ]);
   });
 
   it('declares expected semgrep rulesets', () => {

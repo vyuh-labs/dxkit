@@ -402,6 +402,23 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'builtin',
     },
   },
+  'license-checker-rseidelsohn': {
+    name: 'license-checker-rseidelsohn',
+    description: 'License inventory for npm dependencies (maintained fork of license-checker)',
+    install: 'npm install -g license-checker-rseidelsohn',
+    check: 'license-checker-rseidelsohn --version',
+    for: 'node',
+    layer: 'language',
+    binaries: ['license-checker-rseidelsohn'],
+    versionCheck: 'license-checker-rseidelsohn --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
+      linux:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
+      windows: 'npm install -g license-checker-rseidelsohn',
+    },
+  },
   ruff: {
     name: 'ruff',
     description: 'Python linting and formatting',
