@@ -12,6 +12,8 @@ import type {
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
+  LicenseFinding,
+  LicensesResult,
   LintGatherOutcome,
   LintResult,
   SeverityCounts,
@@ -346,6 +348,115 @@ const pyTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/**
+ * Raw shape emitted per-entry by `pip-licenses --format=json`. Fields are
+ * pip-licenses's capitalised names; we map them to LicenseFinding below.
+ */
+interface PipLicensesEntry {
+  Name: string;
+  Version: string;
+  License?: string;
+  LicenseText?: string;
+  Author?: string;
+  URL?: string;
+  Description?: string;
+}
+
+/**
+ * Locate the project's own Python interpreter. Conventional venv locations
+ * are `.venv/bin/python[3]` or `venv/bin/python[3]`; we check in that
+ * order. Returns null if no venv is found — the provider then skips
+ * cleanly rather than falling through to pip-licenses's install env
+ * (which would report dxkit's own packages, not the project's).
+ */
+function findPyProjectVenvPython(cwd: string): string | null {
+  const candidates = [
+    path.join(cwd, '.venv', 'bin', 'python'),
+    path.join(cwd, '.venv', 'bin', 'python3'),
+    path.join(cwd, 'venv', 'bin', 'python'),
+    path.join(cwd, 'venv', 'bin', 'python3'),
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.statSync(c).isFile()) return c;
+    } catch {
+      /* not this one */
+    }
+  }
+  return null;
+}
+
+/**
+ * Single source of truth for the python pack's license gathering.
+ * Consumed by `pyLicensesProvider` (capability dispatcher).
+ *
+ * Gating is strict — both a Python manifest AND a project venv are
+ * required. Reason: pip-licenses operates on the active Python
+ * environment, so invoking it without `--python <project-venv>` would
+ * report whatever packages are installed in dxkit's graphify-venv
+ * (i.e. garbage). Returns null when either prerequisite is missing so
+ * the dispatcher drops the pack cleanly.
+ */
+function gatherPyLicensesResult(cwd: string): LicensesResult | null {
+  const hasManifest =
+    fileExists(cwd, 'pyproject.toml') ||
+    fileExists(cwd, 'setup.py') ||
+    fileExists(cwd, 'requirements.txt') ||
+    fileExists(cwd, 'Pipfile');
+  if (!hasManifest) return null;
+
+  const venvPython = findPyProjectVenvPython(cwd);
+  if (!venvPython) return null;
+
+  const status = findTool(TOOL_DEFS['pip-licenses'], cwd);
+  if (!status.available || !status.path) return null;
+
+  const raw = run(
+    `${status.path} --python ${venvPython} --format=json --with-license-file --no-license-path --with-description --with-urls --with-authors 2>/dev/null`,
+    cwd,
+    120000,
+  );
+  if (!raw) return null;
+
+  let data: PipLicensesEntry[];
+  try {
+    data = JSON.parse(raw) as PipLicensesEntry[];
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) return null;
+
+  const findings: LicenseFinding[] = [];
+  for (const entry of data) {
+    if (!entry.Name || !entry.Version) continue;
+    const licenseType = entry.License && entry.License !== 'UNKNOWN' ? entry.License : 'UNKNOWN';
+    findings.push({
+      package: entry.Name,
+      version: entry.Version,
+      licenseType,
+      licenseText:
+        entry.LicenseText && entry.LicenseText !== 'UNKNOWN' ? entry.LicenseText : undefined,
+      sourceUrl: entry.URL && entry.URL !== 'UNKNOWN' ? entry.URL : undefined,
+      description:
+        entry.Description && entry.Description !== 'UNKNOWN' ? entry.Description : undefined,
+      supplier: entry.Author && entry.Author !== 'UNKNOWN' ? entry.Author : undefined,
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    tool: 'pip-licenses',
+    findings,
+  };
+}
+
+const pyLicensesProvider: CapabilityProvider<LicensesResult> = {
+  source: 'python',
+  async gather(cwd) {
+    return gatherPyLicensesResult(cwd);
+  },
+};
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -363,7 +474,7 @@ export const python: LanguageSupport = {
     );
   },
 
-  tools: ['ruff', 'pip-audit', 'coverage-py'],
+  tools: ['ruff', 'pip-audit', 'coverage-py', 'pip-licenses'],
   semgrepRulesets: ['p/python'],
 
   capabilities: {
@@ -372,6 +483,7 @@ export const python: LanguageSupport = {
     coverage: pyCoverageProvider,
     imports: pyImportsProvider,
     testFramework: pyTestFrameworkProvider,
+    licenses: pyLicensesProvider,
   },
 
   mapLintSeverity: mapRuffSeverity,

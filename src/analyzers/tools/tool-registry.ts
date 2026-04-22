@@ -454,6 +454,24 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'pip install --user pip-audit',
     },
   },
+  'pip-licenses': {
+    name: 'pip-licenses',
+    description: 'License inventory for Python packages in a venv',
+    install: 'pip install pip-licenses',
+    check: 'pip-licenses --version',
+    for: 'python',
+    layer: 'language',
+    binaries: ['pip-licenses'],
+    probePaths: ['/tmp/graphify-venv/bin'],
+    versionCheck: 'pip-licenses --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-licenses && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
+      linux:
+        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-licenses && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
+      windows: 'pip install --user pip-licenses',
+    },
+  },
   'golangci-lint': {
     name: 'golangci-lint',
     description: 'Go linting',
