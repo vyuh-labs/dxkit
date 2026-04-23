@@ -48,6 +48,7 @@ function printUsage(): void {
     --verbose    Print per-tool timing to stderr
     --no-save    Skip writing the markdown report file
     --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
+    --xlsx       Licenses: also write 15-col BOM XLSX (requires --detailed)
     --since      Dev-report: start date (YYYY-MM-DD)
 
   ${logger.bold('Examples:')}
@@ -80,6 +81,7 @@ export async function run(argv: string[]): Promise<void> {
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
       output: { type: 'string', short: 'o' },
+      xlsx: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -606,16 +608,33 @@ export async function run(argv: string[]): Promise<void> {
           console.log(''); // slop-ok
           logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
+          if (values.detailed || values.xlsx) {
             const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
               await import('./analyzers/licenses/detailed');
             const detailed = buildLicensesDetailed(report);
-            const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+
+            if (values.detailed) {
+              const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
+              const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
+              fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
+              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+              logger.success(
+                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
+              );
+              logger.success(
+                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
+              );
+            }
+
+            if (values.xlsx) {
+              const { toLicensesXlsx } = await import('./analyzers/xlsx');
+              const xlsxPath = values.output
+                ? path.resolve(values.output as string)
+                : path.join(reportDir, `licenses-${date}.xlsx`);
+              const buf = await toLicensesXlsx(detailed);
+              fs.writeFileSync(xlsxPath, buf);
+              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
+            }
           }
         }
       }
