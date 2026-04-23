@@ -5,6 +5,7 @@ import hostedGitInfo from 'hosted-git-info';
 
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
@@ -259,6 +260,23 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           if (v.url) finding.references = [v.url];
           findings.push(finding);
         }
+      }
+    }
+
+    // Alias-fallback CVSS pass: npm-audit ships CVSS for ~100% of
+    // advisories (smoke: 94/94 on platform), so this is typically a
+    // no-op — every input has `embeddedCvss` set, no API calls fire.
+    // Future-proof against the rare advisory missing CVSS.
+    if (findings.length > 0) {
+      const cvssInputs = findings.map((f) => ({
+        primaryId: f.id,
+        embeddedCvss: f.cvssScore ?? null,
+        aliases: f.aliases ?? [],
+      }));
+      const resolved = await resolveCvssScores(cvssInputs);
+      for (const f of findings) {
+        const score = resolved.get(f.id);
+        if (score !== null && score !== undefined) f.cvssScore = score;
       }
     }
 

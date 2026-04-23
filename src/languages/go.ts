@@ -3,12 +3,19 @@ import * as path from 'path';
 
 import { parseGoCoverProfile } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
-import { classifyOsvSeverity, enrichSeverities, type OsvVuln } from '../analyzers/tools/osv';
-import { fileExists, run } from '../analyzers/tools/runner';
+import {
+  classifyOsvSeverity,
+  enrichOsv,
+  extractOsvCvssScore,
+  resolveCvssScores,
+  type OsvVuln,
+} from '../analyzers/tools/osv';
+import { fileExists, parseJsonStream, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnFinding,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
@@ -108,9 +115,28 @@ function tierGolangciIssue(issue: GolangciIssue): LintSeverity {
   return byLinter;
 }
 
+interface GovulnFinding {
+  osv?: string;
+  fixed_version?: string;
+  trace?: Array<{ module?: string; version?: string; package?: string }>;
+}
+
 /**
  * Single source of truth for the go pack's dep-vuln gathering.
  * Consumed by `goDepVulnsProvider` (capability dispatcher).
+ *
+ * govulncheck only emits `finding` records when call analysis confirms
+ * the vulnerable code is reachable from the project's main package, so
+ * every emitted DepVulnFinding sets `reachable: true` — Tier-1 output
+ * with Tier-4 reachability semantics by virtue of the upstream tool's
+ * design.
+ *
+ * Findings are grouped by (osvId, module, installedVersion). One
+ * advisory hitting multiple modules yields multiple findings; multiple
+ * call paths through the same (advisory, module, version) collapse to
+ * one. govulncheck's per-call-path output (102 raw findings on the
+ * Tickit smoke) is intentional internal detail; the bom/render layer
+ * wants one row per (vuln × installed package).
  */
 async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vuln = findTool(TOOL_DEFS.govulncheck, cwd);
@@ -120,55 +146,123 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
   if (!raw) return { kind: 'no-output' };
 
   try {
-    // govulncheck emits ndjson with three relevant shapes:
+    // govulncheck -json emits a stream of *pretty-printed* JSON objects
+    // (each spanning many lines), not single-line ndjson — so we can't
+    // JSON.parse line-by-line. Accumulate lines into a buffer and try to
+    // parse after each newline; success resets the buffer for the next
+    // record. Three relevant top-level shapes:
     //   { "osv": { ...full OSV record... } }   — the advisory detail
     //   { "finding": { "osv": "GO-YYYY-NNNN", "trace": [...] } }  — a call-site hit
-    //   { "config": ... } / { "progress": ... } — ignored
-    const findingIds = new Set<string>();
+    //   { "config": ... } / { "progress": ... } / { "SBOM": ... } — ignored
+    const groupedFindings = new Map<string, GovulnFinding>();
     const embeddedOsv = new Map<string, OsvVuln>();
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const obj = JSON.parse(line) as {
-          finding?: { osv?: string };
-          osv?: OsvVuln & { id?: string };
-        };
-        if (obj.finding?.osv) findingIds.add(obj.finding.osv);
-        if (obj.osv?.id) embeddedOsv.set(obj.osv.id, obj.osv);
-      } catch {
-        /* skip non-JSON lines */
+    for (const obj of parseJsonStream(raw) as Array<{
+      finding?: GovulnFinding;
+      osv?: OsvVuln;
+    }>) {
+      if (obj.finding?.osv) {
+        const trace0 = obj.finding.trace?.[0] ?? {};
+        const key = `${obj.finding.osv}|${trace0.module ?? ''}|${trace0.version ?? ''}`;
+        if (!groupedFindings.has(key)) groupedFindings.set(key, obj.finding);
       }
+      if (obj.osv?.id) embeddedOsv.set(obj.osv.id, obj.osv);
     }
 
     // Prefer severity from the embedded OSV record (already in the
     // govulncheck output, no extra API call). Fall back to an OSV.dev
     // lookup for IDs without embedded data. Fall back to 'high' (the
     // legacy govulncheck default) for anything still unknown.
-    const ids = [...findingIds];
-    const needsLookup = ids.filter((id) => {
+    const uniqueIds = [
+      ...new Set([...groupedFindings.values()].map((f) => f.osv).filter(Boolean) as string[]),
+    ];
+    const needsLookup = uniqueIds.filter((id) => {
       const rec = embeddedOsv.get(id);
       if (!rec) return true;
       return classifyOsvSeverity(rec) === 'unknown';
     });
-    const lookedUp = needsLookup.length > 0 ? await enrichSeverities(needsLookup) : new Map();
+    const lookedUp = needsLookup.length > 0 ? await enrichOsv(needsLookup) : new Map();
 
     let critical = 0;
     let high = 0;
     let medium = 0;
     let low = 0;
     let enrichedCount = 0;
-    for (const id of ids) {
+    const severityById = new Map<string, keyof SeverityCounts>();
+    for (const id of uniqueIds) {
       const rec = embeddedOsv.get(id);
       let sev = rec ? classifyOsvSeverity(rec) : 'unknown';
-      if (sev === 'unknown') sev = lookedUp.get(id) ?? 'unknown';
+      if (sev === 'unknown') sev = lookedUp.get(id)?.severity ?? 'unknown';
+      let bucket: keyof SeverityCounts;
       if (sev !== 'unknown') {
         enrichedCount++;
-        if (sev === 'critical') critical++;
-        else if (sev === 'high') high++;
-        else if (sev === 'medium') medium++;
-        else low++;
+        if (sev === 'critical') bucket = 'critical';
+        else if (sev === 'high') bucket = 'high';
+        else if (sev === 'medium') bucket = 'medium';
+        else bucket = 'low';
       } else {
-        high++; // govulncheck legacy default
+        bucket = 'high'; // govulncheck legacy default
+      }
+      severityById.set(id, bucket);
+      if (bucket === 'critical') critical++;
+      else if (bucket === 'high') high++;
+      else if (bucket === 'medium') medium++;
+      else low++;
+    }
+
+    const findings: DepVulnFinding[] = [];
+    for (const grouped of groupedFindings.values()) {
+      if (!grouped.osv) continue;
+      const trace0 = grouped.trace?.[0] ?? {};
+      const osvRec = embeddedOsv.get(grouped.osv) as
+        | (OsvVuln & { affected?: Array<{ package?: { name?: string } }> })
+        | undefined;
+      // Prefer the trace module (project-specific), fall back to the OSV
+      // record's affected package name, then 'unknown' if neither shipped.
+      const pkgName = trace0.module ?? osvRec?.affected?.[0]?.package?.name ?? 'unknown';
+      const finding: DepVulnFinding = {
+        id: grouped.osv,
+        package: pkgName,
+        installedVersion: trace0.version,
+        tool: 'govulncheck',
+        severity: severityById.get(grouped.osv) ?? 'high',
+        reachable: true,
+      };
+      if (grouped.fixed_version) finding.fixedVersion = grouped.fixed_version;
+      // Capture the embedded CVSS (govulncheck bundles severity vectors
+      // for many third-party deps but rarely for stdlib). Alias-fallback
+      // happens in the batched resolveCvssScores pass after this loop.
+      const embeddedScore = osvRec ? extractOsvCvssScore(osvRec) : null;
+      if (embeddedScore !== null) finding.cvssScore = embeddedScore;
+      if (osvRec) {
+        const aliases = (osvRec.aliases ?? []).filter((a) => a && a.length > 0);
+        if (aliases.length > 0) finding.aliases = aliases;
+        if (osvRec.summary) finding.summary = osvRec.summary;
+        else if (osvRec.details) finding.summary = osvRec.details;
+        const refs = (osvRec.references ?? []).map((r) => r.url).filter(Boolean);
+        if (refs.length > 0) finding.references = refs;
+      }
+      // Synthesize an OSV.dev URL when the embedded record lacked references.
+      if (!finding.references) {
+        finding.references = [`https://osv.dev/vulnerability/${grouped.osv}`];
+      }
+      findings.push(finding);
+    }
+
+    // Alias-fallback CVSS pass: stdlib advisories (GO-YYYY-NNNN) often
+    // carry no CVSS in either govulncheck's embedded data or OSV.dev's
+    // GO-* record, while the corresponding CVE alias does (e.g.
+    // GO-2025-3750 → CVE-2025-0913). resolveCvssScores re-queries each
+    // alias for findings still missing a score, batched.
+    if (findings.length > 0) {
+      const cvssInputs = findings.map((f) => ({
+        primaryId: f.id,
+        embeddedCvss: f.cvssScore ?? null,
+        aliases: f.aliases ?? [],
+      }));
+      const resolved = await resolveCvssScores(cvssInputs);
+      for (const f of findings) {
+        const score = resolved.get(f.id);
+        if (score !== null && score !== undefined) f.cvssScore = score;
       }
     }
 
@@ -179,6 +273,7 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       // produced enrichment. Embedded-only severity isn't an OSV call.
       enrichment: enrichedCount > 0 && needsLookup.length > 0 ? 'osv.dev' : null,
       counts: { critical, high, medium, low },
+      findings,
     };
     return { kind: 'success', envelope };
   } catch {

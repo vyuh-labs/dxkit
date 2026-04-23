@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   classifyOsvSeverity,
-  enrichSeverities,
+  enrichOsv,
   parseCvssV3BaseScore,
+  resolveCvssScores,
   scoreToTier,
   __clearOsvCache,
   type OsvVuln,
@@ -142,8 +143,8 @@ describe('classifyOsvSeverity', () => {
   });
 });
 
-describe('enrichSeverities', () => {
-  it('calls the fetcher once per unique ID and returns the classified map', async () => {
+describe('enrichOsv', () => {
+  it('calls the fetcher once per unique ID and returns severity + cvssScore', async () => {
     const calls: string[] = [];
     const fetcher = async (id: string): Promise<OsvVuln | null> => {
       calls.push(id);
@@ -152,10 +153,11 @@ describe('enrichSeverities', () => {
         severity: [{ type: 'CVSS_V3', score: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H' }],
       };
     };
-    const result = await enrichSeverities(['PYSEC-1', 'PYSEC-2', 'PYSEC-1'], fetcher);
+    const result = await enrichOsv(['PYSEC-1', 'PYSEC-2', 'PYSEC-1'], fetcher);
     expect(calls.sort()).toEqual(['PYSEC-1', 'PYSEC-2']);
-    expect(result.get('PYSEC-1')).toBe('critical');
-    expect(result.get('PYSEC-2')).toBe('critical');
+    expect(result.get('PYSEC-1')?.severity).toBe('critical');
+    expect(result.get('PYSEC-1')?.cvssScore).toBeGreaterThan(0);
+    expect(result.get('PYSEC-2')?.severity).toBe('critical');
   });
 
   it('caches results across calls within the same session', async () => {
@@ -164,15 +166,26 @@ describe('enrichSeverities', () => {
       calls++;
       return { id, database_specific: { severity: 'HIGH' } };
     };
-    await enrichSeverities(['GHSA-1'], fetcher);
-    await enrichSeverities(['GHSA-1', 'GHSA-2'], fetcher);
+    await enrichOsv(['GHSA-1'], fetcher);
+    await enrichOsv(['GHSA-1', 'GHSA-2'], fetcher);
     expect(calls).toBe(2); // GHSA-1 fetched once, GHSA-2 once
   });
 
-  it('maps unknown IDs (fetcher returns null) to unknown severity', async () => {
+  it('maps unknown IDs (fetcher returns null) to unknown severity + null score', async () => {
     const fetcher = async (): Promise<OsvVuln | null> => null;
-    const result = await enrichSeverities(['UNKNOWN-1'], fetcher);
-    expect(result.get('UNKNOWN-1')).toBe('unknown');
+    const result = await enrichOsv(['UNKNOWN-1'], fetcher);
+    expect(result.get('UNKNOWN-1')?.severity).toBe('unknown');
+    expect(result.get('UNKNOWN-1')?.cvssScore).toBeNull();
+  });
+
+  it('returns null cvssScore when the OSV record lacks parseable CVSS vectors', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> => ({
+      id,
+      database_specific: { severity: 'MEDIUM' },
+    });
+    const result = await enrichOsv(['GHSA-X'], fetcher);
+    expect(result.get('GHSA-X')?.severity).toBe('medium');
+    expect(result.get('GHSA-X')?.cvssScore).toBeNull();
   });
 
   it('handles an empty ID list without calling the fetcher', async () => {
@@ -181,19 +194,94 @@ describe('enrichSeverities', () => {
       called = true;
       return null;
     };
-    const result = await enrichSeverities([], fetcher);
+    const result = await enrichOsv([], fetcher);
     expect(result.size).toBe(0);
     expect(called).toBe(false);
   });
 
-  it('survives fetcher errors — returns unknown for failed IDs', async () => {
+  it('survives fetcher errors — drops failed IDs from the map', async () => {
     const fetcher = async (id: string): Promise<OsvVuln | null> => {
       if (id === 'FAIL') throw new Error('network');
       return { database_specific: { severity: 'MEDIUM' } };
     };
-    const result = await enrichSeverities(['FAIL', 'OK'], fetcher);
+    const result = await enrichOsv(['FAIL', 'OK'], fetcher);
     // FAIL rejection means Promise.allSettled drops it — map won't contain FAIL
-    expect(result.get('OK')).toBe('medium');
+    expect(result.get('OK')?.severity).toBe('medium');
     expect(result.has('FAIL')).toBe(false);
+  });
+});
+
+describe('resolveCvssScores', () => {
+  const HIGH_VECTOR = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H';
+
+  it('returns embedded scores without making any API calls', async () => {
+    let called = false;
+    const fetcher = async (): Promise<OsvVuln | null> => {
+      called = true;
+      return null;
+    };
+    const result = await resolveCvssScores(
+      [
+        { primaryId: 'GHSA-1', embeddedCvss: 7.5, aliases: ['CVE-1'] },
+        { primaryId: 'GHSA-2', embeddedCvss: 9.0, aliases: [] },
+      ],
+      fetcher,
+    );
+    expect(called).toBe(false);
+    expect(result.get('GHSA-1')).toBe(7.5);
+    expect(result.get('GHSA-2')).toBe(9.0);
+  });
+
+  it('falls back to OSV.dev primary lookup when embedded score is null', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> =>
+      id === 'PYSEC-1' ? { id, severity: [{ type: 'CVSS_V3', score: HIGH_VECTOR }] } : null;
+    const result = await resolveCvssScores(
+      [{ primaryId: 'PYSEC-1', embeddedCvss: null, aliases: [] }],
+      fetcher,
+    );
+    expect(result.get('PYSEC-1')).toBeGreaterThan(0);
+  });
+
+  it('falls back to alias lookup when primary lookup yields no score', async () => {
+    // GO-XXXX has no severity; its CVE-XXXX alias does
+    const fetcher = async (id: string): Promise<OsvVuln | null> => {
+      if (id === 'GO-XXXX') return { id, database_specific: { url: 'whatever' } };
+      if (id === 'CVE-XXXX') return { id, severity: [{ type: 'CVSS_V3', score: HIGH_VECTOR }] };
+      return null;
+    };
+    const result = await resolveCvssScores(
+      [{ primaryId: 'GO-XXXX', embeddedCvss: null, aliases: ['CVE-XXXX'] }],
+      fetcher,
+    );
+    expect(result.get('GO-XXXX')).toBeGreaterThan(0);
+  });
+
+  it('returns null when neither primary nor any alias yields a score', async () => {
+    const fetcher = async (): Promise<OsvVuln | null> => null;
+    const result = await resolveCvssScores(
+      [{ primaryId: 'UNKNOWN-1', embeddedCvss: null, aliases: ['CVE-NOPE'] }],
+      fetcher,
+    );
+    expect(result.get('UNKNOWN-1')).toBeNull();
+  });
+
+  it('batches across many inputs — embedded findings cause no API calls', async () => {
+    let calls = 0;
+    const fetcher = async (id: string): Promise<OsvVuln | null> => {
+      calls++;
+      return id === 'PYSEC-2' ? { id, severity: [{ type: 'CVSS_V3', score: HIGH_VECTOR }] } : null;
+    };
+    const result = await resolveCvssScores(
+      [
+        { primaryId: 'GHSA-1', embeddedCvss: 5.0, aliases: ['CVE-1'] }, // no lookup
+        { primaryId: 'GHSA-2', embeddedCvss: 6.0, aliases: [] }, // no lookup
+        { primaryId: 'PYSEC-2', embeddedCvss: null, aliases: [] }, // primary lookup hits
+      ],
+      fetcher,
+    );
+    // PYSEC-2 needed primary lookup; GHSA-* skipped entirely
+    expect(calls).toBe(1);
+    expect(result.get('GHSA-1')).toBe(5.0);
+    expect(result.get('PYSEC-2')).toBeGreaterThan(0);
   });
 });

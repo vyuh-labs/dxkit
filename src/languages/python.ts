@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { parseCoveragePy } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
-import { enrichSeverities } from '../analyzers/tools/osv';
+import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
@@ -131,16 +131,18 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         if (v.id) vulnIds.push(v.id);
       }
     }
-    // pip-audit doesn't carry severity per vuln — look up via OSV.dev.
-    // Unknown/unreachable IDs fall back to medium (pip-audit's legacy default).
-    const severities = await enrichSeverities(vulnIds);
+    // pip-audit doesn't carry severity or CVSS per vuln — look up via
+    // OSV.dev. Unknown/unreachable IDs fall back to medium (pip-audit's
+    // legacy default). cvssScore is attached to findings when available.
+    const enriched = await enrichOsv(vulnIds);
     let critical = 0;
     let high = 0;
     let medium = 0;
     let low = 0;
     let enrichedCount = 0;
     const resolveSeverity = (id: string): keyof SeverityCounts => {
-      const sev = severities.get(id);
+      const detail = enriched.get(id);
+      const sev = detail?.severity;
       if (sev && sev !== 'unknown') {
         enrichedCount++;
         if (sev === 'critical') return 'critical';
@@ -168,6 +170,10 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           tool: 'pip-audit',
           severity,
         };
+        // Embedded score from the primary enrichment pass; alias-fallback
+        // happens in the batched resolveCvssScores call after this loop.
+        const primaryCvss = enriched.get(v.id)?.cvssScore;
+        if (primaryCvss !== null && primaryCvss !== undefined) finding.cvssScore = primaryCvss;
         // pip-audit returns sorted fix versions ascending; the first is the
         // minimal upgrade that resolves the issue.
         if (v.fix_versions && v.fix_versions.length > 0) {
@@ -182,6 +188,23 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         // layer can override if a tool-supplied URL becomes available later.
         finding.references = [`https://osv.dev/vulnerability/${v.id}`];
         findings.push(finding);
+      }
+    }
+
+    // Alias-fallback CVSS pass: PYSEC-* records on OSV.dev frequently
+    // lack CVSS vectors that the corresponding CVE alias carries (the
+    // pip ecosystem assigns PYSEC ids before CVEs land). When primary
+    // lookup misses, we re-query each alias to fill the score.
+    if (findings.length > 0) {
+      const cvssInputs = findings.map((f) => ({
+        primaryId: f.id,
+        embeddedCvss: f.cvssScore ?? null,
+        aliases: f.aliases ?? [],
+      }));
+      const resolved = await resolveCvssScores(cvssInputs);
+      for (const f of findings) {
+        const score = resolved.get(f.id);
+        if (score !== null && score !== undefined) f.cvssScore = score;
       }
     }
 
