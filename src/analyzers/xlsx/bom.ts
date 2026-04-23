@@ -74,11 +74,18 @@ export async function toBomXlsx(report: BomReport): Promise<Buffer> {
   const reportDate = report.analyzedAt.slice(0, 10);
   const rows = [...report.entries].sort((a, b) => a.package.localeCompare(b.package));
 
+  // Non-vulnerable rows still need a signal in cols 11/12/13 so a reviewer
+  // can distinguish "scanned, clean" from "not scanned / unknown". Blank
+  // leaves the same ambiguity the customer's hand-built sheet had.
+  const NO_VULNS_CRITICALITY = 'None';
+  const NO_VULNS_ISSUES = 'None';
+  const NO_VULNS_RESOLUTION = 'No action required';
+
   for (const e of rows) {
     // col 11: severity badge + count, e.g. "Critical (3 vulns)".
     const criticality = e.maxSeverity
       ? `${SEV_LABEL[e.maxSeverity]} (${e.vulns.length} vuln${e.vulns.length === 1 ? '' : 's'})`
-      : '';
+      : NO_VULNS_CRITICALITY;
 
     // col 12: per-advisory list. "ID: summary" with summary truncated
     // per entry. Sorted by severity within the package so the most
@@ -97,7 +104,8 @@ export async function toBomXlsx(report: BomReport): Promise<Buffer> {
       const cvss = v.cvssScore !== undefined ? ` [CVSS ${v.cvssScore.toFixed(1)}]` : '';
       return title ? `${v.id}${cvss}: ${title}` : `${v.id}${cvss}`;
     });
-    const vulnerabilityIssues = vulnLines.join('; ');
+    const vulnerabilityIssues = e.vulns.length === 0 ? NO_VULNS_ISSUES : vulnLines.join('; ');
+    const resolution = e.vulns.length === 0 ? NO_VULNS_RESOLUTION : e.upgradeAdvice;
 
     ws.addRow([
       xlsxSafe(e.package), // col 1
@@ -109,11 +117,12 @@ export async function toBomXlsx(report: BomReport): Promise<Buffer> {
       xlsxSafe(e.licenseType), // col 7
       xlsxSafe(e.licenseText), // col 8
       xlsxSafe(e.supplier), // col 9
-      xlsxSafe(e.releaseDate), // col 10
+      xlsxSafe(e.releaseDate), // col 10 — deferred (needs npm registry
+      //   enrichment; belongs in 10h.6 OSS enrichment phase)
       xlsxSafe(criticality), // col 11 — bom-only
       xlsxSafe(vulnerabilityIssues), // col 12 — bom-only
-      xlsxSafe(e.upgradeAdvice), // col 13 — bom-only
-      '', // col 14 — checklist (human)
+      xlsxSafe(resolution), // col 13 — bom-only
+      '', // col 14 — intentionally blank (human workflow: OK/Pending/etc)
       `${e.package}@${e.version}`, // col 15
     ]);
   }

@@ -237,9 +237,18 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         return versionCache.get(pkg);
       };
       for (const [pkgName, entry] of Object.entries(auditData.vulnerabilities)) {
+        // npm-audit's `fixAvailable` is the *consumer* upgrade command —
+        // `{ name, version }` identifies which top-level dep to bump to
+        // resolve the entire advisory tree under this entry. When `name`
+        // matches the entry key, the fix is at this package's own
+        // version (direct upgrade). When `name` differs, the fix is a
+        // transitive parent upgrade — applying `fix.version` as THIS
+        // package's fixedVersion is wrong (caused the "uuid@13 fixed at
+        // 3.2.1" false positive surfaced by the 10h.3.10 benchmark).
         const fix = entry.fixAvailable;
-        const fixedVersion = typeof fix === 'object' ? fix.version : undefined;
-        const breakingUpgrade = typeof fix === 'object' ? fix.isSemVerMajor : undefined;
+        const fixIsObject = typeof fix === 'object';
+        const directFix = fixIsObject && fix.name === pkgName ? fix : null;
+        const transitiveFix = fixIsObject && fix.name !== pkgName ? fix : null;
         for (const v of entry.via ?? []) {
           if (typeof v === 'string') continue;
           const advisoryPkg = v.name ?? pkgName;
@@ -253,8 +262,18 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
             severity: normalizeNpmSeverity(v.severity),
           };
           if (typeof v.cvss?.score === 'number') finding.cvssScore = v.cvss.score;
-          if (fixedVersion) finding.fixedVersion = fixedVersion;
-          if (breakingUpgrade !== undefined) finding.breakingUpgrade = breakingUpgrade;
+          if (directFix) {
+            finding.fixedVersion = directFix.version;
+            finding.breakingUpgrade = directFix.isSemVerMajor;
+          } else if (transitiveFix) {
+            // Parent-upgrade remediation — surface directly in upgradeAdvice
+            // rather than pretending the value is a direct fix. Bom render
+            // picks this up as the Tier-1 resolution for the row.
+            const majorNote = transitiveFix.isSemVerMajor ? ' [major]' : '';
+            finding.upgradeAdvice =
+              `Upgrade ${transitiveFix.name} to ${transitiveFix.version}${majorNote} ` +
+              `(transitive fix)`;
+          }
           if (ghsa) finding.aliases = [ghsa];
           if (v.title) finding.summary = v.title;
           if (v.url) finding.references = [v.url];
