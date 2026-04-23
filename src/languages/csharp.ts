@@ -3,11 +3,13 @@ import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnFinding,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
@@ -15,6 +17,7 @@ import type {
   LicensesResult,
   LintGatherOutcome,
   LintResult,
+  SeverityCounts,
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport } from './types';
@@ -112,54 +115,195 @@ export function parseCoberturaXml(raw: string, sourceFile: string, cwd: string):
 }
 
 /**
+ * `dotnet list package --vulnerable --format json` shape (see
+ * https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-list-package).
+ * Per-advisory entries are LEAN compared to other ecosystems' tools —
+ * no CVSS, no fix version, no description. We compensate via OSV
+ * alias-fallback (advisoryUrl → GHSA → OSV.dev) for cvssScore; fix
+ * version + summary remain unpopulated until a richer source is wired
+ * in 10h.6 (e.g. NuGet's vulnerability API).
+ */
+interface DotnetAdvisory {
+  advisoryUrl?: string;
+  severity?: string;
+}
+
+interface DotnetTopLevelPackage {
+  id?: string;
+  requestedVersion?: string;
+  resolvedVersion?: string;
+  advisories?: DotnetAdvisory[];
+}
+
+interface DotnetFramework {
+  framework?: string;
+  topLevelPackages?: DotnetTopLevelPackage[];
+}
+
+interface DotnetVulnerableReport {
+  projects?: Array<{
+    path?: string;
+    frameworks?: DotnetFramework[];
+  }>;
+}
+
+/**
+ * Map dotnet's textual severity to the four-tier `SeverityCounts`
+ * domain. NuGet uses critical/high/moderate/low (moderate maps to
+ * medium, matching npm-audit).
+ */
+function normalizeDotnetSeverity(s: string | undefined): keyof SeverityCounts {
+  switch (s?.toLowerCase()) {
+    case 'critical':
+      return 'critical';
+    case 'high':
+      return 'high';
+    case 'moderate':
+    case 'medium':
+      return 'medium';
+    default:
+      return 'low';
+  }
+}
+
+/**
+ * Extract the GHSA identifier from an advisory URL like
+ * `https://github.com/advisories/GHSA-...`. dotnet's --vulnerable
+ * output uses the GitHub advisory URL almost universally, so this
+ * is the primary id source for C# findings.
+ */
+function extractGhsaIdFromUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i);
+  return m ? m[0].toUpperCase() : null;
+}
+
+/**
+ * Pure parser for `dotnet list package --vulnerable --format json`.
+ * Extracted from the gather function so it can be unit-tested without
+ * a real .NET SDK on the dev machine (10h.5 release-time validation
+ * runs the full pipeline). Returns null when the input is malformed;
+ * otherwise returns counts + findings ready for downstream alias
+ * enrichment.
+ */
+export function parseDotnetVulnerableOutput(
+  raw: string,
+): { counts: SeverityCounts; findings: DepVulnFinding[] } | null {
+  let data: DotnetVulnerableReport;
+  try {
+    data = JSON.parse(raw) as DotnetVulnerableReport;
+  } catch {
+    return null;
+  }
+
+  let critical = 0;
+  let high = 0;
+  let medium = 0;
+  let low = 0;
+  const findings: DepVulnFinding[] = [];
+  for (const proj of data.projects ?? []) {
+    for (const fw of proj.frameworks ?? []) {
+      for (const pkg of fw.topLevelPackages ?? []) {
+        if (!pkg.id) continue;
+        for (const adv of pkg.advisories ?? []) {
+          const severity = normalizeDotnetSeverity(adv.severity);
+          if (severity === 'critical') critical++;
+          else if (severity === 'high') high++;
+          else if (severity === 'medium') medium++;
+          else low++;
+
+          const ghsa = extractGhsaIdFromUrl(adv.advisoryUrl);
+          // No GHSA URL means we have nothing addressable — fall back
+          // to a synthetic id so the finding is still emitted (the
+          // counts already incremented, and bom render needs a row).
+          const id = ghsa ?? `nuget-${pkg.id}@${pkg.resolvedVersion ?? 'unknown'}`;
+          const finding: DepVulnFinding = {
+            id,
+            package: pkg.id,
+            installedVersion: pkg.resolvedVersion,
+            tool: 'dotnet-vulnerable',
+            severity,
+          };
+          if (ghsa) finding.aliases = [ghsa];
+          if (adv.advisoryUrl) finding.references = [adv.advisoryUrl];
+          findings.push(finding);
+        }
+      }
+    }
+  }
+  return { counts: { critical, high, medium, low }, findings };
+}
+
+/**
  * Single source of truth for the csharp pack's dep-vuln gathering.
  * Consumed by `csharpDepVulnsProvider` (capability dispatcher). Runs
  * independently of `dotnet-format` availability — historical bug where
  * projects with `dotnet` but no `dotnet-format` saw zero vuln data.
+ *
+ * Project-file gating: dotnet list requires a .csproj or .sln in cwd
+ * to identify what to scan. Without one it'd fail with a non-JSON
+ * error message. Mirrors the python pack manifest gating from 10h.3.3
+ * — return null cleanly rather than scan an unrelated scope.
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  if (!hasCsharpProject(cwd)) return { kind: 'tool-missing' };
+
   const vulnRaw = run('dotnet list package --vulnerable --format json 2>/dev/null', cwd, 120000);
   if (!vulnRaw) return { kind: 'no-output' };
 
+  const parsed = parseDotnetVulnerableOutput(vulnRaw);
+  if (!parsed) return { kind: 'parse-error' };
+
+  const { counts, findings } = parsed;
+
+  // Alias-fallback CVSS pass: dotnet --vulnerable ships zero CVSS data
+  // per advisory; the GHSA id (extracted from advisoryUrl) is the only
+  // anchor. resolveCvssScores looks up via GHSA → CVE alias chain.
+  if (findings.length > 0) {
+    const cvssInputs = findings.map((f) => ({
+      primaryId: f.id,
+      embeddedCvss: f.cvssScore ?? null,
+      aliases: f.aliases ?? [],
+    }));
+    const resolved = await resolveCvssScores(cvssInputs);
+    for (const f of findings) {
+      const score = resolved.get(f.id);
+      if (score !== null && score !== undefined) f.cvssScore = score;
+    }
+  }
+
+  const envelope: DepVulnResult = {
+    schemaVersion: 1,
+    tool: 'dotnet-vulnerable',
+    enrichment: null,
+    counts,
+    findings,
+  };
+  return { kind: 'success', envelope };
+}
+
+/** True if `cwd` has a .csproj or .sln file at depth 0 or 1 (workspace
+ *  layouts often nest projects one level under the repo root). */
+function hasCsharpProject(cwd: string): boolean {
+  let entries: fs.Dirent[];
   try {
-    const data = JSON.parse(vulnRaw) as {
-      projects?: Array<{
-        frameworks?: Array<{
-          topLevelPackages?: Array<{
-            resolvedVersion: string;
-            advisories?: Array<{ severity: string }>;
-          }>;
-        }>;
-      }>;
-    };
-    let critical = 0;
-    let high = 0;
-    let medium = 0;
-    let low = 0;
-    for (const proj of data.projects || []) {
-      for (const fw of proj.frameworks || []) {
-        for (const pkg of fw.topLevelPackages || []) {
-          for (const adv of pkg.advisories || []) {
-            const sev = adv.severity?.toLowerCase();
-            if (sev === 'critical') critical++;
-            else if (sev === 'high') high++;
-            else if (sev === 'moderate' || sev === 'medium') medium++;
-            else low++;
-          }
-        }
+    entries = fs.readdirSync(cwd, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const e of entries) {
+    if (e.isFile() && (e.name.endsWith('.csproj') || e.name.endsWith('.sln'))) return true;
+    if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
+      try {
+        const sub = fs.readdirSync(path.join(cwd, e.name), { withFileTypes: true });
+        if (sub.some((s) => s.isFile() && (s.name.endsWith('.csproj') || s.name.endsWith('.sln'))))
+          return true;
+      } catch {
+        /* unreadable subdir — ignore */
       }
     }
-    if (critical + high + medium + low === 0) return { kind: 'no-output' };
-    const envelope: DepVulnResult = {
-      schemaVersion: 1,
-      tool: 'dotnet-vulnerable',
-      enrichment: null,
-      counts: { critical, high, medium, low },
-    };
-    return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
   }
+  return false;
 }
 
 const csharpDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
