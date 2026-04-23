@@ -9,6 +9,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnFinding,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
@@ -27,8 +28,21 @@ interface RuffResult {
   severity?: string;
 }
 
+interface PipAuditVuln {
+  id: string;
+  fix_versions: string[];
+  aliases?: string[];
+  description?: string;
+}
+
+interface PipAuditDep {
+  name?: string;
+  version?: string;
+  vulns: PipAuditVuln[];
+}
+
 interface PipAuditReport {
-  dependencies: Array<{ vulns: Array<{ id: string; fix_versions: string[] }> }>;
+  dependencies: PipAuditDep[];
 }
 
 function stripPyComments(src: string): string {
@@ -72,6 +86,30 @@ function hasPyFileWithinDepth(cwd: string, maxDepth = 2): boolean {
 }
 
 /**
+ * Build the pip-audit invocation for the project at `cwd`. Returns null
+ * when no supported manifest is present — without one, pip-audit would
+ * silently fall back to scanning its own python environment (the
+ * dxkit-installed graphify-venv), reporting irrelevant vulnerabilities
+ * against tools rather than against the project's declared dependencies.
+ *
+ * Manifest precedence:
+ *   - pyproject.toml / setup.py → `pip-audit .` (project mode reads the
+ *     declared dependencies)
+ *   - requirements.txt          → `pip-audit -r requirements.txt`
+ *   - Pipfile                   → unsupported by pip-audit natively; we
+ *     return null rather than scan the wrong environment.
+ */
+function buildPipAuditCommand(cwd: string, pipAuditPath: string): string | null {
+  if (fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py')) {
+    return `${pipAuditPath} . --format json 2>/dev/null`;
+  }
+  if (fileExists(cwd, 'requirements.txt')) {
+    return `${pipAuditPath} -r requirements.txt --format json 2>/dev/null`;
+  }
+  return null;
+}
+
+/**
  * Single source of truth for the python pack's dep-vuln gathering.
  * Consumed by `pyDepVulnsProvider` (capability dispatcher).
  */
@@ -79,7 +117,10 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
   const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
   if (!pipAudit.available || !pipAudit.path) return { kind: 'tool-missing' };
 
-  const raw = run(`${pipAudit.path} --format json 2>/dev/null`, cwd, 120000);
+  const cmd = buildPipAuditCommand(cwd, pipAudit.path);
+  if (!cmd) return { kind: 'tool-missing' };
+
+  const raw = run(cmd, cwd, 120000);
   if (!raw) return { kind: 'no-output' };
 
   try {
@@ -98,23 +139,58 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
     let medium = 0;
     let low = 0;
     let enrichedCount = 0;
-    for (const id of vulnIds) {
+    const resolveSeverity = (id: string): keyof SeverityCounts => {
       const sev = severities.get(id);
       if (sev && sev !== 'unknown') {
         enrichedCount++;
-        if (sev === 'critical') critical++;
-        else if (sev === 'high') high++;
-        else if (sev === 'medium') medium++;
+        if (sev === 'critical') return 'critical';
+        if (sev === 'high') return 'high';
+        if (sev === 'medium') return 'medium';
+        return 'low';
+      }
+      return 'medium';
+    };
+
+    const findings: DepVulnFinding[] = [];
+    for (const dep of data.dependencies || []) {
+      for (const v of dep.vulns || []) {
+        if (!v.id) continue;
+        const severity = resolveSeverity(v.id);
+        if (severity === 'critical') critical++;
+        else if (severity === 'high') high++;
+        else if (severity === 'medium') medium++;
         else low++;
-      } else {
-        medium++;
+
+        const finding: DepVulnFinding = {
+          id: v.id,
+          package: dep.name ?? 'unknown',
+          installedVersion: dep.version,
+          tool: 'pip-audit',
+          severity,
+        };
+        // pip-audit returns sorted fix versions ascending; the first is the
+        // minimal upgrade that resolves the issue.
+        if (v.fix_versions && v.fix_versions.length > 0) {
+          finding.fixedVersion = v.fix_versions[0];
+        }
+        // Filter empty alias entries — ECHO advisories occasionally emit [].
+        const aliases = (v.aliases ?? []).filter((a) => a && a.length > 0);
+        if (aliases.length > 0) finding.aliases = aliases;
+        if (v.description) finding.summary = v.description;
+        // pip-audit doesn't carry advisory URLs; OSV.dev hosts a canonical
+        // page per vulnerability id, so synthesize the reference. Render
+        // layer can override if a tool-supplied URL becomes available later.
+        finding.references = [`https://osv.dev/vulnerability/${v.id}`];
+        findings.push(finding);
       }
     }
+
     const envelope: DepVulnResult = {
       schemaVersion: 1,
       tool: 'pip-audit',
       enrichment: enrichedCount > 0 ? 'osv.dev' : null,
       counts: { critical, high, medium, low },
+      findings,
     };
     return { kind: 'success', envelope };
   } catch {
