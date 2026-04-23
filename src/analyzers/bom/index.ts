@@ -17,7 +17,8 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { buildByTopLevelDep, gatherBomEntries } from './gather';
+import { discoverProjectRoots } from './discovery';
+import { buildByTopLevelDep, gatherBomEntries, mergeNestedBomEntries } from './gather';
 import type { BomEntry, BomReport, BomSeverity } from './types';
 
 export type { BomReport, BomEntry } from './types';
@@ -34,6 +35,13 @@ export interface AnalyzeBomOptions {
    *  29 transitive rows themselves are hidden. Entries with
    *  `isTopLevel === false` are dropped; `undefined` passes through. */
   filter?: BomFilter;
+  /** When `true` (default), walk the repo and aggregate every sub-project
+   *  root with a language manifest. Closes D001a: `bom platform/` would
+   *  previously miss `platform/userserver/` entirely. Set `false` to
+   *  restore the pre-10h.5.0b root-only behavior (useful when the caller
+   *  has already narrowed to a single project and wants to avoid the
+   *  walk cost / cross-root merge). */
+  nested?: boolean;
 }
 
 export async function analyzeBom(
@@ -41,7 +49,9 @@ export async function analyzeBom(
   options: AnalyzeBomOptions = {},
 ): Promise<BomReport> {
   const stack = detect(repoPath);
-  const { entries: rawEntries, toolsUsed, toolsUnavailable } = await gatherBomEntries(repoPath);
+  const nested = options.nested ?? true;
+  const gatherResult = nested ? await gatherNested(repoPath) : await gatherBomEntries(repoPath);
+  const { entries: rawEntries, toolsUsed, toolsUnavailable, projectRoots } = gatherResult;
 
   // byTopLevelDep must be built from the full entry set so the rollup
   // continues to reflect the complete blast radius of upgrading each
@@ -84,11 +94,36 @@ export async function analyzeBom(
       byTopLevelDep,
       filter,
       unfilteredTotalPackages: rawEntries.length,
+      projectRoots,
     },
     entries,
     toolsUsed,
     toolsUnavailable,
   };
+}
+
+/**
+ * Run gatherBomEntries against every discovered project root and
+ * merge. When only one root is found (single-project repos, the
+ * common case), short-circuits to a normal gather with
+ * `projectRoots: ["."]` — zero overhead beyond the directory walk.
+ */
+async function gatherNested(
+  repoPath: string,
+): Promise<ReturnType<typeof gatherBomEntries> extends Promise<infer T> ? T : never> {
+  const absRoots = discoverProjectRoots(repoPath);
+  if (absRoots.length <= 1) {
+    // No sub-roots discovered (or only cwd itself): fall through to
+    // the non-nested path so the output shape is identical.
+    return gatherBomEntries(repoPath);
+  }
+  const perRoot = await Promise.all(
+    absRoots.map(async (absRoot) => ({
+      relPath: path.relative(repoPath, absRoot) || '.',
+      result: await gatherBomEntries(absRoot),
+    })),
+  );
+  return mergeNestedBomEntries(perRoot);
 }
 
 const SEV_BADGE: Record<BomSeverity, string> = {
@@ -114,6 +149,14 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   const s = report.summary;
   L.push('## Summary');
   L.push('');
+  if (s.projectRoots.length > 1) {
+    L.push(
+      `**Aggregated across ${s.projectRoots.length} project roots** — ` +
+        s.projectRoots.map((r) => `\`${r}\``).join(', ') +
+        '. Each row unions the roots that installed the package (see `sources`).',
+    );
+    L.push('');
+  }
   if (s.filter === 'top-level') {
     L.push(
       `**${s.totalPackages} top-level packages** (of ${s.unfilteredTotalPackages} installed) across the active language pack(s). ` +

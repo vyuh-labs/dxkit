@@ -54,6 +54,17 @@ export interface BomEntry {
    *  this is `false` — undefined passes through so degraded gathers
    *  don't accidentally filter the whole report down to zero. */
   isTopLevel?: boolean;
+
+  /** Cwd-relative paths of the sub-project roots this package was
+   *  found in (e.g. `["."]`, `["userserver"]`, or
+   *  `[".", "userserver", "tools"]`). Populated only when
+   *  `analyzeBom({ nested: true })` discovers more than one root.
+   *  When a package appears under multiple roots (common for shared
+   *  transitives like `lodash`), the sources list unions the
+   *  sub-paths so the reader can see the full blast radius of an
+   *  upgrade. Unset when nested scan was disabled or only one root
+   *  existed. */
+  sources?: string[];
 }
 
 /**
@@ -115,6 +126,11 @@ export interface BomReport {
      *  row count otherwise, so the header can show "120 of 1371
      *  (filter=top-level)." */
     unfilteredTotalPackages: number;
+    /** Cwd-relative paths of every project root the nested scan
+     *  discovered (e.g. `["."]` or `[".", "userserver"]`). Sorted,
+     *  distinct. When nested scan is disabled or only one root was
+     *  found, this is `["."]` so consumers can treat it uniformly. */
+    projectRoots: string[];
   };
   entries: ReadonlyArray<BomEntry>;
   toolsUsed: string[];
