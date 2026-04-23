@@ -51,6 +51,8 @@ function printUsage(): void {
     --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
     --xlsx       Licenses/bom: also write 15-col BOM XLSX
     --since      Dev-report: start date (YYYY-MM-DD)
+    --filter     Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
+                 advisory rollup under byTopLevelDep still reflects transitives)
 
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
@@ -83,6 +85,7 @@ export async function run(argv: string[]): Promise<void> {
       detailed: { type: 'boolean', default: false },
       output: { type: 'string', short: 'o' },
       xlsx: { type: 'boolean', default: false },
+      filter: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -647,8 +650,14 @@ export async function run(argv: string[]): Promise<void> {
       const { analyzeBom, formatBomReport } = await import('./analyzers/bom');
       logger.header('vyuh-dxkit bom');
       logger.info(`Analyzing ${targetPath}...`);
+      const rawFilter = values.filter;
+      if (rawFilter !== undefined && rawFilter !== 'all' && rawFilter !== 'top-level') {
+        logger.fail(`Invalid --filter value: ${rawFilter}. Expected 'all' or 'top-level'.`);
+        process.exit(1);
+      }
+      const filter = rawFilter as 'all' | 'top-level' | undefined;
       const startTime = Date.now();
-      const report = await analyzeBom(targetPath, { verbose: !!values.verbose });
+      const report = await analyzeBom(targetPath, { verbose: !!values.verbose, filter });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -656,7 +665,12 @@ export async function run(argv: string[]): Promise<void> {
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
-        console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages}`); // slop-ok
+        if (s.filter === 'top-level') {
+          // prettier-ignore
+          console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages} of ${s.unfilteredTotalPackages} (filter=top-level)`); // slop-ok
+        } else {
+          console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages}`); // slop-ok
+        }
         console.log(
           // slop-ok
           `  ${logger.bold('Vulnerable packages:')} ${s.vulnerablePackages} ` +

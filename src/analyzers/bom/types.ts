@@ -46,6 +46,14 @@ export interface BomEntry {
    *  the license tool missed; surfaced in the detailed report so the
    *  user can decide whether to trust the license=UNKNOWN row. */
   joinedFromBoth: boolean;
+
+  /** True when this package is a root manifest dep (direct or dev-dep).
+   *  False when definitely transitive. Undefined when the language
+   *  pack couldn't determine it (missing lockfile / manifest parse
+   *  failure). `analyzeBom({ filter: 'top-level' })` drops rows where
+   *  this is `false` — undefined passes through so degraded gathers
+   *  don't accidentally filter the whole report down to zero. */
+  isTopLevel?: boolean;
 }
 
 /**
@@ -95,8 +103,18 @@ export interface BomReport {
     /** Snyk-style upgrade-oriented grouping: per-top-level-dep rollup
      *  built from `vulns[].topLevelDep`. Empty when no findings carry
      *  topLevelDep attribution (e.g. pre-10h.4 packs or projects
-     *  without a parseable dep graph). */
+     *  without a parseable dep graph). Always computed on the
+     *  unfiltered entry set so the rollup reflects full blast radius
+     *  even when the caller requested `filter: 'top-level'`. */
     byTopLevelDep: Record<string, BomTopLevelRollup>;
+    /** Which row filter was applied. Defaults to `'all'` (no filter).
+     *  `'top-level'` drops `BomEntry.isTopLevel === false` rows. */
+    filter: 'all' | 'top-level';
+    /** Total package count in the unfiltered entry set. Equals
+     *  `totalPackages` when `filter === 'all'`; equals the pre-filter
+     *  row count otherwise, so the header can show "120 of 1371
+     *  (filter=top-level)." */
+    unfilteredTotalPackages: number;
   };
   entries: ReadonlyArray<BomEntry>;
   toolsUsed: string[];

@@ -624,9 +624,18 @@ function gatherRustLicensesResult(cwd: string): LicensesResult | null {
   }
   if (!Array.isArray(data)) return null;
 
+  // Same self-parent invariant as the other packs: cargo metadata's
+  // resolve graph seeds BFS from each direct dep, so `index[top]`
+  // always contains `top`. Empty index (cargo missing, not a
+  // workspace) leaves isTopLevel unset — the bom filter will pass
+  // the row through rather than guess.
+  const topLevelIndex = loadRustTopLevelDepIndex(cwd);
+  const hasIndex = topLevelIndex.size > 0;
+
   const findings: LicenseFinding[] = [];
   for (const entry of data) {
     if (!entry.name || !entry.version) continue;
+    const parents = hasIndex ? topLevelIndex.get(entry.name) : undefined;
     findings.push({
       package: entry.name,
       version: entry.version,
@@ -634,6 +643,7 @@ function gatherRustLicensesResult(cwd: string): LicensesResult | null {
       sourceUrl: entry.repository || undefined,
       description: entry.description || undefined,
       supplier: entry.authors || undefined,
+      isTopLevel: hasIndex ? (parents?.includes(entry.name) ?? false) : undefined,
     });
   }
 
