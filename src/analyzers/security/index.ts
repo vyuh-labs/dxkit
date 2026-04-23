@@ -81,23 +81,55 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // Executive summary
+  // Executive summary — two independent axes that must NOT be summed
+  // naïvely. Code findings are issues your team owns and patches in
+  // source; dependency vulns are issues in third-party packages that
+  // upgrade-bumps resolve. Reporting them separately keeps the
+  // remediation owner unambiguous.
   const s = report.summary.findings;
+  const d = report.summary.dependencies;
   L.push('## Executive Summary');
   L.push('');
+  L.push('Security signals split across two independent axes:');
+  L.push('- **Code findings** — vulnerabilities in source your team owns. Fix by patching code.');
+  L.push(
+    '- **Dependency vulnerabilities** — vulnerabilities in third-party packages. Fix by upgrading the dep.',
+  );
+  L.push('');
+
+  L.push('### Code Findings');
+  L.push('');
+  L.push(
+    `_Sources: ${[...new Set(report.findings.map((f) => f.tool))].sort().join(', ') || '(none)'}_`,
+  );
+  L.push('');
   L.push('| Severity | Count |');
-  L.push('|----------|-------|');
+  L.push('|----------|------:|');
   L.push(`| CRITICAL | ${s.critical} |`);
   L.push(`| HIGH     | ${s.high} |`);
   L.push(`| MEDIUM   | ${s.medium} |`);
   L.push(`| LOW      | ${s.low} |`);
-  L.push(`| **Total** | **${s.total}** |`);
+  L.push(`| **Subtotal** | **${s.total}** |`);
   L.push('');
-  const d = report.summary.dependencies;
+
+  L.push('### Dependency Vulnerabilities');
+  L.push('');
   if (d.tool) {
-    L.push(
-      `Dependency audit: ${d.critical}C ${d.high}H ${d.medium}M ${d.low}L (${d.total} total, via ${d.tool}).`,
-    );
+    L.push(`_Source: ${d.tool}_`);
+    L.push('');
+    L.push('| Severity | Count |');
+    L.push('|----------|------:|');
+    L.push(`| CRITICAL | ${d.critical} |`);
+    L.push(`| HIGH     | ${d.high} |`);
+    L.push(`| MEDIUM   | ${d.medium} |`);
+    L.push(`| LOW      | ${d.low} |`);
+    L.push(`| **Subtotal** | **${d.total}** |`);
+    L.push('');
+    L.push(`**Total signals:** ${s.total + d.total} (${s.total} code + ${d.total} dependency)`);
+  } else {
+    L.push('_No dependency audit data — no language pack with a depVulns provider was active._');
+    L.push('');
+    L.push(`**Total signals:** ${s.total} (code only)`);
   }
   L.push('');
   L.push('---');
@@ -135,17 +167,33 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     sectionNum++;
   }
 
-  // Dependencies
-  if (d.tool) {
+  // Dep-vuln per-package detail. Counts already appeared in the
+  // Executive Summary; this section gives the actionable list (which
+  // packages, which versions, which CVEs) so a reader can act without
+  // bouncing to the --detailed report.
+  if (d.tool && d.findings.length > 0) {
     L.push(`## ${sectionNum}. Dependency Vulnerabilities`);
     L.push('');
-    L.push('| Severity | Count |');
-    L.push('|----------|-------|');
-    L.push(`| Critical | ${d.critical} |`);
-    L.push(`| High     | ${d.high} |`);
-    L.push(`| Medium   | ${d.medium} |`);
-    L.push(`| Low      | ${d.low} |`);
-    L.push(`| **Total** | **${d.total}** |`);
+    L.push(`${d.findings.length} advisories across third-party packages (counts above).`);
+    L.push('');
+    const sorted = [...d.findings].sort(
+      (a, b) => SORDER[a.severity] - SORDER[b.severity] || a.package.localeCompare(b.package),
+    );
+    const cap = 50;
+    const shown = sorted.slice(0, cap);
+    L.push('| Severity | Package@Version | ID | Fix | Tool |');
+    L.push('|----------|-----------------|----|-----|------|');
+    for (const f of shown) {
+      L.push(
+        `| ${f.severity.toUpperCase()} | \`${f.package}@${f.installedVersion ?? '?'}\` | \`${f.id}\` | ${f.fixedVersion ?? '—'} | ${f.tool} |`,
+      );
+    }
+    if (sorted.length > cap) {
+      L.push('');
+      L.push(
+        `_Showing ${cap} of ${sorted.length} advisories worst-first. Run with \`--detailed\` for the full inventory._`,
+      );
+    }
     L.push('');
     L.push('---');
     L.push('');

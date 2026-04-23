@@ -46,15 +46,30 @@ export function formatSecurityDetailedMarkdown(
   L.push('---');
   L.push('');
 
-  // Summary
+  // Summary — two independent axes (see formatSecurityReport in
+  // index.ts for the same rationale). Code findings vs dependency
+  // vulnerabilities are NOT summed naïvely; each has its own
+  // remediation owner (your team patches code, you upgrade deps).
   L.push('## Summary');
   L.push('');
+  L.push('Two independent axes:');
+  L.push('- **Code findings** — vulnerabilities in source your team owns. Fix by patching code.');
   L.push(
-    `Code findings: ${s.critical}C ${s.high}H ${s.medium}M ${s.low}L (${s.total} total). ` +
-      (d.tool
-        ? `Dependency vulns: ${d.critical}C ${d.high}H ${d.medium}M ${d.low}L (${d.total}, via ${d.tool}).`
-        : 'No dependency audit data.'),
+    '- **Dependency vulnerabilities** — vulnerabilities in third-party packages. Fix by upgrading the dep.',
   );
+  L.push('');
+  L.push(`**Code findings:** ${s.critical}C ${s.high}H ${s.medium}M ${s.low}L (${s.total} total)`);
+  if (d.tool) {
+    L.push(
+      `**Dependency vulns:** ${d.critical}C ${d.high}H ${d.medium}M ${d.low}L (${d.total} total, via ${d.tool})`,
+    );
+    L.push('');
+    L.push(`**Combined signals:** ${s.total + d.total} (${s.total} code + ${d.total} dependency)`);
+  } else {
+    L.push('**Dependency vulns:** no audit data');
+    L.push('');
+    L.push(`**Combined signals:** ${s.total} (code only)`);
+  }
   L.push('');
   L.push('---');
   L.push('');
