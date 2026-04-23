@@ -586,26 +586,78 @@ interface PipLicensesEntry {
 }
 
 /**
- * Locate the project's own Python interpreter. Conventional venv locations
- * are `.venv/bin/python[3]` or `venv/bin/python[3]`; we check in that
- * order. Returns null if no venv is found — the provider then skips
+ * Check whether an absolute path points at a runnable Python
+ * interpreter (a file; Windows `python.exe` not yet supported —
+ * matches the pre-10h.4.4 behavior).
+ */
+function isPyExecutable(abs: string): boolean {
+  try {
+    return fs.statSync(abs).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Given a candidate venv root directory, return the path to its
+ * `bin/python[3]` binary if present, or null otherwise. Extracted so
+ * the fallback chain below can reuse it across detection strategies.
+ */
+function venvRootToPython(venvRoot: string): string | null {
+  for (const exe of ['python', 'python3']) {
+    const candidate = path.join(venvRoot, 'bin', exe);
+    if (isPyExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Locate the project's own Python interpreter.
+ *
+ * Detection order (fail-cheap first, subprocess last):
+ *   1. `./.venv` or `./venv` under cwd  — uv default, in-project
+ *      poetry (`virtualenvs.in-project = true`), hand-rolled venvs.
+ *      Zero-cost stat() checks.
+ *   2. `$VIRTUAL_ENV` env var — set by `source .venv/bin/activate`
+ *      and poetry shell. Catches externally-activated envs.
+ *   3. `poetry env info --path` — external poetry venvs
+ *      (default `virtualenvs.in-project = false` on most installs;
+ *      env lives in `~/.cache/pypoetry/virtualenvs/<hash>`).
+ *   4. `pipenv --venv` — pipenv default stores elsewhere too.
+ *
+ * Returns null if no venv is resolvable — the provider then skips
  * cleanly rather than falling through to pip-licenses's install env
  * (which would report dxkit's own packages, not the project's).
  */
-function findPyProjectVenvPython(cwd: string): string | null {
-  const candidates = [
-    path.join(cwd, '.venv', 'bin', 'python'),
-    path.join(cwd, '.venv', 'bin', 'python3'),
-    path.join(cwd, 'venv', 'bin', 'python'),
-    path.join(cwd, 'venv', 'bin', 'python3'),
-  ];
-  for (const c of candidates) {
-    try {
-      if (fs.statSync(c).isFile()) return c;
-    } catch {
-      /* not this one */
-    }
+export function findPyProjectVenvPython(cwd: string): string | null {
+  // 1. Conventional in-project venv roots (fast path).
+  for (const dir of ['.venv', 'venv']) {
+    const p = venvRootToPython(path.join(cwd, dir));
+    if (p) return p;
   }
+
+  // 2. Caller-activated env (poetry shell, source activate, etc.).
+  const active = process.env.VIRTUAL_ENV;
+  if (active) {
+    const p = venvRootToPython(active);
+    if (p) return p;
+  }
+
+  // 3. External poetry venv. `poetry env info --path` returns the
+  // active env's root directory on stdout or nothing if no env.
+  const poetryPath = run('poetry env info --path 2>/dev/null', cwd, 10000).trim();
+  if (poetryPath) {
+    const p = venvRootToPython(poetryPath);
+    if (p) return p;
+  }
+
+  // 4. External pipenv venv.
+  const pipenvPath = run('pipenv --venv 2>/dev/null', cwd, 10000).trim();
+  if (pipenvPath) {
+    const p = venvRootToPython(pipenvPath);
+    if (p) return p;
+  }
+
   return null;
 }
 
