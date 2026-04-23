@@ -155,16 +155,30 @@ export type OsvFetcher = (id: string) => Promise<OsvVuln | null>;
  */
 const OSV_REQUEST_TIMEOUT_MS = 10000;
 
+/**
+ * OSV.dev is case-sensitive on GHSA IDs — `GHSA-7h2j-956f-4vf2` resolves,
+ * `GHSA-7H2J-956F-4VF2` returns "Bug not found". npm-audit emits
+ * uppercase, so any analyzer passing npm-audit IDs straight through
+ * would get zero results. Normalize the alphabetic portion before the
+ * HTTP call; CVE / PYSEC / GO / RUSTSEC aren't affected (either all-
+ * numeric or already canonically uppercased).
+ */
+function normalizeIdForOsv(id: string): string {
+  if (id.startsWith('GHSA-')) return 'GHSA-' + id.slice(5).toLowerCase();
+  return id;
+}
+
 const DEFAULT_FETCHER: OsvFetcher = async (id) => {
   try {
-    const res = await fetch(`https://api.osv.dev/v1/vulns/${encodeURIComponent(id)}`, {
+    const normalized = normalizeIdForOsv(id);
+    const res = await fetch(`https://api.osv.dev/v1/vulns/${encodeURIComponent(normalized)}`, {
       signal: AbortSignal.timeout(OSV_REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     return (await res.json()) as OsvVuln;
   } catch (err) {
     if (process.env.DXKIT_DEBUG_OSV) {
-      process.stderr.write(`[dxkit-osv] ${id}: ${(err as Error).message}\n`);
+      process.stderr.write(`[dxkit-osv] ${id}: ${(err as Error).message}\n`); // slop-ok
     }
     return null;
   }
@@ -273,6 +287,39 @@ export async function resolveCvssScores(
         result.set(primaryId, s);
         break;
       }
+    }
+  }
+  return result;
+}
+
+/**
+ * Look up the `aliases` list for each ID against OSV.dev. GHSA/RUSTSEC/
+ * GO-YYYY-NNNN primaries frequently have a CVE in their aliases that
+ * the producing tool (npm-audit, cargo-audit, govulncheck) didn't
+ * surface — we pull them here so downstream enrichers (EPSS) can
+ * query against CVE IDs even when the primary isn't one.
+ *
+ * Falls back to an empty list for IDs the fetcher can't resolve.
+ * Session-cached via the same map as `enrichOsv` so a find-severity
+ * pass and a find-aliases pass cost at most one roundtrip per ID.
+ */
+export async function resolveAliases(
+  ids: ReadonlyArray<string>,
+  fetcher: OsvFetcher = DEFAULT_FETCHER,
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return result;
+  const settled = await Promise.allSettled(
+    uniqueIds.map(async (id) => {
+      const vuln = await fetcher(id);
+      return [id, vuln?.aliases ?? []] as const;
+    }),
+  );
+  for (const p of settled) {
+    if (p.status === 'fulfilled') {
+      const [id, aliases] = p.value;
+      result.set(id, aliases);
     }
   }
   return result;

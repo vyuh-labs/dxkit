@@ -8,6 +8,8 @@
  *   dispatcher → dependency CVEs unioned across every active language pack
  */
 import { run } from '../tools/runner';
+import { enrichEpss, extractCveId } from '../tools/epss';
+import { resolveAliases } from '../tools/osv';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
@@ -149,6 +151,48 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
   const envelope = await defaultDispatcher.gather(cwd, DEP_VULNS, providers);
   if (!envelope) return EMPTY_DEP_VULNS;
 
+  // Cross-pack EPSS enrichment. Every pack's dep-vuln provider emits
+  // findings with an `id` + optional `aliases` list; we hoist CVE IDs
+  // across the whole batch, fetch once, then attach `epssScore` in
+  // place. Done here rather than per-pack so (a) one session cache
+  // serves all packs, (b) the EPSS endpoint sees at most one batched
+  // request per analyzer run, (c) non-CVE primaries (GHSA, RUSTSEC,
+  // GO-YYYY-NNNN) fall back to aliases uniformly.
+  //
+  // Two-step lookup: npm-audit only surfaces GHSA IDs with no CVE
+  // aliases. When `extractCveId` comes up empty, we fall back to
+  // OSV.dev's `/v1/vulns/<GHSA>` which returns a properly-populated
+  // alias list including the CVE. One OSV roundtrip resolves the
+  // whole batch; one EPSS roundtrip scores them all.
+  const findings = envelope.findings ?? [];
+  if (findings.length > 0) {
+    const cveByFinding = new Map<number, string>();
+    const needsAliasLookup: Array<{ idx: number; primary: string }> = [];
+    for (let i = 0; i < findings.length; i++) {
+      const direct = extractCveId(findings[i]);
+      if (direct) {
+        cveByFinding.set(i, direct);
+      } else {
+        needsAliasLookup.push({ idx: i, primary: findings[i].id });
+      }
+    }
+    if (needsAliasLookup.length > 0) {
+      const aliasMap = await resolveAliases(needsAliasLookup.map((x) => x.primary));
+      for (const { idx, primary } of needsAliasLookup) {
+        const aliases = aliasMap.get(primary) ?? [];
+        const cve = aliases.find((a) => a.startsWith('CVE-'));
+        if (cve) cveByFinding.set(idx, cve);
+      }
+    }
+    if (cveByFinding.size > 0) {
+      const scores = await enrichEpss([...new Set(cveByFinding.values())]);
+      for (const [idx, cve] of cveByFinding) {
+        const score = scores.get(cve);
+        if (score !== undefined) findings[idx].epssScore = score;
+      }
+    }
+  }
+
   const { critical, high, medium, low } = envelope.counts;
   return {
     critical,
@@ -157,6 +201,6 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     low,
     total: critical + high + medium + low,
     tool: envelope.tool,
-    findings: envelope.findings ?? [],
+    findings,
   };
 }
