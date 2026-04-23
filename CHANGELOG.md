@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-04-23
+
+Patch release hardening the publish pipeline after `v2.2.0`'s Publish
+workflow failed with `403 — version already published`. The failure
+was caused by a local `npm publish` that preceded the
+Release-triggered CI publish, not a code defect — the tarball on npm
+byte-matches main. No functional changes in this release; all work
+is on the release path (tracked internally as D015).
+
+### Added — publish pipeline guardrails
+
+- **`scripts/require-ci.js` + `prepublishOnly` guard** — any `npm publish`
+  invocation outside GitHub Actions now fails at the script hook with
+  a clear error pointing to `CLAUDE.md §"Release procedure"`. Prevents
+  accidental local publish before the registry is ever contacted.
+
+- **`publishConfig.provenance: true`** — npm publishes now carry a
+  GitHub Actions provenance attestation. Provenance requires an OIDC
+  token that only exists inside Actions; tarball-mode publishes
+  (`npm publish *.tgz`, which skips `prepublishOnly`) also fail outside
+  CI. Belt-and-suspenders with the script guard.
+
+- **Publish-workflow preflights** (`.github/workflows/publish.yml`) —
+  before `npm publish` runs, the workflow now verifies (in order):
+  1. tag `vX.Y.Z` matches `package.json` version `X.Y.Z`
+  2. tagged commit is reachable from `origin/main` (blocks
+     feature-branch tags)
+  3. the `CI` workflow succeeded on the tagged commit SHA
+  4. `X.Y.Z` is not already on npm (catches the exact 2.2.0 failure)
+
+- **Explicit pack + publish + verify** — workflow packs the tarball,
+  records its sha1, publishes that exact file, then fetches
+  `npm view dist.shasum` and fails on mismatch. Eliminates drift
+  between "what npm packed" and "what we audited."
+
+- **Tarball workflow artifact** — every release archives the published
+  `.tgz` as a workflow artifact (90-day retention) for post-mortem
+  auditability.
+
+### Documented — `CLAUDE.md`
+
+New "Release procedure" section codifying PR → CI-green → merge → tag
+→ CI publishes as the only path. Explicit "no local `npm publish`"
+rule.
+
 ## [2.2.0] - 2026-04-23
 
 Minor release adding Snyk-style top-level dep attribution across every
