@@ -341,6 +341,14 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         return versionCache.get(pkg);
       };
       const topLevelIndex = loadTsTopLevelDepIndex(cwd);
+      // npm-audit inlines the same advisory record on every consumer's
+      // `via[]` across the vulnerability tree (e.g. minimatch's ReDoS
+      // advisory appears on @loopback/cli, glob-parent, picomatch, etc.
+      // all at once). Without dedup we emit N copies of one logical
+      // advisory against the same package@version. Dedup on
+      // (package, installedVersion, id) — each advisory-against-pkg pair
+      // is the true identity of a finding.
+      const seen = new Set<string>();
       for (const [pkgName, entry] of Object.entries(auditData.vulnerabilities)) {
         // npm-audit's `fixAvailable` is the *consumer* upgrade command —
         // `{ name, version }` identifies which top-level dep to bump to
@@ -359,6 +367,9 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           const advisoryPkg = v.name ?? pkgName;
           const ghsa = extractGhsaId(v.url);
           const id = ghsa ?? (v.source ? `npm-${v.source}` : `npm-${advisoryPkg}`);
+          const dedupeKey = `${advisoryPkg}@${installedVersion(advisoryPkg) ?? ''}|${id}`;
+          if (seen.has(dedupeKey)) continue;
+          seen.add(dedupeKey);
           const finding: DepVulnFinding = {
             id,
             package: advisoryPkg,
