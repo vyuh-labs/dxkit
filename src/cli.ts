@@ -53,6 +53,8 @@ function printUsage(): void {
     --since      Dev-report: start date (YYYY-MM-DD)
     --filter     Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
                  advisory rollup under byTopLevelDep still reflects transitives)
+    --no-nested  Bom: disable nested-project aggregation (default scans the repo
+                 for all sub-projects with manifests and merges their BOMs)
 
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
@@ -86,6 +88,7 @@ export async function run(argv: string[]): Promise<void> {
       output: { type: 'string', short: 'o' },
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
+      'no-nested': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -656,8 +659,13 @@ export async function run(argv: string[]): Promise<void> {
         process.exit(1);
       }
       const filter = rawFilter as 'all' | 'top-level' | undefined;
+      const nested = !values['no-nested'];
       const startTime = Date.now();
-      const report = await analyzeBom(targetPath, { verbose: !!values.verbose, filter });
+      const report = await analyzeBom(targetPath, {
+        verbose: !!values.verbose,
+        filter,
+        nested,
+      });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
@@ -665,6 +673,11 @@ export async function run(argv: string[]): Promise<void> {
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
+        if (s.projectRoots.length > 1) {
+          logger.info(
+            `Aggregated across ${s.projectRoots.length} project roots: ${s.projectRoots.join(', ')}`,
+          );
+        }
         if (s.filter === 'top-level') {
           // prettier-ignore
           console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages} of ${s.unfilteredTotalPackages} (filter=top-level)`); // slop-ok
