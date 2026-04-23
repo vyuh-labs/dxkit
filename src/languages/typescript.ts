@@ -10,6 +10,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnFinding,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
@@ -115,13 +116,92 @@ interface AuditV1 {
   };
 }
 
+/**
+ * Per-advisory record nested under `vulnerabilities[pkg].via`. npm-audit
+ * inlines a full GHSA advisory here when the entry is the actual report;
+ * string entries in the same array are pointers to other vulnerable
+ * packages (transitive chain) and are skipped during finding extraction.
+ */
+interface AuditAdvisory {
+  source?: number;
+  name?: string;
+  dependency?: string;
+  title?: string;
+  url?: string;
+  severity?: string;
+  cwe?: string[];
+  cvss?: { score?: number; vectorString?: string };
+  range?: string;
+}
+
+interface AuditV2VulnEntry {
+  name?: string;
+  severity: string;
+  via?: Array<string | AuditAdvisory>;
+  fixAvailable?: boolean | { name: string; version: string; isSemVerMajor: boolean };
+  range?: string;
+}
+
 interface AuditV2 {
-  vulnerabilities?: Record<string, { severity: string }>;
+  vulnerabilities?: Record<string, AuditV2VulnEntry>;
+}
+
+/**
+ * Map npm-audit's severity vocabulary to the four-tier `SeverityCounts`
+ * domain. npm uses `moderate`; we normalize to `medium` everywhere else.
+ * Unknown values fall through to `low` to avoid silently inflating counts.
+ */
+function normalizeNpmSeverity(s: string | undefined): keyof SeverityCounts {
+  switch (s) {
+    case 'critical':
+      return 'critical';
+    case 'high':
+      return 'high';
+    case 'moderate':
+    case 'medium':
+      return 'medium';
+    default:
+      return 'low';
+  }
+}
+
+/**
+ * Extract the GHSA identifier from a GitHub advisory URL like
+ * `https://github.com/advisories/GHSA-h5c3-5r3r-rr8q`. Returns null when
+ * the URL doesn't match (e.g. legacy npm advisory pages).
+ */
+function extractGhsaId(url: string | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i);
+  return m ? m[0].toUpperCase() : null;
+}
+
+/**
+ * Read the locally installed version of a package from
+ * `node_modules/<pkg>/package.json`. Used to attach `installedVersion`
+ * to dep-vuln findings — npm-audit's JSON only reports the affected
+ * range, not which exact resolved version is on disk.
+ */
+function readInstalledTsVersion(cwd: string, pkgName: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, 'node_modules', pkgName, 'package.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * Single source of truth for the typescript pack's dep-vuln gathering.
  * Consumed by `tsDepVulnsProvider` (capability dispatcher).
+ *
+ * Counts derive from the per-package severity buckets (npm-audit's own
+ * aggregation). Findings derive from the per-advisory `via[]` objects
+ * — one finding per advisory, so a package with three GHSAs yields
+ * three findings even though counts increment by one. This matches the
+ * customer xlsx model: col 11 (Criticality) is per-package, col 12
+ * (Vulnerability Issues) is per-advisory.
  */
 async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   if (!fileExists(cwd, 'package.json')) return { kind: 'tool-missing' };
@@ -147,11 +227,47 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         else if (v.severity === 'low') low++;
       }
     }
+
+    const findings: DepVulnFinding[] = [];
+    if (auditData.vulnerabilities) {
+      const versionCache = new Map<string, string | undefined>();
+      const installedVersion = (pkg: string): string | undefined => {
+        if (!versionCache.has(pkg)) versionCache.set(pkg, readInstalledTsVersion(cwd, pkg));
+        return versionCache.get(pkg);
+      };
+      for (const [pkgName, entry] of Object.entries(auditData.vulnerabilities)) {
+        const fix = entry.fixAvailable;
+        const fixedVersion = typeof fix === 'object' ? fix.version : undefined;
+        const breakingUpgrade = typeof fix === 'object' ? fix.isSemVerMajor : undefined;
+        for (const v of entry.via ?? []) {
+          if (typeof v === 'string') continue;
+          const advisoryPkg = v.name ?? pkgName;
+          const ghsa = extractGhsaId(v.url);
+          const id = ghsa ?? (v.source ? `npm-${v.source}` : `npm-${advisoryPkg}`);
+          const finding: DepVulnFinding = {
+            id,
+            package: advisoryPkg,
+            installedVersion: installedVersion(advisoryPkg),
+            tool: 'npm-audit',
+            severity: normalizeNpmSeverity(v.severity),
+          };
+          if (typeof v.cvss?.score === 'number') finding.cvssScore = v.cvss.score;
+          if (fixedVersion) finding.fixedVersion = fixedVersion;
+          if (breakingUpgrade !== undefined) finding.breakingUpgrade = breakingUpgrade;
+          if (ghsa) finding.aliases = [ghsa];
+          if (v.title) finding.summary = v.title;
+          if (v.url) finding.references = [v.url];
+          findings.push(finding);
+        }
+      }
+    }
+
     const envelope: DepVulnResult = {
       schemaVersion: 1,
       tool: 'npm-audit',
       enrichment: null,
       counts: { critical, high, medium, low },
+      findings,
     };
     return { kind: 'success', envelope };
   } catch {
