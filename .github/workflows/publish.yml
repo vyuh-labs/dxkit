@@ -9,15 +9,122 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # required for npm provenance via OIDC
+      actions: read # required for gh api querying the CI run of the tagged SHA
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history — ancestor check needs it
+
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm run build
-      - run: npm publish --access public
+
+      # Preflight 1/4 — tag ↔ package.json version. A mismatch here means
+      # someone tagged the wrong commit or forgot to bump. Fail early so
+      # the tarball we build isn't misleading.
+      - name: Preflight — tag matches package.json version
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG_NAME (version $TAG_VERSION) does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "✓ Tag $TAG_NAME matches package.json version $PKG_VERSION"
+
+      # Preflight 2/4 — tagged commit must be reachable from origin/main.
+      # Blocks the "tagged a feature branch that never merged" mistake.
+      - name: Preflight — tagged commit is on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "::error::Tagged commit ${GITHUB_SHA} is not reachable from origin/main"
+            exit 1
+          fi
+          echo "✓ Tagged commit ${GITHUB_SHA} is an ancestor of origin/main"
+
+      # Preflight 3/4 — CI must have succeeded on the exact tagged SHA.
+      # Prevents "tag pushed before CI finished" or "CI red on main".
+      - name: Preflight — CI is green on tagged commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CONCLUSION=$(gh run list \
+            --workflow CI \
+            --commit "${GITHUB_SHA}" \
+            --json conclusion,status \
+            --jq '.[0].conclusion // "missing"')
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI is not green on tagged commit ${GITHUB_SHA} (got: ${CONCLUSION})"
+            echo "Re-run CI on this commit and wait for success before re-triggering the release."
+            exit 1
+          fi
+          echo "✓ CI is green on ${GITHUB_SHA}"
+
+      # Preflight 4/4 — version must not already exist on npm. Catches the
+      # exact 2.2.0 race where a local publish preceded the workflow run.
+      - name: Preflight — version not already on npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@vyuhlabs/dxkit@${VERSION}" version >/dev/null 2>&1; then
+            echo "::error::@vyuhlabs/dxkit@${VERSION} is already published on npm"
+            echo "Bump the version and re-tag, or investigate whether a local publish happened."
+            exit 1
+          fi
+          echo "✓ @vyuhlabs/dxkit@${VERSION} is available on npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Pack first, capture the sha1 we built, then publish *that exact
+      # tarball*. Eliminates any drift between "what npm publish packs"
+      # and "what we verified post-publish".
+      - name: Pack tarball
+        id: pack
+        run: |
+          TARBALL=$(npm pack --silent)
+          SHASUM=$(sha1sum "$TARBALL" | awk '{print $1}')
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "shasum=$SHASUM" >> "$GITHUB_OUTPUT"
+          echo "✓ Built $TARBALL (sha1: $SHASUM)"
+
+      - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance "${{ steps.pack.outputs.tarball }}"
+
+      # Post-publish — npm's recorded shasum must equal our local sha1.
+      # A mismatch means something replaced the tarball mid-publish or
+      # the registry accepted a different file; bail loudly.
+      - name: Verify npm shasum matches local tarball
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          REMOTE_SHASUM=""
+          for i in 1 2 3 4 5 6; do
+            REMOTE_SHASUM=$(npm view "@vyuhlabs/dxkit@${VERSION}" dist.shasum 2>/dev/null || true)
+            if [ -n "$REMOTE_SHASUM" ]; then break; fi
+            sleep 3
+          done
+          LOCAL_SHASUM="${{ steps.pack.outputs.shasum }}"
+          if [ -z "$REMOTE_SHASUM" ]; then
+            echo "::error::npm never reported a shasum for @vyuhlabs/dxkit@${VERSION}"
+            exit 1
+          fi
+          if [ "$REMOTE_SHASUM" != "$LOCAL_SHASUM" ]; then
+            echo "::error::npm shasum ($REMOTE_SHASUM) does not match local tarball shasum ($LOCAL_SHASUM)"
+            exit 1
+          fi
+          echo "✓ Shasum verified: ${REMOTE_SHASUM}"
+
+      - name: Upload tarball as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyuhlabs-dxkit-${{ github.ref_name }}
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 90

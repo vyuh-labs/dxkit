@@ -57,6 +57,47 @@ Reports, analyzers, and tool registries **must not** grow language-specific
 branches. If you find yourself writing one, the right answer is almost
 always to add the capability to `LanguageSupport` and let the pack provide it.
 
+## Release procedure
+
+**Every release goes through the CI pipeline. No exceptions.** Local
+`npm publish` is blocked by `scripts/require-ci.js` (wired as the
+`prepublishOnly` hook) and additionally disabled by
+`publishConfig.provenance: true`, which requires an OIDC token that
+only exists inside GitHub Actions.
+
+Sequence for a new release:
+
+1. Work on a `feat/<phase-or-change>` branch.
+2. Open a PR against `main`. CI must pass (typecheck, lint, format, tests, coverage, architecture rules, slop check, `npm pack --dry-run`).
+3. Merge via the GitHub UI — not a local `git push`. Branch protection on `main` enforces this.
+4. In the PR (or a follow-up), bump `package.json` + `package-lock.json` + add a `CHANGELOG.md` entry for the new version.
+5. After the release commit is on `main` and CI is green there:
+
+   ```bash
+   git checkout main && git pull
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+6. Create a GitHub Release from the tag. This fires `.github/workflows/publish.yml`, which preflights:
+   - tag `vX.Y.Z` matches `package.json` version `X.Y.Z`
+   - tagged commit is reachable from `origin/main` (no feature-branch tags)
+   - the `CI` workflow succeeded on the tagged commit SHA
+   - `X.Y.Z` is not already on npm
+
+   Only then does it `npm pack` + `npm publish --provenance` + verify the
+   registry shasum matches the locally built tarball. The tarball is
+   archived as a workflow artifact for 90 days.
+
+**Why this exists**: the v2.2.0 release shipped from a local
+`npm publish` that raced the CI-driven one (CI lost with 403 — version
+already taken). The code on npm matched main byte-for-byte, but the
+release path was unauditable and provenance was absent. Tracked
+internally as D015.
+
+**Never run `npm publish` locally.** The guard will stop you with a
+clear error message; don't try to work around it.
+
 ## Build & Test
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "AI-native developer experience toolkit for any repository",
   "license": "MIT",
   "author": "Vyuh Labs",
@@ -16,7 +16,8 @@
     "vyuh-dxkit": "./dist/index.js"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "main": "./dist/lib.js",
   "types": "./dist/lib.d.ts",
@@ -39,7 +40,7 @@
   ],
   "scripts": {
     "build": "node scripts/copy-templates.js && tsc",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/require-ci.js && npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
