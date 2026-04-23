@@ -34,15 +34,15 @@ The two modes are complementary. The analyzers run anywhere; the scaffolder writ
 
 Seven deterministic analyzers. Each emits a markdown report to `.ai/reports/` and optional structured JSON.
 
-| Command           | What it does                                                                      | Runtime | Output                                     |
-| ----------------- | --------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
-| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                   | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
-| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)     | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
-| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                      | <1s     | `.ai/reports/test-gaps-<date>.md`          |
-| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                            | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
-| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                        | <1s     | `.ai/reports/developer-report-<date>.md`   |
-| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)      | 5–20s   | `.ai/reports/licenses-<date>.md`           |
-| `bom`             | **Bill of Materials** — joins licenses + vulnerabilities per package, 15-col XLSX | 10–40s  | `.ai/reports/bom-<date>.{md,xlsx}`         |
+| Command           | What it does                                                                                                                                | Runtime | Output                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
+| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                                                                             | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
+| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)                                                               | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
+| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                | <1s     | `.ai/reports/test-gaps-<date>.md`          |
+| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                      | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
+| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                  | <1s     | `.ai/reports/developer-report-<date>.md`   |
+| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)                                                                | 5–20s   | `.ai/reports/licenses-<date>.md`           |
+| `bom`             | **Bill of Materials** — joins licenses + vulnerabilities per package, 15-col XLSX; groups advisories by top-level manifest dep (Snyk-style) | 10–40s  | `.ai/reports/bom-<date>.{md,xlsx}`         |
 
 Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
 

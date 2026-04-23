@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-04-23
+
+Minor release adding Snyk-style top-level dep attribution across every
+language pack. Answers "which direct manifest dep do I upgrade to fix
+the most advisories" alongside the existing per-leaf-package reporting.
+Drop-in upgrade — additive `topLevelDep?: string[]` field, no schema
+bump required.
+
+### Added — top-level dep attribution (Phase 10h.4)
+
+- **`DepVulnFinding.topLevelDep?: string[]`** — per-advisory list of
+  root manifest entries (direct + dev deps) that transitively pull the
+  vulnerable package. Coarse name-level attribution (unions across
+  multiple parents when the package is reachable from more than one
+  top-level). Enables Snyk-style grouping: one advisory against
+  `tar@7.5.9` surfaces as "under `@loopback/cli`" rather than just
+  "tar has a CVE".
+
+- **TypeScript pack** — BFS over `package-lock.json` (v2/v3) from
+  each root `dependencies` / `devDependencies` entry. Pure parser
+  `buildTsTopLevelDepIndex` unit-tested; benchmark on
+  `vyuhlabs-platform`: 71/71 findings attributed across 31 vulnerable
+  packages, `@loopback/cli` rollup = 29 advisories (matches Snyk UI).
+
+- **Python pack** — BFS over `pip show` graph from packages with empty
+  `Required-by`. Pure parsers `parsePipShowOutput` +
+  `buildPyTopLevelDepIndex`. Venv detection now includes poetry
+  (`poetry env info --path`), pipenv (`pipenv --venv`), and
+  `$VIRTUAL_ENV` env var alongside the existing `.venv`/`venv` fast
+  path — poetry with default `virtualenvs.in-project = false` now
+  resolves.
+
+- **Go pack** — BFS over `go mod graph` output, with `go.mod`'s
+  `// indirect` markers filtering the seed set so only user-declared
+  direct deps become top-levels. Pure parsers `parseGoModDirectDeps` +
+  `buildGoTopLevelDepIndex`.
+
+- **Rust pack** — BFS over `cargo metadata --format-version 1` resolve
+  graph from each direct dep of `resolve.root`. Pure parser
+  `buildRustTopLevelDepIndex`; maps package ids → names, collapses
+  version variants.
+
+- **C# pack** — **two-part expansion**. First,
+  `dotnet list package --vulnerable` now uses `--include-transitive`,
+  so transitive vulns (previously invisible) are surfaced. Second,
+  attribution comes from walking `obj/project.assets.json` — pure
+  parsers `parseProjectAssetsJson` + `buildCsharpTopLevelDepIndex`.
+  Direct findings carry self-attribution; transitive findings gain
+  `topLevelDep` from the assets-json graph. Degrades gracefully when
+  the lockfile is absent (user hasn't run `dotnet restore`).
+
+### Added — bom render surfaces top-level grouping
+
+- **`BomReport.summary.byTopLevelDep: Record<string, BomTopLevelRollup>`**
+  where `BomTopLevelRollup = { advisoryCount, maxSeverity, packages[] }`.
+  Multi-parent advisories increment counters for each top-level they
+  list, matching Snyk's rollup semantics.
+
+- **Markdown "Top-Level Dep Groups" section** in `bom-<date>.md` —
+  sorted by severity then advisory count. First row is the single
+  upgrade that resolves the most critical/highest-volume issues. Caps
+  at 30 top-levels, packages list truncated at 8 with "+N more".
+
+- **Xlsx col 12 annotation** — each advisory line gains
+  ` via <parent>` (single top-level) or ` via <parent> (+N more)`
+  (multi-parent). Reviewer sees upgrade guidance directly in the
+  spreadsheet cell. No suffix when `topLevelDep` is unset.
+
+### Fixed — TS dep-vuln finding dedupe
+
+- `gatherTsDepVulnsResult` now de-duplicates findings by
+  `(package, installedVersion, id)`. npm-audit inlines the same
+  advisory on every consumer's `via[]` across the vulnerability tree
+  (e.g. minimatch's ReDoS appearing on `@loopback/cli`, `glob-parent`,
+  `picomatch` simultaneously); the advisory-emission loop previously
+  pushed N copies of one logical finding. Platform count 94 → 71,
+  14 distinct dupe pairs → 0. Pre-existing from 2.1.0; caught during
+  10h.4 evaluation.
+
+### Notes
+
+- Every pack degrades gracefully when its dep-graph source is missing:
+  TS without `package-lock.json`, Python without a venv, Go without
+  `go.mod`, Rust without `cargo metadata`, C# without
+  `obj/project.assets.json`. Findings still emit; `topLevelDep` stays
+  unset.
+
+- Release validated against `vyuhlabs-platform` TypeScript benchmark.
+  Python/Go/Rust/C# packs exercised via fixture-based unit tests
+  (+53 new tests across the 4 non-TS language test files); real-world
+  validation lands with 2.3.0's cross-ecosystem benchmark fixtures.
+
 ## [2.1.0] - 2026-04-23
 
 Minor release adding two new analyzers and a shared XLSX converter.
