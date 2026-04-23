@@ -666,10 +666,8 @@ export async function run(argv: string[]): Promise<void> {
         const s = report.summary;
         console.log(''); // slop-ok
         if (s.filter === 'top-level') {
-          console.log(
-            // slop-ok
-            `  ${logger.bold('Packages indexed:')} ${s.totalPackages} of ${s.unfilteredTotalPackages} (filter=top-level)`,
-          );
+          // prettier-ignore
+          console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages} of ${s.unfilteredTotalPackages} (filter=top-level)`); // slop-ok
         } else {
           console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages}`); // slop-ok
         }
