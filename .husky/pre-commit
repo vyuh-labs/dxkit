@@ -1,1 +1,13 @@
-bash scripts/check-architecture.sh && bash scripts/check-slop.sh && npx lint-staged && npm run typecheck
+# Order matters: `lint-staged` runs Prettier (+ ESLint --fix) and
+# re-stages the reformatted files. If slop/architecture/typecheck
+# ran first, Prettier could re-introduce a violation AFTER the gate
+# already passed, and the commit would land dirty (this is what
+# happened on feat/10h-5-0-top-level-filter — a `// slop-ok`
+# same-line marker was split by Prettier into a multi-line call
+# and the bare `console.log(` line survived the gate because the
+# gate ran before Prettier). Keeping `lint-staged` first means the
+# gates see the *final* staged state, not a pre-format snapshot.
+npx lint-staged \
+  && bash scripts/check-architecture.sh \
+  && bash scripts/check-slop.sh \
+  && npm run typecheck

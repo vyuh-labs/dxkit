@@ -1,9 +1,27 @@
-# Build, run the unit suite with coverage, enforce threshold.
+# Mirror the CI gates locally so `git push` fails fast on anything
+# CI would also fail on, instead of finding out 40s later in the PR
+# check. The set below matches `.github/workflows/ci.yml` step-for-step
+# (minus the pack-dry-run smoke, which is covered by prepublishOnly
+# at release time and rarely regresses between commits).
+#
 # Integration tests live under test/integration/ and run via
 # `npm run test:integration` (or in CI) — too slow for every push.
 #
 # Coverage threshold reflects the full unit suite, not --changed scope,
 # so the number is meaningful (a partial run would underreport).
+
+# Fast static gates — fail before burning time on build/tests.
+npm run typecheck
+npx eslint . --max-warnings 0
+npx prettier --check .
+bash scripts/check-architecture.sh
+
+# Slop check against the push target. Matches the CI step's
+# DXKIT_SLOP_BASE=origin/main range-diff so no PR can surface slop
+# that `git push` didn't already surface locally.
+DXKIT_SLOP_BASE=origin/main bash scripts/check-slop.sh
+
+# Build + unit tests with coverage, coverage threshold.
 npm run build
 npx vitest run --coverage
 bash scripts/check-coverage.sh
