@@ -7,6 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-23
+
+Minor release adding two new analyzers and a shared XLSX converter.
+Schema-compatible with 2.0.x for all pre-existing reports; introduces
+two new report kinds (`licenses`, `bom`) and a schema v11 → v12 bump on
+the detailed security report. Drop-in upgrade — no existing consumer
+breaks.
+
+### Added — license inventory
+
+- **`vyuh-dxkit licenses [path]`** — per-pack dependency license
+  inventory across TypeScript (license-checker-rseidelsohn), Python
+  (pip-licenses), Go (go-licenses), Rust (cargo-license), and C#
+  (nuget-license). Populates 11 fields per package (name, version,
+  description, license type, license text, source URL, supplier,
+  release date, etc.). Writes `.ai/reports/licenses-<date>.md`; with
+  `--detailed` also a risk-categorized JSON + markdown flagging
+  strong-copyleft, weak-copyleft, unknown-license, missing-attribution
+  packages. TypeScript provider normalizes source URLs through
+  `hosted-git-info` so `git+`/SCP/RFC-SSH variants collapse to canonical
+  HTTPS.
+- **`vyuh-dxkit bom [path]`** — Bill of Materials joining `licenses`
+  with dependency vulnerabilities on `(package, version)`. One row per
+  installed package-version with license metadata (cols 1-9, 15 per
+  customer spec) AND per-package vulnerability rollup: max severity
+  (col 11), per-advisory list with CVSS scores (col 12), and derived
+  Tier-1 resolution proposal (col 13 — "Upgrade X to Y" when every
+  advisory has a fixedVersion, "Upgrade <parent> (transitive fix)" when
+  the fix is in a parent dep, "No fix available" otherwise). Detailed
+  mode (`--detailed`) emits a risk-review markdown with 6 triage
+  buckets (critical/high × no-fix/actionable, medium, low, license-
+  scanner-gap). `--xlsx` / `to-xlsx` produce the 15-column workbook
+  the customer's spreadsheet workflow expects, byte-identical headers.
+- **`vyuh-dxkit to-xlsx <json>`** — shared converter. Reads any
+  licenses or bom detailed JSON and emits the canonical 15-col XLSX.
+  Lets downstream tooling stash JSON and render on demand without re-
+  running the analyzer.
+
+### Added — dependency-vulnerability per-advisory detail
+
+- Every language pack's `depVulns` provider now populates
+  `DepVulnFinding[]` alongside the existing per-severity counts. Counts
+  remain per-package (for `vulnerabilities` command parity); findings
+  are per-advisory with id (GHSA/CVE/PYSEC/GO/RUSTSEC), installed +
+  fixed versions, CVSS score, aliases, summary, references, and tool
+  attribution. `gatherDepVulns` forwards findings into
+  `SecurityReport.summary.dependencies.findings` so the
+  `vulnerabilities --detailed` command renders per-advisory inventory
+  (previously: counts only).
+- `DepVulnFinding` extended with nine optional fields for tier-layered
+  enrichment: `tool` (denormalized producer, renamed from unused
+  `source`), `cvssScore`, `upgradeAdvice`, `reachable`, `epssScore`,
+  `kev`, `riskScore`, `breakingUpgrade`, `aliases`, `summary`,
+  `references`. Per-pack Tier-1 providers populate what their native
+  tools emit; Tier-2/3/4 enrichment lands in later 10h sub-phases.
+- Cross-pack OSV enhancement: `enrichOsv` (renamed from
+  `enrichSeverities`) now returns `{severity, cvssScore}` pairs, and
+  a new `resolveCvssScores` helper does batched alias-fallback
+  lookups. Fills the CVSS gap for GO-\* records (bulk of which carry
+  no severity but whose CVE aliases do) and PYSEC-\* records. TS pack
+  is a no-op via this path (npm-audit already ships CVSS at ~100%);
+  Python cvssScore coverage jumped from 0% → 100% on the fixture,
+  Go from 0% → 55% on vyuhlabs/Tickit.
+- **Go pack parser fix** — `govulncheck -json` emits pretty-printed
+  multi-line JSON, not single-line ndjson. Previous `split('\n')`
+  parser silently failed on every invocation; new balanced-brace
+  `parseJsonStream` helper in `runner.ts` handles both shapes and
+  string-literal escapes. Reusable for any future tool that
+  pretty-prints.
+- **Python pack manifest gating** — previously `pip-audit` ran with
+  no project context and silently scanned dxkit's own graphify-venv.
+  Now routes by manifest: `pip-audit <cwd>` for pyproject.toml/setup.py
+  projects, `pip-audit -r requirements.txt` for requirements projects,
+  null otherwise. Corrected platform audit: 97 → 94 dep vulns (3
+  phantom graphify-venv pip findings removed).
+
+### Added — tool registry
+
+- TypeScript pack: `license-checker-rseidelsohn` (license inventory)
+- Python pack: `pip-licenses` (license inventory)
+- Go pack: `go-licenses` (license inventory, `go install golang.org/...`)
+- Rust pack: `cargo-license` (license inventory, `cargo install`)
+- C# pack: `nuget-license` (license inventory, `dotnet tool install`)
+
+All bundled into per-pack provider commits so `findTool` + provider
+invocation land together (CLAUDE.md rule 1).
+
+### Changed
+
+- **Vulnerability report labelling** — Executive Summary now cleanly
+  separates "Code Findings" (your team patches source) from
+  "Dependency Vulnerabilities" (upgrade the dep) into two tables with
+  a combined total. Previously a single table labelled just "Severity
+  / Count" implied dep vulns were included, which they weren't. The
+  shallow report also now renders a worst-first per-advisory dep-vuln
+  table (50-row cap), so `vulnerabilities` without `--detailed` is
+  already actionable.
+- **Security detailed schema** — bumps from `"11"` → `"12"` for the
+  new `summary.dependencies.findings: DepVulnFinding[]` field in the
+  JSON output. Additive — consumers reading just the old keys stay
+  compatible.
+- **`DepVulnFinding.source` repurposed to `DepVulnFinding.tool`**.
+  The former `'osv.dev' | 'tool-default' | 'tool-reported'` enum was
+  dead code (declared, never written or read). Field now holds the
+  producer tool name (`npm-audit` / `pip-audit` / `govulncheck` /
+  `cargo-audit` / `dotnet-vulnerable`) so per-finding attribution
+  survives merges across multiple providers.
+
+### Fixed
+
+- **npm-audit `fixAvailable` misinterpretation** — `fix.name` is the
+  top-level upgrade target, not the vulnerable package itself. Prior
+  code blindly assigned `fix.version` as `fixedVersion` on every
+  advisory, producing absurd output like "uuid@13.0.0 → Upgrade to
+  3.2.1". Now branches on `fix.name === pkgName`: direct fix sets
+  `fixedVersion`; transitive fix sets `upgradeAdvice` with parent-
+  package guidance ("Upgrade @loopback/cli to 5.0.0 [major]
+  (transitive fix)"). Surfaced ~20 false positives on platform audit
+  covering uuid/octokit/tar/undici/underscore.
+- **bom xlsx col 11/12/13 fill on non-vulnerable rows** — previously
+  blank, creating "scanned-clean vs not-scanned" ambiguity. Now fills
+  "None" / "No action required" so reviewers see at a glance which
+  rows dxkit actually processed.
+
+### Runtime dependencies added
+
+- `exceljs ^4.4.0` — XLSX writer. Adds ~80 transitive deps (bumps
+  dxkit's own license-checker count 242 → ~325).
+- `hosted-git-info ^9.0.2` + `@types/hosted-git-info ^3.0.5` — URL
+  canonicalisation (source URL column of licenses/bom).
+
 ## [2.0.1] - 2026-04-22
 
 Patch release following the 2.0.0 smoke-test. No API or schema changes —

@@ -32,25 +32,31 @@ The two modes are complementary. The analyzers run anywhere; the scaffolder writ
 
 ## Analyzer CLI (`vyuh-dxkit <command>`)
 
-Five deterministic analyzers. Each emits a markdown report to `.ai/reports/` and optional structured JSON.
+Seven deterministic analyzers. Each emits a markdown report to `.ai/reports/` and optional structured JSON.
 
-| Command           | What it does                                                    | Runtime | Output                                     |
-| ----------------- | --------------------------------------------------------------- | ------- | ------------------------------------------ |
-| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX) | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
-| `vulnerabilities` | gitleaks + semgrep + `npm audit` / `pip-audit`                  | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
-| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)    | <1s     | `.ai/reports/test-gaps-<date>.md`          |
-| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene          | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
-| `dev-report`      | Commits, contributors, hot files, velocity, conventional %      | <1s     | `.ai/reports/developer-report-<date>.md`   |
+| Command           | What it does                                                                      | Runtime | Output                                     |
+| ----------------- | --------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
+| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                   | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
+| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)     | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
+| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                      | <1s     | `.ai/reports/test-gaps-<date>.md`          |
+| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                            | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
+| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                        | <1s     | `.ai/reports/developer-report-<date>.md`   |
+| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)      | 5–20s   | `.ai/reports/licenses-<date>.md`           |
+| `bom`             | **Bill of Materials** — joins licenses + vulnerabilities per package, 15-col XLSX | 10–40s  | `.ai/reports/bom-<date>.{md,xlsx}`         |
+
+Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
 
 ### Flags (apply to all analyzer commands)
 
-| Flag             | Effect                                                                                |
-| ---------------- | ------------------------------------------------------------------------------------- |
-| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions |
-| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                       |
-| `--verbose`      | Print per-tool timing to stderr                                                       |
-| `--no-save`      | Skip writing markdown; useful with `--json`                                           |
-| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                          |
+| Flag             | Effect                                                                                 |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions  |
+| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                        |
+| `--verbose`      | Print per-tool timing to stderr                                                        |
+| `--no-save`      | Skip writing markdown; useful with `--json`                                            |
+| `--xlsx`         | (`licenses`, `bom` only) Also write 15-col `.xlsx` — drop-in for spreadsheet workflows |
+| `-o <file>`      | (`licenses`, `bom`, `to-xlsx`) Override output path for xlsx / converted file          |
+| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                           |
 
 ### Detailed mode — evidence + ranked fixes
 
