@@ -36,6 +36,7 @@ export async function analyzeBom(
   const bySeverity: Record<BomSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let vulnerablePackages = 0;
   let actionableVulns = 0;
+  let totalAdvisories = 0;
   let vulnOnlyPackages = 0;
   for (const e of entries) {
     if (e.maxSeverity) {
@@ -43,6 +44,7 @@ export async function analyzeBom(
       vulnerablePackages++;
       if (e.upgradeAdvice.startsWith('PROPOSAL:')) actionableVulns++;
     }
+    totalAdvisories += e.vulns.length;
     if (!e.joinedFromBoth) vulnOnlyPackages++;
   }
 
@@ -57,6 +59,7 @@ export async function analyzeBom(
       bySeverity,
       vulnerablePackages,
       actionableVulns,
+      totalAdvisories,
       vulnOnlyPackages,
     },
     entries,
@@ -88,15 +91,26 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   const s = report.summary;
   L.push('## Summary');
   L.push('');
-  L.push(
-    `**${s.totalPackages} packages** indexed across the active language pack(s). ` +
-      `**${s.vulnerablePackages}** have known vulnerabilities; ` +
-      `**${s.actionableVulns}** of those have an upgrade-target proposal (Tier 1).`,
-  );
+  L.push(`**${s.totalPackages} packages** indexed across the active language pack(s).`);
   L.push('');
   if (s.vulnerablePackages > 0) {
-    L.push('| Severity | Vulnerable Packages |');
-    L.push('|----------|--------------------:|');
+    L.push(
+      `**${s.vulnerablePackages} packages** carry known vulnerabilities — ` +
+        `**${s.totalAdvisories} advisories** in total ` +
+        `(one package can have many advisories, e.g. multiple CVEs against ` +
+        `the same installed version). ` +
+        `**${s.actionableVulns}** of those packages have a Tier-1 upgrade proposal.`,
+    );
+    L.push('');
+    L.push(
+      `> The numbers reconcile with \`vyuh-dxkit vulnerabilities\`: ` +
+        `that command reports per-advisory (${s.totalAdvisories}); bom collapses ` +
+        `them per-package (${s.vulnerablePackages}) so each row of the ` +
+        `xlsx is one upgrade decision.`,
+    );
+    L.push('');
+    L.push('| Severity (worst-of-package) | Vulnerable Packages |');
+    L.push('|-----------------------------|--------------------:|');
     L.push(`| CRITICAL | ${s.bySeverity.critical} |`);
     L.push(`| HIGH     | ${s.bySeverity.high} |`);
     L.push(`| MEDIUM   | ${s.bySeverity.medium} |`);

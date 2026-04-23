@@ -25,6 +25,7 @@ function printUsage(): void {
     vyuh-dxkit quality [path]    Code quality + slop detection
     vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit licenses [path]   Dependency license inventory
+    vyuh-dxkit bom [path]        Bill of Materials (licenses + vulnerabilities joined)
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -43,12 +44,12 @@ function printUsage(): void {
     --force      Overwrite modified files (except evolved)
     --rescan     Re-run codebase analysis
 
-  ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses):')}
+  ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses, bom):')}
     --json       Print report as JSON to stdout
     --verbose    Print per-tool timing to stderr
     --no-save    Skip writing the markdown report file
     --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
-    --xlsx       Licenses: also write 15-col BOM XLSX (requires --detailed)
+    --xlsx       Licenses/bom: also write 15-col BOM XLSX
     --since      Dev-report: start date (YYYY-MM-DD)
 
   ${logger.bold('Examples:')}
@@ -641,6 +642,90 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'bom': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { analyzeBom, formatBomReport } = await import('./analyzers/bom');
+      logger.header('vyuh-dxkit bom');
+      logger.info(`Analyzing ${targetPath}...`);
+      const startTime = Date.now();
+      const report = await analyzeBom(targetPath, { verbose: !!values.verbose });
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      if (values.json) {
+        console.log(JSON.stringify(report, null, 2)); // slop-ok
+      } else {
+        const s = report.summary;
+        console.log(''); // slop-ok
+        console.log(`  ${logger.bold('Packages indexed:')} ${s.totalPackages}`); // slop-ok
+        console.log(
+          // slop-ok
+          `  ${logger.bold('Vulnerable packages:')} ${s.vulnerablePackages} ` +
+            `(${s.totalAdvisories} advisories — vulnerabilities cmd counts those)`,
+        );
+        console.log(
+          // slop-ok
+          `  ${logger.bold('Actionable upgrades:')} ${s.actionableVulns} (Tier-1 proposals)`,
+        );
+        if (s.vulnOnlyPackages > 0) {
+          console.log(
+            // slop-ok
+            `  ${logger.bold('License-scanner gap:')} ${s.vulnOnlyPackages} vuln-only entries`,
+          );
+        }
+        if (s.vulnerablePackages > 0) {
+          console.log(''); // slop-ok
+          console.log(`  ${logger.bold('Severity (worst-of-package):')}`); // slop-ok
+          console.log(
+            // slop-ok
+            `       ${s.bySeverity.critical} critical, ${s.bySeverity.high} high, ${s.bySeverity.medium} medium, ${s.bySeverity.low} low`,
+          );
+        }
+        console.log(''); // slop-ok
+        logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
+        logger.dim(`Completed in ${elapsed}s`);
+
+        if (!values['no-save']) {
+          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const date = new Date().toISOString().slice(0, 10);
+          const reportPath = path.join(reportDir, `bom-${date}.md`);
+          fs.mkdirSync(reportDir, { recursive: true });
+          fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
+          console.log(''); // slop-ok
+          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+
+          if (values.detailed || values.xlsx) {
+            const { buildBomDetailed, formatBomDetailedMarkdown } =
+              await import('./analyzers/bom/detailed');
+            const detailed = buildBomDetailed(report);
+
+            if (values.detailed) {
+              const detailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
+              const detailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
+              fs.writeFileSync(detailedMdPath, formatBomDetailedMarkdown(detailed, elapsed));
+              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+              logger.success(
+                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
+              );
+              logger.success(
+                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
+              );
+            }
+
+            if (values.xlsx) {
+              const { toBomXlsx } = await import('./analyzers/xlsx');
+              const xlsxPath = values.output
+                ? path.resolve(values.output as string)
+                : path.join(reportDir, `bom-${date}.xlsx`);
+              const buf = await toBomXlsx(report);
+              fs.writeFileSync(xlsxPath, buf);
+              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
+            }
+          }
+        }
+      }
+      break;
+    }
+
     case 'to-xlsx': {
       const inputArg = positionals[1];
       if (!inputArg) {
@@ -668,7 +753,7 @@ export async function run(argv: string[]): Promise<void> {
       const kind = detectReportKind(json);
       if (kind === 'unknown') {
         logger.fail(
-          'Unrecognised report shape. Supported inputs: licenses (vyuh-dxkit licenses --detailed produces licenses-<date>-detailed.json).',
+          'Unrecognised report shape. Supported inputs: licenses (vyuh-dxkit licenses --detailed) or bom (vyuh-dxkit bom --detailed).',
         );
         process.exit(1);
       }

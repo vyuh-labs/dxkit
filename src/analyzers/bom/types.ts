@@ -61,11 +61,18 @@ export interface BomReport {
      *  maxSeverity, not per advisory). Matches what bom xlsx
      *  col 11 will summarize. */
     bySeverity: Record<BomSeverity, number>;
-    /** Number of packages with at least one known vulnerability. */
+    /** Number of packages with at least one known vulnerability.
+     *  Note: a single package may carry many advisories — see
+     *  totalAdvisories for the per-vuln count. */
     vulnerablePackages: number;
     /** Number of vulnerable packages where every vuln has a
      *  fixedVersion (Tier-1 upgrade proposal is actionable). */
     actionableVulns: number;
+    /** Total advisories across every vulnerable package (each row's
+     *  vulns.length, summed). Reconciles with the count surfaced by
+     *  `vyuh-dxkit vulnerabilities` — that command shows one tick
+     *  per advisory; bom shows one row per package. */
+    totalAdvisories: number;
     /** Packages found only by a vuln scanner — license scanner
      *  missed them. See BomEntry.joinedFromBoth. */
     vulnOnlyPackages: number;

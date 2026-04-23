@@ -185,10 +185,17 @@ export function formatBomDetailedMarkdown(detailed: BomDetailedReport, elapsed: 
   L.push('');
   L.push(`- **Total packages:** ${s.totalPackages}`);
   L.push(`- **Vulnerable packages:** ${s.vulnerablePackages}`);
+  L.push(`- **Total advisories:** ${s.totalAdvisories} (one package can have many)`);
   L.push(`- **Actionable upgrades (Tier-1 proposals):** ${s.actionableVulns}`);
   if (s.vulnOnlyPackages > 0) {
     L.push(`- **Vuln-only entries (license gap):** ${s.vulnOnlyPackages}`);
   }
+  L.push('');
+  L.push(
+    `> Reconciles with \`vyuh-dxkit vulnerabilities\`: that command counts ` +
+      `per-advisory (${s.totalAdvisories}); bom collapses per-package ` +
+      `(${s.vulnerablePackages}) so each xlsx row is one upgrade decision.`,
+  );
   L.push('');
   L.push('---');
   L.push('');
