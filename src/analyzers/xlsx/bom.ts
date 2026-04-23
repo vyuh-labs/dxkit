@@ -125,8 +125,7 @@ export async function toBomXlsx(report: BomReport): Promise<Buffer> {
       xlsxSafe(e.licenseType), // col 7
       xlsxSafe(e.licenseText), // col 8
       xlsxSafe(e.supplier), // col 9
-      xlsxSafe(e.releaseDate), // col 10 — deferred (needs npm registry
-      //   enrichment; belongs in 10h.6 OSS enrichment phase)
+      xlsxSafe(e.releaseDate ? e.releaseDate.slice(0, 10) : ''), // col 10 — ISO date truncated to YYYY-MM-DD; populated by npm-registry enrichment (10h.5.1, closes D006)
       xlsxSafe(criticality), // col 11 — bom-only
       xlsxSafe(vulnerabilityIssues), // col 12 — bom-only
       xlsxSafe(resolution), // col 13 — bom-only

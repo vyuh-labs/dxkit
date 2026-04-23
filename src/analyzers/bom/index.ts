@@ -262,12 +262,21 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       );
     const cap = 50;
     const shown = vuln.slice(0, cap);
-    L.push('| Severity | Package@Version | License | # Vulns | Resolution |');
-    L.push('|----------|-----------------|---------|--------:|------------|');
+    L.push('| Severity | Package@Version | License | # Vulns | Max EPSS | Resolution |');
+    L.push('|----------|-----------------|---------|--------:|---------:|------------|');
     for (const e of shown) {
       const advice = e.upgradeAdvice.replace(/\|/g, '\\|');
+      const epssScores = e.vulns
+        .map((v) => v.epssScore)
+        .filter((s): s is number => typeof s === 'number');
+      // Max EPSS across the package's advisories — "how likely is *something*
+      // in this package to get hit this month". Rendered as pct for
+      // human readability (2 decimals so low-but-nonzero scores remain
+      // visible), dash when no CVE had an EPSS entry.
+      const epssCell =
+        epssScores.length > 0 ? `${(Math.max(...epssScores) * 100).toFixed(2)}%` : '—';
       L.push(
-        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${advice} |`,
+        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${epssCell} | ${advice} |`,
       );
     }
     if (vuln.length > cap) {

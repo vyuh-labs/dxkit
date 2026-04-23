@@ -5,6 +5,7 @@ import hostedGitInfo from 'hosted-git-info';
 
 import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
 import { resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -790,7 +791,7 @@ function splitTsLicenseCheckerKey(key: string): { package: string; version: stri
  * `licenseFile` path on disk — the customer's existing workflow does
  * the same thing (see `license-generation.sh` in vyuhlabs-platform).
  */
-function gatherTsLicensesResult(cwd: string): LicensesResult | null {
+async function gatherTsLicensesResult(cwd: string): Promise<LicensesResult | null> {
   if (!fileExists(cwd, 'package.json')) return null;
 
   const status = findTool(TOOL_DEFS['license-checker-rseidelsohn'], cwd);
@@ -849,6 +850,18 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
       supplier: entry.publisher,
       isTopLevel: hasIndex ? (parents?.includes(split.package) ?? false) : undefined,
     });
+  }
+
+  // Populate releaseDate (xlsx col 10 / D006) from the npm registry.
+  // Batched per unique package name; one HTTP call per package
+  // regardless of how many versions are installed. Graceful fallback:
+  // unreachable registry / unknown package leaves `releaseDate` unset.
+  const dateMap = await enrichReleaseDates(
+    findings.map((f) => ({ package: f.package, version: f.version })),
+  );
+  for (const f of findings) {
+    const iso = dateMap.get(`${f.package}@${f.version}`);
+    if (iso) f.releaseDate = iso;
   }
 
   return {
