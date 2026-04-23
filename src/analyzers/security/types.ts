@@ -1,6 +1,7 @@
 /**
  * Security analyzer types.
  */
+import type { DepVulnFinding } from '../../languages/capabilities/types';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
@@ -24,6 +25,10 @@ export interface DepVulnSummary {
   low: number;
   total: number;
   tool: string | null;
+  /** Per-advisory detail concatenated across every active pack. Empty
+   *  when no provider returned findings (counts may still be non-zero
+   *  for legacy pack output that only emits aggregate counts). */
+  findings: DepVulnFinding[];
 }
 
 export interface SecurityReport {

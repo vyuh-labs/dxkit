@@ -127,6 +127,7 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
   low: 0,
   total: 0,
   tool: null,
+  findings: [],
 };
 
 /**
@@ -156,5 +157,6 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     low,
     total: critical + high + medium + low,
     tool: envelope.tool,
+    findings: envelope.findings ?? [],
   };
 }

@@ -1,6 +1,7 @@
 /**
  * Detailed security report — JSON schema + markdown formatter.
  */
+import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
@@ -17,7 +18,8 @@ export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedR
   const actions = rank(buildSecurityActions(report), counts, scoreSecurityCounts);
   return {
     ...report,
-    schemaVersion: '11',
+    // v12 adds per-advisory dep-vuln detail under summary.dependencies.findings.
+    schemaVersion: '12',
     securityScore: scoreSecurityCounts(counts).score,
     actions,
   };
@@ -129,6 +131,27 @@ export function formatSecurityDetailedMarkdown(
     L.push(`| Low      | ${d.low} |`);
     L.push(`| **Total** | **${d.total}** |`);
     L.push('');
+    if (d.findings.length > 0) {
+      // Per-advisory inventory. Sorted by (severity, package, id) so the
+      // table reads top-down from worst-first within each pack's output.
+      const sortedDeps: DepVulnFinding[] = [...d.findings].sort(
+        (a, b) =>
+          SEV_ORDER[a.severity] - SEV_ORDER[b.severity] ||
+          a.package.localeCompare(b.package) ||
+          a.id.localeCompare(b.id),
+      );
+      L.push(`Per-advisory detail (${sortedDeps.length} findings):`);
+      L.push('');
+      L.push('| Severity | ID | Package | Installed | Fixed | CVSS | Tool |');
+      L.push('|----------|----|---------|-----------|-------|-----:|------|');
+      for (const f of sortedDeps) {
+        const cvss = f.cvssScore !== undefined ? f.cvssScore.toFixed(1) : '—';
+        L.push(
+          `| ${f.severity.toUpperCase()} | \`${f.id}\` | \`${f.package}\` | ${f.installedVersion ?? '—'} | ${f.fixedVersion ?? '—'} | ${cvss} | ${f.tool} |`,
+        );
+      }
+      L.push('');
+    }
     L.push('---');
     L.push('');
   }

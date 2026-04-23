@@ -68,7 +68,15 @@ function securityReport(overrides: Partial<SecurityReport> = {}): SecurityReport
     branch: 'main',
     summary: {
       findings: { critical: 2, high: 5, medium: 10, low: 3, total: 20 },
-      dependencies: { critical: 1, high: 3, medium: 8, low: 2, total: 14, tool: 'npm-audit' },
+      dependencies: {
+        critical: 1,
+        high: 3,
+        medium: 8,
+        low: 2,
+        total: 14,
+        tool: 'npm-audit',
+        findings: [],
+      },
     },
     findings: [
       {
@@ -336,7 +344,15 @@ describe('security/actions', () => {
     const clean = securityReport({
       summary: {
         findings: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
-        dependencies: { critical: 0, high: 0, medium: 0, low: 0, total: 0, tool: null },
+        dependencies: {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          total: 0,
+          tool: null,
+          findings: [],
+        },
       },
       findings: [],
     });
