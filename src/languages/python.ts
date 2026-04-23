@@ -110,6 +110,117 @@ function buildPipAuditCommand(cwd: string, pipAuditPath: string): string | null 
 }
 
 /**
+ * Pure parser for `pip show pkg1 pkg2 ...` output. pip-show returns
+ * RFC-822-ish blocks separated by `---` with `Key: Value` lines. The
+ * fields we need:
+ *
+ *   Name: foo
+ *   Requires: a, b, c
+ *   Required-by: x, y
+ *
+ * Empty `Required-by` identifies a package that nothing else in the
+ * env depends on — conventionally a directly-installed (top-level)
+ * package. Extracted so the builder below can be unit-tested without
+ * a live pip invocation.
+ */
+export function parsePipShowOutput(
+  raw: string,
+): Map<string, { requires: string[]; requiredBy: string[] }> {
+  const graph = new Map<string, { requires: string[]; requiredBy: string[] }>();
+  // pip separates blocks with a line containing exactly '---'.
+  const blocks = raw.split(/^---\s*$/m);
+  for (const block of blocks) {
+    let name: string | null = null;
+    let requires: string[] = [];
+    let requiredBy: string[] = [];
+    for (const line of block.split('\n')) {
+      const m = line.match(/^(Name|Requires|Required-by):\s*(.*)$/i);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === 'name') name = val;
+      else if (key === 'requires') {
+        requires = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else if (key === 'required-by') {
+        requiredBy = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+    if (name) graph.set(name, { requires, requiredBy });
+  }
+  return graph;
+}
+
+/**
+ * BFS the parsed pip-show graph to produce a per-package-name index of
+ * its top-level ancestors. Top-levels are packages with empty
+ * `Required-by` — nothing else in the environment depends on them, so
+ * they were installed as direct deps.
+ *
+ * Pure function; testable with fabricated graphs.
+ */
+export function buildPyTopLevelDepIndex(
+  graph: Map<string, { requires: string[]; requiredBy: string[] }>,
+): Map<string, string[]> {
+  const topLevels: string[] = [];
+  for (const [name, meta] of graph) {
+    if (meta.requiredBy.length === 0) topLevels.push(name);
+  }
+  const result = new Map<string, Set<string>>();
+  for (const top of topLevels) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      const meta = graph.get(name);
+      if (!meta) continue;
+      for (const child of meta.requires) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+  }
+  const sorted = new Map<string, string[]>();
+  for (const [k, v] of result) sorted.set(k, [...v].sort());
+  return sorted;
+}
+
+/**
+ * Invoke `pip list` + `pip show --all` against the project's venv and
+ * build the top-level attribution index. Returns an empty map when no
+ * venv is present or either pip command fails — attribution stays
+ * unset, mirroring the TS pack's lockfile-missing case.
+ */
+function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const venvPython = findPyProjectVenvPython(cwd);
+  if (!venvPython) return new Map();
+  const listRaw = run(`${venvPython} -m pip list --format=json 2>/dev/null`, cwd, 60000);
+  if (!listRaw) return new Map();
+  let list: Array<{ name?: string }>;
+  try {
+    list = JSON.parse(listRaw);
+  } catch {
+    return new Map();
+  }
+  const names = list.map((x) => x.name).filter((n): n is string => !!n);
+  if (names.length === 0) return new Map();
+  // pip show accepts multiple package names in one call; stays well
+  // under shell arg-length limits for realistic envs (O(100) pkgs).
+  const showRaw = run(`${venvPython} -m pip show ${names.join(' ')} 2>/dev/null`, cwd, 60000);
+  if (!showRaw) return new Map();
+  return buildPyTopLevelDepIndex(parsePipShowOutput(showRaw));
+}
+
+/**
  * Single source of truth for the python pack's dep-vuln gathering.
  * Consumed by `pyDepVulnsProvider` (capability dispatcher).
  */
@@ -153,6 +264,17 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       return 'medium';
     };
 
+    // Lazy-built: only load the top-level index when we have at least
+    // one finding. Saves a pip list + pip show invocation on clean
+    // projects. The index is built once even if multiple findings
+    // reference the same package.
+    let topLevelIndex: Map<string, string[]> | null = null;
+    const getTopLevel = (pkg: string): string[] | undefined => {
+      if (topLevelIndex === null) topLevelIndex = loadPyTopLevelDepIndex(cwd);
+      const parents = topLevelIndex.get(pkg);
+      return parents && parents.length > 0 ? parents : undefined;
+    };
+
     const findings: DepVulnFinding[] = [];
     for (const dep of data.dependencies || []) {
       for (const v of dep.vulns || []) {
@@ -187,6 +309,8 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         // page per vulnerability id, so synthesize the reference. Render
         // layer can override if a tool-supplied URL becomes available later.
         finding.references = [`https://osv.dev/vulnerability/${v.id}`];
+        const parents = getTopLevel(finding.package);
+        if (parents) finding.topLevelDep = parents;
         findings.push(finding);
       }
     }

@@ -254,6 +254,100 @@ export function parseCargoAuditOutput(
 }
 
 /**
+ * Subset of `cargo metadata --format-version 1` we consume. The real
+ * output has many more fields; we type only the resolve graph bits.
+ */
+interface CargoMetadata {
+  packages?: Array<{ id?: string; name?: string }>;
+  resolve?: {
+    root?: string;
+    nodes?: Array<{
+      id?: string;
+      dependencies?: string[];
+    }>;
+  };
+}
+
+/**
+ * Pure parser for `cargo metadata --format-version 1`, returning a
+ * per-crate-name index of the top-level manifest deps that transitively
+ * pull that crate. Mirrors the TS pack's `buildTsTopLevelDepIndex`
+ * shape so bom + HTML renders can use identical grouping logic.
+ *
+ * Cargo's resolve graph uses opaque package ids (e.g.
+ * `openssl 0.10.50 (registry+...)`). We map id→name via `packages[]`
+ * and then BFS starting from each direct dep of `resolve.root`
+ * (derived from the workspace root's `resolve.nodes[i].dependencies`).
+ *
+ * Returns an empty map on malformed input rather than throwing — the
+ * caller keeps attribution unset so dep-vuln gather still succeeds.
+ */
+export function buildRustTopLevelDepIndex(raw: string): Map<string, string[]> {
+  let data: CargoMetadata;
+  try {
+    data = JSON.parse(raw) as CargoMetadata;
+  } catch {
+    return new Map();
+  }
+  const packages = data.packages ?? [];
+  const nodes = data.resolve?.nodes ?? [];
+  const rootId = data.resolve?.root;
+  if (!rootId || nodes.length === 0) return new Map();
+
+  const nameById = new Map<string, string>();
+  for (const pkg of packages) {
+    if (pkg.id && pkg.name) nameById.set(pkg.id, pkg.name);
+  }
+
+  const depsById = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (node.id) depsById.set(node.id, node.dependencies ?? []);
+  }
+
+  const rootNode = depsById.get(rootId);
+  if (!rootNode) return new Map();
+
+  const result = new Map<string, Set<string>>();
+  for (const topId of rootNode) {
+    const topName = nameById.get(topId);
+    if (!topName) continue;
+    const visited = new Set<string>();
+    const queue: string[] = [topId];
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const name = nameById.get(id);
+      if (name) {
+        const bucket = result.get(name) ?? new Set<string>();
+        bucket.add(topName);
+        result.set(name, bucket);
+      }
+      for (const childId of depsById.get(id) ?? []) {
+        if (!visited.has(childId)) queue.push(childId);
+      }
+    }
+  }
+
+  const sorted = new Map<string, string[]>();
+  for (const [name, parents] of result) {
+    sorted.set(name, [...parents].sort());
+  }
+  return sorted;
+}
+
+/**
+ * Read + parse `cargo metadata --format-version 1` for the project at
+ * `cwd`. Returns an empty index when cargo itself is missing or the
+ * command fails — topLevelDep stays unattributed rather than blocking.
+ */
+function loadRustTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const raw = run('cargo metadata --format-version 1 2>/dev/null', cwd, 60000);
+  if (!raw) return new Map();
+  return buildRustTopLevelDepIndex(raw);
+}
+
+/**
  * Single source of truth for the rust pack's dep-vuln gathering.
  * Consumed by `rustDepVulnsProvider` (capability dispatcher).
  *
@@ -279,6 +373,17 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
   if (!parsed) return { kind: 'parse-error' };
 
   const { counts, findings } = parsed;
+
+  // Attach top-level attribution from cargo's resolve graph. Best-effort:
+  // when `cargo metadata` is unavailable the findings keep the Tier-1
+  // identity fields only.
+  if (findings.length > 0) {
+    const topLevelIndex = loadRustTopLevelDepIndex(cwd);
+    for (const f of findings) {
+      const parents = topLevelIndex.get(f.package);
+      if (parents && parents.length > 0) f.topLevelDep = parents;
+    }
+  }
 
   // Alias-fallback CVSS pass: many RUSTSEC entries ship without a
   // CVSS vector but their CVE alias on OSV.dev carries one.

@@ -223,6 +223,13 @@ export function parseDotnetVulnerableOutput(
             installedVersion: pkg.resolvedVersion,
             tool: 'dotnet-vulnerable',
             severity,
+            // `dotnet list --vulnerable` iterates topLevelPackages only
+            // (we don't pass --include-transitive today), so every
+            // emitted finding IS a direct manifest dep. Transitive
+            // attribution would require a project.assets.json walk —
+            // out of scope for 10h.4; revisit if --include-transitive
+            // is added in a later phase.
+            topLevelDep: [pkg.id],
           };
           if (ghsa) finding.aliases = [ghsa];
           if (adv.advisoryUrl) finding.references = [adv.advisoryUrl];

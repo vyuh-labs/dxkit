@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCargoAuditOutput } from '../src/languages/rust';
+import { parseCargoAuditOutput, buildRustTopLevelDepIndex } from '../src/languages/rust';
 
 // Fixture JSONs mirror the cargo-audit --json schema documented at
 // https://docs.rs/rustsec/latest/rustsec/advisory/struct.Advisory.html.
@@ -195,5 +195,82 @@ describe('parseCargoAuditOutput', () => {
     const parsed = parseCargoAuditOutput(raw)!;
     expect(parsed.counts).toEqual({ critical: 2, high: 1, medium: 2, low: 2 });
     expect(parsed.findings).toHaveLength(7);
+  });
+});
+
+describe('buildRustTopLevelDepIndex', () => {
+  it('returns empty map on malformed input', () => {
+    expect(buildRustTopLevelDepIndex('not json').size).toBe(0);
+    expect(buildRustTopLevelDepIndex('').size).toBe(0);
+    expect(buildRustTopLevelDepIndex('{}').size).toBe(0);
+  });
+
+  it('returns empty map when resolve.root is missing', () => {
+    const raw = JSON.stringify({ packages: [], resolve: { nodes: [] } });
+    expect(buildRustTopLevelDepIndex(raw).size).toBe(0);
+  });
+
+  it('attributes a direct dep to itself', () => {
+    const raw = JSON.stringify({
+      packages: [
+        { id: 'root 0.1 (path)', name: 'my-crate' },
+        { id: 'serde 1.0 (registry)', name: 'serde' },
+      ],
+      resolve: {
+        root: 'root 0.1 (path)',
+        nodes: [
+          { id: 'root 0.1 (path)', dependencies: ['serde 1.0 (registry)'] },
+          { id: 'serde 1.0 (registry)', dependencies: [] },
+        ],
+      },
+    });
+    const idx = buildRustTopLevelDepIndex(raw);
+    expect(idx.get('serde')).toEqual(['serde']);
+  });
+
+  it('attributes transitives to their top-level ancestor', () => {
+    const raw = JSON.stringify({
+      packages: [
+        { id: 'root 0.1 (path)', name: 'my-crate' },
+        { id: 'tokio 1.0 (registry)', name: 'tokio' },
+        { id: 'mio 1.0 (registry)', name: 'mio' },
+      ],
+      resolve: {
+        root: 'root 0.1 (path)',
+        nodes: [
+          { id: 'root 0.1 (path)', dependencies: ['tokio 1.0 (registry)'] },
+          { id: 'tokio 1.0 (registry)', dependencies: ['mio 1.0 (registry)'] },
+          { id: 'mio 1.0 (registry)', dependencies: [] },
+        ],
+      },
+    });
+    const idx = buildRustTopLevelDepIndex(raw);
+    expect(idx.get('tokio')).toEqual(['tokio']);
+    expect(idx.get('mio')).toEqual(['tokio']);
+  });
+
+  it('unions attributions across multiple top-level deps', () => {
+    const raw = JSON.stringify({
+      packages: [
+        { id: 'root 0.1 (path)', name: 'my-crate' },
+        { id: 'tokio 1.0 (registry)', name: 'tokio' },
+        { id: 'reqwest 0.11 (registry)', name: 'reqwest' },
+        { id: 'bytes 1.0 (registry)', name: 'bytes' },
+      ],
+      resolve: {
+        root: 'root 0.1 (path)',
+        nodes: [
+          {
+            id: 'root 0.1 (path)',
+            dependencies: ['tokio 1.0 (registry)', 'reqwest 0.11 (registry)'],
+          },
+          { id: 'tokio 1.0 (registry)', dependencies: ['bytes 1.0 (registry)'] },
+          { id: 'reqwest 0.11 (registry)', dependencies: ['bytes 1.0 (registry)'] },
+          { id: 'bytes 1.0 (registry)', dependencies: [] },
+        ],
+      },
+    });
+    const idx = buildRustTopLevelDepIndex(raw);
+    expect(idx.get('bytes')).toEqual(['reqwest', 'tokio']);
   });
 });

@@ -122,6 +122,84 @@ interface GovulnFinding {
 }
 
 /**
+ * Pure parser for `go mod graph`, returning a per-module index of the
+ * top-level manifest deps (direct children of the root module) that
+ * transitively pull each module.
+ *
+ * `go mod graph` output is line-oriented: `<src> <dst>` where each
+ * token is `module@version` except the root module which appears
+ * without `@version`. The root's direct deps are the top-levels we
+ * BFS from; attribution collapses at the module-name level so the
+ * same package appearing at multiple versions maps to a single name.
+ */
+export function buildGoTopLevelDepIndex(raw: string): Map<string, string[]> {
+  const nameOf = (tok: string): string => {
+    const at = tok.indexOf('@');
+    return at < 0 ? tok : tok.slice(0, at);
+  };
+
+  // Root is identified as the only source token without `@version`.
+  // All lines whose source lacks `@` share the same root name (barring
+  // workspace multi-module repos, which we approximate as a single
+  // root — accurate enough for Snyk-style grouping).
+  let root: string | null = null;
+  const edges = new Map<string, Set<string>>();
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 2) continue;
+    const srcName = nameOf(parts[0]);
+    const dstName = nameOf(parts[1]);
+    if (!parts[0].includes('@')) {
+      // Source token lacks @version → this is the root module.
+      if (root === null) root = srcName;
+    }
+    const bucket = edges.get(srcName) ?? new Set<string>();
+    bucket.add(dstName);
+    edges.set(srcName, bucket);
+  }
+  if (!root) return new Map();
+
+  const rootChildren = [...(edges.get(root) ?? new Set<string>())];
+
+  const result = new Map<string, Set<string>>();
+  for (const top of rootChildren) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      for (const child of edges.get(name) ?? []) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+  }
+
+  const sorted = new Map<string, string[]>();
+  for (const [name, parents] of result) {
+    sorted.set(name, [...parents].sort());
+  }
+  return sorted;
+}
+
+/**
+ * Invoke `go mod graph` and build the top-level index. Returns an empty
+ * map when `go` itself is missing or the command fails — attribution
+ * stays unset so dep-vuln gather still succeeds (Go projects without a
+ * working `go` toolchain can't have run govulncheck anyway).
+ */
+function loadGoTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const raw = run('go mod graph 2>/dev/null', cwd, 60000);
+  if (!raw) return new Map();
+  return buildGoTopLevelDepIndex(raw);
+}
+
+/**
  * Single source of truth for the go pack's dep-vuln gathering.
  * Consumed by `goDepVulnsProvider` (capability dispatcher).
  *
@@ -209,6 +287,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       else low++;
     }
 
+    const topLevelIndex = loadGoTopLevelDepIndex(cwd);
+
     const findings: DepVulnFinding[] = [];
     for (const grouped of groupedFindings.values()) {
       if (!grouped.osv) continue;
@@ -245,6 +325,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       if (!finding.references) {
         finding.references = [`https://osv.dev/vulnerability/${grouped.osv}`];
       }
+      const parents = topLevelIndex.get(pkgName);
+      if (parents && parents.length > 0) finding.topLevelDep = parents;
       findings.push(finding);
     }
 

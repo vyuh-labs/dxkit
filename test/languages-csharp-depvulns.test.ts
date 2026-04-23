@@ -217,4 +217,32 @@ describe('parseDotnetVulnerableOutput', () => {
     expect(parsed.findings).toEqual([]);
     expect(parsed.counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
   });
+
+  it('sets topLevelDep to the package itself — every emitted finding is direct', () => {
+    const raw = JSON.stringify({
+      projects: [
+        {
+          frameworks: [
+            {
+              topLevelPackages: [
+                {
+                  id: 'Newtonsoft.Json',
+                  resolvedVersion: '12.0.3',
+                  advisories: [
+                    {
+                      severity: 'high',
+                      advisoryUrl: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const parsed = parseDotnetVulnerableOutput(raw)!;
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].topLevelDep).toEqual(['Newtonsoft.Json']);
+  });
 });
