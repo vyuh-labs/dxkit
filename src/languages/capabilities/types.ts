@@ -171,6 +171,12 @@ export interface LicenseFinding {
   supplier?: string;
   /** ISO 8601 release date; present when the registry exposes it. */
   releaseDate?: string;
+  /** True when this package is a root manifest dep (direct or dev-dep) as
+   *  opposed to a transitive. Populated per-pack by the same root-manifest
+   *  parse that seeds `buildXxxTopLevelDepIndex`. Unset when the pack
+   *  can't read the manifest/lockfile — the bom filter treats unset as
+   *  "don't know" and passes the row through rather than dropping it. */
+  isTopLevel?: boolean;
 }
 
 /**

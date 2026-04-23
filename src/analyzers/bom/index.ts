@@ -22,16 +22,36 @@ import type { BomEntry, BomReport, BomSeverity } from './types';
 
 export type { BomReport, BomEntry } from './types';
 
+export type BomFilter = 'all' | 'top-level';
+
 export interface AnalyzeBomOptions {
   verbose?: boolean;
+  /** Row filter. `'all'` emits every package (default, no behavior change).
+   *  `'top-level'` keeps only direct manifest deps; `byTopLevelDep`
+   *  (which attributes transitive advisories to their parent) is
+   *  computed on the unfiltered set so the rollup still answers
+   *  "upgrading @loopback/cli resolves 29 advisories" even when the
+   *  29 transitive rows themselves are hidden. Entries with
+   *  `isTopLevel === false` are dropped; `undefined` passes through. */
+  filter?: BomFilter;
 }
 
 export async function analyzeBom(
   repoPath: string,
-  _options: AnalyzeBomOptions = {},
+  options: AnalyzeBomOptions = {},
 ): Promise<BomReport> {
   const stack = detect(repoPath);
-  const { entries, toolsUsed, toolsUnavailable } = await gatherBomEntries(repoPath);
+  const { entries: rawEntries, toolsUsed, toolsUnavailable } = await gatherBomEntries(repoPath);
+
+  // byTopLevelDep must be built from the full entry set so the rollup
+  // continues to reflect the complete blast radius of upgrading each
+  // top-level dep — independent of whether the user requested the
+  // filtered row view.
+  const byTopLevelDep = buildByTopLevelDep(rawEntries);
+
+  const filter: BomFilter = options.filter ?? 'all';
+  const entries =
+    filter === 'top-level' ? rawEntries.filter((e) => e.isTopLevel !== false) : rawEntries;
 
   const bySeverity: Record<BomSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let vulnerablePackages = 0;
@@ -61,7 +81,9 @@ export async function analyzeBom(
       actionableVulns,
       totalAdvisories,
       vulnOnlyPackages,
-      byTopLevelDep: buildByTopLevelDep(entries),
+      byTopLevelDep,
+      filter,
+      unfilteredTotalPackages: rawEntries.length,
     },
     entries,
     toolsUsed,
@@ -92,7 +114,15 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   const s = report.summary;
   L.push('## Summary');
   L.push('');
-  L.push(`**${s.totalPackages} packages** indexed across the active language pack(s).`);
+  if (s.filter === 'top-level') {
+    L.push(
+      `**${s.totalPackages} top-level packages** (of ${s.unfilteredTotalPackages} installed) across the active language pack(s). ` +
+        `Transitive rows are hidden; the advisory rollup under "Top-Level Dep Groups" ` +
+        `still reflects the full blast radius.`,
+    );
+  } else {
+    L.push(`**${s.totalPackages} packages** indexed across the active language pack(s).`);
+  }
   L.push('');
   if (s.vulnerablePackages > 0) {
     L.push(

@@ -233,6 +233,15 @@ function buildEntry(
   // Pick the first non-empty `upgradeAdvice` from any finding; fall
   // back to derived advice when all vulns are Tier-1 only.
   const tieredAdvice = vulns.map((v) => v.upgradeAdvice).find((a) => a && a.length > 0);
+  // For vuln-only synthetic rows (no LicenseFinding), treat the
+  // package as top-level iff any finding lists itself in topLevelDep
+  // or has no transitive attribution. Prevents the filter from
+  // dropping pure-vuln rows silently on packs where licenses are
+  // missing (e.g. workspace sub-packages pre-10h.5.0b).
+  let isTopLevel = lic.isTopLevel;
+  if (isTopLevel === undefined && !joinedFromBoth && vulns.length > 0) {
+    isTopLevel = vulns.some((v) => !v.topLevelDep || v.topLevelDep.includes(lic.package));
+  }
   return {
     package: lic.package,
     version: lic.version,
@@ -246,5 +255,6 @@ function buildEntry(
     maxSeverity: maxSeverityOf(vulns),
     upgradeAdvice: tieredAdvice ?? deriveTier1Resolution(vulns),
     joinedFromBoth,
+    isTopLevel,
   };
 }

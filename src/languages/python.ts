@@ -701,10 +701,18 @@ function gatherPyLicensesResult(cwd: string): LicensesResult | null {
   }
   if (!Array.isArray(data)) return null;
 
+  // Top-level attribution reuses the same pip-show-graph BFS the
+  // depVulns path builds. Self-parent invariant (`index[top]` contains
+  // `top`) classifies every row without a second `pip show` pass.
+  // Empty index (pip tools missing, venv gone) leaves isTopLevel unset.
+  const topLevelIndex = loadPyTopLevelDepIndex(cwd);
+  const hasIndex = topLevelIndex.size > 0;
+
   const findings: LicenseFinding[] = [];
   for (const entry of data) {
     if (!entry.Name || !entry.Version) continue;
     const licenseType = entry.License && entry.License !== 'UNKNOWN' ? entry.License : 'UNKNOWN';
+    const parents = hasIndex ? topLevelIndex.get(entry.Name) : undefined;
     findings.push({
       package: entry.Name,
       version: entry.Version,
@@ -715,6 +723,7 @@ function gatherPyLicensesResult(cwd: string): LicensesResult | null {
       description:
         entry.Description && entry.Description !== 'UNKNOWN' ? entry.Description : undefined,
       supplier: entry.Author && entry.Author !== 'UNKNOWN' ? entry.Author : undefined,
+      isTopLevel: hasIndex ? (parents?.includes(entry.Name) ?? false) : undefined,
     });
   }
 

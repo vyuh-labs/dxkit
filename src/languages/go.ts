@@ -660,19 +660,25 @@ function parseGoListModuleStream(raw: string): GoListModule[] {
 }
 
 /**
- * Find the module whose path is the longest prefix of a Go package path,
- * returning its version. go-licenses reports at the package level
- * (`github.com/x/y/subpkg`) while `go list -m all` reports at the module
- * level (`github.com/x/y`); longest-prefix match bridges the two.
+ * Find the module whose path is the longest prefix of a Go package path.
+ * go-licenses reports at the package level (`github.com/x/y/subpkg`)
+ * while module-keyed maps (go list -m all, the top-level index) key on
+ * module paths (`github.com/x/y`); longest-prefix match bridges the two.
+ * Returns an empty string when no module prefixes the package.
  */
-function goVersionForPackage(pkgPath: string, modules: Map<string, string>): string {
+function goModuleForPackage(pkgPath: string, modules: Iterable<string>): string {
   let best = '';
-  for (const mod of modules.keys()) {
+  for (const mod of modules) {
     if ((pkgPath === mod || pkgPath.startsWith(mod + '/')) && mod.length > best.length) {
       best = mod;
     }
   }
-  return modules.get(best) ?? '';
+  return best;
+}
+
+function goVersionForPackage(pkgPath: string, modules: Map<string, string>): string {
+  const mod = goModuleForPackage(pkgPath, modules.keys());
+  return modules.get(mod) ?? '';
 }
 
 /**
@@ -705,6 +711,12 @@ function gatherGoLicensesResult(cwd: string): LicensesResult | null {
     }
   }
 
+  // go-licenses reports packages (`github.com/x/y/subpkg`); the top-level
+  // index keys modules (`github.com/x/y`). Project the CSV row's package
+  // path down to its owning module, then check the self-parent invariant.
+  const topLevelIndex = loadGoTopLevelDepIndex(cwd);
+  const hasIndex = topLevelIndex.size > 0;
+
   const findings: LicenseFinding[] = [];
   for (const line of csvRaw.split('\n')) {
     const trimmed = line.trim();
@@ -714,11 +726,18 @@ function gatherGoLicensesResult(cwd: string): LicensesResult | null {
     const pkg = parts[0].trim();
     const url = parts[1].trim();
     const license = parts[2].trim();
+    let isTopLevel: boolean | undefined;
+    if (hasIndex) {
+      const mod = goModuleForPackage(pkg, topLevelIndex.keys());
+      const parents = mod ? topLevelIndex.get(mod) : undefined;
+      isTopLevel = mod ? (parents?.includes(mod) ?? false) : false;
+    }
     findings.push({
       package: pkg,
       version: goVersionForPackage(pkg, versions),
       licenseType: license || 'UNKNOWN',
       sourceUrl: url || undefined,
+      isTopLevel,
     });
   }
 

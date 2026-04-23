@@ -806,6 +806,16 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
     return null;
   }
 
+  // Load the top-level index once and project it down to `isTopLevel`
+  // per finding. The self-parent invariant — `index[top]` always
+  // contains `top` itself, because BFS starts from each top-level —
+  // is the cheapest signal; checking `parents.includes(pkg)` classifies
+  // every row without a second manifest parse. Empty index (missing
+  // lockfile, unparsable JSON) leaves isTopLevel unset so the bom
+  // filter passes the row through rather than guessing wrong.
+  const topLevelIndex = loadTsTopLevelDepIndex(cwd);
+  const hasIndex = topLevelIndex.size > 0;
+
   const findings: LicenseFinding[] = [];
   for (const [key, entry] of Object.entries(data)) {
     const split = splitTsLicenseCheckerKey(key);
@@ -825,6 +835,7 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
     }
 
     const meta = readTsPackageMetadata(cwd, split.package);
+    const parents = hasIndex ? topLevelIndex.get(split.package) : undefined;
     findings.push({
       package: split.package,
       version: split.version,
@@ -836,6 +847,7 @@ function gatherTsLicensesResult(cwd: string): LicensesResult | null {
       sourceUrl: normalizeRepoUrl(meta.repositoryUrl || entry.repository || entry.url),
       description: meta.description,
       supplier: entry.publisher,
+      isTopLevel: hasIndex ? (parents?.includes(split.package) ?? false) : undefined,
     });
   }
 

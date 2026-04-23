@@ -767,10 +767,18 @@ function gatherCsharpLicensesResult(cwd: string): LicensesResult | null {
   }
   if (!Array.isArray(data)) return null;
 
+  // Top-level attribution reuses project.assets.json via
+  // loadCsharpTopLevelDepIndex. Same self-parent invariant as the
+  // other packs. Missing assets-json (user hasn't run dotnet restore)
+  // leaves isTopLevel unset.
+  const topLevelIndex = loadCsharpTopLevelDepIndex(cwd);
+  const hasIndex = topLevelIndex.size > 0;
+
   const findings: LicenseFinding[] = [];
   for (const entry of data) {
     if (!entry.PackageId || !entry.PackageVersion) continue;
     const license = entry.License && entry.License.length > 0 ? entry.License : 'UNKNOWN';
+    const parents = hasIndex ? topLevelIndex.get(entry.PackageId) : undefined;
     findings.push({
       package: entry.PackageId,
       version: entry.PackageVersion,
@@ -782,6 +790,7 @@ function gatherCsharpLicensesResult(cwd: string): LicensesResult | null {
       description:
         entry.Description && entry.Description.length > 0 ? entry.Description : undefined,
       supplier: entry.Authors && entry.Authors.length > 0 ? entry.Authors : undefined,
+      isTopLevel: hasIndex ? (parents?.includes(entry.PackageId) ?? false) : undefined,
     });
   }
 

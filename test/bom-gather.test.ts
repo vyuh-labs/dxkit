@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildByTopLevelDep,
   compareSemver,
@@ -165,3 +165,84 @@ describe('buildByTopLevelDep', () => {
     expect(result['@loopback/cli'].packages).toEqual(['tar']);
   });
 });
+
+describe('analyzeBom filter', () => {
+  // Pure-ish integration test: mock gatherBomEntries to return a
+  // hand-crafted set, then verify filter='top-level' drops the
+  // expected rows while the byTopLevelDep rollup stays complete.
+  it('keeps isTopLevel=true and undefined, drops isTopLevel=false', async () => {
+    vi.resetModules();
+    vi.doMock('../src/analyzers/bom/gather', async () => {
+      const actual = await vi.importActual<typeof import('../src/analyzers/bom/gather')>(
+        '../src/analyzers/bom/gather',
+      );
+      return {
+        ...actual,
+        gatherBomEntries: vi.fn(async () => ({
+          entries: [
+            mkEntry('react', true),
+            mkEntry('@types/react', true),
+            mkEntry('lodash', false, [
+              {
+                id: 'CVE-X',
+                package: 'lodash',
+                tool: 't',
+                severity: 'high',
+                topLevelDep: ['react'],
+              },
+            ]),
+            mkEntry('minimatch', false, [
+              {
+                id: 'CVE-Y',
+                package: 'minimatch',
+                tool: 't',
+                severity: 'critical',
+                topLevelDep: ['react'],
+              },
+            ]),
+            mkEntry('unknown-origin', undefined),
+          ],
+          toolsUsed: ['test'],
+          toolsUnavailable: [],
+        })),
+      };
+    });
+    const { analyzeBom } = await import('../src/analyzers/bom');
+    const reportAll = await analyzeBom('/tmp/fake-repo');
+    const reportTop = await analyzeBom('/tmp/fake-repo', { filter: 'top-level' });
+
+    expect(reportAll.summary.filter).toBe('all');
+    expect(reportAll.summary.totalPackages).toBe(5);
+    expect(reportAll.summary.unfilteredTotalPackages).toBe(5);
+
+    expect(reportTop.summary.filter).toBe('top-level');
+    expect(reportTop.summary.totalPackages).toBe(3); // react, @types/react, unknown-origin
+    expect(reportTop.summary.unfilteredTotalPackages).toBe(5);
+    const keptNames = reportTop.entries.map((e) => e.package).sort();
+    expect(keptNames).toEqual(['@types/react', 'react', 'unknown-origin']);
+
+    // byTopLevelDep must reflect the full blast radius on both reports —
+    // transitive advisories attribute to 'react' even when the
+    // transitive rows themselves are hidden by the filter.
+    expect(reportTop.summary.byTopLevelDep['react'].advisoryCount).toBe(2);
+    expect(reportTop.summary.byTopLevelDep['react'].packages).toEqual(['lodash', 'minimatch']);
+    vi.doUnmock('../src/analyzers/bom/gather');
+  });
+});
+
+function mkEntry(
+  pkg: string,
+  isTopLevel: boolean | undefined,
+  vulns: DepVulnFinding[] = [],
+): BomEntry {
+  return {
+    package: pkg,
+    version: '1.0.0',
+    licenseType: 'MIT',
+    vulns,
+    maxSeverity: vulns.length > 0 ? vulns[0].severity : null,
+    upgradeAdvice: '',
+    joinedFromBoth: true,
+    isTopLevel,
+  };
+}
