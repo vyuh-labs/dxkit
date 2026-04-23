@@ -90,6 +90,17 @@ export interface DepVulnFinding {
   aliases?: string[];
   summary?: string;
   references?: string[];
+
+  // Top-level (direct) manifest dep(s) this advisory rolls up to.
+  // `['axios']` when the vulnerable package is itself a direct dep.
+  // `['@loopback/cli', '@loopback/repository']` for a transitive package
+  // reachable from multiple top-level entries — union of parents, sorted.
+  // Enables Snyk-style "upgrade @loopback/cli to fix 7 advisories"
+  // grouping in bom render + future HTML viewer. Coarse name-level
+  // attribution (ignores version pinning across duplicate copies) —
+  // sufficient for upgrade-scope grouping; refined paths land in 10h.5
+  // if reachability analysis needs them.
+  topLevelDep?: string[];
 }
 
 /** Dependency vulnerabilities, the depVulns capability. */

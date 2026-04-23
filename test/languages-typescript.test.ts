@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { typescript, extractTsImportsRaw, resolveTsImportRaw } from '../src/languages/typescript';
+import {
+  typescript,
+  extractTsImportsRaw,
+  resolveTsImportRaw,
+  buildTsTopLevelDepIndex,
+} from '../src/languages/typescript';
 
 let tmp: string;
 
@@ -205,5 +210,87 @@ describe('typescript.mapLintSeverity', () => {
     expect(map(null)).toBe('low');
     expect(map(undefined)).toBe('low');
     expect(map('some-random-plugin/weird-rule')).toBe('low');
+  });
+});
+
+describe('buildTsTopLevelDepIndex', () => {
+  it('returns empty map for missing/invalid input', () => {
+    expect(buildTsTopLevelDepIndex(null).size).toBe(0);
+    expect(buildTsTopLevelDepIndex({}).size).toBe(0);
+    expect(buildTsTopLevelDepIndex({ packages: {} }).size).toBe(0);
+  });
+
+  it('attributes a direct dep to itself', () => {
+    const lock = {
+      packages: {
+        '': { dependencies: { axios: '^1.0.0' } },
+        'node_modules/axios': { dependencies: { follow: '1.0.0' } },
+        'node_modules/follow': {},
+      },
+    };
+    const idx = buildTsTopLevelDepIndex(lock);
+    expect(idx.get('axios')).toEqual(['axios']);
+    expect(idx.get('follow')).toEqual(['axios']);
+  });
+
+  it('attributes a transitive dep to its top-level ancestor', () => {
+    const lock = {
+      packages: {
+        '': { dependencies: { '@loopback/cli': '^1.0.0' } },
+        'node_modules/@loopback/cli': { dependencies: { tar: '^7.0.0' } },
+        'node_modules/tar': { dependencies: { minipass: '*' } },
+        'node_modules/minipass': {},
+      },
+    };
+    const idx = buildTsTopLevelDepIndex(lock);
+    expect(idx.get('@loopback/cli')).toEqual(['@loopback/cli']);
+    expect(idx.get('tar')).toEqual(['@loopback/cli']);
+    expect(idx.get('minipass')).toEqual(['@loopback/cli']);
+  });
+
+  it('unions attributions when a package is reachable from multiple top-levels', () => {
+    const lock = {
+      packages: {
+        '': {
+          dependencies: { '@loopback/cli': '^1.0.0', '@loopback/repository': '^1.0.0' },
+          devDependencies: { 'dev-tool': '^1.0.0' },
+        },
+        'node_modules/@loopback/cli': { dependencies: { lodash: '*' } },
+        'node_modules/@loopback/repository': { dependencies: { lodash: '*' } },
+        'node_modules/dev-tool': { dependencies: { lodash: '*' } },
+        'node_modules/lodash': {},
+      },
+    };
+    const idx = buildTsTopLevelDepIndex(lock);
+    expect(idx.get('lodash')).toEqual(['@loopback/cli', '@loopback/repository', 'dev-tool']);
+  });
+
+  it('follows nested node_modules duplicates when building the graph', () => {
+    // @loopback/cli ships its own tar@6 nested; root has no tar. The
+    // nested copy's `dependencies` still contribute child attribution.
+    const lock = {
+      packages: {
+        '': { dependencies: { '@loopback/cli': '^1.0.0' } },
+        'node_modules/@loopback/cli': { dependencies: { tar: '^6.0.0' } },
+        'node_modules/@loopback/cli/node_modules/tar': { dependencies: { yallist: '*' } },
+        'node_modules/@loopback/cli/node_modules/yallist': {},
+      },
+    };
+    const idx = buildTsTopLevelDepIndex(lock);
+    expect(idx.get('tar')).toEqual(['@loopback/cli']);
+    expect(idx.get('yallist')).toEqual(['@loopback/cli']);
+  });
+
+  it('handles cycles without infinite looping', () => {
+    const lock = {
+      packages: {
+        '': { dependencies: { a: '*' } },
+        'node_modules/a': { dependencies: { b: '*' } },
+        'node_modules/b': { dependencies: { a: '*' } },
+      },
+    };
+    const idx = buildTsTopLevelDepIndex(lock);
+    expect(idx.get('a')).toEqual(['a']);
+    expect(idx.get('b')).toEqual(['a']);
   });
 });

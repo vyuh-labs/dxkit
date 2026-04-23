@@ -194,6 +194,110 @@ function readInstalledTsVersion(cwd: string, pkgName: string): string | undefine
 }
 
 /**
+ * Shape of npm's lockfileVersion 2/3 `package-lock.json` that this module
+ * consumes. Only the fields we read are typed; others are ignored.
+ */
+interface NpmLockfilePackageEntry {
+  dependencies?: Record<string, string>;
+}
+
+interface NpmLockfile {
+  packages?: Record<
+    string,
+    NpmLockfilePackageEntry & {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    }
+  >;
+}
+
+/**
+ * Build a per-package-name index mapping each installed npm package to
+ * the set of root manifest entries (top-level deps) it rolls up under.
+ *
+ * Strategy: BFS the lockfile starting from each root `dependencies` /
+ * `devDependencies` name, following each visited package's own
+ * `dependencies` map. Each lockfile entry for a given name contributes
+ * its direct-child names — duplicated copies (nested `node_modules/`)
+ * are all consulted so attribution matches npm's resolution at any
+ * ancestor path. Attribution is coarse at the package-name level
+ * (ignores which exact version serves which parent) — matches Snyk's
+ * own grouping in their UI and is what bom + HTML renders group on.
+ *
+ * Exported for unit tests; pure function over parsed lockfile JSON so
+ * fixtures don't need filesystem setup.
+ */
+export function buildTsTopLevelDepIndex(lock: unknown): Map<string, string[]> {
+  const result = new Map<string, Set<string>>();
+  if (!lock || typeof lock !== 'object') return new Map();
+  const packages = (lock as NpmLockfile).packages;
+  if (!packages) return new Map();
+  const root = packages[''];
+  if (!root) return new Map();
+
+  const topLevelNames = [
+    ...Object.keys(root.dependencies ?? {}),
+    ...Object.keys(root.devDependencies ?? {}),
+  ];
+
+  // Pre-index: installed package name -> every lockfile key where it lives.
+  // Scoped packages ('@foo/bar') are kept intact since everything after
+  // the last 'node_modules/' segment is the logical package name.
+  const keysByName = new Map<string, string[]>();
+  const NM = 'node_modules/';
+  for (const key of Object.keys(packages)) {
+    const idx = key.lastIndexOf(NM);
+    if (idx < 0) continue;
+    const name = key.slice(idx + NM.length);
+    if (!name) continue;
+    const arr = keysByName.get(name) ?? [];
+    arr.push(key);
+    keysByName.set(name, arr);
+  }
+
+  for (const top of topLevelNames) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      for (const key of keysByName.get(name) ?? []) {
+        const entry = packages[key];
+        const deps = entry?.dependencies;
+        if (!deps) continue;
+        for (const childName of Object.keys(deps)) {
+          if (!visited.has(childName)) queue.push(childName);
+        }
+      }
+    }
+  }
+
+  const sorted = new Map<string, string[]>();
+  for (const [pkg, parents] of result) {
+    sorted.set(pkg, [...parents].sort());
+  }
+  return sorted;
+}
+
+/**
+ * Read + parse the project's `package-lock.json`, then run the index.
+ * Returns an empty map when the lockfile is missing or unparsable —
+ * topLevelDep stays unattributed rather than blocking dep-vuln gather.
+ */
+function loadTsTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, 'package-lock.json'), 'utf-8');
+    return buildTsTopLevelDepIndex(JSON.parse(raw));
+  } catch {
+    return new Map();
+  }
+}
+
+/**
  * Single source of truth for the typescript pack's dep-vuln gathering.
  * Consumed by `tsDepVulnsProvider` (capability dispatcher).
  *
@@ -236,6 +340,7 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         if (!versionCache.has(pkg)) versionCache.set(pkg, readInstalledTsVersion(cwd, pkg));
         return versionCache.get(pkg);
       };
+      const topLevelIndex = loadTsTopLevelDepIndex(cwd);
       for (const [pkgName, entry] of Object.entries(auditData.vulnerabilities)) {
         // npm-audit's `fixAvailable` is the *consumer* upgrade command —
         // `{ name, version }` identifies which top-level dep to bump to
@@ -277,6 +382,8 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           if (ghsa) finding.aliases = [ghsa];
           if (v.title) finding.summary = v.title;
           if (v.url) finding.references = [v.url];
+          const parents = topLevelIndex.get(advisoryPkg);
+          if (parents && parents.length > 0) finding.topLevelDep = parents;
           findings.push(finding);
         }
       }
