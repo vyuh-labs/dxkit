@@ -122,6 +122,154 @@ interface GovulnFinding {
 }
 
 /**
+ * Pure parser for `go.mod`, extracting module paths declared in
+ * `require` blocks WITHOUT a `// indirect` marker. Those are the
+ * user's direct deps — the ones that show up as Snyk top-levels.
+ *
+ * Handles both syntaxes:
+ *   require foo.com/bar v1.0                        (single-line)
+ *   require ( foo.com/bar v1.0                      (block)
+ *             baz.com/qux v2.0 // indirect )        (indirect-marked)
+ *
+ * Lines with `// indirect` (or `//indirect`) are skipped since those
+ * were added by `go mod tidy` to pin transitive versions, not because
+ * the user declared them. Go's direct/indirect distinction maps
+ * cleanly onto the top-level concept.
+ */
+export function parseGoModDirectDeps(raw: string): string[] {
+  const direct: string[] = [];
+  let inRequireBlock = false;
+  for (const rawLine of raw.split('\n')) {
+    // Strip line comments first so `// indirect` detection is accurate.
+    // Preserve the original for the indirect check — which looks at the
+    // comment we just stripped.
+    const indirect = /\/\/\s*indirect\b/.test(rawLine);
+    const line = rawLine.replace(/\/\/.*$/, '').trim();
+    if (!line) continue;
+    if (line === 'require (') {
+      inRequireBlock = true;
+      continue;
+    }
+    if (inRequireBlock && line === ')') {
+      inRequireBlock = false;
+      continue;
+    }
+    if (inRequireBlock) {
+      if (indirect) continue;
+      // Block-form entries are `<modpath> <version>`; we only want the path.
+      const parts = line.split(/\s+/);
+      if (parts.length >= 1 && parts[0]) direct.push(parts[0]);
+      continue;
+    }
+    // Single-line require outside a block: `require <modpath> <version>`.
+    const m = line.match(/^require\s+(\S+)\s+\S+/);
+    if (m && !indirect) direct.push(m[1]);
+  }
+  return direct;
+}
+
+/**
+ * Pure parser for `go mod graph`, returning a per-module index of the
+ * top-level manifest deps (root's direct children, filtered against
+ * `go.mod`'s direct-dep list when supplied) that transitively pull
+ * each module.
+ *
+ * `go mod graph` output is line-oriented: `<src> <dst>` where each
+ * token is `module@version` except the root module which appears
+ * without `@version`. The root's direct deps are the BFS seeds;
+ * attribution collapses at the module-name level so the same package
+ * appearing at multiple versions maps to a single name.
+ *
+ * When `directDeps` is supplied, seeds are intersected with that set —
+ * excludes indirect-but-in-graph modules (every dependency of a
+ * direct dep is also a direct child of root in the graph). Without
+ * this filter, Go projects with 5 direct + 30 indirect deps would
+ * show 35 "top-levels," inflating attribution.
+ */
+export function buildGoTopLevelDepIndex(
+  raw: string,
+  directDeps?: ReadonlyArray<string>,
+): Map<string, string[]> {
+  const nameOf = (tok: string): string => {
+    const at = tok.indexOf('@');
+    return at < 0 ? tok : tok.slice(0, at);
+  };
+
+  // Root is identified as the only source token without `@version`.
+  // All lines whose source lacks `@` share the same root name (barring
+  // workspace multi-module repos, which we approximate as a single
+  // root — accurate enough for Snyk-style grouping).
+  let root: string | null = null;
+  const edges = new Map<string, Set<string>>();
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 2) continue;
+    const srcName = nameOf(parts[0]);
+    const dstName = nameOf(parts[1]);
+    if (!parts[0].includes('@')) {
+      // Source token lacks @version → this is the root module.
+      if (root === null) root = srcName;
+    }
+    const bucket = edges.get(srcName) ?? new Set<string>();
+    bucket.add(dstName);
+    edges.set(srcName, bucket);
+  }
+  if (!root) return new Map();
+
+  let rootChildren = [...(edges.get(root) ?? new Set<string>())];
+  if (directDeps && directDeps.length > 0) {
+    const directSet = new Set(directDeps);
+    rootChildren = rootChildren.filter((name) => directSet.has(name));
+  }
+
+  const result = new Map<string, Set<string>>();
+  for (const top of rootChildren) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      for (const child of edges.get(name) ?? []) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+  }
+
+  const sorted = new Map<string, string[]>();
+  for (const [name, parents] of result) {
+    sorted.set(name, [...parents].sort());
+  }
+  return sorted;
+}
+
+/**
+ * Invoke `go mod graph` + read `go.mod` and build the top-level index.
+ * Returns an empty map when either is missing — attribution stays
+ * unset so dep-vuln gather still succeeds. Degrades safely on
+ * toolchain-less environments (e.g. containerized CI lacking go).
+ */
+function loadGoTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const graphRaw = run('go mod graph 2>/dev/null', cwd, 60000);
+  if (!graphRaw) return new Map();
+  let directDeps: string[] = [];
+  try {
+    const modRaw = fs.readFileSync(path.join(cwd, 'go.mod'), 'utf-8');
+    directDeps = parseGoModDirectDeps(modRaw);
+  } catch {
+    // go.mod missing/unreadable — fall back to pre-filter behavior
+    // (all root children become top-levels). Consistent with the
+    // pre-10h.4.4.a semantics rather than blocking attribution.
+  }
+  return buildGoTopLevelDepIndex(graphRaw, directDeps);
+}
+
+/**
  * Single source of truth for the go pack's dep-vuln gathering.
  * Consumed by `goDepVulnsProvider` (capability dispatcher).
  *
@@ -209,6 +357,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       else low++;
     }
 
+    const topLevelIndex = loadGoTopLevelDepIndex(cwd);
+
     const findings: DepVulnFinding[] = [];
     for (const grouped of groupedFindings.values()) {
       if (!grouped.osv) continue;
@@ -245,6 +395,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       if (!finding.references) {
         finding.references = [`https://osv.dev/vulnerability/${grouped.osv}`];
       }
+      const parents = topLevelIndex.get(pkgName);
+      if (parents && parents.length > 0) finding.topLevelDep = parents;
       findings.push(finding);
     }
 

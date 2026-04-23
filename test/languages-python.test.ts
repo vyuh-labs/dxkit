@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { python, extractPyImportsRaw, resolvePyImportRaw } from '../src/languages/python';
+import {
+  python,
+  extractPyImportsRaw,
+  resolvePyImportRaw,
+  findPyProjectVenvPython,
+} from '../src/languages/python';
 
 let tmp: string;
 
@@ -130,5 +135,64 @@ describe('python.mapLintSeverity', () => {
   it('maps unknown prefixes to low', () => {
     expect(map('XYZ123')).toBe('low');
     expect(map('')).toBe('low');
+  });
+});
+
+describe('findPyProjectVenvPython', () => {
+  function writePythonBin(root: string, name = 'python'): string {
+    const binDir = path.join(root, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const exe = path.join(binDir, name);
+    fs.writeFileSync(exe, '#!/bin/sh\n', { mode: 0o755 });
+    return exe;
+  }
+
+  afterEach(() => {
+    delete process.env.VIRTUAL_ENV;
+  });
+
+  it('returns null when no venv is present', () => {
+    expect(findPyProjectVenvPython(tmp)).toBe(null);
+  });
+
+  it('prefers ./.venv over ./venv (detection order)', () => {
+    const venv = writePythonBin(path.join(tmp, 'venv'));
+    const dotVenv = writePythonBin(path.join(tmp, '.venv'));
+    const found = findPyProjectVenvPython(tmp);
+    expect(found).toBe(dotVenv);
+    expect(found).not.toBe(venv);
+  });
+
+  it('falls back to ./venv when ./.venv is absent', () => {
+    const venv = writePythonBin(path.join(tmp, 'venv'));
+    expect(findPyProjectVenvPython(tmp)).toBe(venv);
+  });
+
+  it('accepts python3 when python is absent', () => {
+    const venv = writePythonBin(path.join(tmp, '.venv'), 'python3');
+    expect(findPyProjectVenvPython(tmp)).toBe(venv);
+  });
+
+  it('falls back to $VIRTUAL_ENV when no local venv is present', () => {
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-py-ext-'));
+    try {
+      const exe = writePythonBin(external);
+      process.env.VIRTUAL_ENV = external;
+      expect(findPyProjectVenvPython(tmp)).toBe(exe);
+    } finally {
+      fs.rmSync(external, { recursive: true, force: true });
+    }
+  });
+
+  it('prioritizes ./.venv over $VIRTUAL_ENV (in-project wins)', () => {
+    const dotVenvExe = writePythonBin(path.join(tmp, '.venv'));
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-py-ext-'));
+    try {
+      writePythonBin(external);
+      process.env.VIRTUAL_ENV = external;
+      expect(findPyProjectVenvPython(tmp)).toBe(dotVenvExe);
+    } finally {
+      fs.rmSync(external, { recursive: true, force: true });
+    }
   });
 });

@@ -110,6 +110,117 @@ function buildPipAuditCommand(cwd: string, pipAuditPath: string): string | null 
 }
 
 /**
+ * Pure parser for `pip show pkg1 pkg2 ...` output. pip-show returns
+ * RFC-822-ish blocks separated by `---` with `Key: Value` lines. The
+ * fields we need:
+ *
+ *   Name: foo
+ *   Requires: a, b, c
+ *   Required-by: x, y
+ *
+ * Empty `Required-by` identifies a package that nothing else in the
+ * env depends on — conventionally a directly-installed (top-level)
+ * package. Extracted so the builder below can be unit-tested without
+ * a live pip invocation.
+ */
+export function parsePipShowOutput(
+  raw: string,
+): Map<string, { requires: string[]; requiredBy: string[] }> {
+  const graph = new Map<string, { requires: string[]; requiredBy: string[] }>();
+  // pip separates blocks with a line containing exactly '---'.
+  const blocks = raw.split(/^---\s*$/m);
+  for (const block of blocks) {
+    let name: string | null = null;
+    let requires: string[] = [];
+    let requiredBy: string[] = [];
+    for (const line of block.split('\n')) {
+      const m = line.match(/^(Name|Requires|Required-by):\s*(.*)$/i);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === 'name') name = val;
+      else if (key === 'requires') {
+        requires = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } else if (key === 'required-by') {
+        requiredBy = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+    if (name) graph.set(name, { requires, requiredBy });
+  }
+  return graph;
+}
+
+/**
+ * BFS the parsed pip-show graph to produce a per-package-name index of
+ * its top-level ancestors. Top-levels are packages with empty
+ * `Required-by` — nothing else in the environment depends on them, so
+ * they were installed as direct deps.
+ *
+ * Pure function; testable with fabricated graphs.
+ */
+export function buildPyTopLevelDepIndex(
+  graph: Map<string, { requires: string[]; requiredBy: string[] }>,
+): Map<string, string[]> {
+  const topLevels: string[] = [];
+  for (const [name, meta] of graph) {
+    if (meta.requiredBy.length === 0) topLevels.push(name);
+  }
+  const result = new Map<string, Set<string>>();
+  for (const top of topLevels) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      const meta = graph.get(name);
+      if (!meta) continue;
+      for (const child of meta.requires) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+  }
+  const sorted = new Map<string, string[]>();
+  for (const [k, v] of result) sorted.set(k, [...v].sort());
+  return sorted;
+}
+
+/**
+ * Invoke `pip list` + `pip show --all` against the project's venv and
+ * build the top-level attribution index. Returns an empty map when no
+ * venv is present or either pip command fails — attribution stays
+ * unset, mirroring the TS pack's lockfile-missing case.
+ */
+function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const venvPython = findPyProjectVenvPython(cwd);
+  if (!venvPython) return new Map();
+  const listRaw = run(`${venvPython} -m pip list --format=json 2>/dev/null`, cwd, 60000);
+  if (!listRaw) return new Map();
+  let list: Array<{ name?: string }>;
+  try {
+    list = JSON.parse(listRaw);
+  } catch {
+    return new Map();
+  }
+  const names = list.map((x) => x.name).filter((n): n is string => !!n);
+  if (names.length === 0) return new Map();
+  // pip show accepts multiple package names in one call; stays well
+  // under shell arg-length limits for realistic envs (O(100) pkgs).
+  const showRaw = run(`${venvPython} -m pip show ${names.join(' ')} 2>/dev/null`, cwd, 60000);
+  if (!showRaw) return new Map();
+  return buildPyTopLevelDepIndex(parsePipShowOutput(showRaw));
+}
+
+/**
  * Single source of truth for the python pack's dep-vuln gathering.
  * Consumed by `pyDepVulnsProvider` (capability dispatcher).
  */
@@ -153,6 +264,17 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       return 'medium';
     };
 
+    // Lazy-built: only load the top-level index when we have at least
+    // one finding. Saves a pip list + pip show invocation on clean
+    // projects. The index is built once even if multiple findings
+    // reference the same package.
+    let topLevelIndex: Map<string, string[]> | null = null;
+    const getTopLevel = (pkg: string): string[] | undefined => {
+      if (topLevelIndex === null) topLevelIndex = loadPyTopLevelDepIndex(cwd);
+      const parents = topLevelIndex.get(pkg);
+      return parents && parents.length > 0 ? parents : undefined;
+    };
+
     const findings: DepVulnFinding[] = [];
     for (const dep of data.dependencies || []) {
       for (const v of dep.vulns || []) {
@@ -187,6 +309,8 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         // page per vulnerability id, so synthesize the reference. Render
         // layer can override if a tool-supplied URL becomes available later.
         finding.references = [`https://osv.dev/vulnerability/${v.id}`];
+        const parents = getTopLevel(finding.package);
+        if (parents) finding.topLevelDep = parents;
         findings.push(finding);
       }
     }
@@ -462,26 +586,78 @@ interface PipLicensesEntry {
 }
 
 /**
- * Locate the project's own Python interpreter. Conventional venv locations
- * are `.venv/bin/python[3]` or `venv/bin/python[3]`; we check in that
- * order. Returns null if no venv is found — the provider then skips
+ * Check whether an absolute path points at a runnable Python
+ * interpreter (a file; Windows `python.exe` not yet supported —
+ * matches the pre-10h.4.4 behavior).
+ */
+function isPyExecutable(abs: string): boolean {
+  try {
+    return fs.statSync(abs).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Given a candidate venv root directory, return the path to its
+ * `bin/python[3]` binary if present, or null otherwise. Extracted so
+ * the fallback chain below can reuse it across detection strategies.
+ */
+function venvRootToPython(venvRoot: string): string | null {
+  for (const exe of ['python', 'python3']) {
+    const candidate = path.join(venvRoot, 'bin', exe);
+    if (isPyExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Locate the project's own Python interpreter.
+ *
+ * Detection order (fail-cheap first, subprocess last):
+ *   1. `./.venv` or `./venv` under cwd  — uv default, in-project
+ *      poetry (`virtualenvs.in-project = true`), hand-rolled venvs.
+ *      Zero-cost stat() checks.
+ *   2. `$VIRTUAL_ENV` env var — set by `source .venv/bin/activate`
+ *      and poetry shell. Catches externally-activated envs.
+ *   3. `poetry env info --path` — external poetry venvs
+ *      (default `virtualenvs.in-project = false` on most installs;
+ *      env lives in `~/.cache/pypoetry/virtualenvs/<hash>`).
+ *   4. `pipenv --venv` — pipenv default stores elsewhere too.
+ *
+ * Returns null if no venv is resolvable — the provider then skips
  * cleanly rather than falling through to pip-licenses's install env
  * (which would report dxkit's own packages, not the project's).
  */
-function findPyProjectVenvPython(cwd: string): string | null {
-  const candidates = [
-    path.join(cwd, '.venv', 'bin', 'python'),
-    path.join(cwd, '.venv', 'bin', 'python3'),
-    path.join(cwd, 'venv', 'bin', 'python'),
-    path.join(cwd, 'venv', 'bin', 'python3'),
-  ];
-  for (const c of candidates) {
-    try {
-      if (fs.statSync(c).isFile()) return c;
-    } catch {
-      /* not this one */
-    }
+export function findPyProjectVenvPython(cwd: string): string | null {
+  // 1. Conventional in-project venv roots (fast path).
+  for (const dir of ['.venv', 'venv']) {
+    const p = venvRootToPython(path.join(cwd, dir));
+    if (p) return p;
   }
+
+  // 2. Caller-activated env (poetry shell, source activate, etc.).
+  const active = process.env.VIRTUAL_ENV;
+  if (active) {
+    const p = venvRootToPython(active);
+    if (p) return p;
+  }
+
+  // 3. External poetry venv. `poetry env info --path` returns the
+  // active env's root directory on stdout or nothing if no env.
+  const poetryPath = run('poetry env info --path 2>/dev/null', cwd, 10000).trim();
+  if (poetryPath) {
+    const p = venvRootToPython(poetryPath);
+    if (p) return p;
+  }
+
+  // 4. External pipenv venv.
+  const pipenvPath = run('pipenv --venv 2>/dev/null', cwd, 10000).trim();
+  if (pipenvPath) {
+    const p = venvRootToPython(pipenvPath);
+    if (p) return p;
+  }
+
   return null;
 }
 

@@ -135,9 +135,25 @@ interface DotnetTopLevelPackage {
   advisories?: DotnetAdvisory[];
 }
 
+/**
+ * Transitive packages differ from top-level entries only in that they
+ * lack `requestedVersion` (never manifest-declared). `dotnet list
+ * package --vulnerable --include-transitive --format json` emits them
+ * separately per framework so downstream can distinguish user-authored
+ * deps from auto-resolved ones. Attribution to a top-level parent is
+ * NOT provided by the dotnet CLI — `project.assets.json` walk fills
+ * that in downstream.
+ */
+interface DotnetTransitivePackage {
+  id?: string;
+  resolvedVersion?: string;
+  advisories?: DotnetAdvisory[];
+}
+
 interface DotnetFramework {
   framework?: string;
   topLevelPackages?: DotnetTopLevelPackage[];
+  transitivePackages?: DotnetTransitivePackage[];
 }
 
 interface DotnetVulnerableReport {
@@ -145,6 +161,27 @@ interface DotnetVulnerableReport {
     path?: string;
     frameworks?: DotnetFramework[];
   }>;
+}
+
+/**
+ * Subset of `project.assets.json` (NuGet's lockfile equivalent) we
+ * consume. Real file has additional sections for runtime targets,
+ * package folders, signing info — not relevant for dep-graph walking.
+ *
+ * Structure we care about:
+ *   targets.<framework>.<Pkg>/<Version>.dependencies = { <SubPkg>: <range> }
+ *     — the forward dep edges, keyed by Pkg/Version for uniqueness.
+ *   project.frameworks.<framework>.dependencies = { <Pkg>: { target, version } }
+ *     — the top-level (directly manifest-declared) deps per framework.
+ */
+interface ProjectAssetsJson {
+  targets?: Record<
+    string,
+    Record<string, { dependencies?: Record<string, string>; type?: string }>
+  >;
+  project?: {
+    frameworks?: Record<string, { dependencies?: Record<string, unknown> }>;
+  };
 }
 
 /**
@@ -179,12 +216,20 @@ function extractGhsaIdFromUrl(url: string | undefined): string | null {
 }
 
 /**
- * Pure parser for `dotnet list package --vulnerable --format json`.
- * Extracted from the gather function so it can be unit-tested without
- * a real .NET SDK on the dev machine (10h.5 release-time validation
- * runs the full pipeline). Returns null when the input is malformed;
- * otherwise returns counts + findings ready for downstream alias
- * enrichment.
+ * Pure parser for `dotnet list package --vulnerable --include-transitive
+ * --format json`. Extracted from the gather function so it can be
+ * unit-tested without a real .NET SDK on the dev machine (10h.5
+ * release-time validation runs the full pipeline). Returns null when
+ * the input is malformed; otherwise returns counts + findings ready
+ * for downstream alias enrichment + top-level attribution.
+ *
+ * Both top-level and transitive packages are iterated. Top-level
+ * findings carry `topLevelDep = [self]` (they ARE manifest deps);
+ * transitive findings emit with `topLevelDep` unset — the gather
+ * function then fills it from `project.assets.json` if available.
+ * Leaving attribution unset on transitives when assets.json is absent
+ * matches Python's venv-missing behavior: degrade gracefully rather
+ * than invent false parents.
  */
 export function parseDotnetVulnerableOutput(
   raw: string,
@@ -201,37 +246,203 @@ export function parseDotnetVulnerableOutput(
   let medium = 0;
   let low = 0;
   const findings: DepVulnFinding[] = [];
+
+  const emit = (
+    pkgId: string,
+    resolvedVersion: string | undefined,
+    advisories: DotnetAdvisory[],
+    topLevelDep: string[] | undefined,
+  ): void => {
+    for (const adv of advisories) {
+      const severity = normalizeDotnetSeverity(adv.severity);
+      if (severity === 'critical') critical++;
+      else if (severity === 'high') high++;
+      else if (severity === 'medium') medium++;
+      else low++;
+
+      const ghsa = extractGhsaIdFromUrl(adv.advisoryUrl);
+      const id = ghsa ?? `nuget-${pkgId}@${resolvedVersion ?? 'unknown'}`;
+      const finding: DepVulnFinding = {
+        id,
+        package: pkgId,
+        installedVersion: resolvedVersion,
+        tool: 'dotnet-vulnerable',
+        severity,
+      };
+      if (topLevelDep && topLevelDep.length > 0) finding.topLevelDep = topLevelDep;
+      if (ghsa) finding.aliases = [ghsa];
+      if (adv.advisoryUrl) finding.references = [adv.advisoryUrl];
+      findings.push(finding);
+    }
+  };
+
   for (const proj of data.projects ?? []) {
     for (const fw of proj.frameworks ?? []) {
       for (const pkg of fw.topLevelPackages ?? []) {
         if (!pkg.id) continue;
-        for (const adv of pkg.advisories ?? []) {
-          const severity = normalizeDotnetSeverity(adv.severity);
-          if (severity === 'critical') critical++;
-          else if (severity === 'high') high++;
-          else if (severity === 'medium') medium++;
-          else low++;
-
-          const ghsa = extractGhsaIdFromUrl(adv.advisoryUrl);
-          // No GHSA URL means we have nothing addressable — fall back
-          // to a synthetic id so the finding is still emitted (the
-          // counts already incremented, and bom render needs a row).
-          const id = ghsa ?? `nuget-${pkg.id}@${pkg.resolvedVersion ?? 'unknown'}`;
-          const finding: DepVulnFinding = {
-            id,
-            package: pkg.id,
-            installedVersion: pkg.resolvedVersion,
-            tool: 'dotnet-vulnerable',
-            severity,
-          };
-          if (ghsa) finding.aliases = [ghsa];
-          if (adv.advisoryUrl) finding.references = [adv.advisoryUrl];
-          findings.push(finding);
-        }
+        emit(pkg.id, pkg.resolvedVersion, pkg.advisories ?? [], [pkg.id]);
+      }
+      for (const pkg of fw.transitivePackages ?? []) {
+        if (!pkg.id) continue;
+        // topLevelDep stays unset; `attachCsharpTopLevelAttribution`
+        // downstream fills it from project.assets.json when available.
+        emit(pkg.id, pkg.resolvedVersion, pkg.advisories ?? [], undefined);
       }
     }
   }
   return { counts: { critical, high, medium, low }, findings };
+}
+
+/**
+ * Pure parser for `obj/project.assets.json`. Extracts the forward
+ * dep graph keyed by package name (collapsing versions — same as
+ * TS/Go/Rust packs) plus the set of top-level (direct manifest)
+ * package names across every target framework declared in `project`.
+ *
+ * Multi-framework projects: graphs are merged across target
+ * frameworks into a single name-level edge map. Top-level set is
+ * the union of declared direct deps across frameworks. This
+ * over-attributes slightly if a package is direct in netstandard2.0
+ * but transitive in net8.0 — it gets listed as a top-level — but the
+ * simplification beats per-framework multi-reporting complexity.
+ */
+export function parseProjectAssetsJson(
+  raw: string,
+): { topLevels: string[]; edges: Map<string, Set<string>> } | null {
+  let data: ProjectAssetsJson;
+  try {
+    data = JSON.parse(raw) as ProjectAssetsJson;
+  } catch {
+    return null;
+  }
+  if (!data.targets && !data.project) return null;
+
+  const nameOf = (key: string): string => {
+    // Keys are `Pkg/Version` — split on '/' and take the package part.
+    const slash = key.indexOf('/');
+    return slash < 0 ? key : key.slice(0, slash);
+  };
+
+  const edges = new Map<string, Set<string>>();
+  for (const target of Object.values(data.targets ?? {})) {
+    for (const [pkgVerKey, pkgEntry] of Object.entries(target)) {
+      const srcName = nameOf(pkgVerKey);
+      const deps = pkgEntry?.dependencies;
+      if (!deps) continue;
+      const bucket = edges.get(srcName) ?? new Set<string>();
+      for (const depName of Object.keys(deps)) {
+        bucket.add(depName);
+      }
+      edges.set(srcName, bucket);
+    }
+  }
+
+  const topLevels = new Set<string>();
+  for (const fw of Object.values(data.project?.frameworks ?? {})) {
+    for (const name of Object.keys(fw?.dependencies ?? {})) {
+      topLevels.add(name);
+    }
+  }
+
+  return { topLevels: [...topLevels].sort(), edges };
+}
+
+/**
+ * BFS the parsed asset graph to produce a per-package-name index of
+ * its top-level ancestors. Mirrors `buildTsTopLevelDepIndex` /
+ * `buildRustTopLevelDepIndex` in shape and semantics; attribution is
+ * coarse (name-level) and unions across multiple reachable parents.
+ */
+export function buildCsharpTopLevelDepIndex(parsed: {
+  topLevels: ReadonlyArray<string>;
+  edges: ReadonlyMap<string, ReadonlySet<string>>;
+}): Map<string, string[]> {
+  const result = new Map<string, Set<string>>();
+  for (const top of parsed.topLevels) {
+    const visited = new Set<string>();
+    const queue: string[] = [top];
+    while (queue.length > 0) {
+      const name = queue.shift() as string;
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const bucket = result.get(name) ?? new Set<string>();
+      bucket.add(top);
+      result.set(name, bucket);
+      for (const child of parsed.edges.get(name) ?? []) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+  }
+  const sorted = new Map<string, string[]>();
+  for (const [name, parents] of result) {
+    sorted.set(name, [...parents].sort());
+  }
+  return sorted;
+}
+
+/**
+ * Locate the nearest `obj/project.assets.json` under cwd (NuGet's
+ * lockfile equivalent, created by `dotnet restore`). Unlike the
+ * shared `findMatchingRecursive`, we cannot skip `obj/` here —
+ * that's literally where the file lives. Walks up to 4 levels deep
+ * to handle solutions with nested projects. Returns the absolute
+ * path of the first match, or null.
+ *
+ * Multi-project solutions currently use the first-found file's
+ * graph — noted as a known limitation in the phase commit.
+ */
+function findProjectAssetsJson(cwd: string, maxDepth = 4): string | null {
+  function search(dir: string, depth: number): string | null {
+    if (depth > maxDepth) return null;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    // Direct-child shortcut: if this directory is `obj`, check for
+    // the file right here before recursing.
+    for (const e of entries) {
+      if (e.isFile() && e.name === 'project.assets.json') {
+        // Only accept if parent directory is `obj`.
+        if (path.basename(dir) === 'obj') return path.join(dir, e.name);
+      }
+    }
+    for (const e of entries) {
+      if (
+        e.name.startsWith('.') ||
+        ['node_modules', 'bin', 'TestResults', 'packages'].includes(e.name)
+      ) {
+        continue;
+      }
+      if (e.isDirectory()) {
+        const nested = search(path.join(dir, e.name), depth + 1);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+  return search(cwd, 0);
+}
+
+/**
+ * Read + parse `obj/project.assets.json` and build the top-level
+ * attribution index. Returns an empty map on any failure — transitive
+ * findings simply ship without attribution rather than blocking the
+ * scan. Matches Python pack's missing-venv semantics.
+ */
+function loadCsharpTopLevelDepIndex(cwd: string): Map<string, string[]> {
+  const assetsPath = findProjectAssetsJson(cwd);
+  if (!assetsPath) return new Map();
+  let raw: string;
+  try {
+    raw = fs.readFileSync(assetsPath, 'utf-8');
+  } catch {
+    return new Map();
+  }
+  const parsed = parseProjectAssetsJson(raw);
+  if (!parsed) return new Map();
+  return buildCsharpTopLevelDepIndex(parsed);
 }
 
 /**
@@ -248,13 +459,40 @@ export function parseDotnetVulnerableOutput(
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   if (!hasCsharpProject(cwd)) return { kind: 'tool-missing' };
 
-  const vulnRaw = run('dotnet list package --vulnerable --format json 2>/dev/null', cwd, 120000);
+  // `--include-transitive` (10h.4.4.c) extends the scan to indirect
+  // deps; without it NuGet would only report vulns where the
+  // vulnerable package is itself declared in .csproj. Transitive
+  // attribution lands via `project.assets.json` below.
+  const vulnRaw = run(
+    'dotnet list package --vulnerable --include-transitive --format json 2>/dev/null',
+    cwd,
+    120000,
+  );
   if (!vulnRaw) return { kind: 'no-output' };
 
   const parsed = parseDotnetVulnerableOutput(vulnRaw);
   if (!parsed) return { kind: 'parse-error' };
 
   const { counts, findings } = parsed;
+
+  // Attach top-level attribution to transitive findings (top-level
+  // findings already carry self-attribution from the parser). Skipped
+  // when project.assets.json is absent — user hasn't run
+  // `dotnet restore`, or the obj/ dir was cleaned. Findings ship with
+  // `topLevelDep` unset in that case, matching Python's no-venv path.
+  const transitiveNeedsAttribution = findings.some(
+    (f) => !f.topLevelDep || f.topLevelDep.length === 0,
+  );
+  if (transitiveNeedsAttribution) {
+    const topLevelIndex = loadCsharpTopLevelDepIndex(cwd);
+    if (topLevelIndex.size > 0) {
+      for (const f of findings) {
+        if (f.topLevelDep && f.topLevelDep.length > 0) continue;
+        const parents = topLevelIndex.get(f.package);
+        if (parents && parents.length > 0) f.topLevelDep = parents;
+      }
+    }
+  }
 
   // Alias-fallback CVSS pass: dotnet --vulnerable ships zero CVSS data
   // per advisory; the GHSA id (extracted from advisoryUrl) is the only

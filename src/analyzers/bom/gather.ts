@@ -8,7 +8,7 @@
 import { gatherLicensesResult } from '../licenses/gather';
 import { gatherDepVulns } from '../security/gather';
 import type { DepVulnFinding, LicenseFinding } from '../../languages/capabilities/types';
-import type { BomEntry, BomSeverity } from './types';
+import type { BomEntry, BomSeverity, BomTopLevelRollup } from './types';
 
 const SEV_RANK: Record<BomSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -73,6 +73,52 @@ function maxSeverityOf(vulns: DepVulnFinding[]): BomSeverity | null {
     if (SEV_RANK[v.severity] < SEV_RANK[best]) best = v.severity;
   }
   return best;
+}
+
+/**
+ * Build the per-top-level-dep rollup from a flat list of entries.
+ * Walks every advisory under every entry; increments the counter for
+ * each top-level the advisory lists (a vuln reachable from two
+ * top-levels increments both, matching Snyk's grouping semantics).
+ *
+ * Entries with no topLevelDep attribution contribute nothing — the
+ * rollup is best-effort based on what each pack populates. Pure
+ * function; unit-testable.
+ */
+export function buildByTopLevelDep(entries: BomEntry[]): Record<string, BomTopLevelRollup> {
+  const accum = new Map<
+    string,
+    { advisoryCount: number; maxSeverity: BomSeverity; packages: Set<string> }
+  >();
+  for (const e of entries) {
+    for (const v of e.vulns) {
+      const tops = v.topLevelDep;
+      if (!tops || tops.length === 0) continue;
+      for (const top of tops) {
+        const cur = accum.get(top);
+        if (!cur) {
+          accum.set(top, {
+            advisoryCount: 1,
+            maxSeverity: v.severity,
+            packages: new Set([e.package]),
+          });
+        } else {
+          cur.advisoryCount++;
+          if (SEV_RANK[v.severity] < SEV_RANK[cur.maxSeverity]) cur.maxSeverity = v.severity;
+          cur.packages.add(e.package);
+        }
+      }
+    }
+  }
+  const out: Record<string, BomTopLevelRollup> = {};
+  for (const [top, data] of accum) {
+    out[top] = {
+      advisoryCount: data.advisoryCount,
+      maxSeverity: data.maxSeverity,
+      packages: [...data.packages].sort(),
+    };
+  }
+  return out;
 }
 
 /**
