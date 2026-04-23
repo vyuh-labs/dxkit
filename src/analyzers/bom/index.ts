@@ -17,7 +17,7 @@
 import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
-import { gatherBomEntries } from './gather';
+import { buildByTopLevelDep, gatherBomEntries } from './gather';
 import type { BomEntry, BomReport, BomSeverity } from './types';
 
 export type { BomReport, BomEntry } from './types';
@@ -61,6 +61,7 @@ export async function analyzeBom(
       actionableVulns,
       totalAdvisories,
       vulnOnlyPackages,
+      byTopLevelDep: buildByTopLevelDep(entries),
     },
     entries,
     toolsUsed,
@@ -127,6 +128,49 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   }
   L.push('---');
   L.push('');
+
+  // Snyk-style top-level dep rollup — upgrade-oriented view answering
+  // "which single `npm install X` / `go get Y` resolves the most
+  // advisories". Only rendered when at least one finding carried
+  // topLevelDep attribution (packs that can't parse a lockfile/graph
+  // simply don't populate it).
+  const topLevelEntries = Object.entries(s.byTopLevelDep);
+  if (topLevelEntries.length > 0) {
+    L.push('## Top-Level Dep Groups');
+    L.push('');
+    L.push(
+      'Grouped by direct manifest dep so each row is one upgrade decision. ' +
+        'Sorted by severity, then advisory count — the top row is the single ' +
+        'upgrade that resolves the most critical/highest-volume issues.',
+    );
+    L.push('');
+    const SEV_RANK: Record<BomSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sorted = topLevelEntries.sort(
+      (a, b) =>
+        SEV_RANK[a[1].maxSeverity] - SEV_RANK[b[1].maxSeverity] ||
+        b[1].advisoryCount - a[1].advisoryCount ||
+        a[0].localeCompare(b[0]),
+    );
+    const cap = 30;
+    const shown = sorted.slice(0, cap);
+    L.push('| Worst Severity | Top-Level Dep | Advisories | Vulnerable Packages |');
+    L.push('|----------------|---------------|-----------:|---------------------|');
+    for (const [top, r] of shown) {
+      const pkgCap = 8;
+      const pkgList =
+        r.packages.length > pkgCap
+          ? `${r.packages.slice(0, pkgCap).join(', ')}, +${r.packages.length - pkgCap} more`
+          : r.packages.join(', ');
+      L.push(`| ${SEV_BADGE[r.maxSeverity]} | \`${top}\` | ${r.advisoryCount} | ${pkgList} |`);
+    }
+    if (sorted.length > cap) {
+      L.push('');
+      L.push(`_Showing ${cap} of ${sorted.length} top-level deps with rolled-up advisories._`);
+    }
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
 
   // Vulnerable packages section — worst-first, one row per package
   if (s.vulnerablePackages > 0) {

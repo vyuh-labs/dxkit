@@ -48,6 +48,22 @@ export interface BomEntry {
   joinedFromBoth: boolean;
 }
 
+/**
+ * Per-top-level-dep aggregation. A single advisory may roll up under
+ * multiple top-levels (e.g. lodash reachable from 20 loopback packages),
+ * in which case each top-level's `advisoryCount` increments by one.
+ * Matches Snyk's UI rollup: "@loopback/cli has 49 advisories".
+ */
+export interface BomTopLevelRollup {
+  /** Total advisories rolled up under this top-level. */
+  advisoryCount: number;
+  /** Highest severity across all rolled-up advisories. */
+  maxSeverity: BomSeverity;
+  /** Distinct vulnerable package names reachable under this top-level.
+   *  Rendered in markdown as a comma-joined list; cap in renderer. */
+  packages: string[];
+}
+
 export interface BomReport {
   repo: string;
   analyzedAt: string;
@@ -76,6 +92,11 @@ export interface BomReport {
     /** Packages found only by a vuln scanner — license scanner
      *  missed them. See BomEntry.joinedFromBoth. */
     vulnOnlyPackages: number;
+    /** Snyk-style upgrade-oriented grouping: per-top-level-dep rollup
+     *  built from `vulns[].topLevelDep`. Empty when no findings carry
+     *  topLevelDep attribution (e.g. pre-10h.4 packs or projects
+     *  without a parseable dep graph). */
+    byTopLevelDep: Record<string, BomTopLevelRollup>;
   };
   entries: ReadonlyArray<BomEntry>;
   toolsUsed: string[];

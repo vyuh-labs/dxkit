@@ -102,7 +102,15 @@ export async function toBomXlsx(report: BomReport): Promise<Buffer> {
     const vulnLines = sortedVulns.map((v) => {
       const title = (v.summary ?? '').replace(/\s+/g, ' ').trim().slice(0, ADVISORY_SUMMARY_MAX);
       const cvss = v.cvssScore !== undefined ? ` [CVSS ${v.cvssScore.toFixed(1)}]` : '';
-      return title ? `${v.id}${cvss}: ${title}` : `${v.id}${cvss}`;
+      // Top-level attribution: tells the reviewer which direct manifest
+      // dep to upgrade. Missing when the pack couldn't parse the graph
+      // (e.g. TS repo with no lockfile) — silent in that case so the
+      // column stays clean.
+      const tops = v.topLevelDep ?? [];
+      let via = '';
+      if (tops.length === 1) via = ` via ${tops[0]}`;
+      else if (tops.length > 1) via = ` via ${tops[0]} (+${tops.length - 1} more)`;
+      return title ? `${v.id}${cvss}${via}: ${title}` : `${v.id}${cvss}${via}`;
     });
     const vulnerabilityIssues = e.vulns.length === 0 ? NO_VULNS_ISSUES : vulnLines.join('; ');
     const resolution = e.vulns.length === 0 ? NO_VULNS_RESOLUTION : e.upgradeAdvice;
