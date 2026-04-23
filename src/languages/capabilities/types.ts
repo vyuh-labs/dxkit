@@ -37,14 +37,59 @@ export interface CapabilityEnvelope {
   readonly tool: string;
 }
 
-/** Per-finding detail for dep-vuln reports that need more than counts. */
+/**
+ * Per-finding detail for dep-vuln reports that need more than counts.
+ *
+ * Field tiers (when each tier populates which fields):
+ *   Tier 1 (per-pack native tool — npm-audit / pip-audit / govulncheck /
+ *           cargo-audit / dotnet vulnerable):
+ *     id, package, installedVersion, severity, tool, fixedVersion?,
+ *     cvssScore?, aliases?, summary?, references?
+ *   Tier 2 (per-pack fix-tool — osv-scanner fix / pip-audit --fix /
+ *           cargo audit fix):
+ *     upgradeAdvice, breakingUpgrade, reachable (osv-scanner only)
+ *   Tier 3 (exploitability enrichment — EPSS, CISA KEV):
+ *     epssScore, kev
+ *   Tier 4 (snyk opt-in):
+ *     reachable, riskScore, upgradeAdvice, breakingUpgrade
+ *
+ * All non-identity fields are optional so higher tiers can extend without
+ * changing this contract.
+ */
 export interface DepVulnFinding {
+  // Identity
   id: string;
   package: string;
   installedVersion?: string;
-  fixedVersion?: string;
+
+  // Producer — denormalized from envelope.tool so per-finding attribution
+  // survives merges across multiple providers (e.g. snyk + npm-audit).
+  tool: string;
+
+  // Severity — ordinal bucket (always) + numeric CVSS base score (when
+  // the producing tool reports it).
   severity: keyof SeverityCounts;
-  source: 'osv.dev' | 'tool-default' | 'tool-reported';
+  cvssScore?: number;
+
+  // Resolution. Tier 1 emits fixedVersion only; render derives advice
+  // from it. Tier 2/4 may write upgradeAdvice + breakingUpgrade directly.
+  fixedVersion?: string;
+  upgradeAdvice?: string;
+  breakingUpgrade?: boolean;
+
+  // Exploitability. Tier 3 (EPSS / CISA KEV) and Tier 4 (snyk reachability /
+  // composite risk) populate these. Render uses them to enrich the
+  // Criticality column without changing per-finding identity.
+  epssScore?: number;
+  kev?: boolean;
+  reachable?: boolean;
+  riskScore?: number;
+
+  // Render + de-dup metadata. `aliases` carries CVE / GHSA / SNYK / OSV
+  // cross-refs so multi-provider joins can collapse duplicates by any id.
+  aliases?: string[];
+  summary?: string;
+  references?: string[];
 }
 
 /** Dependency vulnerabilities, the depVulns capability. */
