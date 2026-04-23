@@ -4,11 +4,13 @@ import * as path from 'path';
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
+import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnFinding,
   DepVulnGatherOutcome,
   DepVulnResult,
   ImportsResult,
@@ -119,50 +121,188 @@ function tierCargoMessage(msg: CargoMessage['message']): LintSeverity {
   return tier;
 }
 
+/**
+ * cargo-audit `--json` output. The shape mirrors the
+ * `rustsec_advisory_db::Advisory` struct — see
+ * https://docs.rs/rustsec/latest/rustsec/advisory/struct.Advisory.html.
+ * `cvss` is a CVSS v3 vector string (not a numeric score) when present;
+ * RUSTSEC advisories often only carry textual `severity`. `aliases`
+ * typically holds the corresponding CVE id when assigned upstream.
+ */
+interface CargoAuditAdvisory {
+  id?: string;
+  package?: string;
+  title?: string;
+  description?: string;
+  date?: string;
+  url?: string;
+  cvss?: string | null;
+  severity?: string;
+  aliases?: string[];
+  references?: string[];
+}
+
+interface CargoAuditVulnEntry {
+  advisory?: CargoAuditAdvisory;
+  versions?: { patched?: string[]; unaffected?: string[] };
+  package?: { name?: string; version?: string };
+}
+
 interface CargoAuditResult {
   vulnerabilities?: {
-    found: number;
-    count: number;
-    list?: Array<{ advisory?: { severity?: string } }>;
+    found?: number;
+    count?: number;
+    list?: CargoAuditVulnEntry[];
   };
+}
+
+/**
+ * Map cargo-audit's textual severity to the four-tier `SeverityCounts`
+ * domain. RUSTSEC uses the standard critical/high/medium/low set;
+ * `informational` advisories (yanked, notice) are treated as low.
+ */
+function normalizeRustSeverity(s: string | undefined): keyof SeverityCounts {
+  switch (s?.toLowerCase()) {
+    case 'critical':
+      return 'critical';
+    case 'high':
+      return 'high';
+    case 'medium':
+      return 'medium';
+    default:
+      return 'low';
+  }
+}
+
+/**
+ * Pure parser for `cargo-audit --json` output. Extracted from the gather
+ * function so it can be exhaustively unit-tested without a real Cargo
+ * toolchain on the dev machine (10h.5 release-time validation runs the
+ * full pipeline). Returns null when the input is malformed or contains
+ * no vulnerabilities object; otherwise returns counts + findings ready
+ * for downstream alias-fallback enrichment.
+ */
+export function parseCargoAuditOutput(
+  raw: string,
+): { counts: SeverityCounts; findings: DepVulnFinding[] } | null {
+  let data: CargoAuditResult;
+  try {
+    data = JSON.parse(raw) as CargoAuditResult;
+  } catch {
+    return null;
+  }
+  if (!data.vulnerabilities) return null;
+
+  let critical = 0;
+  let high = 0;
+  let medium = 0;
+  let low = 0;
+  const findings: DepVulnFinding[] = [];
+  for (const v of data.vulnerabilities.list || []) {
+    const adv = v.advisory;
+    if (!adv?.id) continue;
+
+    // Resolve severity + CVSS first so the counts bucket matches the
+    // per-finding severity even when CVSS promotes the classification
+    // for advisories that ship only a vector.
+    let severity = normalizeRustSeverity(adv.severity);
+    let cvssScore: number | null = null;
+    if (adv.cvss) {
+      const parsed = parseCvssV3BaseScore(adv.cvss);
+      if (parsed !== null) {
+        cvssScore = parsed;
+        if (!adv.severity) {
+          const tier = scoreToTier(parsed);
+          if (tier !== 'unknown') severity = tier;
+        }
+      }
+    }
+    if (severity === 'critical') critical++;
+    else if (severity === 'high') high++;
+    else if (severity === 'medium') medium++;
+    else low++;
+
+    const finding: DepVulnFinding = {
+      id: adv.id,
+      package: v.package?.name ?? adv.package ?? 'unknown',
+      installedVersion: v.package?.version,
+      tool: 'cargo-audit',
+      severity,
+    };
+    if (cvssScore !== null) finding.cvssScore = cvssScore;
+    const patched = v.versions?.patched ?? [];
+    if (patched.length > 0) {
+      // RUSTSEC patched entries are version requirement strings
+      // (e.g. ">=1.2.5"). Strip the leading comparator so the
+      // bom render's "Upgrade to X" text reads cleanly. Multiple
+      // patched constraints (rare) fall through with the first.
+      finding.fixedVersion = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+    }
+    const aliases = (adv.aliases ?? []).filter((a) => a && a.length > 0);
+    if (aliases.length > 0) finding.aliases = aliases;
+    if (adv.title) finding.summary = adv.title;
+    else if (adv.description) finding.summary = adv.description;
+    const refs = [...(adv.references ?? []), adv.url].filter(
+      (u): u is string => typeof u === 'string' && u.length > 0,
+    );
+    if (refs.length > 0) finding.references = refs;
+    else finding.references = [`https://rustsec.org/advisories/${adv.id}.html`];
+    findings.push(finding);
+  }
+
+  return { counts: { critical, high, medium, low }, findings };
 }
 
 /**
  * Single source of truth for the rust pack's dep-vuln gathering.
  * Consumed by `rustDepVulnsProvider` (capability dispatcher).
+ *
+ * Manifest gating: cargo-audit operates on `Cargo.lock` — without one
+ * it can't enumerate resolved dependency versions. We return early
+ * rather than running the tool against the wrong scope (mirrors the
+ * 10h.3.3 fix in the python pack).
+ *
+ * cvssScore is derived from the advisory's CVSS vector when present
+ * (RUSTSEC advisories vary — many ship only textual severity), with
+ * resolveCvssScores supplying alias-fallback against CVE OSV records
+ * for entries where cargo-audit's bundled vector is missing.
  */
 async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  if (!fileExists(cwd, 'Cargo.lock')) return { kind: 'tool-missing' };
   const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
   if (!audit.available || !audit.path) return { kind: 'tool-missing' };
 
   const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
   if (!raw) return { kind: 'no-output' };
 
-  try {
-    const data = JSON.parse(raw) as CargoAuditResult;
-    if (!data.vulnerabilities) return { kind: 'no-output' };
+  const parsed = parseCargoAuditOutput(raw);
+  if (!parsed) return { kind: 'parse-error' };
 
-    let critical = 0;
-    let high = 0;
-    let medium = 0;
-    let low = 0;
-    for (const v of data.vulnerabilities.list || []) {
-      const sev = v.advisory?.severity?.toLowerCase();
-      if (sev === 'critical') critical++;
-      else if (sev === 'high') high++;
-      else if (sev === 'medium') medium++;
-      else low++;
+  const { counts, findings } = parsed;
+
+  // Alias-fallback CVSS pass: many RUSTSEC entries ship without a
+  // CVSS vector but their CVE alias on OSV.dev carries one.
+  if (findings.length > 0) {
+    const cvssInputs = findings.map((f) => ({
+      primaryId: f.id,
+      embeddedCvss: f.cvssScore ?? null,
+      aliases: f.aliases ?? [],
+    }));
+    const resolved = await resolveCvssScores(cvssInputs);
+    for (const f of findings) {
+      const score = resolved.get(f.id);
+      if (score !== null && score !== undefined) f.cvssScore = score;
     }
-    const envelope: DepVulnResult = {
-      schemaVersion: 1,
-      tool: 'cargo-audit',
-      enrichment: null,
-      counts: { critical, high, medium, low },
-    };
-    return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
   }
+
+  const envelope: DepVulnResult = {
+    schemaVersion: 1,
+    tool: 'cargo-audit',
+    enrichment: null,
+    counts,
+    findings,
+  };
+  return { kind: 'success', envelope };
 }
 
 const rustDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
