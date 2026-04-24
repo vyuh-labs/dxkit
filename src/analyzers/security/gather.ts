@@ -12,6 +12,7 @@ import { enrichEpss, extractCveId } from '../tools/epss';
 import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
 import { buildReachablePackageSet, markReachable } from '../tools/reachability';
+import { scoreFindings } from '../tools/risk-score';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
@@ -219,6 +220,12 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
         markReachable(findings, reachable);
       }
     }
+
+    // Composite riskScore = f(cvss, epss, kev, reachable). Runs last
+    // so every signal is populated. Formula is documented in
+    // risk-score.ts; skipped for findings without CVSS so we don't
+    // fabricate severity from partial data.
+    scoreFindings(findings);
   }
 
   const { critical, high, medium, low } = envelope.counts;

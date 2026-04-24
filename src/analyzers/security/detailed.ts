@@ -147,34 +147,37 @@ export function formatSecurityDetailedMarkdown(
     L.push(`| **Total** | **${d.total}** |`);
     L.push('');
     if (d.findings.length > 0) {
-      // Per-advisory inventory. Sorted by (severity, package, id) so the
-      // table reads top-down from worst-first within each pack's output.
-      const sortedDeps: DepVulnFinding[] = [...d.findings].sort(
-        (a, b) =>
+      // Per-advisory inventory. Sorted by composite riskScore when
+      // available (primary triage key), falling back to severity + package
+      // for findings where CVSS was missing. Highest risk first.
+      const sortedDeps: DepVulnFinding[] = [...d.findings].sort((a, b) => {
+        const ra = a.riskScore ?? -1;
+        const rb = b.riskScore ?? -1;
+        if (ra !== rb) return rb - ra;
+        return (
           SEV_ORDER[a.severity] - SEV_ORDER[b.severity] ||
           a.package.localeCompare(b.package) ||
-          a.id.localeCompare(b.id),
-      );
+          a.id.localeCompare(b.id)
+        );
+      });
       L.push(`Per-advisory detail (${sortedDeps.length} findings):`);
       L.push('');
-      L.push('| Severity | KEV | Reach | ID | Package | Installed | Fixed | CVSS | EPSS | Tool |');
-      L.push('|----------|:---:|:-----:|----|---------|-----------|-------|-----:|-----:|------|');
+      L.push(
+        '| Risk | Severity | KEV | Reach | ID | Package | Installed | Fixed | CVSS | EPSS | Tool |',
+      );
+      L.push(
+        '|-----:|----------|:---:|:-----:|----|---------|-----------|-------|-----:|-----:|------|',
+      );
       for (const f of sortedDeps) {
         const cvss = f.cvssScore !== undefined ? f.cvssScore.toFixed(1) : '—';
-        // EPSS rendered as a percentage (probability of exploitation in
-        // the next 30 days per FIRST.org). Dash when no CVE alias was
-        // scoreable or the EPSS dataset hasn't caught up to this CVE yet.
         const epss = typeof f.epssScore === 'number' ? `${(f.epssScore * 100).toFixed(2)}%` : '—';
-        // KEV badge: `⚠` when CISA has confirmed active exploitation
-        // — outranks EPSS probability as a remediation signal. Empty
-        // cell (not dash) to keep the column scannable visually.
         const kev = f.kev ? '⚠' : '';
-        // Reach badge: `✓` when the repo's source imports this
-        // package, `·` when definitely not, blank when unknown (no
-        // imports data — treated as "can't tell").
         const reach = f.reachable === true ? '✓' : f.reachable === false ? '·' : '';
+        // Composite risk (0–100). Bold since it's the primary sort key;
+        // dash when CVSS was missing (risk uncomputable).
+        const risk = typeof f.riskScore === 'number' ? `**${f.riskScore.toFixed(0)}**` : '—';
         L.push(
-          `| ${f.severity.toUpperCase()} | ${kev} | ${reach} | \`${f.id}\` | \`${f.package}\` | ${f.installedVersion ?? '—'} | ${f.fixedVersion ?? '—'} | ${cvss} | ${epss} | ${f.tool} |`,
+          `| ${risk} | ${f.severity.toUpperCase()} | ${kev} | ${reach} | \`${f.id}\` | \`${f.package}\` | ${f.installedVersion ?? '—'} | ${f.fixedVersion ?? '—'} | ${cvss} | ${epss} | ${f.tool} |`,
         );
       }
       L.push('');
