@@ -21,6 +21,20 @@ import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../languages';
 import { DetectedStack, ToolRequirement } from '../../types';
 
+/**
+ * Shared Python venv location for every Python-based tool dxkit installs
+ * (graphify, semgrep, ruff, pip-audit, pip-licenses, coverage). Lives
+ * under `~/.cache/dxkit/` so it survives `/tmp` cleanup. Previously
+ * `/tmp/graphify-venv` — D013's "~50% flake" was that cleanup, plus
+ * concurrent-run races on first install. `.cache/` is XDG-compliant
+ * and persistent; `test -d` in the shell install commands keeps creation
+ * idempotent.
+ */
+export const TOOLS_VENV = path.join(os.homedir(), '.cache', 'dxkit', 'tools-venv');
+/** Legacy path still probed for backwards compat: repos that already set
+ *  up the old venv won't force a reinstall on upgrade. */
+const LEGACY_TOOLS_VENV = '/tmp/graphify-venv';
+
 export interface ToolDefinition extends ToolRequirement {
   /** Binary name(s) to look for in PATH. First match wins. */
   binaries: string[];
@@ -63,7 +77,8 @@ function getSystemPaths(): string[] {
     `${home}/.local/bin`, // pipx, user pip
     `${home}/.cargo/bin`, // rust
     `${home}/go/bin`, // go
-    '/tmp/graphify-venv/bin', // dxkit graphify venv
+    `${TOOLS_VENV}/bin`, // dxkit shared Python tools venv (persistent)
+    `${LEGACY_TOOLS_VENV}/bin`, // legacy: pre-10f.2 installs
   ];
   // Include $GOPATH/bin if set
   if (process.env.GOPATH) {
@@ -142,7 +157,8 @@ function findNodePackage(pkg: string, cwd: string): string | null {
 /** Special-case: check if graphify Python module is importable. */
 function findGraphifyPython(cwd: string): string | null {
   const pythonCandidates = [
-    '/tmp/graphify-venv/bin/python',
+    `${TOOLS_VENV}/bin/python`, // current (10f.2+)
+    `${LEGACY_TOOLS_VENV}/bin/python`, // legacy
     `${os.homedir()}/.local/bin/python3`,
     'python3',
   ];
@@ -179,7 +195,8 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
         available: true,
         path: pyPath,
         version: 'importable',
-        source: pyPath.includes('/tmp/graphify-venv') ? 'probe' : 'path',
+        source:
+          pyPath.includes(TOOLS_VENV) || pyPath.includes(LEGACY_TOOLS_VENV) ? 'probe' : 'path',
         requirement: def,
       };
     }
@@ -326,14 +343,14 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'all',
     layer: 'optional',
     binaries: ['graphify'],
-    probePaths: ['/tmp/graphify-venv/bin'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck:
-      'python3 -c "import graphify; print(\'installed\')" 2>/dev/null || /tmp/graphify-venv/bin/python -c "import graphify; print(\'installed\')" 2>/dev/null',
+      'python3 -c "import graphify; print(\'installed\')" 2>/dev/null || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')" 2>/dev/null',
     installCommands: {
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q graphifyy',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q graphifyy',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q graphifyy',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q graphifyy',
       windows: 'pip install --user graphifyy',
     },
   },
@@ -362,13 +379,13 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'all',
     layer: 'universal',
     binaries: ['semgrep'],
-    probePaths: ['/tmp/graphify-venv/bin'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'semgrep --version 2>/dev/null',
     installCommands: {
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q semgrep && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/semgrep ~/.local/bin/semgrep',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q semgrep && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/semgrep ~/.local/bin/semgrep',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install -q semgrep && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/semgrep ~/.local/bin/semgrep',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q semgrep && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/semgrep ~/.local/bin/semgrep',
       windows: 'pip install --user semgrep',
     },
   },
@@ -431,9 +448,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     installCommands: {
       // Use the dxkit venv (created during graphify install) for Python tools
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install ruff && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/ruff ~/.local/bin/ruff',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install ruff && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/ruff ~/.local/bin/ruff',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install ruff && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/ruff ~/.local/bin/ruff',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install ruff && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/ruff ~/.local/bin/ruff',
       windows: 'pip install --user ruff',
     },
   },
@@ -448,9 +465,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'pip-audit --version 2>/dev/null',
     installCommands: {
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-audit && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-audit ~/.local/bin/pip-audit',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-audit && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-audit ~/.local/bin/pip-audit',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-audit && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-audit ~/.local/bin/pip-audit',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-audit && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-audit ~/.local/bin/pip-audit',
       windows: 'pip install --user pip-audit',
     },
   },
@@ -462,13 +479,13 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'python',
     layer: 'language',
     binaries: ['pip-licenses'],
-    probePaths: ['/tmp/graphify-venv/bin'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'pip-licenses --version 2>/dev/null',
     installCommands: {
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-licenses && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-licenses && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install pip-licenses && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-licenses && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
       windows: 'pip install --user pip-licenses',
     },
   },
@@ -639,9 +656,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'coverage --version 2>/dev/null',
     installCommands: {
       macos:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install coverage && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/coverage ~/.local/bin/coverage',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install coverage && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/coverage ~/.local/bin/coverage',
       linux:
-        'test -d /tmp/graphify-venv || python3 -m venv /tmp/graphify-venv; /tmp/graphify-venv/bin/pip install coverage && mkdir -p ~/.local/bin && ln -sf /tmp/graphify-venv/bin/coverage ~/.local/bin/coverage',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install coverage && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/coverage ~/.local/bin/coverage',
       windows: 'pip install --user coverage',
     },
   },

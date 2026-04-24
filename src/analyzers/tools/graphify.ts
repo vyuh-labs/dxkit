@@ -9,11 +9,15 @@
  * `tools/parallel.ts`. Memoized per-cwd so both callers share one
  * invocation per analyzer run.
  *
- * Known flake (Phase 10f.2): `/tmp/graphify-venv` race + `/tmp`
- * cleanup kills graphify ~50% of runs. Separate behavioral fix; this
- * file's structure is unaffected.
+ * D013 (10f.2) — `/tmp/graphify-venv` was prone to systemd-tmpfiles
+ * cleanup and first-install races. The venv now lives at
+ * `~/.cache/dxkit/tools-venv` via `tool-registry.ts:TOOLS_VENV`;
+ * this file's per-run tempfile also migrated to `fs.mkdtempSync` so
+ * two concurrent dxkit processes never collide on a script name.
  */
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeSet } from './exclusions';
@@ -194,12 +198,22 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   const pythonCmd = findPython(cwd);
   if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
 
-  const scriptPath = `/tmp/dxkit-graphify-${Date.now()}.py`;
+  // Per-run tempdir via mkdtempSync — unique random suffix eliminates
+  // the `Date.now()` collision risk when two dxkit processes fire
+  // within the same millisecond. The whole dir is rm'd on exit so we
+  // don't litter /tmp across runs.
+  const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-graphify-'));
+  const scriptPath = path.join(scriptDir, 'run.py');
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
-  // Redirect stderr to suppress progress output, run from /tmp to avoid writing to target
-  const output = run(`cd /tmp && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`, cwd, 120000);
+  // Redirect stderr to suppress progress output, run from the tempdir
+  // so the script doesn't drop cache files inside the analyzed repo.
+  const output = run(
+    `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`,
+    cwd,
+    120000,
+  );
   try {
-    fs.unlinkSync(scriptPath);
+    fs.rmSync(scriptDir, { recursive: true, force: true });
   } catch {
     /* ignore */
   }
