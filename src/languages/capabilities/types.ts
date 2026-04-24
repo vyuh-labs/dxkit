@@ -38,6 +38,49 @@ export interface CapabilityEnvelope {
 }
 
 /**
+ * Structured upgrade proposal for one advisory. Populated by Tier-2 fix
+ * tools (`osv-scanner fix --dry-run`, `pip-audit --fix --dry-run`,
+ * `cargo audit fix --dry-run`) and by the cross-pack transitive fix
+ * resolver. Lives alongside the free-text `upgradeAdvice` (retained for
+ * markdown readability) so autonomous upgrade bots consume a typed
+ * payload and humans keep readable copy.
+ *
+ * Example: advisory against `minimatch@3.0.4` reachable via
+ * `@loopback/cli@6.0.0` — the Tier-2 tool resolves that upgrading
+ * `@loopback/cli` to `7.0.1` pulls a patched `minimatch`:
+ *
+ *   {
+ *     parent: '@loopback/cli',
+ *     parentVersion: '7.0.1',
+ *     patches: ['GHSA-xxxx-yyyy-zzzz', 'CVE-2022-1234'],
+ *     breaking: true,
+ *   }
+ *
+ * `parent` equals the finding's own `package` when the vulnerable
+ * package itself is a direct dep. `patches` lists every advisory id the
+ * proposed upgrade would resolve (may be > 1 when one parent bump
+ * patches multiple transitive advisories — the common "upgrade
+ * @loopback/cli to fix 29 advisories" case). `breaking` is the tool's
+ * own classification of whether the proposed jump crosses a major
+ * version boundary.
+ */
+export interface DepVulnUpgradePlan {
+  /** Package to upgrade (top-level dep when different from the
+   *  finding's `package`; otherwise the finding's own package). */
+  parent: string;
+  /** Target version for the parent. Semver triple, no range prefix. */
+  parentVersion: string;
+  /** Advisory ids this upgrade resolves — always includes the finding's
+   *  own `id`; may include sibling advisories when one parent bump
+   *  patches several transitives at once. Sorted, deduplicated. */
+  patches: string[];
+  /** True when the target version crosses a major boundary from the
+   *  installed parent version. Producer-classified; consumers treat it
+   *  as a triage hint, not a guarantee. */
+  breaking: boolean;
+}
+
+/**
  * Per-finding detail for dep-vuln reports that need more than counts.
  *
  * Field tiers (when each tier populates which fields):
@@ -47,11 +90,11 @@ export interface CapabilityEnvelope {
  *     cvssScore?, aliases?, summary?, references?
  *   Tier 2 (per-pack fix-tool — osv-scanner fix / pip-audit --fix /
  *           cargo audit fix):
- *     upgradeAdvice, breakingUpgrade, reachable (osv-scanner only)
+ *     upgradeAdvice, breakingUpgrade, upgradePlan, reachable (osv-scanner only)
  *   Tier 3 (exploitability enrichment — EPSS, CISA KEV):
  *     epssScore, kev
  *   Tier 4 (snyk opt-in):
- *     reachable, riskScore, upgradeAdvice, breakingUpgrade
+ *     reachable, riskScore, upgradeAdvice, breakingUpgrade, upgradePlan
  *
  * All non-identity fields are optional so higher tiers can extend without
  * changing this contract.
@@ -73,8 +116,14 @@ export interface DepVulnFinding {
 
   // Resolution. Tier 1 emits fixedVersion only; render derives advice
   // from it. Tier 2/4 may write upgradeAdvice + breakingUpgrade directly.
+  // `upgradePlan` is the structured sibling of `upgradeAdvice` — populated
+  // by Tier-2 fix tools and the cross-pack transitive resolver so
+  // autonomous upgrade bots consume a typed payload; `upgradeAdvice`
+  // stays as the human-readable string for markdown/xlsx. Both may be
+  // present; consumers prefer `upgradePlan` when it exists.
   fixedVersion?: string;
   upgradeAdvice?: string;
+  upgradePlan?: DepVulnUpgradePlan;
   breakingUpgrade?: boolean;
 
   // Exploitability. Tier 3 (EPSS / CISA KEV) and Tier 4 (snyk reachability /
@@ -101,6 +150,17 @@ export interface DepVulnFinding {
   // sufficient for upgrade-scope grouping; refined paths land in 10h.5
   // if reachability analysis needs them.
   topLevelDep?: string[];
+
+  // Durable per-finding identity across runs. Stamped by the cross-pack
+  // aggregator in `gatherDepVulns` after enrichment — producers never
+  // populate it. Enables set-diff of today's findings vs last run: a
+  // fingerprint that disappears means an advisory was resolved; a new
+  // one means a regression. Stable hash of `(package, installedVersion,
+  // id)` — does not include severity/enrichment fields so re-scoring
+  // the same advisory against the same install doesn't mint a new
+  // identity. `BomReport.summary.fingerprints` carries the full list
+  // as a single manifest for external diff tooling.
+  fingerprint?: string;
 }
 
 /** Dependency vulnerabilities, the depVulns capability. */

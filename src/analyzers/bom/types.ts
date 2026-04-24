@@ -131,6 +131,17 @@ export interface BomReport {
      *  distinct. When nested scan is disabled or only one root was
      *  found, this is `["."]` so consumers can treat it uniformly. */
     projectRoots: string[];
+    /** Sorted, deduplicated list of every advisory `fingerprint`
+     *  covered by this report. Each fingerprint is a stable hash of
+     *  `(package, installedVersion, id)` stamped by the cross-pack
+     *  dep-vuln aggregator. Consumers diff two reports by set
+     *  difference on this list — added fingerprints are new
+     *  advisories, removed ones are resolved. The per-finding
+     *  fingerprint also lives on each `BomEntry.vulns[].fingerprint`
+     *  for attribution; this field is a convenience manifest so
+     *  external tooling (suppressions, CI gates, upgrade bots) can
+     *  diff without walking every entry. */
+    fingerprints: string[];
   };
   entries: ReadonlyArray<BomEntry>;
   toolsUsed: string[];
