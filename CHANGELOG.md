@@ -27,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autonomous upgrade bots consume the structured form. New type
   `DepVulnUpgradePlan`.
 
+### Added — Tier-2 fix tools (Phase 10h.6.1)
+
+- **TypeScript `osv-scanner fix` integration** — wraps `osv-scanner fix
+  --format json --manifest package.json --lockfile package-lock.json`
+  and stamps structured `upgradePlan` on each matching `DepVulnFinding`
+  surfaced by `npm audit`. Per-patch rollup: if one top-level bump
+  resolves N advisories, every finding's `upgradePlan.patches[]` lists
+  all N. Breaking detection normalizes pre-1.x where a minor bump
+  (0.5 → 0.6) is treated as breaking.
+- **New tool in `TOOL_DEFS`** — `osv-scanner` (Node/TS pack, Tier-2).
+  Installs via `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest`
+  (macOS also tries `brew install osv-scanner` first). Soft-fails when
+  the binary isn't available — existing `upgradeAdvice` (free-text,
+  from npm-audit) stays as the fallback and no findings are dropped.
+- **New helper** — `src/analyzers/tools/osv-scanner-fix.ts` exports
+  `gatherOsvScannerFixPlans(cwd)`, `parseOsvScannerFixOutput(raw)`, and
+  `enrichWithUpgradePlans(findings, plans)`. 18 new tests with a real
+  osv-scanner sample as fixture.
+
 ## [2.3.2] - 2026-04-24
 
 PM-grade bom reports. The xlsx and markdown outputs both restructure

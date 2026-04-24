@@ -7,6 +7,10 @@ import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/cov
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
 import { resolveCvssScores } from '../analyzers/tools/osv';
+import {
+  enrichWithUpgradePlans,
+  gatherOsvScannerFixPlans,
+} from '../analyzers/tools/osv-scanner-fix';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
@@ -416,6 +420,17 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         const score = resolved.get(f.id);
         if (score !== null && score !== undefined) f.cvssScore = score;
       }
+    }
+
+    // Tier-2 enrichment — run osv-scanner fix to populate structured
+    // `upgradePlan` on every finding it has a proposal for. Free-text
+    // `upgradeAdvice` from npm-audit already set above stays as-is (it's
+    // the human-readable form for markdown); `upgradePlan` is the
+    // agent-consumable form. Degrades silently when osv-scanner is
+    // unavailable — zero enrichment, existing advice preserved.
+    if (findings.length > 0) {
+      const plans = await gatherOsvScannerFixPlans(cwd);
+      enrichWithUpgradePlans(findings, plans);
     }
 
     const envelope: DepVulnResult = {
@@ -904,7 +919,7 @@ export const typescript: LanguageSupport = {
 
   mapLintSeverity: mapEslintRuleSeverity,
 
-  tools: ['eslint', 'npm-audit', 'vitest-coverage', 'license-checker-rseidelsohn'],
+  tools: ['eslint', 'npm-audit', 'osv-scanner', 'vitest-coverage', 'license-checker-rseidelsohn'],
   semgrepRulesets: ['p/javascript', 'p/typescript'],
 
   capabilities: {

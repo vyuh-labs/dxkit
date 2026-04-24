@@ -97,14 +97,14 @@ vyuh-dxkit tools install                      # interactive: prompts per tool
 
 ### Tools integrated
 
-| Layer     | Tools                                                    |
-| --------- | -------------------------------------------------------- |
-| Universal | `cloc`, `gitleaks`, `semgrep`, `jscpd`, `graphify` (AST) |
-| Node / TS | `eslint`, `npm audit`, `@vitest/coverage-v8`             |
-| Python    | `ruff`, `pip-audit`, `coverage` (coverage.py)            |
-| Go        | `golangci-lint`, `govulncheck`                           |
-| Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                |
-| C#        | `dotnet-format` (via SDK — formatter, not a linter)      |
+| Layer     | Tools                                                                     |
+| --------- | ------------------------------------------------------------------------- |
+| Universal | `cloc`, `gitleaks`, `semgrep`, `jscpd`, `graphify` (AST)                  |
+| Node / TS | `eslint`, `npm audit`, `osv-scanner` (fix planner), `@vitest/coverage-v8` |
+| Python    | `ruff`, `pip-audit`, `coverage` (coverage.py)                             |
+| Go        | `golangci-lint`, `govulncheck`                                            |
+| Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                                 |
+| C#        | `dotnet-format` (via SDK — formatter, not a linter)                       |
 
 Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
 
