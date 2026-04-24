@@ -5,7 +5,7 @@ description: Generate developer activity and code quality report from git histor
 ## Step 1: Check for Existing Report
 
 ```bash
-ls .ai/reports/developer-report-*.md 2>/dev/null | tail -1
+ls .dxkit/reports/developer-report-*.md 2>/dev/null | tail -1
 ```
 
 **If a report exists**: Read it. The commit counts, contributor stats, and velocity data are deterministic. Skip to Step 3.
@@ -35,7 +35,7 @@ Using the git data, add:
 
 **Do not change commit counts, contributor stats, or velocity numbers from the deterministic report.**
 
-Save to `.ai/reports/developer-report-YYYY-MM-DD.md`.
+Save to `.dxkit/reports/developer-report-YYYY-MM-DD.md`.
 
 Examples:
 - `/dev-report` — Team overview (last 3 months)

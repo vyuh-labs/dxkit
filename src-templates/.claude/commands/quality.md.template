@@ -5,7 +5,7 @@ description: Run code quality analysis with slop detection
 ## Step 1: Check for Existing Report
 
 ```bash
-ls .ai/reports/quality-review-*.md 2>/dev/null | tail -1
+ls .dxkit/reports/quality-review-*.md 2>/dev/null | tail -1
 ```
 
 **If a report exists**: Read it. The slop score, duplication %, and metrics are deterministic. Skip to Step 3.
@@ -54,7 +54,7 @@ Using the quality metrics, add:
 
 **Do not change the slop score, duplication %, or metric counts from the deterministic report.**
 
-Save to `.ai/reports/quality-review-YYYY-MM-DD.md`.
+Save to `.dxkit/reports/quality-review-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

@@ -7,7 +7,7 @@ Convert markdown report(s) to PDF.
 
 ## Arguments
 - `$ARGUMENTS`
-- If empty or "all", convert all reports in `.ai/reports/`
+- If empty or "all", convert all reports in `.dxkit/reports/`
 - If a file path, convert that specific file
 
 ## How to Convert
@@ -20,11 +20,11 @@ Try these tools in order (use whichever is available):
 
 ## For "all" reports
 ```
-for f in .ai/reports/*.md; do
+for f in .dxkit/reports/*.md; do
   npx md-to-pdf "$f"
 done
 ```
 
 ## Output
-- PDFs are saved alongside the markdown files in `.ai/reports/`
+- PDFs are saved alongside the markdown files in `.dxkit/reports/`
 - Report which files were converted and their paths

@@ -7,7 +7,7 @@
  * (cols 11-13). Output formats:
  *
  *   - `formatBomReport(report)` — markdown summary for
- *     `.ai/reports/bom-<date>.md` and PR comments.
+ *     `.dxkit/reports/bom-<date>.md` and PR comments.
  *   - JSON via the CLI's `--json` flag (10h.3.9) — schema-versioned
  *     pass-through with the added summary + repo metadata.
  *   - XLSX via the shared converter (10h.3.9) — drop-in replacement
