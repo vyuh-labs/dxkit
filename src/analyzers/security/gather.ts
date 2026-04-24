@@ -9,6 +9,7 @@
  */
 import { run } from '../tools/runner';
 import { enrichEpss, extractCveId } from '../tools/epss';
+import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
@@ -185,10 +186,15 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
       }
     }
     if (cveByFinding.size > 0) {
-      const scores = await enrichEpss([...new Set(cveByFinding.values())]);
+      const uniqueCves = [...new Set(cveByFinding.values())];
+      // EPSS + KEV run in parallel — one roundtrip each, independent
+      // endpoints. KEV catalog is a single bulk fetch (~200KB, 1300
+      // entries), so subsequent lookups in the same session are free.
+      const [scores, kevHits] = await Promise.all([enrichEpss(uniqueCves), enrichKev(uniqueCves)]);
       for (const [idx, cve] of cveByFinding) {
         const score = scores.get(cve);
         if (score !== undefined) findings[idx].epssScore = score;
+        if (kevHits.has(cve)) findings[idx].kev = true;
       }
     }
   }
