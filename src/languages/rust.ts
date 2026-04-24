@@ -236,7 +236,22 @@ export function parseCargoAuditOutput(
       // (e.g. ">=1.2.5"). Strip the leading comparator so the
       // bom render's "Upgrade to X" text reads cleanly. Multiple
       // patched constraints (rare) fall through with the first.
-      finding.fixedVersion = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+      const cleanFix = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+      finding.fixedVersion = cleanFix;
+      // Tier-2 structured plan (10h.6.3): Rust's dep graph is resolved
+      // by cargo in one go — there's no "transitive parent" concept like
+      // npm's where the fix is at a different package. The upgrade
+      // target IS the vulnerable crate itself, so parent == finding
+      // package. patches[] carries just this advisory's id (cargo-audit
+      // doesn't bundle multi-advisory rollups the way osv-scanner does).
+      // `breaking` derives from the semver-major comparison; same pre-
+      // 1.x convention as the TS/Python packs.
+      finding.upgradePlan = {
+        parent: finding.package,
+        parentVersion: cleanFix,
+        patches: [adv.id],
+        breaking: isMajorBump(v.package?.version ?? '', cleanFix),
+      };
     }
     const aliases = (adv.aliases ?? []).filter((a) => a && a.length > 0);
     if (aliases.length > 0) finding.aliases = aliases;
@@ -660,6 +675,23 @@ const rustLicensesProvider: CapabilityProvider<LicensesResult> = {
     return gatherRustLicensesResult(cwd);
   },
 };
+
+/**
+ * True when `to`'s major segment exceeds `from`'s. Pre-1.x (`0.x`)
+ * minor bumps treated as breaking too — convention shared with the
+ * TypeScript and Python packs. Returns false when either input is
+ * unparseable.
+ *
+ * Exported for test coverage.
+ */
+export function isMajorBump(from: string, to: string): boolean {
+  const fromParts = from.split('.').map((p) => parseInt(p, 10));
+  const toParts = to.split('.').map((p) => parseInt(p, 10));
+  if (fromParts.some(isNaN) || toParts.some(isNaN)) return false;
+  if ((fromParts[0] ?? 0) !== (toParts[0] ?? 0)) return true;
+  if ((fromParts[0] ?? 0) === 0 && (fromParts[1] ?? 0) !== (toParts[1] ?? 0)) return true;
+  return false;
+}
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;

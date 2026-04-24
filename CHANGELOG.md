@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if one top-level bump resolves N advisories, every finding's
   `upgradePlan.patches[]` lists all N. Breaking detection normalizes
   pre-1.x where a minor bump (0.5 → 0.6) is treated as breaking.
+- **Rust `cargo-audit` upgradePlan population** (10h.6.3) — mirrors the
+  Python pattern: cargo-audit's existing JSON output already carries
+  per-advisory `versions.patched[]`, so we populate
+  `DepVulnFinding.upgradePlan` as a pure transformation (parent equals
+  the finding's own crate; Rust has no transitive-parent remediation
+  concept at the advisory level). New `isMajorBump` helper shared with
+  the TS/Python packs (identical implementation — flagged for
+  consolidation in 10h.6.4's cross-pack resolver). 5 new tests.
 - **Python `pip-audit` upgradePlan population** (10h.6.2) — pip-audit
   already returns `fix_versions[]` per advisory; we now map the first
   (minimal-resolving) entry into `DepVulnFinding.upgradePlan` alongside
