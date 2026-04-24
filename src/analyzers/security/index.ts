@@ -170,28 +170,40 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   // Dep-vuln per-package detail. Counts already appeared in the
   // Executive Summary; this section gives the actionable list (which
   // packages, which versions, which CVEs) so a reader can act without
-  // bouncing to the --detailed report.
+  // bouncing to the --detailed report. Sorted by composite riskScore
+  // desc so "this week's triage" sits at the top — matches bom's
+  // triage ordering.
   if (d.tool && d.findings.length > 0) {
     L.push(`## ${sectionNum}. Dependency Vulnerabilities`);
     L.push('');
-    L.push(`${d.findings.length} advisories across third-party packages (counts above).`);
-    L.push('');
-    const sorted = [...d.findings].sort(
-      (a, b) => SORDER[a.severity] - SORDER[b.severity] || a.package.localeCompare(b.package),
+    L.push(
+      `${d.findings.length} advisories across third-party packages (counts above), ` +
+        'ranked by composite risk score (CVSS × KEV × EPSS × reachable).',
     );
+    L.push('');
+    const sorted = [...d.findings].sort((a, b) => {
+      const ra = a.riskScore ?? -1;
+      const rb = b.riskScore ?? -1;
+      if (ra !== rb) return rb - ra;
+      return SORDER[a.severity] - SORDER[b.severity] || a.package.localeCompare(b.package);
+    });
     const cap = 50;
     const shown = sorted.slice(0, cap);
-    L.push('| Severity | Package@Version | ID | Fix | Tool |');
-    L.push('|----------|-----------------|----|-----|------|');
+    L.push('| Risk | Severity | KEV | Reach | Package@Version | ID | Fix | EPSS | Tool |');
+    L.push('|-----:|----------|:---:|:-----:|-----------------|----|-----|-----:|------|');
     for (const f of shown) {
+      const risk = typeof f.riskScore === 'number' ? `**${f.riskScore.toFixed(0)}**` : '—';
+      const kev = f.kev ? '⚠' : '';
+      const reach = f.reachable === true ? '✓' : f.reachable === false ? '·' : '';
+      const epss = typeof f.epssScore === 'number' ? `${(f.epssScore * 100).toFixed(2)}%` : '—';
       L.push(
-        `| ${f.severity.toUpperCase()} | \`${f.package}@${f.installedVersion ?? '?'}\` | \`${f.id}\` | ${f.fixedVersion ?? '—'} | ${f.tool} |`,
+        `| ${risk} | ${f.severity.toUpperCase()} | ${kev} | ${reach} | \`${f.package}@${f.installedVersion ?? '?'}\` | \`${f.id}\` | ${f.fixedVersion ?? '—'} | ${epss} | ${f.tool} |`,
       );
     }
     if (sorted.length > cap) {
       L.push('');
       L.push(
-        `_Showing ${cap} of ${sorted.length} advisories worst-first. Run with \`--detailed\` for the full inventory._`,
+        `_Showing ${cap} of ${sorted.length} advisories ranked by risk score. Run with \`--detailed\` for the full inventory + CVSS column._`,
       );
     }
     L.push('');
