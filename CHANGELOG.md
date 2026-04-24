@@ -27,15 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autonomous upgrade bots consume the structured form. New type
   `DepVulnUpgradePlan`.
 
-### Added — Tier-2 fix tools (Phase 10h.6.1)
+### Added — Tier-2 fix tools (Phase 10h.6.1 + 10h.6.2)
 
-- **TypeScript `osv-scanner fix` integration** — wraps `osv-scanner fix
-  --format json --manifest package.json --lockfile package-lock.json`
-  and stamps structured `upgradePlan` on each matching `DepVulnFinding`
-  surfaced by `npm audit`. Per-patch rollup: if one top-level bump
-  resolves N advisories, every finding's `upgradePlan.patches[]` lists
-  all N. Breaking detection normalizes pre-1.x where a minor bump
-  (0.5 → 0.6) is treated as breaking.
+- **TypeScript `osv-scanner fix` integration** (10h.6.1) — wraps
+  `osv-scanner fix --format json --manifest package.json --lockfile
+  package-lock.json` and stamps structured `upgradePlan` on each
+  matching `DepVulnFinding` surfaced by `npm audit`. Per-patch rollup:
+  if one top-level bump resolves N advisories, every finding's
+  `upgradePlan.patches[]` lists all N. Breaking detection normalizes
+  pre-1.x where a minor bump (0.5 → 0.6) is treated as breaking.
+- **Python `pip-audit` upgradePlan population** (10h.6.2) — pip-audit
+  already returns `fix_versions[]` per advisory; we now map the first
+  (minimal-resolving) entry into `DepVulnFinding.upgradePlan` alongside
+  the existing `fixedVersion`. Python's flat dep graph means
+  `upgradePlan.parent` equals the finding's own package — no transitive
+  parent to upgrade, just bump the vulnerable package directly. No new
+  subprocess call required; pure transformation of existing output.
 - **New tool in `TOOL_DEFS`** — `osv-scanner` (Node/TS pack, Tier-2).
   Installs via `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest`
   (macOS also tries `brew install osv-scanner` first). Soft-fails when
@@ -43,8 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from npm-audit) stays as the fallback and no findings are dropped.
 - **New helper** — `src/analyzers/tools/osv-scanner-fix.ts` exports
   `gatherOsvScannerFixPlans(cwd)`, `parseOsvScannerFixOutput(raw)`, and
-  `enrichWithUpgradePlans(findings, plans)`. 18 new tests with a real
+  `enrichWithUpgradePlans(findings, plans)`. 19 new tests with a real
   osv-scanner sample as fixture.
+- **New helper in Python pack** — `isMajorBump(from, to)` shared
+  between depVulns gather and tests. Same pre-1.x-minor-is-breaking
+  convention as the TypeScript pack. 5 new tests.
 
 ## [2.3.2] - 2026-04-24
 
