@@ -12,3 +12,7 @@ coverage/
 graphify-out/
 .ai/reports/
 .dxkit/
+
+# Claude Code local state — per-user, not committed
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
