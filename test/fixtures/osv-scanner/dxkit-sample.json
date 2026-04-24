@@ -1,0 +1,70 @@
+{
+  "path": "package.json",
+  "ecosystem": "npm",
+  "strategy": "relax",
+  "vulnerabilities": [
+    {
+      "id": "GHSA-4w7w-66w2-5vf9",
+      "packages": [
+        {
+          "name": "vite",
+          "version": "5.4.21"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-67mh-4wv8-2f99",
+      "packages": [
+        {
+          "name": "esbuild",
+          "version": "0.21.5"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-w5hq-g745-h8pq",
+      "packages": [
+        {
+          "name": "uuid",
+          "version": "8.3.2"
+        }
+      ],
+      "unactionable": true
+    }
+  ],
+  "patches": [
+    {
+      "packageUpdates": null
+    },
+    {
+      "packageUpdates": [
+        {
+          "name": "vitest",
+          "versionFrom": "^2.1.4",
+          "versionTo": "^3.2.4",
+          "transitive": false
+        }
+      ],
+      "fixed": [
+        {
+          "id": "GHSA-4w7w-66w2-5vf9",
+          "packages": [
+            {
+              "name": "vite",
+              "version": "5.4.21"
+            }
+          ]
+        },
+        {
+          "id": "GHSA-67mh-4wv8-2f99",
+          "packages": [
+            {
+              "name": "esbuild",
+              "version": "0.21.5"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

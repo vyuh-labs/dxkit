@@ -274,3 +274,6 @@ describe('buildRustTopLevelDepIndex', () => {
     expect(idx.get('bytes')).toEqual(['reqwest', 'tokio']);
   });
 });
+
+// `isMajorBump` shared helper moved to src/analyzers/tools/semver-bump.ts
+// in Phase 10h.6.4; full test coverage lives in test/semver-bump.test.ts.

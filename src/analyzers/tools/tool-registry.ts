@@ -442,6 +442,28 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'builtin',
     },
   },
+  'osv-scanner': {
+    name: 'osv-scanner',
+    description:
+      'OSV.dev dependency scanner + fix planner — populates structured upgradePlan on dep-vuln findings (Tier-2, Node/npm pack)',
+    install: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+    check: 'osv-scanner --version',
+    for: 'node',
+    layer: 'language',
+    binaries: ['osv-scanner'],
+    // Go installs to $GOBIN (→ $GOPATH/bin by default, or ~/go/bin) which
+    // is typically in $PATH on dev machines. Probe the canonical default
+    // explicitly so detection works on machines that only have `go` in
+    // PATH but not `go/bin`.
+    probePaths: [path.join(os.homedir(), 'go', 'bin')],
+    versionCheck: 'osv-scanner --version 2>/dev/null',
+    installCommands: {
+      macos:
+        'brew install osv-scanner || go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+      linux: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+      windows: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+    },
+  },
   'license-checker-rseidelsohn': {
     name: 'license-checker-rseidelsohn',
     description: 'License inventory for npm dependencies (maintained fork of license-checker)',

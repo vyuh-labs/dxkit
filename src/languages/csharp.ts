@@ -381,32 +381,41 @@ export function buildCsharpTopLevelDepIndex(parsed: {
 }
 
 /**
- * Locate the nearest `obj/project.assets.json` under cwd (NuGet's
- * lockfile equivalent, created by `dotnet restore`). Unlike the
- * shared `findMatchingRecursive`, we cannot skip `obj/` here —
- * that's literally where the file lives. Walks up to 4 levels deep
- * to handle solutions with nested projects. Returns the absolute
- * path of the first match, or null.
+ * Locate every `obj/project.assets.json` under cwd (NuGet's lockfile
+ * equivalent, created by `dotnet restore`). Unlike the shared
+ * `findMatchingRecursive`, we can't skip `obj/` — that's where the
+ * file lives. Walks up to `maxDepth` levels to cover solutions with
+ * multiple nested projects.
  *
- * Multi-project solutions currently use the first-found file's
- * graph — noted as a known limitation in the phase commit.
+ * Phase 10h.6.7 (closes D003): earlier revisions returned only the
+ * first match, so multi-project solutions got transitive attribution
+ * from one project's graph, missing vulns reachable only through
+ * siblings. `loadCsharpTopLevelDepIndex` now calls this and merges
+ * every returned graph before BFS.
+ *
+ * Exported for test coverage.
  */
-function findProjectAssetsJson(cwd: string, maxDepth = 4): string | null {
-  function search(dir: string, depth: number): string | null {
-    if (depth > maxDepth) return null;
+export function findAllProjectAssetsJson(cwd: string, maxDepth = 4): string[] {
+  const out: string[] = [];
+  function search(dir: string, depth: number): void {
+    if (depth > maxDepth) return;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      return null;
+      return;
     }
-    // Direct-child shortcut: if this directory is `obj`, check for
-    // the file right here before recursing.
-    for (const e of entries) {
-      if (e.isFile() && e.name === 'project.assets.json') {
-        // Only accept if parent directory is `obj`.
-        if (path.basename(dir) === 'obj') return path.join(dir, e.name);
+    // Direct-child shortcut: if this directory is `obj`, collect the
+    // file right here before recursing siblings. Skipping recursion
+    // into `obj/` keeps the walk bounded (obj/ contains no deeper
+    // projects of its own).
+    if (path.basename(dir) === 'obj') {
+      for (const e of entries) {
+        if (e.isFile() && e.name === 'project.assets.json') {
+          out.push(path.join(dir, e.name));
+        }
       }
+      return;
     }
     for (const e of entries) {
       if (
@@ -416,33 +425,63 @@ function findProjectAssetsJson(cwd: string, maxDepth = 4): string | null {
         continue;
       }
       if (e.isDirectory()) {
-        const nested = search(path.join(dir, e.name), depth + 1);
-        if (nested) return nested;
+        search(path.join(dir, e.name), depth + 1);
       }
     }
-    return null;
   }
-  return search(cwd, 0);
+  search(cwd, 0);
+  return out;
 }
 
 /**
- * Read + parse `obj/project.assets.json` and build the top-level
- * attribution index. Returns an empty map on any failure — transitive
- * findings simply ship without attribution rather than blocking the
- * scan. Matches Python pack's missing-venv semantics.
+ * Merge multiple `project.assets.json` parse results into a single
+ * graph. `topLevels` unions across projects; `edges` unions the
+ * adjacency sets — if project A lists `Newtonsoft.Json` → `Foo` and
+ * project B lists `Newtonsoft.Json` → `Bar`, the merged graph shows
+ * both children. Run BFS against the union so advisories reachable
+ * through any project's dep graph get attribution.
+ *
+ * Exported for test coverage.
+ */
+export function mergeAssetParses(
+  parses: ReadonlyArray<{ topLevels: string[]; edges: Map<string, Set<string>> }>,
+): { topLevels: string[]; edges: Map<string, Set<string>> } {
+  const edges = new Map<string, Set<string>>();
+  const topLevels = new Set<string>();
+  for (const p of parses) {
+    for (const t of p.topLevels) topLevels.add(t);
+    for (const [src, children] of p.edges) {
+      const bucket = edges.get(src) ?? new Set<string>();
+      for (const child of children) bucket.add(child);
+      edges.set(src, bucket);
+    }
+  }
+  return { topLevels: [...topLevels].sort(), edges };
+}
+
+/**
+ * Read + parse every discovered `obj/project.assets.json` under cwd
+ * and build the unified top-level attribution index. Returns an empty
+ * map on complete failure (no files / all files unreadable) —
+ * transitive findings then ship without attribution rather than
+ * blocking the scan.
  */
 function loadCsharpTopLevelDepIndex(cwd: string): Map<string, string[]> {
-  const assetsPath = findProjectAssetsJson(cwd);
-  if (!assetsPath) return new Map();
-  let raw: string;
-  try {
-    raw = fs.readFileSync(assetsPath, 'utf-8');
-  } catch {
-    return new Map();
+  const assetsPaths = findAllProjectAssetsJson(cwd);
+  if (assetsPaths.length === 0) return new Map();
+  const parses: Array<{ topLevels: string[]; edges: Map<string, Set<string>> }> = [];
+  for (const assetsPath of assetsPaths) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(assetsPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    const parsed = parseProjectAssetsJson(raw);
+    if (parsed) parses.push(parsed);
   }
-  const parsed = parseProjectAssetsJson(raw);
-  if (!parsed) return new Map();
-  return buildCsharpTopLevelDepIndex(parsed);
+  if (parses.length === 0) return new Map();
+  return buildCsharpTopLevelDepIndex(mergeAssetParses(parses));
 }
 
 /**

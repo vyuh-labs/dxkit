@@ -143,6 +143,7 @@ describe('typescript registration', () => {
     expect(typescript.tools).toEqual([
       'eslint',
       'npm-audit',
+      'osv-scanner',
       'vitest-coverage',
       'license-checker-rseidelsohn',
     ]);

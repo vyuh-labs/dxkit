@@ -96,3 +96,6 @@ describe('buildPyTopLevelDepIndex', () => {
     expect(idx.get('foo')).toEqual(['foo']);
   });
 });
+
+// `isMajorBump` shared helper moved to src/analyzers/tools/semver-bump.ts
+// in Phase 10h.6.4; full test coverage lives in test/semver-bump.test.ts.

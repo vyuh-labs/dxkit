@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-04-24
+
+Phase 10h.6 complete. Tier-2 fix tools + agent-handoff types +
+cross-pack upgrade-plan resolver + C# multi-project attribution.
+Closes defect D003. One user-facing theme: every `DepVulnFinding`
+that has a viable remediation now carries a structured
+`upgradePlan` that agents can consume directly — no more parsing
+free-text `upgradeAdvice` to figure out what to upgrade.
+
 ### Added — agent handoff (Phase 10h.6 kickoff)
 
 - **Advisory fingerprint** — `DepVulnFinding.fingerprint` is a stable
@@ -26,6 +35,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolver). Free-text advice stays for markdown/xlsx readability;
   autonomous upgrade bots consume the structured form. New type
   `DepVulnUpgradePlan`.
+
+### Added — Tier-2 fix tools (Phase 10h.6.1 + 10h.6.2)
+
+- **TypeScript `osv-scanner fix` integration** (10h.6.1) — wraps
+  `osv-scanner fix --format json --manifest package.json --lockfile
+  package-lock.json` and stamps structured `upgradePlan` on each
+  matching `DepVulnFinding` surfaced by `npm audit`. Per-patch rollup:
+  if one top-level bump resolves N advisories, every finding's
+  `upgradePlan.patches[]` lists all N. Breaking detection normalizes
+  pre-1.x where a minor bump (0.5 → 0.6) is treated as breaking.
+- **Rust `cargo-audit` upgradePlan population** (10h.6.3) — mirrors the
+  Python pattern: cargo-audit's existing JSON output already carries
+  per-advisory `versions.patched[]`, so we populate
+  `DepVulnFinding.upgradePlan` as a pure transformation (parent equals
+  the finding's own crate; Rust has no transitive-parent remediation
+  concept at the advisory level). New `isMajorBump` helper shared with
+  the TS/Python packs (identical implementation — flagged for
+  consolidation in 10h.6.4's cross-pack resolver). 5 new tests.
+- **Python `pip-audit` upgradePlan population** (10h.6.2) — pip-audit
+  already returns `fix_versions[]` per advisory; we now map the first
+  (minimal-resolving) entry into `DepVulnFinding.upgradePlan` alongside
+  the existing `fixedVersion`. Python's flat dep graph means
+  `upgradePlan.parent` equals the finding's own package — no transitive
+  parent to upgrade, just bump the vulnerable package directly. No new
+  subprocess call required; pure transformation of existing output.
+- **New tool in `TOOL_DEFS`** — `osv-scanner` (Node/TS pack, Tier-2).
+  Installs via `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest`
+  (macOS also tries `brew install osv-scanner` first). Soft-fails when
+  the binary isn't available — existing `upgradeAdvice` (free-text,
+  from npm-audit) stays as the fallback and no findings are dropped.
+- **New helper** — `src/analyzers/tools/osv-scanner-fix.ts` exports
+  `gatherOsvScannerFixPlans(cwd)`, `parseOsvScannerFixOutput(raw)`, and
+  `enrichWithUpgradePlans(findings, plans)`. 19 new tests with a real
+  osv-scanner sample as fixture.
+- **New helper in Python pack** — `isMajorBump(from, to)` shared
+  between depVulns gather and tests. Same pre-1.x-minor-is-breaking
+  convention as the TypeScript pack. 5 new tests.
+
+### Fixed — C# multi-project attribution (Phase 10h.6.7, closes D003)
+
+- Multi-project .NET solutions (web app + tests + shared libs) now
+  get correct top-level-dep attribution from every project's graph.
+  Earlier revisions walked to the **first** `obj/project.assets.json`
+  they found and built the attribution index from that one file —
+  advisories reachable only through sibling projects' dep chains
+  ended up without a `topLevelDep`. Fix: enumerate every
+  `project.assets.json` under cwd, merge the edge maps + union
+  top-level sets, run BFS against the merged graph. New exports in
+  `src/languages/csharp.ts`: `findAllProjectAssetsJson` and
+  `mergeAssetParses`. 5 new tests covering the merge semantics + the
+  concrete D003 case (advisory reachable through sibling only).
+
+### Added — cross-pack upgrade-plan resolver (Phase 10h.6.4)
+
+- **Shared `isMajorBump` helper** — three identical copies
+  (TS/Python/Rust from 10h.6.1–.3) consolidated into
+  `src/analyzers/tools/semver-bump.ts`. All three packs import from
+  the shared module; 7-test suite at `test/semver-bump.test.ts`
+  supersedes the inline duplicates.
+- **Cross-pack resolver** — new module
+  `src/analyzers/tools/upgrade-plan-resolver.ts` exposing
+  `resolveTransitiveUpgradePlans(findings)`. Runs after per-pack
+  Tier-2 tools and before riskScore composition. Two passes:
+    1. **Reconciliation** — for every advisory id listed in any
+       existing plan's `patches[]`, stamp the same plan onto the
+       matching finding (by id only, case-insensitive). Fills gaps
+       where a Tier-2 tool's `fixed[]` mentions an id that's carried
+       by another finding with a different (package, version) tuple.
+    2. **Free-text parse** — derives a plan from the npm-audit
+       transitive-fix template (`"Upgrade X to Y [major] (transitive
+       fix)"`) when no structured plan exists. Single-advisory scope
+       (patches=[finding.id]) since the free-text doesn't carry
+       cross-advisory rollup. Producer-written plans are
+       authoritative; resolver never overwrites.
+- **Wire-up** — `gatherDepVulns` in `src/analyzers/security/gather.ts`
+  now calls `resolveTransitiveUpgradePlans` after fingerprinting and
+  tier-3 enrichment, before composite `riskScore`. 11 new tests at
+  `test/upgrade-plan-resolver.test.ts`.
 
 ## [2.3.2] - 2026-04-24
 

@@ -5,6 +5,7 @@ import { parseCoveragePy } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
@@ -300,6 +301,18 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         // minimal upgrade that resolves the issue.
         if (v.fix_versions && v.fix_versions.length > 0) {
           finding.fixedVersion = v.fix_versions[0];
+          // Tier-2 structured plan (10h.6.2): Python's dep graph is flat —
+          // the fix is always an upgrade of the package itself, so parent
+          // == finding.package. `patches[]` carries just this advisory's
+          // id (pip-audit doesn't roll up "one upgrade fixes N advisories"
+          // the way osv-scanner does on npm). `breaking` derives from a
+          // major-version jump from the installed version to the target.
+          finding.upgradePlan = {
+            parent: finding.package,
+            parentVersion: v.fix_versions[0],
+            patches: [v.id],
+            breaking: isMajorBump(dep.version ?? '', v.fix_versions[0]),
+          };
         }
         // Filter empty alias entries — ECHO advisories occasionally emit [].
         const aliases = (v.aliases ?? []).filter((a) => a && a.length > 0);

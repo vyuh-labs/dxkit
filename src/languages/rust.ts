@@ -6,6 +6,7 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
@@ -236,7 +237,22 @@ export function parseCargoAuditOutput(
       // (e.g. ">=1.2.5"). Strip the leading comparator so the
       // bom render's "Upgrade to X" text reads cleanly. Multiple
       // patched constraints (rare) fall through with the first.
-      finding.fixedVersion = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+      const cleanFix = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+      finding.fixedVersion = cleanFix;
+      // Tier-2 structured plan (10h.6.3): Rust's dep graph is resolved
+      // by cargo in one go — there's no "transitive parent" concept like
+      // npm's where the fix is at a different package. The upgrade
+      // target IS the vulnerable crate itself, so parent == finding
+      // package. patches[] carries just this advisory's id (cargo-audit
+      // doesn't bundle multi-advisory rollups the way osv-scanner does).
+      // `breaking` derives from the semver-major comparison; same pre-
+      // 1.x convention as the TS/Python packs.
+      finding.upgradePlan = {
+        parent: finding.package,
+        parentVersion: cleanFix,
+        patches: [adv.id],
+        breaking: isMajorBump(v.package?.version ?? '', cleanFix),
+      };
     }
     const aliases = (adv.aliases ?? []).filter((a) => a && a.length > 0);
     if (aliases.length > 0) finding.aliases = aliases;

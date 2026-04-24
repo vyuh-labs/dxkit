@@ -14,6 +14,7 @@ import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
 import { buildReachablePackageSet, markReachable } from '../tools/reachability';
 import { scoreFindings } from '../tools/risk-score';
+import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
@@ -226,6 +227,15 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
         markReachable(findings, reachable);
       }
     }
+
+    // Cross-pack upgrade-plan resolver (Phase 10h.6.4). Runs after
+    // per-pack Tier-2 tools have stamped what they can, and before
+    // risk scoring so the composite riskScore can factor in the
+    // "actionable" bit (future 10h.9.2 CI gate uses it too). Fills
+    // gaps by (a) reconciling advisories across plans' `patches[]`
+    // lists and (b) parsing the npm-audit transitive-fix free-text
+    // template into a structured plan when no tool produced one.
+    resolveTransitiveUpgradePlans(findings);
 
     // Composite riskScore = f(cvss, epss, kev, reachable). Runs last
     // so every signal is populated. Formula is documented in
