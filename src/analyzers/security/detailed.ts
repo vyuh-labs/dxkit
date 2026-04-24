@@ -157,16 +157,20 @@ export function formatSecurityDetailedMarkdown(
       );
       L.push(`Per-advisory detail (${sortedDeps.length} findings):`);
       L.push('');
-      L.push('| Severity | ID | Package | Installed | Fixed | CVSS | EPSS | Tool |');
-      L.push('|----------|----|---------|-----------|-------|-----:|-----:|------|');
+      L.push('| Severity | KEV | ID | Package | Installed | Fixed | CVSS | EPSS | Tool |');
+      L.push('|----------|:---:|----|---------|-----------|-------|-----:|-----:|------|');
       for (const f of sortedDeps) {
         const cvss = f.cvssScore !== undefined ? f.cvssScore.toFixed(1) : '—';
         // EPSS rendered as a percentage (probability of exploitation in
         // the next 30 days per FIRST.org). Dash when no CVE alias was
         // scoreable or the EPSS dataset hasn't caught up to this CVE yet.
         const epss = typeof f.epssScore === 'number' ? `${(f.epssScore * 100).toFixed(2)}%` : '—';
+        // KEV badge: `⚠` when CISA has confirmed active exploitation
+        // — outranks EPSS probability as a remediation signal. Empty
+        // cell (not dash) to keep the column scannable visually.
+        const kev = f.kev ? '⚠' : '';
         L.push(
-          `| ${f.severity.toUpperCase()} | \`${f.id}\` | \`${f.package}\` | ${f.installedVersion ?? '—'} | ${f.fixedVersion ?? '—'} | ${cvss} | ${epss} | ${f.tool} |`,
+          `| ${f.severity.toUpperCase()} | ${kev} | \`${f.id}\` | \`${f.package}\` | ${f.installedVersion ?? '—'} | ${f.fixedVersion ?? '—'} | ${cvss} | ${epss} | ${f.tool} |`,
         );
       }
       L.push('');

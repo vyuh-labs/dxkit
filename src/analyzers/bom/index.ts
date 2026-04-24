@@ -262,8 +262,8 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       );
     const cap = 50;
     const shown = vuln.slice(0, cap);
-    L.push('| Severity | Package@Version | License | # Vulns | Max EPSS | Resolution |');
-    L.push('|----------|-----------------|---------|--------:|---------:|------------|');
+    L.push('| Severity | Package@Version | License | # Vulns | KEV | Max EPSS | Resolution |');
+    L.push('|----------|-----------------|---------|--------:|:---:|---------:|------------|');
     for (const e of shown) {
       const advice = e.upgradeAdvice.replace(/\|/g, '\\|');
       const epssScores = e.vulns
@@ -275,8 +275,11 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // visible), dash when no CVE had an EPSS entry.
       const epssCell =
         epssScores.length > 0 ? `${(Math.max(...epssScores) * 100).toFixed(2)}%` : '—';
+      // KEV cell: `⚠` when any advisory is in the CISA KEV catalog —
+      // the strongest "fix now" signal we can surface. Empty otherwise.
+      const kevCell = e.vulns.some((v) => v.kev) ? '⚠' : '';
       L.push(
-        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${epssCell} | ${advice} |`,
+        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${epssCell} | ${advice} |`,
       );
     }
     if (vuln.length > cap) {
