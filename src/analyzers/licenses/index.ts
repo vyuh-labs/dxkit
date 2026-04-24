@@ -106,19 +106,35 @@ export function formatLicensesReport(report: LicensesReport, elapsed: string): s
     );
   } else {
     const cap = 50;
-    const rows = [...report.findings].sort((a, b) => a.package.localeCompare(b.package));
+    // Sort top-level packages first, then alphabetical — same ordering
+    // bom uses so readers comparing the two reports see the same "direct
+    // dep" set at the top.
+    const rows = [...report.findings].sort((a, b) => {
+      const topA = a.isTopLevel === true ? 0 : 1;
+      const topB = b.isTopLevel === true ? 0 : 1;
+      if (topA !== topB) return topA - topB;
+      return a.package.localeCompare(b.package);
+    });
     const shown = rows.slice(0, cap);
-    L.push('| Package | Version | License | Description | Source URL |');
-    L.push('|---------|---------|---------|-------------|------------|');
+    // Direct column is the "⭐ fix here first" signal from 10h.5.0;
+    // Released column surfaces the npm-registry date (10h.5.1 / D006).
+    L.push('| Direct | Package | Version | License | Released | Description |');
+    L.push('|:------:|---------|---------|---------|----------|-------------|');
     for (const f of shown) {
       const desc = (f.description || '').replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 80);
-      const url = f.sourceUrl || '';
-      L.push(`| \`${f.package}\` | ${f.version} | ${f.licenseType} | ${desc} | ${url} |`);
+      const released = f.releaseDate ? f.releaseDate.slice(0, 10) : '—';
+      const direct = f.isTopLevel === true ? '⭐' : f.isTopLevel === false ? '' : '—';
+      L.push(
+        `| ${direct} | \`${f.package}\` | ${f.version} | ${f.licenseType} | ${released} | ${desc} |`,
+      );
     }
     if (rows.length > cap) {
       L.push('');
       L.push(
-        `_Showing ${cap} of ${rows.length} packages alphabetically. Run with \`--detailed\` for full inventory + risk review._`,
+        `_Showing ${cap} of ${rows.length} packages (top-level first, then alphabetical). ` +
+          'Run with `--detailed` for full inventory + risk review.' +
+          ` Direct column: ⭐ root manifest dep, blank transitive, — unknown (pack couldn't read lockfile).` +
+          '_',
       );
     }
   }
