@@ -11,11 +11,17 @@ import { run } from '../tools/runner';
 import { enrichEpss, extractCveId } from '../tools/epss';
 import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
+import { buildReachablePackageSet, markReachable } from '../tools/reachability';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
 import { detectActiveLanguages } from '../../languages';
-import { CODE_PATTERNS, DEP_VULNS, SECRETS } from '../../languages/capabilities/descriptors';
+import {
+  CODE_PATTERNS,
+  DEP_VULNS,
+  IMPORTS,
+  SECRETS,
+} from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
@@ -195,6 +201,22 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
         const score = scores.get(cve);
         if (score !== undefined) findings[idx].epssScore = score;
         if (kevHits.has(cve)) findings[idx].kev = true;
+      }
+    }
+
+    // Reachability — does the repo's source actually import any of
+    // these vulnerable packages? Dispatches the IMPORTS capability
+    // (which packs populate from their per-file specifier extraction)
+    // once, unions into a name set, then marks every finding. When
+    // no pack contributes imports (no source files / all packs
+    // declined), leaves `reachable` unset rather than mass-classify
+    // everything as false.
+    const importsProviders = providersFor(IMPORTS);
+    if (importsProviders.length > 0) {
+      const importsEnvelope = await defaultDispatcher.gather(cwd, IMPORTS, importsProviders);
+      if (importsEnvelope && importsEnvelope.extracted.size > 0) {
+        const reachable = buildReachablePackageSet(importsEnvelope);
+        markReachable(findings, reachable);
       }
     }
   }

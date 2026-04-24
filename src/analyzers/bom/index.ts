@@ -262,8 +262,12 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       );
     const cap = 50;
     const shown = vuln.slice(0, cap);
-    L.push('| Severity | Package@Version | License | # Vulns | KEV | Max EPSS | Resolution |');
-    L.push('|----------|-----------------|---------|--------:|:---:|---------:|------------|');
+    L.push(
+      '| Severity | Package@Version | License | # Vulns | KEV | Reach | Max EPSS | Resolution |',
+    );
+    L.push(
+      '|----------|-----------------|---------|--------:|:---:|:-----:|---------:|------------|',
+    );
     for (const e of shown) {
       const advice = e.upgradeAdvice.replace(/\|/g, '\\|');
       const epssScores = e.vulns
@@ -278,8 +282,13 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // KEV cell: `⚠` when any advisory is in the CISA KEV catalog —
       // the strongest "fix now" signal we can surface. Empty otherwise.
       const kevCell = e.vulns.some((v) => v.kev) ? '⚠' : '';
+      // Reach cell: `✓` when the repo's source imports this package
+      // (any advisory on it is reachable); empty cell when every
+      // advisory's `reachable === false`. Unset → blank (treated as
+      // "don't know", which is safer than implying non-reachability).
+      const reachCell = e.vulns.some((v) => v.reachable === true) ? '✓' : '';
       L.push(
-        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${epssCell} | ${advice} |`,
+        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${reachCell} | ${epssCell} | ${advice} |`,
       );
     }
     if (vuln.length > cap) {
