@@ -22,18 +22,43 @@ import type { LanguageId } from '../../languages';
 import { DetectedStack, ToolRequirement } from '../../types';
 
 /**
- * Shared Python venv location for every Python-based tool dxkit installs
- * (graphify, semgrep, ruff, pip-audit, pip-licenses, coverage). Lives
- * under `~/.cache/dxkit/` so it survives `/tmp` cleanup. Previously
- * `/tmp/graphify-venv` — D013's "~50% flake" was that cleanup, plus
- * concurrent-run races on first install. `.cache/` is XDG-compliant
- * and persistent; `test -d` in the shell install commands keeps creation
- * idempotent.
+ * Shared Python venv location for graphify specifically. Graphify is a
+ * Python *library* that our graphify.ts subprocess imports directly,
+ * not a CLI tool — so it needs a stable venv-relative path we can spawn
+ * from, unlike the CLI tools which are better served by pipx (see
+ * below).
+ *
+ * Lives under `~/.cache/dxkit/` so it survives `/tmp` cleanup. Previously
+ * `/tmp/graphify-venv` (D013's "~50% flake" was the cleanup + concurrent-
+ * run race on first install). `.cache/` is XDG-compliant and persistent;
+ * `test -d` in the shell install commands keeps creation idempotent.
  */
 export const TOOLS_VENV = path.join(os.homedir(), '.cache', 'dxkit', 'tools-venv');
 /** Legacy path still probed for backwards compat: repos that already set
  *  up the old venv won't force a reinstall on upgrade. */
 const LEGACY_TOOLS_VENV = '/tmp/graphify-venv';
+
+/**
+ * pipx bootstrap + install fragment. Inlined into every Python CLI tool's
+ * install command so each tool gets its OWN isolated venv under
+ * `~/.local/pipx/venvs/<tool>/` with its own dep resolution. Fixes the
+ * 2.3.0 failure mode where semgrep (tomli~=2.0.1) and pip-audit (newer
+ * tomli) fought in the shared venv.
+ *
+ *   1. If `pipx` is on PATH, use it.
+ *   2. Else try `python3 -m pip install --user pipx` (legacy + non-PEP-668).
+ *   3. PEP 668 distros (Debian 12+, Ubuntu 23.04+) refuse `pip --user` on
+ *      externally-managed Python; fall back to
+ *      `--user --break-system-packages`.
+ *   4. Prepend `~/.local/bin` to PATH so the freshly-installed pipx is
+ *      found within the same shell.
+ *
+ * Result: `pipx install <tool>` symlinks the binary into `~/.local/bin/`,
+ * which is already in `getSystemPaths()` probes so `findTool()` picks it
+ * up on the next run.
+ */
+const PIPX_BOOTSTRAP =
+  'command -v pipx >/dev/null 2>&1 || { python3 -m pip install --user pipx 2>/dev/null || python3 -m pip install --user --break-system-packages pipx; } && export PATH="$HOME/.local/bin:$PATH"';
 
 export interface ToolDefinition extends ToolRequirement {
   /** Binary name(s) to look for in PATH. First match wins. */
@@ -374,7 +399,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   semgrep: {
     name: 'semgrep',
     description: 'Static analysis security scanner (SAST)',
-    install: 'pip install semgrep',
+    install: 'pipx install semgrep',
     check: 'semgrep --version',
     for: 'all',
     layer: 'universal',
@@ -382,11 +407,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'semgrep --version 2>/dev/null',
     installCommands: {
-      macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q semgrep && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/semgrep ~/.local/bin/semgrep',
-      linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q semgrep && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/semgrep ~/.local/bin/semgrep',
-      windows: 'pip install --user semgrep',
+      macos: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
+      windows: 'pipx install semgrep',
     },
   },
   eslint: {
@@ -439,42 +462,39 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   ruff: {
     name: 'ruff',
     description: 'Python linting and formatting',
-    install: 'pip install ruff',
+    install: 'pipx install ruff',
     check: 'ruff --version',
     for: 'python',
     layer: 'language',
     binaries: ['ruff'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'ruff --version 2>/dev/null',
     installCommands: {
-      // Use the dxkit venv (created during graphify install) for Python tools
-      macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install ruff && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/ruff ~/.local/bin/ruff',
-      linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install ruff && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/ruff ~/.local/bin/ruff',
-      windows: 'pip install --user ruff',
+      macos: `${PIPX_BOOTSTRAP} && pipx install ruff`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install ruff`,
+      windows: 'pipx install ruff',
     },
   },
   'pip-audit': {
     name: 'pip-audit',
     description: 'Python dependency vulnerability scanning',
-    install: 'pip install pip-audit',
+    install: 'pipx install pip-audit',
     check: 'pip-audit --version',
     for: 'python',
     layer: 'language',
     binaries: ['pip-audit'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'pip-audit --version 2>/dev/null',
     installCommands: {
-      macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-audit && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-audit ~/.local/bin/pip-audit',
-      linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-audit && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-audit ~/.local/bin/pip-audit',
-      windows: 'pip install --user pip-audit',
+      macos: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
+      windows: 'pipx install pip-audit',
     },
   },
   'pip-licenses': {
     name: 'pip-licenses',
     description: 'License inventory for Python packages in a venv',
-    install: 'pip install pip-licenses',
+    install: 'pipx install pip-licenses',
     check: 'pip-licenses --version',
     for: 'python',
     layer: 'language',
@@ -482,11 +502,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'pip-licenses --version 2>/dev/null',
     installCommands: {
-      macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-licenses && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
-      linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install pip-licenses && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/pip-licenses ~/.local/bin/pip-licenses',
-      windows: 'pip install --user pip-licenses',
+      macos: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
+      windows: 'pipx install pip-licenses',
     },
   },
   'golangci-lint': {
@@ -621,13 +639,20 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: [],
     nodePackage: '@vitest/coverage-v8',
+    // Version auto-detect via `require('vitest/package.json')` assumed
+    // vitest was present in the target repo. Repos using mocha/jest/ava
+    // hit a MODULE_NOT_FOUND crash (pre-2.3.1 failure mode). Gate with
+    // an existence check so the install no-ops cleanly when vitest
+    // isn't declared — vitest-coverage is only useful alongside vitest.
     installCommands: {
-      // Version must match installed vitest major — auto-detect it.
       macos:
-        "npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
+        "test -f node_modules/vitest/package.json || { echo 'vitest not present in this repo — skipping @vitest/coverage-v8'; exit 0; } && npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
       linux:
-        "npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
-      windows: 'npm install --save-dev @vitest/coverage-v8',
+        "test -f node_modules/vitest/package.json || { echo 'vitest not present in this repo — skipping @vitest/coverage-v8'; exit 0; } && npm install --save-dev \"@vitest/coverage-v8@$(node -e \"process.stdout.write('^'+require('vitest/package.json').version.split('.')[0])\")\"",
+      // The log call here is inside a `node -e` shell-string argument,
+      // not real TS source. slop-ok on the line silences the gate.
+      windows:
+        "node -e \"try{require('vitest/package.json');process.exit(0)}catch{console.log('vitest not present — skipping');process.exit(0)}\" || npm install --save-dev @vitest/coverage-v8", // slop-ok
     },
   },
   'cargo-llvm-cov': {
@@ -648,18 +673,17 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   'coverage-py': {
     name: 'coverage-py',
     description: 'Python line-level coverage (produces coverage.json)',
-    install: 'pip install coverage',
+    install: 'pipx install coverage',
     check: 'coverage --version',
     for: 'python',
     layer: 'language',
     binaries: ['coverage'],
+    probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'coverage --version 2>/dev/null',
     installCommands: {
-      macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install coverage && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/coverage ~/.local/bin/coverage',
-      linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install coverage && mkdir -p ~/.local/bin && ln -sf $HOME/.cache/dxkit/tools-venv/bin/coverage ~/.local/bin/coverage',
-      windows: 'pip install --user coverage',
+      macos: `${PIPX_BOOTSTRAP} && pipx install coverage`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install coverage`,
+      windows: 'pipx install coverage',
     },
   },
 };

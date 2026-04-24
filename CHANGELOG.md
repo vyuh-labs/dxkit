@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-04-24
+
+Patch release fixing three install-robustness issues reported on a
+real vyuhlabs-platform install:
+
+### Fixed
+
+- **`@vitest/coverage-v8` install crashed with `MODULE_NOT_FOUND`** on
+  repos that don't use vitest (mocha / jest / ava / lb-mocha). The
+  install command called `node -e "require('vitest/package.json')"`
+  to auto-detect the vitest major — unconditionally, so any non-
+  vitest project hit a hard crash during `tools install --yes`.
+  Now prefixed with `test -f node_modules/vitest/package.json ||
+  { echo 'vitest not present — skipping'; exit 0; }` so the install
+  no-ops cleanly when vitest isn't a target-repo dep.
+
+- **Semgrep / pip-audit / ruff / pip-licenses / coverage dep pins
+  colliding in the shared venv**. Pre-2.3.1 installed every Python
+  CLI tool into one venv at `~/.cache/dxkit/tools-venv/`. semgrep's
+  `tomli~=2.0.1` pin lost to pip-audit's newer tomli, breaking
+  semgrep on repos where both tools installed. Every Python CLI
+  (semgrep, ruff, pip-audit, pip-licenses, coverage) now uses
+  `pipx install <tool>`, putting each in its own isolated venv
+  under `~/.local/pipx/venvs/<tool>/`. Binaries symlink into
+  `~/.local/bin/` which is already in `getSystemPaths()`'s probe
+  list, so `findTool()` picks them up without further changes.
+  Bootstrap fragment auto-installs pipx via `pip --user` when
+  absent (handles PEP-668 Debian/Ubuntu with
+  `--break-system-packages` fallback).
+
+- **Graphify stays on the shared venv** — it's a Python *library*
+  that our graphify.ts subprocess imports, not a CLI tool, so pipx
+  doesn't apply. `TOOLS_VENV` narrows to graphify-only.
+
+- **"Install command exited 0 without producing the binary" now
+  reports as skipped, not failed**. Any install command can
+  legitimately no-op (guarded installs like vitest-coverage);
+  those no-ops shouldn't clutter the failure summary. Real
+  failures (non-zero exit) still classify as `failed`.
+
+### Known limitations (not blocking)
+
+- `npm install @vyuhlabs/dxkit` still emits deprecation warnings for
+  `inflight@1`, `glob@7`, `fstream`, `rimraf@2`, `lodash.isequal` —
+  all transitive under `exceljs` (via `archiver` → `archiver-utils`).
+  exceljs@4.4.0 is the latest available; the chain is upstream.
+  Warnings only, no functional impact; would require either switching
+  xlsx libraries (breaking) or upstream archiver modernization.
+
+### Validation on vyuhlabs-platform/userserver
+
+- `vyuh-dxkit tools` reports 12/13 tools found (vitest-coverage
+  correctly listed as missing since lb-mocha is in use)
+- `vyuh-dxkit tools install --yes` reports `0 installed, 1 skipped,
+  0 failed` (clean)
+- `vyuh-dxkit bom --xlsx --filter=top-level` completes in 17s,
+  writes `.dxkit/reports/bom-YYYY-MM-DD.{md,xlsx}` cleanly
+
 ## [2.3.0] - 2026-04-24
 
 Minor release — turns the `bom` report from enumeration (1700+ rows
