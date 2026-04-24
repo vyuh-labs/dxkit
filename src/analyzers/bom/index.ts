@@ -249,24 +249,37 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   if (s.vulnerablePackages > 0) {
     L.push('## Vulnerable Packages');
     L.push('');
-    L.push('Sorted by severity (worst-first), then alphabetical. ');
-    L.push('Resolution column shows the Tier-1 derived upgrade target ');
-    L.push('(or "No fix available" when an advisory has no published patch).');
+    L.push(
+      'Sorted by **composite risk score** (CVSS × KEV × EPSS × reachable) when available, ' +
+        'falling back to severity + alphabetical. Resolution shows the Tier-1 derived upgrade ' +
+        'target (or "No fix available" when an advisory has no published patch).',
+    );
     L.push('');
     const SEV_RANK: Record<BomSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    const maxRisk = (e: BomEntry): number => {
+      let best = -1;
+      for (const v of e.vulns) {
+        if (typeof v.riskScore === 'number' && v.riskScore > best) best = v.riskScore;
+      }
+      return best;
+    };
     const vuln: BomEntry[] = report.entries
       .filter((e) => e.maxSeverity)
-      .sort(
-        (a, b) =>
-          SEV_RANK[a.maxSeverity!] - SEV_RANK[b.maxSeverity!] || a.package.localeCompare(b.package),
-      );
+      .sort((a, b) => {
+        const ra = maxRisk(a);
+        const rb = maxRisk(b);
+        if (ra !== rb) return rb - ra; // higher risk first
+        return (
+          SEV_RANK[a.maxSeverity!] - SEV_RANK[b.maxSeverity!] || a.package.localeCompare(b.package)
+        );
+      });
     const cap = 50;
     const shown = vuln.slice(0, cap);
     L.push(
-      '| Severity | Package@Version | License | # Vulns | KEV | Reach | Max EPSS | Resolution |',
+      '| Risk | Severity | CVSS | Package@Version | License | # Vulns | KEV | Reach | EPSS | Resolution |',
     );
     L.push(
-      '|----------|-----------------|---------|--------:|:---:|:-----:|---------:|------------|',
+      '|-----:|----------|-----:|-----------------|---------|--------:|:---:|:-----:|-----:|------------|',
     );
     for (const e of shown) {
       const advice = e.upgradeAdvice.replace(/\|/g, '\\|');
@@ -279,6 +292,14 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // visible), dash when no CVE had an EPSS entry.
       const epssCell =
         epssScores.length > 0 ? `${(Math.max(...epssScores) * 100).toFixed(2)}%` : '—';
+      // Max CVSS across the package's advisories — exposes the raw
+      // numeric severity alongside the categorical bucket so readers
+      // can distinguish 7.1 from 9.8 when both bucket as HIGH. Dash
+      // when no advisory had CVSS data.
+      const cvssScores = e.vulns
+        .map((v) => v.cvssScore)
+        .filter((s): s is number => typeof s === 'number');
+      const cvssCell = cvssScores.length > 0 ? Math.max(...cvssScores).toFixed(1) : '—';
       // KEV cell: `⚠` when any advisory is in the CISA KEV catalog —
       // the strongest "fix now" signal we can surface. Empty otherwise.
       const kevCell = e.vulns.some((v) => v.kev) ? '⚠' : '';
@@ -287,8 +308,13 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // advisory's `reachable === false`. Unset → blank (treated as
       // "don't know", which is safer than implying non-reachability).
       const reachCell = e.vulns.some((v) => v.reachable === true) ? '✓' : '';
+      // Risk: max composite riskScore across the package's advisories.
+      // Leading column so the eye catches priority first. Dash when
+      // no advisory had a CVSS (riskScore uncomputable).
+      const risk = maxRisk(e);
+      const riskCell = risk >= 0 ? `**${risk.toFixed(0)}**` : '—';
       L.push(
-        `| ${SEV_BADGE[e.maxSeverity!]} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${reachCell} | ${epssCell} | ${advice} |`,
+        `| ${riskCell} | ${SEV_BADGE[e.maxSeverity!]} | ${cvssCell} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${reachCell} | ${epssCell} | ${advice} |`,
       );
     }
     if (vuln.length > cap) {
