@@ -16,6 +16,7 @@
 
 import * as path from 'path';
 import { detect } from '../../detect';
+import { collectFingerprints } from '../tools/fingerprint';
 import { run } from '../tools/runner';
 import { discoverProjectRoots } from './discovery';
 import { buildByTopLevelDep, gatherBomEntries, mergeNestedBomEntries } from './gather';
@@ -79,6 +80,12 @@ export async function analyzeBom(
     if (!e.joinedFromBoth) vulnOnlyPackages++;
   }
 
+  // Manifest of every advisory identity in the (post-filter) report.
+  // Drawn from `entries` rather than `rawEntries` so `filter=top-level`
+  // reports surface only the fingerprints the caller actually sees —
+  // diffing two filtered reports stays consistent.
+  const fingerprints = collectFingerprints(entries.flatMap((e) => e.vulns));
+
   return {
     repo: stack.projectName || path.basename(repoPath),
     analyzedAt: new Date().toISOString(),
@@ -96,6 +103,7 @@ export async function analyzeBom(
       filter,
       unfilteredTotalPackages: rawEntries.length,
       projectRoots,
+      fingerprints,
     },
     entries,
     toolsUsed,

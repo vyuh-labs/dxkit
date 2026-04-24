@@ -9,6 +9,7 @@
  */
 import { run } from '../tools/runner';
 import { enrichEpss, extractCveId } from '../tools/epss';
+import { stampFingerprints } from '../tools/fingerprint';
 import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
 import { buildReachablePackageSet, markReachable } from '../tools/reachability';
@@ -173,6 +174,11 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
   // alias list including the CVE. One OSV roundtrip resolves the
   // whole batch; one EPSS roundtrip scores them all.
   const findings = envelope.findings ?? [];
+  // Stamp durable identity on every finding before enrichment. The hash
+  // inputs are package/version/id only, so stamping is independent of
+  // EPSS/KEV/reachability results — keeps `fingerprint` stable across
+  // runs even if enrichment tooling changes underneath.
+  stampFingerprints(findings);
   if (findings.length > 0) {
     const cveByFinding = new Map<number, string>();
     const needsAliasLookup: Array<{ idx: number; primary: string }> = [];

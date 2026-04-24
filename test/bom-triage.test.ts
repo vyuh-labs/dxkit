@@ -21,6 +21,7 @@ function mkReport(entries: BomEntry[]): BomReport {
       filter: 'all',
       unfilteredTotalPackages: entries.length,
       projectRoots: ['.'],
+      fingerprints: [],
     },
     entries,
     toolsUsed: [],

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — agent handoff (Phase 10h.6 kickoff)
+
+- **Advisory fingerprint** — `DepVulnFinding.fingerprint` is a stable
+  16-char hash of `(package, installedVersion, id)`, stamped by the
+  cross-pack aggregator after enrichment. Identity is input-only —
+  re-scoring or enrichment changes do not mint a new fingerprint.
+  `BomReport.summary.fingerprints` ships the sorted-deduplicated
+  manifest so external tooling (suppressions, CI gates, upgrade bots)
+  can diff two reports by plain set difference. New helper
+  `src/analyzers/tools/fingerprint.ts`.
+
+- **Structured upgradePlan** — `DepVulnFinding.upgradePlan` is a typed
+  sibling to the existing free-text `upgradeAdvice`:
+  `{ parent, parentVersion, patches[], breaking }`. Populated by the
+  Tier-2 fix tools landing in 10h.6.1–.4 (`osv-scanner fix`,
+  `pip-audit --fix`, `cargo audit fix`, the cross-pack transitive
+  resolver). Free-text advice stays for markdown/xlsx readability;
+  autonomous upgrade bots consume the structured form. New type
+  `DepVulnUpgradePlan`.
+
 ## [2.3.2] - 2026-04-24
 
 PM-grade bom reports. The xlsx and markdown outputs both restructure
