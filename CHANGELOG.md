@@ -64,6 +64,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between depVulns gather and tests. Same pre-1.x-minor-is-breaking
   convention as the TypeScript pack. 5 new tests.
 
+### Fixed — C# multi-project attribution (Phase 10h.6.7, closes D003)
+
+- Multi-project .NET solutions (web app + tests + shared libs) now
+  get correct top-level-dep attribution from every project's graph.
+  Earlier revisions walked to the **first** `obj/project.assets.json`
+  they found and built the attribution index from that one file —
+  advisories reachable only through sibling projects' dep chains
+  ended up without a `topLevelDep`. Fix: enumerate every
+  `project.assets.json` under cwd, merge the edge maps + union
+  top-level sets, run BFS against the merged graph. New exports in
+  `src/languages/csharp.ts`: `findAllProjectAssetsJson` and
+  `mergeAssetParses`. 5 new tests covering the merge semantics + the
+  concrete D003 case (advisory reachable through sibling only).
+
 ### Added — cross-pack upgrade-plan resolver (Phase 10h.6.4)
 
 - **Shared `isMajorBump` helper** — three identical copies

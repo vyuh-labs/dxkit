@@ -3,6 +3,7 @@ import {
   parseDotnetVulnerableOutput,
   parseProjectAssetsJson,
   buildCsharpTopLevelDepIndex,
+  mergeAssetParses,
 } from '../src/languages/csharp';
 
 // Fixture JSONs mirror the dotnet list package --vulnerable --format json
@@ -430,5 +431,66 @@ describe('buildCsharpTopLevelDepIndex', () => {
     });
     expect(idx.get('A')).toEqual(['A']);
     expect(idx.get('B')).toEqual(['A']);
+  });
+});
+
+describe('mergeAssetParses (D003 — multi-project merge)', () => {
+  it('unions top-level sets across projects', () => {
+    const a = { topLevels: ['Alpha', 'Shared'], edges: new Map<string, Set<string>>() };
+    const b = { topLevels: ['Beta', 'Shared'], edges: new Map<string, Set<string>>() };
+    const merged = mergeAssetParses([a, b]);
+    expect(merged.topLevels).toEqual(['Alpha', 'Beta', 'Shared']);
+  });
+
+  it('unions edge adjacency for the same source package', () => {
+    // Project A sees Newtonsoft.Json → Foo; project B sees it → Bar.
+    // The merged graph shows both children reachable from Newtonsoft.Json.
+    const a = {
+      topLevels: ['Alpha'],
+      edges: new Map<string, Set<string>>([['Newtonsoft.Json', new Set(['Foo'])]]),
+    };
+    const b = {
+      topLevels: ['Beta'],
+      edges: new Map<string, Set<string>>([['Newtonsoft.Json', new Set(['Bar'])]]),
+    };
+    const merged = mergeAssetParses([a, b]);
+    expect(merged.edges.get('Newtonsoft.Json')).toEqual(new Set(['Foo', 'Bar']));
+  });
+
+  it('enables attribution reachable through a sibling project only', () => {
+    // This is the core D003 case: vulnerability in `Leaf` reachable ONLY
+    // via `Beta` project's graph. First-project-wins logic would miss it.
+    const a = {
+      topLevels: ['Alpha'],
+      edges: new Map<string, Set<string>>([['Alpha', new Set(['UnrelatedDep'])]]),
+    };
+    const b = {
+      topLevels: ['Beta'],
+      edges: new Map<string, Set<string>>([
+        ['Beta', new Set(['Middle'])],
+        ['Middle', new Set(['Leaf'])],
+      ]),
+    };
+    const merged = mergeAssetParses([a, b]);
+    const idx = buildCsharpTopLevelDepIndex(merged);
+    // Pre-fix, attribution would be empty because only project A's
+    // assets was read. Post-fix, Leaf is correctly attributed to Beta.
+    expect(idx.get('Leaf')).toEqual(['Beta']);
+  });
+
+  it('handles empty input gracefully', () => {
+    const merged = mergeAssetParses([]);
+    expect(merged.topLevels).toEqual([]);
+    expect(merged.edges.size).toBe(0);
+  });
+
+  it('handles a single-project input identically to pre-fix behavior', () => {
+    const single = {
+      topLevels: ['Solo'],
+      edges: new Map<string, Set<string>>([['Solo', new Set(['Child'])]]),
+    };
+    const merged = mergeAssetParses([single]);
+    expect(merged.topLevels).toEqual(['Solo']);
+    expect(merged.edges.get('Solo')).toEqual(new Set(['Child']));
   });
 });
