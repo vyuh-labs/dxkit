@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-04-24
+
+Phase 10h.6 complete. Tier-2 fix tools + agent-handoff types +
+cross-pack upgrade-plan resolver + C# multi-project attribution.
+Closes defect D003. One user-facing theme: every `DepVulnFinding`
+that has a viable remediation now carries a structured
+`upgradePlan` that agents can consume directly — no more parsing
+free-text `upgradeAdvice` to figure out what to upgrade.
+
 ### Added — agent handoff (Phase 10h.6 kickoff)
 
 - **Advisory fingerprint** — `DepVulnFinding.fingerprint` is a stable
