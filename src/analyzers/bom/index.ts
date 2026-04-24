@@ -133,6 +133,91 @@ const SEV_BADGE: Record<BomSeverity, string> = {
   low: 'LOW',
 };
 
+/**
+ * Row in the "This Week's Triage" section. Pure projection over the
+ * flattened advisories sorted by riskScore desc — exposed for tests
+ * so the one-line rationale logic is verifiable without a full report
+ * fixture.
+ */
+export interface TriageRow {
+  risk: number;
+  id: string;
+  packageAtVersion: string;
+  rationale: string;
+  fix: string;
+}
+
+/**
+ * Build the triage list: top N advisories by riskScore across the
+ * whole bom, each with a one-line rationale stitched from the
+ * signals that drove the score. Filters out advisories below
+ * `minRisk` so the section stays the "interesting" subset —
+ * not every advisory the bom touched.
+ *
+ * Rationale is constructed left-to-right from the most decisive
+ * signals: KEV > reachable > high CVSS > high EPSS, so the reader
+ * can immediately see *why* this entry sits high. Examples:
+ *
+ *   - "KEV, reachable, CVSS 9.8"
+ *   - "reachable, CVSS 4.8"
+ *   - "CVSS 9.1" (transitive only, no reach/KEV signal)
+ *
+ * Pure function; exported for unit tests.
+ */
+export function buildTriageRows(report: BomReport, limit: number, minRisk: number): TriageRow[] {
+  interface Flat {
+    risk: number;
+    id: string;
+    packageAtVersion: string;
+    cvss?: number;
+    epss?: number;
+    kev?: boolean;
+    reachable?: boolean;
+    upgradeAdvice: string;
+  }
+  const flat: Flat[] = [];
+  for (const e of report.entries) {
+    for (const v of e.vulns) {
+      if (typeof v.riskScore !== 'number') continue;
+      if (v.riskScore < minRisk) continue;
+      flat.push({
+        risk: v.riskScore,
+        id: v.id,
+        packageAtVersion: `${e.package}@${e.version}`,
+        cvss: v.cvssScore,
+        epss: v.epssScore,
+        kev: v.kev,
+        reachable: v.reachable,
+        upgradeAdvice: v.upgradeAdvice ?? e.upgradeAdvice,
+      });
+    }
+  }
+  flat.sort((a, b) => b.risk - a.risk || a.id.localeCompare(b.id));
+  const top = flat.slice(0, limit);
+
+  return top.map((f) => {
+    const parts: string[] = [];
+    if (f.kev) parts.push('KEV');
+    if (f.reachable === true) parts.push('reachable');
+    if (f.reachable === false) parts.push('not reachable');
+    if (typeof f.cvss === 'number') parts.push(`CVSS ${f.cvss.toFixed(1)}`);
+    if (typeof f.epss === 'number' && f.epss >= 0.01) {
+      parts.push(`EPSS ${(f.epss * 100).toFixed(1)}%`);
+    }
+    const rationale = parts.length > 0 ? parts.join(', ') : '—';
+    // Keep fix concise: strip the leading "PROPOSAL:" noise so the
+    // cell reads as a direct instruction.
+    const fix = (f.upgradeAdvice || '—').replace(/^PROPOSAL:\s*/, '').replace(/\|/g, '\\|');
+    return {
+      risk: f.risk,
+      id: f.id,
+      packageAtVersion: f.packageAtVersion,
+      rationale,
+      fix,
+    };
+  });
+}
+
 export function formatBomReport(report: BomReport, elapsed: string): string {
   const L: string[] = [];
 
@@ -144,6 +229,33 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   L.push('');
   L.push('---');
   L.push('');
+
+  // "This Week's Triage" — top advisories by riskScore, rendered
+  // before the summary so the reader sees what to fix *first* above
+  // the statistical overview. Only included when at least one
+  // advisory crossed the moderate risk threshold (≥ 15). Limits
+  // to 10 rows to keep it scannable; the full inventory follows.
+  const triage = buildTriageRows(report, 10, 15);
+  if (triage.length > 0) {
+    L.push("## This Week's Triage");
+    L.push('');
+    L.push(
+      `Top ${triage.length} advisor${triage.length === 1 ? 'y' : 'ies'} by composite ` +
+        'risk score (CVSS × KEV × EPSS × reachable). Fix from the top of this list — ' +
+        'higher score = more signal that it matters *right now*.',
+    );
+    L.push('');
+    L.push('| Risk | ID | Package@Version | Rationale | Fix |');
+    L.push('|-----:|----|-----------------|-----------|-----|');
+    for (const row of triage) {
+      L.push(
+        `| **${row.risk.toFixed(0)}** | \`${row.id}\` | \`${row.packageAtVersion}\` | ${row.rationale} | ${row.fix} |`,
+      );
+    }
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
 
   // Summary
   const s = report.summary;
