@@ -5,7 +5,7 @@
  * capability across every active language pack. Output formats:
  *
  *   - `formatLicensesMarkdown(report)` — table markdown for
- *     `.ai/reports/licenses-<date>.md` and PR comments.
+ *     `.dxkit/reports/licenses-<date>.md` and PR comments.
  *   - JSON via the CLI's `--json` flag — envelope pass-through with
  *     the added summary + repo metadata.
  *   - XLSX — 15-column drop-in for the customer's spreadsheet

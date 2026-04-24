@@ -7,7 +7,7 @@ description: Run a comprehensive codebase health audit (tests, quality, docs, se
 Check if a deterministic report already exists:
 
 ```bash
-ls .ai/reports/health-audit-*.md 2>/dev/null | tail -1
+ls .dxkit/reports/health-audit-*.md 2>/dev/null | tail -1
 ```
 
 **If a report exists**: Read it. The scores and metrics are deterministic ground truth — do not change them. Skip to Step 3.
@@ -23,7 +23,7 @@ npx vyuh-dxkit health . --json 2>/dev/null
 ```
 
 **If the command succeeds** (returns JSON with `summary.overallScore`):
-- The CLI saves a report to `.ai/reports/health-audit-YYYY-MM-DD.md`
+- The CLI saves a report to `.dxkit/reports/health-audit-YYYY-MM-DD.md`
 - Read that report. Proceed to Step 3.
 
 **If the command fails** (not installed or errors):
@@ -47,7 +47,7 @@ Add a **Prioritized Action Items** section at the end:
 
 **If you have deterministic scores: keep all numbers exactly as reported. Add context and explanations only — do not re-score.**
 
-Save the enriched report to `.ai/reports/health-audit-YYYY-MM-DD.md`.
+Save the enriched report to `.dxkit/reports/health-audit-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

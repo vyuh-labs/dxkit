@@ -4,7 +4,7 @@ description: Audit documentation gaps or write/improve docs
 
 Delegate to the **doc-writer** agent. It can audit documentation quality, identify gaps, and help write or improve docs.
 
-When auditing, **save the report to `.ai/reports/docs-audit-YYYY-MM-DD.md`** (use today's date).
+When auditing, **save the report to `.dxkit/reports/docs-audit-YYYY-MM-DD.md`** (use today's date).
 
 Examples:
 - `/docs audit` — Assess documentation quality and list gaps

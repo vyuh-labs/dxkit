@@ -5,7 +5,7 @@ description: Find critical code paths that lack test coverage
 ## Step 1: Check for Existing Report
 
 ```bash
-ls .ai/reports/test-gaps-*.md 2>/dev/null | tail -1
+ls .dxkit/reports/test-gaps-*.md 2>/dev/null | tail -1
 ```
 
 **If a report exists**: Read it. The file counts, coverage %, and risk tiers are deterministic. Skip to Step 3.
@@ -38,7 +38,7 @@ Add a **Test Infrastructure Setup** section if tests are at 0%:
 
 **Do not change coverage %, file counts, or risk classifications from the deterministic report.**
 
-Save to `.ai/reports/test-gaps-YYYY-MM-DD.md`.
+Save to `.dxkit/reports/test-gaps-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

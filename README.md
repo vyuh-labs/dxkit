@@ -15,8 +15,12 @@ Built so agent-written code has deterministic guardrails before it ships. Scores
 cd your-repo
 npx @vyuhlabs/dxkit tools install --yes      # one-time: install cloc, gitleaks, etc.
 npx @vyuhlabs/dxkit health --detailed         # 6-dimension score + remediation plan
-npx @vyuhlabs/dxkit vulnerabilities           # secret + SAST + dep-audit scan
+npx @vyuhlabs/dxkit vulnerabilities           # secret + SAST + dep-audit (ranked by risk)
+npx @vyuhlabs/dxkit bom --filter=top-level    # Bill of Materials w/ "This Week's Triage"
 npx @vyuhlabs/dxkit test-gaps                 # import-graph + coverage-aware
+npx @vyuhlabs/dxkit quality                   # slop + duplication + lint
+npx @vyuhlabs/dxkit licenses                  # dependency license inventory
+npx @vyuhlabs/dxkit dev-report                # git activity + contributors
 ```
 
 **Scaffold AI tooling into a repo:**
@@ -32,31 +36,33 @@ The two modes are complementary. The analyzers run anywhere; the scaffolder writ
 
 ## Analyzer CLI (`vyuh-dxkit <command>`)
 
-Seven deterministic analyzers. Each emits a markdown report to `.ai/reports/` and optional structured JSON.
+Seven deterministic analyzers. Each emits a markdown report to `.dxkit/reports/` and optional structured JSON.
 
-| Command           | What it does                                                                                                                                | Runtime | Output                                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
-| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                                                                             | 10–20s  | `.ai/reports/health-audit-<date>.md`       |
-| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)                                                               | 5–30s   | `.ai/reports/vulnerability-scan-<date>.md` |
-| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                | <1s     | `.ai/reports/test-gaps-<date>.md`          |
-| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                      | 5–15s   | `.ai/reports/quality-review-<date>.md`     |
-| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                  | <1s     | `.ai/reports/developer-report-<date>.md`   |
-| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)                                                                | 5–20s   | `.ai/reports/licenses-<date>.md`           |
-| `bom`             | **Bill of Materials** — joins licenses + vulnerabilities per package, 15-col XLSX; groups advisories by top-level manifest dep (Snyk-style) | 10–40s  | `.ai/reports/bom-<date>.{md,xlsx}`         |
+| Command           | What it does                                                                                                                                                                                                                                                                                                          | Runtime | Output                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
+| `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                                                                                                                                                                                                                                                       | 10–20s  | `.dxkit/reports/health-audit-<date>.md`       |
+| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)                                                                                                                                                                                                                                         | 5–30s   | `.dxkit/reports/vulnerability-scan-<date>.md` |
+| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                                                                                                                                                                                          | <1s     | `.dxkit/reports/test-gaps-<date>.md`          |
+| `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                                                                                                                                                                                                | 5–15s   | `.dxkit/reports/quality-review-<date>.md`     |
+| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                                                                                                                                                                                            | <1s     | `.dxkit/reports/developer-report-<date>.md`   |
+| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)                                                                                                                                                                                                                                          | 5–20s   | `.dxkit/reports/licenses-<date>.md`           |
+| `bom`             | **Bill of Materials** — joins licenses + vulns per package, groups by top-level manifest dep (Snyk-style), enriches with CISA KEV + EPSS + reachability, ranks by composite risk score with "This Week's Triage" summary, aggregates nested sub-projects, `--filter=top-level` collapses transitive rows, 15-col XLSX | 10–40s  | `.dxkit/reports/bom-<date>.{md,xlsx}`         |
 
 Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
 
 ### Flags (apply to all analyzer commands)
 
-| Flag             | Effect                                                                                 |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions  |
-| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                        |
-| `--verbose`      | Print per-tool timing to stderr                                                        |
-| `--no-save`      | Skip writing markdown; useful with `--json`                                            |
-| `--xlsx`         | (`licenses`, `bom` only) Also write 15-col `.xlsx` — drop-in for spreadsheet workflows |
-| `-o <file>`      | (`licenses`, `bom`, `to-xlsx`) Override output path for xlsx / converted file          |
-| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                           |
+| Flag             | Effect                                                                                                                                        |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions                                                         |
+| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                                                                               |
+| `--verbose`      | Print per-tool timing to stderr                                                                                                               |
+| `--no-save`      | Skip writing markdown; useful with `--json`                                                                                                   |
+| `--xlsx`         | (`licenses`, `bom` only) Also write 15-col `.xlsx` — drop-in for spreadsheet workflows                                                        |
+| `-o <file>`      | (`licenses`, `bom`, `to-xlsx`) Override output path for xlsx / converted file                                                                 |
+| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                                                                                  |
+| `--filter`       | (`bom` only) `all` (default) or `top-level` — keep only root manifest deps; the byTopLevelDep rollup still reflects transitives               |
+| `--no-nested`    | (`bom` only) Disable nested-project aggregation. Default discovers every sub-project with a language manifest under cwd and merges their BOMs |
 
 ### Detailed mode — evidence + ranked fixes
 
@@ -188,7 +194,7 @@ CLAUDE.md                  # Main context file for Claude Code
 
 The scaffolded slash commands (`/health`, `/vulnerabilities`, `/test-gaps`, `/quality`, `/dev-report`) use a three-tier fallback:
 
-1. **Check for an existing report** in `.ai/reports/` from today
+1. **Check for an existing report** in `.dxkit/reports/` from today
 2. **Run `vyuh-dxkit <command>`** — deterministic, fast, same output
 3. **Fall back to LLM analysis** only if the CLI isn't available
 
@@ -313,10 +319,10 @@ Both loops use the session framework — checkpoints, skill evolution, progress 
 
 ## Reports
 
-All analyzer commands save timestamped reports to `.ai/reports/`:
+All analyzer commands save timestamped reports to `.dxkit/reports/`:
 
 ```
-.ai/reports/
+.dxkit/reports/
   health-audit-<date>.md
   health-audit-<date>-detailed.md           # with --detailed
   health-audit-<date>-detailed.json         # agent-consumable
@@ -359,12 +365,17 @@ When create-devstack writes `.project.yaml` before calling dxkit, detection and 
 ## CLI Reference
 
 ```bash
-# Analyzer commands
-vyuh-dxkit health [path]              # 6-dimension score
-vyuh-dxkit vulnerabilities [path]     # Security scan
-vyuh-dxkit test-gaps [path]           # Coverage + gaps + actions
-vyuh-dxkit quality [path]             # Slop + duplication + lint
-vyuh-dxkit dev-report [path]          # Git activity report
+# Analyzer commands — each writes to .dxkit/reports/<name>-<date>.md
+vyuh-dxkit health [path]                       # 6-dimension score
+vyuh-dxkit vulnerabilities [path]              # Security scan, ranked by composite risk
+vyuh-dxkit test-gaps [path]                    # Coverage + gaps + actions
+vyuh-dxkit quality [path]                      # Slop + duplication + lint
+vyuh-dxkit dev-report [path] [--since <date>]  # Git activity report
+vyuh-dxkit licenses [path]                     # Dependency license inventory
+vyuh-dxkit bom [path] [--filter=top-level]     # Bill of Materials + risk-ranked triage
+
+# Data conversion
+vyuh-dxkit to-xlsx <json-file>        # render licenses/bom detailed JSON as 15-col XLSX
 
 # Tool management
 vyuh-dxkit tools                      # status

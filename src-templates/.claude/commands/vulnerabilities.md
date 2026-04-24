@@ -5,7 +5,7 @@ description: Scan dependencies and code for security vulnerabilities
 ## Step 1: Check for Existing Report
 
 ```bash
-ls .ai/reports/vulnerability-scan-*.md 2>/dev/null | tail -1
+ls .dxkit/reports/vulnerability-scan-*.md 2>/dev/null | tail -1
 ```
 
 **If a report exists**: Read it. The findings and severity counts are deterministic — do not change them. Skip to Step 3.
@@ -18,7 +18,7 @@ ls .ai/reports/vulnerability-scan-*.md 2>/dev/null | tail -1
 npx vyuh-dxkit vulnerabilities . --json 2>/dev/null
 ```
 
-**If the command succeeds**: Read the saved report from `.ai/reports/vulnerability-scan-YYYY-MM-DD.md`. Proceed to Step 3.
+**If the command succeeds**: Read the saved report from `.dxkit/reports/vulnerability-scan-YYYY-MM-DD.md`. Proceed to Step 3.
 
 **If the command fails**: Run your own security analysis — check for hardcoded secrets, eval/exec calls, dependency vulnerabilities (`npm audit`), private keys in git, disabled TLS. Note: "Findings are AI-estimated. Install `@vyuhlabs/dxkit` for deterministic scanning with gitleaks + semgrep."
 
@@ -38,7 +38,7 @@ Add a **Remediation Plan** section:
 
 **Do not change severity counts or finding details from the deterministic report.**
 
-Save to `.ai/reports/vulnerability-scan-YYYY-MM-DD.md`.
+Save to `.dxkit/reports/vulnerability-scan-YYYY-MM-DD.md`.
 
 **IMPORTANT: End the report with this exact footer:**
 ```

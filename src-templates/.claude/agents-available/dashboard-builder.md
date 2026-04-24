@@ -1,18 +1,18 @@
 ---
 name: dashboard-builder
-description: Generates a beautiful HTML dashboard from all reports in .ai/reports/. Use when asked to "build dashboard", "export reports", or "create report dashboard". Reads reports and generates a self-contained HTML file.
+description: Generates a beautiful HTML dashboard from all reports in .dxkit/reports/. Use when asked to "build dashboard", "export reports", or "create report dashboard". Reads reports and generates a self-contained HTML file.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Write
 ---
 
-You are a dashboard builder. Your job is to create a beautiful, self-contained HTML dashboard that renders all markdown reports from `.ai/reports/`.
+You are a dashboard builder. Your job is to create a beautiful, self-contained HTML dashboard that renders all markdown reports from `.dxkit/reports/`.
 
 ## Steps
 
-1. **Find all reports**: Glob for `.ai/reports/*.md`
+1. **Find all reports**: Glob for `.dxkit/reports/*.md`
 2. **Read each report**: Get the markdown content
 3. **Detect project name**: From `CLAUDE.md`, `package.json`, or directory name
-4. **Generate dashboard**: Create `.ai/reports/dashboard.html`
+4. **Generate dashboard**: Create `.dxkit/reports/dashboard.html`
 
 ## Dashboard Design
 
@@ -413,7 +413,7 @@ Generate this exact structure (fill in REPORTS_DATA and PROJECT_NAME):
 
 ## Building the REPORTS_JSON
 
-For each `.md` file in `.ai/reports/`:
+For each `.md` file in `.dxkit/reports/`:
 1. Read the file content
 2. Escape for JavaScript: replace `\` with `\\`, backticks with `\`+backtick, `${` with `\${`, and `</script>` with `<\/script>`
 3. Build a JSON object: `{ "filename-without-ext": "escaped markdown content" }`
@@ -425,8 +425,8 @@ Replace `REPORTS_JSON` with the JSON object.
 ## After Generation
 
 Tell the user:
-- Dashboard saved to `.ai/reports/dashboard.html`
-- Open it in a browser: `open .ai/reports/dashboard.html` (macOS) or `xdg-open .ai/reports/dashboard.html` (Linux)
+- Dashboard saved to `.dxkit/reports/dashboard.html`
+- Open it in a browser: `open .dxkit/reports/dashboard.html` (macOS) or `xdg-open .dxkit/reports/dashboard.html` (Linux)
 - Print to PDF from the browser for a shareable document
 
 ---

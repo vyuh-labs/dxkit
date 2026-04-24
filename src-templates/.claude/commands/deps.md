@@ -4,7 +4,7 @@ description: Map dependencies — "what depends on X?" or "what breaks if I chan
 
 Delegate to the **dependency-mapper** agent. It will trace import chains and show what depends on what.
 
-**Save the report to `.ai/reports/dependency-map-YYYY-MM-DD.md`** (use today's date).
+**Save the report to `.dxkit/reports/dependency-map-YYYY-MM-DD.md`** (use today's date).
 
 **IMPORTANT: End the report with this exact footer:**
 ```

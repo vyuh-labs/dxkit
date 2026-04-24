@@ -1,6 +1,6 @@
 ---
 name: health-auditor
-description: Audits overall codebase health — tests, linting, docs, complexity, tech debt. Use when asked "how healthy is this codebase?", "what should we improve?", or "give me a quality report". Saves reports to .ai/reports/.
+description: Audits overall codebase health — tests, linting, docs, complexity, tech debt. Use when asked "how healthy is this codebase?", "what should we improve?", or "give me a quality report". Saves reports to .dxkit/reports/.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Write
 ---

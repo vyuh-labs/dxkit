@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-04-24
+
+Minor release — turns the `bom` report from enumeration (1700+ rows
+of noise) into a **decision doc** (top 10 triage queue ranked by
+composite exploit-risk). Every `DepVulnFinding` now carries five
+exploitability signals — CVSS, EPSS, CISA KEV, reachability,
+composite `riskScore` — that consumers can read individually or as
+the ranked `Risk` column. `licenses` + `vulnerabilities` renders
+gain parity with the new bom surface so any dxkit command shows the
+same triage-relevant data.
+
+Nine sub-commits (Phase 10h.5) landed behind PRs #4 / #5 / #6 /
+#7 / #8 / #9 / #10 / #11 through the hardened 2.2.1 pipeline —
+the first full release cut where every commit flowed PR → CI-green →
+merge → tag → CI-publishes without deviation.
+
+### Added — exploitability enrichers
+
+- **EPSS** (`DepVulnFinding.epssScore`, 0.0–1.0) from FIRST.org's
+  `api.first.org/data/v1/epss`. Batched (≤100 CVEs/call), session-
+  cached, graceful offline fallback. Non-CVE primaries (GHSA /
+  RUSTSEC / GO / PYSEC) resolve via OSV.dev alias lookup — no
+  coverage gap across packs. (10h.5.1)
+
+- **CISA KEV** (`DepVulnFinding.kev`, boolean) from the official
+  catalog at `cisa.gov/.../known_exploited_vulnerabilities.json`.
+  Single bulk fetch per process, O(1) lookup. Badge `⚠` in every
+  render. (10h.5.2)
+
+- **Reachability** (`DepVulnFinding.reachable`, tri-state) — does
+  this repo's source actually import the vulnerable package?
+  Built from per-pack `ImportsResult`'s specifier extraction;
+  `specifierToPackage` handles TS scoped/bare, Python dotted
+  modules, Go 3-segment module paths. Coarse name-level
+  matching; undefined when no imports data available. (10h.5.3)
+
+- **Composite riskScore** (`DepVulnFinding.riskScore`, 0–100) —
+  `clamp(cvss*10 × kev? × (1+2*epss) × reach?, 0, 100)`. Formula
+  documented in `src/analyzers/tools/risk-score.ts`. Null when
+  CVSS missing (no fabrication from side signals). (10h.5.4)
+
+- **"This Week's Triage"** section at the top of every bom report —
+  top 10 advisories with riskScore ≥ 15, rationale composed from
+  most decisive signals (KEV → reachable → CVSS → EPSS), fix
+  column with "PROPOSAL:" prefix stripped. (10h.5.5)
+
+### Added — decision-doc UX
+
+- **`bom --filter=top-level`** drops transitive rows (1700+ → ~150
+  on typical repos) while the `byTopLevelDep` rollup still reflects
+  full blast radius — "upgrading `@loopback/cli` resolves 29
+  advisories" survives when those 29 transitive rows are hidden.
+  `BomEntry.isTopLevel` + `summary.filter` + `summary.unfilteredTotalPackages`
+  ride the shape. (10h.5.0)
+
+- **Nested-project aggregation** (default ON; `--no-nested` opts
+  out). `src/analyzers/bom/discovery.ts` walks the repo,
+  discovers every directory with a language manifest
+  (package.json, pyproject.toml/requirements.txt/setup.py/Pipfile,
+  go.mod, Cargo.toml, *.csproj/*.sln), runs per-root gather, and
+  merges with dedup on `(package, version)`. `BomEntry.sources`
+  unions the roots each package was found in; `isTopLevel`
+  OR-merges; vulns dedup on `(id, package, installedVersion)`.
+  Closes **D001a** — `bom platform/` previously missed
+  `platform/userserver/` entirely. Side-benefit: naturally
+  addresses **D003** (C# multi-project) since each `.csproj`
+  becomes its own root. (10h.5.0b)
+
+- **`LicenseFinding.releaseDate`** populated from the npm registry
+  for every TS-ecosystem package. Closes **D006** — xlsx col 10
+  ("Component Release Date") was previously empty. Bundled with
+  the EPSS fetcher roundtrip. (10h.5.1)
+
+- **`licenses` render** sorts top-level deps (⭐) first, transitive
+  below. Adds `Direct` + `Released` columns. Matches bom's
+  `--filter=top-level` ordering so cross-referencing the two
+  reports Just Works. (10h.5.6)
+
+- **`vulnerabilities` render (main, not --detailed)** per-advisory
+  table now sorted by `riskScore` desc with `Risk` / `KEV` /
+  `Reach` / `EPSS` columns alongside the existing fields. (10h.5.6)
+
+### Fixed
+
+- **D013** — graphify's shared Python venv moved from
+  `/tmp/graphify-venv` (subject to systemd-tmpfiles sweep + race
+  on first install) to `~/.cache/dxkit/tools-venv` (XDG persistent).
+  Also fixed `Date.now()` script-tempfile collision class in
+  graphify.ts via `fs.mkdtempSync`. Affects every Python-based
+  tool dxkit installs (graphify, semgrep, ruff, pip-audit,
+  pip-licenses, coverage). Legacy `/tmp/graphify-venv` path still
+  probed, so existing installations aren't forced into a
+  reinstall. (10f.2)
+
+- **OSV.dev GHSA case-sensitivity** — `api.osv.dev/v1/vulns/<GHSA>`
+  expects lowercase; npm-audit emits uppercase. `osv.ts`
+  `DEFAULT_FETCHER` normalizes the alphabetic portion. Silently
+  broke alias resolution for every TS finding pre-2.3.0.
+
+### Changed — output directory
+
+- **Reports moved from `.ai/reports/` to `.dxkit/reports/`**.
+  Separates tool output (regenerated each run, can be gitignored)
+  from AI-agent context (`.ai/sessions/`, `.ai/prompts/` —
+  human-authored, version-controlled). All CLI commands + every
+  scaffolded slash command / agent / template updated to the new
+  path. Existing `.ai/reports/*.md` files become orphans after
+  upgrade — acceptable since reports regenerate each run.
+
+### Process
+
+- First full release cut through the 2.2.1-hardened publish
+  pipeline: 8 PRs, every one PR→CI→admin-squash-merge→main. Each
+  dog-fooded the pre-push CI-mirror hooks landed in PR #3.
+
 ## [2.2.1] - 2026-04-23
 
 Patch release hardening the publish pipeline after `v2.2.0`'s Publish

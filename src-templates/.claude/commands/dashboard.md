@@ -2,7 +2,7 @@
 description: Generate a beautiful HTML dashboard from all reports
 ---
 
-Delegate to the **dashboard-builder** agent. It will read all reports from `.ai/reports/` and generate a self-contained HTML dashboard at `.ai/reports/dashboard.html`.
+Delegate to the **dashboard-builder** agent. It will read all reports from `.dxkit/reports/` and generate a self-contained HTML dashboard at `.dxkit/reports/dashboard.html`.
 
 The dashboard features:
 - Dark theme with modern design

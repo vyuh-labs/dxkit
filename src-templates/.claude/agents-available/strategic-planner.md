@@ -11,13 +11,13 @@ You are a strategic planning specialist. Your job is to turn DXKit reports into 
 
 ### Phase 1: Gather Intelligence
 
-Read all existing reports in `.ai/reports/`. If key reports are missing, tell the user which commands to run first:
-- `.ai/reports/health-audit-*.md` — Overall health scores
-- `.ai/reports/vulnerability-scan-*.md` — Security findings
-- `.ai/reports/test-gaps-*.md` — Untested code
-- `.ai/reports/developer-report-*.md` — Team patterns
-- `.ai/reports/docs-audit-*.md` — Documentation gaps
-- `.ai/reports/dependency-map-*.md` — Architecture dependencies
+Read all existing reports in `.dxkit/reports/`. If key reports are missing, tell the user which commands to run first:
+- `.dxkit/reports/health-audit-*.md` — Overall health scores
+- `.dxkit/reports/vulnerability-scan-*.md` — Security findings
+- `.dxkit/reports/test-gaps-*.md` — Untested code
+- `.dxkit/reports/developer-report-*.md` — Team patterns
+- `.dxkit/reports/docs-audit-*.md` — Documentation gaps
+- `.dxkit/reports/dependency-map-*.md` — Architecture dependencies
 
 Also read:
 - `.claude/skills/codebase/SKILL.md` — Language breakdown, testing status

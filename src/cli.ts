@@ -273,7 +273,7 @@ export async function run(argv: string[]): Promise<void> {
 
         // Save markdown report (unless --no-save)
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `health-audit-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -349,7 +349,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -405,7 +405,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -483,7 +483,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `quality-review-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -543,7 +543,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `developer-report-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -607,7 +607,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `licenses-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -712,7 +712,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`Completed in ${elapsed}s`);
 
         if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.ai', 'reports');
+          const reportDir = path.join(targetPath, '.dxkit', 'reports');
           const date = new Date().toISOString().slice(0, 10);
           const reportPath = path.join(reportDir, `bom-${date}.md`);
           fs.mkdirSync(reportDir, { recursive: true });
@@ -939,8 +939,13 @@ function enableStealthMode(cwd: string, createdFiles: string[]): void {
       files.push(f);
     }
   }
-  // Always include the manifest
+  // Always include the manifest + the runtime analyzer-output dir.
+  // `.dxkit/` isn't in `createdFiles` (generator.ts only emits
+  // scaffolded files; `.dxkit/reports/*.md` shows up later when the
+  // user actually runs an analyzer) — adding it preemptively means
+  // stealth mode doesn't need a second pass after the first scan.
   files.push('.vyuh-dxkit.json');
+  dirs.add('.dxkit/');
 
   // Dedupe against existing .gitignore
   const existingLines = new Set(existing.split('\n').map((l) => l.trim()));

@@ -2,7 +2,7 @@
 description: Generate improvement plans with KPIs from reports (or list existing plans)
 ---
 
-Delegate to the **strategic-planner** agent. It reads all reports in `.ai/reports/`, proposes measurable KPIs, and generates actionable plans in `.ai/plans/`.
+Delegate to the **strategic-planner** agent. It reads all reports in `.dxkit/reports/`, proposes measurable KPIs, and generates actionable plans in `.ai/plans/`.
 
 If reports don't exist yet, it will tell you which commands to run first (`/health`, `/vulnerabilities`, `/test-gaps`, etc.).
 
