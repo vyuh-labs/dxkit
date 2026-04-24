@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-04-24
+
+PM-grade bom reports. The xlsx and markdown outputs both restructure
+around decision-making (what to fix, who to call, what to plan) rather
+than enumeration (here are all the packages, figure it out).
+
+### Added — markdown report
+
+- **🎯 Executive Summary** at the top: ship-blocker count, sprint-sized
+  finding count (risk ≥ 40), license exposure (copyleft-strong + unknown
+  counts), staleness (> 3y old packages), highest-leverage upgrade. One
+  screen, written for a PM who needs "can we ship?" without scrolling.
+
+- **Reconciliation prose** on "Top-Level Dep Groups" explaining why the
+  numbers don't sum to the Summary totals — each CVE is counted once per
+  top-level parent it reaches through, by design. "Advisories" column
+  renamed to "Rolled-up Advisories" to reinforce the different semantics.
+
+### Added — xlsx report (4-sheet workbook, replaces the single `platform` sheet)
+
+1. **`Executive Summary`** — KV grid on one screen: totals, severity
+   breakdown, top ship-blocker, highest-leverage upgrade, license-class
+   counts (Permissive / Copyleft weak & strong / Proprietary / Unknown),
+   staleness counts, tool provenance.
+
+2. **`Triage`** — top 10 findings ranked by composite riskScore.
+   Columns: Priority / Risk / Severity / KEV / Reachable /
+   Package@Version / Advisory / CVSS / EPSS / Upgrade to / Effort /
+   Rationale.
+
+3. **`Inventory`** — the legacy 15-column customer format (unchanged
+   byte-for-byte on cols 1–15) with **4 columns appended** (16–19):
+   Risk / KEV / Reachable / EPSS, plus a bonus col 20 for CVSS (max).
+   Sort by col 16 desc for the same triage ordering sheet 2 uses.
+
+4. **`License Breakdown`** — pivot: license type × count × risk class ×
+   sample packages. Copyleft-strong licenses surface at the top; unknown
+   bucket flags licenses the classifier didn't recognise (legitimate
+   human-review candidates like `CC-BY-4.0`).
+
+### Added — shared pm-signals module
+
+New `src/analyzers/bom/pm-signals.ts` with pure helpers the markdown
+and xlsx renderers both use:
+
+- `licenseClass(licenseType)` — SPDX-id → `permissive` | `copyleft-weak` |
+  `copyleft-strong` | `proprietary` | `unknown`. Handles compound
+  expressions (`MIT OR GPL-3.0` classifies as `copyleft-strong`, the
+  stricter class), parenthesised forms (`(Apache-2.0 OR UPL-1.0)`),
+  legacy `"MIT license"` / `"Apache 2.0 license"` suffixes, and known
+  proprietary markers (`UNLICENSED`, `SEE LICENSE IN ...`).
+
+- `stalenessTier(releaseDate)` — `fresh` (< 1y) / `aging` (1–3y) /
+  `stale` (≥ 3y) / `unknown`. Injectable `now` for deterministic tests.
+
+- `effortEstimate(entry)` — `trivial` (patch bump) / `moderate` (minor
+  bump) / `major` (breaking) / `blocked` (no fix available). Derived
+  from semver delta; multi-vuln entries escalate to the worst tier seen.
+
+Derivations deliberately stay in the renderer layer rather than on
+`DepVulnFinding` / `LicenseFinding` so the analyzer contract is
+unchanged — consumers can re-derive trivially if needed.
+
+### Changed (breaking-ish — see note)
+
+- Xlsx sheet layout changed from single `"platform"` sheet to a 4-sheet
+  workbook. **Consumers hardcoding sheet name `"platform"` will break.**
+  The legacy 15-column layout is preserved byte-for-byte on the renamed
+  `"Inventory"` sheet. Appended cols 16–19 are additive.
+
+### Validation
+
+- 715 tests passing (+18 pm-signals cases: license class mapping,
+  compound expressions, staleness thresholds, effort semver deltas).
+- Typecheck + lint + format + architecture + pre-push CI-mirror gate clean.
+- vyuhlabs-platform smoke: all 4 sheets render correctly, exec summary
+  surfaces 3 ship-blockers + 9 sprint-risk findings + pm2 flagged
+  copyleft-strong, `@loopback/rest` surfaces as highest-leverage upgrade
+  (27 transitive advisories, worst CRITICAL).
+
 ## [2.3.1] - 2026-04-24
 
 Patch release fixing three install-robustness issues reported on a
