@@ -41,7 +41,7 @@ Seven deterministic analyzers. Each emits a markdown report to `.dxkit/reports/`
 | Command           | What it does                                                                                                                                                                                                                                                                                                          | Runtime | Output                                        |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
 | `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                                                                                                                                                                                                                                                       | 10–20s  | `.dxkit/reports/health-audit-<date>.md`       |
-| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (per-advisory detail in `--detailed`)                                                                                                                                                                                                                                         | 5–30s   | `.dxkit/reports/vulnerability-scan-<date>.md` |
+| `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (enriched with EPSS exploit probability, CISA KEV catalog, reachability from your source, composite riskScore; per-advisory detail in `--detailed`)                                                                                                                           | 5–30s   | `.dxkit/reports/vulnerability-scan-<date>.md` |
 | `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                                                                                                                                                                                          | <1s     | `.dxkit/reports/test-gaps-<date>.md`          |
 | `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                                                                                                                                                                                                | 5–15s   | `.dxkit/reports/quality-review-<date>.md`     |
 | `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                                                                                                                                                                                            | <1s     | `.dxkit/reports/developer-report-<date>.md`   |
@@ -104,7 +104,7 @@ vyuh-dxkit tools install                      # interactive: prompts per tool
 | Python    | `ruff`, `pip-audit`, `coverage` (coverage.py)            |
 | Go        | `golangci-lint`, `govulncheck`                           |
 | Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                |
-| C#        | `dotnet-format` (via SDK)                                |
+| C#        | `dotnet-format` (via SDK — formatter, not a linter)      |
 
 Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
 
@@ -126,7 +126,7 @@ Three layers merge: bundled defaults → repo `.gitignore` → repo `.dxkit-igno
 
 ### `.dxkit-suppressions.json`
 
-Silence known-false positives without touching code. Currently wired to `gitleaks` (semgrep + slop-hook wiring in progress).
+Silence known-false positives without touching code. Wired to `gitleaks` (secrets) and `semgrep` (code patterns). Slop-hook wiring remains a follow-up.
 
 ```json
 {
@@ -136,11 +136,18 @@ Silence known-false positives without touching code. Currently wired to `gitleak
       "paths": ["test/fixtures/**", "**/*.test.ts"],
       "reason": "Fake keys in test fixtures"
     }
+  ],
+  "semgrep": [
+    {
+      "rule": "javascript.express.security.audit.express-check-directory-traversal",
+      "paths": ["scripts/serve-static.js"],
+      "reason": "Controlled internal tool, not user-reachable"
+    }
   ]
 }
 ```
 
-A finding is suppressed when its rule matches (exact string, or `*` for any) AND at least one path glob matches. Globs support `**`, `*`, `?`.
+A finding is suppressed when its rule matches (exact string, or `*` for any) AND at least one path glob matches. Globs support `**`, `*`, `?`. Suppressed counts are reported separately in the analyzer output so "zero visible" is distinguishable from "zero real".
 
 ### `.project.yaml` (optional, for scaffolding)
 
@@ -152,13 +159,15 @@ When present (typically written by `@vyuhlabs/create-devstack`), `dxkit init` re
 
 Each language is a single `LanguageSupport` implementation in `src/languages/`. Adding a new language is one file — detection, tools, coverage parsing, import extraction, and lint severity mapping in one place.
 
-| Language | Detection                            | Coverage import     | Import-graph                | Native tools                        | Lint severity tiers    | Vuln severity tiers                 |
-| -------- | ------------------------------------ | ------------------- | --------------------------- | ----------------------------------- | ---------------------- | ----------------------------------- |
-| TS / JS  | `package.json`                       | ✅ Istanbul         | ✅ import/require/re-export | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                 |
-| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py      | ✅ import/from              | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4) |
-| Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks            | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev   |
-| Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ✅ use statements           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
-| C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ✅ using declarations       | dotnet-format                       | — (formatter)          | ✅ dotnet list --vulnerable         |
+| Language | Detection                            | Coverage import     | Import-graph                           | Native tools                        | Lint severity tiers    | Vuln severity tiers                 |
+| -------- | ------------------------------------ | ------------------- | -------------------------------------- | ----------------------------------- | ---------------------- | ----------------------------------- |
+| TS / JS  | `package.json`                       | ✅ Istanbul         | ✅ import/require/re-export            | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                 |
+| Python   | `pyproject.toml`, `setup.py`, `*.py` | ✅ coverage.py      | ✅ import/from                         | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4) |
+| Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks                       | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev   |
+| Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ⚠️ use statements, extracted only¹     | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
+| C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ⚠️ using declarations, extracted only¹ | dotnet-format (formatter)           | ❌ (no linter yet)     | ✅ dotnet list --vulnerable         |
+
+¹ Rust + C# packs populate `imports.extracted` but the file-level resolver is a no-op — Rust's `use` paths and C#'s `using` namespaces don't map 1:1 to source files. Downstream analyses that need an edge graph (reachability for dep-vulns, import-graph credit for test-gaps) degrade to conservative defaults for these two languages. Resolvers are planned; see Phase 10i-L.2 in the roadmap.
 
 ✅ full support. Multi-language repos fully supported — every detected language's tools run, and dep-vuln counts aggregate across all language packs via the `depVulns` capability (pip-audit findings don't silently replace npm-audit ones).
 
@@ -187,8 +196,14 @@ Running `init` auto-detects your tech stack and generates a complete `.claude/` 
 CLAUDE.md                  # Main context file for Claude Code
 .ai/
   sessions/                # Session checkpoints
-  reports/                 # Generated reports (health, vulnerabilities, etc.)
+  features/                # Feature-planning docs produced by `/feature`
+.dxkit/
+  reports/                 # Generated analyzer output (health, bom, licenses, …)
+.dxkit-ignore              # Extra analyzer-only exclusions (on top of .gitignore)
+.dxkit-suppressions.json   # Silence known-false positives (gitleaks, semgrep)
 ```
+
+The `.dxkit/` directory holds analyzer state and was split out from `.ai/` in v2.3.0 so tool output (regeneratable, safe to gitignore) is separated from agent context (session history, feature plans).
 
 ### Slash commands → native CLI delegation
 
