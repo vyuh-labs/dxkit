@@ -162,7 +162,13 @@ async function runInstall(targetPath: string, autoYes: boolean): Promise<void> {
       logger.info(`Running: ${cmd}`);
       const result = runInstallCmd(cmd);
       if (result.success) {
-        // Verify install worked
+        // Verify install worked. An install command can legitimately
+        // exit 0 without producing the binary — e.g. the vitest-coverage
+        // guard no-ops when vitest isn't a target-repo dep. Treat
+        // "exit 0 + tool still missing" as a skip, not a failure: the
+        // script ran cleanly, we just didn't get the binary we wanted.
+        // Real install failures surface through the `result.success ===
+        // false` branch below (non-zero exit).
         const recheck = findTool(def, targetPath);
         if (recheck.available) {
           results.push({ name: s.name, status: 'installed' });
@@ -170,10 +176,10 @@ async function runInstall(targetPath: string, autoYes: boolean): Promise<void> {
         } else {
           results.push({
             name: s.name,
-            status: 'failed',
-            msg: 'install command succeeded but tool not found',
+            status: 'skipped',
+            msg: 'install command exited 0 without producing the binary (likely a guarded no-op)',
           });
-          logger.fail(`${s.name} install command ran but tool not found in PATH`);
+          logger.dim(`${s.name} skipped — install command exited cleanly without installing`);
         }
       } else {
         results.push({ name: s.name, status: 'failed', msg: result.message });
