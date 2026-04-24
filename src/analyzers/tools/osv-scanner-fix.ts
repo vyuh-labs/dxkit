@@ -24,6 +24,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { DepVulnFinding, DepVulnUpgradePlan } from '../../languages/capabilities/types';
+import { isMajorBump } from './semver-bump';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
 /** Raw osv-scanner `fix --format json` output shape. Kept internal —
@@ -143,7 +144,10 @@ export function parseOsvScannerFixOutput(raw: string): Map<string, DepVulnUpgrad
       parent: directUpdate.name,
       parentVersion: normalizeVersion(directUpdate.versionTo),
       patches: fixedIds,
-      breaking: isSemverMajorBump(directUpdate.versionFrom, directUpdate.versionTo),
+      breaking: isMajorBump(
+        normalizeVersion(directUpdate.versionFrom),
+        normalizeVersion(directUpdate.versionTo),
+      ),
     };
     // Key every fixed advisory onto the same plan so renderers find it
     // when iterating findings.
@@ -197,31 +201,4 @@ export function planKey(pkg: string, version: string, advisoryId: string): strin
  *  is cleaner without the prefix. */
 function normalizeVersion(v: string): string {
   return v.replace(/^[\^~>=<\s]+/, '').trim();
-}
-
-/** True when `to`'s major segment is higher than `from`'s. Pre-1.x
- *  versions (0.x.y) treat a minor bump as effectively breaking — osv-scanner
- *  doesn't flag it but semver does. Conservative — a jump that crosses
- *  a 0.x boundary (0.5.0 → 1.0.0) is also breaking. */
-function isSemverMajorBump(from: string, to: string): boolean {
-  const fromMajor = extractMajor(from);
-  const toMajor = extractMajor(to);
-  if (fromMajor === null || toMajor === null) return false;
-  if (fromMajor !== toMajor) return true;
-  if (fromMajor === 0) {
-    const fromMinor = extractMinor(from);
-    const toMinor = extractMinor(to);
-    if (fromMinor !== null && toMinor !== null && fromMinor !== toMinor) return true;
-  }
-  return false;
-}
-
-function extractMajor(v: string): number | null {
-  const m = v.match(/^[\^~>=<\s]*(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
-}
-
-function extractMinor(v: string): number | null {
-  const m = v.match(/^[\^~>=<\s]*\d+\.(\d+)/);
-  return m ? parseInt(m[1], 10) : null;
 }

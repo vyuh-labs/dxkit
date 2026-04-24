@@ -6,6 +6,7 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
@@ -675,23 +676,6 @@ const rustLicensesProvider: CapabilityProvider<LicensesResult> = {
     return gatherRustLicensesResult(cwd);
   },
 };
-
-/**
- * True when `to`'s major segment exceeds `from`'s. Pre-1.x (`0.x`)
- * minor bumps treated as breaking too — convention shared with the
- * TypeScript and Python packs. Returns false when either input is
- * unparseable.
- *
- * Exported for test coverage.
- */
-export function isMajorBump(from: string, to: string): boolean {
-  const fromParts = from.split('.').map((p) => parseInt(p, 10));
-  const toParts = to.split('.').map((p) => parseInt(p, 10));
-  if (fromParts.some(isNaN) || toParts.some(isNaN)) return false;
-  if ((fromParts[0] ?? 0) !== (toParts[0] ?? 0)) return true;
-  if ((fromParts[0] ?? 0) === 0 && (fromParts[1] ?? 0) !== (toParts[1] ?? 0)) return true;
-  return false;
-}
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;

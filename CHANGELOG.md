@@ -64,6 +64,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between depVulns gather and tests. Same pre-1.x-minor-is-breaking
   convention as the TypeScript pack. 5 new tests.
 
+### Added — cross-pack upgrade-plan resolver (Phase 10h.6.4)
+
+- **Shared `isMajorBump` helper** — three identical copies
+  (TS/Python/Rust from 10h.6.1–.3) consolidated into
+  `src/analyzers/tools/semver-bump.ts`. All three packs import from
+  the shared module; 7-test suite at `test/semver-bump.test.ts`
+  supersedes the inline duplicates.
+- **Cross-pack resolver** — new module
+  `src/analyzers/tools/upgrade-plan-resolver.ts` exposing
+  `resolveTransitiveUpgradePlans(findings)`. Runs after per-pack
+  Tier-2 tools and before riskScore composition. Two passes:
+    1. **Reconciliation** — for every advisory id listed in any
+       existing plan's `patches[]`, stamp the same plan onto the
+       matching finding (by id only, case-insensitive). Fills gaps
+       where a Tier-2 tool's `fixed[]` mentions an id that's carried
+       by another finding with a different (package, version) tuple.
+    2. **Free-text parse** — derives a plan from the npm-audit
+       transitive-fix template (`"Upgrade X to Y [major] (transitive
+       fix)"`) when no structured plan exists. Single-advisory scope
+       (patches=[finding.id]) since the free-text doesn't carry
+       cross-advisory rollup. Producer-written plans are
+       authoritative; resolver never overwrites.
+- **Wire-up** — `gatherDepVulns` in `src/analyzers/security/gather.ts`
+  now calls `resolveTransitiveUpgradePlans` after fingerprinting and
+  tier-3 enrichment, before composite `riskScore`. 11 new tests at
+  `test/upgrade-plan-resolver.test.ts`.
+
 ## [2.3.2] - 2026-04-24
 
 PM-grade bom reports. The xlsx and markdown outputs both restructure

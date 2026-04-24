@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  parseCargoAuditOutput,
-  buildRustTopLevelDepIndex,
-  isMajorBump,
-} from '../src/languages/rust';
+import { parseCargoAuditOutput, buildRustTopLevelDepIndex } from '../src/languages/rust';
 
 // Fixture JSONs mirror the cargo-audit --json schema documented at
 // https://docs.rs/rustsec/latest/rustsec/advisory/struct.Advisory.html.
@@ -279,25 +275,5 @@ describe('buildRustTopLevelDepIndex', () => {
   });
 });
 
-describe('isMajorBump (rust pack)', () => {
-  it('flags major-version upgrade as breaking', () => {
-    expect(isMajorBump('1.2.3', '2.0.0')).toBe(true);
-  });
-
-  it('flags pre-1.x minor bump as breaking (0.x convention shared with ts + python packs)', () => {
-    expect(isMajorBump('0.5.0', '0.6.0')).toBe(true);
-  });
-
-  it('does not flag same-major patch bump as breaking', () => {
-    expect(isMajorBump('1.2.3', '1.2.4')).toBe(false);
-  });
-
-  it('does not flag pre-1.x patch-level bump as breaking', () => {
-    expect(isMajorBump('0.5.0', '0.5.1')).toBe(false);
-  });
-
-  it('returns false when either input is unparseable', () => {
-    expect(isMajorBump('', '1.0.0')).toBe(false);
-    expect(isMajorBump('1.0.0', 'not-semver')).toBe(false);
-  });
-});
+// `isMajorBump` shared helper moved to src/analyzers/tools/semver-bump.ts
+// in Phase 10h.6.4; full test coverage lives in test/semver-bump.test.ts.
