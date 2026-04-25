@@ -196,29 +196,94 @@ export function buildPyTopLevelDepIndex(
 }
 
 /**
+ * Parse a `requirements.txt`-style file into the set of direct (top-
+ * level) package names. Used as a fallback when no venv is available
+ * for the pip-show-based dep graph. Handles common requirement-spec
+ * shapes:
+ *
+ *   requests==2.20.0           → 'requests'
+ *   requests>=2.20,<3          → 'requests'
+ *   Django                     → 'django'  (lowercased to match pip-audit)
+ *   # comment                  → skipped
+ *   -r other.txt               → skipped (recursive include not followed)
+ *   -e .                       → skipped
+ *   pkg ; python_version<'3'   → 'pkg'  (env-marker stripped)
+ *   pkg[extra1,extra2]         → 'pkg'  (extras stripped)
+ *
+ * Names are lowercased to match pip-audit's canonical-PyPI casing
+ * convention. Returns deduplicated names in the order they appear.
+ */
+export function parseRequirementsTxtTopLevels(raw: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of raw.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith('-')) continue;
+    // Strip inline `;` environment markers — they're conditions, not
+    // part of the package spec.
+    const beforeMarker = line.split(';')[0].trim();
+    // Capture the leading package-name token, allowing the standard PEP
+    // 508 character set ([A-Za-z0-9._-]+). Stop at the first specifier
+    // (==, >=, <=, ~=, !=, <, >, [, space).
+    const m = beforeMarker.match(/^([A-Za-z0-9._-]+)/);
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+/**
  * Invoke `pip list` + `pip show --all` against the project's venv and
- * build the top-level attribution index. Returns an empty map when no
- * venv is present or either pip command fails — attribution stays
- * unset, mirroring the TS pack's lockfile-missing case.
+ * build the top-level attribution index. When no venv is present, fall
+ * back to parsing `requirements.txt` directly — that gives us at least
+ * direct-dep self-attribution (pkg → [pkg]) even when the project has
+ * never been `pip install`ed. Surfaced by the cross-ecosystem benchmark
+ * fixture (Phase 10h.6.8): a `requirements.txt`-only directory yielded
+ * empty `topLevelDep` on every direct dep.
  */
 function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
   const venvPython = findPyProjectVenvPython(cwd);
-  if (!venvPython) return new Map();
-  const listRaw = run(`${venvPython} -m pip list --format=json 2>/dev/null`, cwd, 60000);
-  if (!listRaw) return new Map();
-  let list: Array<{ name?: string }>;
+  if (venvPython) {
+    const listRaw = run(`${venvPython} -m pip list --format=json 2>/dev/null`, cwd, 60000);
+    if (listRaw) {
+      try {
+        const list = JSON.parse(listRaw) as Array<{ name?: string }>;
+        const names = list.map((x) => x.name).filter((n): n is string => !!n);
+        if (names.length > 0) {
+          // pip show accepts multiple package names in one call; stays
+          // well under shell arg-length limits for realistic envs
+          // (O(100) pkgs).
+          const showRaw = run(
+            `${venvPython} -m pip show ${names.join(' ')} 2>/dev/null`,
+            cwd,
+            60000,
+          );
+          if (showRaw) return buildPyTopLevelDepIndex(parsePipShowOutput(showRaw));
+        }
+      } catch {
+        /* fall through to requirements.txt fallback */
+      }
+    }
+  }
+
+  // Fallback: parse requirements.txt directly. Only direct deps get
+  // attribution; transitives stay unset (would need resolved metadata
+  // from a pip-installed env to attribute, which we explicitly don't
+  // have here).
+  if (!fileExists(cwd, 'requirements.txt')) return new Map();
+  let raw: string;
   try {
-    list = JSON.parse(listRaw);
+    raw = fs.readFileSync(path.join(cwd, 'requirements.txt'), 'utf-8');
   } catch {
     return new Map();
   }
-  const names = list.map((x) => x.name).filter((n): n is string => !!n);
-  if (names.length === 0) return new Map();
-  // pip show accepts multiple package names in one call; stays well
-  // under shell arg-length limits for realistic envs (O(100) pkgs).
-  const showRaw = run(`${venvPython} -m pip show ${names.join(' ')} 2>/dev/null`, cwd, 60000);
-  if (!showRaw) return new Map();
-  return buildPyTopLevelDepIndex(parsePipShowOutput(showRaw));
+  const topLevels = parseRequirementsTxtTopLevels(raw);
+  const result = new Map<string, string[]>();
+  for (const name of topLevels) result.set(name, [name]);
+  return result;
 }
 
 /**
@@ -277,9 +342,19 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
     };
 
     const findings: DepVulnFinding[] = [];
+    // pip-audit emits the same advisory once per affected-version range,
+    // so a single CVE on a package can show up multiple times — same
+    // (package, version, id), same fingerprint. Dedup at the source so
+    // downstream consumers don't see synthetic duplicates. Surfaced by
+    // requests@2.20.0 in the cross-ecosystem benchmark fixture (Phase
+    // 10h.6.8) where PYSEC-2023-74 was emitted twice.
+    const seen = new Set<string>();
     for (const dep of data.dependencies || []) {
       for (const v of dep.vulns || []) {
         if (!v.id) continue;
+        const dedupKey = `${dep.name ?? 'unknown'}\0${dep.version ?? ''}\0${v.id}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
         const severity = resolveSeverity(v.id);
         if (severity === 'critical') critical++;
         else if (severity === 'high') high++;

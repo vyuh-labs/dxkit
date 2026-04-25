@@ -117,14 +117,21 @@ export function parseCoberturaXml(raw: string, sourceFile: string, cwd: string):
 /**
  * `dotnet list package --vulnerable --format json` shape (see
  * https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-list-package).
- * Per-advisory entries are LEAN compared to other ecosystems' tools —
- * no CVSS, no fix version, no description. We compensate via OSV
- * alias-fallback (advisoryUrl → GHSA → OSV.dev) for cvssScore; fix
- * version + summary remain unpopulated until a richer source is wired
- * in 10h.6 (e.g. NuGet's vulnerability API).
+ * Field names match the actual dotnet 8 SDK JSON output verbatim:
+ * `vulnerabilities` (not `advisories`) and `advisoryurl` (lowercase,
+ * not `advisoryUrl`). Earlier revisions of this parser used the
+ * camelCase shape and silently produced zero findings on real dotnet
+ * output — surfaced by the cross-ecosystem benchmark fixture in
+ * Phase 10h.6.8.
+ *
+ * Per-vulnerability entries are LEAN compared to other ecosystems'
+ * tools — no CVSS, no fix version, no description. We compensate via
+ * OSV alias-fallback (advisoryurl → GHSA → OSV.dev) for cvssScore;
+ * fix version + summary remain unpopulated until a richer source is
+ * wired (e.g. NuGet's vulnerability API).
  */
-interface DotnetAdvisory {
-  advisoryUrl?: string;
+interface DotnetVulnerability {
+  advisoryurl?: string;
   severity?: string;
 }
 
@@ -132,7 +139,7 @@ interface DotnetTopLevelPackage {
   id?: string;
   requestedVersion?: string;
   resolvedVersion?: string;
-  advisories?: DotnetAdvisory[];
+  vulnerabilities?: DotnetVulnerability[];
 }
 
 /**
@@ -147,7 +154,7 @@ interface DotnetTopLevelPackage {
 interface DotnetTransitivePackage {
   id?: string;
   resolvedVersion?: string;
-  advisories?: DotnetAdvisory[];
+  vulnerabilities?: DotnetVulnerability[];
 }
 
 interface DotnetFramework {
@@ -250,17 +257,17 @@ export function parseDotnetVulnerableOutput(
   const emit = (
     pkgId: string,
     resolvedVersion: string | undefined,
-    advisories: DotnetAdvisory[],
+    vulnerabilities: DotnetVulnerability[],
     topLevelDep: string[] | undefined,
   ): void => {
-    for (const adv of advisories) {
-      const severity = normalizeDotnetSeverity(adv.severity);
+    for (const vuln of vulnerabilities) {
+      const severity = normalizeDotnetSeverity(vuln.severity);
       if (severity === 'critical') critical++;
       else if (severity === 'high') high++;
       else if (severity === 'medium') medium++;
       else low++;
 
-      const ghsa = extractGhsaIdFromUrl(adv.advisoryUrl);
+      const ghsa = extractGhsaIdFromUrl(vuln.advisoryurl);
       const id = ghsa ?? `nuget-${pkgId}@${resolvedVersion ?? 'unknown'}`;
       const finding: DepVulnFinding = {
         id,
@@ -271,7 +278,7 @@ export function parseDotnetVulnerableOutput(
       };
       if (topLevelDep && topLevelDep.length > 0) finding.topLevelDep = topLevelDep;
       if (ghsa) finding.aliases = [ghsa];
-      if (adv.advisoryUrl) finding.references = [adv.advisoryUrl];
+      if (vuln.advisoryurl) finding.references = [vuln.advisoryurl];
       findings.push(finding);
     }
   };
@@ -280,13 +287,13 @@ export function parseDotnetVulnerableOutput(
     for (const fw of proj.frameworks ?? []) {
       for (const pkg of fw.topLevelPackages ?? []) {
         if (!pkg.id) continue;
-        emit(pkg.id, pkg.resolvedVersion, pkg.advisories ?? [], [pkg.id]);
+        emit(pkg.id, pkg.resolvedVersion, pkg.vulnerabilities ?? [], [pkg.id]);
       }
       for (const pkg of fw.transitivePackages ?? []) {
         if (!pkg.id) continue;
         // topLevelDep stays unset; `attachCsharpTopLevelAttribution`
         // downstream fills it from project.assets.json when available.
-        emit(pkg.id, pkg.resolvedVersion, pkg.advisories ?? [], undefined);
+        emit(pkg.id, pkg.resolvedVersion, pkg.vulnerabilities ?? [], undefined);
       }
     }
   }

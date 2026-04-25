@@ -37,9 +37,9 @@ describe('parseDotnetVulnerableOutput', () => {
                   id: 'Microsoft.AspNetCore.App',
                   requestedVersion: '8.0.0',
                   resolvedVersion: '8.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
-                      advisoryUrl: 'https://github.com/advisories/GHSA-h5c3-5r3r-rr8q',
+                      advisoryurl: 'https://github.com/advisories/GHSA-h5c3-5r3r-rr8q',
                       severity: 'high',
                     },
                   ],
@@ -76,9 +76,9 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'foo',
                   resolvedVersion: '1.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
-                      advisoryUrl: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
+                      advisoryurl: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
                       severity: 'moderate',
                     },
                   ],
@@ -104,7 +104,7 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'foo',
                   resolvedVersion: '1.0.0',
-                  advisories: [{ severity: 'low' }],
+                  vulnerabilities: [{ severity: 'low' }],
                 },
               ],
             },
@@ -127,12 +127,12 @@ describe('parseDotnetVulnerableOutput', () => {
               topLevelPackages: [
                 {
                   resolvedVersion: '1.0.0',
-                  advisories: [{ severity: 'high' }],
+                  vulnerabilities: [{ severity: 'high' }],
                 },
                 {
                   id: 'good',
                   resolvedVersion: '2.0.0',
-                  advisories: [{ severity: 'high' }],
+                  vulnerabilities: [{ severity: 'high' }],
                 },
               ],
             },
@@ -157,13 +157,13 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'a',
                   resolvedVersion: '1.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
-                      advisoryUrl: 'https://github.com/advisories/GHSA-1111-2222-3333',
+                      advisoryurl: 'https://github.com/advisories/GHSA-1111-2222-3333',
                       severity: 'critical',
                     },
                     {
-                      advisoryUrl: 'https://github.com/advisories/GHSA-4444-5555-6666',
+                      advisoryurl: 'https://github.com/advisories/GHSA-4444-5555-6666',
                       severity: 'high',
                     },
                   ],
@@ -175,9 +175,9 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'b',
                   resolvedVersion: '2.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
-                      advisoryUrl: 'https://github.com/advisories/GHSA-7777-8888-9999',
+                      advisoryurl: 'https://github.com/advisories/GHSA-7777-8888-9999',
                       severity: 'moderate',
                     },
                   ],
@@ -193,7 +193,7 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'c',
                   resolvedVersion: '3.0.0',
-                  advisories: [{ severity: 'low' }],
+                  vulnerabilities: [{ severity: 'low' }],
                 },
               ],
             },
@@ -206,13 +206,13 @@ describe('parseDotnetVulnerableOutput', () => {
     expect(parsed.findings).toHaveLength(4);
   });
 
-  it('handles empty advisories array as zero findings', () => {
+  it('handles empty vulnerabilities array as zero findings', () => {
     const raw = JSON.stringify({
       projects: [
         {
           frameworks: [
             {
-              topLevelPackages: [{ id: 'safe', resolvedVersion: '1.0.0', advisories: [] }],
+              topLevelPackages: [{ id: 'safe', resolvedVersion: '1.0.0', vulnerabilities: [] }],
             },
           ],
         },
@@ -233,10 +233,10 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'Newtonsoft.Json',
                   resolvedVersion: '12.0.3',
-                  advisories: [
+                  vulnerabilities: [
                     {
                       severity: 'high',
-                      advisoryUrl: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
+                      advisoryurl: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc',
                     },
                   ],
                 },
@@ -262,10 +262,10 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'System.Net.Http',
                   resolvedVersion: '4.3.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
                       severity: 'critical',
-                      advisoryUrl: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
+                      advisoryurl: 'https://github.com/advisories/GHSA-xxxx-yyyy-zzzz',
                     },
                   ],
                 },
@@ -294,10 +294,10 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'TopPkg',
                   resolvedVersion: '1.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
                       severity: 'high',
-                      advisoryUrl: 'https://github.com/advisories/GHSA-top1-xxxx-yyyy',
+                      advisoryurl: 'https://github.com/advisories/GHSA-top1-xxxx-yyyy',
                     },
                   ],
                 },
@@ -306,10 +306,10 @@ describe('parseDotnetVulnerableOutput', () => {
                 {
                   id: 'TransPkg',
                   resolvedVersion: '2.0.0',
-                  advisories: [
+                  vulnerabilities: [
                     {
                       severity: 'medium',
-                      advisoryUrl: 'https://github.com/advisories/GHSA-tra1-xxxx-yyyy',
+                      advisoryurl: 'https://github.com/advisories/GHSA-tra1-xxxx-yyyy',
                     },
                   ],
                 },

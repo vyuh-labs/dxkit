@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Dxkit.Benchmark.ProjectB</RootNamespace>
+    <NoWarn>NU1701;NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned vulnerable dep — Newtonsoft.Json 9.0.1 has GHSA-5crp-9r3c-p9vr.
+         This is the D003 validator: pre-2.4.0, dxkit's depth-4 walk
+         picked the first project.assets.json found (likely ProjectA's,
+         which has no vulns) and missed this advisory entirely. Post-fix
+         (10h.6.7), dxkit walks every obj/project.assets.json under the
+         solution root and merges them, so this advisory surfaces with
+         topLevelDep == ['Newtonsoft.Json']. -->
+    <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
+  </ItemGroup>
+
+</Project>
