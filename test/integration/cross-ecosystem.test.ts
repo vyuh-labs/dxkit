@@ -78,20 +78,53 @@ interface BenchmarkLanguage {
     /** Path under `dir` to the file containing the deliberate AWS key. */
     file: string;
   };
-  // 10i.0.2 will add: lint?: { file: string; rule: string }
+  /** Phase 10i.0.2 — fixture with one deliberate linter violation. */
+  lint?: {
+    /** Path under `dir` to the file containing the violation. */
+    file: string;
+    /** Expected `metrics.lintTool` reported by `dxkit quality`. */
+    expectedTool: 'ruff' | 'eslint' | 'golangci-lint' | 'clippy' | 'dotnet-format';
+    /** External binary the linter shells out to (used for `it.skipIf` gating). */
+    requires: string;
+  };
   // 10i.0.3 will add: dup?: { primaryFile: string; cloneFile: string }
   // 10i.0.4 will add: untested?: { sourceFile: string; coverageFile: string }
 }
 
 const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
-  { name: 'Python', dir: 'python', secret: { file: 'secrets.py' } },
-  { name: 'Go', dir: 'go', secret: { file: 'secrets.go' } },
-  { name: 'Rust', dir: 'rust', secret: { file: 'src/secrets.rs' } },
-  { name: 'C# (single)', dir: 'csharp', secret: { file: 'Secrets.cs' } },
+  {
+    name: 'Python',
+    dir: 'python',
+    secret: { file: 'secrets.py' },
+    lint: { file: 'bad_lint.py', expectedTool: 'ruff', requires: 'ruff' },
+  },
+  {
+    name: 'Go',
+    dir: 'go',
+    secret: { file: 'secrets.go' },
+    lint: { file: 'bad_lint.go', expectedTool: 'golangci-lint', requires: 'golangci-lint' },
+  },
+  {
+    name: 'Rust',
+    dir: 'rust',
+    secret: { file: 'src/secrets.rs' },
+    lint: { file: 'src/bad_lint.rs', expectedTool: 'clippy', requires: 'cargo' },
+  },
+  {
+    name: 'C# (single)',
+    dir: 'csharp',
+    secret: { file: 'Secrets.cs' },
+    lint: { file: 'BadLint.cs', expectedTool: 'dotnet-format', requires: 'dotnet' },
+  },
   {
     name: 'C# (multi)',
     dir: 'csharp-multi',
     secret: { file: path.join('ProjectA', 'Secrets.cs') },
+    lint: {
+      file: path.join('ProjectA', 'BadLint.cs'),
+      expectedTool: 'dotnet-format',
+      requires: 'dotnet',
+    },
   },
 ];
 
@@ -132,6 +165,16 @@ interface SecurityReport {
   findings: SecurityFinding[];
 }
 
+interface QualityReport {
+  metrics: {
+    lintErrors: number;
+    lintWarnings: number;
+    lintTool: string | null;
+  };
+  toolsUsed: string[];
+  toolsUnavailable: string[];
+}
+
 function commandExists(cmd: string): boolean {
   try {
     execSync(`command -v ${cmd}`, { stdio: 'pipe' });
@@ -152,6 +195,15 @@ async function runDxkitSecurityReport(fixtureDir: string): Promise<SecurityRepor
 async function runDxkitVulnerabilities(fixtureDir: string): Promise<DepVulnSummary> {
   const report = await runDxkitSecurityReport(fixtureDir);
   return report.summary.dependencies;
+}
+
+async function runDxkitQualityReport(fixtureDir: string): Promise<QualityReport> {
+  const { stdout } = await execAsync(`node ${DXKIT_BIN} quality ${fixtureDir} --json --no-save`, {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  return JSON.parse(stdout) as QualityReport;
 }
 
 describe('cross-ecosystem benchmarks — Python', () => {
@@ -362,6 +414,45 @@ describe('matrix — secrets (Phase 10i.0.1)', () => {
       expect(aws, `expected a secret finding on ${secretFile}`).toBeDefined();
       expect(aws!.tool).toBe('gitleaks');
       expect(aws!.rule).toBe('aws-access-token');
+    });
+  }
+});
+
+/**
+ * Phase 10i.0.2 — lint coverage across every language pack.
+ *
+ * Each fixture has one source file with one deliberate linter
+ * violation idiomatic to that ecosystem (ruff F401 unused-import,
+ * gosimple S1002 bool-comparison, clippy unused_variables, dotnet-
+ * format whitespace). Asserts dxkit's quality pipeline reports the
+ * pack's expected linter and a non-zero error+warning count.
+ *
+ * Pre-stages the assertion surface for 10i.2 (LintFinding fingerprints)
+ * and the 10i.0.5 parity gate.
+ *
+ * Closes D016 — the C# pack's `dotnet-format` parser was filtering for
+ * the substring `'Formatted'` (a string that never appears in real
+ * dotnet-format output) and silently returning 0 violations on every
+ * real .NET project. Caught by adding the C# row to this matrix; fixed
+ * in `src/languages/csharp.ts:gatherCsharpLintResult`.
+ *
+ * Toolchain gate: each row's `lint.requires` declares the binary the
+ * pack's linter shells out to. Locally, contributors without ruff /
+ * golangci-lint / cargo / dotnet see those rows skip; CI installs all
+ * four and runs the full matrix.
+ */
+describe('matrix — lint (Phase 10i.0.2)', () => {
+  for (const lang of BENCHMARK_LANGUAGES) {
+    if (!lang.lint) continue;
+    const { file, expectedTool, requires } = lang.lint;
+    it.skipIf(!commandExists(requires))(`${lang.name}: ${expectedTool} flags ${file}`, async () => {
+      const report = await runDxkitQualityReport(path.join(FIXTURES, lang.dir));
+      expect(report.metrics.lintTool).toBe(expectedTool);
+      const total = report.metrics.lintErrors + report.metrics.lintWarnings;
+      expect(
+        total,
+        `expected ${expectedTool} to report ≥1 lint finding for ${lang.name} (got ${total})`,
+      ).toBeGreaterThan(0);
     });
   }
 });
