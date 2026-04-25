@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-04-25
+
+Phase 10i.0 — cross-ecosystem matrix completion. Establishes the
+"matrix layer" of `test/integration/cross-ecosystem.test.ts` — a
+data-driven `BENCHMARK_LANGUAGES` table that drives uniform
+per-language assertions for **every** report dimension. The 2.4.1
+fixtures only validated `dxkit vulnerabilities`; this release adds
+matrix coverage for **secrets, lint, duplications, and test-gaps**
+across all 5 benchmark languages, plus a CI-enforced parity gate so
+new feature dimensions can't ship without per-language coverage.
+
+Closes **D016** — surfaced and fixed during 10i.0.2.
+
+### Fixed
+
+- **C# `dotnet-format` parser returned zero violations on every real
+  .NET project** since the C# pack landed. The lint provider counted
+  lines containing the substring `'Formatted'` to derive violation
+  count; real `dotnet format --verify-no-changes` output uses
+  `path/to/File.cs(line,col): error CODE: message [project]` — the
+  string `'Formatted'` never appears. Same drift shape as 2.4.1's
+  D005 C# vulnerabilities defect: parser written against synthetic
+  output, never validated against real tool output. Fixed by
+  matching the canonical `\): error \w+:` regex. Caught by adding
+  the C# row to the new lint matrix; the row failed because the
+  parser returned 0 despite exit code != 0 and visible violations
+  in the output. (`src/languages/csharp.ts`, **D016**)
+
+### Added
+
+- **Cross-ecosystem matrix layer** (`test/integration/cross-ecosystem.test.ts`).
+  New `BENCHMARK_LANGUAGES` table at the top of the file is the
+  single source of truth for which languages participate and where
+  each fixture's deliberate findings live. Each `describe('matrix —
+  <report>')` block iterates the table to produce one uniform
+  assertion per language — adding a new feature is one new
+  optional field per row + one new `matrix —` describe; adding a
+  6th language is one row append + one fixture dir + one CI install.
+  No search-and-replace across describe blocks.
+
+- **`matrix — secrets` (Phase 10i.0.1)** — 5 hardcoded fake AWS
+  access keys (`AKIA1234567890ABCDEF` — patterned digits/letters
+  that pass gitleaks' `aws-access-token` regex but fail real AWS
+  validation and GitHub push protection). One per benchmark
+  ecosystem. Asserts `dxkit vulnerabilities` surfaces a
+  `SecretFinding` (category=secret, tool=gitleaks,
+  rule=aws-access-token) for each.
+
+- **`matrix — lint` (Phase 10i.0.2)** — 5 deliberate idiomatic
+  linter violations (Python ruff F401 unused-import, Go gosimple
+  S1002 bool-comparison, Rust clippy unused_variables, C#
+  dotnet-format whitespace × 2). Asserts `dxkit quality` reports
+  the expected linter and ≥1 lint finding. CI workflow now
+  installs `ruff` (pipx), `golangci-lint` (curl install script),
+  and `clippy` (rustup component) alongside the existing depVulns
+  toolchains; `dotnet format` ships in the .NET 8 SDK.
+
+- **`matrix — duplications` (Phase 10i.0.3)** — two near-identical
+  helpers per fixture, sized comfortably above jscpd's
+  `--min-lines 5 --min-tokens 50` defaults (initial pass had
+  ~30-token bodies that fell below the threshold; widened on the
+  way in). Asserts `metrics.duplication.cloneCount > 0`.
+
+- **`matrix — test-gaps` (Phase 10i.0.4)** — one untested source
+  module per fixture with no matching test file. Asserts
+  `dxkit test-gaps` returns the file in `gaps[]` with
+  `hasMatchingTest: false`. No coverage artifact committed —
+  filename-match coverage source is the matrix's canonical
+  fallback.
+
+- **`scripts/check-cross-ecosystem-coverage.sh` parity gate**
+  (Phase 10i.0.5) — parses the test file and verifies every
+  (report × language) cell has BOTH metadata in
+  `BENCHMARK_LANGUAGES` and a matching `matrix — <report>`
+  describe. Exits non-zero with a specific cell-pointer error
+  message if any are missing. Wired into both `.github/workflows/ci.yml`
+  and `.husky/pre-commit` so contributors catch parity gaps locally
+  before push. Documented as a 4-step recipe in the script header
+  for adding a new matrix dimension.
+
+- **`.dxkit-ignore`** at repo root excludes `test/fixtures/benchmarks/`
+  from dxkit's own self-scan (`vyuh-dxkit vulnerabilities .` from
+  this repo) so the deliberate fixture findings don't false-positive
+  in dxkit's own report. Cross-ecosystem.test.ts is unaffected — it
+  scans fixture dirs as cwd, where the repo-root `.dxkit-ignore`
+  doesn't apply.
+
+### Changed
+
+- **Bumped `vitest` 2.1.4 → 3.2.4 and `@vitest/coverage-v8` 2.1.9 →
+  3.2.4 together** (matched 3.2.4 pair, peer-deps clean). vitest 3
+  introduces a hardcoded 60s `onTaskUpdate` ack timeout on the
+  worker→main birpc channel (vitest-dev/vitest #8164) — a sync-
+  blocked test thread (`execSync` shelling out for >60s) starves the
+  channel and vitest exits non-zero with an unhandled error even when
+  every test passes. Refactored `cross-ecosystem.test.ts` to use
+  `util.promisify(exec)` for all shell-outs (pip-audit, govulncheck,
+  dotnet restore, cargo-audit) so the runner stays responsive.
+
+- **Default `vitest.config.ts` `testTimeout` 30s → 60s.** The
+  cross-ecosystem suite shells out to network-dependent registries
+  (npm/pypi/crates.io/nuget); 30s was tight enough to flake on
+  slow-network days (pip-audit observed at 27-34s on the
+  `requests@2.20.0` fixture). Unit tests are unaffected — they fail
+  fast on assertion errors; only hangs care about the timeout.
+
+- **`.gitignore`** adds `test/fixtures/benchmarks/**/target/` so
+  cargo's build dir doesn't get committed when contributors run the
+  Rust matrix locally.
+
+- **CONTRIBUTING.md toolchain table** grows a "Matrix rows" column
+  and `ruff` / `golangci-lint` / `gitleaks` rows, since each is now
+  a matrix-dimension toolchain (not just a depVulns one).
+
 ## [2.4.1] - 2026-04-25
 
 Phase 10h.6.8 — cross-ecosystem benchmark validation. Builds five
