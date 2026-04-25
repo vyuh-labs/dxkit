@@ -276,14 +276,17 @@ If you need to run the cross-ecosystem suite locally — e.g., because
 you're modifying a non-TS language pack — install the relevant
 toolchain:
 
-| Toolchain             | Required for     | Install (Linux/macOS)                                                                                           |
-| --------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------- |
-| `pip-audit`           | Python fixture   | `pipx install pip-audit` (already in TOOL_DEFS)                                                                 |
-| `cargo` (rustup)      | Rust fixture     | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal`                    |
-| `cargo-audit`         | Rust fixture     | `cargo install --locked cargo-audit`                                                                            |
-| `dotnet` (.NET 8 SDK) | both C# fixtures | `wget https://dot.net/v1/dotnet-install.sh && bash dotnet-install.sh --channel 8.0 --install-dir $HOME/.dotnet` |
-| `go` 1.21+            | Go fixture       | `apt install golang` / `brew install go`                                                                        |
-| `govulncheck`         | Go fixture       | `go install golang.org/x/vuln/cmd/govulncheck@latest`                                                           |
+| Toolchain             | Matrix rows                           | Required for                                                       | Install (Linux/macOS)                                                                                                               |
+| --------------------- | ------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `pip-audit`           | Python                                | depVulns                                                           | `pipx install pip-audit` (already in TOOL_DEFS)                                                                                     |
+| `ruff`                | Python                                | lint (Phase 10i.0.2)                                               | `pipx install ruff`                                                                                                                 |
+| `cargo` (rustup)      | Rust                                  | depVulns + lint (clippy is bundled with rustup `clippy` component) | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal && rustup component add clippy`         |
+| `cargo-audit`         | Rust                                  | depVulns                                                           | `cargo install --locked cargo-audit`                                                                                                |
+| `dotnet` (.NET 8 SDK) | C# (single) + C# (multi)              | depVulns + lint (`dotnet format` is bundled)                       | `wget https://dot.net/v1/dotnet-install.sh && bash dotnet-install.sh --channel 8.0 --install-dir $HOME/.dotnet`                     |
+| `go` 1.21+            | Go                                    | depVulns + lint                                                    | `apt install golang` / `brew install go`                                                                                            |
+| `govulncheck`         | Go                                    | depVulns                                                           | `go install golang.org/x/vuln/cmd/govulncheck@latest`                                                                               |
+| `golangci-lint`       | Go                                    | lint (Phase 10i.0.2)                                               | `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \| sh -s -- -b $(go env GOPATH)/bin v1.64.8` |
+| `gitleaks`            | all (matrix — secrets, Phase 10i.0.1) | secrets                                                            | `pipx install gitleaks` / `brew install gitleaks` / [GitHub release](https://github.com/gitleaks/gitleaks/releases)                 |
 
 ### Regenerating a fixture
 

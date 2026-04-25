@@ -617,7 +617,15 @@ function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
   let violations = 0;
   if (exitCode !== 0) {
     const raw = run('dotnet format --verify-no-changes 2>&1', cwd, 120000);
-    violations = raw ? raw.split('\n').filter((l) => l.includes('Formatted')).length : 1;
+    // dotnet-format emits one line per violation in the form
+    //   path/to/File.cs(line,col): error CODE: message [project.csproj]
+    // (codes include WHITESPACE, FINALNEWLINE, IDE-style rules, etc.).
+    // Pre-2.4.2 this filtered for `'Formatted'` substring matches —
+    // a string that never appears in real dotnet-format output —
+    // resulting in 0 violations on every real C# project despite
+    // exitCode != 0 (D016, surfaced by Phase 10i.0.2 cross-ecosystem
+    // matrix). Match the canonical `): error CODE:` pattern instead.
+    violations = raw ? raw.split('\n').filter((l) => /\): error \w+:/.test(l)).length : 1;
   }
 
   const envelope: LintResult = {
