@@ -44,7 +44,7 @@ and run `npm run build`.
 
 ```bash
 nvm use                # picks up .nvmrc (Node 22)
-npm install            # installs deps and sets up husky hooks
+npm ci                 # bit-exact install from package-lock.json (recommended)
 npm run build          # copies src-templates/ → templates/ and runs tsc
 npm test               # vitest in watch mode
 npm run test:run       # build + vitest run (one-shot, includes integration)
@@ -53,6 +53,12 @@ npm run test:integration   # only test/integration/** (~33s alone)
 npm run lint           # eslint
 npm run format         # prettier --write .
 ```
+
+`npm ci` is the recommended install command — it reproduces `package-lock.json`
+exactly and matches what CI runs (`.github/workflows/ci.yml:20`). Use
+`npm install <pkg>` only when intentionally adding or changing a dependency.
+Avoid `--legacy-peer-deps` — the lockfile resolves cleanly without it; the
+flag can silently drift versions in `package.json` during install.
 
 The first `npm install` registers husky hooks automatically:
 
@@ -203,6 +209,16 @@ Tests live in `test/` and use [Vitest](https://vitest.dev/). Three kinds:
   `beforeAll`, and shares the reports across assertions. This is what
   gives us coverage of the shell-out code paths (gitleaks, jscpd, eslint,
   npm audit). ~18s. Included in the default suite.
+- **Cross-ecosystem integration test** (`test/integration/cross-ecosystem.test.ts`):
+  runs `dxkit vulnerabilities` against committed benchmark fixtures
+  under `test/fixtures/benchmarks/{python,go,rust,csharp,csharp-multi}/`
+  — projects with deliberately pinned vulnerable deps. Validates non-TS
+  language packs against real ecosystem-tool output (pip-audit,
+  govulncheck, cargo-audit, dotnet list package --vulnerable). ~150s
+  end-to-end (subprocess-heavy; CI parallelizes). Each ecosystem's
+  tests `skipIf` the relevant binary is not on PATH, so contributors
+  without the toolchain see those tests skip locally; CI installs them
+  all. See **Cross-ecosystem benchmarks** below.
 - **CLI integration test** (`test/cli-init.test.ts`): builds the CLI and
   runs it against a temp directory, asserting on the files `init` writes.
   Use this when changing the generator.
@@ -231,6 +247,80 @@ test.ts` (report transformers).
 - The integration test exercises the end-to-end pipeline; don't mock the
   analyzer internals in it. If you need isolated coverage for a gather
   function, write a unit test that drives the specific parser instead.
+
+## Cross-ecosystem benchmarks
+
+`test/fixtures/benchmarks/` holds five committed reference projects
+(`python`, `go`, `rust`, `csharp`, `csharp-multi`) with deliberately
+pinned vulnerable dependencies. They exist to validate dxkit's non-TS
+language packs against **real** ecosystem-tool output rather than
+hand-crafted JSON.
+
+The history that motivated them: through 2.4.0, the Python / Rust / C#
+packs were unit-tested only against synthetic JSON the test author
+hand-wrote. Phase 10h.6.8 surfaced four real defects — including a
+C# parser that returned **zero findings on every real .NET project**
+because the synthetic fixture had the wrong schema shape and the
+parser had drifted to match. The benchmarks are the regression net.
+
+### Toolchain requirements
+
+**Routine dxkit development does not require any of these toolchains.**
+The cross-ecosystem suite uses `it.skipIf(!commandExists(...))(...)`
+gates — locally, contributors without `cargo` / `dotnet` / `go` /
+`govulncheck` / `pip-audit` see those tests skip with a clear message.
+CI (`.github/workflows/ci.yml`) installs them all; that's the
+canonical validation point.
+
+If you need to run the cross-ecosystem suite locally — e.g., because
+you're modifying a non-TS language pack — install the relevant
+toolchain:
+
+| Toolchain             | Required for     | Install (Linux/macOS)                                                                                           |
+| --------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------- |
+| `pip-audit`           | Python fixture   | `pipx install pip-audit` (already in TOOL_DEFS)                                                                 |
+| `cargo` (rustup)      | Rust fixture     | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y --profile minimal`                    |
+| `cargo-audit`         | Rust fixture     | `cargo install --locked cargo-audit`                                                                            |
+| `dotnet` (.NET 8 SDK) | both C# fixtures | `wget https://dot.net/v1/dotnet-install.sh && bash dotnet-install.sh --channel 8.0 --install-dir $HOME/.dotnet` |
+| `go` 1.21+            | Go fixture       | `apt install golang` / `brew install go`                                                                        |
+| `govulncheck`         | Go fixture       | `go install golang.org/x/vuln/cmd/govulncheck@latest`                                                           |
+
+### Regenerating a fixture
+
+The fixtures are committed minus `obj/` (.NET build artifacts — see
+`.gitignore` rule for `test/fixtures/benchmarks/**/obj/`). Most
+fixtures need no regeneration; the cases that do:
+
+```bash
+# Rust — re-resolve dependency graph
+cd test/fixtures/benchmarks/rust && rm Cargo.lock && cargo generate-lockfile
+
+# Go — re-resolve module checksums (use `tidy`, not `download` — govulncheck needs transitive sums)
+cd test/fixtures/benchmarks/go && rm go.sum && go mod tidy
+
+# C# (single + multi) — restore is automatic in the integration test's beforeAll
+# To regenerate locally for inspection:
+cd test/fixtures/benchmarks/csharp && dotnet restore
+cd test/fixtures/benchmarks/csharp-multi && dotnet restore Solution.sln
+```
+
+Each fixture has its own `README.md` documenting expected scanner
+output and the specific defect it guards against.
+
+### Running locally
+
+```bash
+# Full cross-ecosystem suite (will skip ecosystems whose toolchains are missing):
+npm run test:run -- test/integration/cross-ecosystem.test.ts
+
+# Single ecosystem:
+npm run test:run -- test/integration/cross-ecosystem.test.ts -t Rust
+```
+
+Subprocess-heavy: ~150s wall-clock end-to-end. Each test invokes
+`node dist/index.js vulnerabilities <fixture>` which in turn shells
+out to the real ecosystem tool. CI parallelizes the matrix; locally
+they run serially.
 
 ## Releasing
 

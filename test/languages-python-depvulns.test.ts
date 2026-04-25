@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parsePipShowOutput, buildPyTopLevelDepIndex } from '../src/languages/python';
+import {
+  parsePipShowOutput,
+  buildPyTopLevelDepIndex,
+  parseRequirementsTxtTopLevels,
+} from '../src/languages/python';
 
 // `pip show` output is RFC-822-ish Key: Value blocks separated by '---'.
 // Fixtures match the real tool's emission pattern (trailing newline,
@@ -94,6 +98,58 @@ describe('buildPyTopLevelDepIndex', () => {
     // `missing` should still be attributed because BFS visits it.
     expect(idx.get('missing')).toEqual(['foo']);
     expect(idx.get('foo')).toEqual(['foo']);
+  });
+});
+
+describe('parseRequirementsTxtTopLevels', () => {
+  it('returns empty array on empty input', () => {
+    expect(parseRequirementsTxtTopLevels('')).toEqual([]);
+  });
+
+  it('extracts package names from common requirement-spec shapes', () => {
+    const raw = ['requests==2.20.0', 'urllib3>=1.24.3', 'idna~=2.7', 'click<8.0', 'pydantic'].join(
+      '\n',
+    );
+    expect(parseRequirementsTxtTopLevels(raw)).toEqual([
+      'requests',
+      'urllib3',
+      'idna',
+      'click',
+      'pydantic',
+    ]);
+  });
+
+  it('lowercases names to match pip-audit canonical PyPI casing', () => {
+    expect(parseRequirementsTxtTopLevels('Django==4.0\nFlask\n')).toEqual(['django', 'flask']);
+  });
+
+  it('skips comments, blank lines, and -r/-e directives', () => {
+    const raw = [
+      '# comment',
+      '',
+      '-r other.txt',
+      '-e .',
+      '--no-binary :all:',
+      'requests==2.20.0',
+    ].join('\n');
+    expect(parseRequirementsTxtTopLevels(raw)).toEqual(['requests']);
+  });
+
+  it('strips environment markers (PEP 508 ; clause)', () => {
+    expect(parseRequirementsTxtTopLevels("backports.zoneinfo;python_version<'3.9'")).toEqual([
+      'backports.zoneinfo',
+    ]);
+  });
+
+  it('handles extras notation (pkg[extra1,extra2])', () => {
+    expect(parseRequirementsTxtTopLevels('requests[security]==2.20.0')).toEqual(['requests']);
+  });
+
+  it('deduplicates repeated names while preserving first-seen order', () => {
+    expect(parseRequirementsTxtTopLevels('requests==2.20.0\nrequests==2.20.0\nidna~=2.7')).toEqual([
+      'requests',
+      'idna',
+    ]);
   });
 });
 

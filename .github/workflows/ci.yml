@@ -19,6 +19,32 @@ jobs:
           cache: 'npm'
       - run: npm ci
 
+      # Cross-ecosystem benchmark toolchains. Required by
+      # test/integration/cross-ecosystem.test.ts (Phase 10h.6.8) which
+      # validates the Python / Go / Rust / C# packs against real
+      # ecosystem-tool output. Each test skipIf its binary is missing,
+      # so missing any one of these would silently shrink the regression
+      # surface — install all four.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pipx install pip-audit
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+      - name: Install cargo-audit (if not cached)
+        run: command -v cargo-audit || cargo install --locked cargo-audit
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+
       - name: Typecheck
         run: npm run typecheck
 

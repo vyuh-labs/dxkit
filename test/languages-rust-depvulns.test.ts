@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parseCargoAuditOutput, buildRustTopLevelDepIndex } from '../src/languages/rust';
+import {
+  parseCargoAuditOutput,
+  buildRustTopLevelDepIndex,
+  extractMinPatchedVersion,
+} from '../src/languages/rust';
 
 // Fixture JSONs mirror the cargo-audit --json schema documented at
 // https://docs.rs/rustsec/latest/rustsec/advisory/struct.Advisory.html.
@@ -272,6 +276,69 @@ describe('buildRustTopLevelDepIndex', () => {
     });
     const idx = buildRustTopLevelDepIndex(raw);
     expect(idx.get('bytes')).toEqual(['reqwest', 'tokio']);
+  });
+});
+
+describe('extractMinPatchedVersion', () => {
+  it('strips a leading >= comparator', () => {
+    expect(extractMinPatchedVersion('>=0.10.55')).toBe('0.10.55');
+    expect(extractMinPatchedVersion('>= 0.10.55')).toBe('0.10.55');
+  });
+
+  it('extracts the >= floor from a comma-separated range', () => {
+    // The defect surfaced by tokio@0.1.22 in test/fixtures/benchmarks/rust/.
+    // Earlier code emitted "1.8.4, <1.9.0" — unusable as a precise version.
+    expect(extractMinPatchedVersion('>=1.8.4, <1.9.0')).toBe('1.8.4');
+    expect(extractMinPatchedVersion('>= 1.8.4, < 1.9.0')).toBe('1.8.4');
+  });
+
+  it('falls back to the first semver token when no >= floor is given', () => {
+    expect(extractMinPatchedVersion('^1.0.0')).toBe('1.0.0');
+    expect(extractMinPatchedVersion('1.8.4')).toBe('1.8.4');
+    expect(extractMinPatchedVersion('~1.2.3')).toBe('1.2.3');
+  });
+
+  it('preserves prerelease and build-metadata tags', () => {
+    expect(extractMinPatchedVersion('>=1.0.0-alpha.1')).toBe('1.0.0-alpha.1');
+    expect(extractMinPatchedVersion('1.0.0+build.7')).toBe('1.0.0+build.7');
+  });
+
+  it('returns the original string when nothing semver-shaped is present', () => {
+    expect(extractMinPatchedVersion('latest')).toBe('latest');
+    expect(extractMinPatchedVersion('')).toBe('');
+  });
+});
+
+describe('parseCargoAuditOutput — patched-range handling', () => {
+  it('cleanly extracts the >= floor when patched is a range', () => {
+    // Validates the tokio@0.1.22 case: cargo-audit emits patched =
+    // [">=1.8.4, <1.9.0", ">=1.13.1"]. parentVersion must be "1.8.4",
+    // not "1.8.4, <1.9.0". Phase 10h.6.8 hotfix.
+    const raw = JSON.stringify({
+      vulnerabilities: {
+        found: 1,
+        count: 1,
+        list: [
+          {
+            advisory: {
+              id: 'RUSTSEC-2021-0124',
+              package: 'tokio',
+              title: 'data race',
+              description: 'race condition',
+              severity: 'medium',
+              aliases: [],
+              references: [],
+            },
+            versions: { patched: ['>=1.8.4, <1.9.0', '>=1.13.1'], unaffected: [] },
+            package: { name: 'tokio', version: '0.1.22' },
+          },
+        ],
+      },
+    });
+    const parsed = parseCargoAuditOutput(raw)!;
+    const f = parsed.findings[0];
+    expect(f.fixedVersion).toBe('1.8.4');
+    expect(f.upgradePlan?.parentVersion).toBe('1.8.4');
   });
 });
 

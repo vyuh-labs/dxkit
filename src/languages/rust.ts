@@ -158,6 +158,32 @@ interface CargoAuditResult {
 }
 
 /**
+ * Extract the minimum patched semver from a RUSTSEC patched-range
+ * string. cargo-audit emits requirement strings like:
+ *
+ *   `">=1.8.4"`            — single lower bound
+ *   `">=1.8.4, <1.9.0"`    — line-restricted patch range
+ *   `">= 1.8.4, < 1.9.0"`  — RUSTSEC's spaced convention
+ *   `"^1.0.0"`             — caret operator
+ *   `"1.8.4"`              — bare version
+ *
+ * Earlier revisions of `parseCargoAuditOutput` only stripped the
+ * leading comparator, producing `"1.8.4, <1.9.0"` for the second
+ * shape — unusable as a `cargo update --precise` argument. This
+ * helper extracts the explicit `>=` floor when present (the minimum
+ * patched version of that line); otherwise falls back to the first
+ * semver-shaped token in the string. Surfaced by tokio@0.1.22 in
+ * the cross-ecosystem benchmark fixture (Phase 10h.6.8).
+ */
+export function extractMinPatchedVersion(patchedRange: string): string {
+  const semver = /\d+\.\d+\.\d+(?:[-+][\w.]+)?/;
+  const gte = patchedRange.match(new RegExp(`>=\\s*(${semver.source})`));
+  if (gte) return gte[1];
+  const any = patchedRange.match(semver);
+  return any ? any[0] : patchedRange;
+}
+
+/**
  * Map cargo-audit's textual severity to the four-tier `SeverityCounts`
  * domain. RUSTSEC uses the standard critical/high/medium/low set;
  * `informational` advisories (yanked, notice) are treated as low.
@@ -233,11 +259,16 @@ export function parseCargoAuditOutput(
     if (cvssScore !== null) finding.cvssScore = cvssScore;
     const patched = v.versions?.patched ?? [];
     if (patched.length > 0) {
-      // RUSTSEC patched entries are version requirement strings
-      // (e.g. ">=1.2.5"). Strip the leading comparator so the
-      // bom render's "Upgrade to X" text reads cleanly. Multiple
-      // patched constraints (rare) fall through with the first.
-      const cleanFix = patched[0].replace(/^[<>=^~\s]+/, '').trim() || patched[0];
+      // RUSTSEC patched entries are version *requirement* strings, often
+      // ranges like ">=1.8.4, <1.9.0" — they describe an entire patched
+      // version line, not a single version. Earlier revisions stripped
+      // only the leading `>=`, leaving `"1.8.4, <1.9.0"` in
+      // `parentVersion` which then can't be passed to `cargo update
+      // --precise <X>`. Surfaced by tokio@0.1.22 in the cross-ecosystem
+      // benchmark fixture (Phase 10h.6.8). Now we extract the explicit
+      // `>=` floor when present (the minimum patched version), or fall
+      // back to the first semver-shaped token in the string.
+      const cleanFix = extractMinPatchedVersion(patched[0]);
       finding.fixedVersion = cleanFix;
       // Tier-2 structured plan (10h.6.3): Rust's dep graph is resolved
       // by cargo in one go — there's no "transitive parent" concept like

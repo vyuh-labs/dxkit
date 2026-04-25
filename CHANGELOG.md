@@ -7,6 +7,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-04-25
+
+Phase 10h.6.8 — cross-ecosystem benchmark validation. Builds five
+committed reference projects (`test/fixtures/benchmarks/{python,go,
+rust,csharp,csharp-multi}/`) with deliberately pinned vulnerable deps
+and runs `dxkit vulnerabilities` against each as a regression test.
+Surfaced four real defects against the 2.4.0 non-TS code paths;
+this release ships fixes for all four.
+
+Closes **D005** (no Python/Go/Rust/C# benchmark projects), open since
+Phase 10h.3.
+
+### Fixed
+
+- **C# pack returned zero findings on real `dotnet list package
+  --vulnerable` output** since 10h.3.6. The parser read
+  `pkg.advisories` + `adv.advisoryUrl`; real dotnet 8 SDK output uses
+  `pkg.vulnerabilities` + `adv.advisoryurl` (lowercase). Unit tests
+  passed because they used the (wrong) synthetic shape. Schema
+  interfaces renamed to match real output (`DotnetAdvisory` →
+  `DotnetVulnerability`); existing tests updated. **Customer impact**:
+  any .NET project run through `vyuh-dxkit vulnerabilities`,
+  `vyuh-dxkit bom`, or the dependencies dimension of `vyuh-dxkit
+  health` was silently reporting zero dep-vulns. (`src/languages/csharp.ts`)
+
+- **Python pack emitted duplicate findings for advisories that
+  pip-audit lists per affected version range.** Same `(package,
+  version, id)` triple was emitted multiple times with identical
+  fingerprints. Fixed by source-side dedup in the gather function.
+  Surfaced by `requests==2.20.0` in the benchmark fixture, where
+  `PYSEC-2023-74` and others appeared twice. (`src/languages/python.ts`)
+
+- **Python pack left `topLevelDep` empty on direct deps when no venv
+  was installed.** A `requirements.txt`-only project had no `pip show`
+  graph to walk, so even the package literally listed in
+  requirements.txt got no attribution. Added `requirements.txt` parser
+  fallback (`parseRequirementsTxtTopLevels`) that gives direct deps
+  self-attribution (`pkg → [pkg]`) when no venv is available.
+  Transitives still stay unset without a venv — that's accurate to the
+  data we have. (`src/languages/python.ts`)
+
+- **Rust pack emitted comma-separated semver ranges as
+  `upgradePlan.parentVersion`** instead of a clean version. cargo-audit
+  emits `versions.patched` entries like `">=1.8.4, <1.9.0"` for
+  patched-version-line ranges. The previous regex stripped only the
+  leading `>=`, leaving `"1.8.4, <1.9.0"` — unusable as a `cargo
+  update --precise <X>` argument. New helper
+  `extractMinPatchedVersion` extracts the explicit `>=` floor or falls
+  back to the first semver-shaped token. Surfaced by `tokio@0.1.22`
+  in the benchmark fixture. (`src/languages/rust.ts`)
+
+### Added
+
+- **Five committed benchmark fixtures** at `test/fixtures/benchmarks/`:
+  `python/` (`requests==2.20.0`), `go/` (`gin-gonic/gin v1.6.0`),
+  `rust/` (`tokio = "0.1.9"`), `csharp/` (`Newtonsoft.Json 9.0.1`),
+  and `csharp-multi/` (a 2-project solution validating Phase 10h.6.7's
+  D003 fix on real `dotnet restore` output rather than synthetic JSON).
+  Each fixture has a `README.md` documenting expected scanner output
+  and the specific defect it guards against.
+
+- **`test/integration/cross-ecosystem.test.ts`** — runs
+  `dxkit vulnerabilities` against every fixture; asserts the
+  hotfix-validated behaviors (no duplicates, clean parentVersion,
+  correct topLevelDep, real-shape parsing, sibling-project graph
+  merge). Each ecosystem's tests `skipIf(!commandExists(...))`, so
+  contributors without `cargo` / `dotnet` / `go` / `pip-audit` /
+  `govulncheck` see them skip locally with a clear message; CI
+  installs all four toolchains and runs the full matrix. ~150s
+  end-to-end.
+
+- **CI workflow** (`.github/workflows/ci.yml`) now installs Python +
+  Go + Rust + .NET + their respective audit tools (`pip-audit`,
+  `govulncheck`, `cargo-audit`) ahead of the test step. cargo-audit
+  is cached across runs; the others are fast enough to install per
+  job.
+
+- **CONTRIBUTING.md — "Cross-ecosystem benchmarks" section** —
+  documents toolchain requirements (none required for routine dxkit
+  dev; each is needed only when modifying that language's pack),
+  per-fixture regeneration steps, and the local-vs-CI run model.
+  Also clarifies: prefer `npm ci` over `npm install` for development
+  setup, and avoid `--legacy-peer-deps` (the lockfile resolves cleanly
+  without it; the flag silently bumped vitest 2.x → 3.x in earlier
+  re-orient instructions).
+
+- **Unit tests** for the four parser helpers added/changed:
+  - `parseRequirementsTxtTopLevels` (7 tests in
+    `test/languages-python-depvulns.test.ts`)
+  - `extractMinPatchedVersion` (5 tests in
+    `test/languages-rust-depvulns.test.ts`)
+  - new patched-range case for `parseCargoAuditOutput` (1 test)
+  - existing C# test suite re-validated against the corrected
+    `vulnerabilities` / `advisoryurl` schema
+
+### Changed
+
+- `.gitignore` adds `test/fixtures/benchmarks/**/obj/` and
+  `test/fixtures/benchmarks/**/bin/` so .NET build artifacts don't
+  get committed when contributors run `dotnet restore` locally
+  for inspection.
+
+### Notes
+
+The benchmark suite establishes the pattern for cross-language
+validation as future report types (bom, licenses, quality, test-gaps,
+dev-report) are made agent-ready in Phase 10i. Per the roadmap,
+Phase 10i.0 (target 2.4.2) extends these fixtures with non-dep-vuln
+scenarios (one secret, one lint warning, one duplication, one
+untested file per language) so each 10i.x sub-commit can assert its
+feature across the full language matrix.
+
 ## [2.4.0] - 2026-04-24
 
 Phase 10h.6 complete. Tier-2 fix tools + agent-handoff types +
