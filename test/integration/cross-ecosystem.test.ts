@@ -87,7 +87,11 @@ interface BenchmarkLanguage {
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
-  // 10i.0.3 will add: dup?: { primaryFile: string; cloneFile: string }
+  /** Phase 10i.0.3 — fixture with one deliberate code-clone pair. */
+  dup?: {
+    /** Path under `dir` to the file containing the two near-identical helpers. */
+    file: string;
+  };
   // 10i.0.4 will add: untested?: { sourceFile: string; coverageFile: string }
 }
 
@@ -97,24 +101,28 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     dir: 'python',
     secret: { file: 'secrets.py' },
     lint: { file: 'bad_lint.py', expectedTool: 'ruff', requires: 'ruff' },
+    dup: { file: 'duplications.py' },
   },
   {
     name: 'Go',
     dir: 'go',
     secret: { file: 'secrets.go' },
     lint: { file: 'bad_lint.go', expectedTool: 'golangci-lint', requires: 'golangci-lint' },
+    dup: { file: 'duplications.go' },
   },
   {
     name: 'Rust',
     dir: 'rust',
     secret: { file: 'src/secrets.rs' },
     lint: { file: 'src/bad_lint.rs', expectedTool: 'clippy', requires: 'cargo' },
+    dup: { file: 'src/duplications.rs' },
   },
   {
     name: 'C# (single)',
     dir: 'csharp',
     secret: { file: 'Secrets.cs' },
     lint: { file: 'BadLint.cs', expectedTool: 'dotnet-format', requires: 'dotnet' },
+    dup: { file: 'Duplications.cs' },
   },
   {
     name: 'C# (multi)',
@@ -125,6 +133,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
       expectedTool: 'dotnet-format',
       requires: 'dotnet',
     },
+    dup: { file: path.join('ProjectA', 'Duplications.cs') },
   },
 ];
 
@@ -170,6 +179,12 @@ interface QualityReport {
     lintErrors: number;
     lintWarnings: number;
     lintTool: string | null;
+    duplication: {
+      totalLines: number;
+      duplicatedLines: number;
+      percentage: number;
+      cloneCount: number;
+    } | null;
   };
   toolsUsed: string[];
   toolsUnavailable: string[];
@@ -452,6 +467,38 @@ describe('matrix — lint (Phase 10i.0.2)', () => {
       expect(
         total,
         `expected ${expectedTool} to report ≥1 lint finding for ${lang.name} (got ${total})`,
+      ).toBeGreaterThan(0);
+    });
+  }
+});
+
+/**
+ * Phase 10i.0.3 — duplication coverage across every language pack.
+ *
+ * Each fixture has one source file with two near-identical helpers
+ * sized comfortably above jscpd's `--min-lines 5 --min-tokens 50`
+ * defaults. Asserts dxkit's quality pipeline reports a non-zero clone
+ * count for every fixture.
+ *
+ * Pre-stages the assertion surface for 10i.2 (DuplicationClone
+ * fingerprints) and the 10i.0.5 parity gate.
+ *
+ * Toolchain gate: jscpd is the universal duplication scanner — runs
+ * language-agnostically on text, so one `commandExists` check covers
+ * every row. (Same shape as the secrets matrix.)
+ */
+describe('matrix — duplications (Phase 10i.0.3)', () => {
+  const hasJscpd = commandExists('jscpd');
+
+  for (const lang of BENCHMARK_LANGUAGES) {
+    if (!lang.dup) continue;
+    const dupFile = lang.dup.file;
+    it.skipIf(!hasJscpd)(`${lang.name}: jscpd flags clone in ${dupFile}`, async () => {
+      const report = await runDxkitQualityReport(path.join(FIXTURES, lang.dir));
+      expect(report.metrics.duplication).not.toBeNull();
+      expect(
+        report.metrics.duplication!.cloneCount,
+        `expected jscpd to find ≥1 clone for ${lang.name}`,
       ).toBeGreaterThan(0);
     });
   }
