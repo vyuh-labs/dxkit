@@ -9,5 +9,6 @@
 # gates see the *final* staged state, not a pre-format snapshot.
 npx lint-staged \
   && bash scripts/check-architecture.sh \
+  && bash scripts/check-cross-ecosystem-coverage.sh \
   && bash scripts/check-slop.sh \
   && npm run typecheck
