@@ -45,6 +45,56 @@ const DXKIT_BIN = path.join(REPO_ROOT, 'dist', 'index.js');
 // this suite go through `execAsync` so the worker stays responsive.
 const execAsync = promisify(exec);
 
+/**
+ * Benchmark-fixture metadata table — the SINGLE SOURCE OF TRUTH for
+ * which languages participate in the cross-ecosystem matrix and where
+ * each fixture's deliberate findings live. Adding a 6th language is one
+ * row append + one fixture dir + one CI toolchain install — no
+ * search-and-replace across describe blocks.
+ *
+ * Each `matrix — <report>` describe block iterates this array. New
+ * report types (lint, dup, untested, bom, licenses, quality, test-gaps,
+ * dev-report) extend each row with one optional field — no new describe
+ * patterns to invent.
+ *
+ * Table-driven by design:
+ *   - `name` is the display name in test output ("Python", "C# (multi)")
+ *   - `dir` is the path under `test/fixtures/benchmarks/`
+ *   - `secret.file` is the path under `dir` containing the fake credential
+ *   - Future fields land in 10i.0.2/.3/.4 sub-commits (lint, dup, untested)
+ *
+ * The 10i.0.5 parity gate parses this array + every `matrix — <report>`
+ * describe block to verify every (report × language) cell has both
+ * metadata + an iteration. Adding a new report = grow the table + add a
+ * matrix describe; the gate auto-extends.
+ */
+interface BenchmarkLanguage {
+  /** Display name shown in vitest test output. */
+  name: string;
+  /** Subdirectory under `test/fixtures/benchmarks/`. */
+  dir: string;
+  /** Phase 10i.0.1 — fake hardcoded secret fixture. */
+  secret?: {
+    /** Path under `dir` to the file containing the deliberate AWS key. */
+    file: string;
+  };
+  // 10i.0.2 will add: lint?: { file: string; rule: string }
+  // 10i.0.3 will add: dup?: { primaryFile: string; cloneFile: string }
+  // 10i.0.4 will add: untested?: { sourceFile: string; coverageFile: string }
+}
+
+const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
+  { name: 'Python', dir: 'python', secret: { file: 'secrets.py' } },
+  { name: 'Go', dir: 'go', secret: { file: 'secrets.go' } },
+  { name: 'Rust', dir: 'rust', secret: { file: 'src/secrets.rs' } },
+  { name: 'C# (single)', dir: 'csharp', secret: { file: 'Secrets.cs' } },
+  {
+    name: 'C# (multi)',
+    dir: 'csharp-multi',
+    secret: { file: path.join('ProjectA', 'Secrets.cs') },
+  },
+];
+
 interface DepVulnFinding {
   id: string;
   package: string;
@@ -66,6 +116,22 @@ interface DepVulnSummary {
   findings: DepVulnFinding[];
 }
 
+interface SecurityFinding {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  category: 'secret' | 'code' | 'config' | 'dependency';
+  cwe: string;
+  rule: string;
+  title: string;
+  file: string;
+  line: number;
+  tool: string;
+}
+
+interface SecurityReport {
+  summary: { dependencies: DepVulnSummary };
+  findings: SecurityFinding[];
+}
+
 function commandExists(cmd: string): boolean {
   try {
     execSync(`command -v ${cmd}`, { stdio: 'pipe' });
@@ -75,12 +141,16 @@ function commandExists(cmd: string): boolean {
   }
 }
 
-async function runDxkitVulnerabilities(fixtureDir: string): Promise<DepVulnSummary> {
+async function runDxkitSecurityReport(fixtureDir: string): Promise<SecurityReport> {
   const { stdout } = await execAsync(
     `node ${DXKIT_BIN} vulnerabilities ${fixtureDir} --json --no-save`,
     { cwd: REPO_ROOT, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 },
   );
-  const report = JSON.parse(stdout) as { summary: { dependencies: DepVulnSummary } };
+  return JSON.parse(stdout) as SecurityReport;
+}
+
+async function runDxkitVulnerabilities(fixtureDir: string): Promise<DepVulnSummary> {
+  const report = await runDxkitSecurityReport(fixtureDir);
   return report.summary.dependencies;
 }
 
@@ -242,4 +312,56 @@ describe('cross-ecosystem benchmarks — Go', () => {
       expect(stdlibFindings.length).toBeGreaterThan(0);
     },
   );
+});
+
+/**
+ * Matrix layer — uniform feature coverage across every language pack.
+ *
+ * Each `matrix — <report>` describe iterates `BENCHMARK_LANGUAGES` and
+ * runs the same assertion against each fixture's deliberate finding.
+ * Catches "pack X stopped working entirely" regressions (e.g., the
+ * 10h.6.8 C# defect that returned 0 findings on real .NET output for
+ * 5 months — would have been caught immediately by a uniform "C# pack
+ * surfaces ≥1 advisory" matrix assertion).
+ *
+ * Distinct from the language-named "deep" describes above (e.g.,
+ * `cross-ecosystem benchmarks — Python`), which are heterogeneous
+ * regression coverage for specific Phase 10h.6.8 parser fixes
+ * (Python dedup, Rust parentVersion, C# parser key, multi-project
+ * D003). Two layers, distinct purposes:
+ *   - Matrix:    same assertion × all languages — catches pipeline death
+ *   - Deep:      one specific assertion per known footgun
+ */
+
+/**
+ * Phase 10i.0.1 — secrets coverage across every language pack.
+ *
+ * Each fixture has one hardcoded fake AWS access key (clearly-fake
+ * `AKIA1234567890ABCDEF` — passes gitleaks' `aws-access-token` regex,
+ * fails real AWS validation). Asserts dxkit's vulnerability pipeline
+ * surfaces a `SecretFinding` (category=secret, tool=gitleaks) pointing
+ * at the deliberate fixture file in every ecosystem.
+ *
+ * Pre-stages the assertion surface for 10i.2 (SecretFinding
+ * fingerprints) and the 10i.0.5 parity gate.
+ *
+ * Toolchain gate: `gitleaks` runs language-agnostically, so one
+ * `commandExists` check covers every row.
+ */
+describe('matrix — secrets (Phase 10i.0.1)', () => {
+  const hasGitleaks = commandExists('gitleaks');
+
+  for (const lang of BENCHMARK_LANGUAGES) {
+    if (!lang.secret) continue;
+    const secretFile = lang.secret.file;
+    it.skipIf(!hasGitleaks)(`${lang.name}: hardcoded AWS key in ${secretFile}`, async () => {
+      const report = await runDxkitSecurityReport(path.join(FIXTURES, lang.dir));
+      const secrets = report.findings.filter((f) => f.category === 'secret');
+      expect(secrets.length).toBeGreaterThan(0);
+      const aws = secrets.find((f) => f.file.endsWith(secretFile));
+      expect(aws, `expected a secret finding on ${secretFile}`).toBeDefined();
+      expect(aws!.tool).toBe('gitleaks');
+      expect(aws!.rule).toBe('aws-access-token');
+    });
+  }
 });

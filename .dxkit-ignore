@@ -1,0 +1,14 @@
+# dxkit self-scan exclusions — applied when running dxkit against
+# its OWN repo root (e.g. `vyuh-dxkit vulnerabilities .`). Does NOT
+# apply when dxkit analyzes a fixture directory directly (different
+# cwd → different exclusion set), so the cross-ecosystem integration
+# tests under test/fixtures/benchmarks/ continue to surface the
+# deliberate findings they assert on.
+
+# Cross-ecosystem benchmark fixtures (Phase 10h.6.8 + 10i.0).
+# These contain deliberately-vulnerable manifests, hardcoded fake
+# secrets, lint violations, duplications, and untested files used by
+# test/integration/cross-ecosystem.test.ts. They are NOT dxkit's own
+# source — they are test artifacts. Excluding them prevents false
+# positives in dxkit's self-health-check.
+test/fixtures/benchmarks/
