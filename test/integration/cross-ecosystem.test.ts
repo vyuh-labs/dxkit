@@ -92,7 +92,11 @@ interface BenchmarkLanguage {
     /** Path under `dir` to the file containing the two near-identical helpers. */
     file: string;
   };
-  // 10i.0.4 will add: untested?: { sourceFile: string; coverageFile: string }
+  /** Phase 10i.0.4 — fixture with one deliberate untested source file. */
+  untested?: {
+    /** Path under `dir` to the source file with no matching test. */
+    file: string;
+  };
 }
 
 const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
@@ -102,6 +106,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     secret: { file: 'secrets.py' },
     lint: { file: 'bad_lint.py', expectedTool: 'ruff', requires: 'ruff' },
     dup: { file: 'duplications.py' },
+    untested: { file: 'untested_module.py' },
   },
   {
     name: 'Go',
@@ -109,6 +114,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     secret: { file: 'secrets.go' },
     lint: { file: 'bad_lint.go', expectedTool: 'golangci-lint', requires: 'golangci-lint' },
     dup: { file: 'duplications.go' },
+    untested: { file: 'untested_module.go' },
   },
   {
     name: 'Rust',
@@ -116,6 +122,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     secret: { file: 'src/secrets.rs' },
     lint: { file: 'src/bad_lint.rs', expectedTool: 'clippy', requires: 'cargo' },
     dup: { file: 'src/duplications.rs' },
+    untested: { file: 'src/untested_module.rs' },
   },
   {
     name: 'C# (single)',
@@ -123,6 +130,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     secret: { file: 'Secrets.cs' },
     lint: { file: 'BadLint.cs', expectedTool: 'dotnet-format', requires: 'dotnet' },
     dup: { file: 'Duplications.cs' },
+    untested: { file: 'UntestedModule.cs' },
   },
   {
     name: 'C# (multi)',
@@ -134,6 +142,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
       requires: 'dotnet',
     },
     dup: { file: path.join('ProjectA', 'Duplications.cs') },
+    untested: { file: path.join('ProjectA', 'UntestedModule.cs') },
   },
 ];
 
@@ -190,6 +199,25 @@ interface QualityReport {
   toolsUnavailable: string[];
 }
 
+interface TestGapsGap {
+  path: string;
+  lines: number;
+  type: string;
+  risk: 'critical' | 'high' | 'medium' | 'low';
+  hasMatchingTest: boolean;
+}
+
+interface TestGapsReport {
+  summary: {
+    sourceFiles: number;
+    effectiveCoverage: number;
+    coverageSource: string;
+  };
+  gaps: TestGapsGap[];
+  toolsUsed: string[];
+  toolsUnavailable: string[];
+}
+
 function commandExists(cmd: string): boolean {
   try {
     execSync(`command -v ${cmd}`, { stdio: 'pipe' });
@@ -219,6 +247,15 @@ async function runDxkitQualityReport(fixtureDir: string): Promise<QualityReport>
     maxBuffer: 50 * 1024 * 1024,
   });
   return JSON.parse(stdout) as QualityReport;
+}
+
+async function runDxkitTestGapsReport(fixtureDir: string): Promise<TestGapsReport> {
+  const { stdout } = await execAsync(`node ${DXKIT_BIN} test-gaps ${fixtureDir} --json --no-save`, {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  return JSON.parse(stdout) as TestGapsReport;
 }
 
 describe('cross-ecosystem benchmarks — Python', () => {
@@ -500,6 +537,40 @@ describe('matrix — duplications (Phase 10i.0.3)', () => {
         report.metrics.duplication!.cloneCount,
         `expected jscpd to find ≥1 clone for ${lang.name}`,
       ).toBeGreaterThan(0);
+    });
+  }
+});
+
+/**
+ * Phase 10i.0.4 — test-gaps coverage across every language pack.
+ *
+ * Each fixture has one source file with no matching test file.
+ * Asserts dxkit's `test-gaps` pipeline detects the file as a source
+ * file and reports it in `gaps[]` with `hasMatchingTest: false`.
+ *
+ * Pre-stages the assertion surface for 10i.2 (UntestedFinding
+ * fingerprints) and the 10i.0.5 parity gate.
+ *
+ * Toolchain gate: test-gaps has no external tool dependency — it
+ * walks the source tree directly using each pack's
+ * `sourceExtensions` + `testFilePatterns` and falls back to
+ * filename-match coverage when no coverage artifact is present. So
+ * every row runs unconditionally (no `skipIf`).
+ *
+ * No coverage artifact is committed: filename-match is intentional
+ * because the matrix is about "test-gaps detects this file as
+ * untested," not "the parser handles every coverage format." The
+ * latter is unit-test territory.
+ */
+describe('matrix — test-gaps (Phase 10i.0.4)', () => {
+  for (const lang of BENCHMARK_LANGUAGES) {
+    if (!lang.untested) continue;
+    const untestedFile = lang.untested.file;
+    it(`${lang.name}: test-gaps surfaces ${untestedFile} as untested`, async () => {
+      const report = await runDxkitTestGapsReport(path.join(FIXTURES, lang.dir));
+      const gap = report.gaps.find((g) => g.path.endsWith(untestedFile));
+      expect(gap, `expected ${untestedFile} in gaps[] for ${lang.name}`).toBeDefined();
+      expect(gap!.hasMatchingTest).toBe(false);
     });
   }
 });
