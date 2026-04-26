@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import { HealthMetrics } from '../types';
 import { run, countLines, fileExists } from './runner';
 import { getFindExcludeFlags } from './exclusions';
+import { allSourceExtensions, splitTestFilePatterns } from '../../languages';
 
 // grepCount uses a narrow filter (node_modules, dist, __pycache__, .d.ts) to
 // preserve pre-refactor byte-equality. The broader EXCLUDED_DIRS list from
@@ -34,13 +35,27 @@ function grepCount(cwd: string, pattern: string, includes: string[]): number {
 // EXCLUDE moved inside gatherGenericMetrics() — must be computed per-cwd now
 // so it picks up project-specific .gitignore / .dxkit-ignore entries.
 
-const SOURCE_EXTS =
-  '\\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" ' +
-  '-o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.cs" \\)';
+// Pack-driven find expressions (Phase 10i.0-LP.3). Replaces the
+// pre-LP hardcoded extension/pattern lists with iteration over the
+// language registry. Adding a 6th pack auto-extends both expressions.
+//
+// Behavior expansions vs pre-LP.3 (both more correct than before):
+//   - `.mjs`/`.cjs` now counted as source files (TypeScript pack
+//     declared them in `sourceExtensions`; the legacy hardcoded list
+//     missed them).
+//   - Rust integration tests under `tests/*.rs` now counted as test
+//     files (Rust pack declared `tests/*.rs` as a path-anchored
+//     pattern; the legacy used only `-name` and skipped path patterns).
+const SOURCE_EXTS = `\\( ${allSourceExtensions()
+  .map((e) => `-name "*${e}"`)
+  .join(' -o ')} \\)`;
 
-const TEST_PATTERNS =
-  '\\( -name "*.test.*" -o -name "*.spec.*" -o -name "*_test.go" ' +
-  '-o -name "test_*.py" -o -name "*Tests.cs" -o -name "*_test.rs" \\)';
+const TEST_PATTERNS = (() => {
+  const { nameOnly, pathAnchored } = splitTestFilePatterns();
+  const nameClauses = nameOnly.map((p) => `-name "${p}"`);
+  const pathClauses = pathAnchored.map((p) => `-path "*/${p}"`);
+  return `\\( ${[...nameClauses, ...pathClauses].join(' -o ')} \\)`;
+})();
 
 /** Gather metrics using only built-in Unix tools. */
 export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
