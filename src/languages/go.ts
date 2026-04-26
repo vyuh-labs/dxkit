@@ -850,6 +850,7 @@ export const go: LanguageSupport = {
 
   permissions: ['Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)'],
   ruleFile: 'go.md',
+  defaultVersion: '1.24.0',
   templateFiles: [{ template: 'configs/go/.golangci.yml.template', output: '.golangci.yml' }],
   cliBinaries: ['go', 'golangci-lint'],
   projectYamlBlock: ({ config, enabled }) => {

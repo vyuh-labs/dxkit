@@ -785,6 +785,7 @@ export const rust: LanguageSupport = {
 
   permissions: ['Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)'],
   ruleFile: 'rust.md',
+  defaultVersion: 'stable',
   // No templateFiles — rust pack does not currently scaffold any
   // config templates from `vyuh-dxkit init` (Cargo.toml is project-
   // owned, not pack-generated).

@@ -921,6 +921,7 @@ export const python: LanguageSupport = {
 
   permissions: ['Bash(python3:*)', 'Bash(pytest:*)', 'Bash(ruff:*)'],
   ruleFile: 'python.md',
+  defaultVersion: '3.12',
   templateFiles: [
     { template: 'configs/python/pyproject.toml.template', output: 'pyproject.toml' },
     { template: 'configs/python/ruff.toml.template', output: 'ruff.toml' },

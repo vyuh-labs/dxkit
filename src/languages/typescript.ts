@@ -1010,6 +1010,8 @@ export const typescript: LanguageSupport = {
   },
 
   permissions: ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)'],
+  defaultVersion: '20',
+  versionKey: 'node',
   // No ruleFile — there is no `.claude/rules/typescript.md`. nextjs.md
   // is a framework rule (not language) and stays hardcoded in
   // generator.ts under `IF_NEXTJS`.

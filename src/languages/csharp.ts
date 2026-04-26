@@ -908,6 +908,7 @@ export const csharp: LanguageSupport = {
     'Bash(dotnet run:*)',
   ],
   ruleFile: 'csharp.md',
+  defaultVersion: '8.0',
   // No templateFiles — .csproj/.sln are project-owned, not pack-generated.
   cliBinaries: ['dotnet'],
   projectYamlBlock: ({ config, enabled }) =>

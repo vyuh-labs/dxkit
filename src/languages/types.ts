@@ -97,6 +97,28 @@ export interface LanguageSupport {
    * "\n") is conventional.
    */
   projectYamlBlock?: (ctx: ProjectYamlContext) => string;
+
+  /**
+   * Default language version surfaced in `DEFAULT_VERSIONS` (e.g. '3.12'
+   * for Python, '20' for Node). Plumbed into template variables as
+   * `<KEY>_VERSION` (uppercased `versionKey`) and into `.project.yaml`'s
+   * `version:` field for inactive packs.
+   */
+  defaultVersion?: string;
+
+  /**
+   * Key under `DetectedStack.versions` where this pack's version lives —
+   * AND the lowercase prefix used to derive template-variable + condition
+   * names (`NODE_VERSION`, `IF_NODE`). Defaults to `id` when omitted.
+   *
+   * Necessary because the typescript pack uses `versionKey: 'node'` —
+   * legacy template / condition naming predates the pack abstraction.
+   * Removing this indirection requires renaming the templates'
+   * `NODE_VERSION` / `IF_NODE` references to `TYPESCRIPT_VERSION` /
+   * `IF_TYPESCRIPT`, which is a breaking template change tracked
+   * alongside D009/D010 in 10f.4.
+   */
+  versionKey?: keyof import('../types').DetectedStack['versions'];
 }
 
 /** Context passed to `LanguageSupport.projectYamlBlock`. */
