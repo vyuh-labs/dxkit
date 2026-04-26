@@ -41,14 +41,27 @@ export function activeLanguagesFromStack(stack: DetectedStack): LanguageSupport[
  * receives `DetectedStack['languages']`, not the full stack).
  */
 export function activeLanguagesFromFlags(flags: DetectedStack['languages']): LanguageSupport[] {
-  const idFlags: Record<LanguageId, boolean> = {
-    typescript: flags.node || flags.nextjs,
-    python: flags.python,
-    go: flags.go,
-    rust: flags.rust,
-    csharp: flags.csharp,
-  };
-  return LANGUAGES.filter((l) => idFlags[l.id]);
+  // Pack-driven activation (Phase 10i.0-LP.7). Each pack uses its
+  // `versionKey` (or falls back to `id`) as the lookup key into the
+  // `flags` object. Adding a 6th pack with its versionKey already
+  // declared works without editing this function — provided the
+  // `DetectedStack.languages` interface gains a matching field
+  // (item #14, deferred to 10f.4).
+  //
+  // The cast through `Record<string, boolean>` is the bridge: the
+  // typed `DetectedStack.languages` shape pre-10f.4 only knows about
+  // {python, go, node, nextjs, rust, csharp}, but lookup-by-pack-key
+  // is the architecturally correct iteration. When 10f.4 refactors to
+  // `Record<LanguageId, boolean>`, the cast goes away.
+  const flagsByKey = flags as unknown as Record<string, boolean>;
+  return LANGUAGES.filter((l) => {
+    const key = l.versionKey ?? l.id;
+    // Special-case: typescript pack maps to `node`, but `nextjs` ALSO
+    // activates it (nextjs is a framework signal layered on top of
+    // Node, not a separate pack — see project_yaml + generator).
+    if (key === 'node') return flagsByKey.node || flagsByKey.nextjs;
+    return flagsByKey[key] ?? false;
+  });
 }
 
 /**
