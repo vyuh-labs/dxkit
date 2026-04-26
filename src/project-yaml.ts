@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ResolvedConfig, DetectedStack } from './types';
 import { DEFAULT_VERSIONS, DEFAULT_COVERAGE } from './constants';
+import { LANGUAGES } from './languages';
 
 /**
  * Schema for .project.yaml as written by @vyuhlabs/create-devstack.
@@ -95,21 +96,20 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
 
   // YAML uses legacy keys `node` / `nextjs` for backwards compat with
   // existing `.project.yaml` files. After 10f.4, `DetectedStack.languages`
-  // is keyed on `LanguageId` (typescript / python / go / rust / csharp).
-  // The mapping: yaml's `node || nextjs` → `languages.typescript`;
-  // yaml's `nextjs` is also surfaced via the top-level `framework`
-  // signal.
+  // is keyed on `LanguageId`. Iterate the registry so adding a new pack
+  // auto-extends YAML reading — by default each pack maps to its
+  // matching `langEnabled(<id>)`. The typescript pack is the only
+  // special case: yaml's `node` OR `nextjs` activates it.
   const VERSION_KEYS = ['python', 'go', 'node', 'rust', 'csharp'] as const;
   const yamlNextjs = langEnabled('nextjs');
 
   const detected: DetectedStack = {
-    languages: {
-      typescript: langEnabled('node') || yamlNextjs,
-      python: langEnabled('python'),
-      go: langEnabled('go'),
-      rust: langEnabled('rust'),
-      csharp: langEnabled('csharp'),
-    },
+    languages: Object.fromEntries(
+      LANGUAGES.map((lang) => {
+        if (lang.id === 'typescript') return [lang.id, langEnabled('node') || yamlNextjs];
+        return [lang.id, langEnabled(lang.id)];
+      }),
+    ) as DetectedStack['languages'],
     infrastructure: {
       docker: tools.docker ?? true,
       postgres: infraEnabled('postgres'),

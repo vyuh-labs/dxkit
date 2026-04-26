@@ -51,6 +51,7 @@
     "test:changed": "vitest run --changed",
     "test:coverage": "npm run build && vitest run --coverage",
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
+    "new-lang": "node scripts/scaffold-language.js",
     "prepare": "husky || true"
   },
   "lint-staged": {
