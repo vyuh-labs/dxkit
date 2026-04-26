@@ -7,13 +7,24 @@ export default defineConfig({
     // `npm run test:integration` still available to run integration only.
     include: ['test/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**', 'templates/**', 'src-templates/**', 'test/fixtures/**'],
-    // 60s default: cross-ecosystem.test.ts shells out to pip-audit /
+    // 180s default: cross-ecosystem.test.ts shells out to pip-audit /
     // govulncheck / cargo-audit / dotnet, which hit the npm / pypi /
-    // crates.io / nuget registries. 30s was tight enough to flake on
-    // slow-network days (pip-audit observed at 27-34s on the
-    // requests@2.20.0 fixture). Unit tests are unaffected — they fail
-    // fast on assertion errors; only hangs care about the timeout.
-    testTimeout: 60000,
+    // crates.io / nuget registries. 60s was tight on cold-cache /
+    // resource-constrained machines (cargo-audit + pip-audit both
+    // observed >60s on WSL2 with concurrent VSCode tsservers). Unit
+    // tests are unaffected — they fail fast on assertion errors; only
+    // hangs care about the timeout.
+    testTimeout: 180000,
+    // pool: 'forks' instead of vitest 3.x default 'threads' — the
+    // threads-pool birpc channel between worker and main starves under
+    // heavy concurrent subprocess fan-out (cross-ecosystem.test.ts
+    // spawns ~10+ network-bound child processes), surfacing as
+    // "Timeout calling onTaskUpdate" unhandled errors that fail the
+    // test process even when every assertion passes (vitest #8164,
+    // documented mitigation in cross-ecosystem.test.ts header).
+    // Forks isolates each test file in its own child node process —
+    // ~50ms startup overhead per file vs threads, but no RPC starvation.
+    pool: 'forks',
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

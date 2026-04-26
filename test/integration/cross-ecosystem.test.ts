@@ -227,12 +227,34 @@ function commandExists(cmd: string): boolean {
   }
 }
 
+// Per-(command, fixture) subprocess cache. The deep describes (Python:
+// 3 calls, Rust/Go/C# single/C# multi: 1 each) AND the matrix describes
+// (secrets: 5, lint: 5, dup: 5, test-gaps: 5) exercise the same dxkit
+// reports on the same fixtures — without sharing, the suite spawns ~22
+// network-bound subprocesses where ~11 are sufficient. Caching at the
+// SecurityReport level lets `runDxkitVulnerabilities` (deep describes,
+// summary.dependencies) and `runDxkitSecurityReport` (matrix secrets,
+// findings) share one subprocess per fixture. Module-scoped + cleared
+// between vitest reruns by the forks pool's process isolation.
+const reportCache = new Map<string, Promise<unknown>>();
+
+async function cachedExec<T>(key: string, run: () => Promise<T>): Promise<T> {
+  let entry = reportCache.get(key) as Promise<T> | undefined;
+  if (!entry) {
+    entry = run();
+    reportCache.set(key, entry);
+  }
+  return entry;
+}
+
 async function runDxkitSecurityReport(fixtureDir: string): Promise<SecurityReport> {
-  const { stdout } = await execAsync(
-    `node ${DXKIT_BIN} vulnerabilities ${fixtureDir} --json --no-save`,
-    { cwd: REPO_ROOT, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout) as SecurityReport;
+  return cachedExec(`vulnerabilities:${fixtureDir}`, async () => {
+    const { stdout } = await execAsync(
+      `node ${DXKIT_BIN} vulnerabilities ${fixtureDir} --json --no-save`,
+      { cwd: REPO_ROOT, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout) as SecurityReport;
+  });
 }
 
 async function runDxkitVulnerabilities(fixtureDir: string): Promise<DepVulnSummary> {
@@ -241,21 +263,24 @@ async function runDxkitVulnerabilities(fixtureDir: string): Promise<DepVulnSumma
 }
 
 async function runDxkitQualityReport(fixtureDir: string): Promise<QualityReport> {
-  const { stdout } = await execAsync(`node ${DXKIT_BIN} quality ${fixtureDir} --json --no-save`, {
-    cwd: REPO_ROOT,
-    encoding: 'utf-8',
-    maxBuffer: 50 * 1024 * 1024,
+  return cachedExec(`quality:${fixtureDir}`, async () => {
+    const { stdout } = await execAsync(`node ${DXKIT_BIN} quality ${fixtureDir} --json --no-save`, {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as QualityReport;
   });
-  return JSON.parse(stdout) as QualityReport;
 }
 
 async function runDxkitTestGapsReport(fixtureDir: string): Promise<TestGapsReport> {
-  const { stdout } = await execAsync(`node ${DXKIT_BIN} test-gaps ${fixtureDir} --json --no-save`, {
-    cwd: REPO_ROOT,
-    encoding: 'utf-8',
-    maxBuffer: 50 * 1024 * 1024,
+  return cachedExec(`test-gaps:${fixtureDir}`, async () => {
+    const { stdout } = await execAsync(
+      `node ${DXKIT_BIN} test-gaps ${fixtureDir} --json --no-save`,
+      { cwd: REPO_ROOT, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout) as TestGapsReport;
   });
-  return JSON.parse(stdout) as TestGapsReport;
 }
 
 describe('cross-ecosystem benchmarks — Python', () => {

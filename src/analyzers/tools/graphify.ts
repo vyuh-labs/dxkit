@@ -94,9 +94,9 @@ for n, d in functions:
 
 max_file = file_funcs.most_common(1)[0] if file_funcs else ("", 0)
 
-# God nodes (degree > 15)
+# God nodes: graphifyy@0.5.0 renamed the result key "edges" → "degree".
 gods = god_nodes(G, top_n=50)
-god_count = sum(1 for g in gods if g["edges"] > 15)
+god_count = sum(1 for g in gods if g["degree"] > 15)
 
 # Cohesion
 scores = score_all(G, communities) if communities else {}

@@ -102,6 +102,7 @@ function getSystemPaths(): string[] {
     `${home}/.local/bin`, // pipx, user pip
     `${home}/.cargo/bin`, // rust
     `${home}/go/bin`, // go
+    `${home}/.dotnet`, // dotnet-install.sh --install-dir $HOME/.dotnet (Microsoft's recommended non-sudo path)
     `${TOOLS_VENV}/bin`, // dxkit shared Python tools venv (persistent)
     `${LEGACY_TOOLS_VENV}/bin`, // legacy: pre-10f.2 installs
   ];
