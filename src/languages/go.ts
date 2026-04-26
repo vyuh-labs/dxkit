@@ -779,4 +779,23 @@ export const go: LanguageSupport = {
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
+
+  permissions: ['Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)'],
+  ruleFile: 'go.md',
+  templateFiles: [{ template: 'configs/go/.golangci.yml.template', output: '.golangci.yml' }],
+  cliBinaries: ['go', 'golangci-lint'],
+  projectYamlBlock: ({ config, enabled }) => {
+    // Go's coverage threshold is 10pp lower than the project default —
+    // preserved from the pre-pack hardcoded YAML in generator.ts.
+    const goCoverage = Math.max(0, parseInt(config.coverageThreshold) - 10);
+    return [
+      `  go:`,
+      `    enabled: ${enabled}`,
+      `    version: "${config.versions.go}"`,
+      `    quality:`,
+      `      coverage: ${goCoverage}`,
+      `      lint: true`,
+      `      format: true`,
+    ].join('\n');
+  },
 };

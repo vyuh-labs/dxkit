@@ -900,4 +900,23 @@ export const csharp: LanguageSupport = {
   // mapping each to a tier. That's deferred until a C# test project
   // is available to validate the integration; see architecture-redesign
   // plan for the capability-based approach this will live in.
+
+  permissions: [
+    'Bash(dotnet test:*)',
+    'Bash(dotnet build:*)',
+    'Bash(dotnet format:*)',
+    'Bash(dotnet run:*)',
+  ],
+  ruleFile: 'csharp.md',
+  // No templateFiles — .csproj/.sln are project-owned, not pack-generated.
+  cliBinaries: ['dotnet'],
+  projectYamlBlock: ({ config, enabled }) =>
+    [
+      `  csharp:`,
+      `    enabled: ${enabled}`,
+      `    version: "${config.versions.csharp}"`,
+      `    quality:`,
+      `      lint: true`,
+      `      format: true`,
+    ].join('\n'),
 };
