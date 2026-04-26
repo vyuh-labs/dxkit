@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import hostedGitInfo from 'hosted-git-info';
 
-import { parseIstanbulFinal, parseIstanbulSummary } from '../analyzers/tools/coverage';
+import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
 import { resolveCvssScores } from '../analyzers/tools/osv';
@@ -592,6 +592,84 @@ const tsLintProvider: CapabilityProvider<LintResult> = {
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
+
+// ─── Coverage parsers ───────────────────────────────────────────────────────
+// Moved from `src/analyzers/tools/coverage.ts` in Phase 10i.0-LP.4 — each
+// pack now owns its coverage format(s). Test imports come from this file
+// directly post-LP.4.
+
+interface IstanbulSummaryEntry {
+  lines?: { total: number; covered: number; skipped: number; pct: number };
+}
+
+/** Istanbul coverage-summary.json: `{ "total": {...}, "/abs/path": {...} }`. */
+export function parseIstanbulSummary(raw: string, sourceFile: string, cwd: string): Coverage {
+  const data = JSON.parse(raw) as Record<string, IstanbulSummaryEntry>;
+  const files = new Map<string, FileCoverage>();
+  let totalCovered = 0;
+  let totalLines = 0;
+
+  for (const [key, entry] of Object.entries(data)) {
+    if (key === 'total') continue;
+    const lines = entry?.lines;
+    if (!lines || typeof lines.covered !== 'number' || typeof lines.total !== 'number') continue;
+    const rel = toRelative(key, cwd);
+    const fc: FileCoverage = {
+      path: rel,
+      covered: lines.covered,
+      total: lines.total,
+      pct: round1(lines.total > 0 ? (lines.covered / lines.total) * 100 : 0),
+    };
+    files.set(rel, fc);
+    totalCovered += lines.covered;
+    totalLines += lines.total;
+  }
+
+  const total = data.total?.lines;
+  const linePercent =
+    total && typeof total.pct === 'number'
+      ? round1(total.pct)
+      : round1(totalLines > 0 ? (totalCovered / totalLines) * 100 : 0);
+
+  return { source: 'istanbul-summary', sourceFile, linePercent, files };
+}
+
+interface IstanbulFinalEntry {
+  path?: string;
+  s?: Record<string, number>;
+}
+
+/** Istanbul coverage-final.json: `{ "/abs/path": { s: { "0": 1, "1": 0, ... }, statementMap: {...} } }`. */
+export function parseIstanbulFinal(raw: string, sourceFile: string, cwd: string): Coverage {
+  const data = JSON.parse(raw) as Record<string, IstanbulFinalEntry>;
+  const files = new Map<string, FileCoverage>();
+  let totalCovered = 0;
+  let totalStatements = 0;
+
+  for (const [key, entry] of Object.entries(data)) {
+    const s = entry?.s;
+    if (!s || typeof s !== 'object') continue;
+    const counts = Object.values(s);
+    const total = counts.length;
+    const covered = counts.filter((n) => typeof n === 'number' && n > 0).length;
+    const rel = toRelative(entry.path || key, cwd);
+    files.set(rel, {
+      path: rel,
+      covered,
+      total,
+      pct: round1(total > 0 ? (covered / total) * 100 : 0),
+    });
+    totalCovered += covered;
+    totalStatements += total;
+  }
+
+  return {
+    source: 'istanbul-final',
+    sourceFile,
+    linePercent: round1(totalStatements > 0 ? (totalCovered / totalStatements) * 100 : 0),
+    files,
+  };
+}
 
 /**
  * Single source of truth for the typescript pack's coverage gathering.

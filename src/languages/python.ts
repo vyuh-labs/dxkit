@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { parseCoveragePy } from '../analyzers/tools/coverage';
+import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -233,6 +233,65 @@ export function parseRequirementsTxtTopLevels(raw: string): string[] {
     out.push(name);
   }
   return out;
+}
+
+// ─── Coverage parser ────────────────────────────────────────────────────────
+// Moved from `src/analyzers/tools/coverage.ts` in Phase 10i.0-LP.4.
+
+interface CoveragePyReport {
+  totals?: { percent_covered?: number };
+  files?: Record<
+    string,
+    {
+      summary?: {
+        num_statements?: number;
+        missing_lines?: number;
+        covered_lines?: number;
+        percent_covered?: number;
+      };
+    }
+  >;
+}
+
+/** coverage.py JSON: `{ "totals": {...}, "files": { "path": { summary: {...} } } }`. */
+export function parseCoveragePy(raw: string, sourceFile: string, cwd: string): Coverage {
+  const data = JSON.parse(raw) as CoveragePyReport;
+  const files = new Map<string, FileCoverage>();
+  let totalCovered = 0;
+  let totalStatements = 0;
+
+  for (const [key, entry] of Object.entries(data.files ?? {})) {
+    const summary = entry?.summary;
+    if (!summary) continue;
+    const total = typeof summary.num_statements === 'number' ? summary.num_statements : 0;
+    const missing = typeof summary.missing_lines === 'number' ? summary.missing_lines : 0;
+    const covered =
+      typeof summary.covered_lines === 'number'
+        ? summary.covered_lines
+        : Math.max(0, total - missing);
+    const rel = toRelative(key, cwd);
+    files.set(rel, {
+      path: rel,
+      covered,
+      total,
+      pct: round1(
+        typeof summary.percent_covered === 'number'
+          ? summary.percent_covered
+          : total > 0
+            ? (covered / total) * 100
+            : 0,
+      ),
+    });
+    totalCovered += covered;
+    totalStatements += total;
+  }
+
+  const linePercent =
+    typeof data.totals?.percent_covered === 'number'
+      ? round1(data.totals.percent_covered)
+      : round1(totalStatements > 0 ? (totalCovered / totalStatements) * 100 : 0);
+
+  return { source: 'coverage-py', sourceFile, linePercent, files };
 }
 
 /**
