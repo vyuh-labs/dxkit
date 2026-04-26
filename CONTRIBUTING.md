@@ -148,30 +148,105 @@ Today's shape: one directory under `src/analyzers/<name>/` with `types.ts`,
 
 ### Adding a new language
 
-Adding a language is **one file** — `src/languages/<name>.ts` implementing
-the `LanguageSupport` interface (`src/languages/types.ts`). Register it in
-`src/languages/index.ts` and the dispatch fans out automatically through
-`health`, `quality`, `test-gaps`, and the tool registry.
+Adding a language follows a **7-file recipe** (per Phase 10i.0-LP — see
+the LP roadmap docs in `tmp/` if curious about the architectural
+journey). The scaffolder writes most of it for you:
 
-What the pack provides (all but `detect`, `sourceExtensions`,
-`testFilePatterns`, `tools`, and `semgrepRulesets` are optional):
+```bash
+npm run new-lang kotlin "Kotlin (Android)"
+```
 
-- `detect(cwd)` — return `true` when this language is present
-- `sourceExtensions: string[]` — file extensions to treat as source
-- `testFilePatterns: string[]` — glob patterns for test files
-- `extraExcludes?: string[]` — dirs to exclude beyond the defaults
-- `tools: string[]` — TOOL_DEFS keys the pack invokes (must match)
-- `semgrepRulesets: string[]` — semgrep `--config` values to add
-- `capabilities?: LanguagePackCapabilities` — typed providers (each
-  returns a `CapabilityEnvelope`) for depVulns, lint, coverage,
-  testFramework, and imports. This is the only data channel from a
-  pack to the analyzer layer — the dispatcher fans out across every
-  pack and filters nulls, so adding a capability means implementing a
-  provider and slotting it here. See existing packs for the pattern.
-- `mapLintSeverity?(ruleId)` — tier lint rules into critical/high/medium/low
+The scaffolder creates **5 new files**:
 
-Contract tests in `test/languages-contract.test.ts` and
-`test/languages-<name>.test.ts` exercise each method.
+```
+src/languages/<id>.ts                  # pack stub — every LanguageSupport field with TODO markers
+test/languages-<id>.test.ts            # pack-specific test stub
+test/fixtures/benchmarks/<id>/         # cross-ecosystem fixture skeleton + README
+src-templates/.claude/rules/<id>.md    # Claude rule file stub
+src-templates/configs/<id>/            # template-config dir + README
+```
+
+And **updates 2 existing files**:
+
+```
+src/types.ts                           # extends LanguageId union with <id>
+src/languages/index.ts                 # imports + registers <id> in LANGUAGES
+```
+
+Then you fill in the TODOs. The scaffolder prints a checklist of the
+remaining work (detect logic, capability providers, fixture content,
+CI toolchain install, this file's toolchain table).
+
+#### What the pack declares (`LanguageSupport`)
+
+All non-required fields can be omitted; the dispatcher tolerates it.
+Required = `id`, `displayName`, `sourceExtensions`, `testFilePatterns`,
+`detect`, `tools`, `semgrepRulesets`. Recommended (LP-recipe enforcement
+will fail CI if missing):
+
+- **Detection + source** — `detect(cwd) → boolean`, `sourceExtensions[]`,
+  `testFilePatterns[]` (use `tests/<glob>` for path-anchored patterns,
+  bare globs for basename match), `extraExcludes?[]`
+- **Tool wiring** — `tools[]` (TOOL_DEFS keys this pack uses; the
+  contract test verifies every `findTool(TOOL_DEFS.X)` reference in the
+  pack's source appears here, AND every entry here is referenced
+  somewhere — the artifact-generating allowlist covers exceptions like
+  `coverage-py` and `cargo-llvm-cov`)
+- **Capabilities** — `capabilities?: { depVulns, lint, coverage,
+imports, testFramework, licenses }`. Each is a `CapabilityProvider`
+  with an async `gather(cwd)` method; return `null` when nothing to
+  report. The dispatcher fans out across every pack.
+- **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
+  `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
+  `ruleFile?` (filename under `src-templates/.claude/rules/`),
+  `templateFiles?[]` (per-pack `init` scaffold templates),
+  `cliBinaries[]` (commands `doctor` checks for), `defaultVersion?`,
+  `versionKey?` (lookup key in `DetectedStack['versions']`; defaults
+  to `id` — only override for legacy template-name compat),
+  `projectYamlBlock?` (renders this pack's `.project.yaml` block)
+- **Lint severity** — `mapLintSeverity?(ruleId)` if your linter has
+  rule IDs you can tier into critical/high/medium/low
+
+#### Recipe enforcement (runs in pre-commit + CI)
+
+Three layers prevent recipe drift:
+
+1. **Architecture greps** (`scripts/check-architecture.sh`) — fail when
+   pack-coupling slips into non-pack code: hardcoded `IF_<LANG>`
+   references, direct `config.languages.<id>` lookups outside the
+   registry bridge, hardcoded `<lang>.md` rule-file strings.
+2. **Pack contract tests** (`test/languages-contract.test.ts`) — fail
+   when a pack omits required metadata (`permissions`, `cliBinaries`,
+   `defaultVersion`, `projectYamlBlock`) or when declared `tools[]`
+   drift from actual invocations.
+3. **Synthetic 6th-pack playbook** (`test/recipe-playbook.test.ts`) —
+   injects a mock pack into the registry and asserts every
+   pack-iterating consumer (generator, doctor, detect, project-yaml,
+   constants, coverage dispatcher, generic, grep-secrets, tool-registry)
+   picks up its contributions. Catches "the architecture stopped being
+   pack-driven" regressions empirically.
+
+#### What scaffolding can't do for you
+
+The scaffolder gives you a stub. The substantive work is:
+
+- Implement `detect(cwd)` against your ecosystem's manifest signals
+- Implement at least one capability provider (start with `coverage` —
+  usually the simplest; `depVulns` is the most valuable but most
+  involved)
+- Add `TOOL_DEFS` entries in `src/analyzers/tools/tool-registry.ts`
+  for any external tool you call
+- Populate `test/fixtures/benchmarks/<id>/` with a minimal real project
+  containing the matrix-dimension content (vuln, secret, lint,
+  duplication, untested file)
+- Register the fixture in `test/integration/cross-ecosystem.test.ts`
+  `BENCHMARK_LANGUAGES`
+- Add the toolchain install to `.github/workflows/ci.yml`
+- Document the toolchain requirement in this file's
+  [Toolchain requirements](#toolchain-requirements) table
+
+Plan ~1 day of work for a desktop-style pack (Python/Go-shaped),
+~1.5 days for mobile (Gradle/Xcode bootstrapping is more involved).
 
 ### Enriching dependency-vulnerability severity
 

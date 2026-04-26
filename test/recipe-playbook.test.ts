@@ -145,7 +145,6 @@ describe('recipe playbook — synthetic 6th pack', () => {
     // cast — the test injects a hypothetical 6th pack to verify the
     // architecture iterates the registry rather than enumerating
     // hardcoded ids.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const flags = {
       typescript: false,
       python: false,
@@ -153,6 +152,7 @@ describe('recipe playbook — synthetic 6th pack', () => {
       rust: false,
       csharp: false,
       kotlin: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
     const active = activeLanguagesFromFlags(flags);
     expect(active.find((l) => (l.id as string) === 'kotlin')).toBe(mockKotlinPack);

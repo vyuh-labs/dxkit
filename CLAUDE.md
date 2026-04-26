@@ -48,14 +48,38 @@ Our code only stitches tools together and computes scores.
 
 Every language-specific concern (detection, tool list, semgrep rulesets,
 coverage parsing, import extraction/resolution, metric gathering, lint
-severity mapping) lives in a single `LanguageSupport` implementation in
+severity mapping, init-scaffold metadata) lives in a single
+`LanguageSupport` implementation in
 `src/languages/{python,typescript,go,rust,csharp}.ts`. Dispatch everywhere
-goes through `detectActiveLanguages()` or `getLanguage()` — never
-per-language `if (stack.python)` chains in report code.
+goes through `detectActiveLanguages()` / `activeLanguagesFromStack()` /
+`activeLanguagesFromFlags()` / `getLanguage()` — never per-language
+`if (stack.languages.python)` chains in report code.
 
-Reports, analyzers, and tool registries **must not** grow language-specific
-branches. If you find yourself writing one, the right answer is almost
-always to add the capability to `LanguageSupport` and let the pack provide it.
+Reports, analyzers, generators, and tool registries **must not** grow
+language-specific branches. If you find yourself writing one, the right
+answer is almost always to add the capability to `LanguageSupport` and
+let the pack provide it.
+
+#### LP-recipe enforcement (Phase 10i.0-LP / 10f.4)
+
+Three layers run pre-commit + CI to keep this rule honest:
+
+1. **`scripts/check-architecture.sh`** — greps for hardcoded `IF_<LANG>`
+   references, direct `config.languages.<id>` lookups outside the
+   registry-bridge files, and hardcoded `<lang>.md` rule-file strings.
+2. **`test/languages-contract.test.ts`** — for every `LanguageSupport`,
+   verifies metadata completeness (`permissions`, `cliBinaries`,
+   `defaultVersion`, `projectYamlBlock`) and `tools[]` ↔ source-call
+   parity (closes D009).
+3. **`test/recipe-playbook.test.ts`** — synthetic 6th-pack injection
+   test. Confirms each pack-iterating consumer (generator, doctor,
+   detect, project-yaml, constants, coverage, generic, grep-secrets,
+   tool-registry) picks up a hypothetical new pack's contributions.
+   Catches "the architecture stopped being pack-driven" empirically.
+
+Adding a new language pack is a one-command scaffold + filling in TODOs:
+`npm run new-lang <id> "<displayName>"`. See `CONTRIBUTING.md` "Adding a
+new language" for the full walkthrough.
 
 ## Release procedure
 
@@ -102,12 +126,15 @@ clear error message; don't try to work around it.
 
 ```bash
 npm run build        # TypeScript → dist/
-npm run test:run     # Vitest (39 tests)
+npm run test:run     # Vitest (~850 tests, ~2 min wall-clock with cross-ecosystem matrix)
 npm run lint         # ESLint
 npm run format:check # Prettier
+npm run new-lang <id> "<displayName>"  # Scaffold a new language pack (LP.7 / 10f.4)
 ```
 
-Pre-commit hooks (husky + lint-staged) run eslint + prettier + typecheck on staged files.
+Pre-commit hooks (husky + lint-staged) run eslint + prettier + typecheck on staged files,
+plus `check-architecture.sh` (CLAUDE.md rules + LP-recipe enforcement),
+`check-slop.sh`, and `check-cross-ecosystem-coverage.sh`.
 
 ## CLI Commands
 
@@ -123,13 +150,17 @@ vyuh-dxkit tools [list|install]   # Tool status & installation
 ## Key Files
 
 - `src/detect.ts` — stack detection (languages, frameworks, tools)
-- `src/types.ts` — DetectedStack, ToolRequirement
+- `src/types.ts` — `LanguageId` union + `DetectedStack` (`languages: Record<LanguageId, boolean>` post-10f.4) + `ToolRequirement`
 - `src/languages/types.ts` — `LanguageSupport` interface (the contract)
 - `src/languages/{python,typescript,go,rust,csharp}.ts` — one file per language
-- `src/languages/index.ts` — `LANGUAGES` registry, `getLanguage`, `detectActiveLanguages`
+- `src/languages/index.ts` — `LANGUAGES` registry; `getLanguage`, `detectActiveLanguages`, `activeLanguagesFromStack`, `activeLanguagesFromFlags`, `allSourceExtensions`, `allTestFilePatterns`, `splitTestFilePatterns`
 - `src/analyzers/tools/tool-registry.ts` — tool definitions, detection, install
 - `src/analyzers/tools/exclusions.ts` — centralized exclusion paths
 - `src/analyzers/tools/osv.ts` — OSV.dev severity enrichment (session cache + offline fallback)
 - `src/analyzers/tools/cvss-v4.ts` — CVSS v4.0 base-score calculator (FIRST reference port)
 - `src/analyzers/health.ts` — health orchestrator (async, `Promise.all` over packs)
 - `src/analyzers/{security,tests,quality,developer}/` — deep analyzers
+- `scripts/scaffold-language.js` — `npm run new-lang <id> "<displayName>"` recipe scaffolder (LP.7 / 10f.4)
+- `scripts/check-architecture.sh` — pre-commit + CI: enforces CLAUDE.md rules + LP-recipe rules
+- `test/languages-contract.test.ts` — pack contract tests (D009 closure)
+- `test/recipe-playbook.test.ts` — synthetic 6th-pack playbook (LP-architecture regression guard)
