@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { Manifest } from './types';
+import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 
 function check(label: string, condition: boolean): boolean {
@@ -107,24 +108,17 @@ export async function runDoctor(cwd: string): Promise<void> {
     track(check('Makefile', fs.existsSync(path.join(cwd, 'Makefile'))));
     track(check('.ai/ directory', fs.existsSync(path.join(cwd, '.ai'))));
 
-    // Toolchain checks
+    // Toolchain checks — pack-driven via `LanguageSupport.cliBinaries`.
+    // Note: pre-LP.1, this block missed C# entirely (no `dotnet` check).
+    // The pack-driven iteration auto-fixes that — csharp pack now
+    // declares `cliBinaries: ['dotnet']` so doctor surfaces missing
+    // dotnet as a failure on .NET projects.
     console.log('');
     logger.info('Toolchains:');
-    if (manifest.config.languages.python) {
-      track(check('python3', commandAvailable('python3')));
-      track(check('ruff', commandAvailable('ruff')));
-    }
-    if (manifest.config.languages.go) {
-      track(check('go', commandAvailable('go')));
-      track(check('golangci-lint', commandAvailable('golangci-lint')));
-    }
-    if (manifest.config.languages.node || manifest.config.languages.nextjs) {
-      track(check('node', commandAvailable('node')));
-      track(check('npm', commandAvailable('npm')));
-    }
-    if (manifest.config.languages.rust) {
-      track(check('rustc', commandAvailable('rustc')));
-      track(check('cargo', commandAvailable('cargo')));
+    for (const lang of activeLanguagesFromStack(manifest.config)) {
+      for (const bin of lang.cliBinaries ?? []) {
+        track(check(bin, commandAvailable(bin)));
+      }
     }
     if (manifest.config.tools.gcloud) {
       track(check('gcloud', commandAvailable('gcloud')));

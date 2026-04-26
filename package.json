@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "AI-native developer experience toolkit for any repository",
   "license": "MIT",
   "author": "Vyuh Labs",
@@ -51,6 +51,7 @@
     "test:changed": "vitest run --changed",
     "test:coverage": "npm run build && vitest run --coverage",
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
+    "new-lang": "node scripts/scaffold-language.js",
     "prepare": "husky || true"
   },
   "lint-staged": {

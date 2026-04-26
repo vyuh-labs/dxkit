@@ -246,7 +246,7 @@ describe('getInstallCommand', () => {
 
 describe('buildRequiredTools', () => {
   it('always includes universal tools', () => {
-    const tools = buildRequiredTools({ node: false } as never);
+    const tools = buildRequiredTools({ typescript: false } as never);
     const names = tools.map((t) => t.name);
     expect(names).toContain('cloc');
     expect(names).toContain('gitleaks');
@@ -255,8 +255,11 @@ describe('buildRequiredTools', () => {
     expect(names).toContain('jscpd');
   });
 
-  it('adds node tools when node is detected', () => {
-    const tools = buildRequiredTools({ node: true } as never);
+  it('adds node tools when typescript is detected', () => {
+    // 10f.4: typescript pack key is `typescript`, not `node`. Templates
+    // still use NODE_VERSION / IF_NODE — but pack activation goes
+    // through `languages.typescript`.
+    const tools = buildRequiredTools({ typescript: true } as never);
     const names = tools.map((t) => t.name);
     expect(names).toContain('eslint');
     expect(names).toContain('npm-audit');
@@ -294,7 +297,7 @@ describe('buildRequiredTools', () => {
 
 describe('checkAllTools', () => {
   it('returns a status entry for each required tool', () => {
-    const statuses = checkAllTools({ node: true } as never, tmp);
+    const statuses = checkAllTools({ typescript: true } as never, tmp);
     const names = statuses.map((s) => s.name);
     expect(names).toContain('cloc');
     expect(names).toContain('eslint');

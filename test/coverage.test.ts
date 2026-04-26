@@ -2,13 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import {
-  loadCoverage,
-  parseIstanbulSummary,
-  parseIstanbulFinal,
-  parseCoveragePy,
-  parseGoCoverProfile,
-} from '../src/analyzers/tools/coverage';
+import { loadCoverage } from '../src/analyzers/tools/coverage';
+import { parseIstanbulSummary, parseIstanbulFinal } from '../src/languages/typescript';
+import { parseCoveragePy } from '../src/languages/python';
+import { parseGoCoverProfile } from '../src/languages/go';
 
 describe('parseIstanbulSummary', () => {
   it('reads per-file line coverage from a summary JSON', () => {

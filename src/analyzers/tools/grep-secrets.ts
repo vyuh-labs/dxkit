@@ -18,6 +18,7 @@ import { findTool, TOOL_DEFS } from './tool-registry';
 import { getGrepExcludeDirFlags, isExcludedPath } from './exclusions';
 import { toProjectRelative } from './paths';
 import { applySuppressions, loadSuppressions } from './suppressions';
+import { allSourceExtensions } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
@@ -54,8 +55,15 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   if (gitleaks.available) return null;
 
   const excludes = getGrepExcludeDirFlags(cwd);
-  const includeFlags =
-    "--include='*.ts' --include='*.tsx' --include='*.js' --include='*.py' --include='*.go'";
+  // Pack-driven include flags (Phase 10i.0-LP.3). Replaces the prior
+  // hardcoded `.ts/.tsx/.js/.py/.go` set with all packs'
+  // `sourceExtensions`. Behavior expansion: `.cs` and `.rs` files are
+  // now scanned for secrets when gitleaks is unavailable. The legacy
+  // hardcoded set was a subset oversight — gitleaks (the primary
+  // scanner) covers all file types, so the fallback should too.
+  const includeFlags = allSourceExtensions()
+    .map((e) => `--include='*${e}'`)
+    .join(' ');
 
   const raw: SecretFinding[] = [];
   for (const sp of PATTERNS) {

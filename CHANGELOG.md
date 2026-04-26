@@ -7,6 +7,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-04-26
+
+Phase 10i.0-LP — language-pack architectural refactor. Two user-visible
+fixes (graphify + dotnet auto-discovery), one developer-experience win
+(test suite from 30 min flaky to 2 min deterministic), and an
+architectural cleanup that makes adding a new language pack a one-command
+scaffold (`npm run new-lang <id> "<displayName>"`) instead of a
+13-file scavenger hunt. Closes audit items #1–#7 and #9–#14 (12 items)
+plus **D009** and a doctor-check gap that had no D-id.
+
+No breaking changes for end users. Internal architecture only — every
+analyzer command (`health`, `vulnerabilities`, `bom`, etc.) produces
+identical output before and after.
+
+### Fixed
+
+- **`graphify` "failed to run" in `health` and `quality` reports.** The
+  graphifyy@0.5.0 release renamed the result-dict key of `god_nodes()`
+  from `"edges"` to `"degree"` (same NetworkX node-degree semantic). The
+  Python script in `buildGraphifyScript` raised `KeyError: 'edges'`,
+  suppressed by the runner's `2>/dev/null`, surfacing only as
+  `Unavailable: graphify (failed to run)` in every health/quality
+  report — degrading complexity/cohesion/maintainability scoring
+  silently. One-line key rename. (`src/analyzers/tools/graphify.ts`)
+
+- **`~/.dotnet` missing from `getSystemPaths()` auto-discovery.**
+  Microsoft's recommended non-sudo path is
+  `dotnet-install.sh --install-dir $HOME/.dotnet`. Without this entry
+  in the system-paths probe list, contributors and customers had to
+  manually export `PATH=$HOME/.dotnet:$PATH` before dxkit detected
+  dotnet. Added alongside the existing `~/.cargo/bin`, `~/go/bin`
+  entries. (`src/analyzers/tools/tool-registry.ts`)
+
+- **`vyuh-dxkit doctor` was silently skipping all C# toolchain checks.**
+  The pre-LP toolchain-check section in `doctor.ts` had explicit
+  branches for python/go/node/rust but **no `if (manifest.config.languages.csharp)` clause** — so .NET
+  projects ran `doctor` and saw a clean bill of health regardless of
+  whether dotnet was installed. Pack-driven iteration (LP.1) auto-fixes
+  this: csharp pack now declares `cliBinaries: ['dotnet']` and doctor
+  surfaces missing dotnet on .NET projects. No D-id (discovered + fixed
+  in the same commit). (`src/doctor.ts`)
+
+- **`cross-ecosystem.test.ts` was unusable on resource-constrained
+  developer machines** — 30 min wall-clock with 15 spurious failures
+  per run, blocking the progressive-regression workflow. Three root
+  causes:
+
+  1. Vitest 3.x's `pool: 'threads'` birpc channel between worker and
+     main starves under heavy concurrent subprocess fan-out (this suite
+     spawns ~22 network-bound child processes); workers can't ack
+     `onTaskUpdate` within 60s and vitest emits `Timeout calling
+     onTaskUpdate`, **failing completed-and-passing tests as a side
+     effect** (vitest #8164). 13 of the 15 prior "failures" were this
+     spurious RPC bug, not real assertion failures. Switched to
+     `pool: 'forks'` — each test file in its own child Node process,
+     no shared birpc channel.
+  2. `testTimeout: 60000` was tight on cold-cache machines; both real
+     non-spurious failures were `pip-audit` and `cargo-audit`
+     exceeding 60s on first run. Bumped to 180s.
+  3. The 22 subprocess invocations were redundant — multiple `it()`
+     blocks across the file invoked the same `node dxkit <report>
+     <fixture>` command. Added a per-(command, fixture) Promise-cache
+     so each fixture's vulnerability/quality/test-gaps report runs
+     once and is shared by all assertions; concurrent racing tests
+     receive the same in-flight promise. Cuts subprocess count ~50%.
+
+  Combined effect: full suite runs from **30 min with 15 spurious
+  failures** to **2:30 with zero**. (`vitest.config.ts`,
+  `test/integration/cross-ecosystem.test.ts`)
+
+### Added
+
+- **`npm run new-lang <id> "<displayName>"`** — language-pack
+  scaffolder. Generates the 7 recipe files (pack stub, test stub,
+  fixture skeleton, Claude rule file, template-config dir) and
+  updates `src/types.ts` (extends `LanguageId` union) plus
+  `src/languages/index.ts` (registers in `LANGUAGES`). Generated code
+  is type-safe by construction — no casts. Prints a next-steps
+  checklist for the work scaffolding can't automate (detect logic,
+  capability providers, fixture content, CI toolchain install,
+  CONTRIBUTING.md row). (`scripts/scaffold-language.js`,
+  `package.json`)
+
+- **`scripts/check-architecture.sh`** — three new pre-commit + CI
+  rules enforcing pack-coupling discipline:
+  - LP-A1: no hardcoded `IF_<LANG>` references outside the
+    constants→generator pipeline
+  - LP-A2: no direct `config.languages.<id>` lookups outside the
+    registry-bridge files
+  - LP-A3: no hardcoded `<lang>.md` rule-file strings outside packs
+- **`test/languages-contract.test.ts`** — five new per-pack tests:
+  metadata completeness (`permissions`, `cliBinaries`,
+  `defaultVersion`, `projectYamlBlock`) plus the **D009 reverse-direction
+  contract test** (every declared tool either invoked via TOOL_DEFS, by
+  shell-command literal, by `node_modules/.bin/<binary>` path, or on
+  the artifact-generating allowlist).
+- **`test/recipe-playbook.test.ts`** — synthetic 6th-pack injection
+  test. Defines a mock `kotlin` pack, mutates the `LANGUAGES` registry
+  to include it, and asserts every pack-iterating consumer
+  (generator, doctor, detect, project-yaml, constants, coverage,
+  generic, grep-secrets, tool-registry) picks up its contributions.
+  Empirical guarantee that the architecture is pack-driven.
+
+- **5 new `LanguageSupport` capabilities** for pack metadata that
+  consumers iterate (no per-language if-chains):
+  `permissions: string[]`, `ruleFile?: string`,
+  `templateFiles?: { template; output }[]`, `cliBinaries: string[]`,
+  `defaultVersion: string`, `versionKey?: keyof DetectedStack['versions']`,
+  `projectYamlBlock?: (ctx) => string`. Plus a coverage-parser capability
+  via direct ownership: per-language parsers (Istanbul, coverage.py,
+  Go cover-profile) moved out of `src/analyzers/tools/coverage.ts`
+  into their respective pack modules.
+
+### Changed
+
+- **`DetectedStack.languages`** — refactored from a fixed-shape
+  interface (`{ python, go, node, nextjs, rust, csharp }`) to
+  `Record<LanguageId, boolean>`. The `nextjs` flag moves out of
+  `languages` and is now exclusively the framework signal under the
+  top-level `framework: 'nextjs'` field — preserved in the legacy
+  `IF_NEXTJS` template variable for backwards compatibility.
+
+  Adding a 6th language pack now extends the `LanguageId` union once
+  and registers in `LANGUAGES`; **no fixed-shape interface to edit**.
+  This is the missing piece that makes the LP "7-file recipe" actually
+  7 files.
+
+  Programmatic consumers of the `detect()` function should note that
+  `stack.languages.node` and `stack.languages.nextjs` no longer exist;
+  instead, `stack.languages.typescript` is `true` for both Node and
+  Next.js projects (typescript pack matches any `package.json`), and
+  `stack.framework === 'nextjs'` distinguishes Next.js. The published
+  template variables `IF_NODE`, `IF_NEXTJS`, `NODE_VERSION` are
+  unchanged.
+
+- **`generator.ts`, `doctor.ts`, `detect.ts`, `coverage.ts`,
+  `generic.ts`, `grep-secrets.ts`, `project-yaml.ts`, `constants.ts`,
+  `tool-registry.ts`** — all per-language if-chains replaced with
+  iteration over the `LANGUAGES` registry. 12 of the 14 LP-audit
+  items closed across these files (the audit doc lives in `tmp/` if
+  curious).
+
+### Internal
+
+- Phase 10i.0-LP closed audit items #1–#7, #9–#13 (the per-pack
+  if-chain cluster + the medium-structural cluster).
+- Phase 10f.4 closed audit item #14 (`DetectedStack.languages`
+  interface refactor — the type-system surgery).
+- D009 (declared-vs-used tool drift contract test) closed via the
+  reverse-direction test in `languages-contract.test.ts`.
+
 ## [2.4.2] - 2026-04-25
 
 Phase 10i.0 — cross-ecosystem matrix completion. Establishes the

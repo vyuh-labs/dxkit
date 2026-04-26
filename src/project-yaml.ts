@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ResolvedConfig, DetectedStack } from './types';
 import { DEFAULT_VERSIONS, DEFAULT_COVERAGE } from './constants';
+import { LANGUAGES } from './languages';
 
 /**
  * Schema for .project.yaml as written by @vyuhlabs/create-devstack.
@@ -93,15 +94,22 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     }
   }
 
+  // YAML uses legacy keys `node` / `nextjs` for backwards compat with
+  // existing `.project.yaml` files. After 10f.4, `DetectedStack.languages`
+  // is keyed on `LanguageId`. Iterate the registry so adding a new pack
+  // auto-extends YAML reading — by default each pack maps to its
+  // matching `langEnabled(<id>)`. The typescript pack is the only
+  // special case: yaml's `node` OR `nextjs` activates it.
+  const VERSION_KEYS = ['python', 'go', 'node', 'rust', 'csharp'] as const;
+  const yamlNextjs = langEnabled('nextjs');
+
   const detected: DetectedStack = {
-    languages: {
-      python: langEnabled('python'),
-      go: langEnabled('go'),
-      node: langEnabled('node'),
-      nextjs: langEnabled('nextjs'),
-      rust: langEnabled('rust'),
-      csharp: langEnabled('csharp'),
-    },
+    languages: Object.fromEntries(
+      LANGUAGES.map((lang) => {
+        if (lang.id === 'typescript') return [lang.id, langEnabled('node') || yamlNextjs];
+        return [lang.id, langEnabled(lang.id)];
+      }),
+    ) as DetectedStack['languages'],
     infrastructure: {
       docker: tools.docker ?? true,
       postgres: infraEnabled('postgres'),
@@ -115,13 +123,13 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     },
     projectName: yaml.project.name,
     projectDescription: yaml.project.description ?? '',
-    versions: {
-      python: langs.python?.version ?? DEFAULT_VERSIONS.python,
-      go: langs.go?.version ?? DEFAULT_VERSIONS.go,
-      node: langs.node?.version ?? DEFAULT_VERSIONS.node,
-      rust: langs.rust?.version ?? DEFAULT_VERSIONS.rust,
-      csharp: langs.csharp?.version ?? DEFAULT_VERSIONS.csharp,
-    },
+    versions: Object.fromEntries(
+      VERSION_KEYS.map((k) => [k, langs[k]?.version ?? DEFAULT_VERSIONS[k]]),
+    ) as DetectedStack['versions'],
+    // 10f.4: nextjs moved out of `languages` and is now exclusively the
+    // framework signal. Preserved here so downstream consumers (generator,
+    // buildConditions) continue to see `framework === 'nextjs'`.
+    framework: yamlNextjs ? 'nextjs' : undefined,
     requiredTools: [],
   };
 

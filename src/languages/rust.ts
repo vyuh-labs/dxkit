@@ -782,4 +782,14 @@ export const rust: LanguageSupport = {
   },
 
   mapLintSeverity: mapClippyLintSeverity,
+
+  permissions: ['Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)'],
+  ruleFile: 'rust.md',
+  defaultVersion: 'stable',
+  // No templateFiles — rust pack does not currently scaffold any
+  // config templates from `vyuh-dxkit init` (Cargo.toml is project-
+  // owned, not pack-generated).
+  cliBinaries: ['rustc', 'cargo'],
+  projectYamlBlock: ({ config, enabled }) =>
+    [`  rust:`, `    enabled: ${enabled}`, `    version: "${config.versions.rust}"`].join('\n'),
 };

@@ -92,7 +92,9 @@ languages:
     const config = readProjectYaml(tmpDir)!;
     expect(config.languages.python).toBe(true);
     expect(config.languages.go).toBe(true);
-    expect(config.languages.node).toBe(false);
+    // After 10f.4, yaml's `node` and `nextjs` keys both map to
+    // `languages.typescript` — typescript pack matches any package.json.
+    expect(config.languages.typescript).toBe(false);
     expect(config.languages.rust).toBe(false);
     expect(config.versions.python).toBe('3.11');
     expect(config.versions.go).toBe('1.22.0');
@@ -211,7 +213,7 @@ tools:
     // Languages
     expect(config.languages.python).toBe(true);
     expect(config.languages.go).toBe(true);
-    expect(config.languages.node).toBe(false);
+    expect(config.languages.typescript).toBe(false);
     expect(config.versions.python).toBe('3.12');
     expect(config.versions.go).toBe('1.24.0');
 

@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
 import { DEFAULT_VERSIONS } from './constants';
+import { LANGUAGES } from './languages';
 
 function getInstalledNodeVersion(): string | undefined {
   try {
@@ -376,23 +377,18 @@ export function detect(cwd: string): DetectedStack {
   const composeContent = detectDockerComposeContent(cwd);
   const isNextjs = detectNextjs(cwd);
 
-  const languages = {
-    python:
-      fileExists(cwd, 'pyproject.toml') ||
-      fileExists(cwd, 'setup.py') ||
-      fileExists(cwd, 'requirements.txt') ||
-      fileExists(cwd, 'Pipfile') ||
-      !!findFileRecursive(cwd, /\.py$/, 2),
-    go: fileExists(cwd, 'go.mod'),
-    node: fileExists(cwd, 'package.json') && !isNextjs,
-    nextjs: isNextjs,
-    rust: fileExists(cwd, 'Cargo.toml'),
-    csharp:
-      fileExists(cwd, '*.sln') ||
-      globExists(cwd, '\\.csproj$') ||
-      globExists(cwd, '\\.sln$') ||
-      !!findFileRecursive(cwd, /\.csproj$/),
-  };
+  // Pack-driven detection. Each LanguageSupport declares its own
+  // `.detect(cwd)` — single source of truth for "is this a <lang>
+  // project?". `Record<LanguageId, boolean>` shape (10f.4) means
+  // adding a 6th pack only extends the LanguageId union; this
+  // function never changes.
+  //
+  // typescript pack matches any package.json — covers both Node and
+  // Next.js projects. nextjs is NOT a separate language flag; it's
+  // surfaced via the top-level `framework` field below.
+  const languages = Object.fromEntries(
+    LANGUAGES.map((lang) => [lang.id, lang.detect(cwd)] as const),
+  ) as DetectedStack['languages'];
 
   return {
     languages,
@@ -417,7 +413,10 @@ export function detect(cwd: string): DetectedStack {
       csharp: extractCsharpVersion(cwd) ?? DEFAULT_VERSIONS.csharp,
     },
     testRunner: detectTestRunner(cwd),
-    framework: detectFramework(cwd),
+    // nextjs detection takes precedence — it's a more specific signal
+    // than detectFramework's package.json scan (10f.4: nextjs moved out
+    // of `languages` and is now exclusively the framework signal).
+    framework: isNextjs ? 'nextjs' : detectFramework(cwd),
     requiredTools: detectRequiredTools(languages),
   };
 }

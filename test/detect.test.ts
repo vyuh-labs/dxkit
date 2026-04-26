@@ -14,10 +14,11 @@ describe('detect()', () => {
 
     it('does not falsely detect other languages', () => {
       expect(stack.languages.go).toBe(false);
-      expect(stack.languages.node).toBe(false);
+      expect(stack.languages.typescript).toBe(false);
       expect(stack.languages.rust).toBe(false);
       expect(stack.languages.csharp).toBe(false);
-      expect(stack.languages.nextjs).toBe(false);
+      // 10f.4: nextjs is now a framework signal, not a `languages` flag.
+      expect(stack.framework).not.toBe('nextjs');
     });
 
     it('extracts python version from pyproject.toml requires-python', () => {
@@ -41,8 +42,10 @@ describe('detect()', () => {
     const stack = detect(FIX('node'));
 
     it('detects node and not nextjs', () => {
-      expect(stack.languages.node).toBe(true);
-      expect(stack.languages.nextjs).toBe(false);
+      // 10f.4: typescript pack matches any package.json (Node OR Next.js).
+      // The "is this Next.js?" distinction now lives in `framework`.
+      expect(stack.languages.typescript).toBe(true);
+      expect(stack.framework).not.toBe('nextjs');
     });
 
     it('extracts node major version from engines.node', () => {
@@ -62,12 +65,10 @@ describe('detect()', () => {
   describe('nextjs fixture', () => {
     const stack = detect(FIX('nextjs'));
 
-    it('detects nextjs and not generic node', () => {
-      expect(stack.languages.nextjs).toBe(true);
-      expect(stack.languages.node).toBe(false);
-    });
-
-    it('reports framework as nextjs', () => {
+    it('detects nextjs as typescript+framework signal', () => {
+      // 10f.4: nextjs project activates the typescript pack (any
+      // package.json) AND surfaces `framework: 'nextjs'`.
+      expect(stack.languages.typescript).toBe(true);
       expect(stack.framework).toBe('nextjs');
     });
   });
@@ -120,10 +121,10 @@ describe('detect()', () => {
     it('detects no languages', () => {
       expect(stack.languages.python).toBe(false);
       expect(stack.languages.go).toBe(false);
-      expect(stack.languages.node).toBe(false);
-      expect(stack.languages.nextjs).toBe(false);
+      expect(stack.languages.typescript).toBe(false);
       expect(stack.languages.rust).toBe(false);
       expect(stack.languages.csharp).toBe(false);
+      expect(stack.framework).not.toBe('nextjs');
     });
 
     it('falls back to directory name as project name', () => {

@@ -157,7 +157,15 @@ When present (typically written by `@vyuhlabs/create-devstack`), `dxkit init` re
 
 ## Language Support
 
-Each language is a single `LanguageSupport` implementation in `src/languages/`. Adding a new language is one file — detection, tools, coverage parsing, import extraction, and lint severity mapping in one place.
+Each language is a single `LanguageSupport` implementation in `src/languages/`. Detection, tools, coverage parsing, import extraction, and lint severity mapping live in one place per language.
+
+Adding a new language is a single command followed by filling in TODO markers:
+
+```bash
+npm run new-lang kotlin "Kotlin (Android)"
+```
+
+This scaffolds the 7 recipe files (pack module, test stub, fixture skeleton, Claude rule file, template-config dir, plus `LanguageId` union extension and `LANGUAGES` registration). See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full walkthrough. Recipe enforcement (architecture greps + contract tests + synthetic 6th-pack playbook) runs in pre-commit so packs that miss required metadata fail CI.
 
 | Language | Detection                            | Coverage import     | Import-graph                           | Native tools                        | Lint severity tiers    | Vuln severity tiers                 |
 | -------- | ------------------------------------ | ------------------- | -------------------------------------- | ----------------------------------- | ---------------------- | ----------------------------------- |

@@ -5,6 +5,7 @@ import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { writeFile, copyFile, sha256, makeExecutable, copyDirectory } from './files';
 import { scanCodebase, renderCodebaseSkill, renderArchitectureRef } from './codebase-scanner';
+import { LANGUAGES, activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 
 function getTemplatesDir(): string {
@@ -46,20 +47,11 @@ function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, bo
     'Bash(git branch:*)',
   ];
 
-  if (conditions.IF_PYTHON) perms.push('Bash(python3:*)', 'Bash(pytest:*)', 'Bash(ruff:*)');
-  if (conditions.IF_GO)
-    perms.push('Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)');
-  if (conditions.IF_NODE || conditions.IF_NEXTJS)
-    perms.push('Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)');
-  if (conditions.IF_RUST)
-    perms.push('Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)');
-  if (conditions.IF_CSHARP)
-    perms.push(
-      'Bash(dotnet test:*)',
-      'Bash(dotnet build:*)',
-      'Bash(dotnet format:*)',
-      'Bash(dotnet run:*)',
-    );
+  // Per-language permissions — declared on each pack via
+  // `LanguageSupport.permissions`, iterated here.
+  for (const lang of activeLanguagesFromStack(config)) {
+    if (lang.permissions) perms.push(...lang.permissions);
+  }
   if (conditions.IF_INFISICAL) perms.push('Bash(make secrets-pull:*)', 'Bash(make secrets-show:*)');
   if (conditions.IF_DOCKER)
     perms.push('Bash(docker ps:*)', 'Bash(docker-compose ps:*)', 'Bash(docker-compose logs:*)');
@@ -236,12 +228,17 @@ export async function generate(
   logger.success('.claude/skills/');
 
   // 4. Rules (conditional on language)
-  if (conditions.IF_PYTHON) copyStatic('.claude/rules/python.md', '.claude/rules/python.md');
-  if (conditions.IF_GO) copyStatic('.claude/rules/go.md', '.claude/rules/go.md');
+  // Per-language rule files declared via `LanguageSupport.ruleFile`.
+  for (const lang of activeLanguagesFromStack(config)) {
+    if (lang.ruleFile) {
+      copyStatic(`.claude/rules/${lang.ruleFile}`, `.claude/rules/${lang.ruleFile}`);
+    }
+  }
+  // Framework-specific rules — NOT pack-owned. Frameworks
+  // (nextjs/loopback/express) live under the top-level `framework`
+  // signal, not in `languages`. Stay hardcoded here until a
+  // framework-pack abstraction exists.
   if (conditions.IF_NEXTJS) copyStatic('.claude/rules/nextjs.md', '.claude/rules/nextjs.md');
-  if (conditions.IF_RUST) copyStatic('.claude/rules/rust.md', '.claude/rules/rust.md');
-  if (conditions.IF_CSHARP) copyStatic('.claude/rules/csharp.md', '.claude/rules/csharp.md');
-  // Framework-specific rules
   if (config.framework === 'loopback')
     copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
   if (config.framework === 'express')
@@ -354,17 +351,12 @@ export async function generate(
       logger.success('.ai/');
     }
 
-    // Language configs (only if not already present)
-    if (conditions.IF_PYTHON) {
-      await writeTemplateIfMissing('configs/python/pyproject.toml.template', 'pyproject.toml');
-      await writeTemplateIfMissing('configs/python/ruff.toml.template', 'ruff.toml');
-      await writeTemplateIfMissing('configs/python/pytest.ini.template', 'pytest.ini');
-    }
-    if (conditions.IF_GO) {
-      await writeTemplateIfMissing('configs/go/.golangci.yml.template', '.golangci.yml');
-    }
-    if (conditions.IF_NEXTJS || conditions.IF_NODE) {
-      await writeTemplateIfMissing('configs/node/tsconfig.json.template', 'tsconfig.json');
+    // Language configs (only if not already present) — declared on
+    // each pack via `LanguageSupport.templateFiles`.
+    for (const lang of activeLanguagesFromStack(config)) {
+      for (const tpl of lang.templateFiles ?? []) {
+        await writeTemplateIfMissing(tpl.template, tpl.output);
+      }
     }
     logger.success('Language configs (skipped existing)');
 
@@ -427,36 +419,25 @@ function generateProjectYaml(config: ResolvedConfig): string {
     `  description: "${config.projectDescription}"`,
     ``,
     `languages:`,
-    `  python:`,
-    `    enabled: ${config.languages.python}`,
-    `    version: "${config.versions.python}"`,
-    `    quality:`,
-    `      coverage: ${config.coverageThreshold}`,
-    `      lint: true`,
-    `      typecheck: true`,
-    `      format: true`,
-    `  go:`,
-    `    enabled: ${config.languages.go}`,
-    `    version: "${config.versions.go}"`,
-    `    quality:`,
-    `      coverage: ${Math.max(0, parseInt(config.coverageThreshold) - 10)}`,
-    `      lint: true`,
-    `      format: true`,
-    `  node:`,
-    `    enabled: ${config.languages.node || config.languages.nextjs}`,
-    `    version: "${config.versions.node}"`,
-    `  rust:`,
-    `    enabled: ${config.languages.rust}`,
-    `    version: "${config.versions.rust}"`,
-    `  csharp:`,
-    `    enabled: ${config.languages.csharp}`,
-    `    version: "${config.versions.csharp}"`,
-    `    quality:`,
-    `      lint: true`,
-    `      format: true`,
-    `  nextjs:`,
-    `    enabled: ${config.languages.nextjs}`,
-    ``,
+  ];
+
+  // Each pack renders its own `languages:` section via
+  // `projectYamlBlock`. Iterates over ALL packs (not just active) so
+  // the YAML emits `enabled: false` for inactive packs — matches the
+  // pre-pack hardcoded shape so no .project.yaml diffs land just from
+  // this refactor.
+  const active = activeLanguagesFromStack(config);
+  for (const lang of LANGUAGES) {
+    if (!lang.projectYamlBlock) continue;
+    lines.push(lang.projectYamlBlock({ config, enabled: active.includes(lang) }));
+  }
+  // nextjs is a framework signal (10f.4: moved out of `languages` to
+  // the top-level `framework` field). The YAML block is preserved for
+  // backwards compat — readers still see `nextjs.enabled`.
+  lines.push(`  nextjs:`);
+  lines.push(`    enabled: ${config.framework === 'nextjs'}`);
+  lines.push(``);
+  lines.push(
     `infrastructure:`,
     `  postgres:`,
     `    enabled: ${config.infrastructure.postgres}`,
@@ -472,7 +453,7 @@ function generateProjectYaml(config: ResolvedConfig): string {
     `  gcloud: ${config.tools.gcloud}`,
     `  pulumi: ${config.tools.pulumi}`,
     `  infisical: ${config.tools.infisical}`,
-  ];
+  );
   return lines.join('\n') + '\n';
 }
 

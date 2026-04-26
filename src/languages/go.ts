@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { parseGoCoverProfile } from '../analyzers/tools/coverage';
+import { type Coverage, type FileCoverage, round1 } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import {
   classifyOsvSeverity,
@@ -478,6 +478,74 @@ const goLintProvider: CapabilityProvider<LintResult> = {
   },
 };
 
+// ─── Coverage parser ────────────────────────────────────────────────────────
+// Moved from `src/analyzers/tools/coverage.ts` in Phase 10i.0-LP.4.
+
+/**
+ * Go coverprofile paths look like `github.com/user/repo/pkg/foo.go`. If that
+ * file doesn't exist at cwd, try stripping leading segments until we find one
+ * that does. Fall back to the original string if nothing resolves.
+ */
+function resolveGoPath(p: string, cwd: string): string {
+  const norm = p.replace(/\\/g, '/');
+  if (fs.existsSync(path.join(cwd, norm))) return norm;
+  const parts = norm.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const candidate = parts.slice(i).join('/');
+    if (fs.existsSync(path.join(cwd, candidate))) return candidate;
+  }
+  return norm;
+}
+
+/**
+ * Go coverprofile:
+ *   mode: set
+ *   pkg/path/file.go:5.2,10.1 3 1
+ *
+ * Each line: `file:startLine.col,endLine.col numStatements count`. A
+ * block is covered iff `count > 0`.
+ */
+export function parseGoCoverProfile(raw: string, sourceFile: string, cwd: string): Coverage {
+  const perFile = new Map<string, { covered: number; total: number }>();
+  let totalCovered = 0;
+  let totalStatements = 0;
+
+  for (const line of raw.split('\n')) {
+    if (!line || line.startsWith('mode:')) continue;
+    const m = line.match(/^(.+):\d+\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$/);
+    if (!m) continue;
+    const file = m[1];
+    const stmts = parseInt(m[2], 10);
+    const count = parseInt(m[3], 10);
+    const bucket = perFile.get(file) ?? { covered: 0, total: 0 };
+    bucket.total += stmts;
+    if (count > 0) bucket.covered += stmts;
+    perFile.set(file, bucket);
+    totalStatements += stmts;
+    if (count > 0) totalCovered += stmts;
+  }
+
+  const files = new Map<string, FileCoverage>();
+  for (const [key, { covered, total }] of perFile) {
+    // Go coverprofile uses module-relative paths (e.g. github.com/user/repo/pkg/foo.go).
+    // Strip the module prefix if it resolves to a real file in cwd.
+    const rel = resolveGoPath(key, cwd);
+    files.set(rel, {
+      path: rel,
+      covered,
+      total,
+      pct: round1(total > 0 ? (covered / total) * 100 : 0),
+    });
+  }
+
+  return {
+    source: 'go',
+    sourceFile,
+    linePercent: round1(totalStatements > 0 ? (totalCovered / totalStatements) * 100 : 0),
+    files,
+  };
+}
+
 /**
  * Single source of truth for the go pack's coverage gathering.
  * Consumed by `goCoverageProvider` (capability dispatcher).
@@ -779,4 +847,24 @@ export const go: LanguageSupport = {
   },
 
   mapLintSeverity: mapGolangciLinterSeverity,
+
+  permissions: ['Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)'],
+  ruleFile: 'go.md',
+  defaultVersion: '1.24.0',
+  templateFiles: [{ template: 'configs/go/.golangci.yml.template', output: '.golangci.yml' }],
+  cliBinaries: ['go', 'golangci-lint'],
+  projectYamlBlock: ({ config, enabled }) => {
+    // Go's coverage threshold is 10pp lower than the project default —
+    // preserved from the pre-pack hardcoded YAML in generator.ts.
+    const goCoverage = Math.max(0, parseInt(config.coverageThreshold) - 10);
+    return [
+      `  go:`,
+      `    enabled: ${enabled}`,
+      `    version: "${config.versions.go}"`,
+      `    quality:`,
+      `      coverage: ${goCoverage}`,
+      `      lint: true`,
+      `      format: true`,
+    ].join('\n');
+  },
 };

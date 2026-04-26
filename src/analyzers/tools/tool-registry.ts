@@ -17,8 +17,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getLanguage } from '../../languages';
-import type { LanguageId } from '../../languages';
+import { activeLanguagesFromFlags } from '../../languages';
 import { DetectedStack, ToolRequirement } from '../../types';
 
 /**
@@ -102,6 +101,7 @@ function getSystemPaths(): string[] {
     `${home}/.local/bin`, // pipx, user pip
     `${home}/.cargo/bin`, // rust
     `${home}/go/bin`, // go
+    `${home}/.dotnet`, // dotnet-install.sh --install-dir $HOME/.dotnet (Microsoft's recommended non-sudo path)
     `${TOOLS_VENV}/bin`, // dxkit shared Python tools venv (persistent)
     `${LEGACY_TOOLS_VENV}/bin`, // legacy: pre-10f.2 installs
   ];
@@ -729,23 +729,11 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
   ];
 
   // Language-specific tools dispatched through the language registry.
-  // Maps DetectedStack keys to LanguageId (handles node/nextjs → typescript).
-  const langMap: Record<string, string> = {
-    node: 'typescript',
-    nextjs: 'typescript',
-    python: 'python',
-    go: 'go',
-    rust: 'rust',
-    csharp: 'csharp',
-  };
-  const seen = new Set<string>();
-  for (const [key, active] of Object.entries(languages)) {
-    if (!active) continue;
-    const id = langMap[key];
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const lang = getLanguage(id as LanguageId);
-    if (lang) names.push(...lang.tools);
+  // `activeLanguagesFromFlags` handles `node|nextjs → typescript`
+  // and naturally dedupes (no Set needed) — replaces the prior
+  // langMap + seen-set pair (Phase 10i.0-LP.2).
+  for (const lang of activeLanguagesFromFlags(languages)) {
+    names.push(...lang.tools);
   }
 
   return names.map((n) => {
