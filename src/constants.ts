@@ -90,22 +90,24 @@ export function buildVariables(config: ResolvedConfig): Record<string, string> {
 }
 
 export function buildConditions(config: ResolvedConfig): Record<string, boolean> {
-  // Per-pack `IF_<KEY>` conditions (Phase 10i.0-LP.6) — iterated from
-  // the language registry so adding a 6th pack auto-extends the
-  // condition vocabulary without an edit here.
+  // Per-pack `IF_<KEY>` conditions — iterated from the language
+  // registry so adding a 6th pack auto-extends the condition
+  // vocabulary. After 10f.4, `config.languages` is keyed on
+  // `LanguageId`, so the lookup is `flags[lang.id]` directly.
   const langConditions: Record<string, boolean> = {};
   for (const lang of LANGUAGES) {
-    const key = lang.versionKey ?? (lang.id as LangVersionKey);
-    langConditions[`IF_${key.toUpperCase()}`] = config.languages[key] ?? false;
+    langConditions[`IF_${lang.id.toUpperCase()}`] = config.languages[lang.id] ?? false;
   }
 
   return {
     ...langConditions,
-    // typescript pack maps to IF_NODE; nextjs is a framework signal that
-    // also activates the Node template paths. Kept explicit because nextjs
-    // is not a language pack — see `activeLanguagesFromStack`.
-    IF_NODE: config.languages.node || config.languages.nextjs,
-    IF_NEXTJS: config.languages.nextjs,
+    // Legacy template aliases (10f.4): templates use IF_NODE / IF_NEXTJS,
+    // not IF_TYPESCRIPT. typescript pack activates for both Node and
+    // Next.js projects (typescript.detect matches any package.json);
+    // IF_NEXTJS is now sourced from the framework signal (nextjs
+    // moved out of `languages` in 10f.4).
+    IF_NODE: config.languages.typescript ?? false,
+    IF_NEXTJS: config.framework === 'nextjs',
     IF_POSTGRES: config.infrastructure.postgres,
     IF_REDIS: config.infrastructure.redis,
     IF_HAS_SERVICES: config.infrastructure.postgres || config.infrastructure.redis,

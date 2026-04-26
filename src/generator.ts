@@ -234,11 +234,10 @@ export async function generate(
       copyStatic(`.claude/rules/${lang.ruleFile}`, `.claude/rules/${lang.ruleFile}`);
     }
   }
-  // Framework-specific rules — NOT pack-owned. nextjs is treated as a
-  // framework signal here even though it's stored under
-  // `config.languages.nextjs`; loopback/express are explicit framework
-  // selectors. Both stay hardcoded until a framework-pack abstraction
-  // exists.
+  // Framework-specific rules — NOT pack-owned. Frameworks
+  // (nextjs/loopback/express) live under the top-level `framework`
+  // signal, not in `languages`. Stay hardcoded here until a
+  // framework-pack abstraction exists.
   if (conditions.IF_NEXTJS) copyStatic('.claude/rules/nextjs.md', '.claude/rules/nextjs.md');
   if (config.framework === 'loopback')
     copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
@@ -432,9 +431,11 @@ function generateProjectYaml(config: ResolvedConfig): string {
     if (!lang.projectYamlBlock) continue;
     lines.push(lang.projectYamlBlock({ config, enabled: active.includes(lang) }));
   }
-  // nextjs is a framework signal, not a language pack — kept hardcoded.
+  // nextjs is a framework signal (10f.4: moved out of `languages` to
+  // the top-level `framework` field). The YAML block is preserved for
+  // backwards compat — readers still see `nextjs.enabled`.
   lines.push(`  nextjs:`);
-  lines.push(`    enabled: ${config.languages.nextjs}`);
+  lines.push(`    enabled: ${config.framework === 'nextjs'}`);
   lines.push(``);
   lines.push(
     `infrastructure:`,

@@ -1,3 +1,17 @@
+/**
+ * Canonical pack identifier set. Lives here (rather than in
+ * `src/languages/types.ts`) because `DetectedStack.languages` is keyed
+ * on it — putting it in the languages module would create a circular
+ * import (languages/types.ts already imports `ResolvedConfig` from this
+ * file). `src/languages/index.ts` re-exports `LanguageId` for callers
+ * that prefer importing from the languages barrel.
+ *
+ * Adding a 6th pack: extend this union AND register the pack in
+ * `src/languages/index.ts` LANGUAGES. The scaffolder
+ * (`scripts/scaffold-language.js`) automates both.
+ */
+export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp';
+
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {
   name: string;
@@ -9,14 +23,19 @@ export interface ToolRequirement {
 }
 
 export interface DetectedStack {
-  languages: {
-    python: boolean;
-    go: boolean;
-    node: boolean;
-    nextjs: boolean;
-    rust: boolean;
-    csharp: boolean;
-  };
+  /**
+   * Per-pack activation flags, keyed on `LanguageId`. Truthy values
+   * mean the pack is active for this project. Phase 10f.4 refactored
+   * this from the legacy fixed-shape `{ python, go, node, nextjs, rust,
+   * csharp }` interface so adding a 6th pack only requires extending
+   * the `LanguageId` union — no shape edit here.
+   *
+   * `nextjs` is no longer a separate flag; nextjs projects activate
+   * `typescript: true` (since the typescript pack matches any
+   * package.json) and the framework signal `framework: 'nextjs'` is
+   * surfaced via the top-level `framework` field below.
+   */
+  languages: Record<LanguageId, boolean>;
   infrastructure: {
     docker: boolean;
     postgres: boolean;
@@ -30,6 +49,12 @@ export interface DetectedStack {
   };
   projectName: string;
   projectDescription: string;
+  /**
+   * Per-pack version strings. Keys match each pack's `versionKey ?? id`
+   * — typescript pack uses `versionKey: 'node'` for legacy template-
+   * variable compat (`NODE_VERSION`), so the key here is `node`, not
+   * `typescript`. Other packs default to their `id`.
+   */
   versions: {
     python?: string;
     go?: string;
@@ -42,7 +67,8 @@ export interface DetectedStack {
     framework: string; // e.g., "jest", "mocha", "vitest", "pytest"
     coverageCommand?: string; // e.g., "npx jest --coverage", "npx c8 npm test"
   };
-  framework?: string; // e.g., "loopback", "express", "fastapi", "gin"
+  /** Framework signal — e.g. "nextjs", "loopback", "express", "fastapi", "gin". */
+  framework?: string;
   requiredTools: ToolRequirement[];
 }
 

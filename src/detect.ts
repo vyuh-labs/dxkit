@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
 import { DEFAULT_VERSIONS } from './constants';
-import { LANGUAGES, type LanguageId } from './languages';
+import { LANGUAGES } from './languages';
 
 function getInstalledNodeVersion(): string | undefined {
   try {
@@ -377,32 +377,18 @@ export function detect(cwd: string): DetectedStack {
   const composeContent = detectDockerComposeContent(cwd);
   const isNextjs = detectNextjs(cwd);
 
-  // Pack-driven detection (Phase 10i.0-LP.5). Each LanguageSupport
-  // declares its own `.detect(cwd)` — single source of truth for
-  // "is this a <lang> project?". Pre-LP, detect.ts hardcoded a parallel
-  // copy of each pack's detection logic, drifting silently (e.g. the C#
-  // pack used `dirHasMatching + findMatchingRecursive` while detect.ts
-  // used `globExists + findFileRecursive`).
+  // Pack-driven detection. Each LanguageSupport declares its own
+  // `.detect(cwd)` — single source of truth for "is this a <lang>
+  // project?". `Record<LanguageId, boolean>` shape (10f.4) means
+  // adding a 6th pack only extends the LanguageId union; this
+  // function never changes.
   //
-  // The legacy `DetectedStack.languages` shape (fixed-key object with
-  // separate `node` and `nextjs` flags) is preserved here. The deeper
-  // refactor — `Record<LanguageId, boolean>` on the type — is audit
-  // item #14, deferred to 10f.4 (the type-system surgery touches ~8
-  // callsites and warrants its own PR).
-  const packDetections = Object.fromEntries(
+  // typescript pack matches any package.json — covers both Node and
+  // Next.js projects. nextjs is NOT a separate language flag; it's
+  // surfaced via the top-level `framework` field below.
+  const languages = Object.fromEntries(
     LANGUAGES.map((lang) => [lang.id, lang.detect(cwd)] as const),
-  ) as Record<LanguageId, boolean>;
-
-  const languages: DetectedStack['languages'] = {
-    python: packDetections.python,
-    go: packDetections.go,
-    // typescript pack matches both Node and Next.js projects (any
-    // package.json). Split here using the framework signal.
-    node: packDetections.typescript && !isNextjs,
-    nextjs: isNextjs,
-    rust: packDetections.rust,
-    csharp: packDetections.csharp,
-  };
+  ) as DetectedStack['languages'];
 
   return {
     languages,
@@ -427,7 +413,10 @@ export function detect(cwd: string): DetectedStack {
       csharp: extractCsharpVersion(cwd) ?? DEFAULT_VERSIONS.csharp,
     },
     testRunner: detectTestRunner(cwd),
-    framework: detectFramework(cwd),
+    // nextjs detection takes precedence — it's a more specific signal
+    // than detectFramework's package.json scan (10f.4: nextjs moved out
+    // of `languages` and is now exclusively the framework signal).
+    framework: isNextjs ? 'nextjs' : detectFramework(cwd),
     requiredTools: detectRequiredTools(languages),
   };
 }

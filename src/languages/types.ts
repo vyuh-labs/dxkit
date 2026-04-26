@@ -1,4 +1,4 @@
-import type { ResolvedConfig } from '../types';
+import type { LanguageId, ResolvedConfig } from '../types';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
@@ -9,7 +9,10 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 
-export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp';
+// `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
+// references it) to avoid circular imports. Re-exported here for
+// callers that import from the languages barrel.
+export type { LanguageId } from '../types';
 
 export type LintSeverity = 'critical' | 'high' | 'medium' | 'low';
 

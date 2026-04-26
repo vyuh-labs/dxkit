@@ -93,21 +93,23 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     }
   }
 
-  // YAML language keys — kept identical to `DetectedStack['languages']`
-  // shape for now. Iteration here just dedupes the prior 6-line
-  // langEnabled chain. The deeper refactor (single source of truth
-  // across YAML + DetectedStack + DEFAULT_VERSIONS) is item #14 in the
-  // LP audit, deferred to 10f.4 because it requires changing the
-  // `DetectedStack.languages` interface from a fixed-shape object to
-  // `Record<LanguageId, …>` — type-system surgery touching ~8
-  // callsites, big enough to warrant its own PR.
-  const LANG_KEYS = ['python', 'go', 'node', 'nextjs', 'rust', 'csharp'] as const;
+  // YAML uses legacy keys `node` / `nextjs` for backwards compat with
+  // existing `.project.yaml` files. After 10f.4, `DetectedStack.languages`
+  // is keyed on `LanguageId` (typescript / python / go / rust / csharp).
+  // The mapping: yaml's `node || nextjs` → `languages.typescript`;
+  // yaml's `nextjs` is also surfaced via the top-level `framework`
+  // signal.
   const VERSION_KEYS = ['python', 'go', 'node', 'rust', 'csharp'] as const;
+  const yamlNextjs = langEnabled('nextjs');
 
   const detected: DetectedStack = {
-    languages: Object.fromEntries(
-      LANG_KEYS.map((k) => [k, langEnabled(k)]),
-    ) as DetectedStack['languages'],
+    languages: {
+      typescript: langEnabled('node') || yamlNextjs,
+      python: langEnabled('python'),
+      go: langEnabled('go'),
+      rust: langEnabled('rust'),
+      csharp: langEnabled('csharp'),
+    },
     infrastructure: {
       docker: tools.docker ?? true,
       postgres: infraEnabled('postgres'),
@@ -124,6 +126,10 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     versions: Object.fromEntries(
       VERSION_KEYS.map((k) => [k, langs[k]?.version ?? DEFAULT_VERSIONS[k]]),
     ) as DetectedStack['versions'],
+    // 10f.4: nextjs moved out of `languages` and is now exclusively the
+    // framework signal. Preserved here so downstream consumers (generator,
+    // buildConditions) continue to see `framework === 'nextjs'`.
+    framework: yamlNextjs ? 'nextjs' : undefined,
     requiredTools: [],
   };
 

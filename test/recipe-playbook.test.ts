@@ -138,17 +138,22 @@ describe('recipe playbook — synthetic 6th pack', () => {
 
   // ─── activeLanguagesFromFlags (LP.7) ──────────────────────────────────────
 
-  it('activeLanguagesFromFlags activates the mock pack via its versionKey (LP.7)', () => {
-    // Cast — `kotlin` isn't a typed key on `DetectedStack.languages` until 10f.4.
+  it('activeLanguagesFromFlags activates the mock pack by id (LP.7 / 10f.4)', () => {
+    // Cast `kotlin: true` — `LanguageId` union is closed in production
+    // (typescript/python/go/rust/csharp); the synthetic mock pack
+    // deliberately uses an extra key. This is the right place for the
+    // cast — the test injects a hypothetical 6th pack to verify the
+    // architecture iterates the registry rather than enumerating
+    // hardcoded ids.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const flags = {
+      typescript: false,
       python: false,
       go: false,
-      node: false,
-      nextjs: false,
       rust: false,
       csharp: false,
       kotlin: true,
-    } as unknown as import('../src/types').DetectedStack['languages'];
+    } as any;
     const active = activeLanguagesFromFlags(flags);
     expect(active.find((l) => (l.id as string) === 'kotlin')).toBe(mockKotlinPack);
   });
@@ -156,14 +161,14 @@ describe('recipe playbook — synthetic 6th pack', () => {
   it('activeLanguagesFromStack picks up the mock pack the same way', () => {
     const stack = {
       languages: {
+        typescript: false,
         python: false,
         go: false,
-        node: false,
-        nextjs: false,
         rust: false,
         csharp: false,
         kotlin: true,
       },
+      framework: undefined,
       // Type-only stub — the assertion only reads .languages.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
@@ -176,10 +181,9 @@ describe('recipe playbook — synthetic 6th pack', () => {
   it('buildRequiredTools includes the mock pack when its flag is set (LP.2 + LP.7)', () => {
     // Mock pack declares zero tools to keep TOOL_DEFS lookup safe.
     const required = buildRequiredTools({
+      typescript: false,
       python: false,
       go: false,
-      node: false,
-      nextjs: false,
       rust: false,
       csharp: false,
       kotlin: true,
@@ -226,10 +230,9 @@ describe('recipe playbook — synthetic 6th pack', () => {
 function makeFakeConfig(opts: { kotlin: boolean; kotlinVersion?: string }) {
   return {
     languages: {
+      typescript: false,
       python: false,
       go: false,
-      node: false,
-      nextjs: false,
       rust: false,
       csharp: false,
       kotlin: opts.kotlin,
@@ -245,6 +248,7 @@ function makeFakeConfig(opts: { kotlin: boolean; kotlinVersion?: string }) {
     coverageThreshold: '80',
     projectName: 'test',
     projectDescription: '',
+    framework: undefined,
     infrastructure: { docker: false, postgres: false, redis: false },
     tools: { gcloud: false, pulumi: false, infisical: false, ghCli: false },
     requiredTools: [],

@@ -227,14 +227,7 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     ).toBe('function');
     // Build a plausible context to invoke the renderer.
     const fakeConfig = {
-      languages: {
-        python: false,
-        go: false,
-        node: false,
-        nextjs: false,
-        rust: false,
-        csharp: false,
-      },
+      languages: { typescript: false, python: false, go: false, rust: false, csharp: false },
       versions: { python: '3.12', go: '1.24.0', node: '20', rust: 'stable', csharp: '8.0' },
       coverageThreshold: '80',
       projectName: 'x',
