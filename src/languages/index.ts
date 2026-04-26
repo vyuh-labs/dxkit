@@ -32,12 +32,21 @@ export function detectActiveLanguages(cwd: string): LanguageSupport[] {
  * rule-file scaffolding) rather than a distinct language.
  */
 export function activeLanguagesFromStack(stack: DetectedStack): LanguageSupport[] {
-  const flags: Record<LanguageId, boolean> = {
-    typescript: stack.languages.node || stack.languages.nextjs,
-    python: stack.languages.python,
-    go: stack.languages.go,
-    rust: stack.languages.rust,
-    csharp: stack.languages.csharp,
+  return activeLanguagesFromFlags(stack.languages);
+}
+
+/**
+ * Same mapping as `activeLanguagesFromStack`, but for callers who only
+ * have the `languages` sub-shape (e.g. `tool-registry.ts:buildRequiredTools`
+ * receives `DetectedStack['languages']`, not the full stack).
+ */
+export function activeLanguagesFromFlags(flags: DetectedStack['languages']): LanguageSupport[] {
+  const idFlags: Record<LanguageId, boolean> = {
+    typescript: flags.node || flags.nextjs,
+    python: flags.python,
+    go: flags.go,
+    rust: flags.rust,
+    csharp: flags.csharp,
   };
-  return LANGUAGES.filter((l) => flags[l.id]);
+  return LANGUAGES.filter((l) => idFlags[l.id]);
 }

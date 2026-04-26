@@ -93,15 +93,21 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     }
   }
 
+  // YAML language keys — kept identical to `DetectedStack['languages']`
+  // shape for now. Iteration here just dedupes the prior 6-line
+  // langEnabled chain. The deeper refactor (single source of truth
+  // across YAML + DetectedStack + DEFAULT_VERSIONS) is item #14 in the
+  // LP audit, deferred to 10f.4 because it requires changing the
+  // `DetectedStack.languages` interface from a fixed-shape object to
+  // `Record<LanguageId, …>` — type-system surgery touching ~8
+  // callsites, big enough to warrant its own PR.
+  const LANG_KEYS = ['python', 'go', 'node', 'nextjs', 'rust', 'csharp'] as const;
+  const VERSION_KEYS = ['python', 'go', 'node', 'rust', 'csharp'] as const;
+
   const detected: DetectedStack = {
-    languages: {
-      python: langEnabled('python'),
-      go: langEnabled('go'),
-      node: langEnabled('node'),
-      nextjs: langEnabled('nextjs'),
-      rust: langEnabled('rust'),
-      csharp: langEnabled('csharp'),
-    },
+    languages: Object.fromEntries(
+      LANG_KEYS.map((k) => [k, langEnabled(k)]),
+    ) as DetectedStack['languages'],
     infrastructure: {
       docker: tools.docker ?? true,
       postgres: infraEnabled('postgres'),
@@ -115,13 +121,9 @@ export function readProjectYaml(cwd: string): ResolvedConfig | null {
     },
     projectName: yaml.project.name,
     projectDescription: yaml.project.description ?? '',
-    versions: {
-      python: langs.python?.version ?? DEFAULT_VERSIONS.python,
-      go: langs.go?.version ?? DEFAULT_VERSIONS.go,
-      node: langs.node?.version ?? DEFAULT_VERSIONS.node,
-      rust: langs.rust?.version ?? DEFAULT_VERSIONS.rust,
-      csharp: langs.csharp?.version ?? DEFAULT_VERSIONS.csharp,
-    },
+    versions: Object.fromEntries(
+      VERSION_KEYS.map((k) => [k, langs[k]?.version ?? DEFAULT_VERSIONS[k]]),
+    ) as DetectedStack['versions'],
     requiredTools: [],
   };
 
