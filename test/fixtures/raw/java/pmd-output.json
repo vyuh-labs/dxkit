@@ -1,0 +1,48 @@
+{
+  "formatVersion": 0,
+  "pmdVersion": "7.24.0",
+  "timestamp": "2026-04-28T17:24:34.419-04:00",
+  "files": [
+    {
+      "filename": "test/fixtures/benchmarks/java/BadLint.java",
+      "violations": [
+        {
+          "beginline": 16,
+          "begincolumn": 1,
+          "endline": 16,
+          "endcolumn": 20,
+          "description": "Unused import \u0027java.util.*\u0027",
+          "rule": "UnnecessaryImport",
+          "ruleset": "Code Style",
+          "priority": 4,
+          "externalInfoUrl": "https://docs.pmd-code.org/snapshot/pmd_rules_java_codestyle.html#unnecessaryimport"
+        },
+        {
+          "beginline": 18,
+          "begincolumn": 8,
+          "endline": 18,
+          "endcolumn": 13,
+          "description": "All classes, interfaces, enums and annotations must belong to a named package",
+          "rule": "NoPackage",
+          "ruleset": "Code Style",
+          "priority": 3,
+          "externalInfoUrl": "https://docs.pmd-code.org/snapshot/pmd_rules_java_codestyle.html#nopackage"
+        },
+        {
+          "beginline": 19,
+          "begincolumn": 19,
+          "endline": 19,
+          "endcolumn": 21,
+          "description": "Document empty method body",
+          "rule": "UncommentedEmptyMethodBody",
+          "ruleset": "Documentation",
+          "priority": 3,
+          "externalInfoUrl": "https://docs.pmd-code.org/snapshot/pmd_rules_java_documentation.html#uncommentedemptymethodbody"
+        }
+      ]
+    }
+  ],
+  "suppressedViolations": [],
+  "processingErrors": [],
+  "configurationErrors": []
+}

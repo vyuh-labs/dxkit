@@ -650,6 +650,29 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'dotnet tool install --global nuget-license',
     },
   },
+  pmd: {
+    name: 'pmd',
+    description: 'Java source-level static analyzer (PMD 7.x)',
+    install: 'brew install pmd',
+    check: 'pmd --version',
+    for: 'java',
+    layer: 'language',
+    binaries: ['pmd'],
+    versionCheck: 'pmd --version 2>/dev/null',
+    // PMD 7.x ships a single zip on GitHub Releases. Linux install
+    // mirrors the detekt + gitleaks pattern: download to ~/.local/share,
+    // symlink the entrypoint script (zip ships it as `bin/pmd`) into
+    // ~/.local/bin. v7.24.0 confirmed via `gh release list pmd/pmd`
+    // 2026-04-28 (latest stable). PMD 7 switched to subcommand syntax
+    // (`pmd check -d <dir> -R <ruleset> -f json`) — the gather code in
+    // src/languages/java.ts uses that form.
+    installCommands: {
+      macos: 'brew install pmd',
+      linux:
+        'mkdir -p ~/.local/share/pmd ~/.local/bin && curl -sSfL -o /tmp/pmd.zip "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.24.0/pmd-dist-7.24.0-bin.zip" && unzip -q -o /tmp/pmd.zip -d ~/.local/share/pmd && chmod +x ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd && ln -sf ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd ~/.local/bin/pmd',
+      windows: 'scoop install pmd',
+    },
+  },
   detekt: {
     name: 'detekt',
     description: 'Kotlin static analysis (lint, complexity, style)',

@@ -64,6 +64,15 @@ jobs:
           ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt-cli
           ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Install PMD # lint (Phase 10k.1.3) — Java source-level analyzer (JSON output)
+        run: |
+          mkdir -p ~/.local/share/pmd ~/.local/bin
+          curl -sSfL -o /tmp/pmd.zip \
+            "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.24.0/pmd-dist-7.24.0-bin.zip"
+          unzip -q -o /tmp/pmd.zip -d ~/.local/share/pmd
+          chmod +x ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd
+          ln -sf ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd ~/.local/bin/pmd
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Typecheck
         run: npm run typecheck

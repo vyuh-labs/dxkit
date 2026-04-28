@@ -20,7 +20,70 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { java, extractJavaImportsRaw } from '../src/languages/java';
+import {
+  java,
+  extractJavaImportsRaw,
+  mapPmdRuleSeverity,
+  parsePmdOutput,
+} from '../src/languages/java';
+
+const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'java');
+function readFixture(name: string): string {
+  return fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf-8');
+}
+
+describe('detectJava — strict source-presence check (10k.1.3 regression)', () => {
+  // 10k.1.3 surfaced: a permissive `pom.xml` check made detectJava
+  // return true on Kotlin's benchmark fixture (which uses pom.xml for
+  // osv-scanner), causing both kotlin AND java packs to activate and
+  // joint-report `lintTool: 'detekt, pmd'`. Fixed: require either
+  // `src/main/java/` path OR `.java` source presence.
+
+  it('does NOT activate on a kotlin Maven project (pom.xml + .kt source, no .java)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-detect-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'pom.xml'), '<project></project>');
+      fs.writeFileSync(path.join(dir, 'Foo.kt'), 'class Foo');
+      expect(java.detect(dir)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('activates on src/main/java/ standard Maven/Gradle layout', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-detect-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'src', 'main', 'java'), { recursive: true });
+      expect(java.detect(dir)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('activates on `.java` source within depth 5', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-detect-'));
+    try {
+      const deep = path.join(dir, 'a', 'b', 'c', 'd');
+      fs.mkdirSync(deep, { recursive: true });
+      fs.writeFileSync(path.join(deep, 'Foo.java'), 'class Foo {}');
+      expect(java.detect(dir)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('activates on mixed Kotlin+Java project (both packs detect — correct)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-detect-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'pom.xml'), '<project></project>');
+      fs.writeFileSync(path.join(dir, 'Foo.kt'), 'class Foo');
+      fs.writeFileSync(path.join(dir, 'Bar.java'), 'class Bar {}');
+      expect(java.detect(dir)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('java pack — metadata', () => {
   it('declares its id and displayName', () => {
@@ -28,21 +91,24 @@ describe('java pack — metadata', () => {
     expect(java.displayName).toBe('Java');
   });
 
-  it('wires imports + testFramework + coverage providers (10k.1.1, 10k.1.2)', () => {
+  it('wires imports + testFramework + coverage + lint providers (10k.1.1-10k.1.3)', () => {
     expect(java.capabilities?.imports).toBeDefined();
     expect(java.capabilities?.imports?.source).toBe('java');
     expect(java.capabilities?.testFramework).toBeDefined();
     expect(java.capabilities?.testFramework?.source).toBe('java');
     expect(java.capabilities?.coverage).toBeDefined();
     expect(java.capabilities?.coverage?.source).toBe('java');
+    expect(java.capabilities?.lint).toBeDefined();
+    expect(java.capabilities?.lint?.source).toBe('java');
   });
 
-  it('does not yet wire depVulns/lint (10k.1.3-10k.1.4)', () => {
-    // Capabilities are genuinely optional (Recipe v3 / G2). Asserting
-    // these are undefined documents the staged-rollout intent — when
-    // the corresponding 10k.1.x commit lands, this test flips.
+  it('declares pmd in tools[] (10k.1.3)', () => {
+    expect(java.tools).toContain('pmd');
+  });
+
+  it('does not yet wire depVulns (10k.1.4)', () => {
+    // Capabilities are genuinely optional (Recipe v3 / G2).
     expect(java.capabilities?.depVulns).toBeUndefined();
-    expect(java.capabilities?.lint).toBeUndefined();
   });
 });
 
@@ -228,8 +294,87 @@ describe('javaCoverageProvider — JaCoCo XML at Maven standard path', () => {
   });
 });
 
+describe('mapPmdRuleSeverity', () => {
+  it('maps priority 1 to critical', () => {
+    expect(mapPmdRuleSeverity(1)).toBe('critical');
+  });
+
+  it('maps priority 2 to high', () => {
+    expect(mapPmdRuleSeverity(2)).toBe('high');
+  });
+
+  it('maps priority 3 to medium', () => {
+    expect(mapPmdRuleSeverity(3)).toBe('medium');
+  });
+
+  it('maps priorities 4 and 5 to low', () => {
+    expect(mapPmdRuleSeverity(4)).toBe('low');
+    expect(mapPmdRuleSeverity(5)).toBe('low');
+  });
+
+  it('defaults unknown / missing priority to medium (defensive)', () => {
+    expect(mapPmdRuleSeverity(undefined)).toBe('medium');
+    expect(mapPmdRuleSeverity(null)).toBe('medium');
+    expect(mapPmdRuleSeverity(0)).toBe('medium');
+    expect(mapPmdRuleSeverity(99)).toBe('medium');
+  });
+});
+
+describe('parsePmdOutput — real PMD 7.24.0 fixture', () => {
+  // Real-fixture-driven (the C# defect lesson — synthetic JSON drift
+  // silently from real tool output). Captured 2026-04-28 from
+  // `pmd check -d test/fixtures/benchmarks/java/BadLint.java -R
+  // rulesets/java/quickstart.xml -f json`. See HARVEST.md.
+
+  it('counts violations by tier from real PMD JSON output', () => {
+    const raw = readFixture('pmd-output.json');
+    const counts = parsePmdOutput(raw);
+    // BadLint.java surfaces 3 violations under the quickstart ruleset
+    // (UnnecessaryImport priority 4, NoPackage priority 3,
+    // UncommentedEmptyMethodBody priority 3). All three are above-zero
+    // signal — exact tier counts depend on PMD's per-rule priority
+    // assignments, which can drift across PMD versions. Asserting
+    // total count + that priorities tier into our 4-tier scheme is
+    // the contract the parser owes; finer assertions would brittle
+    // against PMD ruleset evolution.
+    const total = counts.critical + counts.high + counts.medium + counts.low;
+    expect(total).toBe(3);
+    // At least one finding tiered as 'medium' (priority 3 — NoPackage,
+    // UncommentedEmptyMethodBody) and at least one as 'low' (priority
+    // 4 — UnnecessaryImport). Insulates from PMD's exact priority
+    // shuffling without losing tier-distribution coverage.
+    expect(counts.medium).toBeGreaterThan(0);
+    expect(counts.low).toBeGreaterThan(0);
+  });
+
+  it('returns empty counts on malformed JSON', () => {
+    expect(parsePmdOutput('not json')).toEqual({
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    });
+  });
+
+  it('returns empty counts when files array is missing', () => {
+    expect(parsePmdOutput('{}')).toEqual({
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    });
+  });
+
+  it('returns empty counts when violations array is empty (clean run)', () => {
+    expect(parsePmdOutput('{"files":[{"violations":[]}]}')).toEqual({
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    });
+  });
+});
+
 // ─── Parser test stubs — uncomment + fill in once each parser exists ───────
 //
-// describe('mapJavaSeverity', () => { ... })  // 10k.1.3 (PMD)
-// describe('parseJavaLintOutput', () => { ... })  // 10k.1.3 (PMD JSON)
 // describe('parseJavaDepVulnsOutput', () => { ... })  // 10k.1.4 (osv-scanner)
