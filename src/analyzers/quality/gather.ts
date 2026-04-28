@@ -39,7 +39,7 @@ export async function gatherDuplication(cwd: string): Promise<{
   stats: DuplicationStats | null;
   toolUsed: string | null;
 }> {
-  const result = await defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION));
+  const result = await defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION, cwd));
   if (!result) return { stats: null, toolUsed: null };
 
   return {
@@ -116,7 +116,7 @@ export async function gatherStructuralMetrics(cwd: string): Promise<{
   orphanModuleCount: number | null;
   toolUsed: string | null;
 }> {
-  const result = await defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL));
+  const result = await defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd));
   if (!result) {
     return {
       maxFunctionsInFile: null,

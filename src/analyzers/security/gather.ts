@@ -42,7 +42,7 @@ export async function gatherSecrets(cwd: string): Promise<{
   findings: SecurityFinding[];
   toolUsed: string | null;
 }> {
-  const result = await defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS));
+  const result = await defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS, cwd));
   if (!result) return { findings: [], toolUsed: null };
 
   const findings: SecurityFinding[] = result.findings.map((f) => ({
@@ -114,7 +114,11 @@ export async function gatherCodePatterns(cwd: string): Promise<{
   findings: SecurityFinding[];
   toolUsed: string | null;
 }> {
-  const result = await defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS));
+  const result = await defaultDispatcher.gather(
+    cwd,
+    CODE_PATTERNS,
+    providersFor(CODE_PATTERNS, cwd),
+  );
   if (!result) return { findings: [], toolUsed: null };
 
   const findings: SecurityFinding[] = result.findings.map((f) => ({
@@ -219,6 +223,15 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     // no pack contributes imports (no source files / all packs
     // declined), leaves `reachable` unset rather than mass-classify
     // everything as false.
+    //
+    // Intentionally NOT stack-filtered (post-D010): the BoM aggregates
+    // across multiple project roots (e.g. `test/fixtures/benchmarks/*`)
+    // and findings come from all languages. Reachability needs to walk
+    // every pack's imports — filtering by the outer cwd's active packs
+    // would silently drop cross-language reachability for findings
+    // attributed to inactive-pack roots. Each provider already returns
+    // null when its source files don't exist; the cost is a few empty
+    // `find` walks at most.
     const importsProviders = providersFor(IMPORTS);
     if (importsProviders.length > 0) {
       const importsEnvelope = await defaultDispatcher.gather(cwd, IMPORTS, importsProviders);

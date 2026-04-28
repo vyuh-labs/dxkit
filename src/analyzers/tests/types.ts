@@ -18,16 +18,22 @@ export interface SourceFile {
   hasMatchingTest: boolean;
 }
 
-/** Where the `effectiveCoverage` number came from. */
+/**
+ * Where the `effectiveCoverage` number came from.
+ *
+ * Single source of truth: `tools/coverage.ts:CoverageSource` enumerates
+ * artifact-derived sources (one per coverage tool format). We extend it
+ * here with two test-only "derived" sources (`filename-match`,
+ * `import-graph`) that the test-gaps analyzer falls back to when no
+ * coverage artifact is available. Adding a new pack-owned coverage
+ * format means editing one place: `tools/coverage.ts`.
+ */
+import type { CoverageSource as ArtifactCoverageSource } from '../tools/coverage';
+
 export type CoverageSource =
+  | ArtifactCoverageSource
   | 'filename-match' // No artifact and no import-graph data available
-  | 'import-graph' // Derived from test files' import edges (up to N hops)
-  | 'istanbul-summary'
-  | 'istanbul-final'
-  | 'coverage-py'
-  | 'go'
-  | 'cobertura'
-  | 'lcov';
+  | 'import-graph'; // Derived from test files' import edges (up to N hops)
 
 export interface TestGapsReport {
   repo: string;

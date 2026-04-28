@@ -176,26 +176,152 @@ const packPath = path.join(REPO_ROOT, 'src', 'languages', `${id}.ts`);
 writeIfMissing(packPath, PACK_TEMPLATE);
 
 // ─── 2. Test stub: test/languages-<id>.test.ts ──────────────────────────────
+// Recipe v2 (Phase 10j.1): includes the fixture-loading helper, the
+// real-fixture provenance docstring, and parser-test stubs for the
+// standard capability surface (lint / coverage / depVulns / imports).
+// The C# defect lesson is encoded in the provenance comment — synthetic
+// fixtures drift silently from real tool output.
 
-const TEST_TEMPLATE = `import { describe, it, expect } from 'vitest';
+const TEST_TEMPLATE = `/**
+ * ${displayName} pack — pack-specific tests.
+ *
+ * RECIPE NOTE: each parser exercised here SHOULD be tested against a
+ * REAL fixture file under \`test/fixtures/raw/${id}/\`, not a synthetic
+ * JSON/XML string. The C# defect lesson (5 months silent, parsers
+ * passed unit tests on synthetic JSON but returned 0 findings on real
+ * input — fixed in Phase 10h.6.8) is the reason. Capture commands live
+ * in \`test/fixtures/raw/${id}/HARVEST.md\`.
+ *
+ * TODO(${id}): replace the placeholder fixture names below with the
+ * actual files you harvest, and the parser names with the actual
+ * exports from src/languages/${id}.ts.
+ */
+
+import { describe, it, expect } from 'vitest';
+// import * as fs from 'fs';
+// import * as path from 'path';
 import { ${id} } from '../src/languages/${id}';
+// import {
+//   parse${capitalize(id)}LintOutput,
+//   parse${capitalize(id)}CoverageOutput,
+//   parse${capitalize(id)}DepVulnsOutput,
+//   extract${capitalize(id)}ImportsRaw,
+//   map${capitalize(id)}Severity,
+// } from '../src/languages/${id}';
 
-describe('${id} pack', () => {
+// const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', '${id}');
+// function readFixture(name: string): string {
+//   return fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf-8');
+// }
+
+describe('${id} pack — metadata', () => {
   it('declares its id and displayName', () => {
     expect(${id}.id).toBe('${id}');
     expect(${id}.displayName).toBe('${displayName}');
   });
 
-  // TODO(${id}): add pack-specific tests once detect() and capabilities are implemented.
-  // Examples to mirror from existing packs:
-  //   - parseRequirementsTxtTopLevels in test/python.test.ts
-  //   - parseGoModDirectDeps in test/go.test.ts
-  //   - parseCargoAuditOutput in test/rust.test.ts
+  // TODO(${id}): once capabilities land, assert the providers are wired:
+  //   expect(${id}.capabilities?.depVulns).toBeDefined();
+  //   expect(${id}.capabilities?.lint).toBeDefined();
+  //   expect(${id}.capabilities?.coverage).toBeDefined();
+  //   expect(${id}.capabilities?.imports).toBeDefined();
+  //   expect(${id}.capabilities?.testFramework).toBeDefined();
 });
+
+// ─── Parser test stubs — uncomment + fill in once each parser exists ───────
+//
+// describe('map${capitalize(id)}Severity', () => {
+//   it('tiers severity strings into dxkit four-tier scheme', () => {
+//     // expect(map${capitalize(id)}Severity('error')).toBe('high');
+//     // expect(map${capitalize(id)}Severity('warning')).toBe('medium');
+//     // expect(map${capitalize(id)}Severity('info')).toBe('low');
+//   });
+// });
+//
+// describe('parse${capitalize(id)}LintOutput', () => {
+//   it('counts violations in the real fixture by severity tier', () => {
+//     const raw = readFixture('lint-output.<ext>');
+//     const counts = parse${capitalize(id)}LintOutput(raw);
+//     expect(counts.high).toBeGreaterThan(0);
+//   });
+// });
+//
+// describe('parse${capitalize(id)}CoverageOutput', () => {
+//   it('computes line-level coverage from the real fixture', () => {
+//     const raw = readFixture('coverage-output.<ext>');
+//     const result = parse${capitalize(id)}CoverageOutput(raw, 'coverage-output.<ext>', '/');
+//     expect(result).not.toBeNull();
+//     expect(result!.linePercent).toBeGreaterThan(0);
+//   });
+// });
+//
+// describe('parse${capitalize(id)}DepVulnsOutput', () => {
+//   it('extracts findings from the real tool output', () => {
+//     const raw = readFixture('depvulns-output.json');
+//     const { findings } = parse${capitalize(id)}DepVulnsOutput(raw);
+//     expect(findings.length).toBeGreaterThan(0);
+//   });
+// });
+//
+// describe('extract${capitalize(id)}ImportsRaw', () => {
+//   it('extracts simple imports from source text', () => {
+//     // const src = '<sample source>';
+//     // expect(extract${capitalize(id)}ImportsRaw(src)).toEqual([...]);
+//   });
+// });
 `;
 
 const testPath = path.join(REPO_ROOT, 'test', `languages-${id}.test.ts`);
 writeIfMissing(testPath, TEST_TEMPLATE);
+
+// ─── 2b. Raw fixture dir + HARVEST.md ────────────────────────────────────────
+// Recipe v2: each pack ships a HARVEST.md that documents how to capture
+// real tool output as committed fixtures. Future packs run these
+// commands to validate parsers against real bytes (the C# defect
+// lesson). The dir is created with .gitkeep so it stays under version
+// control even before harvest.
+
+const rawFixtureDir = path.join(REPO_ROOT, 'test', 'fixtures', 'raw', id);
+ensureDir(rawFixtureDir);
+const HARVEST_TEMPLATE = `# ${displayName} — raw tool-output fixture harvest
+
+Capture real ${displayName} tool output and commit the bytes here. Unit
+tests in \`test/languages-${id}.test.ts\` parse these fixtures, NOT
+hand-crafted strings. The C# defect (Phase 10h.6.8 — parser passed
+synthetic-JSON unit tests for 5 months while returning 0 findings on
+real \`dotnet list package --vulnerable\` output) is the cautionary
+tale that justifies this discipline.
+
+## Standard fixtures
+
+| File                  | Producer                                    | What it validates                          |
+| --------------------- | ------------------------------------------- | ------------------------------------------ |
+| \`lint-output.<ext>\` | the pack's linter (e.g. detekt, ruff)       | parse\${Tool}LintOutput correctness        |
+| \`coverage-output.<ext>\` | the pack's coverage reporter            | parse\${Tool}CoverageOutput correctness    |
+| \`depvulns-output.json\` | osv-scanner / pip-audit / cargo-audit etc. | parse\${Tool}DepVulnsOutput correctness   |
+
+## Capture commands
+
+TODO(${id}): replace these placeholder commands with the actual capture
+invocations for ${displayName}'s tools. Run from a tiny realistic
+project (commit fake credentials/known-vuln deps that surface findings).
+
+\`\`\`bash
+# Example shape — adapt per tool:
+# <tool> --format <fmt> <input> > test/fixtures/raw/${id}/lint-output.<ext>
+# <tool> --report json > test/fixtures/raw/${id}/coverage-output.<ext>
+# <vuln-tool> scan --format json > test/fixtures/raw/${id}/depvulns-output.json
+\`\`\`
+
+## Why committed
+
+Real-output fixtures stay byte-identical to what the upstream tool
+emits. \`.prettierignore\` excludes \`test/fixtures/raw/\` so reformatting
+doesn't drift the bytes. Re-harvest only when:
+  - The upstream tool ships a JSON/XML schema change
+  - The fixture's project was edited (different finding set)
+`;
+writeIfMissing(path.join(rawFixtureDir, 'HARVEST.md'), HARVEST_TEMPLATE);
 
 // ─── 3. Fixture skeleton: test/fixtures/benchmarks/<id>/ ────────────────────
 
@@ -203,19 +329,54 @@ const fixtureDir = path.join(REPO_ROOT, 'test', 'fixtures', 'benchmarks', id);
 ensureDir(fixtureDir);
 const FIXTURE_README = `# ${displayName} benchmark fixture
 
-TODO(${id}): populate this directory with a minimal real ${displayName} project that:
-  - has a known dep-vulnerability (matrix vulnerabilities row)
-  - contains a fake hardcoded credential (matrix secrets row,
-    e.g. AKIA1234567890ABCDEF in a config file)
-  - has a deliberate linter violation (matrix lint row)
-  - has a near-duplicate code block (matrix duplications row)
-  - has one untested source file (matrix test-gaps row)
+Pinned vulnerable dep used by \`test/integration/cross-ecosystem.test.ts\`
+to validate the ${displayName} pack across the cross-ecosystem matrix
+(secrets / lint / dups / test-gaps + per-pack depVulns).
 
-See test/fixtures/benchmarks/python/ for an example of the conventions.
+## Standard 5-file convention
 
-When the fixture is populated, register it in
-test/integration/cross-ecosystem.test.ts by adding a row to
-BENCHMARK_LANGUAGES.
+Each language pack's benchmark dir ships these five files. Names are
+case-sensitive and the cross-ecosystem matrix asserts findings on each.
+Reference shape: \`test/fixtures/benchmarks/python/\` (most-canonical),
+\`test/fixtures/benchmarks/kotlin/\` (most-recent / Recipe-v2 reference).
+
+| File                       | Concern        | What flags it                                           |
+| -------------------------- | -------------- | ------------------------------------------------------- |
+| \`<manifest>\`             | depVulns       | the pack's vuln scanner via OSV.dev or native CLI      |
+| \`BadLint.<ext>\`          | lint           | the pack's linter on default config                     |
+| \`Duplications.<ext>\`     | duplications   | jscpd (language-agnostic clone detector)                |
+| \`Secrets.<ext>\`          | secrets        | gitleaks (AKIA pattern is the standard fake token)      |
+| \`UntestedModule.<ext>\`   | test-gaps      | filename-match coverage source (no companion test file) |
+
+## TODO checklist for ${displayName}
+
+  - [ ] Pick the right \`<manifest>\` osv-scanner / native scanner reads
+        (e.g. \`pom.xml\` for Maven, \`Cargo.lock\` for Rust). Pin a
+        known-vulnerable version of a stable popular package.
+  - [ ] Write \`BadLint.<ext>\` with multiple deliberate violations the
+        linter's default ruleset flags (multiple so at least one fires
+        across version drift).
+  - [ ] Write \`Duplications.<ext>\` with two near-identical helper
+        functions sized comfortably above jscpd's defaults
+        (\`--min-lines 5 --min-tokens 50\`).
+  - [ ] Write \`Secrets.<ext>\` with a fake AKIA-pattern AWS key that
+        matches gitleaks' default \`aws-access-token\` rule but is
+        clearly bogus (low-entropy patterned digits).
+  - [ ] Write \`UntestedModule.<ext>\` — simple class/function with no
+        matching test file. Body should be lint-clean and clone-free.
+  - [ ] Register in \`test/integration/cross-ecosystem.test.ts\` —
+        add a row to \`BENCHMARK_LANGUAGES\` and a
+        \`cross-ecosystem benchmarks — ${displayName}\` describe block.
+  - [ ] Run \`npm run test:run\` — all kotlin matrix rows + the
+        ${displayName} benchmark depVulns test should pass (or skip on
+        toolchain availability).
+
+## Fixture vs raw
+
+Fixtures here are full mini-projects exercised end-to-end by the
+matrix tests. The \`test/fixtures/raw/${id}/\` directory holds
+captured tool-output bytes for unit-test parser validation — see that
+dir's HARVEST.md for capture commands.
 `;
 writeIfMissing(path.join(fixtureDir, 'README.md'), FIXTURE_README);
 
@@ -326,12 +487,16 @@ const nextSteps = [
   '',
   `  1. Implement detect${capitalize(id)}() in src/languages/${id}.ts`,
   `  2. Populate sourceExtensions, testFilePatterns, tools, cliBinaries, defaultVersion, permissions`,
-  `  3. Implement capability providers (capabilities.depVulns / lint / coverage / etc.)`,
-  `  4. Add TOOL_DEFS entries for ${id}'s tools in src/analyzers/tools/tool-registry.ts`,
-  `  5. Populate test/fixtures/benchmarks/${id}/ with the matrix-dimension content`,
-  `  6. Register the new fixture in test/integration/cross-ecosystem.test.ts BENCHMARK_LANGUAGES`,
-  `  7. Add ${id} toolchain install to .github/workflows/ci.yml`,
-  `  8. Document the toolchain requirement in CONTRIBUTING.md "Cross-ecosystem benchmarks"`,
+  `  3. Add TOOL_DEFS entries for ${id}'s tools in src/analyzers/tools/tool-registry.ts`,
+  `  4. Harvest real tool-output bytes per test/fixtures/raw/${id}/HARVEST.md`,
+  `     (the C# defect lesson — parsers MUST be unit-tested against real bytes)`,
+  `  5. Implement capability providers + parsers (capabilities.depVulns / lint / coverage / etc.)`,
+  `  6. Fill in parser-test stubs in test/languages-${id}.test.ts with the harvested fixtures`,
+  `  7. Populate test/fixtures/benchmarks/${id}/ — the standard 5 files (see fixture README)`,
+  `  8. Register in test/integration/cross-ecosystem.test.ts: BENCHMARK_LANGUAGES row +`,
+  `     "cross-ecosystem benchmarks — ${displayName}" describe block (extend lint.expectedTool union)`,
+  `  9. Add ${id} toolchain install to .github/workflows/ci.yml`,
+  ` 10. Document the toolchain requirement in CONTRIBUTING.md "Cross-ecosystem benchmarks"`,
   '',
   `  Validate: npm run test:run`,
   `  Recipe enforcement runs in pre-commit (architecture greps + contract tests + recipe-playbook synthesis).`,

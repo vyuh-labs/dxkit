@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-04-27
+
+Phase 10j.1 — first mobile language pack (Kotlin/Android), Recipe v2
+scaffolder enhancements driven by lessons from adding it, and a fix
+for D010 (inactive-pack provider invocation) which surfaced as a
+test-suite performance regression.
+
+No breaking changes for end users. New depVulns/lint/coverage data on
+Kotlin/Maven projects; existing analyzer commands produce identical
+output for non-Kotlin projects.
+
+### Added
+
+- **Kotlin (Android) language pack.** Full LP-recipe implementation with
+  five capability providers:
+  - **depVulns** via `osv-scanner` against `pom.xml` /
+    `gradle.lockfile` (Maven ecosystem filtered out of polyglot scans
+    so npm/PyPI findings stay attributed to their own packs).
+  - **lint** via detekt's Checkstyle XML report — severity tiering
+    derived from detekt's source-of-truth `CheckstyleOutputReportSpec`
+    (error → high, warning → medium, info → low).
+  - **coverage** via JaCoCo XML at the standard Gradle/Android paths
+    (`app/build/reports/jacoco/...`, `build/reports/jacoco/test/...`).
+  - **imports** via regex extraction (no resolver — Kotlin packages
+    don't 1:1 map to file paths; mirrors the rust pack's choice).
+  - **testFramework** via gradle build-deps text scan (Kotest > Spek >
+    JUnit precedence).
+
+  Standard cross-ecosystem benchmark fixture under
+  `test/fixtures/benchmarks/kotlin/` with `gson:2.8.5` (alias
+  CVE-2022-25647) + `log4j-core:2.14.0` known-vulnerable pinned
+  deps. Matrix row + `cross-ecosystem benchmarks — Kotlin` describe
+  block. detekt registry entry (`TOOL_DEFS`) ships brew + Linux-zip
+  install commands. (`src/languages/kotlin.ts`,
+  `test/languages-kotlin.test.ts`,
+  `test/fixtures/{benchmarks,raw}/kotlin/`,
+  `src/analyzers/tools/tool-registry.ts`)
+
+- **CI: Java 17 (Temurin) + detekt installed on the Linux runner.**
+  Kotlin matrix lint row now runs end-to-end in CI alongside Python /
+  Go / Rust / C# rows. Java 17 toolchain is opt-in for contributors
+  (`it.skipIf(!commandExists('java'))` gates the matrix lint test
+  locally). (`.github/workflows/ci.yml`,
+  `CONTRIBUTING.md` — toolchain table extended with three rows:
+  `osv-scanner`, `java`, `detekt`)
+
+- **Recipe v2 — scaffolder enhancements driven by Kotlin's pain.**
+  `npm run new-lang <id> "<displayName>"` now also generates:
+  - parser-test stubs in `test/languages-<id>.test.ts` with the
+    fixture-loading helper, the C# defect provenance docstring, and
+    commented-out test patterns for `parse<Tool>{Lint,Coverage,DepVulns}Output`,
+    `map<Lang>Severity`, `extract<Lang>ImportsRaw`.
+  - `test/fixtures/raw/<id>/HARVEST.md` template documenting the
+    capture commands for real tool-output bytes (the parser-vs-real-output
+    discipline that closes the C# defect class).
+  - Richer `test/fixtures/benchmarks/<id>/README.md` with the standard
+    5-file convention (manifest / BadLint / Duplications / Secrets /
+    UntestedModule) and a TODO checklist.
+  - Updated next-steps checklist surfaces the harvest step before
+    parser implementation. (`scripts/scaffold-language.js`)
+
+- **LP-A4 architecture rule.** Pre-commit + CI grep that catches
+  hardcoded multi-language extension globs of the
+  `'**/*.{ts,tsx,js,jsx,py,go,rs,cs}'` shape — the JSCPD_PATTERN bug
+  that silently dropped the kotlin matrix duplication test until
+  caught by the cross-ecosystem fixture run. Future regressions land
+  with a clear error pointing at `LANGUAGES.flatMap(l => l.sourceExtensions)`
+  as the right derivation. (`scripts/check-architecture.sh`)
+
+### Fixed
+
+- **D010 — inactive-pack provider invocation.** `providersFor()` now
+  filters by `lang.detect(cwd)` when given a cwd (per-pack capabilities
+  only; globals stay unconditional). Module-level memoization caches
+  the active-pack list per cwd so 9 capability dispatches incur one
+  detect-walk per pack instead of nine. Threaded through 16 analyzer
+  callsites. **Intentionally NOT filtered**: the BoM's reachability
+  pass in `gatherDepVulns` calls `providersFor(IMPORTS)` without a
+  cwd, because the BoM aggregates findings across multiple project
+  roots and reachability needs to walk every pack's source files
+  regardless of outer-cwd activation. Filtering there silently
+  dropped cross-language reachability and zeroed the "This Week's
+  Triage" risk scoring — caught during the regression-check pass
+  on dxkit's own BoM diff. Cross-ecosystem.test.ts: 444s peak →
+  174s wall-clock after Recipe v2 (-228s, 51% reduction). Closes
+  D010 (`tmp/known-defects.md`). (`src/languages/capabilities/index.ts`,
+  `src/analyzers/{health,licenses,quality,security,tests}/...`)
+
+- **`JSCPD_PATTERN` was hardcoded** with `'ts,tsx,js,jsx,py,go,rs,cs'`
+  baked in at module load — adding a new pack required this exact
+  cross-cutting edit and the kotlin matrix duplication test silently
+  dropped for two commits because we forgot to add `kt`. The pattern
+  now derives from `LANGUAGES.flatMap(l => l.sourceExtensions)` on
+  every call. LP-A4 (above) catches future re-introductions.
+  (`src/analyzers/tools/jscpd.ts`)
+
+- **`detekt-cli` zip ships the binary as `bin/detekt-cli`, not
+  `bin/detekt`** — the original `TOOL_DEFS.detekt` install command
+  symlinked the wrong path and `chmod +x` errored out. Caught by the
+  `vyuh-dxkit tools install` flow during real-tool harvest. Both
+  binary names now declared in `binaries[]` and both symlinks created
+  on Linux install. (`src/analyzers/tools/tool-registry.ts`)
+
+### Changed
+
+- **`DetectedStack.versions` migrated to
+  `Partial<Record<LanguageId | 'node', string>>`** from the legacy
+  fixed shape `{ python?, go?, node?, rust?, csharp? }`. Adding a new
+  language pack no longer requires editing this field — the type
+  auto-grows with `LanguageId`. The `'node'` carve-out preserves the
+  legacy `NODE_VERSION` template-variable compat without forcing a
+  breaking template rename (deferred to a future major).
+  (`src/types.ts`)
+
+- **`CoverageSource` union consolidated.** `src/analyzers/tests/types.ts`
+  now extends `src/analyzers/tools/coverage.ts:CoverageSource` (with
+  test-only `'filename-match'` / `'import-graph'` additions) instead
+  of duplicating the artifact-source list. Adding a new coverage
+  format means editing one place. Added `'jacoco'` for the kotlin
+  pack. (`src/analyzers/tools/coverage.ts`,
+  `src/analyzers/tests/types.ts`)
+
+- **`scripts/check-cross-ecosystem-coverage.sh` auto-derives expected
+  language count.** Reads `LANGUAGES.length` from
+  `src/languages/index.ts` instead of a hardcoded constant. New packs
+  no longer need to bump `EXPECTED_LANGUAGES` by hand.
+  (`scripts/check-cross-ecosystem-coverage.sh`)
+
+### Internal
+
+- Tests: 849 → 895 (+46 from kotlin parser tests, cross-ecosystem
+  matrix kotlin row, and indirect coverage of new pack-iterating
+  consumers). Wall-clock: 122s → 174s — net +52s for kotlin's
+  legitimate test work, after D010 fix recovered ~228s of
+  inactive-pack overhead.
+
+- Recipe-playbook test's synthetic id renamed from `'kotlin'` to
+  `'playbook'` (a non-LanguageId placeholder that won't collide with
+  any future real pack). The collision was the LP architecture's
+  predicted "first real pack stress-test" — fix took five lines.
+
+- `import-graph.test.ts` setup now writes a minimal `package.json` so
+  the typescript pack's `detect()` activates — reflects post-D010
+  production semantics where inactive packs' gathers don't run.
+
 ## [2.4.3] - 2026-04-26
 
 Phase 10i.0-LP — language-pack architectural refactor. Two user-visible

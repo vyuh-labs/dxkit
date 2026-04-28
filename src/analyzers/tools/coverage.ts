@@ -32,7 +32,8 @@ export type CoverageSource =
   | 'coverage-py'
   | 'go'
   | 'cobertura'
-  | 'lcov';
+  | 'lcov'
+  | 'jacoco';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */

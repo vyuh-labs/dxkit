@@ -650,6 +650,32 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'dotnet tool install --global nuget-license',
     },
   },
+  detekt: {
+    name: 'detekt',
+    description: 'Kotlin static analysis (lint, complexity, style)',
+    install: 'brew install detekt',
+    check: 'detekt --version',
+    for: 'kotlin',
+    layer: 'language',
+    // detekt-cli's standalone zip ships the entrypoint as `detekt-cli`
+    // (verified against v1.23.6 zip structure). Brew's detekt formula
+    // installs both `detekt` and `detekt-cli` as the same wrapper, so
+    // listing both keeps detection working across install methods.
+    binaries: ['detekt', 'detekt-cli'],
+    versionCheck: 'detekt --version 2>/dev/null || detekt-cli --version 2>/dev/null',
+    // detekt-cli ships as a single zip on GitHub Releases. Linux install
+    // mirrors the gitleaks pattern: download to ~/.local/share, symlink
+    // the entrypoint script (zip ships it as `bin/detekt-cli`) into
+    // ~/.local/bin under both names so callers using either binary name
+    // resolve. v1.23.6 is the latest 1.x line; 2.x drops Kotlin <1.9
+    // support — track for a future bump.
+    installCommands: {
+      macos: 'brew install detekt',
+      linux:
+        'mkdir -p ~/.local/share/detekt ~/.local/bin && curl -sSfL -o /tmp/detekt-cli.zip https://github.com/detekt/detekt/releases/download/v1.23.6/detekt-cli-1.23.6.zip && unzip -q -o /tmp/detekt-cli.zip -d ~/.local/share/detekt && chmod +x ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt',
+      windows: 'scoop install detekt',
+    },
+  },
 
   // ── Coverage providers ──────────────────────────────────────────────────
   'vitest-coverage': {

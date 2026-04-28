@@ -12,6 +12,13 @@ describe('buildReachable', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-reach-'));
     fs.mkdirSync(path.join(tmp, 'src'));
     fs.mkdirSync(path.join(tmp, 'test'));
+    // Minimal package.json so the typescript pack's detect() activates
+    // (post-D010 stack-aware providersFor only runs gathers from packs
+    // whose detect() returns true for cwd). Without this, the imports
+    // gather would skip and these tests would assert against an empty
+    // edge map. Production callers (security/gather.ts) always have a
+    // real manifest in their cwd; this synthesizes that condition.
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name": "test", "version": "1.0.0"}');
     // The dispatcher caches per (cwd, capability); each tmpdir is unique
     // so no collision, but clearing is cheap insurance.
     defaultDispatcher.clearCache();

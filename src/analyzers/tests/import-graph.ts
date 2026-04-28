@@ -43,8 +43,12 @@ export async function buildReachable(
   cwd: string,
   options: ImportGraphOptions = {},
 ): Promise<Set<string>> {
+  // D010 fix: filter to packs active for this cwd. Imports gather is
+  // expensive (find subprocess + per-file regex extraction); inactive
+  // packs would walk the tree only to emit zero results.
   const providers: CapabilityProvider<ImportsResult>[] = [];
   for (const lang of LANGUAGES) {
+    if (!lang.detect(cwd)) continue;
     const p = lang.capabilities?.imports;
     if (p) providers.push(p);
   }

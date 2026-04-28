@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="4.3">
+<file name="src/main/com/sample/Sample1.kt">
+	<error line="11" column="1" severity="error" message="MagicNumber rule: literal 42 should be a constant" source="detekt.style/MagicNumber" />
+	<error line="14" column="5" severity="warning" message="ComplexCondition rule: condition exceeds threshold" source="detekt.complexity/ComplexCondition" />
+	<error line="20" column="3" severity="info" message="MaxLineLength rule: line exceeds 120 chars" source="detekt.style/MaxLineLength" />
+</file>
+<file name="src/main/com/sample/Sample2.kt">
+	<error line="22" column="2" severity="error" message="UnsafeCast rule: unchecked cast may throw at runtime" source="detekt.potential-bugs/UnsafeCast" />
+	<error line="30" column="8" severity="warning" message="MaxLineLength rule: line exceeds 120 chars" source="detekt.style/MaxLineLength" />
+</file>
+</checkstyle>

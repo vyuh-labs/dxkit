@@ -96,6 +96,23 @@ if [ -n "$LP_RULEFILE_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# LP-A4: No hardcoded multi-language file-extension globs. The 10j.1 bug
+# was `JSCPD_PATTERN = '**/*.{ts,tsx,js,jsx,py,go,rs,cs}'` — adding
+# kotlin's `.kt`/`.kts` required editing this string by hand, and the
+# kotlin matrix test silently failed because we forgot. Cross-cutting
+# extension globs MUST derive from `LANGUAGES.flatMap(l => l.sourceExtensions)`
+# (see `buildJscpdPattern` in `tools/jscpd.ts` for the pattern). This
+# rule catches any future regression.
+LP_GLOB_VIOLATIONS=$(grep -rnE "'\*\*/\*\.\{[^}]*\b(py|ts|tsx|js|go|rs|cs|kt)\b[^}]*\b(py|ts|tsx|js|go|rs|cs|kt)\b[^}]*\}'" src/ 2>/dev/null \
+  | grep -v "// lp-recipe-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$LP_GLOB_VIOLATIONS" ]; then
+  echo "❌ LP recipe violation: hardcoded multi-language extension glob:"
+  echo "$LP_GLOB_VIOLATIONS"
+  echo "   → Derive from LANGUAGES.flatMap(l => l.sourceExtensions). See tools/jscpd.ts:buildJscpdPattern for the pattern."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
