@@ -89,6 +89,7 @@ export async function run(argv: string[]): Promise<void> {
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
       'no-nested': { type: 'boolean', default: false },
+      all: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -311,9 +312,41 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'tools': {
       const subCommand = positionals[1];
-      const targetPath = resolveRepoPath(positionals[2]);
+      // For `tools install`, positionals[2] is overloaded: tool name
+      // (cross-stack single-tool install) OR path (default behavior).
+      // Disambiguate: if it's a known TOOL_DEFS key, treat as tool
+      // name. If it's not a known tool name AND doesn't look like a
+      // path (no slash, no dot-prefix, doesn't resolve to an existing
+      // directory), fail loudly so typo'd tool names don't silently
+      // fall through to a default install on a non-existent path.
+      const { TOOL_DEFS } = await import('./analyzers/tools/tool-registry');
+      const arg2 = positionals[2];
+      const arg3 = positionals[3];
+      let toolName: string | undefined;
+      let pathArg: string | undefined;
+      if (subCommand === 'install' && arg2) {
+        if (TOOL_DEFS[arg2]) {
+          toolName = arg2;
+          pathArg = arg3;
+        } else {
+          const looksLikePath =
+            arg2.includes('/') || arg2.startsWith('.') || fs.existsSync(path.resolve(cwd, arg2));
+          if (!looksLikePath) {
+            logger.fail(`Unknown tool: ${arg2}`);
+            logger.info('Run `vyuh-dxkit tools list` to see available tools.');
+            process.exit(1);
+          }
+          pathArg = arg2;
+        }
+      } else {
+        pathArg = arg2;
+      }
+      const targetPath = resolveRepoPath(pathArg);
       const { runToolsCommand } = await import('./tools-cli');
-      await runToolsCommand(targetPath, subCommand, !!values.yes);
+      await runToolsCommand(targetPath, subCommand, !!values.yes, {
+        toolName,
+        all: !!values.all,
+      });
       break;
     }
 

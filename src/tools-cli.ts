@@ -4,20 +4,60 @@
  * Modes:
  * - `vyuh-dxkit tools`             → list status for required tools
  * - `vyuh-dxkit tools install`     → interactive install of missing tools
+ *                                    for the current-project stack
+ * - `vyuh-dxkit tools install <name>` → install one named tool (any
+ *                                    stack); useful for cross-stack dev
+ *                                    work where you need a tool that
+ *                                    your current project doesn't
+ *                                    declare (e.g. installing
+ *                                    `spotbugs` on a Node-only repo)
+ * - `vyuh-dxkit tools install --all` → enumerate every known tool in
+ *                                    TOOL_DEFS and install missing
+ *                                    ones; useful for setting up a
+ *                                    cross-stack dev environment
  * - `vyuh-dxkit tools install --yes` → install all missing, no prompts
  */
 import * as readline from 'readline/promises';
 import { stdin, stdout } from 'process';
 import { execSync } from 'child_process';
 import { detect } from './detect';
+import { DetectedStack } from './types';
 import * as logger from './logger';
 import {
   TOOL_DEFS,
   findTool,
   getInstallCommand,
   checkAllTools,
+  buildRequiredTools,
   ToolStatus,
 } from './analyzers/tools/tool-registry';
+
+export interface ToolsInstallOptions {
+  toolName?: string;
+  all?: boolean;
+}
+
+/**
+ * Decide which tool names to consider for install given the options.
+ * Pure function — does not touch the filesystem; testable in isolation.
+ *
+ * - toolName set: just that one (returns [] if name is unknown — caller
+ *   surfaces an error)
+ * - all: every key in TOOL_DEFS, sorted for stable output
+ * - default: tools required for the current-project stack
+ */
+export function selectToolNames(
+  languages: DetectedStack['languages'],
+  options: ToolsInstallOptions = {},
+): string[] {
+  if (options.toolName) {
+    return TOOL_DEFS[options.toolName] ? [options.toolName] : [];
+  }
+  if (options.all) {
+    return Object.keys(TOOL_DEFS).sort();
+  }
+  return buildRequiredTools(languages).map((r) => r.name);
+}
 
 const LAYER_ORDER: Record<string, number> = {
   universal: 1,
@@ -115,16 +155,53 @@ function runInstallCmd(cmd: string): { success: boolean; message: string } {
 }
 
 /** Interactive install of missing tools. */
-async function runInstall(targetPath: string, autoYes: boolean): Promise<void> {
-  const statuses = showStatus(targetPath);
+async function runInstall(
+  targetPath: string,
+  autoYes: boolean,
+  options: ToolsInstallOptions = {},
+): Promise<void> {
+  // Validate single-tool name early so we fail fast with a useful message.
+  if (options.toolName && !TOOL_DEFS[options.toolName]) {
+    logger.fail(`Unknown tool: ${options.toolName}`);
+    logger.info('Run `vyuh-dxkit tools list` to see available tools.');
+    process.exit(1);
+  }
+
+  // Default mode shows the full status table. Targeted modes skip it
+  // because the table would be either redundant (single tool) or huge
+  // (--all enumerates every TOOL_DEFS entry).
+  let statuses: ToolStatus[];
+  let modeLabel: string;
+  if (options.toolName || options.all) {
+    const stack = detect(targetPath);
+    const names = selectToolNames(stack.languages, options);
+    statuses = names
+      .map((n) => {
+        const def = TOOL_DEFS[n];
+        return def ? findTool(def, targetPath) : null;
+      })
+      .filter((s): s is ToolStatus => s !== null);
+    modeLabel = options.toolName
+      ? `Install ${options.toolName}`
+      : `Install all known tools (${statuses.length} candidates, missing only)`;
+  } else {
+    statuses = showStatus(targetPath);
+    modeLabel = 'Install missing tools';
+  }
+
   const missing = statuses.filter((s) => !s.available);
 
   if (missing.length === 0) {
+    if (options.toolName) {
+      logger.success(`${options.toolName} is already installed.`);
+    } else if (options.all) {
+      logger.success(`All ${statuses.length} known tools already installed.`);
+    }
     return;
   }
 
   console.log('');
-  logger.header('Install missing tools');
+  logger.header(modeLabel);
 
   const rl = autoYes ? null : readline.createInterface({ input: stdin, output: stdout });
   const results: Array<{ name: string; status: 'installed' | 'skipped' | 'failed'; msg?: string }> =
@@ -216,16 +293,17 @@ export async function runToolsCommand(
   targetPath: string,
   subCommand: string | undefined,
   autoYes: boolean,
+  options: ToolsInstallOptions = {},
 ): Promise<void> {
   if (!subCommand || subCommand === 'list' || subCommand === 'status') {
     showStatus(targetPath);
     return;
   }
   if (subCommand === 'install') {
-    await runInstall(targetPath, autoYes);
+    await runInstall(targetPath, autoYes, options);
     return;
   }
   logger.fail(`Unknown tools subcommand: ${subCommand}`);
-  logger.info('Usage: vyuh-dxkit tools [list|install] [path]');
+  logger.info('Usage: vyuh-dxkit tools [list|install] [<tool-name>] [path] [--all] [--yes]');
   process.exit(1);
 }
