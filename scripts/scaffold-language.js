@@ -497,9 +497,12 @@ const nextSteps = [
   `     "cross-ecosystem benchmarks — ${displayName}" describe block (extend lint.expectedTool union)`,
   `  9. Add ${id} toolchain install to .github/workflows/ci.yml`,
   ` 10. Document the toolchain requirement in CONTRIBUTING.md "Cross-ecosystem benchmarks"`,
+  ` 11. Update README.md ecosystem coverage table + CLAUDE.md path globs for the new language`,
+  `     (Recipe v3 / G5 — bash scripts/check-docs-coverage.sh fails until you do)`,
+  ` 12. Add a CHANGELOG.md "[Unreleased]" entry describing the new pack scaffold`,
   '',
   `  Validate: npm run test:run`,
-  `  Recipe enforcement runs in pre-commit (architecture greps + contract tests + recipe-playbook synthesis).`,
+  `  Recipe enforcement runs in pre-commit (architecture greps + contract tests + recipe-playbook synthesis + doc coverage).`,
   '',
 ];
 console.log(nextSteps.join('\n')); // slop-ok

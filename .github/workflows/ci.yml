@@ -83,6 +83,9 @@ jobs:
       - name: Cross-ecosystem coverage parity (Phase 10i.0.5)
         run: bash scripts/check-cross-ecosystem-coverage.sh
 
+      - name: Doc coverage parity (Recipe v3 / G5)
+        run: bash scripts/check-docs-coverage.sh
+
       - name: Slop check (vs base branch)
         if: github.event_name == 'pull_request'
         env:

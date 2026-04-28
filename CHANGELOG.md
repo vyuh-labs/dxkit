@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Phase 10k.1 — Java pack (recipe stress test #1) + D008/D011 closures.
+Targeting 2.4.5. In progress; capabilities (PMD lint, JaCoCo coverage
+reuse, osv-scanner Maven dep-vuln, JUnit/TestNG test-framework) land
+progressively across 10k.1.x commits.
+
+### Added
+
+- **Java language pack scaffold (Phase 10k.1.0).** Detection (`pom.xml`,
+  `src/main/java/`, `*.java` source within depth 5), `sourceExtensions`,
+  `testFilePatterns` (JUnit 4/5 + TestNG + Maven Failsafe IT
+  conventions), `extraExcludes` (Maven `target/`, Gradle `build/`,
+  `.gradle/`, `out/`), semgrep `p/java` ruleset, LP-recipe metadata
+  (permissions, cliBinaries, defaultVersion '17', projectYamlBlock).
+  Universal tools (gitleaks/jscpd/semgrep) work on `.java` source
+  immediately. Language-specific capabilities ship in 10k.1.x.
+- **`scripts/check-docs-coverage.sh` (Recipe v3 / G5).** Pre-commit +
+  CI gate that asserts every `LanguageId` in `src/languages/index.ts`
+  appears in canonical doc anchors (CLAUDE.md path glob; README.md
+  ecosystem coverage table row count + ID substring mention). Closes
+  the kotlin-PR-#23 follow-up class of failure where a pack ships in
+  main but docs go stale because nobody remembered to update them.
+- **`vyuh-dxkit tools install <name>` and `--all` (D011).** Single-tool
+  install for cross-stack development (e.g. installing `spotbugs` on a
+  Node-only repo); `--all` enumerates every TOOL_DEFS entry. Unknown
+  names fail loudly with an "Unknown tool" message + pointer to
+  `tools list`.
+- **Cross-ecosystem benchmark fixture for Java.**
+  `test/fixtures/benchmarks/java/` — four matrix dimension fixture
+  files (Secrets.java with fake AWS key, BadLint.java with PMD-targeted
+  violations, Duplications.java with jscpd clone pair, UntestedModule.java
+  for filename-match test-gap). Matrix wins immediately on
+  secret/dup/test-gaps; lint matrix Java row gated on `requires: 'pmd'`
+  pending toolchain install in 10k.1.x.
+
+### Fixed
+
+- **D008 — stale test-fixture types + missing contract test.** 21 type
+  errors surfaced when `tsc --noEmit` runs against `src + test`
+  together (`DimensionScore.details` / `DuplicationStats.totalLines`
+  field drift; `DepVulnFinding.source` → renamed to `.tool`;
+  `mapLintSeverity` contract was narrower than every impl reality;
+  spread-duplication cleanups). Adds `tsconfig.test.json` +
+  `npm run typecheck:test` + wires into `.husky/pre-push` and
+  `.github/workflows/ci.yml`. The contract test paid for itself in the
+  same session — caught a `Record<LanguageId, boolean>` literal
+  regression introduced 30 minutes earlier.
+- **`scripts/check-cross-ecosystem-coverage.sh` Prettier robustness
+  (Recipe v3 / G1).** Auto-derive parser assumed single-line
+  `LANGUAGES = [...]`. Prettier reformatted to multi-line at the 7th
+  entry (line-length budget) and the gate parsed 0 entries silently.
+  Switched to awk block extract — robust to both shapes.
+- **Vitest `hookTimeout` default of 10s caused C# `beforeAll` flakes.**
+  `dotnet restore` against a cold NuGet cache routinely takes 18-44s
+  on WSL2. Now matches `testTimeout` at 180s.
+
+### Phase 10k roadmap
+
+After 10k.1 (Java) ships in 2.4.5, **10k.2 (Ruby) ships in 2.4.6** as
+recipe stress test #2 — fully dynamic language outside the JVM family.
+Then **2.5.0 (Phase 10i — fingerprints + exec summary across 8-language
+matrix)**. Phase 10j.2 (Swift/iOS) is **deferred to post-10rr / pre-3.0.0
+opportunistic slot** because Linux/WSL2 development can't validate the
+xcodeproj-shape majority without macOS access. See
+`tmp/phase-10k-backend-langs-roadmap.md` for the full phase plan.
+
 ## [2.4.4] - 2026-04-27
 
 Phase 10j.1 — first mobile language pack (Kotlin/Android), Recipe v2
