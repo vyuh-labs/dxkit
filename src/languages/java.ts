@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { fileExists, run } from '../analyzers/tools/runner';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { ImportsResult, TestFrameworkResult } from './capabilities/types';
+import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -182,6 +183,22 @@ const javaTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+// ─── Coverage (JaCoCo XML — shared with kotlin pack) ───────────────────────
+//
+// Per CLAUDE.md rule #2 ("Each tool has ONE gather function"), the
+// JaCoCo parser + locator + gather glue all live in
+// `src/analyzers/tools/jacoco.ts`. Both kotlin and java packs delegate.
+// Java's Maven paths (`target/site/jacoco/jacoco.xml`) and Gradle paths
+// share the same candidate list because they're mutually exclusive on
+// any given project root.
+
+const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'java',
+  async gather(cwd) {
+    return gatherJaCoCoCoverageResult(cwd);
+  },
+};
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const java: LanguageSupport = {
@@ -210,10 +227,9 @@ export const java: LanguageSupport = {
   capabilities: {
     imports: javaImportsProvider,
     testFramework: javaTestFrameworkProvider,
-    // depVulns / lint / coverage land in 10k.1.2-10k.1.4. Capabilities
-    // contract is genuinely optional (Recipe v3 / G2, 10k.1.0.3) — no
-    // null-stub workarounds needed for capabilities not yet
-    // implemented.
+    coverage: javaCoverageProvider,
+    // depVulns / lint land in 10k.1.3-10k.1.4. Capabilities contract
+    // is genuinely optional (Recipe v3 / G2, 10k.1.0.3).
   },
 
   // ─── LP-recipe metadata ────────────────────────────────────────────────
