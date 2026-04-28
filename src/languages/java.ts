@@ -1,7 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { fileExists } from '../analyzers/tools/runner';
+import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { fileExists, run } from '../analyzers/tools/runner';
+import type { CapabilityProvider } from './capabilities/provider';
+import type { ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -56,6 +59,131 @@ function detectJava(cwd: string): boolean {
   return hasJavaSourceWithinDepth(cwd, 5);
 }
 
+// ─── Imports (regex extraction, no resolver) ───────────────────────────────
+
+/**
+ * Extract `import com.foo.Bar;` paths from a Java source string. Handles:
+ *   - regular imports:   `import com.foo.Bar;`
+ *   - static imports:    `import static com.foo.Bar.method;`
+ *   - wildcard imports:  `import com.foo.*;`
+ * Strips line + block comments first so commented-out imports don't
+ * false-match.
+ *
+ * Exported for unit tests; consumed by `gatherJavaImportsResult`.
+ */
+export function extractJavaImportsRaw(content: string): string[] {
+  const out: string[] = [];
+  // Strip block comments first (they may span multiple lines and contain
+  // `import` text), then line comments.
+  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  // Match `import` at line start (after optional whitespace), optionally
+  // `static`, then a dotted path with optional trailing `*`, then `;`.
+  // The `as` aliasing Kotlin allows isn't valid Java syntax.
+  const re = /^\s*import\s+(?:static\s+)?([\w.*]+)\s*;/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stripped)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Enumerate `.java` files under cwd and capture per-file imports. Java
+ * package paths don't 1:1 map to filesystem paths in all build layouts
+ * (a single package can span `src/main/java/com/foo/` *and*
+ * `src/test/java/com/foo/`, plus IDE-generated extras), so we don't
+ * produce `edges` — the resolution would be heuristic. Mirrors the
+ * kotlin/rust pack choice.
+ */
+function gatherJavaImportsResult(cwd: string): ImportsResult | null {
+  const excludes = getFindExcludeFlags(cwd);
+  const raw = run(`find . -type f -name "*.java" ${excludes} 2>/dev/null`, cwd);
+  if (!raw) return null;
+
+  const extracted = new Map<string, ReadonlyArray<string>>();
+  for (const line of raw.split('\n')) {
+    const p = line.trim();
+    if (!p) continue;
+    const rel = p.replace(/^\.\//, '');
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    extracted.set(rel, extractJavaImportsRaw(content));
+  }
+
+  if (extracted.size === 0) return null;
+  return {
+    schemaVersion: 1,
+    tool: 'java-imports',
+    sourceExtensions: ['.java'],
+    extracted,
+    edges: new Map(),
+  };
+}
+
+const javaImportsProvider: CapabilityProvider<ImportsResult> = {
+  source: 'java',
+  async gather(cwd) {
+    return gatherJavaImportsResult(cwd);
+  },
+};
+
+// ─── Test framework detection (build-file substring scan) ──────────────────
+
+/**
+ * Detect which test framework a Java project uses by scanning Maven and
+ * Gradle build files for the canonical artifact substrings. Order of
+ * preference matches what coexisting projects most likely standardize
+ * on:
+ *   - JUnit 5 (Jupiter) — modern default; `junit-jupiter` artifact
+ *   - Spock — `org.spockframework` / `spock-core`
+ *   - TestNG — `org.testng` / `:testng:`
+ *   - JUnit 4 — `junit:junit` or any other `junit` mention as last
+ *     resort, since `junit-jupiter` already matched JUnit 5
+ *
+ * Substring matching is intentional — same approach as the kotlin pack.
+ * Robust to syntactic variation across pom.xml (XML <artifactId>) and
+ * build.gradle{,.kts} (Groovy/Kotlin DSL string literals).
+ */
+function gatherJavaTestFrameworkResult(cwd: string): TestFrameworkResult | null {
+  const buildFiles = ['pom.xml', 'build.gradle.kts', 'build.gradle'];
+  let combined = '';
+  for (const rel of buildFiles) {
+    if (!fileExists(cwd, rel)) continue;
+    try {
+      combined += fs.readFileSync(path.join(cwd, rel), 'utf-8') + '\n';
+    } catch {
+      /* ignore unreadable */
+    }
+  }
+  if (!combined) return null;
+  if (combined.includes('junit-jupiter')) {
+    return { schemaVersion: 1, tool: 'java', name: 'junit5' };
+  }
+  if (combined.includes('org.spockframework') || combined.includes('spock-core')) {
+    return { schemaVersion: 1, tool: 'java', name: 'spock' };
+  }
+  if (combined.includes('org.testng') || combined.includes(':testng:')) {
+    return { schemaVersion: 1, tool: 'java', name: 'testng' };
+  }
+  if (combined.toLowerCase().includes('junit')) {
+    return { schemaVersion: 1, tool: 'java', name: 'junit4' };
+  }
+  return null;
+}
+
+const javaTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
+  source: 'java',
+  async gather(cwd) {
+    return gatherJavaTestFrameworkResult(cwd);
+  },
+};
+
+// ─── Pack export ────────────────────────────────────────────────────────────
+
 export const java: LanguageSupport = {
   id: 'java',
   displayName: 'Java',
@@ -72,22 +200,21 @@ export const java: LanguageSupport = {
 
   detect: detectJava,
 
-  // TODO(10k.1.x): tools and capabilities land in subsequent commits
-  // as PMD lint, JaCoCo coverage (reusing kotlin's parser), osv-scanner
-  // Maven dep-vuln, JUnit/TestNG test-framework detection are wired in.
+  // TODO(10k.1.x): PMD lint (10k.1.3), JaCoCo coverage reuse (10k.1.2),
+  // osv-scanner Maven dep-vuln (10k.1.4) land in subsequent commits.
   tools: [],
 
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
 
-  // Capabilities are genuinely empty during 10k.1.0–10k.1.0.2.
-  // Real providers (depVulns via osv-scanner Maven, lint via PMD,
-  // coverage via JaCoCo XML reuse, imports, testFramework) land
-  // progressively in 10k.1.x. The capabilities-contract.test.ts
-  // assertion was loosened in 10k.1.0.3 (Recipe v3 / G2) so packs
-  // can omit capabilities they haven't yet implemented — no
-  // null-stub-provider workaround needed.
-  capabilities: {},
+  capabilities: {
+    imports: javaImportsProvider,
+    testFramework: javaTestFrameworkProvider,
+    // depVulns / lint / coverage land in 10k.1.2-10k.1.4. Capabilities
+    // contract is genuinely optional (Recipe v3 / G2, 10k.1.0.3) — no
+    // null-stub workarounds needed for capabilities not yet
+    // implemented.
+  },
 
   // ─── LP-recipe metadata ────────────────────────────────────────────────
 
