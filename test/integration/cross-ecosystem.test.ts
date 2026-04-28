@@ -83,7 +83,14 @@ interface BenchmarkLanguage {
     /** Path under `dir` to the file containing the violation. */
     file: string;
     /** Expected `metrics.lintTool` reported by `dxkit quality`. */
-    expectedTool: 'ruff' | 'eslint' | 'golangci-lint' | 'clippy' | 'dotnet-format' | 'detekt';
+    expectedTool:
+      | 'ruff'
+      | 'eslint'
+      | 'golangci-lint'
+      | 'clippy'
+      | 'dotnet-format'
+      | 'detekt'
+      | 'pmd';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -156,6 +163,19 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     lint: { file: 'BadLint.kt', expectedTool: 'detekt', requires: 'java' },
     dup: { file: 'Duplications.kt' },
     untested: { file: 'UntestedModule.kt' },
+  },
+  {
+    name: 'Java',
+    dir: 'java',
+    secret: { file: 'Secrets.java' },
+    // PMD is the canonical Java linter for the 10k.1 pack (lighter
+    // than spotbugs since it's source-level, no compiled .class
+    // requirement). `requires: 'pmd'` skips the matrix row locally
+    // and on CI until the pack's lint capability + the PMD CI
+    // toolchain install land in subsequent 10k.1.x commits.
+    lint: { file: 'BadLint.java', expectedTool: 'pmd', requires: 'pmd' },
+    dup: { file: 'Duplications.java' },
+    untested: { file: 'UntestedModule.java' },
   },
 ];
 

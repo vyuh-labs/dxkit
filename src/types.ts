@@ -10,7 +10,7 @@
  * `src/languages/index.ts` LANGUAGES. The scaffolder
  * (`scripts/scaffold-language.js`) automates both.
  */
-export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp' | 'kotlin';
+export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp' | 'kotlin' | 'java';
 
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {
