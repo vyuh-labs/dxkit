@@ -5,10 +5,11 @@ import { go } from './go';
 import { python } from './python';
 import { rust } from './rust';
 import { typescript } from './typescript';
+import { kotlin } from './kotlin';
 
 export type { LanguageId, LanguageSupport, LintSeverity, ProjectYamlContext } from './types';
 
-export const LANGUAGES: readonly LanguageSupport[] = [python, typescript, csharp, go, rust];
+export const LANGUAGES: readonly LanguageSupport[] = [python, typescript, csharp, go, rust, kotlin];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {
   return LANGUAGES.find((l) => l.id === id);

@@ -268,15 +268,15 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     duplication,
     structural,
   ] = await Promise.all([
-    defaultDispatcher.gather(cwd, DEP_VULNS, providersFor(DEP_VULNS)),
-    defaultDispatcher.gather(cwd, LINT, providersFor(LINT)),
-    defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE)),
-    defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS)),
-    defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK)),
-    defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS)),
-    defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS)),
-    defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION)),
-    defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL)),
+    defaultDispatcher.gather(cwd, DEP_VULNS, providersFor(DEP_VULNS, cwd)),
+    defaultDispatcher.gather(cwd, LINT, providersFor(LINT, cwd)),
+    defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
+    defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
+    defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
+    defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS, cwd)),
+    defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
+    defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
+    defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
   ]);
   const report: CapabilityReport = {};
   if (depVulns) report.depVulns = depVulns;

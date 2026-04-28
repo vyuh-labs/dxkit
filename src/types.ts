@@ -10,7 +10,7 @@
  * `src/languages/index.ts` LANGUAGES. The scaffolder
  * (`scripts/scaffold-language.js`) automates both.
  */
-export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp';
+export type LanguageId = 'typescript' | 'python' | 'go' | 'rust' | 'csharp' | 'kotlin';
 
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {
@@ -52,16 +52,18 @@ export interface DetectedStack {
   /**
    * Per-pack version strings. Keys match each pack's `versionKey ?? id`
    * — typescript pack uses `versionKey: 'node'` for legacy template-
-   * variable compat (`NODE_VERSION`), so the key here is `node`, not
-   * `typescript`. Other packs default to their `id`.
+   * variable compat (`NODE_VERSION`), so the key for the typescript
+   * pack here is `node`, not `typescript`. Other packs default to
+   * their `id`.
+   *
+   * Pack-driven shape (Recipe v2, Phase 10j.1): `Partial<Record<...>>`
+   * over `LanguageId | 'node'` so adding a new pack only extends
+   * `LanguageId` — this field auto-grows. The `'node'` carve-out
+   * preserves the legacy template-variable compat without forcing a
+   * breaking template rename (deferred to a future major when the
+   * `NODE_VERSION` → `TYPESCRIPT_VERSION` template migration ships).
    */
-  versions: {
-    python?: string;
-    go?: string;
-    node?: string;
-    rust?: string;
-    csharp?: string;
-  };
+  versions: Partial<Record<LanguageId | 'node', string>>;
   testRunner?: {
     command: string; // e.g., "npx jest", "npx mocha", "npm test"
     framework: string; // e.g., "jest", "mocha", "vitest", "pytest"

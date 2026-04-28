@@ -156,12 +156,13 @@ journey). The scaffolder writes most of it for you:
 npm run new-lang kotlin "Kotlin (Android)"
 ```
 
-The scaffolder creates **5 new files**:
+The scaffolder creates **6 new files** (Recipe v2, Phase 10j.1):
 
 ```
 src/languages/<id>.ts                  # pack stub — every LanguageSupport field with TODO markers
-test/languages-<id>.test.ts            # pack-specific test stub
-test/fixtures/benchmarks/<id>/         # cross-ecosystem fixture skeleton + README
+test/languages-<id>.test.ts            # parser-test stubs + fixture-loading helper + provenance docstring
+test/fixtures/benchmarks/<id>/README.md # standard 5-file convention + TODO checklist
+test/fixtures/raw/<id>/HARVEST.md      # commands to capture real tool-output bytes
 src-templates/.claude/rules/<id>.md    # Claude rule file stub
 src-templates/configs/<id>/            # template-config dir + README
 ```
@@ -174,8 +175,13 @@ src/languages/index.ts                 # imports + registers <id> in LANGUAGES
 ```
 
 Then you fill in the TODOs. The scaffolder prints a checklist of the
-remaining work (detect logic, capability providers, fixture content,
-CI toolchain install, this file's toolchain table).
+remaining work — including the critical Recipe-v2 step **#4: harvest
+real tool output**. Parsers MUST be unit-tested against bytes the
+upstream tool actually emits, not synthetic JSON/XML strings. The C#
+defect (Phase 10h.6.8 — parser passed unit tests on synthetic JSON for
+5 months while returning 0 findings on real `dotnet list package
+--vulnerable` output) is the cautionary tale that justifies this
+discipline. See `test/fixtures/raw/<id>/HARVEST.md` for capture commands.
 
 #### What the pack declares (`LanguageSupport`)
 
@@ -361,6 +367,9 @@ toolchain:
 | `go` 1.21+            | Go                                    | depVulns + lint                                                    | `apt install golang` / `brew install go`                                                                                            |
 | `govulncheck`         | Go                                    | depVulns                                                           | `go install golang.org/x/vuln/cmd/govulncheck@latest`                                                                               |
 | `golangci-lint`       | Go                                    | lint (Phase 10i.0.2)                                               | `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \| sh -s -- -b $(go env GOPATH)/bin v1.64.8` |
+| `osv-scanner`         | Kotlin                                | depVulns (Maven via `pom.xml`)                                     | `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest`                                                                |
+| `java` 17+ (Temurin)  | Kotlin                                | lint runtime (detekt is JVM-based)                                 | `apt install openjdk-17-jdk` / `brew install --cask temurin`                                                                        |
+| `detekt`              | Kotlin                                | lint (Phase 10j.1) — Kotlin static analysis (Checkstyle XML)       | `brew install detekt` / [GitHub release zip](https://github.com/detekt/detekt/releases) (see `vyuh-dxkit tools install`)            |
 | `gitleaks`            | all (matrix — secrets, Phase 10i.0.1) | secrets                                                            | `pipx install gitleaks` / `brew install gitleaks` / [GitHub release](https://github.com/gitleaks/gitleaks/releases)                 |
 
 ### Regenerating a fixture

@@ -9,6 +9,12 @@
 #
 # Coverage threshold reflects the full unit suite, not --changed scope,
 # so the number is meaningful (a partial run would underreport).
+#
+# Inner-loop dev iteration: use `npm run test:changed` (vitest's
+# import-graph-aware testmon-equivalent) for fast affected-only feedback.
+# Push gate intentionally runs everything because (a) coverage threshold
+# requires it and (b) --changed misses indirect TS-type cascades through
+# the dispatcher / capability registry that the full suite catches.
 
 # Fast static gates — fail before burning time on build/tests.
 npm run typecheck

@@ -3,7 +3,7 @@
  *
  * The durable guarantee that the LP architecture is *truly* pack-driven.
  *
- * Defines a synthetic 6th pack (`mockKotlinPack`) implementing every
+ * Defines a synthetic pack (`mockPlaybookPack`) implementing every
  * `LanguageSupport` field, mocks the registry to include it, and asserts
  * each pack-iterating consumer picks up its contributions. If a future PR
  * re-introduces hardcoded language coupling — even subtly, even in a
@@ -19,13 +19,19 @@
  *   - buildRequiredTools concatenates active packs' tools
  *   - detect() iterates LANGUAGES and calls each pack's .detect(cwd)
  *
- * What's NOT covered (gated on item #14 / 10f.4 — typed
- * `DetectedStack.languages` interface refactor):
- *   - Adding a fully type-safe 6th pack requires extending the
- *     `LanguageId` union AND adding a key to `DetectedStack.languages`.
- *     Until 10f.4 refactors to `Record<LanguageId, boolean>`, every new
- *     pack must edit `src/types.ts` — which is the 8th file in the
- *     "7-file recipe". This is documented in CONTRIBUTING.md.
+ * Synthetic-id choice (`'playbook'`):
+ *   The mock uses an id deliberately outside the `LanguageId` union so it
+ *   never collides with a real pack. Phase 10j.1 (Kotlin) surfaced this:
+ *   the original mock used `'kotlin'` as a placeholder, then collided
+ *   when the real Kotlin pack landed. The lesson generalised — synthetic
+ *   ids should be unmistakably non-language (`playbook`) so this test
+ *   keeps working as future packs are added without further renames.
+ *
+ * Post-10f.4 note:
+ *   `DetectedStack.languages` is now `Record<LanguageId, boolean>`. The
+ *   synthetic pack's id is not in the union, so the test casts the
+ *   stack/flags object via `as any` to inject the synthetic flag. Real
+ *   packs don't need any cast.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
@@ -45,32 +51,35 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-// ─── The mock 6th pack ───────────────────────────────────────────────────────
-const mockKotlinPack = {
-  id: 'kotlin',
-  displayName: 'Kotlin (synthetic — recipe playbook)',
-  sourceExtensions: ['.kt', '.kts'],
-  testFilePatterns: ['*Test.kt', 'src/test/kotlin/*.kt'],
-  extraExcludes: ['build', '.gradle'],
+// ─── The mock synthetic pack ────────────────────────────────────────────────
+// Distinctive extensions/patterns/binaries (`.pbk`, `playbookc-mock`) so the
+// assertions verify the *synthetic* contributions specifically, never
+// accidentally satisfied by a real pack that happens to share a token.
+const mockPlaybookPack = {
+  id: 'playbook',
+  displayName: 'Playbook (synthetic — recipe playbook)',
+  sourceExtensions: ['.pbk', '.pbkx'],
+  testFilePatterns: ['*Test.pbk', 'src/test/playbook/*.pbk'],
+  extraExcludes: ['playbook-build', '.playbook-cache'],
   detect: vi.fn(() => false),
   tools: [],
   semgrepRulesets: [],
   capabilities: {
     coverage: {
-      source: 'kotlin-mock',
+      source: 'playbook-mock',
       async gather() {
         return null;
       },
     },
   },
-  permissions: ['Bash(mock-kotlin-permission:*)'],
-  ruleFile: 'kotlin-mock.md',
-  templateFiles: [{ template: 'configs/kotlin-mock/foo.template', output: 'foo' }],
-  cliBinaries: ['kotlinc-mock'],
+  permissions: ['Bash(mock-playbook-permission:*)'],
+  ruleFile: 'playbook-mock.md',
+  templateFiles: [{ template: 'configs/playbook-mock/foo.template', output: 'foo' }],
+  cliBinaries: ['playbookc-mock'],
   defaultVersion: '99.0.0',
-  versionKey: 'kotlin',
+  versionKey: 'playbook',
   projectYamlBlock: ({ enabled }: { enabled: boolean }) =>
-    [`  kotlin-mock:`, `    enabled: ${enabled}`, `    version: "99.0.0"`].join('\n'),
+    [`  playbook-mock:`, `    enabled: ${enabled}`, `    version: "99.0.0"`].join('\n'),
 } as unknown as LanguageSupport;
 
 // ─── Registry mutation ──────────────────────────────────────────────────────
@@ -85,32 +94,32 @@ const mockKotlinPack = {
 // this beforeAll runs — those are tested separately via the LP.6
 // `buildVariables` / `buildConditions` paths, which iterate fresh.
 beforeAll(() => {
-  (LANGUAGES as unknown as LanguageSupport[]).push(mockKotlinPack);
+  (LANGUAGES as unknown as LanguageSupport[]).push(mockPlaybookPack);
 });
 
 afterAll(() => {
   const arr = LANGUAGES as unknown as LanguageSupport[];
-  const idx = arr.indexOf(mockKotlinPack);
+  const idx = arr.indexOf(mockPlaybookPack);
   if (idx >= 0) arr.splice(idx, 1);
 });
 
-describe('recipe playbook — synthetic 6th pack', () => {
+describe('recipe playbook — synthetic pack', () => {
   it('the mocked registry includes the mock pack', () => {
-    expect(LANGUAGES.find((l) => l.id === ('kotlin' as unknown))).toBeDefined();
+    expect(LANGUAGES.find((l) => (l.id as string) === 'playbook')).toBeDefined();
   });
 
   // ─── Iteration-based consumers (LP.3, LP.6, LP.7) ─────────────────────────
 
   it('allSourceExtensions includes the mock pack extensions (LP.3)', () => {
     const exts = allSourceExtensions();
-    expect(exts).toContain('.kt');
-    expect(exts).toContain('.kts');
+    expect(exts).toContain('.pbk');
+    expect(exts).toContain('.pbkx');
   });
 
   it('allTestFilePatterns includes the mock pack patterns (LP.3)', () => {
     const patterns = allTestFilePatterns();
-    expect(patterns).toContain('*Test.kt');
-    expect(patterns).toContain('src/test/kotlin/*.kt');
+    expect(patterns).toContain('*Test.pbk');
+    expect(patterns).toContain('src/test/playbook/*.pbk');
   });
 
   // DEFAULT_VERSIONS is captured at module load, BEFORE this test's
@@ -119,30 +128,30 @@ describe('recipe playbook — synthetic 6th pack', () => {
   // below, which iterates LANGUAGES fresh on every call.
 
   it('buildVariables emits the mock pack <KEY>_VERSION (LP.6)', () => {
-    const fakeConfig = makeFakeConfig({ kotlin: true, kotlinVersion: '99.0.0' });
+    const fakeConfig = makeFakeConfig({ playbook: true, playbookVersion: '99.0.0' });
     const v = buildVariables(fakeConfig);
-    expect(v.KOTLIN_VERSION).toBe('99.0.0');
+    expect(v.PLAYBOOK_VERSION).toBe('99.0.0');
   });
 
-  it('buildConditions emits IF_KOTLIN for the mock pack (LP.6)', () => {
-    const fakeConfig = makeFakeConfig({ kotlin: true });
+  it('buildConditions emits IF_PLAYBOOK for the mock pack (LP.6)', () => {
+    const fakeConfig = makeFakeConfig({ playbook: true });
     const conditions = buildConditions(fakeConfig);
-    expect(conditions.IF_KOTLIN).toBe(true);
+    expect(conditions.IF_PLAYBOOK).toBe(true);
   });
 
-  it('buildConditions emits IF_KOTLIN=false when mock pack is inactive (LP.6)', () => {
-    const fakeConfig = makeFakeConfig({ kotlin: false });
+  it('buildConditions emits IF_PLAYBOOK=false when mock pack is inactive (LP.6)', () => {
+    const fakeConfig = makeFakeConfig({ playbook: false });
     const conditions = buildConditions(fakeConfig);
-    expect(conditions.IF_KOTLIN).toBe(false);
+    expect(conditions.IF_PLAYBOOK).toBe(false);
   });
 
   // ─── activeLanguagesFromFlags (LP.7) ──────────────────────────────────────
 
   it('activeLanguagesFromFlags activates the mock pack by id (LP.7 / 10f.4)', () => {
-    // Cast `kotlin: true` — `LanguageId` union is closed in production
-    // (typescript/python/go/rust/csharp); the synthetic mock pack
-    // deliberately uses an extra key. This is the right place for the
-    // cast — the test injects a hypothetical 6th pack to verify the
+    // Cast `playbook: true` — `LanguageId` union is closed in production
+    // (typescript/python/go/rust/csharp/kotlin); the synthetic mock pack
+    // deliberately uses an id outside the union. The cast lives here
+    // because the test injects a hypothetical extra pack to verify the
     // architecture iterates the registry rather than enumerating
     // hardcoded ids.
     const flags = {
@@ -151,11 +160,12 @@ describe('recipe playbook — synthetic 6th pack', () => {
       go: false,
       rust: false,
       csharp: false,
-      kotlin: true,
+      kotlin: false,
+      playbook: true,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
     const active = activeLanguagesFromFlags(flags);
-    expect(active.find((l) => (l.id as string) === 'kotlin')).toBe(mockKotlinPack);
+    expect(active.find((l) => (l.id as string) === 'playbook')).toBe(mockPlaybookPack);
   });
 
   it('activeLanguagesFromStack picks up the mock pack the same way', () => {
@@ -166,14 +176,15 @@ describe('recipe playbook — synthetic 6th pack', () => {
         go: false,
         rust: false,
         csharp: false,
-        kotlin: true,
+        kotlin: false,
+        playbook: true,
       },
       framework: undefined,
       // Type-only stub — the assertion only reads .languages.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
     const active = activeLanguagesFromStack(stack);
-    expect(active.find((l) => (l.id as string) === 'kotlin')).toBe(mockKotlinPack);
+    expect(active.find((l) => (l.id as string) === 'playbook')).toBe(mockPlaybookPack);
   });
 
   // ─── buildRequiredTools (LP.2 + LP.7) ─────────────────────────────────────
@@ -186,7 +197,8 @@ describe('recipe playbook — synthetic 6th pack', () => {
       go: false,
       rust: false,
       csharp: false,
-      kotlin: true,
+      kotlin: false,
+      playbook: true,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
     // No assertion that mock-pack tools are added (it has none); we
@@ -200,7 +212,7 @@ describe('recipe playbook — synthetic 6th pack', () => {
   it('detect() invokes the mock pack’s detect(cwd) function (LP.5)', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-playbook-'));
     try {
-      const mockDetect = mockKotlinPack.detect as ReturnType<typeof vi.fn>;
+      const mockDetect = mockPlaybookPack.detect as ReturnType<typeof vi.fn>;
       mockDetect.mockClear();
       detect(tmpDir);
       expect(mockDetect).toHaveBeenCalledWith(tmpDir);
@@ -212,12 +224,12 @@ describe('recipe playbook — synthetic 6th pack', () => {
   it('detectActiveLanguages calls the mock pack’s detect() and respects its return value', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-playbook-'));
     try {
-      const mockDetect = mockKotlinPack.detect as ReturnType<typeof vi.fn>;
+      const mockDetect = mockPlaybookPack.detect as ReturnType<typeof vi.fn>;
       mockDetect.mockClear();
       mockDetect.mockReturnValue(true);
       const active = detectActiveLanguages(tmpDir);
       expect(mockDetect).toHaveBeenCalledWith(tmpDir);
-      expect(active.find((l) => (l.id as string) === 'kotlin')).toBe(mockKotlinPack);
+      expect(active.find((l) => (l.id as string) === 'playbook')).toBe(mockPlaybookPack);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -226,8 +238,8 @@ describe('recipe playbook — synthetic 6th pack', () => {
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 // Synthesize a `ResolvedConfig` with all required fields, optionally
-// activating the mock pack via `kotlin: true`.
-function makeFakeConfig(opts: { kotlin: boolean; kotlinVersion?: string }) {
+// activating the mock pack via `playbook: true`.
+function makeFakeConfig(opts: { playbook: boolean; playbookVersion?: string }) {
   return {
     languages: {
       typescript: false,
@@ -235,7 +247,8 @@ function makeFakeConfig(opts: { kotlin: boolean; kotlinVersion?: string }) {
       go: false,
       rust: false,
       csharp: false,
-      kotlin: opts.kotlin,
+      kotlin: false,
+      playbook: opts.playbook,
     },
     versions: {
       python: '3.12',
@@ -243,7 +256,8 @@ function makeFakeConfig(opts: { kotlin: boolean; kotlinVersion?: string }) {
       node: '20',
       rust: 'stable',
       csharp: '8.0',
-      kotlin: opts.kotlinVersion ?? '99.0.0',
+      kotlin: '1.9.22',
+      playbook: opts.playbookVersion ?? '99.0.0',
     },
     coverageThreshold: '80',
     projectName: 'test',

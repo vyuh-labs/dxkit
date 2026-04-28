@@ -83,7 +83,7 @@ interface BenchmarkLanguage {
     /** Path under `dir` to the file containing the violation. */
     file: string;
     /** Expected `metrics.lintTool` reported by `dxkit quality`. */
-    expectedTool: 'ruff' | 'eslint' | 'golangci-lint' | 'clippy' | 'dotnet-format';
+    expectedTool: 'ruff' | 'eslint' | 'golangci-lint' | 'clippy' | 'dotnet-format' | 'detekt';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -143,6 +143,19 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     },
     dup: { file: path.join('ProjectA', 'Duplications.cs') },
     untested: { file: path.join('ProjectA', 'UntestedModule.cs') },
+  },
+  {
+    name: 'Kotlin',
+    dir: 'kotlin',
+    secret: { file: 'Secrets.kt' },
+    // detekt is a JVM tool — `requires: 'java'` gates on the runtime
+    // because `commandExists('detekt')` returns true even when the
+    // detekt-cli wrapper exists but Java is missing (the wrapper would
+    // then crash with "JAVA_HOME is not set"). CI installs Java 17
+    // before running this matrix row.
+    lint: { file: 'BadLint.kt', expectedTool: 'detekt', requires: 'java' },
+    dup: { file: 'Duplications.kt' },
+    untested: { file: 'UntestedModule.kt' },
   },
 ];
 
@@ -420,6 +433,50 @@ describe('cross-ecosystem benchmarks — C# (multi-project, D003 validator)', ()
     expect(fs.existsSync(path.join(fixture, 'ProjectA', 'obj', 'project.assets.json'))).toBe(true);
     expect(fs.existsSync(path.join(fixture, 'ProjectB', 'obj', 'project.assets.json'))).toBe(true);
   });
+});
+
+describe('cross-ecosystem benchmarks — Kotlin', () => {
+  const fixture = path.join(FIXTURES, 'kotlin');
+  const hasOsvScanner = commandExists('osv-scanner');
+
+  it.skipIf(!hasOsvScanner)(
+    'osv-scanner surfaces gson@2.8.5 advisory (GHSA-4jrv-ppp4-jm57) from pom.xml',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // Every kotlin pack finding flows through osv-scanner — the only
+      // depVulns source for this pack today.
+      const kotlinFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
+      expect(kotlinFindings.length).toBeGreaterThan(0);
+      // gson@2.8.5 has GHSA-4jrv-ppp4-jm57 (alias CVE-2022-25647). The
+      // exact advisory id may rotate when OSV.dev re-publishes, but the
+      // package name + version anchor is stable.
+      const gsonFindings = kotlinFindings.filter((f) => f.package === 'com.google.code.gson:gson');
+      expect(gsonFindings.length).toBeGreaterThan(0);
+      expect(gsonFindings[0].installedVersion).toBe('2.8.5');
+    },
+  );
+
+  it.skipIf(!hasOsvScanner)(
+    'every advisory has a stable fingerprint and no duplicates by (package, version, id)',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // Same dedup contract as the python pack: osv-scanner can list a
+      // single advisory once per affected version range; gather must
+      // collapse duplicates at the source so consumers don't see synthetic
+      // fingerprint collisions.
+      const seen = new Set<string>();
+      for (const f of dep.findings) {
+        if (f.tool !== 'osv-scanner') continue;
+        const key = `${f.package}\0${f.installedVersion ?? ''}\0${f.id}`;
+        expect(seen.has(key)).toBe(false);
+        seen.add(key);
+        // Phase 10i fingerprint contract — kotlin row must comply.
+        if (f.fingerprint) expect(f.fingerprint).toMatch(/^[a-f0-9]{16}$/);
+      }
+    },
+  );
 });
 
 describe('cross-ecosystem benchmarks — Go', () => {

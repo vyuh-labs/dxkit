@@ -3,16 +3,18 @@
  *
  * The `jscpdProvider` is registered in `GLOBAL_CAPABILITIES.duplication`
  * (src/languages/capabilities/global.ts). jscpd runs once per repo with
- * a fixed source-file pattern and respects the project's `.gitignore`
- * via the `--gitignore` flag — crucial on large repos, jscpd without
- * it walks into `node_modules` and OOMs.
+ * a cross-language source-file pattern and respects the project's
+ * `.gitignore` via the `--gitignore` flag — crucial on large repos,
+ * jscpd without it walks into `node_modules` and OOMs.
  *
- * The source-file pattern is cross-language (all five packs' extensions
- * in one glob). jscpd's tokenizer is language-aware so this is safe;
- * keeping the pattern declared here rather than per-pack avoids five
- * separate jscpd invocations on mixed-stack repos.
+ * The source-file pattern is the union of every pack's
+ * `sourceExtensions` (LP-recipe pattern, Phase 10i.0-LP). jscpd's
+ * tokenizer is language-aware so a single union glob is safe; pack-
+ * driven derivation keeps adding a new language to a one-line scaffold
+ * change rather than a cross-cutting edit here.
  */
 
+import { LANGUAGES } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DuplicationClone, DuplicationResult } from '../../languages/capabilities/types';
 import { run } from './runner';
@@ -47,12 +49,26 @@ export type DuplicationGatherOutcome =
   | { kind: 'unavailable'; reason: string };
 
 /**
- * Union of source extensions across all language packs. A union pattern
- * rather than per-pack invocation so mixed-stack repos (Node + Python)
- * pay for one jscpd run, not N. Adding a language's extensions here is
- * the one cross-cutting edit needed when registering a new pack.
+ * Union of source extensions across all language packs, derived
+ * pack-side. Iterates LANGUAGES fresh on every call so a new pack lands
+ * in the glob without an edit here (matches `allSourceExtensions`'s
+ * pattern from Phase 10i.0-LP.3). A union pattern (rather than per-pack
+ * invocation) so mixed-stack repos pay for one jscpd run, not N.
+ *
+ * Note: returns a function so the registry mutation in
+ * `test/recipe-playbook.test.ts` (which appends a synthetic pack to
+ * LANGUAGES) takes effect — module-load capture would freeze the union
+ * before the test injection.
  */
-const JSCPD_PATTERN = '**/*.{ts,tsx,js,jsx,py,go,rs,cs}';
+function buildJscpdPattern(): string {
+  const exts = new Set<string>();
+  for (const lang of LANGUAGES) {
+    for (const e of lang.sourceExtensions) {
+      exts.add(e.replace(/^\./, ''));
+    }
+  }
+  return `**/*.{${[...exts].sort().join(',')}}`;
+}
 
 /** Extract the top N clone pairs sorted largest-first. */
 function topClonesFrom(duplicates: JscpdRawDuplicate[], limit = 15): DuplicationClone[] {
@@ -85,8 +101,9 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
   const reportDir = `/tmp/dxkit-jscpd-${Date.now()}`;
+  const pattern = buildJscpdPattern();
   run(
-    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${JSCPD_PATTERN}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
+    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
     cwd,
     300000,
   );

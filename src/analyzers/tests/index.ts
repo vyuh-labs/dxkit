@@ -144,6 +144,8 @@ function coverageSourceLabel(source: CoverageSource, file?: string): string {
       return `from ${file ?? 'cobertura.xml'}`;
     case 'lcov':
       return `from ${file ?? 'lcov.info'}`;
+    case 'jacoco':
+      return `from ${file ?? 'jacocoTestReport.xml'}`;
   }
 }
 

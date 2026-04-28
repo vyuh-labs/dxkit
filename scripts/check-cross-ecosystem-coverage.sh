@@ -22,10 +22,37 @@
 set -e
 
 FILE="test/integration/cross-ecosystem.test.ts"
-EXPECTED_LANGUAGES=5
+LANG_REGISTRY="src/languages/index.ts"
 
 if [ ! -f "$FILE" ]; then
   echo "❌ $FILE not found (run from dxkit repo root)"
+  exit 1
+fi
+if [ ! -f "$LANG_REGISTRY" ]; then
+  echo "❌ $LANG_REGISTRY not found (run from dxkit repo root)"
+  exit 1
+fi
+
+# Derive expected count from the LANGUAGES registry (Recipe v2 — Phase
+# 10j.1). Pre-Recipe-v2 this was hardcoded and required a manual bump
+# per new pack; now the parity gate auto-tracks the registry.
+#
+# The grep matches the single-line `LANGUAGES = [...]` form rendered by
+# the scaffolder. Counts entries by counting commas + 1 in the array
+# literal (last entry has no trailing comma in our convention but
+# prettier sometimes adds one — both cases handled).
+LANG_LINE=$(grep -E "^export const LANGUAGES" "$LANG_REGISTRY")
+if [ -z "$LANG_LINE" ]; then
+  echo "❌ Could not find 'export const LANGUAGES' in $LANG_REGISTRY"
+  exit 1
+fi
+# Extract the bracketed array contents, count comma-separated entries.
+LANG_BODY=$(echo "$LANG_LINE" | sed 's/.*\[\(.*\)\].*/\1/')
+# Trim trailing comma if present, then count commas + 1.
+LANG_BODY=$(echo "$LANG_BODY" | sed 's/,[[:space:]]*$//')
+EXPECTED_LANGUAGES=$(echo "$LANG_BODY" | tr ',' '\n' | grep -c .)
+if [ "$EXPECTED_LANGUAGES" -lt 1 ]; then
+  echo "❌ Could not parse LANGUAGES count from $LANG_REGISTRY"
   exit 1
 fi
 

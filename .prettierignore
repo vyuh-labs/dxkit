@@ -6,3 +6,8 @@ coverage/
 package-lock.json
 CHANGELOG.md
 tmp/
+
+# Captured real-tool-output fixtures must remain byte-identical to what
+# the upstream tool emits — reformatting defeats the C-defect-style
+# regression check (synthetic JSON drifts; real-output fixtures don't).
+test/fixtures/raw/

@@ -18,6 +18,6 @@ import type { LicensesResult } from '../../languages/capabilities/types';
  */
 export async function gatherLicensesResult(cwd: string): Promise<LicensesResult | null> {
   const descriptor = PER_PACK_REGISTRY.licenses;
-  const providers = providersFor(descriptor);
+  const providers = providersFor(descriptor, cwd);
   return defaultDispatcher.gather(cwd, descriptor, providers);
 }
