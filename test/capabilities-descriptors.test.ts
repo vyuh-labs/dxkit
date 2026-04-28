@@ -94,7 +94,7 @@ describe('DEP_VULNS descriptor', () => {
           id: 'CVE-2024-0001',
           package: 'pkg-a',
           severity: 'critical',
-          source: 'tool-reported',
+          tool: 'npm-audit',
         },
       ],
     };
@@ -108,7 +108,7 @@ describe('DEP_VULNS descriptor', () => {
           id: 'GHSA-xxxx',
           package: 'pkg-b',
           severity: 'high',
-          source: 'osv.dev',
+          tool: 'pip-audit',
         },
       ],
     };

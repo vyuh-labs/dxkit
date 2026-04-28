@@ -42,6 +42,7 @@
     "build": "node scripts/copy-templates.js && tsc",
     "prepublishOnly": "node scripts/require-ci.js && npm run build",
     "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

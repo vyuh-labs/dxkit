@@ -259,6 +259,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
     maxScore: 100,
     status: 'good' as const,
     metrics: {},
+    details: '',
   });
   return {
     repo: 'test',
@@ -313,7 +314,7 @@ function devReport(): DevReport {
       },
     ],
     hotFiles: [{ path: 'src/cli.ts', changes: 18 }],
-    velocity: [{ week: '2026-04-13', commits: 5, contributors: 1 }],
+    velocity: [{ week: '2026-04-13', commits: 5 }],
     toolsUsed: ['git'],
     toolsUnavailable: [],
   } as DevReport;
@@ -394,7 +395,13 @@ describe('quality/actions', () => {
       fixmeCount: 0,
       hackCount: 0,
       staleFiles: [],
-      duplication: { percentage: 0, cloneCount: 0, topClones: [] },
+      duplication: {
+        totalLines: 0,
+        duplicatedLines: 0,
+        percentage: 0,
+        cloneCount: 0,
+        topClones: [],
+      },
       deadImportCount: 0,
       orphanModuleCount: 0,
     });

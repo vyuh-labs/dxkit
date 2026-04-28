@@ -68,6 +68,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Typecheck (tests)
+        run: npm run typecheck:test
+
       - name: Lint
         run: npx eslint . --max-warnings 0
 

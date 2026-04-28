@@ -9,12 +9,12 @@ import type { DepVulnFinding } from '../src/languages/capabilities/types';
 function mkFinding(
   overrides: Partial<DepVulnFinding> & Pick<DepVulnFinding, 'id' | 'package'>,
 ): DepVulnFinding {
+  // id + package are required in overrides per Pick<>; defaults apply
+  // only to the rest. Spread last so overrides win.
   return {
-    id: overrides.id,
-    package: overrides.package,
-    installedVersion: overrides.installedVersion ?? '1.0.0',
-    tool: overrides.tool ?? 'npm-audit',
-    severity: overrides.severity ?? 'medium',
+    installedVersion: '1.0.0',
+    tool: 'npm-audit',
+    severity: 'medium',
     ...overrides,
   };
 }

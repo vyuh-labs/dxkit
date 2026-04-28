@@ -52,7 +52,15 @@ export interface LanguageSupport {
   tools: string[];
   semgrepRulesets: string[];
 
-  mapLintSeverity?(code: string): LintSeverity;
+  /**
+   * Tier a lint rule code into a severity bucket. Accepts `string | null |
+   * undefined` because real lint output occasionally emits `ruleId: null`
+   * (eslint with rule-disabled diagnostics) or omits the field entirely
+   * (golangci-lint's "unknown linter" path). Implementations short-circuit
+   * to `'low'` for non-string input — both `mapEslintRuleSeverity` and the
+   * golangci-lint mapping rely on this contract for defensive parsing.
+   */
+  mapLintSeverity?(code: string | null | undefined): LintSeverity;
 
   /** Capability providers for the dispatcher channel. */
   capabilities?: LanguagePackCapabilities;

@@ -18,6 +18,7 @@
 
 # Fast static gates — fail before burning time on build/tests.
 npm run typecheck
+npm run typecheck:test
 npx eslint . --max-warnings 0
 npx prettier --check .
 bash scripts/check-architecture.sh
