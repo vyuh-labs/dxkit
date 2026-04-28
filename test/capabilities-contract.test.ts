@@ -111,10 +111,24 @@ describe('global capabilities shape', () => {
 });
 
 describe('providersFor()', () => {
-  it('returns the per-pack provider list for a per-pack capability', () => {
-    // Every pack has a depVulns provider today; use that as the canary.
+  it('returns exactly the packs that registered the per-pack capability', () => {
+    // Capabilities are optional per pack — the contract is that
+    // `providersFor()` returns providers from EVERY pack that registered
+    // one, and zero from packs that didn't. Pre-Recipe-v3 / G2, this
+    // test asserted `providers.length === LANGUAGES.length` against a
+    // depVulns canary, which forced packs without depVulns (10k.1.0 Java
+    // before its osv-scanner Maven impl, and Swift in 10j.2 by design)
+    // to register null-stub providers as workaround. The new assertion
+    // is precise: count packs that registered, expect that count.
+    //
+    // Future architectural extension: explicit opt-out via
+    // `capabilities.depVulns: null` (vs `undefined` for "not registered
+    // yet") so renderers can distinguish "scanner unavailable" from
+    // "0 findings". Reserved for 10j.2 Swift when it has a concrete
+    // consumer; not introduced speculatively today.
+    const expectedCount = LANGUAGES.filter((l) => l.capabilities?.depVulns).length;
     const providers = providersFor(PER_PACK_REGISTRY.depVulns);
-    expect(providers.length).toBe(LANGUAGES.length);
+    expect(providers.length).toBe(expectedCount);
   });
 
   it('returns the registered global providers for a global capability', () => {

@@ -2,8 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { fileExists } from '../analyzers/tools/runner';
-import type { CapabilityProvider } from './capabilities/provider';
-import type { DepVulnResult } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -82,20 +80,14 @@ export const java: LanguageSupport = {
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
 
-  // Stub depVulns provider — preserves the "every pack has a depVulns
-  // provider" invariant asserted by `capabilities-contract.test.ts`
-  // until the real osv-scanner Maven implementation lands in 10k.1.x.
-  // Returns null until then; harmless on real projects (no findings
-  // attributed to Java) and avoids a contract-test break for the
-  // intermediate scaffold commit.
-  capabilities: {
-    depVulns: {
-      source: 'java',
-      async gather() {
-        return null;
-      },
-    } as CapabilityProvider<DepVulnResult>,
-  },
+  // Capabilities are genuinely empty during 10k.1.0–10k.1.0.2.
+  // Real providers (depVulns via osv-scanner Maven, lint via PMD,
+  // coverage via JaCoCo XML reuse, imports, testFramework) land
+  // progressively in 10k.1.x. The capabilities-contract.test.ts
+  // assertion was loosened in 10k.1.0.3 (Recipe v3 / G2) so packs
+  // can omit capabilities they haven't yet implemented — no
+  // null-stub-provider workaround needed.
+  capabilities: {},
 
   // ─── LP-recipe metadata ────────────────────────────────────────────────
 
