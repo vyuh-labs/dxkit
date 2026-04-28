@@ -245,7 +245,8 @@ describe('resolveCvssScores', () => {
   it('falls back to alias lookup when primary lookup yields no score', async () => {
     // GO-XXXX has no severity; its CVE-XXXX alias does
     const fetcher = async (id: string): Promise<OsvVuln | null> => {
-      if (id === 'GO-XXXX') return { id, database_specific: { url: 'whatever' } };
+      // GO-XXXX: no severity, no CVSS — forces alias fallback to CVE-XXXX
+      if (id === 'GO-XXXX') return { id };
       if (id === 'CVE-XXXX') return { id, severity: [{ type: 'CVSS_V3', score: HIGH_VECTOR }] };
       return null;
     };

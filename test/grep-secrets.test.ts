@@ -11,9 +11,10 @@ vi.mock('../src/analyzers/tools/tool-registry', async () => {
   const actual = await vi.importActual<typeof import('../src/analyzers/tools/tool-registry')>(
     '../src/analyzers/tools/tool-registry',
   );
+  type ToolDefinition = Parameters<typeof actual.findTool>[0];
   return {
     ...actual,
-    findTool: (def: { name: string }, cwd?: string) => {
+    findTool: (def: ToolDefinition, cwd?: string) => {
       if (def.name === 'gitleaks') {
         return {
           name: 'gitleaks',
