@@ -22,6 +22,7 @@ npm run typecheck:test
 npx eslint . --max-warnings 0
 npx prettier --check .
 bash scripts/check-architecture.sh
+bash scripts/check-docs-coverage.sh
 
 # Slop check against the push target. Matches the CI step's
 # DXKIT_SLOP_BASE=origin/main range-diff so no PR can surface slop
