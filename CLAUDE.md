@@ -94,6 +94,38 @@ Sequence for a new release:
 1. Work on a `feat/<phase-or-change>` branch.
 2. Open a PR against `main`. CI must pass (typecheck, lint, format, tests, coverage, architecture rules, slop check, `npm pack --dry-run`).
 3. Merge via the GitHub UI — not a local `git push`. Branch protection on `main` enforces this.
+
+   **Choose the merge strategy by branch shape:**
+   - **Squash merge** when the branch is a single logical change (one
+     feature, one bug fix, one refactor) regardless of how many WIP
+     commits it took to get there. The collapsed message reads as a
+     coherent unit; intermediate commits don't carry standalone value.
+     Example: PR #22 (kotlin pack) was scoped as one unit even though
+     it bundled Recipe v2 — collapsed cleanly because nobody needs to
+     bisect to "kotlin pack but before Recipe v2".
+   - **Rebase merge** when the branch bundles multiple independently-
+     meaningful units — discrete defect closures (D008, D011),
+     architectural refactors (Recipe v3 / G2 / G5 / G9), and feature
+     work — each with its own prose-quality commit message. Preserving
+     atomic commits is high-value because:
+     1. Bisect granularity halves debug time on future regressions
+     2. Recipe-vN working doc cross-references commit SHAs by gap-id
+        — squashing invalidates them
+     3. Defect closures grep cleanly (`git log --grep=D008`) only when
+        their commits aren't buried inside a feature squash
+        Example: PR for Phase 10k.1 Java pack rebase-merged so D008,
+        D011, G5 (docs gate), G2 (capabilities optional), G9 (detect
+        source-driven), and 5 capability commits each survive on main.
+   - **Merge commit** is a fallback only when neither fits cleanly.
+     Default to one of the two above.
+
+   Two questions to disambiguate at PR-open time:
+   - "Is each commit independently meaningful, or are they WIP toward
+     one outcome?" → if independent, rebase. If WIP, squash.
+   - "Do any commit SHAs get referenced from elsewhere
+     (`tmp/recipe-vN-working-doc.md`, memory pointers, future
+     checkpoints)?" → if yes, rebase to preserve them.
+
 4. In the PR (or a follow-up), bump `package.json` + `package-lock.json` + add a `CHANGELOG.md` entry for the new version.
 5. After the release commit is on `main` and CI is green there:
 

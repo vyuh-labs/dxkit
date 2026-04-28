@@ -7,21 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Phase 10k.1 — Java pack (recipe stress test #1) + D008/D011 closures.
-Targeting 2.4.5. In progress; capabilities (PMD lint, JaCoCo coverage
-reuse, osv-scanner Maven dep-vuln, JUnit/TestNG test-framework) land
-progressively across 10k.1.x commits.
+## [2.4.5] - 2026-04-28
+
+Phase 10k.1 — Java language pack (recipe stress test #1, JVM-cousin
+shape). 7th language pack lands the cross-ecosystem matrix at
+**8 active language packs** including Java with full capability
+coverage. Recipe v3 makes substantial progress (G2 + G5 + G9
+delivered; G1 partial; G4/G6/G7 deferred). D008 + D011 + a vitest
+hookTimeout flake closed in pre-flight commits.
+
+No breaking changes for end users. New depVulns/lint/coverage/
+imports/testFramework data on Java/Maven projects; existing analyzer
+commands produce identical output for non-Java projects.
 
 ### Added
 
-- **Java language pack scaffold (Phase 10k.1.0).** Detection (`pom.xml`,
-  `src/main/java/`, `*.java` source within depth 5), `sourceExtensions`,
-  `testFilePatterns` (JUnit 4/5 + TestNG + Maven Failsafe IT
-  conventions), `extraExcludes` (Maven `target/`, Gradle `build/`,
-  `.gradle/`, `out/`), semgrep `p/java` ruleset, LP-recipe metadata
-  (permissions, cliBinaries, defaultVersion '17', projectYamlBlock).
-  Universal tools (gitleaks/jscpd/semgrep) work on `.java` source
-  immediately. Language-specific capabilities ship in 10k.1.x.
+- **Java language pack** (Phase 10k.1) with five capability providers:
+  - **depVulns** via `osv-scanner` against `pom.xml` /
+    `gradle.lockfile` / `gradle/verification-metadata.xml`.
+    Implementation lives in the new shared
+    `src/analyzers/tools/osv-scanner-maven.ts` module that both
+    kotlin and java packs delegate to (CLAUDE.md rule #2 SSOT).
+  - **lint** via PMD 7.x with `rulesets/java/quickstart.xml`.
+    `parsePmdOutput` tiers PMD's 1-5 priority into dxkit's
+    critical/high/medium/low scheme via `mapPmdRuleSeverity`.
+    Real-fixture-driven parser tests against captured PMD 7.24.0
+    output at `test/fixtures/raw/java/pmd-output.json`.
+  - **coverage** via JaCoCo XML — reuses the kotlin pack's parser
+    unchanged (the parser was source-language-agnostic from day 1
+    and is now hosted in `src/analyzers/tools/jacoco.ts`). Path
+    candidates extended for Maven (`target/site/jacoco/jacoco.xml`,
+    `target/site/jacoco-aggregate/jacoco.xml`) alongside the existing
+    Gradle paths.
+  - **imports** via regex extraction over `import [static]
+    <fqn>(.<Class>|.*)?;` after stripping line + block comments.
+    Best-effort resolution (matches kotlin/rust pack semantics —
+    Java package paths don't 1:1 map to filesystem paths in all
+    build layouts).
+  - **testFramework** via build-file substring scan of pom.xml +
+    build.gradle{,.kts} for canonical artifact names. Order honors
+    mixed-state migration: junit-jupiter > spock > testng > junit4.
+- **PMD (`pmd`) in TOOL_DEFS**. PMD 7.x as the canonical Java linter,
+  with brew on macOS / GitHub releases zip on Linux / scoop on
+  Windows. CI install step added.
+- **Java cross-ecosystem benchmark fixture**
+  (`test/fixtures/benchmarks/java/`) — five files (Secrets.java with
+  fake AWS key, BadLint.java with PMD violations, Duplications.java
+  with jscpd clone pair, UntestedModule.java for filename-match
+  test-gap, pom.xml with `commons-collections:3.2.1` for the original
+  "Mad Gadget" CVE-2015-7501 deserialization advisory + log4j-core
+  for Log4Shell). Matrix wins on all four dimensions (secret/dup/
+  test-gaps run unconditionally; lint matrix activates with
+  `requires: 'pmd'`).
 - **`scripts/check-docs-coverage.sh` (Recipe v3 / G5).** Pre-commit +
   CI gate that asserts every `LanguageId` in `src/languages/index.ts`
   appears in canonical doc anchors (CLAUDE.md path glob; README.md
@@ -29,17 +66,44 @@ progressively across 10k.1.x commits.
   the kotlin-PR-#23 follow-up class of failure where a pack ships in
   main but docs go stale because nobody remembered to update them.
 - **`vyuh-dxkit tools install <name>` and `--all` (D011).** Single-tool
-  install for cross-stack development (e.g. installing `spotbugs` on a
-  Node-only repo); `--all` enumerates every TOOL_DEFS entry. Unknown
-  names fail loudly with an "Unknown tool" message + pointer to
-  `tools list`.
-- **Cross-ecosystem benchmark fixture for Java.**
-  `test/fixtures/benchmarks/java/` — four matrix dimension fixture
-  files (Secrets.java with fake AWS key, BadLint.java with PMD-targeted
-  violations, Duplications.java with jscpd clone pair, UntestedModule.java
-  for filename-match test-gap). Matrix wins immediately on
-  secret/dup/test-gaps; lint matrix Java row gated on `requires: 'pmd'`
-  pending toolchain install in 10k.1.x.
+  install for cross-stack development (e.g. installing `spotbugs` /
+  `pmd` on a Node-only repo); `--all` enumerates every TOOL_DEFS
+  entry. Unknown names fail loudly with an "Unknown tool" message +
+  pointer to `tools list`. Used during this phase's PMD harvest.
+- **CLAUDE.md merge-strategy guidance**. Codifies when PRs should
+  squash-merge (single logical unit) vs rebase-merge (multiple
+  independently-meaningful commits with prose-quality messages —
+  what this PR did to preserve D008/D011/G2/G5/G9 + 5 capability
+  commits as discrete history).
+
+### Refactored (architectural improvement)
+
+- **`src/analyzers/tools/jacoco.ts`** — extracted from kotlin pack
+  in 10k.1.2. Owns `parseJaCoCoXml`, `findJaCoCoReport`,
+  `gatherJaCoCoCoverageResult`. Both JVM packs delegate. Parser was
+  always source-language-agnostic; just relocating to the right home.
+- **`src/analyzers/tools/osv-scanner-maven.ts`** — extracted from
+  kotlin pack in 10k.1.4. Same pattern. Owns
+  `parseOsvScannerMavenFindings` + `gatherOsvScannerMavenDepVulnsResult`.
+  Both JVM packs delegate. Parser was already ecosystem-filtered to
+  Maven (not Kotlin-coupled); just relocating.
+- **Capabilities contract is genuinely optional (Recipe v3 / G2).**
+  `capabilities-contract.test.ts:117` previously asserted
+  `providers.length === LANGUAGES.length` for the depVulns capability,
+  forcing packs without depVulns to register null-stub providers.
+  Now: `expect(providers.length).toBe(LANGUAGES.filter((l) =>
+  l.capabilities?.depVulns).length)` — precise contract, packs can
+  omit. Unblocks Swift's eventual graceful-degradation pattern.
+  Java's null-stub from intermediate commits retired.
+- **`detectJava` is source-presence-driven, not manifest-driven
+  (Recipe v3 / G9).** Initial detection activated on bare `pom.xml`,
+  which broke kotlin's matrix lint test because kotlin's fixture has
+  pom.xml (for osv-scanner Maven). Both packs activated → lintTool
+  came back as `'detekt, pmd'`. Fix: require either `src/main/java/`
+  directory OR actual `.java` source within depth 5. Mixed Kotlin +
+  Java projects still activate both packs (correct). G9 noted as a
+  scaffolder-template fix candidate — the scaffolded `detect()` stub
+  currently suggests "manifest signals" which is the bug we just hit.
 
 ### Fixed
 
@@ -54,10 +118,11 @@ progressively across 10k.1.x commits.
   same session — caught a `Record<LanguageId, boolean>` literal
   regression introduced 30 minutes earlier.
 - **`scripts/check-cross-ecosystem-coverage.sh` Prettier robustness
-  (Recipe v3 / G1).** Auto-derive parser assumed single-line
+  (Recipe v3 / G1, partial).** Auto-derive parser assumed single-line
   `LANGUAGES = [...]`. Prettier reformatted to multi-line at the 7th
   entry (line-length budget) and the gate parsed 0 entries silently.
-  Switched to awk block extract — robust to both shapes.
+  Switched to awk block extract — robust to both shapes. One
+  instance fixed; class-wide audit of similar parsers deferred.
 - **Vitest `hookTimeout` default of 10s caused C# `beforeAll` flakes.**
   `dotnet restore` against a cold NuGet cache routinely takes 18-44s
   on WSL2. Now matches `testTimeout` at 180s.

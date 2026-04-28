@@ -106,7 +106,7 @@ vyuh-dxkit tools install                      # interactive: prompts per tool
 | Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                                 |
 | C#        | `dotnet-format` (via SDK — formatter, not a linter)                       |
 | Kotlin    | `detekt` (Checkstyle XML), `osv-scanner` (Maven), JaCoCo XML              |
-| Java      | 🚧 Phase 10k.1.x — `pmd`, `osv-scanner` (Maven), JaCoCo XML reuse         |
+| Java      | `pmd` (PMD 7.x JSON), `osv-scanner` (Maven), JaCoCo XML reuse             |
 
 Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
 
@@ -169,19 +169,17 @@ npm run new-lang kotlin "Kotlin (Android)"
 
 This scaffolds the 7 recipe files (pack module, test stub, fixture skeleton, Claude rule file, template-config dir, plus `LanguageId` union extension and `LANGUAGES` registration). See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full walkthrough. Recipe enforcement (architecture greps + contract tests + synthetic 6th-pack playbook) runs in pre-commit so packs that miss required metadata fail CI.
 
-| Language | Detection                             | Coverage import                                   | Import-graph                           | Native tools                                | Lint severity tiers      | Vuln severity tiers                              |
-| -------- | ------------------------------------- | ------------------------------------------------- | -------------------------------------- | ------------------------------------------- | ------------------------ | ------------------------------------------------ |
-| TS / JS  | `package.json`                        | ✅ Istanbul                                       | ✅ import/require/re-export            | eslint, npm audit, vitest-coverage          | ✅ ESLint rule ID        | ✅ npm audit native                              |
-| Python   | `pyproject.toml`, `setup.py`, `*.py`  | ✅ coverage.py                                    | ✅ import/from                         | ruff, pip-audit, coverage                   | ✅ ruff code prefix      | ✅ pip-audit + OSV.dev (CVSS v3+v4)              |
-| Go       | `go.mod`                              | ✅ coverprofile                                   | ✅ import blocks                       | golangci-lint, govulncheck                  | ✅ `FromLinter` family   | ✅ govulncheck embedded + OSV.dev                |
-| Rust     | `Cargo.toml`                          | ✅ lcov + cobertura                               | ⚠️ use statements, extracted only¹     | clippy, cargo-audit, cargo-llvm-cov         | ✅ clippy group          | ✅ cargo-audit native                            |
-| C#       | `*.csproj`, `*.sln`                   | ✅ cobertura XML                                  | ⚠️ using declarations, extracted only¹ | dotnet-format (formatter)                   | ❌ (no linter yet)       | ✅ dotnet list --vulnerable                      |
-| Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`      | ✅ JaCoCo XML                                     | ⚠️ import statements, extracted only¹  | detekt, osv-scanner (Maven)                 | ✅ detekt severity       | ✅ osv-scanner + OSV.dev (Maven)                 |
-| Java     | `pom.xml`, `src/main/java/`, `*.java` | 🚧 (Phase 10k.1.x — JaCoCo XML reuse from Kotlin) | 🚧 (Phase 10k.1.x)                     | 🚧 (Phase 10k.1.x — PMD, osv-scanner Maven) | 🚧 (Phase 10k.1.x — PMD) | 🚧 (Phase 10k.1.x — osv-scanner + OSV.dev Maven) |
+| Language | Detection                             | Coverage import     | Import-graph                           | Native tools                        | Lint severity tiers    | Vuln severity tiers                 |
+| -------- | ------------------------------------- | ------------------- | -------------------------------------- | ----------------------------------- | ---------------------- | ----------------------------------- |
+| TS / JS  | `package.json`                        | ✅ Istanbul         | ✅ import/require/re-export            | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                 |
+| Python   | `pyproject.toml`, `setup.py`, `*.py`  | ✅ coverage.py      | ✅ import/from                         | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4) |
+| Go       | `go.mod`                              | ✅ coverprofile     | ✅ import blocks                       | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev   |
+| Rust     | `Cargo.toml`                          | ✅ lcov + cobertura | ⚠️ use statements, extracted only¹     | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
+| C#       | `*.csproj`, `*.sln`                   | ✅ cobertura XML    | ⚠️ using declarations, extracted only¹ | dotnet-format (formatter)           | ❌ (no linter yet)     | ✅ dotnet list --vulnerable         |
+| Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`      | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹  | detekt, osv-scanner (Maven)         | ✅ detekt severity     | ✅ osv-scanner + OSV.dev (Maven)    |
+| Java     | `pom.xml`, `src/main/java/`, `*.java` | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹  | PMD, osv-scanner (Maven)            | ✅ PMD priority tiers  | ✅ osv-scanner + OSV.dev (Maven)    |
 
-¹ Rust, C#, and Kotlin packs populate `imports.extracted` but the file-level resolver is a no-op — Rust's `use` paths, C#'s `using` namespaces, and Kotlin's `import` package paths don't map 1:1 to source files. Downstream analyses that need an edge graph (reachability for dep-vulns, import-graph credit for test-gaps) degrade to conservative defaults for these three languages. Resolvers are planned; see Phase 10i-L.2 in the roadmap.
-
-🚧 Java pack is scaffolded in 2.4.5 (10k.1) — detection + sourceExtensions are live (universal tools like gitleaks/jscpd work on `.java` source today); language-specific capabilities (PMD lint, JaCoCo coverage reuse, osv-scanner Maven dep-vuln, JUnit/TestNG test-framework detection) land progressively in subsequent 10k.1.x commits.
+¹ Rust, C#, Kotlin, and Java packs populate `imports.extracted` but the file-level resolver is a no-op — Rust's `use` paths, C#'s `using` namespaces, Kotlin's and Java's `import` package paths don't map 1:1 to source files. Downstream analyses that need an edge graph (reachability for dep-vulns, import-graph credit for test-gaps) degrade to conservative defaults for these four languages. Resolvers are planned; see Phase 10i-L.2 in the roadmap.
 
 ✅ full support. Multi-language repos fully supported — every detected language's tools run, and dep-vuln counts aggregate across all language packs via the `depVulns` capability (pip-audit findings don't silently replace npm-audit ones).
 
