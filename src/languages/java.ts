@@ -3,11 +3,13 @@ import * as path from 'path';
 
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
+import { gatherOsvScannerMavenDepVulnsResult } from '../analyzers/tools/osv-scanner-maven';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,
@@ -332,6 +334,23 @@ const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+// ─── DepVulns (osv-scanner against Maven — shared with kotlin pack) ────────
+//
+// Same shape as coverage above — parser + manifest discovery + tool
+// invocation + CVSS resolution all live in
+// `src/analyzers/tools/osv-scanner-maven.ts` (extracted from kotlin
+// pack in 10k.1.4 for SSOT). Java contributes the same Maven manifest
+// candidates (pom.xml, gradle.lockfile, gradle/verification-metadata.xml)
+// — JVM ecosystem manifests are language-agnostic.
+
+const javaDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'java',
+  async gather(cwd) {
+    const outcome = await gatherOsvScannerMavenDepVulnsResult(cwd, 'java');
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const java: LanguageSupport = {
@@ -350,8 +369,7 @@ export const java: LanguageSupport = {
 
   detect: detectJava,
 
-  // TODO(10k.1.4): osv-scanner Maven dep-vuln lands next commit.
-  tools: ['pmd'],
+  tools: ['pmd', 'osv-scanner'],
 
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
@@ -361,8 +379,7 @@ export const java: LanguageSupport = {
     testFramework: javaTestFrameworkProvider,
     coverage: javaCoverageProvider,
     lint: javaLintProvider,
-    // depVulns lands in 10k.1.4. Capabilities contract is genuinely
-    // optional (Recipe v3 / G2, 10k.1.0.3).
+    depVulns: javaDepVulnsProvider,
   },
 
   // ─── LP-recipe metadata ────────────────────────────────────────────────

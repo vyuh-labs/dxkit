@@ -91,7 +91,7 @@ describe('java pack — metadata', () => {
     expect(java.displayName).toBe('Java');
   });
 
-  it('wires imports + testFramework + coverage + lint providers (10k.1.1-10k.1.3)', () => {
+  it('wires all 5 capability providers (10k.1.1-10k.1.4)', () => {
     expect(java.capabilities?.imports).toBeDefined();
     expect(java.capabilities?.imports?.source).toBe('java');
     expect(java.capabilities?.testFramework).toBeDefined();
@@ -100,15 +100,13 @@ describe('java pack — metadata', () => {
     expect(java.capabilities?.coverage?.source).toBe('java');
     expect(java.capabilities?.lint).toBeDefined();
     expect(java.capabilities?.lint?.source).toBe('java');
+    expect(java.capabilities?.depVulns).toBeDefined();
+    expect(java.capabilities?.depVulns?.source).toBe('java');
   });
 
-  it('declares pmd in tools[] (10k.1.3)', () => {
+  it('declares pmd + osv-scanner in tools[] (10k.1.3, 10k.1.4)', () => {
     expect(java.tools).toContain('pmd');
-  });
-
-  it('does not yet wire depVulns (10k.1.4)', () => {
-    // Capabilities are genuinely optional (Recipe v3 / G2).
-    expect(java.capabilities?.depVulns).toBeUndefined();
+    expect(java.tools).toContain('osv-scanner');
   });
 });
 

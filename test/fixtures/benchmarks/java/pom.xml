@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Java benchmark fixture — Maven manifest with one known-vulnerable
+  Maven dep. Phase 10k.1.4 cross-ecosystem benchmark target. The java
+  pack's depVulns gather invokes osv-scanner against this file and
+  expects to surface `commons-collections:commons-collections`
+  advisories including GHSA-6hgm-866r-3cjv (alias CVE-2015-7501 —
+  Java deserialization gadget, the original "Mad Gadget" exploit).
+
+  org.apache.logging.log4j:log4j-core@2.14.0 is included as a second
+  known-vulnerable dep so fingerprint-uniqueness assertions have
+  multiple findings to test against (Log4Shell — CVE-2021-44228).
+  Both packages are intentionally OLD pinned versions chosen for
+  stable advisory presence on OSV.dev. We use commons-collections
+  (Java-specific historical exploit) instead of gson here so the
+  fixture isn't a bit-for-bit copy of kotlin's — distinct deps make
+  cross-ecosystem polyglot tests more meaningful.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>vyuhlabs.dxkit.benchmark</groupId>
+  <artifactId>java-benchmark</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>commons-collections</groupId>
+      <artifactId>commons-collections</artifactId>
+      <version>3.2.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <version>2.14.0</version>
+    </dependency>
+  </dependencies>
+</project>
