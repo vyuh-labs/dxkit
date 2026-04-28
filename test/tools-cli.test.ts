@@ -18,6 +18,7 @@ const NODE_ONLY: DetectedStack['languages'] = {
   rust: false,
   csharp: false,
   kotlin: false,
+  java: false,
 };
 
 const EMPTY_STACK: DetectedStack['languages'] = {
@@ -27,6 +28,7 @@ const EMPTY_STACK: DetectedStack['languages'] = {
   rust: false,
   csharp: false,
   kotlin: false,
+  java: false,
 };
 
 describe('selectToolNames', () => {

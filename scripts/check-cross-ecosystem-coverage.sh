@@ -37,18 +37,20 @@ fi
 # 10j.1). Pre-Recipe-v2 this was hardcoded and required a manual bump
 # per new pack; now the parity gate auto-tracks the registry.
 #
-# The grep matches the single-line `LANGUAGES = [...]` form rendered by
-# the scaffolder. Counts entries by counting commas + 1 in the array
-# literal (last entry has no trailing comma in our convention but
-# prettier sometimes adds one — both cases handled).
-LANG_LINE=$(grep -E "^export const LANGUAGES" "$LANG_REGISTRY")
-if [ -z "$LANG_LINE" ]; then
+# Handles BOTH single-line (`LANGUAGES = [a, b]`) and multi-line
+# (prettier reformats once entries push past the line length budget,
+# which happened at the 7th entry / 10k.1 Java add) forms. awk pulls
+# the block between the `LANGUAGES` declaration and the closing `];`,
+# tr collapses to one line, sed extracts the bracketed body, count
+# comma-separated entries.
+LANG_BLOCK=$(awk '/^export const LANGUAGES/,/^\];/' "$LANG_REGISTRY" | tr -d '\n')
+if [ -z "$LANG_BLOCK" ]; then
   echo "❌ Could not find 'export const LANGUAGES' in $LANG_REGISTRY"
   exit 1
 fi
-# Extract the bracketed array contents, count comma-separated entries.
-LANG_BODY=$(echo "$LANG_LINE" | sed 's/.*\[\(.*\)\].*/\1/')
-# Trim trailing comma if present, then count commas + 1.
+# Extract the bracketed array contents.
+LANG_BODY=$(echo "$LANG_BLOCK" | sed 's/.*\[\(.*\)\].*/\1/')
+# Trim trailing comma if present, then count comma-separated entries.
 LANG_BODY=$(echo "$LANG_BODY" | sed 's/,[[:space:]]*$//')
 EXPECTED_LANGUAGES=$(echo "$LANG_BODY" | tr ',' '\n' | grep -c .)
 if [ "$EXPECTED_LANGUAGES" -lt 1 ]; then
