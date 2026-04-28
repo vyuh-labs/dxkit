@@ -4,9 +4,17 @@ import * as path from 'path';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
-import type { LanguageSupport } from './types';
+import type {
+  CoverageResult,
+  ImportsResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+  TestFrameworkResult,
+} from './capabilities/types';
+import type { LanguageSupport, LintSeverity } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -44,19 +52,26 @@ function hasJavaSourceWithinDepth(cwd: string, maxDepth = 5): boolean {
 }
 
 /**
- * Java pack detection. Conservative on Gradle (build.gradle.kts is
- * Kotlin DSL — typically Kotlin projects), aggressive on Maven and
- * the canonical `src/main/java/` layout. Mixed Kotlin+Java projects
- * activate both packs (correct — the project genuinely is both).
+ * Java pack detection. Strict: requires evidence of actual Java SOURCE,
+ * not just a JVM build manifest. `pom.xml` alone is NOT a Java signal —
+ * Kotlin (incl. our own `test/fixtures/benchmarks/kotlin/pom.xml` for
+ * osv-scanner) and Scala projects also ship Maven POMs. The two
+ * unambiguous signals:
+ *
+ *   1. `src/main/java/` directory exists — the path itself is the
+ *      Maven/Gradle convention for Java sources.
+ *   2. A `.java` file lives within depth 5 of cwd (Java package
+ *      hierarchies are routinely 4-5 segments under `src/`).
+ *
+ * Mixed Kotlin+Java projects (legacy Android migrations, polyglot
+ * monorepos) activate BOTH packs — correct, the project genuinely is
+ * both. Pure Kotlin/Scala/Groovy projects with `pom.xml` but no
+ * `.java` source no longer false-trigger Java (10k.1.3 fix).
  */
 function detectJava(cwd: string): boolean {
-  // Maven manifest — unambiguously Java.
-  if (fileExists(cwd, 'pom.xml')) return true;
-  // Standard Maven/Gradle layout marker.
+  // Standard Maven/Gradle Java layout — directory name is the signal.
   if (fs.existsSync(path.join(cwd, 'src', 'main', 'java'))) return true;
-  // Bare source — walk for `.java` files. We don't activate purely on
-  // build.gradle / build.gradle.kts because Kotlin projects share
-  // those manifests; presence of a `.java` file is the disambiguator.
+  // Otherwise require actual `.java` source presence.
   return hasJavaSourceWithinDepth(cwd, 5);
 }
 
@@ -183,6 +198,124 @@ const javaTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+// ─── Lint (PMD JSON output) ────────────────────────────────────────────────
+
+/**
+ * Map PMD's 1-5 priority scale to dxkit's 4-tier severity. PMD's
+ * priority semantics (per official docs):
+ *   1 = High         → critical
+ *   2 = Medium High  → high
+ *   3 = Medium       → medium
+ *   4 = Medium Low   → low
+ *   5 = Low          → low
+ *
+ * Defensive: unknown / missing priorities tier as 'medium' — visibility
+ * tilts toward "developer sees it" rather than "silently dropped". Same
+ * defensive-default approach as detekt / mapDetektSeverity.
+ *
+ * Exported for unit tests.
+ */
+export function mapPmdRuleSeverity(priority: number | undefined | null): LintSeverity {
+  if (priority === 1) return 'critical';
+  if (priority === 2) return 'high';
+  if (priority === 3) return 'medium';
+  if (priority === 4 || priority === 5) return 'low';
+  return 'medium';
+}
+
+/**
+ * Parse PMD 7.x JSON output (`pmd check -f json`) into a tiered
+ * SeverityCounts. Shape:
+ *
+ *   {
+ *     "formatVersion": 0,
+ *     "pmdVersion": "7.24.0",
+ *     "files": [
+ *       {
+ *         "filename": "<path>",
+ *         "violations": [
+ *           {
+ *             "beginline": N, "begincolumn": N,
+ *             "endline": N, "endcolumn": N,
+ *             "description": "...",
+ *             "rule": "<ruleName>",
+ *             "ruleset": "<rulesetCategory>",
+ *             "priority": 1-5,
+ *             "externalInfoUrl": "..."
+ *           }
+ *         ]
+ *       }
+ *     ],
+ *     "suppressedViolations": [],
+ *     "processingErrors": [],
+ *     "configurationErrors": []
+ *   }
+ *
+ * Tolerates malformed JSON (returns empty counts) and missing
+ * `files`/`violations` arrays. Real-fixture tests live in
+ * `test/languages-java.test.ts` against
+ * `test/fixtures/raw/java/pmd-output.json`.
+ *
+ * Exported for unit tests; consumed by `gatherJavaLintResult`.
+ */
+export function parsePmdOutput(raw: string): SeverityCounts {
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  let parsed: { files?: Array<{ violations?: Array<{ priority?: number }> }> };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return counts;
+  }
+  for (const file of parsed.files ?? []) {
+    for (const v of file.violations ?? []) {
+      counts[mapPmdRuleSeverity(v.priority)]++;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Single source of truth for the java pack's lint gathering. Consumed
+ * by `javaLintProvider`.
+ *
+ * PMD 7.x switched to subcommand syntax (`pmd check -d <dir> -R
+ * <ruleset> -f <format>`). We use the built-in
+ * `rulesets/java/quickstart.xml` — the curated subset PMD recommends
+ * for general scanning across rule categories (Best Practices, Code
+ * Style, Design, Documentation, Error Prone, Multithreading,
+ * Performance, Security). Projects that ship their own
+ * `pmd-ruleset.xml` aren't honored yet — Recipe v3 candidate if
+ * customer-need surfaces.
+ *
+ * Exit codes: PMD exits 0 (no violations), 4 (violations found),
+ * other (error). Our `run` helper captures stdout regardless of exit
+ * code, so violations-found doesn't block parsing.
+ */
+function gatherJavaLintResult(cwd: string): LintGatherOutcome {
+  // Activation gate — match detectJava (no pom.xml-alone trigger).
+  if (!fs.existsSync(path.join(cwd, 'src', 'main', 'java')) && !hasJavaSourceWithinDepth(cwd, 5)) {
+    return { kind: 'unavailable', reason: 'no java source' };
+  }
+  const pmd = findTool(TOOL_DEFS.pmd, cwd);
+  if (!pmd.available || !pmd.path) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+  const cmd = `${pmd.path} check -d . -R rulesets/java/quickstart.xml -f json 2>/dev/null`;
+  const raw = run(cmd, cwd, 120000);
+  if (!raw) return { kind: 'unavailable', reason: 'no pmd output' };
+  const counts = parsePmdOutput(raw);
+  const envelope: LintResult = { schemaVersion: 1, tool: 'pmd', counts };
+  return { kind: 'success', envelope };
+}
+
+const javaLintProvider: CapabilityProvider<LintResult> = {
+  source: 'java',
+  async gather(cwd) {
+    const outcome = gatherJavaLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 // ─── Coverage (JaCoCo XML — shared with kotlin pack) ───────────────────────
 //
 // Per CLAUDE.md rule #2 ("Each tool has ONE gather function"), the
@@ -217,9 +350,8 @@ export const java: LanguageSupport = {
 
   detect: detectJava,
 
-  // TODO(10k.1.x): PMD lint (10k.1.3), JaCoCo coverage reuse (10k.1.2),
-  // osv-scanner Maven dep-vuln (10k.1.4) land in subsequent commits.
-  tools: [],
+  // TODO(10k.1.4): osv-scanner Maven dep-vuln lands next commit.
+  tools: ['pmd'],
 
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
@@ -228,8 +360,9 @@ export const java: LanguageSupport = {
     imports: javaImportsProvider,
     testFramework: javaTestFrameworkProvider,
     coverage: javaCoverageProvider,
-    // depVulns / lint land in 10k.1.3-10k.1.4. Capabilities contract
-    // is genuinely optional (Recipe v3 / G2, 10k.1.0.3).
+    lint: javaLintProvider,
+    // depVulns lands in 10k.1.4. Capabilities contract is genuinely
+    // optional (Recipe v3 / G2, 10k.1.0.3).
   },
 
   // ─── LP-recipe metadata ────────────────────────────────────────────────
@@ -246,9 +379,10 @@ export const java: LanguageSupport = {
 
   templateFiles: [],
 
-  // doctor checks both build tools' presence; either is sufficient for
-  // a real Java workflow.
-  cliBinaries: ['java', 'mvn'],
+  // doctor checks the runtime + build tool + linter. `java` is the
+  // JVM runtime PMD/JaCoCo wrappers shell into; `mvn` is the dominant
+  // build tool; `pmd` is the canonical linter wired in 10k.1.3.
+  cliBinaries: ['java', 'mvn', 'pmd'],
 
   // Java 17 is current LTS as of 2026-04 with very wide deployment.
   defaultVersion: '17',
