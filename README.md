@@ -45,7 +45,7 @@ Seven deterministic analyzers. Each emits a markdown report to `.dxkit/reports/`
 | `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                                                                                                                                                                                          | <1s     | `.dxkit/reports/test-gaps-<date>.md`          |
 | `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                                                                                                                                                                                                | 5–15s   | `.dxkit/reports/quality-review-<date>.md`     |
 | `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                                                                                                                                                                                            | <1s     | `.dxkit/reports/developer-report-<date>.md`   |
-| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C#)                                                                                                                                                                                                                                          | 5–20s   | `.dxkit/reports/licenses-<date>.md`           |
+| `licenses`        | Dependency license inventory across every active pack (TS/Python/Go/Rust/C# — Kotlin pending)                                                                                                                                                                                                                         | 5–20s   | `.dxkit/reports/licenses-<date>.md`           |
 | `bom`             | **Bill of Materials** — joins licenses + vulns per package, groups by top-level manifest dep (Snyk-style), enriches with CISA KEV + EPSS + reachability, ranks by composite risk score with "This Week's Triage" summary, aggregates nested sub-projects, `--filter=top-level` collapses transitive rows, 15-col XLSX | 10–40s  | `.dxkit/reports/bom-<date>.{md,xlsx}`         |
 
 Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
@@ -77,7 +77,7 @@ Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bo
 
 Three signals, strongest wins for files it covers:
 
-1. **Coverage artifact** — Istanbul JSON (TS/JS), `coverage.json` (Python), `coverage.out` (Go), cobertura XML (C#/Rust), `lcov.info` (Rust). If the tool measured a file, that decision is authoritative.
+1. **Coverage artifact** — Istanbul JSON (TS/JS), `coverage.json` (Python), `coverage.out` (Go), cobertura XML (C#/Rust), `lcov.info` (Rust), JaCoCo XML (Kotlin). If the tool measured a file, that decision is authoritative.
 2. **Import-graph reachability** — files transitively imported from an active test file (up to 3 hops). Rescues integration tests + behavior-named tests the filename matcher misses.
 3. **Filename match** — last-resort basename similarity.
 
@@ -105,6 +105,7 @@ vyuh-dxkit tools install                      # interactive: prompts per tool
 | Go        | `golangci-lint`, `govulncheck`                                            |
 | Rust      | `clippy`, `cargo-audit`, `cargo-llvm-cov`                                 |
 | C#        | `dotnet-format` (via SDK — formatter, not a linter)                       |
+| Kotlin    | `detekt` (Checkstyle XML), `osv-scanner` (Maven), JaCoCo XML              |
 
 Install commands are platform-aware (brew on macOS, user-local install on Linux, winget/scoop on Windows). Tools install into `~/.local/bin` or similar user paths — no `sudo` required.
 
@@ -174,8 +175,9 @@ This scaffolds the 7 recipe files (pack module, test stub, fixture skeleton, Cla
 | Go       | `go.mod`                             | ✅ coverprofile     | ✅ import blocks                       | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev   |
 | Rust     | `Cargo.toml`                         | ✅ lcov + cobertura | ⚠️ use statements, extracted only¹     | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native               |
 | C#       | `*.csproj`, `*.sln`                  | ✅ cobertura XML    | ⚠️ using declarations, extracted only¹ | dotnet-format (formatter)           | ❌ (no linter yet)     | ✅ dotnet list --vulnerable         |
+| Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`     | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹  | detekt, osv-scanner (Maven)         | ✅ detekt severity     | ✅ osv-scanner + OSV.dev (Maven)    |
 
-¹ Rust + C# packs populate `imports.extracted` but the file-level resolver is a no-op — Rust's `use` paths and C#'s `using` namespaces don't map 1:1 to source files. Downstream analyses that need an edge graph (reachability for dep-vulns, import-graph credit for test-gaps) degrade to conservative defaults for these two languages. Resolvers are planned; see Phase 10i-L.2 in the roadmap.
+¹ Rust, C#, and Kotlin packs populate `imports.extracted` but the file-level resolver is a no-op — Rust's `use` paths, C#'s `using` namespaces, and Kotlin's `import` package paths don't map 1:1 to source files. Downstream analyses that need an edge graph (reachability for dep-vulns, import-graph credit for test-gaps) degrade to conservative defaults for these three languages. Resolvers are planned; see Phase 10i-L.2 in the roadmap.
 
 ✅ full support. Multi-language repos fully supported — every detected language's tools run, and dep-vuln counts aggregate across all language packs via the `depVulns` capability (pip-audit findings don't silently replace npm-audit ones).
 
