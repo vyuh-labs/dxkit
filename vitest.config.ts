@@ -15,6 +15,14 @@ export default defineConfig({
     // tests are unaffected — they fail fast on assertion errors; only
     // hangs care about the timeout.
     testTimeout: 180000,
+    // Match testTimeout for hooks. Default vitest hookTimeout is 10s,
+    // which is too short for the C# `beforeAll` blocks that run
+    // `dotnet restore` against a cold NuGet cache (observed: 2026-04-28
+    // baseline run before 10k.1 work, both csharp + csharp-multi suites
+    // timed out at the 10s default). Same network/cold-cache risk
+    // applies to any future beforeAll that pre-warms a toolchain
+    // (cargo fetch, pip install, gradle wrapper download).
+    hookTimeout: 180000,
     // pool: 'forks' instead of vitest 3.x default 'threads' — the
     // threads-pool birpc channel between worker and main starves under
     // heavy concurrent subprocess fan-out (cross-ecosystem.test.ts
