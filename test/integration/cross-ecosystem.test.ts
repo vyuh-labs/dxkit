@@ -499,6 +499,33 @@ describe('cross-ecosystem benchmarks — Kotlin', () => {
   );
 });
 
+describe('cross-ecosystem benchmarks — Java', () => {
+  const fixture = path.join(FIXTURES, 'java');
+  const hasOsvScanner = commandExists('osv-scanner');
+
+  it.skipIf(!hasOsvScanner)(
+    'osv-scanner surfaces commons-collections@3.2.1 deserialization advisory (GHSA-6hgm-866r-3cjv) from pom.xml',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // Java pack delegates to the shared
+      // src/analyzers/tools/osv-scanner-maven.ts gather (10k.1.4 SSOT
+      // refactor) — same pipeline as kotlin, just attributed via
+      // DepVulnFinding.tool === 'osv-scanner'.
+      const javaFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
+      expect(javaFindings.length).toBeGreaterThan(0);
+      // commons-collections@3.2.1 has GHSA-6hgm-866r-3cjv (alias
+      // CVE-2015-7501 — the original "Mad Gadget" Java deserialization
+      // exploit). Famous, stable advisory presence on OSV.dev.
+      const ccFindings = javaFindings.filter(
+        (f) => f.package === 'commons-collections:commons-collections',
+      );
+      expect(ccFindings.length).toBeGreaterThan(0);
+      expect(ccFindings[0].installedVersion).toBe('3.2.1');
+    },
+  );
+});
+
 describe('cross-ecosystem benchmarks — Go', () => {
   const fixture = path.join(FIXTURES, 'go');
   const hasGovulncheck = commandExists('govulncheck');

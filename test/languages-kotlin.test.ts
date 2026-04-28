@@ -40,11 +40,11 @@ import * as path from 'path';
 import {
   kotlin,
   parseDetektCheckstyleXml,
-  parseOsvScannerMavenFindings,
   extractKotlinImportsRaw,
   mapDetektSeverity,
 } from '../src/languages/kotlin';
 import { parseJaCoCoXml } from '../src/analyzers/tools/jacoco';
+import { parseOsvScannerMavenFindings } from '../src/analyzers/tools/osv-scanner-maven';
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'kotlin');
 
