@@ -28,20 +28,21 @@ describe('java pack — metadata', () => {
     expect(java.displayName).toBe('Java');
   });
 
-  it('wires imports + testFramework providers (10k.1.1)', () => {
+  it('wires imports + testFramework + coverage providers (10k.1.1, 10k.1.2)', () => {
     expect(java.capabilities?.imports).toBeDefined();
     expect(java.capabilities?.imports?.source).toBe('java');
     expect(java.capabilities?.testFramework).toBeDefined();
     expect(java.capabilities?.testFramework?.source).toBe('java');
+    expect(java.capabilities?.coverage).toBeDefined();
+    expect(java.capabilities?.coverage?.source).toBe('java');
   });
 
-  it('does not yet wire depVulns/lint/coverage (10k.1.2-10k.1.4)', () => {
+  it('does not yet wire depVulns/lint (10k.1.3-10k.1.4)', () => {
     // Capabilities are genuinely optional (Recipe v3 / G2). Asserting
     // these are undefined documents the staged-rollout intent — when
     // the corresponding 10k.1.x commit lands, this test flips.
     expect(java.capabilities?.depVulns).toBeUndefined();
     expect(java.capabilities?.lint).toBeUndefined();
-    expect(java.capabilities?.coverage).toBeUndefined();
   });
 });
 
@@ -172,9 +173,63 @@ describe('gatherJavaTestFrameworkResult — substring detection', () => {
   });
 });
 
+describe('javaCoverageProvider — JaCoCo XML at Maven standard path', () => {
+  // Java's JaCoCo coverage reuses the SHARED parser/finder/glue from
+  // src/analyzers/tools/jacoco.ts (CLAUDE.md rule #2 — single source of
+  // truth). The parser itself is validated extensively in
+  // test/languages-kotlin.test.ts against both Kotlin and Java source
+  // JaCoCo XML; this test specifically exercises the JAVA PACK's
+  // wiring + Maven path discovery (`target/site/jacoco/jacoco.xml`)
+  // that was added to the shared finder in 10k.1.2.
+
+  const KOTLIN_FIXTURE = path.join(
+    __dirname,
+    'fixtures',
+    'raw',
+    'kotlin',
+    'jacoco-java-source.xml',
+  );
+
+  it('discovers and parses jacoco.xml at target/site/jacoco/jacoco.xml (Maven default)', async () => {
+    if (!fs.existsSync(KOTLIN_FIXTURE)) {
+      // Defensive — fixture may have moved. Test fails loudly on real
+      // bytes, not fixture-relocation ambiguity.
+      throw new Error(
+        `Expected JaCoCo Java-source fixture at ${KOTLIN_FIXTURE}; the kotlin pack uses it for the same SSOT validation.`,
+      );
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-cov-'));
+    try {
+      // Lay out a Maven project with the standard JaCoCo report path.
+      const reportDir = path.join(dir, 'target', 'site', 'jacoco');
+      fs.mkdirSync(reportDir, { recursive: true });
+      const xml = fs.readFileSync(KOTLIN_FIXTURE, 'utf-8');
+      fs.writeFileSync(path.join(reportDir, 'jacoco.xml'), xml);
+
+      const result = await java.capabilities!.coverage!.gather(dir);
+      expect(result).not.toBeNull();
+      expect(result!.tool).toBe('coverage:jacoco');
+      // The shared parser populates the per-file coverage map; cardinality
+      // depends on the fixture but should be > 0.
+      expect(result!.coverage.files.size).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when no JaCoCo report exists under cwd', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-java-cov-empty-'));
+    try {
+      const result = await java.capabilities!.coverage!.gather(dir);
+      expect(result).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Parser test stubs — uncomment + fill in once each parser exists ───────
 //
 // describe('mapJavaSeverity', () => { ... })  // 10k.1.3 (PMD)
 // describe('parseJavaLintOutput', () => { ... })  // 10k.1.3 (PMD JSON)
-// describe('parseJavaCoverageOutput', () => { ... })  // 10k.1.2 (JaCoCo reuse)
 // describe('parseJavaDepVulnsOutput', () => { ... })  // 10k.1.4 (osv-scanner)
