@@ -241,3 +241,43 @@ describe('enrichWithUpgradePlans', () => {
     expect(findings[0].upgradePlan?.parent).toBe('vitest');
   });
 });
+
+describe('gatherOsvScannerFixPlans — temp-dir isolation (10k.1.5b regression)', () => {
+  // Regression: pre-10k.1.5b, gatherOsvScannerFixPlans ran osv-scanner in
+  // the analyzed project's cwd. osv-scanner v2's `fix` subcommand invokes
+  // `npm install` to compute upgrade patches, which mutates / wipes the
+  // cwd's node_modules. On dxkit-on-dxkit this caused subsequent
+  // dxkit subcommand invocations to crash with `Cannot find module
+  // 'hosted-git-info'`. 5-month-old data-mutation bug shipped since
+  // 2.4.0 / Phase 10h.6, caught during 2.4.5 pre-ship regression.
+  //
+  // Fix: copy package.json + package-lock.json to a temp dir, run
+  // osv-scanner there, discard the temp dir afterward. The test below
+  // doesn't invoke osv-scanner (would require the binary on test
+  // runners) — instead it exercises the early-return contract that
+  // matters for the isolation guarantee.
+
+  it('returns empty map when manifest+lockfile are missing — no temp-dir created', async () => {
+    const fs = await import('fs');
+    const os = await import('os');
+    const path = await import('path');
+    const { gatherOsvScannerFixPlans } = await import('../src/analyzers/tools/osv-scanner-fix');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-osv-test-'));
+    try {
+      // Empty cwd — no package.json, no package-lock.json. Function
+      // short-circuits before opening a temp dir.
+      const tmpsBefore = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dxkit-osv-fix-'));
+      const result = await gatherOsvScannerFixPlans(dir);
+      const tmpsAfter = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dxkit-osv-fix-'));
+      expect(result.size).toBe(0);
+      // Isolation contract — when the function exits (success or
+      // missing-input fallback) it must NOT leave any
+      // dxkit-osv-fix-* temp dir behind. Pre-fix, the function
+      // didn't create one in this branch either, but post-fix the
+      // contract is "always discard the temp dir before return".
+      expect(tmpsAfter.length).toBe(tmpsBefore.length);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

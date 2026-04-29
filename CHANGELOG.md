@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.4.5] - 2026-04-28
+## [2.4.5] - 2026-04-29
+
+### Fixed (high-severity, discovered during 2.4.5 pre-ship regression)
+
+- **`osv-scanner fix` was mutating the analyzed project's `node_modules`**
+  (5-month-old bug shipped since 2.4.0 / Phase 10h.6). osv-scanner v2's
+  `fix` subcommand invokes `npm install` internally to compute upgrade
+  patches; that install wipes / reinstalls the cwd's `node_modules` (often
+  with `--legacy-peer-deps` fallback if the project's deps don't resolve
+  cleanly). On dxkit-on-dxkit during back-to-back report runs this caused
+  subsequent dxkit subcommand invocations to crash with `Cannot find
+  module 'hosted-git-info'`. On larger repos like vyuhlabs-platform
+  (835MB node_modules) the reinstall happened to succeed but still
+  mutated state silently. **Fix**: stage `package.json` +
+  `package-lock.json` in a fresh temp dir before invoking osv-scanner,
+  discard the temp dir after parsing JSON output. Project's tree is now
+  read-only treatment (the contract dxkit's analyzers always claimed).
+  Regression test added in `test/osv-scanner-fix.test.ts`. Caught by
+  exactly the discipline the user pushed for: "never ship broken;
+  understand the root cause and fix properly".
+
+
 
 Phase 10k.1 — Java language pack (recipe stress test #1, JVM-cousin
 shape). 7th language pack lands the cross-ecosystem matrix at

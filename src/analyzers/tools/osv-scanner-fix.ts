@@ -22,6 +22,7 @@
 
 import { execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { DepVulnFinding, DepVulnUpgradePlan } from '../../languages/capabilities/types';
 import { isMajorBump } from './semver-bump';
@@ -72,6 +73,26 @@ interface OsvFixPatch {
  *
  * Never throws. `gatherTsDepVulnsResult` calls this unconditionally and
  * treats the empty map as "no enrichment available".
+ *
+ * **TEMP-DIR ISOLATION (10k.1.5b fix — discovered during 2.4.5 pre-ship
+ * regression):** osv-scanner v2's `fix` subcommand invokes `npm install`
+ * internally to compute upgrade patches. That `npm install` MUTATES the
+ * cwd's node_modules — wipes it then reinstalls (often with
+ * `--legacy-peer-deps` fallback if the project's deps don't resolve
+ * cleanly). On dxkit's own repo this caused subsequent dxkit subcommand
+ * invocations to crash with `Cannot find module 'hosted-git-info'`
+ * because osv-scanner's reinstall left an incomplete tree. On
+ * vyuhlabs-platform (835MB node_modules) the reinstall happened to
+ * succeed but still mutated state silently — a 5-month-old data-mutation
+ * bug shipped since 2.4.0 / Phase 10h.6 and only caught now because
+ * 2.4.5 pre-ship regression ran reports back-to-back on dxkit's own repo
+ * and tripped the chain.
+ *
+ * Mitigation: we copy `package.json` + `package-lock.json` to a fresh
+ * temp dir, run osv-scanner there, and discard the temp dir afterward.
+ * Output JSON identifies advisories by `(package, version, id)` tuples
+ * which are independent of cwd, so the upgrade-plan map we return is
+ * unchanged. The caller's project gets read-only treatment.
  */
 export async function gatherOsvScannerFixPlans(
   cwd: string,
@@ -85,27 +106,40 @@ export async function gatherOsvScannerFixPlans(
   }
   const tool = findTool(TOOL_DEFS['osv-scanner'], cwd);
   if (!tool.available || !tool.path) return new Map();
-  // Quote paths defensively — repo paths with spaces break shell parsing
-  // otherwise, and osv-scanner's CLI is shell-parsed.
-  const cmd =
-    `${tool.path} fix --format json --manifest ${JSON.stringify(manifestRel)} ` +
-    `--lockfile ${JSON.stringify(lockfileRel)}`;
-  let raw: string;
+
+  // Stage manifest + lockfile in a fresh temp dir. osv-scanner mutates
+  // node_modules in its working directory; staging here protects the
+  // caller's actual project tree from any side effects.
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-osv-fix-'));
   try {
-    raw = execSync(cmd, {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
-    });
-  } catch (err) {
-    // osv-scanner exits non-zero whenever it finds vulns, even though the
-    // JSON payload is complete. Capture stdout from the error and proceed.
-    const e = err as { stdout?: Buffer | string };
-    if (!e.stdout) return new Map();
-    raw = typeof e.stdout === 'string' ? e.stdout : e.stdout.toString('utf8');
+    fs.copyFileSync(manifestAbs, path.join(tempDir, manifestRel));
+    fs.copyFileSync(lockfileAbs, path.join(tempDir, lockfileRel));
+
+    // Quote paths defensively — temp paths with spaces would break shell
+    // parsing (rare on Linux but Windows os.tmpdir paths can include
+    // them).
+    const cmd =
+      `${tool.path} fix --format json --manifest ${JSON.stringify(manifestRel)} ` +
+      `--lockfile ${JSON.stringify(lockfileRel)}`;
+    let raw: string;
+    try {
+      raw = execSync(cmd, {
+        cwd: tempDir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120_000,
+      });
+    } catch (err) {
+      // osv-scanner exits non-zero whenever it finds vulns, even though the
+      // JSON payload is complete. Capture stdout from the error and proceed.
+      const e = err as { stdout?: Buffer | string };
+      if (!e.stdout) return new Map();
+      raw = typeof e.stdout === 'string' ? e.stdout : e.stdout.toString('utf8');
+    }
+    return parseOsvScannerFixOutput(raw);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  return parseOsvScannerFixOutput(raw);
 }
 
 /**
