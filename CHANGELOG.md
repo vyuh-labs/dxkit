@@ -11,22 +11,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (high-severity, discovered during 2.4.5 pre-ship regression)
 
-- **`osv-scanner fix` was mutating the analyzed project's `node_modules`**
-  (5-month-old bug shipped since 2.4.0 / Phase 10h.6). osv-scanner v2's
-  `fix` subcommand invokes `npm install` internally to compute upgrade
-  patches; that install wipes / reinstalls the cwd's `node_modules` (often
-  with `--legacy-peer-deps` fallback if the project's deps don't resolve
-  cleanly). On dxkit-on-dxkit during back-to-back report runs this caused
-  subsequent dxkit subcommand invocations to crash with `Cannot find
-  module 'hosted-git-info'`. On larger repos like vyuhlabs-platform
-  (835MB node_modules) the reinstall happened to succeed but still
-  mutated state silently. **Fix**: stage `package.json` +
-  `package-lock.json` in a fresh temp dir before invoking osv-scanner,
-  discard the temp dir after parsing JSON output. Project's tree is now
-  read-only treatment (the contract dxkit's analyzers always claimed).
-  Regression test added in `test/osv-scanner-fix.test.ts`. Caught by
-  exactly the discipline the user pushed for: "never ship broken;
-  understand the root cause and fix properly".
+- **`osv-scanner fix` was THREE bugs in one** (5-month-old bug shipped
+  since 2.4.0 / Phase 10h.6). osv-scanner v2's `fix` subcommand invokes
+  `npm install` internally to compute upgrade patches. dxkit was
+  invoking it in the user's project cwd, which caused all three of the
+  following:
+
+  1. **Data mutation** — `npm install` wipes / reinstalls the cwd's
+     `node_modules` (often with `--legacy-peer-deps` fallback when
+     peer-deps don't resolve cleanly). Visible to users running
+     back-to-back commands: `dxkit vulnerabilities` followed by `npm
+     test` or any other step depending on stable `node_modules` would
+     fail cryptically. Discovered when dxkit-on-dxkit crashed mid-run
+     with `Cannot find module 'hosted-git-info'`.
+
+  2. **Process orphan leak** — osv-scanner's `npm install` grandchildren
+     outlived dxkit's 120s `execSync` budget. `execSync(..., {timeout})`
+     SIGTERMs only the immediate child; npm install + its node-package
+     subprocesses orphaned to PID 1 and kept eating CPU/memory until
+     they finished or the shell exited. Each `dxkit vulnerabilities`
+     invocation could leak 1-3 orphans; in CI this polluted subsequent
+     steps.
+
+  3. **Silent BoM under-reporting** — when osv-scanner's npm install
+     left a partially-broken `node_modules` (peer-dep mismatches that
+     `--legacy-peer-deps` couldn't fully resolve), dxkit's BoM
+     aggregator subsequently couldn't enumerate the affected
+     dependencies. Root-project deps got silently dropped from the
+     BoM. On dxkit-on-dxkit comparison, 2.4.4 reported only 7 BoM
+     entries (sub-fixture deps) vs 2.4.5's 24 (sub-fixtures + dxkit's
+     own 17 root deps including `hosted-git-info`, `eslint`,
+     `typescript`, etc.). `unfilteredTotalPackages` 22 → 353. The
+     analyzed project's own deps were missing from BoM whenever the
+     bug hit. Most repos that resolve peer-deps cleanly under
+     `--legacy-peer-deps` weren't affected (vyuhlabs-platform's BoM
+     stayed correct at 145 packages); repos with subtle peer-dep
+     issues silently lost root-dep enumeration.
+
+  **Fix** (split across 10k.1.5b and 10k.1.5c):
+
+  - **Temp-dir isolation (10k.1.5b)**: stage `package.json` +
+    `package-lock.json` in a fresh temp dir before invoking osv-scanner,
+    discard the temp dir after parsing JSON output. Project's tree is
+    now read-only treatment (the contract dxkit's analyzers always
+    claimed). Stops bug #1 (mutation) and #3 (BoM under-reporting,
+    since `node_modules` no longer gets clobbered).
+
+  - **Process-group SIGKILL on timeout (10k.1.5c)**: new
+    `runDetached(cmd, args, opts)` helper in `src/analyzers/tools/runner.ts`
+    spawns the child in its own process group via
+    `spawn({ detached: true })` and `process.kill(-pid, 'SIGKILL')` on
+    timeout — kills grandchildren atomically. Stops bug #2 (orphan
+    leak). Reusable for any future tool that may fork grandchildren
+    (PMD's JVM, mvn, gradle).
+
+  Regression tests added: `test/osv-scanner-fix.test.ts` for the
+  isolation contract; `test/runner.test.ts` for the process-group
+  group-kill semantics (sleep-30-grandchild + 200ms timeout asserts
+  elapsed < 2s — would block 30s if process-group regressed). Caught
+  by the discipline the user pushed for: "never ship broken;
+  understand the root cause and fix properly". The discipline was
+  validated end-to-end — the same scan that found bug #1 also
+  surfaced #2 and #3 once we knew where to look.
+
+  **Forensic evidence preserved** at
+  `tmp/regression/2.4.4/dxkit/bom.json` (gitignored — 2.4.4 baseline
+  with under-reported BoM) vs `tmp/regression/2.4.5-fixed/dxkit/bom.json`
+  (full enumeration after the fix).
 
 
 

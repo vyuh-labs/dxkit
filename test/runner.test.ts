@@ -112,11 +112,14 @@ describe('runDetached — process group lifecycle (10k.1.5c regression)', () => 
   it('passes argv through without shell interpretation', async () => {
     // No shell expansion of `$HOME`, `*`, etc. — args reach the binary
     // verbatim. Important for osv-scanner paths that may contain `$` or
-    // glob characters.
-    const outcome = await runDetached('printf', ['$HOME and *'], {
-      cwd: process.cwd(),
-      timeoutMs: 5000,
-    });
+    // glob characters. Use node directly (bypasses PATH-binary
+    // discovery quirks that surfaced under v8 coverage instrumentation
+    // when this used `printf`).
+    const outcome = await runDetached(
+      'node',
+      ['-e', 'process.stdout.write(process.argv[1])', '$HOME and *'],
+      { cwd: process.cwd(), timeoutMs: 5000 },
+    );
     expect(outcome.stdout).toBe('$HOME and *');
   });
 });
