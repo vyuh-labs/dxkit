@@ -20,11 +20,11 @@
  * structured form check `upgradePlan` presence.
  */
 
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { DepVulnFinding, DepVulnUpgradePlan } from '../../languages/capabilities/types';
+import { runDetached } from './runner';
 import { isMajorBump } from './semver-bump';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
@@ -115,28 +115,24 @@ export async function gatherOsvScannerFixPlans(
     fs.copyFileSync(manifestAbs, path.join(tempDir, manifestRel));
     fs.copyFileSync(lockfileAbs, path.join(tempDir, lockfileRel));
 
-    // Quote paths defensively — temp paths with spaces would break shell
-    // parsing (rare on Linux but Windows os.tmpdir paths can include
-    // them).
-    const cmd =
-      `${tool.path} fix --format json --manifest ${JSON.stringify(manifestRel)} ` +
-      `--lockfile ${JSON.stringify(lockfileRel)}`;
-    let raw: string;
-    try {
-      raw = execSync(cmd, {
-        cwd: tempDir,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 120_000,
-      });
-    } catch (err) {
-      // osv-scanner exits non-zero whenever it finds vulns, even though the
-      // JSON payload is complete. Capture stdout from the error and proceed.
-      const e = err as { stdout?: Buffer | string };
-      if (!e.stdout) return new Map();
-      raw = typeof e.stdout === 'string' ? e.stdout : e.stdout.toString('utf8');
-    }
-    return parseOsvScannerFixOutput(raw);
+    // Use runDetached (10k.1.5c addition) to put osv-scanner in its own
+    // process group. osv-scanner's `fix` subcommand spawns `npm install`
+    // grandchildren that orphan if execSync's timeout merely sends
+    // SIGTERM to the immediate child (the original 10k.1.5b fix only
+    // addressed node_modules mutation; the orphan-process leak was a
+    // separate symptom of the same root cause). runDetached SIGKILLs
+    // the entire group on timeout — taking npm-install + its
+    // subprocesses with it.
+    const outcome = await runDetached(
+      tool.path,
+      ['fix', '--format', 'json', '--manifest', manifestRel, '--lockfile', lockfileRel],
+      { cwd: tempDir, timeoutMs: 120_000 },
+    );
+    // osv-scanner exits non-zero whenever it finds vulns, even though
+    // the JSON payload is complete. Always parse stdout regardless of
+    // exit code. Empty stdout (timed-out or hard-failed) → empty map.
+    if (!outcome.stdout) return new Map();
+    return parseOsvScannerFixOutput(outcome.stdout);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

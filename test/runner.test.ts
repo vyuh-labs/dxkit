@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseJsonStream } from '../src/analyzers/tools/runner';
+import { parseJsonStream, runDetached } from '../src/analyzers/tools/runner';
 
 describe('parseJsonStream', () => {
   it('parses concatenated single-line objects', () => {
@@ -56,5 +56,67 @@ describe('parseJsonStream', () => {
   it('ignores leading/trailing non-JSON text', () => {
     const raw = 'preamble noise\n{"a":1}\ntrailing junk';
     expect(parseJsonStream(raw)).toEqual([{ a: 1 }]);
+  });
+});
+
+describe('runDetached — process group lifecycle (10k.1.5c regression)', () => {
+  it('returns clean exit + captured stdout on success', async () => {
+    const outcome = await runDetached('printf', ['hello'], {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    });
+    expect(outcome.code).toBe(0);
+    expect(outcome.stdout).toBe('hello');
+    expect(outcome.timedOut).toBe(false);
+  });
+
+  it('captures stderr separately from stdout', async () => {
+    const outcome = await runDetached('sh', ['-c', 'printf out; printf err >&2'], {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    });
+    expect(outcome.code).toBe(0);
+    expect(outcome.stdout).toBe('out');
+    expect(outcome.stderr).toBe('err');
+  });
+
+  it('SIGKILLs the entire process group on timeout, including grandchildren', async () => {
+    // sh -c 'sleep 30 & wait' spawns sleep as a grandchild. If runDetached
+    // only killed the immediate sh child (default execSync timeout
+    // behaviour), the wait would block until sleep finishes 30s later.
+    // With process-group SIGKILL, both sh and sleep die at once and we
+    // return in ~200ms.
+    const start = Date.now();
+    const outcome = await runDetached('sh', ['-c', 'sleep 30 & wait'], {
+      cwd: process.cwd(),
+      timeoutMs: 200,
+    });
+    const elapsed = Date.now() - start;
+    expect(outcome.timedOut).toBe(true);
+    // 2-second budget covers test-runner overhead while keeping the
+    // assertion strict enough to fail loudly if process-group kill
+    // regresses (would block for 30s).
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('handles spawn-time errors gracefully (no throw)', async () => {
+    const outcome = await runDetached('this-command-does-not-exist-xyz', [], {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    });
+    // ENOENT path → resolves with empty stdout. No throw.
+    expect(outcome.stdout).toBe('');
+    expect(outcome.timedOut).toBe(false);
+  });
+
+  it('passes argv through without shell interpretation', async () => {
+    // No shell expansion of `$HOME`, `*`, etc. — args reach the binary
+    // verbatim. Important for osv-scanner paths that may contain `$` or
+    // glob characters.
+    const outcome = await runDetached('printf', ['$HOME and *'], {
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    });
+    expect(outcome.stdout).toBe('$HOME and *');
   });
 });
