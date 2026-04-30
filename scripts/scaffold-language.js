@@ -72,6 +72,169 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ─── G4 (Recipe v3): benchmark fixture profile registry ────────────────────
+// Per-language conventions for the standard 4 benchmark fixtures
+// (Secrets / BadLint / Duplications / UntestedModule). When scaffolding
+// a new pack, add an entry here BEFORE running `npm run new-lang` so
+// the scaffolder writes ready-to-use fixture stubs instead of empty
+// placeholders.
+//
+// The standard 4 fixtures are language-agnostic in INTENT (matrix
+// asserts gitleaks/jscpd/test-gaps fire) but language-specific in
+// SYNTAX. Pre-templating saves ~30 min of cribbing-from-kotlin per new
+// pack. Languages without a profile fall back to GENERIC_FIXTURE_STUB
+// (writes empty files with TODO markers — still better than nothing).
+//
+// Profile fields:
+//   ext           — file extension (no leading dot)
+//   filenameCase  — 'pascal' (Secrets.kt) or 'snake' (secrets.py)
+//   comment       — line-comment marker ('//', '#', '--', etc.)
+//   secrets       — body of the AKIA-leaking file (gitleaks AWS rule)
+//   badLint       — body that violates the pack's default linter
+//   duplications  — body with two near-identical methods (jscpd target)
+//   untested      — body with one simple class/function (no test pair)
+//
+// AKIA constant: every profile must use the literal "AKIA1234567890ABCDEF"
+// — gitleaks' default `aws-access-token` rule matches /AKIA[0-9A-Z]{16}/
+// and the matrix asserts severity=critical.
+
+const GENERIC_FIXTURE_STUB = {
+  ext: 'TODO',
+  filenameCase: 'pascal',
+  comment: '//',
+  secrets: '// TODO: declare AWS_ACCESS_KEY_ID constant equal to "AKIA1234567890ABCDEF"\n',
+  badLint:
+    "// TODO: write a body that violates the pack's default linter\n" +
+    '//       (e.g. unused-import, magic-number, useless-assignment)\n',
+  duplications:
+    '// TODO: two near-identical methods (>=20 lines each, >=50 jscpd tokens)\n' +
+    "//       cribbing from any existing pack's Duplications fixture is fine\n",
+  untested:
+    '// TODO: one simple class/function with no matching test file\n' +
+    '//       body must be lint-clean, clone-free, and secret-free\n',
+};
+
+const FIXTURE_PROFILES = {
+  ruby: {
+    ext: 'rb',
+    filenameCase: 'snake',
+    comment: '#',
+    secrets:
+      '# Hardcoded fake AWS access key — gitleaks should flag this as\n' +
+      '# `aws-access-token`. Per-language secret fixture pre-staging the\n' +
+      '# cross-ecosystem assertion surface.\n' +
+      '#\n' +
+      '# The key below is intentionally fake (low-entropy, no valid AWS\n' +
+      '# checksum) so it cannot be used to authenticate.\n' +
+      'AWS_ACCESS_KEY_ID = "AKIA1234567890ABCDEF"\n',
+    badLint:
+      '# Deliberate RuboCop violations on default config:\n' +
+      '#   - Lint/UselessAssignment (unused_var)\n' +
+      '#   - Style/RedundantReturn (return at end of method)\n' +
+      'def bad_lint\n' +
+      '  unused_var = 42\n' +
+      '  return 0\n' +
+      'end\n',
+    duplications:
+      '# Two near-identical methods — jscpd should detect this clone with\n' +
+      '# default thresholds (--min-lines 5 --min-tokens 50).\n' +
+      'def summarize_items_a(items)\n' +
+      '  total = 0\n' +
+      '  sum_positive = 0\n' +
+      '  sum_negative = 0\n' +
+      '  count_positive = 0\n' +
+      '  count_negative = 0\n' +
+      '  items.each do |item|\n' +
+      '    if item > 0\n' +
+      '      total = total + item\n' +
+      '      sum_positive = sum_positive + item\n' +
+      '      count_positive = count_positive + 1\n' +
+      '    else\n' +
+      '      total = total - item\n' +
+      '      sum_negative = sum_negative + item\n' +
+      '      count_negative = count_negative + 1\n' +
+      '    end\n' +
+      '  end\n' +
+      '  avg_pos = count_positive > 0 ? sum_positive.to_f / count_positive : 0.0\n' +
+      '  avg_neg = count_negative > 0 ? sum_negative.to_f / count_negative : 0.0\n' +
+      '  total + avg_pos + avg_neg\n' +
+      'end\n' +
+      '\n' +
+      'def summarize_items_b(items)\n' +
+      '  total = 0\n' +
+      '  sum_positive = 0\n' +
+      '  sum_negative = 0\n' +
+      '  count_positive = 0\n' +
+      '  count_negative = 0\n' +
+      '  items.each do |item|\n' +
+      '    if item > 0\n' +
+      '      total = total + item\n' +
+      '      sum_positive = sum_positive + item\n' +
+      '      count_positive = count_positive + 1\n' +
+      '    else\n' +
+      '      total = total - item\n' +
+      '      sum_negative = sum_negative + item\n' +
+      '      count_negative = count_negative + 1\n' +
+      '    end\n' +
+      '  end\n' +
+      '  avg_pos = count_positive > 0 ? sum_positive.to_f / count_positive : 0.0\n' +
+      '  avg_neg = count_negative > 0 ? sum_negative.to_f / count_negative : 0.0\n' +
+      '  total + avg_pos + avg_neg\n' +
+      'end\n',
+    untested:
+      '# Deliberate untested file fixture. No matching `_spec.rb` /\n' +
+      "# `_test.rb` exists; dxkit's `test-gaps` filename-match coverage\n" +
+      '# source should report this in `gaps[]` with `hasMatchingTest: false`.\n' +
+      'class UntestedModule\n' +
+      '  def describe\n' +
+      '    "untested"\n' +
+      '  end\n' +
+      'end\n',
+  },
+};
+
+const FIXTURE_NAMES = ['secrets', 'badLint', 'duplications', 'untested'];
+
+function fixtureFilename(concern, profile) {
+  // pascal: Secrets.kt, BadLint.kt, Duplications.kt, UntestedModule.kt
+  // snake:  secrets.py, bad_lint.py, duplications.py, untested_module.py
+  const pascalNames = {
+    secrets: 'Secrets',
+    badLint: 'BadLint',
+    duplications: 'Duplications',
+    untested: 'UntestedModule',
+  };
+  const snakeNames = {
+    secrets: 'secrets',
+    badLint: 'bad_lint',
+    duplications: 'duplications',
+    untested: 'untested_module',
+  };
+  const base = profile.filenameCase === 'snake' ? snakeNames[concern] : pascalNames[concern];
+  return `${base}.${profile.ext}`;
+}
+
+function writeBenchmarkFixtures(id, displayName, fixtureDir) {
+  const profile = FIXTURE_PROFILES[id] ?? GENERIC_FIXTURE_STUB;
+  const isGeneric = !FIXTURE_PROFILES[id];
+  if (isGeneric) {
+    info(
+      `no FIXTURE_PROFILES entry for '${id}' — writing TODO-stub fixtures. ` +
+        `Add a profile to scripts/scaffold-language.js for the next scaffold.`,
+    );
+  }
+  for (const concern of FIXTURE_NAMES) {
+    const filename = fixtureFilename(concern, profile);
+    const headerLines = [
+      `${profile.comment} Per-language ${concern} fixture, ${displayName} row.`,
+      `${profile.comment} Recipe v3 (G4) scaffolded — adjust syntax / linter rules as needed.`,
+      '',
+    ];
+    const content = headerLines.join('\n') + profile[concern];
+    writeIfMissing(path.join(fixtureDir, filename), content);
+  }
+}
+
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -353,17 +516,11 @@ Reference shape: \`test/fixtures/benchmarks/python/\` (most-canonical),
   - [ ] Pick the right \`<manifest>\` osv-scanner / native scanner reads
         (e.g. \`pom.xml\` for Maven, \`Cargo.lock\` for Rust). Pin a
         known-vulnerable version of a stable popular package.
-  - [ ] Write \`BadLint.<ext>\` with multiple deliberate violations the
-        linter's default ruleset flags (multiple so at least one fires
-        across version drift).
-  - [ ] Write \`Duplications.<ext>\` with two near-identical helper
-        functions sized comfortably above jscpd's defaults
-        (\`--min-lines 5 --min-tokens 50\`).
-  - [ ] Write \`Secrets.<ext>\` with a fake AKIA-pattern AWS key that
-        matches gitleaks' default \`aws-access-token\` rule but is
-        clearly bogus (low-entropy patterned digits).
-  - [ ] Write \`UntestedModule.<ext>\` — simple class/function with no
-        matching test file. Body should be lint-clean and clone-free.
+  - [ ] Recipe v3 / G4 scaffolded the standard 4 fixtures
+        (Secrets / BadLint / Duplications / UntestedModule). Verify
+        they suit ${displayName}'s default linter ruleset and adjust
+        if needed; if no FIXTURE_PROFILES entry exists for this
+        language, the files are TODO stubs you must fill in.
   - [ ] Register in \`test/integration/cross-ecosystem.test.ts\` —
         add a row to \`BENCHMARK_LANGUAGES\` and a
         \`cross-ecosystem benchmarks — ${displayName}\` describe block.
@@ -379,6 +536,14 @@ captured tool-output bytes for unit-test parser validation — see that
 dir's HARVEST.md for capture commands.
 `;
 writeIfMissing(path.join(fixtureDir, 'README.md'), FIXTURE_README);
+
+// ─── 3b. G4 (Recipe v3): templated standard-4 fixture stubs ────────────────
+// Writes Secrets / BadLint / Duplications / UntestedModule files using
+// the per-language profile from FIXTURE_PROFILES. Saves ~30 min of
+// hand-cribbing from kotlin/python on each new pack. Falls back to
+// generic TODO stubs when no profile exists for the language.
+
+writeBenchmarkFixtures(id, displayName, fixtureDir);
 
 // ─── 4. Rule file stub: src-templates/.claude/rules/<id>.md ─────────────────
 
@@ -492,7 +657,8 @@ const nextSteps = [
   `     (the C# defect lesson — parsers MUST be unit-tested against real bytes)`,
   `  5. Implement capability providers + parsers (capabilities.depVulns / lint / coverage / etc.)`,
   `  6. Fill in parser-test stubs in test/languages-${id}.test.ts with the harvested fixtures`,
-  `  7. Populate test/fixtures/benchmarks/${id}/ — the standard 5 files (see fixture README)`,
+  `  7. test/fixtures/benchmarks/${id}/ — Secrets/BadLint/Duplications/UntestedModule scaffolded (G4);`,
+  `     fill in the dep manifest (e.g. Gemfile, pom.xml, requirements.txt) by hand`,
   `  8. Register in test/integration/cross-ecosystem.test.ts: BENCHMARK_LANGUAGES row +`,
   `     "cross-ecosystem benchmarks — ${displayName}" describe block (extend lint.expectedTool union)`,
   `  9. Add ${id} toolchain install to .github/workflows/ci.yml`,
