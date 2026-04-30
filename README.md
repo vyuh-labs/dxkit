@@ -32,6 +32,14 @@ npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks
 
 The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
 
+> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. the 2.4.5 osv-scanner-fix data-mutation fix), run:
+>
+> ```bash
+> npm install -g @vyuhlabs/dxkit@latest
+> # or, if you don't need a global install, remove the old one and rely on npx:
+> npm uninstall -g @vyuhlabs/dxkit
+> ```
+
 ---
 
 ## Analyzer CLI (`vyuh-dxkit <command>`)
