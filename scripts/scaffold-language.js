@@ -640,6 +640,33 @@ if (indexSrc.includes(importLine)) {
   ok(`updated src/languages/index.ts (registered ${id} in LANGUAGES)`);
 }
 
+// ─── 8. G6 (Recipe v3): CHANGELOG [Unreleased] stub ───────────────────────
+// Append a TODO line under the existing `## [Unreleased]` section so
+// the developer doesn't forget to write release notes at ship time.
+// Idempotent — skips if a line for this pack already exists.
+
+const changelogPath = path.join(REPO_ROOT, 'CHANGELOG.md');
+if (fs.existsSync(changelogPath)) {
+  let changelogSrc = fs.readFileSync(changelogPath, 'utf-8');
+  const stubLine = `- **TODO: \`${displayName}\` pack scaffolded.** Replace with real release notes (capabilities landed, defects closed, recipe gaps surfaced) before ship.`;
+  if (changelogSrc.includes(stubLine)) {
+    info(`CHANGELOG.md already has a stub for '${id}'`);
+  } else {
+    // Insert one line below `## [Unreleased]` plus its trailing blank.
+    const unreleasedRe = /^(## \[Unreleased\]\n\n?)/m;
+    if (!unreleasedRe.test(changelogSrc)) {
+      info(
+        'CHANGELOG.md missing `## [Unreleased]` section — skipping G6 stub. ' +
+          'Add the section manually and re-run if needed.',
+      );
+    } else {
+      changelogSrc = changelogSrc.replace(unreleasedRe, `$1${stubLine}\n\n`);
+      fs.writeFileSync(changelogPath, changelogSrc);
+      ok(`updated CHANGELOG.md ([Unreleased] stub for '${id}')`);
+    }
+  }
+}
+
 // ─── Next-steps checklist ────────────────────────────────────────────────────
 
 // CLI output below — annotated with slop-ok per the project convention.
@@ -665,7 +692,7 @@ const nextSteps = [
   ` 10. Document the toolchain requirement in CONTRIBUTING.md "Cross-ecosystem benchmarks"`,
   ` 11. Update README.md ecosystem coverage table + CLAUDE.md path globs for the new language`,
   `     (Recipe v3 / G5 — bash scripts/check-docs-coverage.sh fails until you do)`,
-  ` 12. Add a CHANGELOG.md "[Unreleased]" entry describing the new pack scaffold`,
+  ` 12. Curate the CHANGELOG.md "[Unreleased]" stub before ship (G6 wrote a placeholder)`,
   '',
   `  Validate: npm run test:run`,
   `  Recipe enforcement runs in pre-commit (architecture greps + contract tests + recipe-playbook synthesis + doc coverage).`,
