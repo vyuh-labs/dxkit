@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ruby language pack** (Phase 10k.2 — recipe stress test #2). 8th
+  language, fully dynamic outside the JVM family. Detection is
+  source-presence-driven (G9 — requires `.rb` files within depth 5,
+  not bare `Gemfile`). Capabilities land incrementally in subsequent
+  10k.2.x commits (imports + testFramework, coverage via SimpleCov,
+  lint via RuboCop, depVulns via bundler-audit + osv-scanner
+  Gemfile.lock). Cross-ecosystem matrix wired with the standard 4
+  benchmark fixtures (Secrets/BadLint/Duplications/UntestedModule —
+  G4-scaffolded with Ruby-specific syntax).
+
+### Recipe v3 (final installment)
+
+- **G4** — scaffolder writes templated benchmark fixtures with
+  per-language syntax tokens (PascalCase vs snake_case filenames,
+  comment markers, AKIA constant placement). Saves ~30 min per new
+  pack. Languages without a profile fall back to TODO stubs.
+- **G6** — scaffolder appends `[Unreleased]` CHANGELOG stub on
+  `npm run new-lang`. Idempotent. Forces release-notes thinking at
+  scaffold time, not ship-tag day.
+- **G1** — class-wide gate parser robustness audit. Auto-derived
+  language lists in `check-architecture.sh` (LP-A1/A2/A3 patterns no
+  longer drift as new packs land). Self-test pattern documented:
+  every gate parsing TS declarations exits 1 with explicit failure
+  when its parser produces an empty list. Surfaced its own bug —
+  the scaffolder's `LANGUAGES` registry update produced a double
+  comma under Prettier multi-line shape; fixed in the same series.
+
 ## [2.4.5] - 2026-04-29
 
 ### Fixed (high-severity, discovered during 2.4.5 pre-ship regression)
