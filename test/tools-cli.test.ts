@@ -19,6 +19,7 @@ const NODE_ONLY: DetectedStack['languages'] = {
   csharp: false,
   kotlin: false,
   java: false,
+  ruby: false,
 };
 
 const EMPTY_STACK: DetectedStack['languages'] = {
@@ -29,6 +30,7 @@ const EMPTY_STACK: DetectedStack['languages'] = {
   csharp: false,
   kotlin: false,
   java: false,
+  ruby: false,
 };
 
 describe('selectToolNames', () => {
