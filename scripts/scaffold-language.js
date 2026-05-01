@@ -634,7 +634,13 @@ if (indexSrc.includes(importLine)) {
     die('Could not locate LANGUAGES array in src/languages/index.ts.');
   }
   indexSrc = indexSrc.replace(registryRe, (_match, prefix, contents, suffix) => {
-    return `${prefix}${contents.trim()}, ${id}${suffix}`;
+    // G1 audit follow-up: strip both leading whitespace AND trailing
+    // comma + whitespace before append. Multi-line shape from Prettier
+    // is `[\n  python,\n  ...,\n  java,\n]` — `contents.trim()` alone
+    // leaves the trailing comma in place and produced `java,, ruby`
+    // (double comma) on the first scaffold against the multi-line form.
+    const normalized = contents.replace(/,?\s*$/, '').replace(/^\s+/, '');
+    return `${prefix}${normalized}, ${id}${suffix}`;
   });
   fs.writeFileSync(indexPath, indexSrc);
   ok(`updated src/languages/index.ts (registered ${id} in LANGUAGES)`);
