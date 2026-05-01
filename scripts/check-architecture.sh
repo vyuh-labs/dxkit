@@ -4,6 +4,44 @@
 
 ERRORS=0
 
+# ─── G1 (Recipe v3): LP language list auto-derived from registry ────────────
+# Pre-G1: each LP-A* rule below had its own hardcoded language list
+# (`python|go|rust|csharp` etc.). Lists drifted as new packs landed:
+# kotlin (2.4.4) and java (2.4.5) weren't in any rule's pattern, so
+# violations against `config.languages.kotlin` slipped through this gate
+# silently — only D008's `typecheck:test` caught them at a later stage.
+#
+# Now we derive the language ID list from `src/languages/index.ts`
+# using the same awk block extraction the cross-ecosystem and docs
+# coverage gates use. Multi-line robust (Prettier reformatted at the
+# 7th LANGUAGES entry / 10k.1 Java add).
+#
+# The list is always augmented with `node|nextjs` as defensive guards
+# — those aren't pack IDs but pre-10f.4 code paths sometimes reference
+# them via `as any` or legacy DetectedStack shape.
+LANG_REGISTRY="src/languages/index.ts"
+if [ -f "$LANG_REGISTRY" ]; then
+  LANG_BLOCK=$(awk '/^export const LANGUAGES/,/^\];/' "$LANG_REGISTRY" | tr -d '\n')
+  LANG_BODY=$(echo "$LANG_BLOCK" | sed 's/.*\[\(.*\)\].*/\1/' | sed 's/,[[:space:]]*$//')
+  LP_LANG_IDS_RAW=$(echo "$LANG_BODY" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+  if [ -z "$LP_LANG_IDS_RAW" ]; then
+    echo "❌ G1 self-test failed: parsed zero LANGUAGES entries from $LANG_REGISTRY."
+    echo "   The block-extraction parser must be broken — fix before continuing."
+    exit 1
+  fi
+  # Pipe-delimited for use inside grep -E patterns.
+  LP_LANG_IDS=$(echo "$LP_LANG_IDS_RAW" | tr '\n' '|' | sed 's/|$//')
+  LP_LANG_IDS_FULL="${LP_LANG_IDS}|node|nextjs"
+  # IF_<LANG> tokens: uppercase + prefix. Always include IF_NODE/IF_NEXTJS
+  # (framework-level, not pack-level).
+  LP_IF_TOKENS=$(echo "$LP_LANG_IDS_RAW" | tr '[:lower:]' '[:upper:]' | sed 's/^/IF_/' | tr '\n' '|' | sed 's/|$//')
+  LP_IF_TOKENS="${LP_IF_TOKENS}|IF_NODE|IF_NEXTJS"
+else
+  # Fallback (shouldn't hit in normal CI but keeps the script runnable).
+  LP_LANG_IDS_FULL="python|typescript|go|rust|csharp|kotlin|java|node|nextjs"
+  LP_IF_TOKENS="IF_PYTHON|IF_TYPESCRIPT|IF_GO|IF_RUST|IF_CSHARP|IF_KOTLIN|IF_JAVA|IF_NODE|IF_NEXTJS"
+fi
+
 # Rule 2: No duplicated tool invocation.
 # The graphify Python script should only exist in tools/graphify.ts.
 # If it appears elsewhere, someone copy-pasted instead of importing.
@@ -46,7 +84,7 @@ fi
 # Filter trailing `| grep -v -E ':[[:space:]]*(//|\*)'` skips lines whose
 # content (after `file:line:`) starts with `//` or `*` — i.e. JSDoc / line-
 # comment text that mentions the token without using it.
-LP_IF_VIOLATIONS=$(grep -rnE "\b(IF_PYTHON|IF_GO|IF_RUST|IF_CSHARP|IF_NODE|IF_NEXTJS)\b" src/ 2>/dev/null \
+LP_IF_VIOLATIONS=$(grep -rnE "\b(${LP_IF_TOKENS})\b" src/ 2>/dev/null \
   | grep -v "src/constants.ts:" \
   | grep -v "src/generator.ts:" \
   | grep -v "// lp-recipe-ok" \
@@ -65,7 +103,7 @@ fi
 # the pack registry (project-yaml.ts, constants.ts, generator.ts, detect.ts).
 # The allowlist shrinks to zero when 10f.4 lands the DetectedStack interface
 # refactor.
-LP_LANG_LOOKUP=$(grep -rnE "config\.languages\.(python|go|node|nextjs|rust|csharp)\b" src/ 2>/dev/null \
+LP_LANG_LOOKUP=$(grep -rnE "config\.languages\.(${LP_LANG_IDS_FULL})\b" src/ 2>/dev/null \
   | grep -v "src/languages/" \
   | grep -v "src/types.ts:" \
   | grep -v "src/project-yaml.ts:" \
@@ -85,7 +123,7 @@ fi
 # `src/languages/` (where each pack declares its own ruleFile) and the
 # framework-rule block in `generator.ts` (nextjs/loopback/express are
 # framework rules, NOT pack-owned).
-LP_RULEFILE_VIOLATIONS=$(grep -rnE "['\"](python|go|rust|csharp)\.md['\"]" src/ 2>/dev/null \
+LP_RULEFILE_VIOLATIONS=$(grep -rnE "['\"](${LP_LANG_IDS})\.md['\"]" src/ 2>/dev/null \
   | grep -v "src/languages/" \
   | grep -v "// lp-recipe-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)')
@@ -101,9 +139,14 @@ fi
 # kotlin's `.kt`/`.kts` required editing this string by hand, and the
 # kotlin matrix test silently failed because we forgot. Cross-cutting
 # extension globs MUST derive from `LANGUAGES.flatMap(l => l.sourceExtensions)`
-# (see `buildJscpdPattern` in `tools/jscpd.ts` for the pattern). This
-# rule catches any future regression.
-LP_GLOB_VIOLATIONS=$(grep -rnE "'\*\*/\*\.\{[^}]*\b(py|ts|tsx|js|go|rs|cs|kt)\b[^}]*\b(py|ts|tsx|js|go|rs|cs|kt)\b[^}]*\}'" src/ 2>/dev/null \
+# (see `buildJscpdPattern` in `tools/jscpd.ts` for the pattern).
+#
+# Extension list is hardcoded (not derived) because pack sourceExtensions
+# can be const references (typescript's `TS_JS_EXT`) that bash can't
+# resolve without evaluating TS. The defense is permissive: pattern
+# fires on 2+ known extensions anywhere in a multi-language glob, so
+# partial drift still triggers. Add new extensions when adding new pack.
+LP_GLOB_VIOLATIONS=$(grep -rnE "'\*\*/\*\.\{[^}]*\b(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)\b[^}]*\b(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)\b[^}]*\}'" src/ 2>/dev/null \
   | grep -v "// lp-recipe-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)')
 if [ -n "$LP_GLOB_VIOLATIONS" ]; then
