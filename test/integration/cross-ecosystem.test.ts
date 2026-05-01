@@ -90,7 +90,8 @@ interface BenchmarkLanguage {
       | 'clippy'
       | 'dotnet-format'
       | 'detekt'
-      | 'pmd';
+      | 'pmd'
+      | 'rubocop';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -176,6 +177,18 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     lint: { file: 'BadLint.java', expectedTool: 'pmd', requires: 'pmd' },
     dup: { file: 'Duplications.java' },
     untested: { file: 'UntestedModule.java' },
+  },
+  {
+    name: 'Ruby',
+    dir: 'ruby',
+    secret: { file: 'secrets.rb' },
+    // RuboCop is the canonical Ruby linter for the 10k.2 pack.
+    // `requires: 'rubocop'` skips the matrix row locally and on CI
+    // until the pack's lint capability + the rubocop CI toolchain
+    // install land in 10k.2.5.
+    lint: { file: 'bad_lint.rb', expectedTool: 'rubocop', requires: 'rubocop' },
+    dup: { file: 'duplications.rb' },
+    untested: { file: 'untested_module.rb' },
   },
 ];
 

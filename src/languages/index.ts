@@ -7,6 +7,7 @@ import { rust } from './rust';
 import { typescript } from './typescript';
 import { kotlin } from './kotlin';
 import { java } from './java';
+import { ruby } from './ruby';
 
 export type { LanguageId, LanguageSupport, LintSeverity, ProjectYamlContext } from './types';
 
@@ -18,6 +19,7 @@ export const LANGUAGES: readonly LanguageSupport[] = [
   rust,
   kotlin,
   java,
+  ruby,
 ];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {
