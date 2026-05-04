@@ -33,7 +33,8 @@ export type CoverageSource =
   | 'go'
   | 'cobertura'
   | 'lcov'
-  | 'jacoco';
+  | 'jacoco'
+  | 'simplecov';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */

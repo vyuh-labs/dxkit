@@ -70,6 +70,16 @@ export interface ToolDefinition extends ToolRequirement {
    * instead of scanning PATH / .bin. Takes precedence over binary search.
    */
   nodePackage?: string;
+  /**
+   * For tools that are Ruby gems without a CLI binary (e.g. SimpleCov,
+   * which is required from spec_helper.rb rather than invoked as a
+   * command). When set, detection runs `gem list -i <name>` instead of
+   * scanning PATH. Takes precedence over binary search. Mirrors the
+   * `nodePackage` pattern. Library-only Ruby tools that DO ship a CLI
+   * (rubocop, bundler-audit) should keep using `binaries: [...]`
+   * instead — the CLI shim is what `findTool` is meant to discover.
+   */
+  gemPackage?: string;
   /** Platform-specific install commands. */
   installCommands: {
     macos?: string;
@@ -179,6 +189,19 @@ function findNodePackage(pkg: string, cwd: string): string | null {
   return fs.existsSync(candidate) ? path.join(cwd, 'node_modules', pkg) : null;
 }
 
+/**
+ * Check if a Ruby gem is installed via `gem list -i <name>`. Returns
+ * the gem name itself on success (gems live across multiple paths —
+ * system, --user-install, rbenv shims — without a single canonical
+ * location). Mirrors `findNodePackage` for the Ruby ecosystem. Used
+ * for library-only gems (`require 'simplecov'`) where there's no CLI
+ * binary to probe.
+ */
+function findGemPackage(pkg: string): string | null {
+  const result = quickRun(`gem list -i ${pkg} 2>/dev/null`);
+  return result === 'true' ? pkg : null;
+}
+
 /** Special-case: check if graphify Python module is importable. */
 function findGraphifyPython(cwd: string): string | null {
   const pythonCandidates = [
@@ -240,6 +263,20 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
     const pkgPath = findNodePackage(def.nodePackage, cwd);
     if (pkgPath) return makeStatus(def, pkgPath, 'probe');
     // Nothing more to check — the package has no binary.
+    return {
+      name: def.name,
+      available: false,
+      path: null,
+      version: null,
+      source: 'missing',
+      requirement: def,
+    };
+  }
+
+  // Ruby gems without a CLI binary (e.g. SimpleCov):
+  if (def.gemPackage) {
+    const gemPath = findGemPackage(def.gemPackage);
+    if (gemPath) return makeStatus(def, gemPath, 'probe');
     return {
       name: def.name,
       available: false,
@@ -755,6 +792,27 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       macos: `${PIPX_BOOTSTRAP} && pipx install coverage`,
       linux: `${PIPX_BOOTSTRAP} && pipx install coverage`,
       windows: 'pipx install coverage',
+    },
+  },
+  // SimpleCov is a pure Ruby gem, library-loaded (`require 'simplecov'`
+  // from spec_helper.rb), no CLI binary. Detected via the `gemPackage`
+  // field — mirrors `nodePackage` for library-only Ruby gems. CLI-shim
+  // gems (rubocop, bundler-audit when they land) keep using
+  // `binaries: [...]`; only library-only gems use `gemPackage`.
+  simplecov: {
+    name: 'simplecov',
+    description: 'Ruby line-level coverage (produces coverage/.resultset.json)',
+    install: 'gem install --user-install simplecov',
+    check: 'gem list -i simplecov',
+    for: 'ruby',
+    layer: 'language',
+    binaries: [],
+    gemPackage: 'simplecov',
+    versionCheck: 'ruby -e "require \'simplecov\'; puts SimpleCov::VERSION" 2>/dev/null',
+    installCommands: {
+      macos: 'gem install --user-install simplecov',
+      linux: 'gem install --user-install simplecov',
+      windows: 'gem install --user-install simplecov',
     },
   },
 };

@@ -1,19 +1,19 @@
 /**
  * Ruby pack — pack-specific tests.
  *
- * Source-text parsers (`extractRubyImportsRaw`, Gemfile-text scan in
- * `gatherRubyTestFrameworkResult`) consume language syntax that is
- * stable across versions, so they're tested here against synthetic
- * inline strings — same convention kotlin/rust/java packs use for
- * their import parsers.
+ * Two test conventions per the recipe v3 → v4 split (`G_v4_1`):
  *
- * RECIPE NOTE: when tool-output parsers land (RuboCop JSON, SimpleCov
- * resultset.json, bundler-audit output) under 10k.2.4-6, they MUST be
- * tested against REAL fixture files under `test/fixtures/raw/ruby/`,
- * NOT synthetic strings. The C# defect lesson (5 months silent,
- * parsers passed unit tests on synthetic JSON but returned 0 findings
- * on real input — fixed in Phase 10h.6.8) is the cautionary tale.
- * Capture commands live in `test/fixtures/raw/ruby/HARVEST.md`.
+ *   - Source-text parsers (`extractRubyImportsRaw`, Gemfile-text scan
+ *     in `gatherRubyTestFrameworkResult`) → synthetic inline strings.
+ *     Language syntax is spec-stable; the value of real fixtures is
+ *     catching schema drift, which doesn't apply here.
+ *   - Tool-output parsers (`parseSimpleCovResultset`, plus 10k.2.5-6's
+ *     RuboCop / bundler-audit) → REAL fixture files under
+ *     `test/fixtures/raw/ruby/`. The C# defect lesson (5 months
+ *     silent, parsers passed unit tests on synthetic JSON but
+ *     returned 0 findings on real input — fixed in Phase 10h.6.8) is
+ *     the reason. Capture commands live in
+ *     `test/fixtures/raw/ruby/HARVEST.md`.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -21,7 +21,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { ruby, extractRubyImportsRaw } from '../src/languages/ruby';
+import { ruby, extractRubyImportsRaw, parseSimpleCovResultset } from '../src/languages/ruby';
+
+const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'ruby');
+
+function readFixture(name: string): string {
+  return fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf-8');
+}
 
 describe('ruby pack — metadata', () => {
   it('declares its id and displayName', () => {
@@ -29,15 +35,19 @@ describe('ruby pack — metadata', () => {
     expect(ruby.displayName).toBe('Ruby');
   });
 
-  it('declares the imports + testFramework capability providers (10k.2.3)', () => {
+  it('declares imports + testFramework + coverage capability providers (10k.2.3-4)', () => {
     expect(ruby.capabilities?.imports).toBeDefined();
     expect(ruby.capabilities?.testFramework).toBeDefined();
+    expect(ruby.capabilities?.coverage).toBeDefined();
   });
 
-  it('lint / coverage / depVulns providers are not yet wired (land in 10k.2.4-6)', () => {
+  it('lint / depVulns providers are not yet wired (land in 10k.2.5-6)', () => {
     expect(ruby.capabilities?.lint).toBeUndefined();
-    expect(ruby.capabilities?.coverage).toBeUndefined();
     expect(ruby.capabilities?.depVulns).toBeUndefined();
+  });
+
+  it('declares simplecov as a required tool (10k.2.4)', () => {
+    expect(ruby.tools).toContain('simplecov');
   });
 });
 
@@ -220,6 +230,148 @@ describe('gatherRubyImportsResult — file enumeration', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-imp-empty-'));
     try {
       const result = await ruby.capabilities!.imports!.gather(dir);
+      expect(result).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseSimpleCovResultset', () => {
+  // Real fixture provenance: SimpleCov v0.22.0 output captured 2026-05-04
+  // from a synthetic 4-method Calculator with 2 tested + 2 untested
+  // methods. Path normalized to `<HARVEST_ROOT>/lib/calculator.rb`. See
+  // test/fixtures/raw/ruby/HARVEST.md for capture commands.
+  //
+  // Empirical assertion: rspec self-reported "Line Coverage: 70.0%
+  // (7 / 10)" — the parser MUST agree.
+
+  it('computes overall line coverage from the real fixture (matches rspec self-report)', () => {
+    const raw = readFixture('coverage-output.json');
+    const result = parseSimpleCovResultset(raw, 'coverage/.resultset.json', '<HARVEST_ROOT>');
+    expect(result).not.toBeNull();
+    expect(result!.linePercent).toBe(70.0);
+    expect(result!.source).toBe('simplecov');
+  });
+
+  it('emits one per-file entry with covered/total/pct against the real fixture', () => {
+    const raw = readFixture('coverage-output.json');
+    const result = parseSimpleCovResultset(raw, 'coverage/.resultset.json', '<HARVEST_ROOT>');
+    expect(result!.files.size).toBe(1);
+    const file = result!.files.get('lib/calculator.rb');
+    expect(file).toBeDefined();
+    expect(file!.covered).toBe(7);
+    expect(file!.total).toBe(10);
+    expect(file!.pct).toBe(70.0);
+  });
+
+  it('relativizes absolute paths against cwd', () => {
+    // Synthesize a payload with a host-style absolute path; verify the
+    // parser returns a project-relative key.
+    const synthetic = JSON.stringify({
+      RSpec: {
+        coverage: {
+          '/repo/lib/foo.rb': { lines: [1, null, 0] },
+        },
+      },
+    });
+    const result = parseSimpleCovResultset(synthetic, 'coverage/.resultset.json', '/repo');
+    expect(result).not.toBeNull();
+    expect([...result!.files.keys()]).toEqual(['lib/foo.rb']);
+  });
+
+  it('treats null as non-executable (excluded from total), 0 as uncovered, >0 as covered', () => {
+    const synthetic = JSON.stringify({
+      RSpec: {
+        coverage: {
+          '/repo/a.rb': { lines: [5, 0, null, 1, null, 0, 2] },
+        },
+      },
+    });
+    const result = parseSimpleCovResultset(synthetic, 'r.json', '/repo');
+    const file = result!.files.get('a.rb')!;
+    // Executable entries: 5, 0, 1, 0, 2 → 5 lines. Covered (>0): 5, 1, 2 → 3.
+    expect(file.total).toBe(5);
+    expect(file.covered).toBe(3);
+    expect(file.pct).toBe(60.0);
+  });
+
+  it('unions per-file lines across multiple suites (max per index)', () => {
+    // RSpec covers line 0 with hit-count 1; Minitest covers lines 1,2.
+    // After union, the file should report 3 of 3 covered (100%).
+    const multi = JSON.stringify({
+      RSpec: {
+        coverage: {
+          '/repo/multi.rb': { lines: [1, 0, 0] },
+        },
+      },
+      Minitest: {
+        coverage: {
+          '/repo/multi.rb': { lines: [0, 1, 1] },
+        },
+      },
+    });
+    const result = parseSimpleCovResultset(multi, 'r.json', '/repo');
+    const file = result!.files.get('multi.rb')!;
+    expect(file.covered).toBe(3);
+    expect(file.total).toBe(3);
+    expect(file.pct).toBe(100.0);
+  });
+
+  it('returns null on malformed JSON', () => {
+    expect(parseSimpleCovResultset('not-json', 'r.json', '/repo')).toBeNull();
+  });
+
+  it('returns null on empty resultset (no suites)', () => {
+    expect(parseSimpleCovResultset('{}', 'r.json', '/repo')).toBeNull();
+  });
+
+  it('returns null when suites have no coverage entries', () => {
+    const empty = JSON.stringify({ RSpec: { timestamp: 1 } });
+    expect(parseSimpleCovResultset(empty, 'r.json', '/repo')).toBeNull();
+  });
+});
+
+describe('gatherSimpleCovCoverageResult — file probe', () => {
+  it('reads coverage/.resultset.json when present', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      // Use the real fixture bytes so this exercises the same parser path
+      // as the real artifact in production.
+      const raw = readFixture('coverage-output.json').replace(/<HARVEST_ROOT>/g, dir);
+      fs.writeFileSync(path.join(dir, 'coverage', '.resultset.json'), raw);
+      const result = await ruby.capabilities!.coverage!.gather(dir);
+      expect(result).not.toBeNull();
+      expect(result!.coverage.source).toBe('simplecov');
+      expect(result!.coverage.linePercent).toBe(70.0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to coverage/coverage.json (simplecov-json formatter output)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-fmt-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      const raw = readFixture('coverage-output.json').replace(/<HARVEST_ROOT>/g, dir);
+      fs.writeFileSync(path.join(dir, 'coverage', 'coverage.json'), raw);
+      const result = await ruby.capabilities!.coverage!.gather(dir);
+      expect(result).not.toBeNull();
+      expect(result!.coverage.linePercent).toBe(70.0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when no SimpleCov artifact exists (HTML-only state included)', async () => {
+    // HTML-only is currently indistinguishable from "tool didn't run" —
+    // tracked as Recipe v4 candidate (extend coverage outcome enum).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-html-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      fs.writeFileSync(path.join(dir, 'coverage', 'index.html'), '<html>fake</html>');
+      const result = await ruby.capabilities!.coverage!.gather(dir);
       expect(result).toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
