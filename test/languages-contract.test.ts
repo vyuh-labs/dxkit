@@ -135,6 +135,7 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
       'go-licenses', // produces license output
       'nuget-license', // produces license JSON
       'vitest-coverage', // produces coverage-summary.json
+      'simplecov', // produces coverage/.resultset.json
     ]);
 
     const srcPath = path.resolve(__dirname, '..', 'src', 'languages', `${lang.id}.ts`);

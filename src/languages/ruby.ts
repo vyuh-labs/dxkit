@@ -1,10 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { ImportsResult, TestFrameworkResult } from './capabilities/types';
+import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { LanguageSupport } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -207,6 +208,169 @@ const rubyTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+// ─── Coverage (SimpleCov resultset.json) ────────────────────────────────────
+
+/**
+ * SimpleCov's `.resultset.json` shape (binary intermediate, JSON-shaped):
+ *
+ *   {
+ *     "RSpec": {                              // suite name (RSpec / Minitest / Test::Unit)
+ *       "coverage": {
+ *         "/abs/path/to/file.rb": {
+ *           "lines": [int|null, ...]          // one entry per source line
+ *         }
+ *       },
+ *       "timestamp": 1777904063
+ *     },
+ *     // multiple suites possible when a project mixes RSpec + Minitest:
+ *     "Minitest": { ... }
+ *   }
+ *
+ * Line entries:
+ *   - positive int → line was hit (covered)
+ *   - 0            → line was not hit (uncovered, but executable)
+ *   - null         → line is not executable (blank, comment, `end`, etc.)
+ *
+ * Multi-suite handling: the same file can appear under multiple suites
+ * if a project runs both runners. We union by taking max coverage per
+ * line index — a line covered by RSpec is covered, period, even if
+ * Minitest didn't reach it. Mirrors SimpleCov's own resultset merge
+ * semantics from `simplecov/lib/simplecov/result_merger.rb`.
+ */
+interface SimpleCovResultset {
+  [suite: string]: {
+    coverage?: Record<string, { lines?: Array<number | null> }>;
+    timestamp?: number;
+  };
+}
+
+/**
+ * Pure parser for SimpleCov `.resultset.json`. Returns null when the
+ * input has no parseable suites (empty file, missing `coverage` key,
+ * or malformed JSON) — distinct from "0% coverage" (where suites
+ * exist with zero hits).
+ *
+ * Exported for unit tests; consumed by `gatherSimpleCovCoverageResult`.
+ */
+export function parseSimpleCovResultset(
+  raw: string,
+  sourceFile: string,
+  cwd: string,
+): Coverage | null {
+  let data: SimpleCovResultset;
+  try {
+    data = JSON.parse(raw) as SimpleCovResultset;
+  } catch {
+    return null;
+  }
+
+  // Per-file line arrays unioned across suites (max per index).
+  const merged = new Map<string, Array<number | null>>();
+  for (const suite of Object.values(data)) {
+    const cov = suite?.coverage;
+    if (!cov || typeof cov !== 'object') continue;
+    for (const [absPath, entry] of Object.entries(cov)) {
+      const lines = entry?.lines;
+      if (!Array.isArray(lines)) continue;
+      const existing = merged.get(absPath);
+      if (!existing) {
+        merged.set(absPath, lines.slice());
+        continue;
+      }
+      // Union: per index, keep max(existing, new). null stays null only if
+      // both are null; any int wins over null; max int wins between two ints.
+      const len = Math.max(existing.length, lines.length);
+      const out: Array<number | null> = new Array(len);
+      for (let i = 0; i < len; i++) {
+        const a = existing[i] ?? null;
+        const b = lines[i] ?? null;
+        if (a === null && b === null) out[i] = null;
+        else if (a === null) out[i] = b;
+        else if (b === null) out[i] = a;
+        else out[i] = Math.max(a, b);
+      }
+      merged.set(absPath, out);
+    }
+  }
+
+  if (merged.size === 0) return null;
+
+  const files = new Map<string, FileCoverage>();
+  let totalCovered = 0;
+  let totalExecutable = 0;
+  for (const [absPath, lines] of merged) {
+    let covered = 0;
+    let executable = 0;
+    for (const v of lines) {
+      if (v === null) continue;
+      executable += 1;
+      if (v > 0) covered += 1;
+    }
+    const rel = toRelative(absPath, cwd);
+    files.set(rel, {
+      path: rel,
+      covered,
+      total: executable,
+      pct: round1(executable > 0 ? (covered / executable) * 100 : 0),
+    });
+    totalCovered += covered;
+    totalExecutable += executable;
+  }
+
+  return {
+    source: 'simplecov',
+    sourceFile,
+    linePercent: round1(totalExecutable > 0 ? (totalCovered / totalExecutable) * 100 : 0),
+    files,
+  };
+}
+
+/**
+ * Probe SimpleCov's canonical artifact path. The default formatter
+ * writes `coverage/.resultset.json`; the simplecov-json gem writes
+ * `coverage/coverage.json` (less common). We probe the canonical
+ * path first — it ships with vanilla SimpleCov and is the most
+ * likely to exist.
+ *
+ * HTML-only fallback (no JSON, only `coverage/index.html`) is currently
+ * not parseable — the analyzer reports "no coverage" in that state,
+ * which is indistinguishable from "tool didn't run." Tracked as a
+ * Recipe v4 candidate (extend the coverage outcome enum to distinguish
+ * 'output-format-incompatible' from 'unavailable').
+ */
+function findSimpleCovResultset(cwd: string): string | null {
+  const candidates = ['coverage/.resultset.json', 'coverage/coverage.json'];
+  for (const rel of candidates) {
+    if (fileExists(cwd, rel)) return rel;
+  }
+  return null;
+}
+
+/**
+ * Single source of truth for the ruby pack's coverage gathering.
+ * Consumed by `rubyCoverageProvider` (capability dispatcher).
+ */
+function gatherSimpleCovCoverageResult(cwd: string): CoverageResult | null {
+  const reportRel = findSimpleCovResultset(cwd);
+  if (!reportRel) return null;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(cwd, reportRel), 'utf-8');
+  } catch {
+    return null;
+  }
+  const coverage = parseSimpleCovResultset(raw, reportRel, cwd);
+  if (!coverage) return null;
+  return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+}
+
+const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
+  source: 'ruby',
+  async gather(cwd) {
+    return gatherSimpleCovCoverageResult(cwd);
+  },
+};
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const ruby: LanguageSupport = {
@@ -227,13 +391,14 @@ export const ruby: LanguageSupport = {
 
   detect: detectRuby,
 
-  tools: [],
+  tools: ['simplecov'],
 
   semgrepRulesets: ['p/ruby'],
 
   capabilities: {
     imports: rubyImportsProvider,
     testFramework: rubyTestFrameworkProvider,
+    coverage: rubyCoverageProvider,
   },
 
   permissions: [
