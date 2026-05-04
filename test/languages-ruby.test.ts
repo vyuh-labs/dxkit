@@ -21,7 +21,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { ruby, extractRubyImportsRaw, parseSimpleCovResultset } from '../src/languages/ruby';
+import {
+  ruby,
+  extractRubyImportsRaw,
+  mapRubocopSeverity,
+  parseRubocopOutput,
+  parseSimpleCovResultset,
+} from '../src/languages/ruby';
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'ruby');
 
@@ -35,19 +41,20 @@ describe('ruby pack — metadata', () => {
     expect(ruby.displayName).toBe('Ruby');
   });
 
-  it('declares imports + testFramework + coverage capability providers (10k.2.3-4)', () => {
+  it('declares imports + testFramework + coverage + lint capability providers (10k.2.3-5)', () => {
     expect(ruby.capabilities?.imports).toBeDefined();
     expect(ruby.capabilities?.testFramework).toBeDefined();
     expect(ruby.capabilities?.coverage).toBeDefined();
+    expect(ruby.capabilities?.lint).toBeDefined();
   });
 
-  it('lint / depVulns providers are not yet wired (land in 10k.2.5-6)', () => {
-    expect(ruby.capabilities?.lint).toBeUndefined();
+  it('depVulns provider is not yet wired (lands in 10k.2.6)', () => {
     expect(ruby.capabilities?.depVulns).toBeUndefined();
   });
 
-  it('declares simplecov as a required tool (10k.2.4)', () => {
+  it('declares rubocop + simplecov as required tools (10k.2.4-5)', () => {
     expect(ruby.tools).toContain('simplecov');
+    expect(ruby.tools).toContain('rubocop');
   });
 });
 
@@ -376,5 +383,83 @@ describe('gatherSimpleCovCoverageResult — file probe', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('mapRubocopSeverity', () => {
+  // Synthetic-string assertions per the recipe convention: source-text
+  // parsers (severity classification consumes language-stable strings)
+  // do not need real fixtures. The full 5-tier mapping is exercised
+  // here; the real fixture only naturally surfaces 2 tiers
+  // (convention + warning).
+  it('maps rubocop severities into the dxkit four-tier scheme', () => {
+    expect(mapRubocopSeverity('fatal')).toBe('critical');
+    expect(mapRubocopSeverity('error')).toBe('high');
+    expect(mapRubocopSeverity('warning')).toBe('medium');
+    expect(mapRubocopSeverity('convention')).toBe('low');
+    expect(mapRubocopSeverity('refactor')).toBe('low');
+  });
+
+  it('handles uppercased / mixed-case input defensively', () => {
+    expect(mapRubocopSeverity('FATAL')).toBe('critical');
+    expect(mapRubocopSeverity('Warning')).toBe('medium');
+    expect(mapRubocopSeverity('Convention')).toBe('low');
+  });
+
+  it('defaults unknown severities to low rather than dropping them', () => {
+    expect(mapRubocopSeverity('info')).toBe('low');
+    expect(mapRubocopSeverity('')).toBe('low');
+    expect(mapRubocopSeverity(null)).toBe('low');
+    expect(mapRubocopSeverity(undefined)).toBe('low');
+  });
+});
+
+describe('parseRubocopOutput', () => {
+  // Real fixture provenance: rubocop v1.86.1 verbatim JSON output
+  // against test/fixtures/benchmarks/ruby/bad_lint.rb. 3 offenses:
+  // 2× convention (Style/FrozenStringLiteralComment, Style/RedundantReturn),
+  // 1× warning (Lint/UselessAssignment). See HARVEST.md for capture
+  // commands.
+
+  it('counts offenses by severity tier in the real fixture', () => {
+    const raw = readFixture('lint-output.json');
+    const counts = parseRubocopOutput(raw);
+    // 2 convention → low; 1 warning → medium; no error/fatal.
+    expect(counts).toEqual({ critical: 0, high: 0, medium: 1, low: 2 });
+  });
+
+  it('returns zero counts when files[].offenses[] is empty', () => {
+    const empty = JSON.stringify({
+      metadata: { rubocop_version: '1.86.1' },
+      files: [{ path: 'clean.rb', offenses: [] }],
+      summary: { offense_count: 0, target_file_count: 1 },
+    });
+    const counts = parseRubocopOutput(empty);
+    expect(counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
+  });
+
+  it('aggregates offenses across multiple files', () => {
+    const multi = JSON.stringify({
+      files: [
+        { path: 'a.rb', offenses: [{ severity: 'warning' }, { severity: 'convention' }] },
+        { path: 'b.rb', offenses: [{ severity: 'error' }] },
+      ],
+    });
+    const counts = parseRubocopOutput(multi);
+    expect(counts).toEqual({ critical: 0, high: 1, medium: 1, low: 1 });
+  });
+
+  it('returns zero counts on malformed JSON (no throw)', () => {
+    const counts = parseRubocopOutput('not-json');
+    expect(counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
+  });
+
+  it('returns zero counts when the JSON has no files key (rubocop crashed)', () => {
+    expect(parseRubocopOutput(JSON.stringify({ metadata: {} }))).toEqual({
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    });
   });
 });
