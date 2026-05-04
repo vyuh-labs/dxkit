@@ -44,7 +44,7 @@ import {
   mapDetektSeverity,
 } from '../src/languages/kotlin';
 import { parseJaCoCoXml } from '../src/analyzers/tools/jacoco';
-import { parseOsvScannerMavenFindings } from '../src/analyzers/tools/osv-scanner-maven';
+import { parseOsvScannerFindings } from '../src/analyzers/tools/osv-scanner-deps';
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'kotlin');
 
@@ -160,10 +160,10 @@ describe('parseJaCoCoXml', () => {
   });
 });
 
-describe('parseOsvScannerMavenFindings', () => {
+describe('parseOsvScannerFindings (Maven ecosystem)', () => {
   it('extracts findings from the real osv-scanner output', () => {
     const raw = readFixture('osv-scanner-output.json');
-    const { counts, findings } = parseOsvScannerMavenFindings(raw);
+    const { counts, findings } = parseOsvScannerFindings(raw, 'Maven');
     // The fixture has 2 Maven packages: gson@2.8.5 (1 vuln) and
     // log4j-core@2.14.0 (7 vulns). 8 findings total.
     expect(findings.length).toBeGreaterThanOrEqual(8);
@@ -173,7 +173,7 @@ describe('parseOsvScannerMavenFindings', () => {
 
   it('attributes findings to the correct Maven coordinates', () => {
     const raw = readFixture('osv-scanner-output.json');
-    const { findings } = parseOsvScannerMavenFindings(raw);
+    const { findings } = parseOsvScannerFindings(raw, 'Maven');
     const gsonFindings = findings.filter((f) => f.package === 'com.google.code.gson:gson');
     expect(gsonFindings.length).toBe(1);
     expect(gsonFindings[0].installedVersion).toBe('2.8.5');
@@ -182,7 +182,7 @@ describe('parseOsvScannerMavenFindings', () => {
 
   it('captures CVE aliases for advisories that ship them', () => {
     const raw = readFixture('osv-scanner-output.json');
-    const { findings } = parseOsvScannerMavenFindings(raw);
+    const { findings } = parseOsvScannerFindings(raw, 'Maven');
     // gson's GHSA-4jrv-ppp4-jm57 has CVE-2022-25647 as alias.
     const gsonFinding = findings.find((f) => f.id === 'GHSA-4jrv-ppp4-jm57');
     expect(gsonFinding).toBeDefined();
@@ -191,7 +191,7 @@ describe('parseOsvScannerMavenFindings', () => {
 
   it('extracts CVSS scores when the OSV record carries a vector', () => {
     const raw = readFixture('osv-scanner-output.json');
-    const { findings } = parseOsvScannerMavenFindings(raw);
+    const { findings } = parseOsvScannerFindings(raw, 'Maven');
     // gson's record has a CVSS:3.1 vector — our parser must compute the score.
     const gsonFinding = findings.find((f) => f.id === 'GHSA-4jrv-ppp4-jm57');
     expect(gsonFinding!.cvssScore).toBeDefined();
@@ -200,7 +200,7 @@ describe('parseOsvScannerMavenFindings', () => {
 
   it('synthesizes osv.dev reference URL when the record has no references[]', () => {
     const raw = readFixture('osv-scanner-output.json');
-    const { findings } = parseOsvScannerMavenFindings(raw);
+    const { findings } = parseOsvScannerFindings(raw, 'Maven');
     for (const f of findings) {
       expect(f.references).toBeDefined();
       expect(f.references!.length).toBeGreaterThan(0);
@@ -230,13 +230,13 @@ describe('parseOsvScannerMavenFindings', () => {
         },
       ],
     });
-    const { findings } = parseOsvScannerMavenFindings(polyglot);
+    const { findings } = parseOsvScannerFindings(polyglot, 'Maven');
     expect(findings.length).toBe(1);
     expect(findings[0].id).toBe('M-1');
   });
 
   it('returns empty results on malformed JSON', () => {
-    const { counts, findings } = parseOsvScannerMavenFindings('not-json');
+    const { counts, findings } = parseOsvScannerFindings('not-json', 'Maven');
     expect(findings.length).toBe(0);
     expect(counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
   });

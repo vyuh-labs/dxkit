@@ -1,19 +1,29 @@
 /**
- * osv-scanner against the Maven ecosystem — shared across JVM packs
- * (kotlin, java). CLAUDE.md rule #2 — the gather function lives once.
- * Extracted from src/languages/kotlin.ts in 10k.1.4 (Phase 10k.1
- * SSOT validation).
+ * osv-scanner against any OSV ecosystem — shared across language packs
+ * that use osv-scanner as their canonical depVulns source. CLAUDE.md
+ * rule #2 — the gather function lives once.
+ *
+ * History: extracted from `src/languages/kotlin.ts` in 10k.1.4 (Phase
+ * 10k.1 SSOT validation), originally Maven-only. Generalized to all
+ * OSV ecosystems in 10k.2.6a (Ruby pack work) — caller passes the
+ * ecosystem string + manifest candidate list, parser filters
+ * accordingly so polyglot repos don't double-count across packs.
+ *
+ * Current consumers:
+ *   - kotlin pack — `Maven` ecosystem, gradle.lockfile + pom.xml + verification-metadata.xml
+ *   - java pack — `Maven` ecosystem (same manifest set)
+ *   - ruby pack — `RubyGems` ecosystem, Gemfile.lock
  *
  * osv-scanner is the established multi-ecosystem scanner; no Tier-1
- * native equivalent exists for Maven/Gradle (CLAUDE.md rule #5).
+ * native equivalent exists for several of the ecosystems above
+ * (CLAUDE.md rule #5 — bundler-audit's JSON is unstable, so Ruby
+ * intentionally uses osv-scanner-only rather than dual-source).
  * The typescript pack's `osv-scanner-fix.ts` uses the `fix`
  * subcommand for upgrade planning — different mode, no shared logic.
  *
- * Manifest gating: osv-scanner reads `pom.xml`, `gradle.lockfile`,
- * `gradle/verification-metadata.xml`, and (limited) `build.gradle`. Bare
- * `build.gradle.kts` is NOT a reliable input — gradle.lockfile is
- * preferred. Without any of these, we return `tool-missing` (matches
- * python/csharp's manifest-gating pattern).
+ * Manifest gating: caller supplies the candidate list. First
+ * existing candidate wins. Without any of them, returns
+ * `tool-missing` (matches python/csharp's manifest-gating pattern).
  */
 import { classifyOsvSeverity, extractOsvCvssScore, resolveCvssScores, type OsvVuln } from './osv';
 import { fileExists, run } from './runner';
@@ -41,16 +51,22 @@ interface OsvScannerOutput {
 }
 
 /**
- * Pure parser for osv-scanner v2.x JSON output, scoped to Maven
- * findings only. Other ecosystems (npm, PyPI, Go) are filtered out so
- * polyglot repos don't double-count: the typescript pack handles npm,
- * the python pack handles PyPI, etc. JVM packs (kotlin, java) own
- * Maven via this shared parser.
+ * Pure parser for osv-scanner v2.x JSON output, scoped to a single
+ * ecosystem. Other ecosystems are filtered out so polyglot repos
+ * don't double-count: each pack handles its own ecosystem (typescript
+ * → npm, python → PyPI, kotlin/java → Maven, ruby → RubyGems, etc.).
+ *
+ * The ecosystem parameter is matched against the OSV record's
+ * `package.ecosystem` field verbatim — use the exact strings OSV
+ * emits (`'Maven'`, `'RubyGems'`, `'PyPI'`, `'npm'`, `'Go'`, etc.).
  *
  * Returns counts + findings + the raw OSV vuln records for downstream
  * CVSS resolution. Exported for unit tests.
  */
-export function parseOsvScannerMavenFindings(raw: string): {
+export function parseOsvScannerFindings(
+  raw: string,
+  ecosystem: string,
+): {
   counts: SeverityCounts;
   findings: DepVulnFinding[];
   vulnsForCvss: Array<{ primaryId: string; embeddedCvss: number | null; aliases: string[] }>;
@@ -74,7 +90,7 @@ export function parseOsvScannerMavenFindings(raw: string): {
   const seen = new Set<string>();
   for (const result of data.results ?? []) {
     for (const pkg of result.packages ?? []) {
-      if (pkg.package?.ecosystem !== 'Maven') continue;
+      if (pkg.package?.ecosystem !== ecosystem) continue;
       const pkgName = pkg.package.name ?? 'unknown';
       const pkgVersion = pkg.package.version;
       for (const vuln of pkg.vulnerabilities ?? []) {
@@ -122,30 +138,33 @@ export function parseOsvScannerMavenFindings(raw: string): {
 }
 
 /**
- * Single source of truth for osv-scanner Maven dep-vuln gathering.
- * Both kotlin and java packs delegate here.
- *
- * Manifest discovery order: lockfile > pom.xml > verification-metadata.
- * We pass the manifest explicitly via --lockfile so osv-scanner doesn't
- * fall back to its (unreliable) build.gradle.kts parser. Multi-module
- * Android/Java projects with per-module lockfiles are not yet handled —
- * first-module-found is the v1 behaviour.
+ * Single source of truth for osv-scanner-driven dep-vuln gathering.
+ * Caller supplies:
+ *   - cwd: project root
+ *   - source: pack id for envelope attribution (currently reserved —
+ *     see note at end of function)
+ *   - ecosystem: OSV ecosystem string (`'Maven'`, `'RubyGems'`, ...)
+ *   - manifestCandidates: ordered list of manifest filenames to probe.
+ *     First existing one is passed via `--lockfile`. Lockfiles
+ *     preferred over higher-level manifests (kotlin: gradle.lockfile
+ *     before pom.xml; ruby: Gemfile.lock).
  *
  * `scan source --lockfile <path>` is the v2.x form. JSON output to
  * stdout. Exit code is non-zero when findings exist — we ignore the
  * exit code and parse the JSON regardless (run() already swallows
  * non-zero exits cleanly via execSync's catch).
  *
- * CVSS alias-fallback: osv-scanner ships CVSS vectors when present, but
- * Maven advisories are inconsistent — some carry only
- * `database_specific.severity` strings. resolveCvssScores looks up via
- * CVE alias when the primary record lacks a vector.
+ * CVSS alias-fallback: osv-scanner ships CVSS vectors when present,
+ * but advisory data quality varies by ecosystem — some carry only
+ * `database_specific.severity` strings. resolveCvssScores looks up
+ * via CVE alias when the primary record lacks a vector.
  */
-export async function gatherOsvScannerMavenDepVulnsResult(
+export async function gatherOsvScannerDepVulnsResult(
   cwd: string,
   source: string,
+  ecosystem: string,
+  manifestCandidates: string[],
 ): Promise<DepVulnGatherOutcome> {
-  const manifestCandidates = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
   let manifest: string | null = null;
   for (const rel of manifestCandidates) {
     if (fileExists(cwd, rel)) {
@@ -165,7 +184,7 @@ export async function gatherOsvScannerMavenDepVulnsResult(
   );
   if (!raw) return { kind: 'no-output' };
 
-  const { counts, findings, vulnsForCvss } = parseOsvScannerMavenFindings(raw);
+  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem);
 
   if (findings.length > 0) {
     const resolved = await resolveCvssScores(vulnsForCvss);

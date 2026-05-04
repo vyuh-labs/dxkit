@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
-import { gatherOsvScannerMavenDepVulnsResult } from '../analyzers/tools/osv-scanner-maven';
+import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
@@ -338,15 +338,18 @@ const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
 //
 // Same shape as coverage above — parser + manifest discovery + tool
 // invocation + CVSS resolution all live in
-// `src/analyzers/tools/osv-scanner-maven.ts` (extracted from kotlin
-// pack in 10k.1.4 for SSOT). Java contributes the same Maven manifest
-// candidates (pom.xml, gradle.lockfile, gradle/verification-metadata.xml)
-// — JVM ecosystem manifests are language-agnostic.
+// `src/analyzers/tools/osv-scanner-deps.ts` (extracted from kotlin
+// pack in 10k.1.4 for SSOT, generalized to all ecosystems in 10k.2.6a).
+// Java contributes the same Maven manifest candidates as kotlin:
+// pom.xml, gradle.lockfile, gradle/verification-metadata.xml. Both
+// packs pass the `'Maven'` ecosystem string for the OSV filter.
+
+const JAVA_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
 
 const javaDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
   source: 'java',
   async gather(cwd) {
-    const outcome = await gatherOsvScannerMavenDepVulnsResult(cwd, 'java');
+    const outcome = await gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
