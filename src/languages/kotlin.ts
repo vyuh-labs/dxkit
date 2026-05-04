@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
-import { gatherOsvScannerMavenDepVulnsResult } from '../analyzers/tools/osv-scanner-maven';
+import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -210,15 +210,23 @@ const kotlinCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 // ─── DepVulns (osv-scanner against Maven manifests) ─────────────────────────
 //
-// Parser + gather glue live in `src/analyzers/tools/osv-scanner-maven.ts`
-// — language-agnostic SSOT (CLAUDE.md rule #2). Both kotlin and java
-// packs delegate. parseOsvScannerMavenFindings is exported there for
-// unit tests.
+// Parser + gather glue live in `src/analyzers/tools/osv-scanner-deps.ts`
+// — language-agnostic SSOT (CLAUDE.md rule #2). Kotlin/Java/Ruby packs
+// all delegate to the same module, parameterized by ecosystem string +
+// manifest candidate list. parseOsvScannerFindings is exported there
+// for unit tests.
+
+const KOTLIN_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
 
 const kotlinDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
   source: 'kotlin',
   async gather(cwd) {
-    const outcome = await gatherOsvScannerMavenDepVulnsResult(cwd, 'kotlin');
+    const outcome = await gatherOsvScannerDepVulnsResult(
+      cwd,
+      'kotlin',
+      'Maven',
+      KOTLIN_DEP_MANIFESTS,
+    );
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
