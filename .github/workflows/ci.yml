@@ -73,6 +73,16 @@ jobs:
           chmod +x ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd
           ln -sf ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd ~/.local/bin/pmd
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - uses: ruby/setup-ruby@v1 # rubocop (Ruby lint, Phase 10k.2.5) needs a managed Ruby toolchain
+        with:
+          ruby-version: '3.3'
+      - name: Install rubocop # lint (Phase 10k.2.5) — Ruby static analyzer (JSON output)
+        run: |
+          gem install rubocop --no-document
+          # ruby/setup-ruby's gem bin is already on PATH, but add it
+          # explicitly to $GITHUB_PATH so subsequent steps see rubocop
+          # without relying on shell-init.
+          echo "$(gem env executable_directory)" >> $GITHUB_PATH
 
       - name: Typecheck
         run: npm run typecheck

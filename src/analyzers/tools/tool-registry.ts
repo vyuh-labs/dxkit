@@ -167,6 +167,45 @@ function findInPipx(binary: string): string | null {
   return fs.existsSync(pipxBin) ? pipxBin : null;
 }
 
+/**
+ * Cached list of gem-installed binary directories. Ruby's gem bin path
+ * varies by ruby version (3.2.0 → `~/.local/share/gem/ruby/3.2.0/bin`,
+ * 3.3.0 → `.../3.3.0/bin`), by install mode (system vs `--user-install`),
+ * and by package manager (apt vs homebrew vs rbenv). The only reliable
+ * way to discover them is to ask Ruby itself via `gem env`. We cache
+ * the result so each `findTool` call only pays the ~150ms ruby-startup
+ * cost once per process.
+ *
+ * Returns an empty array when Ruby isn't installed — no harm; the
+ * subsequent `findInGemBin` call returns null and the search falls
+ * through to the next probe step.
+ */
+let _gemBinPathsCache: string[] | null = null;
+function getGemBinPaths(): string[] {
+  if (_gemBinPathsCache !== null) return _gemBinPathsCache;
+  const candidates: string[] = [];
+  // System gem bin (matches the active Ruby — apt, brew, rbenv all
+  // resolve correctly via `gem env`).
+  const sysBin = quickRun('gem env executable_directory 2>/dev/null');
+  if (sysBin) candidates.push(sysBin);
+  // User-install gem bin (`gem install --user-install <gem>` lands
+  // here; matches `Gem.user_dir + "/bin"` — the dxkit-preferred install
+  // mode since it doesn't need sudo).
+  const userBin = quickRun(`ruby -e 'puts Gem.user_dir + "/bin"' 2>/dev/null`);
+  if (userBin) candidates.push(userBin);
+  _gemBinPathsCache = candidates;
+  return candidates;
+}
+
+/** Check if a gem-installed binary exists in any discovered gem bin dir. */
+function findInGemBin(binary: string): string | null {
+  for (const dir of getGemBinPaths()) {
+    const candidate = path.join(dir, binary);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 /** Check system probe paths. */
 function findInProbePaths(binary: string, extraProbes: string[] = []): string | null {
   const allPaths = [...getSystemPaths(), ...extraProbes];
@@ -309,6 +348,12 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
     // 4. pipx
     const pipxResult = findInPipx(binary);
     if (pipxResult) return makeStatus(def, pipxResult, 'pipx');
+
+    // 4b. gem-installed binaries (ruby toolchain — system + --user-install
+    // bin dirs discovered via `gem env`). Mirrors the pipx step for the
+    // Ruby ecosystem.
+    const gemResult = findInGemBin(binary);
+    if (gemResult) return makeStatus(def, gemResult, 'probe');
 
     // 5. System probe paths (includes cargo/go/graphify venv)
     const probeResult = findInProbePaths(binary, def.probePaths);
@@ -792,6 +837,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       macos: `${PIPX_BOOTSTRAP} && pipx install coverage`,
       linux: `${PIPX_BOOTSTRAP} && pipx install coverage`,
       windows: 'pipx install coverage',
+    },
+  },
+  rubocop: {
+    name: 'rubocop',
+    description: 'Ruby linter / static-analysis tool',
+    install: 'gem install --user-install rubocop',
+    check: 'rubocop --version',
+    for: 'ruby',
+    layer: 'language',
+    binaries: ['rubocop'],
+    versionCheck: 'rubocop --version 2>/dev/null',
+    installCommands: {
+      macos: 'gem install --user-install rubocop',
+      linux: 'gem install --user-install rubocop',
+      windows: 'gem install --user-install rubocop',
     },
   },
   // SimpleCov is a pure Ruby gem, library-loaded (`require 'simplecov'`

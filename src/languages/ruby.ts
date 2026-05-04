@@ -4,9 +4,17 @@ import * as path from 'path';
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
-import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
-import type { LanguageSupport } from './types';
+import type {
+  CoverageResult,
+  ImportsResult,
+  LintGatherOutcome,
+  LintResult,
+  SeverityCounts,
+  TestFrameworkResult,
+} from './capabilities/types';
+import type { LanguageSupport, LintSeverity } from './types';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -208,6 +216,123 @@ const rubyTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+// ─── Lint (rubocop --format json) ───────────────────────────────────────────
+
+/**
+ * Map RuboCop's severity strings to dxkit's four-tier scheme. RuboCop
+ * canonically emits 5 severities (see `RuboCop::Cop::Severity::CODES`
+ * in the upstream source — `lib/rubocop/cop/severity.rb`):
+ *
+ *   - `convention` → low      (style + naming — the bulk of findings)
+ *   - `refactor`   → low      (complexity hints; Metrics/* cops)
+ *   - `warning`    → medium   (Lint/* cops — actual code-quality risk)
+ *   - `error`      → high     (real defects; rare in default config)
+ *   - `fatal`      → critical (rubocop-internal failure or syntax error)
+ *
+ * Defensive `'low'` default for unknown severities — matches the
+ * mapDetektSeverity / mapRuffSeverity contract: never silently drop a
+ * finding, even if rubocop adds a new tier we don't recognize yet.
+ *
+ * Exported for unit tests.
+ */
+export function mapRubocopSeverity(severity: string | null | undefined): LintSeverity {
+  if (typeof severity !== 'string') return 'low';
+  switch (severity.toLowerCase()) {
+    case 'fatal':
+      return 'critical';
+    case 'error':
+      return 'high';
+    case 'warning':
+      return 'medium';
+    case 'convention':
+    case 'refactor':
+      return 'low';
+    default:
+      return 'low';
+  }
+}
+
+interface RubocopOffense {
+  severity?: string;
+  cop_name?: string;
+  message?: string;
+}
+
+interface RubocopFile {
+  path?: string;
+  offenses?: RubocopOffense[];
+}
+
+interface RubocopOutput {
+  files?: RubocopFile[];
+  summary?: { offense_count?: number; target_file_count?: number };
+}
+
+/**
+ * Pure parser for RuboCop's JSON output (rubocop --format json). The
+ * shape is fixed per the upstream `RuboCop::Formatter::JSONFormatter`
+ * contract — `metadata` + `files[*].offenses[*]` + `summary`. We only
+ * need the offenses; metadata + summary are surface for future
+ * enrichment (per-file attribution, top-N rules) but not needed for
+ * the dxkit lint envelope which carries SeverityCounts only.
+ *
+ * Returns zero counts on malformed input rather than throwing —
+ * matches mapDetektSeverity / parseEslintFinal conventions. The
+ * gather function distinguishes "rubocop ran fine, found nothing"
+ * from "rubocop missing / parse error" via LintGatherOutcome's
+ * kind field.
+ *
+ * Exported for unit tests; consumed by `gatherRubyLintResult`.
+ */
+export function parseRubocopOutput(raw: string): SeverityCounts {
+  const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  let data: RubocopOutput;
+  try {
+    data = JSON.parse(raw) as RubocopOutput;
+  } catch {
+    return counts;
+  }
+  for (const file of data.files ?? []) {
+    for (const offense of file.offenses ?? []) {
+      counts[mapRubocopSeverity(offense.severity)]++;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Single source of truth for the ruby pack's lint gathering. Consumed
+ * by `rubyLintProvider` (capability dispatcher).
+ *
+ * RuboCop is invoked with `--format json` so we always get a
+ * machine-readable payload (the default formatter is human-text).
+ * Exit code: rubocop exits 1 when offenses are found, 0 when clean.
+ * We tolerate any exit code (rubocop writes valid JSON to stdout
+ * regardless) and rely on parseRubocopOutput's empty-on-malformed
+ * contract.
+ */
+function gatherRubyLintResult(cwd: string): LintGatherOutcome {
+  const rubocop = findTool(TOOL_DEFS.rubocop, cwd);
+  if (!rubocop.available || !rubocop.path) {
+    return { kind: 'unavailable', reason: 'not installed' };
+  }
+  const raw = run(`${rubocop.path} --format json . 2>/dev/null`, cwd, 120000);
+  if (!raw) {
+    return { kind: 'unavailable', reason: 'no rubocop output' };
+  }
+  const counts = parseRubocopOutput(raw);
+  const envelope: LintResult = { schemaVersion: 1, tool: 'rubocop', counts };
+  return { kind: 'success', envelope };
+}
+
+const rubyLintProvider: CapabilityProvider<LintResult> = {
+  source: 'ruby',
+  async gather(cwd) {
+    const outcome = gatherRubyLintResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 // ─── Coverage (SimpleCov resultset.json) ────────────────────────────────────
 
 /**
@@ -391,7 +516,7 @@ export const ruby: LanguageSupport = {
 
   detect: detectRuby,
 
-  tools: ['simplecov'],
+  tools: ['rubocop', 'simplecov'],
 
   semgrepRulesets: ['p/ruby'],
 
@@ -399,7 +524,10 @@ export const ruby: LanguageSupport = {
     imports: rubyImportsProvider,
     testFramework: rubyTestFrameworkProvider,
     coverage: rubyCoverageProvider,
+    lint: rubyLintProvider,
   },
+
+  mapLintSeverity: mapRubocopSeverity,
 
   permissions: [
     'Bash(bundle:*)',
