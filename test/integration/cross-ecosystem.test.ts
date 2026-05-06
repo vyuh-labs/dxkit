@@ -522,9 +522,10 @@ describe('cross-ecosystem benchmarks — Java', () => {
       const dep = await runDxkitVulnerabilities(fixture);
       expect(dep.findings.length).toBeGreaterThan(0);
       // Java pack delegates to the shared
-      // src/analyzers/tools/osv-scanner-maven.ts gather (10k.1.4 SSOT
-      // refactor) — same pipeline as kotlin, just attributed via
-      // DepVulnFinding.tool === 'osv-scanner'.
+      // src/analyzers/tools/osv-scanner-deps.ts gather (10k.1.4 SSOT
+      // refactor; ecosystem-parameterized in 10k.2.6a) — same pipeline
+      // as kotlin, just attributed via DepVulnFinding.tool ===
+      // 'osv-scanner'.
       const javaFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
       expect(javaFindings.length).toBeGreaterThan(0);
       // commons-collections@3.2.1 has GHSA-6hgm-866r-3cjv (alias
@@ -535,6 +536,31 @@ describe('cross-ecosystem benchmarks — Java', () => {
       );
       expect(ccFindings.length).toBeGreaterThan(0);
       expect(ccFindings[0].installedVersion).toBe('3.2.1');
+    },
+  );
+});
+
+describe('cross-ecosystem benchmarks — Ruby', () => {
+  const fixture = path.join(FIXTURES, 'ruby');
+  const hasOsvScanner = commandExists('osv-scanner');
+
+  it.skipIf(!hasOsvScanner)(
+    'osv-scanner surfaces nokogiri@1.10.0 advisories from Gemfile.lock',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // Ruby pack delegates to the shared
+      // src/analyzers/tools/osv-scanner-deps.ts gather (10k.2.6a
+      // SSOT generalization) — same pipeline as kotlin/java, just
+      // with ecosystem='RubyGems' + manifestCandidates=['Gemfile.lock'].
+      const rubyFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
+      expect(rubyFindings.length).toBeGreaterThan(0);
+      // nokogiri@1.10.0 has many libxml2/libxslt advisories. Pinning a
+      // single advisory id is fragile (OSV re-publishes); anchor on the
+      // package coordinate which is stable.
+      const nokogiriFindings = rubyFindings.filter((f) => f.package === 'nokogiri');
+      expect(nokogiriFindings.length).toBeGreaterThan(0);
+      expect(nokogiriFindings[0].installedVersion).toBe('1.10.0');
     },
   );
 });
