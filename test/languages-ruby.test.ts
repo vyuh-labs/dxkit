@@ -28,6 +28,7 @@ import {
   parseRubocopOutput,
   parseSimpleCovResultset,
 } from '../src/languages/ruby';
+import { parseOsvScannerFindings } from '../src/analyzers/tools/osv-scanner-deps';
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', 'ruby');
 
@@ -41,20 +42,23 @@ describe('ruby pack — metadata', () => {
     expect(ruby.displayName).toBe('Ruby');
   });
 
-  it('declares imports + testFramework + coverage + lint capability providers (10k.2.3-5)', () => {
+  it('declares all five capability providers (Phase 10k.2 complete)', () => {
     expect(ruby.capabilities?.imports).toBeDefined();
     expect(ruby.capabilities?.testFramework).toBeDefined();
     expect(ruby.capabilities?.coverage).toBeDefined();
     expect(ruby.capabilities?.lint).toBeDefined();
+    expect(ruby.capabilities?.depVulns).toBeDefined();
+    // licenses deliberately omitted — no canonical pure-CLI license tool
+    // for RubyGems analogous to pip-licenses (license_finder gem exists
+    // but requires bundle install + a venv-style setup that's out of
+    // scope for the depVulns commit).
+    expect(ruby.capabilities?.licenses).toBeUndefined();
   });
 
-  it('depVulns provider is not yet wired (lands in 10k.2.6)', () => {
-    expect(ruby.capabilities?.depVulns).toBeUndefined();
-  });
-
-  it('declares rubocop + simplecov as required tools (10k.2.4-5)', () => {
-    expect(ruby.tools).toContain('simplecov');
+  it('declares osv-scanner + rubocop + simplecov as required tools (10k.2.4-6)', () => {
+    expect(ruby.tools).toContain('osv-scanner');
     expect(ruby.tools).toContain('rubocop');
+    expect(ruby.tools).toContain('simplecov');
   });
 });
 
@@ -461,5 +465,105 @@ describe('parseRubocopOutput', () => {
       medium: 0,
       low: 0,
     });
+  });
+});
+
+describe('parseOsvScannerFindings (RubyGems ecosystem)', () => {
+  // Real fixture: osv-scanner v2.x against a hand-crafted Gemfile.lock
+  // pinning nokogiri 1.10.0 + rack 2.0.1 + loofah 2.2.0. Captured
+  // 2026-05-04 for Phase 10k.2.6. 73 advisories total: 31 nokogiri +
+  // 36 rack + 6 loofah. See HARVEST.md for the lockfile contents.
+
+  it('extracts findings from the real RubyGems osv-scanner output', () => {
+    const raw = readFixture('depvulns-output.json');
+    const { counts, findings } = parseOsvScannerFindings(raw, 'RubyGems');
+    // The fixture has 3 RubyGems packages totalling 73 vulns. The
+    // parser dedups by (package, version, id) — every advisory id
+    // here is unique per package, so the dedup pass is a no-op and
+    // the count holds.
+    expect(findings.length).toBeGreaterThanOrEqual(70);
+    expect(findings.length).toBe(73);
+    const totalCounted = counts.critical + counts.high + counts.medium + counts.low;
+    expect(totalCounted).toBe(findings.length);
+  });
+
+  it('attributes findings to the correct RubyGems package coordinates', () => {
+    const raw = readFixture('depvulns-output.json');
+    const { findings } = parseOsvScannerFindings(raw, 'RubyGems');
+    const nokogiriFindings = findings.filter((f) => f.package === 'nokogiri');
+    const rackFindings = findings.filter((f) => f.package === 'rack');
+    const loofahFindings = findings.filter((f) => f.package === 'loofah');
+    expect(nokogiriFindings.length).toBe(31);
+    expect(rackFindings.length).toBe(36);
+    expect(loofahFindings.length).toBe(6);
+    // Spot-check: every loofah finding pinned to 2.2.0
+    for (const f of loofahFindings) {
+      expect(f.installedVersion).toBe('2.2.0');
+      expect(f.tool).toBe('osv-scanner');
+    }
+  });
+
+  it('captures CVE aliases for advisories that ship them', () => {
+    const raw = readFixture('depvulns-output.json');
+    const { findings } = parseOsvScannerFindings(raw, 'RubyGems');
+    // Loofah's GHSA-x7rv-cr6v-4vm4 has CVE-2018-8048 as alias.
+    const loofahCve = findings.find((f) => f.id === 'GHSA-x7rv-cr6v-4vm4');
+    expect(loofahCve).toBeDefined();
+    expect(loofahCve!.aliases).toContain('CVE-2018-8048');
+  });
+
+  it('synthesizes osv.dev reference URL for every advisory', () => {
+    const raw = readFixture('depvulns-output.json');
+    const { findings } = parseOsvScannerFindings(raw, 'RubyGems');
+    for (const f of findings) {
+      expect(f.references).toBeDefined();
+      expect(f.references!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("filters out non-RubyGems ecosystems when called with 'RubyGems'", () => {
+    // Use the existing kotlin Maven fixture and filter for RubyGems —
+    // should produce zero findings (no RubyGems packages there).
+    const mavenRaw = fs.readFileSync(
+      path.join(__dirname, 'fixtures', 'raw', 'kotlin', 'osv-scanner-output.json'),
+      'utf-8',
+    );
+    const { findings } = parseOsvScannerFindings(mavenRaw, 'RubyGems');
+    expect(findings.length).toBe(0);
+  });
+});
+
+describe('gatherRubyDepVulnsResult — manifest probe', () => {
+  it('reads Gemfile.lock when present and produces an envelope (network-dependent)', async () => {
+    // This test validates the file-probe + tool-invocation path.
+    // It depends on osv-scanner being installed; if not, gather()
+    // returns null and we just assert the gate is honest.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-vuln-'));
+    try {
+      // Empty Gemfile.lock — osv-scanner accepts it but reports no
+      // packages. We assert the gather function doesn't throw and
+      // returns either a success envelope OR null (depending on
+      // local osv-scanner availability + network).
+      fs.writeFileSync(path.join(dir, 'Gemfile.lock'), 'GEM\n  remote: https://rubygems.org/\n');
+      const result = await ruby.capabilities!.depVulns!.gather(dir);
+      // Either: osv-scanner ran and found nothing (envelope w/ zero counts),
+      // or osv-scanner missing (null).
+      if (result !== null) {
+        expect(result.tool).toBe('osv-scanner');
+        expect(result.counts.critical + result.counts.high).toBe(0);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when no Gemfile.lock exists', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-vuln-empty-'));
+    try {
+      const result = await ruby.capabilities!.depVulns!.gather(dir);
+      expect(result).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

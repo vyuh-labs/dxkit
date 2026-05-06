@@ -3,11 +3,13 @@ import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type { CapabilityProvider } from './capabilities/provider';
 import type {
   CoverageResult,
+  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,
@@ -496,6 +498,37 @@ const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
   },
 };
 
+// ─── DepVulns (osv-scanner against Gemfile.lock) ────────────────────────────
+//
+// Parser + manifest discovery + tool invocation + CVSS resolution all
+// live in `src/analyzers/tools/osv-scanner-deps.ts` — language-agnostic
+// SSOT (CLAUDE.md rule #2). Same module powers kotlin/java's Maven
+// scanning. ParseOsvScannerFindings is exported there for unit tests
+// and is exercised by both Maven and RubyGems fixtures.
+//
+// bundler-audit alternative: deliberately NOT used. Its JSON output
+// is unstable upstream (line-oriented text is the canonical format),
+// and osv-scanner gives us SSOT consistency across Maven/RubyGems/PyPI
+// + stable JSON + CVSS resolution + the same enrichment surface. If a
+// future customer needs bundler-audit specifically (e.g. air-gapped
+// env where osv.dev queries are unavailable), it can be added as a
+// secondary tool without disturbing this primary path.
+
+const RUBY_DEP_MANIFESTS = ['Gemfile.lock'];
+
+const rubyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+  source: 'ruby',
+  async gather(cwd) {
+    const outcome = await gatherOsvScannerDepVulnsResult(
+      cwd,
+      'ruby',
+      'RubyGems',
+      RUBY_DEP_MANIFESTS,
+    );
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+};
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const ruby: LanguageSupport = {
@@ -516,7 +549,7 @@ export const ruby: LanguageSupport = {
 
   detect: detectRuby,
 
-  tools: ['rubocop', 'simplecov'],
+  tools: ['osv-scanner', 'rubocop', 'simplecov'],
 
   semgrepRulesets: ['p/ruby'],
 
@@ -525,6 +558,7 @@ export const ruby: LanguageSupport = {
     testFramework: rubyTestFrameworkProvider,
     coverage: rubyCoverageProvider,
     lint: rubyLintProvider,
+    depVulns: rubyDepVulnsProvider,
   },
 
   mapLintSeverity: mapRubocopSeverity,

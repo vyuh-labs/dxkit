@@ -9,11 +9,11 @@ tale that justifies this discipline.
 
 ## Standard fixtures
 
-| File                   | Producer                          | Capability         | What it validates                   |
-| ---------------------- | --------------------------------- | ------------------ | ----------------------------------- |
-| `coverage-output.json` | SimpleCov v0.22.0                 | coverage (10k.2.4) | parseSimpleCovResultset correctness |
-| `lint-output.json`     | rubocop v1.86.1                   | lint (10k.2.5)     | parseRubocopOutput correctness      |
-| `depvulns-output.txt`  | bundler-audit (planned 10k.2.6)   | depVulns           | parseBundlerAuditOutput correctness |
+| File                    | Producer            | Capability         | What it validates                                    |
+| ----------------------- | ------------------- | ------------------ | ---------------------------------------------------- |
+| `coverage-output.json`  | SimpleCov v0.22.0   | coverage (10k.2.4) | parseSimpleCovResultset correctness                  |
+| `lint-output.json`      | rubocop v1.86.1     | lint (10k.2.5)     | parseRubocopOutput correctness                       |
+| `depvulns-output.json`  | osv-scanner v2.x    | depVulns (10k.2.6) | parseOsvScannerFindings correctness for `RubyGems`   |
 
 ## Capture commands
 
@@ -97,6 +97,45 @@ those are the tiers a real bad-lint.rb naturally surfaces. Tests for
 the other rubocop severities (`refactor`, `error`, `fatal`) live as
 synthetic-string assertions on `mapRubocopSeverity` (it's a pure
 source-text function — same convention as `mapDetektSeverity`).
+
+### `depvulns-output.json` (osv-scanner, captured 2026-05-04 for Phase 10k.2.6)
+
+A separate harvest project at `tmp/ruby-vuln-fixture/` (gitignored)
+contains a hand-crafted minimal `Gemfile.lock` pinning known-vuln
+gem versions:
+
+- `nokogiri 1.10.0` — many advisories (libxml2 / libxslt CVEs)
+- `rack 2.0.1` — many advisories (CVE-2018-16470 path traversal etc.)
+- `loofah 2.2.0` — XSS class (CVE-2018-8048 / CVE-2018-16468 / ...)
+
+osv-scanner reads `Gemfile.lock` natively (no `bundle install`
+needed — the lockfile is the canonical input format). 73 advisories
+total in the captured fixture: 31 nokogiri, 36 rack, 6 loofah.
+
+Capture:
+
+```bash
+# osv-scanner is already in TOOL_DEFS as a universal dep-vuln scanner;
+# install via `vyuh-dxkit tools install osv-scanner` if needed.
+
+cd tmp/ruby-vuln-fixture
+osv-scanner scan source --lockfile Gemfile.lock --format json \
+  > ../../test/fixtures/raw/ruby/depvulns-output.json 2>/dev/null
+
+# Sanitize the absolute Gemfile.lock path (leaks username):
+sed -i 's|/home/[^/]*/projects/dxkit/tmp/ruby-vuln-fixture|<HARVEST_ROOT>|g' \
+  ../../test/fixtures/raw/ruby/depvulns-output.json
+```
+
+The fixture exercises:
+
+- Per-package vulnerability list parsing (3 packages × variable counts)
+- Multi-vuln-per-package handling
+- CVE alias extraction (every advisory has GHSA + CVE pair)
+- CVSS scoring path (most records have severity vectors)
+- Ecosystem filter (`pkg.package.ecosystem !== 'RubyGems'` skipped) —
+  validated empirically against the kotlin Maven fixture which is a
+  separate file but exercises the same parser-with-ecosystem-param.
 
 ## Why committed
 

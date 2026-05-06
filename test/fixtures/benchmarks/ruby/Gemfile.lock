@@ -1,0 +1,22 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    nokogiri (1.10.0)
+      mini_portile2 (~> 2.4.0)
+    mini_portile2 (2.4.0)
+    rack (2.0.1)
+    loofah (2.2.0)
+      crass (~> 1.0.2)
+      nokogiri (>= 1.5.9)
+    crass (1.0.6)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  nokogiri (= 1.10.0)
+  rack (= 2.0.1)
+  loofah (= 2.2.0)
+
+BUNDLED WITH
+   2.4.19
