@@ -7,19 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [2.4.6] - 2026-05-07
 
-- **Ruby language pack** (Phase 10k.2 — recipe stress test #2). 8th
-  language, fully dynamic outside the JVM family. Detection is
-  source-presence-driven (G9 — requires `.rb` files within depth 5,
-  not bare `Gemfile`). Capabilities land incrementally in subsequent
-  10k.2.x commits (imports + testFramework, coverage via SimpleCov,
-  lint via RuboCop, depVulns via bundler-audit + osv-scanner
-  Gemfile.lock). Cross-ecosystem matrix wired with the standard 4
-  benchmark fixtures (Secrets/BadLint/Duplications/UntestedModule —
-  G4-scaffolded with Ruby-specific syntax).
+### Added — Ruby language pack (Phase 10k.2)
 
-### Recipe v3 (final installment)
+8th language pack, fully dynamic outside the JVM family. Stress-tests
+the LP-recipe (v3) on a paradigm distinct from Java/Kotlin. Detection
+is source-presence-driven (G9 — requires `.rb` files within depth 5,
+not bare `Gemfile`).
+
+All 5 capabilities wired:
+
+- **imports** — `require` / `require_relative` / `autoload :Sym, 'path'`
+  extraction. File-level resolver no-op (Ruby's `$LOAD_PATH` + Zeitwerk
+  + metaprogramming make resolution fundamentally best-effort; mirrors
+  rust/kotlin/csharp/java pattern). Best-effort contract documented
+  in pack source.
+- **testFramework** — Gemfile / Gemfile.lock substring scan with
+  precedence rspec → minitest → test-unit. Glob-count fallback
+  (`*_spec.rb` vs `*_test.rb` / `test_*.rb`) when no Gemfile exists.
+- **coverage** — SimpleCov via `coverage/.resultset.json` (canonical)
+  → `coverage/coverage.json` (simplecov-json formatter) → null.
+  Multi-suite resultset handled via per-line max-union (matches
+  SimpleCov's own merge semantics).
+- **lint** — RuboCop `--format json`. Severity map: fatal→critical,
+  error→high, warning→medium, convention/refactor→low.
+- **depVulns** — osv-scanner against Gemfile.lock with `RubyGems`
+  ecosystem filter. Routes through the cross-pack SSOT (see
+  Architecture below). bundler-audit deliberately not used — its JSON
+  is unstable upstream.
+
+`licenses` deliberately omitted — no canonical pure-CLI license tool
+for RubyGems analogous to pip-licenses.
+
+Cross-ecosystem matrix wired with the standard 4 benchmark fixtures
+(Secrets/BadLint/Duplications/UntestedModule — G4-scaffolded). New
+`Ruby > osv-scanner surfaces nokogiri@1.10.0 advisories from
+Gemfile.lock` benchmark added with a pinned-vulnerable Gemfile.lock
+(nokogiri 1.10.0 + rack 2.0.1 + loofah 2.2.0). CI gains
+`ruby/setup-ruby@v1` + `gem install rubocop`.
+
+### Architecture
+
+- **`gemPackage` registry probe field** — extends `ToolDefinition`
+  for library-only Ruby gems (mirrors the existing `nodePackage`
+  field). Probes via `gem list -i <name>`; used by SimpleCov which
+  is required from `spec_helper.rb` rather than invoked as a CLI
+  command. Future ecosystems with library-only tools follow the same
+  pattern. Surfaced when `tools install simplecov` falsely reported
+  "already installed" because the prior `binaries: ['ruby']`
+  workaround couldn't distinguish "ruby present" from "simplecov
+  gem installed."
+- **`findInGemBin` registry probe step** — discovers Ruby gem bin
+  directories dynamically via `gem env executable_directory` +
+  `Gem.user_dir + "/bin"`. Memoized once per process (~150ms one-time
+  cost). Handles ruby version differences (3.2.0 vs 3.3.0), install
+  modes (system vs `--user-install`), and package managers (apt vs
+  brew vs rbenv) with no static probePaths needed.
+- **`osv-scanner-deps.ts` SSOT generalization** (renamed from
+  `osv-scanner-maven.ts`). `parseOsvScannerFindings(raw, ecosystem)`
+  and `gatherOsvScannerDepVulnsResult(cwd, source, ecosystem,
+  manifestCandidates)` now take ecosystem + manifest candidates as
+  parameters. Kotlin/Java pass `'Maven'` + Maven manifests; Ruby
+  passes `'RubyGems'` + `['Gemfile.lock']`. CLAUDE.md rule #2 —
+  fork-and-edit avoided. Same dedup semantics, same CVSS resolution
+  path.
+
+### Recipe v3 (final installment) — closed
 
 - **G4** — scaffolder writes templated benchmark fixtures with
   per-language syntax tokens (PascalCase vs snake_case filenames,
@@ -35,6 +89,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when its parser produces an empty list. Surfaced its own bug —
   the scaffolder's `LANGUAGES` registry update produced a double
   comma under Prettier multi-line shape; fixed in the same series.
+
+Three deferred items carried forward to v4 with explicit trigger
+conditions: G2-Opt2 typed-null capability (Swift consumer), G3
+BENCHMARK_LANGUAGES auto-edit (matrix > 8 packs), G7 pre-commit hook
+polish (multi-gate diagnosis cost).
+
+### Recipe v4 (working doc opened)
+
+`tmp/recipe-v4-working-doc.md` (gitignored, ephemeral). Surfaced
+during 10k.2:
+
+- **G_v4_1** — scaffolder TEST_TEMPLATE conflates source-text vs
+  tool-output parsers. Future contributors must re-derive the
+  convention by reading existing packs.
+- **G_v4_2** — TOOL_DEFS probe assumed CLI binary; library-only gems
+  lacked detection. **DELIVERED in 10k.2.4** via the new `gemPackage`
+  field.
+- **G_v4_3** — SimpleCov HTML-only state currently indistinguishable
+  from "tool didn't run." Outcome enum extension proposed.
+
+Recipe-v4 is paying for itself: G_v4_2 surfaced and shipped in the
+same session; G_v4_1 caught in a meta-conversation about test
+discipline.
+
+### Defects
+
+- **D002** (Python subprocess fallback) — Ruby pack has no analog
+  (osv-scanner reads Gemfile.lock directly, no `bundle env`/`bundle
+  show` introspection ladder). Stays accepted-deferred.
+- **D017** (NEW) — `dxkit bom <large-project> > file.json` produces
+  0-byte output intermittently on vyuhlabs-platform (1700+ deps).
+  EXIT=0, no error. Workaround: pipe through `cat`. Hypothesis:
+  Node stdout buffer doesn't drain before process exit when output
+  is large + stdout is a regular file. NOT a 2.4.6 ship blocker —
+  workaround exists, intermittent, doesn't affect interactive use.
+  Investigate in a follow-up commit.
+
+### Pre-ship regression — clean
+
+Sequential dxkit reports captured against dxkit-on-dxkit and
+vyuhlabs-platform; 12 reports each diffed against the 2.4.5-fixed
+baseline. Zero code regressions detected. All deltas explained:
+
+- dxkit/test-gaps 16 → 32 — better data (Istanbul vs import-graph
+  fallback in baseline).
+- dxkit/vulnerabilities +3 gitleaks — expected (G4 AKIA placeholder
+  strings in scaffolder source).
+- platform/vulnerabilities -3 — platform-side refactor of
+  user.controller.ts (not dxkit).
+- BoM advisory deltas — OSV.dev upstream churn (8 days since 2.4.5
+  ship).
+
+Confidence: high. 1025 tests passing, full suite + all gates green
+at every commit in the 10-commit branch.
 
 ## [2.4.5] - 2026-04-29
 
