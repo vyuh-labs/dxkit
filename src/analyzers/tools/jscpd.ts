@@ -105,7 +105,7 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
   run(
     `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
     cwd,
-    300000,
+    600000, // 10 min — bumped from 300000 in 2.4.7 (was timing out on 1700+-dep frontend repos during real-user UX session 2026-05-07)
   );
 
   const reportRaw = run(`cat '${reportDir}/jscpd-report.json' 2>/dev/null`, cwd);

@@ -210,7 +210,7 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   const output = run(
     `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`,
     cwd,
-    120000,
+    300000, // 5 min — bumped from 120000 in 2.4.7 (was timing out on multi-thousand-file frontend repos during real-user UX session 2026-05-07)
   );
   try {
     fs.rmSync(scriptDir, { recursive: true, force: true });
