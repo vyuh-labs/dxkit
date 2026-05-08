@@ -67,6 +67,21 @@ export function scoreTest(input: ScoreInput): DimensionScore {
     if (coveragePercent !== null && coveragePercent >= 60) score += 10;
     if (coveragePercent !== null && coveragePercent >= 80) score += 5;
   }
+  // 2.4.7 honesty cap (real-user UX session 2026-05-07): without real
+  // coverage data, the testing dimension cannot honestly score above
+  // C-grade. Industry consensus (CodeClimate, SonarQube, Codecov): a
+  // project that doesn't measure coverage is failing the most basic
+  // testing-discipline check, regardless of how many test files exist
+  // or whether the test runner reports green. File-presence + green-
+  // exit-code without coverage = unmeasured. Cap at 35/100 (C grade).
+  //
+  // This replaces a previous testRatio<0.05 hardcoded cap that was
+  // overfitted to platform's LoopBack scaffolds; the coverage-data
+  // gate is the correct signal because it generalizes — any real
+  // testing investment includes coverage measurement.
+  if (coveragePercent === null && score > 35) {
+    score = 35;
+  }
 
   if (commentedCodeRatio !== null && commentedCodeRatio > 0.5) {
     score -= 15;
