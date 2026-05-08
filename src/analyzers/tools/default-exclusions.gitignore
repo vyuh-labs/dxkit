@@ -30,6 +30,16 @@ obj/
 .tox/
 coverage/
 
+# ─── dxkit's own outputs ─────────────────────────────────────────────────
+# Without this, dxkit re-scans the markdown reports + dashboard.html it
+# just produced and finds things like the AKIA placeholder strings inside
+# gitleaks descriptions ("Detected a Generic API Key like AKIA…") —
+# self-referential noise. Caught during 2026-05-07 customer-demo
+# evaluation: platform's vulnerability scan re-flagged
+# `.dxkit/reports/dashboard.html:289` because the dashboard embeds the
+# scan output as JSON.
+.dxkit/
+
 # ─── Python environments & bytecode ───────────────────────────────────────
 __pycache__/
 .venv/
