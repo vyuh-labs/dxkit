@@ -160,6 +160,30 @@ export function gatherSourceFiles(cwd: string): SourceFile[] {
       continue;
     // Skip type definition files
     if (p.endsWith('.d.ts')) continue;
+    // 2.4.7 (real-user UX session 2026-05-07): we previously had
+    // hardcoded regex filters here for `data/` files, mocks, generated
+    // code, etc. — but that's overfitting to one project's naming
+    // conventions. The industry answer (CodeClimate, SonarQube,
+    // Codecov): trust real coverage data when available; fall back to
+    // file-based heuristics ONLY when no coverage exists, and signal
+    // the result as "approximate" loudly. Filename-matching is
+    // fundamentally a worse signal than statement-level coverage from
+    // Istanbul / coverage.py / JaCoCo / etc.
+    //
+    // The honest fix lives at the SCORING + RENDER layer:
+    //   - scoring.ts caps the testing dimension when no coverage data
+    //     exists (a project without coverage can't be scored highly
+    //     for testing, period).
+    //   - detailed report adds a banner: "no coverage data found —
+    //     this list is approximate; configure coverage and re-run for
+    //     authoritative gaps."
+    //   - Project-specific exclusions belong in user-supplied
+    //     `.dxkit-ignore` (TODO: 2.4.8) — never in dxkit's defaults.
+    //
+    // For now we only filter accidentally-committed editor artifacts
+    // and language-irrelevant binaries — these aren't TypeScript/Python
+    // source by any reasonable interpretation.
+    if (/\.(swp|pyc|lic|pem|min\.[tj]s)$/.test(p)) continue;
 
     const fullPath = `${cwd}/${p.replace('./', '')}`;
     let lines = 0;
