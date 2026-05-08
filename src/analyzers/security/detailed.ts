@@ -40,8 +40,13 @@ export function formatSecurityDetailedMarkdown(
   L.push(`**Date:** ${detailed.analyzedAt.slice(0, 10)}`);
   L.push(`**Repository:** ${detailed.repo}`);
   L.push(`**Branch:** ${detailed.branch} (${detailed.commitSha})`);
-  L.push(`**Security Score:** ${detailed.securityScore}/100`);
+  L.push(`**Vulnerability Score:** ${detailed.securityScore}/100`);
   L.push(`**Schema version:** ${detailed.schemaVersion}`);
+  L.push('');
+  L.push('> _This score is computed over findings + dependency vulnerabilities only._');
+  L.push(
+    '> _For the comprehensive Security dimension (also covering TLS config, env files in git, eval usage, private keys), see the Health Audit report._',
+  );
   L.push('');
   L.push('---');
   L.push('');
