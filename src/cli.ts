@@ -11,6 +11,18 @@ import { GenerationMode } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// process.stdout.write returns false when the OS pipe buffer is full
+// (typically 64KB on Linux). Without awaiting 'drain', the process exits
+// and the tail of large payloads is silently lost on POSIX — manifests as
+// 0-byte files when piping `--json` output through `cat > file` or similar.
+// Tracked as D017.
+async function emitJson(payload: unknown): Promise<void> {
+  const data = JSON.stringify(payload, null, 2) + '\n';
+  if (!process.stdout.write(data)) {
+    await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+  }
+}
+
 function printUsage(): void {
   console.log(`
   ${logger.bold('vyuh-dxkit')} v${VERSION} — AI-native developer experience toolkit
@@ -241,7 +253,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         // Console output
         console.log('');
@@ -361,7 +373,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary.findings;
         const d = report.summary.dependencies;
@@ -419,7 +431,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary;
         console.log('');
@@ -475,7 +487,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const m = report.metrics;
         const slopLabel =
@@ -551,7 +563,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary;
         console.log('');
@@ -615,7 +627,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2)); // slop-ok
+        await emitJson(report); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
@@ -702,7 +714,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2)); // slop-ok
+        await emitJson(report); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
