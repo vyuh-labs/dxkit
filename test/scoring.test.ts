@@ -32,8 +32,15 @@ describe('scoreTest', () => {
   });
 
   it('caps base score at 60 for high ratios', () => {
-    const s = scoreTest(withInput({ metrics: { sourceFiles: 100, testFiles: 80 } }));
-    // ratio 0.8 * 200 = 160 → capped at 60
+    // Coverage data present so the 2.4.7 honesty cap (afc9577) doesn't
+    // kick in — the test isolates the ratio*200 → 60 cap.
+    const s = scoreTest(
+      withInput({
+        metrics: { sourceFiles: 100, testFiles: 80 },
+        capabilities: { coverage: coverageCapability(40) },
+      }),
+    );
+    // ratio 0.8 * 200 = 160 → capped at 60; coverage 40 < 60 → no bonus.
     expect(s.score).toBe(60);
   });
 
