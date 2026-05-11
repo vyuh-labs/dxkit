@@ -38,6 +38,7 @@ function printUsage(): void {
     vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit licenses [path]   Dependency license inventory
     vyuh-dxkit bom [path]        Bill of Materials (licenses + vulnerabilities joined)
+    vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -102,6 +103,9 @@ export async function run(argv: string[]): Promise<void> {
       filter: { type: 'string' },
       'no-nested': { type: 'boolean', default: false },
       all: { type: 'boolean', default: false },
+      'reports-dir': { type: 'string' },
+      'json-dir': { type: 'string' },
+      'project-name': { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -794,6 +798,59 @@ export async function run(argv: string[]): Promise<void> {
             }
           }
         }
+      }
+      break;
+    }
+
+    case 'dashboard': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { analyzeDashboard } = await import('./analyzers/dashboard');
+      logger.header('vyuh-dxkit dashboard');
+
+      const reportsDir = values['reports-dir']
+        ? path.resolve(values['reports-dir'] as string)
+        : path.join(targetPath, '.dxkit', 'reports');
+      const jsonDir = values['json-dir'] ? path.resolve(values['json-dir'] as string) : undefined;
+      const projectName = (values['project-name'] as string | undefined) ?? undefined;
+      const outputPath = values.output
+        ? path.resolve(values.output as string)
+        : path.join(reportsDir, 'dashboard.html');
+
+      let result;
+      try {
+        result = analyzeDashboard(targetPath, { reportsDir, jsonDir, projectName });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.fail(msg);
+        process.exit(1);
+      }
+
+      if (result.reportCount === 0) {
+        logger.fail(
+          `No report markdowns found in ${path.relative(targetPath, reportsDir) || reportsDir}.\n` +
+            `Run 'vyuh-dxkit health .' (or any other report command) first to populate the directory.`,
+        );
+        process.exit(1);
+      }
+
+      if (values['no-save']) {
+        // Drain-aware HTML emission to stdout. Mirrors emitJson() for
+        // payloads that can exceed the 64KB pipe buffer (a dashboard
+        // with all reports embedded routinely runs 300-500KB).
+        if (!process.stdout.write(result.html)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      } else {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, result.html);
+        logger.success(
+          `Dashboard written to ${path.relative(targetPath, outputPath) || outputPath}`,
+        );
+        logger.dim(
+          `${result.reportCount} reports · ${result.summary.healthScore !== null ? `health ${result.summary.healthScore}/100` : 'no health data'} · ` +
+            `${result.summary.vulnCount} vulns · ${result.summary.gapCount} test gaps · ` +
+            `${result.summary.advisoryCount} BoM advisories · ${result.criticalIssueCount} critical-issue tiles`,
+        );
       }
       break;
     }
