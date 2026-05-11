@@ -1,3 +1,21 @@
+# Early-exit on delete-only pushes (e.g. `git push origin --delete <branch>`).
+# Git invokes pre-push with stdin lines of the form
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+# For a delete, local-sha is 40 zeros and there's nothing to typecheck or
+# build. Running the full gate suite against the resulting empty diff is
+# wasteful AND fails ungracefully on some gates (no commits to check).
+all_zero=true
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+    all_zero=false
+    break
+  fi
+done
+if $all_zero; then
+  echo "[pre-push] Delete-only push detected — skipping local gates."
+  exit 0
+fi
+
 # Mirror the CI gates locally so `git push` fails fast on anything
 # CI would also fail on, instead of finding out 40s later in the PR
 # check. The set below matches `.github/workflows/ci.yml` step-for-step
