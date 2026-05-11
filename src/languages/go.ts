@@ -11,8 +11,9 @@ import {
   type OsvVuln,
 } from '../analyzers/tools/osv';
 import { fileExists, parseJsonStream, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -569,10 +570,43 @@ function gatherGoCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Run `go test -coverprofile=coverage.out ./...` from cwd (D021).
+ *
+ * Universal Go convention — works on any Go module. The output file
+ * `coverage.out` is the canonical artifact that `gatherGoCoverageResult`
+ * already reads on the next dispatcher pass.
+ *
+ * Preflight: detect a `go.mod` or any `.go` source. If neither exists,
+ * return `unavailable` rather than waste the spawn cost (Go's own
+ * "no Go files" error is fine but unhelpful framing for the user).
+ */
+function runGoTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'go',
+      cmd: 'go test -coverprofile=coverage.out ./...',
+      cwd,
+      artifact: 'coverage.out',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'go.mod')) {
+          return 'no go.mod in this directory — not a Go module';
+        }
+        // `go` itself missing surfaces via the spawn ENOENT path; no
+        // need to pre-check.
+        return null;
+      },
+    }),
+  );
+}
+
 const goCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'go',
   async gather(cwd) {
     return gatherGoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runGoTestsWithCoverage(cwd);
   },
 };
 

@@ -38,6 +38,7 @@ function printUsage(): void {
     vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit licenses [path]   Dependency license inventory
     vyuh-dxkit bom [path]        Bill of Materials (licenses + vulnerabilities joined)
+    vyuh-dxkit coverage [path]   Run per-pack test-with-coverage (side-effecting; materializes the coverage artifact health/test-gaps read)
     vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
@@ -106,6 +107,9 @@ export async function run(argv: string[]): Promise<void> {
       'reports-dir': { type: 'string' },
       'json-dir': { type: 'string' },
       'project-name': { type: 'string' },
+      lang: { type: 'string' },
+      timeout: { type: 'string' },
+      'no-fail-fast': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -849,6 +853,134 @@ export async function run(argv: string[]): Promise<void> {
           `${result.reportCount} reports · ${result.summary.healthScore !== null ? `health ${result.summary.healthScore}/100` : 'no health data'} · ` +
             `${result.summary.vulnCount} vulns · ${result.summary.gapCount} test gaps · ` +
             `${result.summary.advisoryCount} BoM advisories · ${result.criticalIssueCount} critical-issue tiles`,
+        );
+      }
+      break;
+    }
+
+    case 'coverage': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { detectActiveLanguages } = await import('./languages');
+      logger.header('vyuh-dxkit coverage');
+
+      const active = detectActiveLanguages(targetPath);
+      const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+      const failFast = !values['no-fail-fast'];
+
+      // Filter to packs that (a) match --lang if given, AND (b) actually
+      // expose a coverage capability with runTests. Packs without
+      // runTests are still rendered as a "skipped — no test runner
+      // wired" row so the user sees the full active-pack set.
+      const candidates = active.filter((p) => !langFilter || p.id === langFilter);
+
+      if (candidates.length === 0) {
+        logger.fail(
+          langFilter
+            ? `No active language pack matches --lang ${langFilter}. Active packs: ${active.map((p) => p.id).join(', ') || '(none)'}`
+            : `No active language packs detected in ${targetPath}. Nothing to run.`,
+        );
+        process.exit(2);
+      }
+
+      logger.info(`Stack: ${candidates.map((p) => p.id).join(', ')}`);
+      console.log(''); // slop-ok
+
+      const rows: Array<{
+        pack: string;
+        status: 'success' | 'unavailable' | 'failed' | 'skipped';
+        durationMs: number;
+        artifact: string | null;
+        reason: string | null;
+      }> = [];
+
+      for (const pack of candidates) {
+        const provider = pack.capabilities?.coverage;
+        if (!provider?.runTests) {
+          rows.push({
+            pack: pack.id,
+            status: 'skipped',
+            durationMs: 0,
+            artifact: null,
+            reason: 'no runTests() implementation yet (pack coverage capability is read-only)',
+          });
+          continue;
+        }
+        process.stderr.write(`  → ${pack.id}: running tests with coverage...\n`);
+        const outcome = await provider.runTests(targetPath);
+        if (outcome.kind === 'success') {
+          rows.push({
+            pack: pack.id,
+            status: 'success',
+            durationMs: outcome.durationMs,
+            artifact: outcome.artifact,
+            reason: null,
+          });
+        } else if (outcome.kind === 'unavailable') {
+          rows.push({
+            pack: pack.id,
+            status: 'unavailable',
+            durationMs: 0,
+            artifact: null,
+            reason: outcome.reason,
+          });
+        } else {
+          rows.push({
+            pack: pack.id,
+            status: 'failed',
+            durationMs: outcome.durationMs,
+            artifact: null,
+            reason: outcome.reason,
+          });
+          if (failFast) {
+            // Render the table so far so the user sees what ran before the bail.
+            break;
+          }
+        }
+      }
+
+      // Render summary table via the same drain-aware stdout primitive
+      // emitJson uses — wide table rows would otherwise trip the
+      // no-bare-console-statements slop gate.
+      const writeRow = (s: string): void => {
+        process.stdout.write(s + '\n');
+      };
+      writeRow('');
+      writeRow(
+        `  ${logger.bold('Pack'.padEnd(12))}  ${logger.bold('Status'.padEnd(12))}  ${logger.bold('Duration'.padEnd(10))}  ${logger.bold('Artifact')}`,
+      );
+      writeRow(`  ${'─'.repeat(12)}  ${'─'.repeat(12)}  ${'─'.repeat(10)}  ${'─'.repeat(40)}`);
+      for (const r of rows) {
+        const icon =
+          r.status === 'success'
+            ? '\x1b[32m✓\x1b[0m'
+            : r.status === 'unavailable' || r.status === 'skipped'
+              ? '\x1b[2m·\x1b[0m'
+              : '\x1b[31m✗\x1b[0m';
+        const duration =
+          r.durationMs > 0 ? `${(r.durationMs / 1000).toFixed(1)}s`.padStart(10) : '—'.padStart(10);
+        const right = r.artifact ?? r.reason ?? '';
+        writeRow(`  ${icon} ${r.pack.padEnd(10)}  ${r.status.padEnd(12)}  ${duration}  ${right}`);
+      }
+
+      const successes = rows.filter((r) => r.status === 'success').length;
+      const failures = rows.filter((r) => r.status === 'failed').length;
+      const unavailable = rows.filter(
+        (r) => r.status === 'unavailable' || r.status === 'skipped',
+      ).length;
+
+      console.log(''); // slop-ok
+      if (failures > 0) {
+        logger.fail(`${successes}/${rows.length} packs produced coverage. ${failures} failed.`);
+        process.exit(1);
+      } else if (successes === 0) {
+        logger.fail(
+          `0/${rows.length} packs produced coverage (${unavailable} unavailable / skipped).`,
+        );
+        process.exit(2);
+      } else {
+        logger.success(
+          `${successes}/${rows.length} packs produced coverage. ` +
+            `Run \`vyuh-dxkit health\` or \`vyuh-dxkit test-gaps\` to consume.`,
         );
       }
       break;
