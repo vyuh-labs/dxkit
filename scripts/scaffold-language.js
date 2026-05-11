@@ -348,12 +348,30 @@ writeIfMissing(packPath, PACK_TEMPLATE);
 const TEST_TEMPLATE = `/**
  * ${displayName} pack — pack-specific tests.
  *
- * RECIPE NOTE: each parser exercised here SHOULD be tested against a
- * REAL fixture file under \`test/fixtures/raw/${id}/\`, not a synthetic
- * JSON/XML string. The C# defect lesson (5 months silent, parsers
- * passed unit tests on synthetic JSON but returned 0 findings on real
- * input — fixed in Phase 10h.6.8) is the reason. Capture commands live
- * in \`test/fixtures/raw/${id}/HARVEST.md\`.
+ * RECIPE NOTE — two distinct parser classes, two distinct test
+ * conventions (Recipe v4 G_v4_1):
+ *
+ * 1. **Source-text parsers** (\`extract${capitalize(id)}ImportsRaw\`,
+ *    \`map${capitalize(id)}Severity\`, anything that reads
+ *    ${displayName} source code or severity-string mappings) →
+ *    **synthetic inline strings**. No fixture file. Language syntax
+ *    is stable; real-fixture provenance adds toil without surfacing
+ *    bugs.
+ *
+ * 2. **Tool-output parsers** (\`parse${capitalize(id)}LintOutput\`,
+ *    \`parse${capitalize(id)}CoverageOutput\`,
+ *    \`parse${capitalize(id)}DepVulnsOutput\`, anything that reads
+ *    JSON/XML/text from an external tool's stdout) → **REAL fixture
+ *    file** under \`test/fixtures/raw/${id}/\`, captured via the
+ *    commands in that dir's \`HARVEST.md\`. The C# defect (Phase
+ *    10h.6.8 — parser passed synthetic-JSON unit tests for 5 months
+ *    while returning 0 findings on real \`dotnet list package
+ *    --vulnerable\` output) is the reason real bytes beat hand-crafted.
+ *
+ * The split matters because the failure modes differ: source-text
+ * parsers fail when the language grammar changes (rare, loud); tool-
+ * output parsers fail when the upstream tool ships a schema tweak
+ * (frequent, silent). Real fixtures defend against the latter.
  *
  * TODO(${id}): replace the placeholder fixture names below with the
  * actual files you harvest, and the parser names with the actual
@@ -364,12 +382,17 @@ import { describe, it, expect } from 'vitest';
 // import * as fs from 'fs';
 // import * as path from 'path';
 import { ${id} } from '../src/languages/${id}';
+// Source-text parsers (synthetic inline tests — see section A below):
+// import {
+//   extract${capitalize(id)}ImportsRaw,
+//   map${capitalize(id)}Severity,
+// } from '../src/languages/${id}';
+//
+// Tool-output parsers (real-fixture tests — see section B below):
 // import {
 //   parse${capitalize(id)}LintOutput,
 //   parse${capitalize(id)}CoverageOutput,
 //   parse${capitalize(id)}DepVulnsOutput,
-//   extract${capitalize(id)}ImportsRaw,
-//   map${capitalize(id)}Severity,
 // } from '../src/languages/${id}';
 
 // const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'raw', '${id}');
@@ -391,7 +414,13 @@ describe('${id} pack — metadata', () => {
   //   expect(${id}.capabilities?.testFramework).toBeDefined();
 });
 
-// ─── Parser test stubs — uncomment + fill in once each parser exists ───────
+// ═══════════════════════════════════════════════════════════════════════════
+// Section A — Source-text parsers (synthetic inline strings, no fixture)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Test these with hand-crafted ${displayName} source snippets or
+// severity-string examples. Language syntax is stable; real fixtures
+// add toil without catching bugs at this layer.
 //
 // describe('map${capitalize(id)}Severity', () => {
 //   it('tiers severity strings into dxkit four-tier scheme', () => {
@@ -400,6 +429,22 @@ describe('${id} pack — metadata', () => {
 //     // expect(map${capitalize(id)}Severity('info')).toBe('low');
 //   });
 // });
+//
+// describe('extract${capitalize(id)}ImportsRaw', () => {
+//   it('extracts simple imports from source text', () => {
+//     // const src = '<sample ${displayName} source code as a string literal>';
+//     // expect(extract${capitalize(id)}ImportsRaw(src)).toEqual([...]);
+//   });
+// });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Section B — Tool-output parsers (REAL fixture from HARVEST.md)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Test these against bytes the upstream tool actually emits. Capture
+// commands live in \`test/fixtures/raw/${id}/HARVEST.md\`. Do NOT
+// use synthetic JSON/XML strings here — see the C# defect lesson
+// referenced in the file header.
 //
 // describe('parse${capitalize(id)}LintOutput', () => {
 //   it('counts violations in the real fixture by severity tier', () => {
@@ -423,13 +468,6 @@ describe('${id} pack — metadata', () => {
 //     const raw = readFixture('depvulns-output.json');
 //     const { findings } = parse${capitalize(id)}DepVulnsOutput(raw);
 //     expect(findings.length).toBeGreaterThan(0);
-//   });
-// });
-//
-// describe('extract${capitalize(id)}ImportsRaw', () => {
-//   it('extracts simple imports from source text', () => {
-//     // const src = '<sample source>';
-//     // expect(extract${capitalize(id)}ImportsRaw(src)).toEqual([...]);
 //   });
 // });
 `;

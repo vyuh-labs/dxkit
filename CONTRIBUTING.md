@@ -176,12 +176,31 @@ src/languages/index.ts                 # imports + registers <id> in LANGUAGES
 
 Then you fill in the TODOs. The scaffolder prints a checklist of the
 remaining work — including the critical Recipe-v2 step **#4: harvest
-real tool output**. Parsers MUST be unit-tested against bytes the
-upstream tool actually emits, not synthetic JSON/XML strings. The C#
-defect (Phase 10h.6.8 — parser passed unit tests on synthetic JSON for
-5 months while returning 0 findings on real `dotnet list package
---vulnerable` output) is the cautionary tale that justifies this
-discipline. See `test/fixtures/raw/<id>/HARVEST.md` for capture commands.
+real tool output**.
+
+**Parser test conventions — two classes, two rules** (Recipe v4
+G_v4_1, refined from 10k.2.3 surfacing). The scaffolded
+`test/languages-<id>.test.ts` is split into Section A and Section B
+that codify these explicitly; the rules are:
+
+1. **Source-text parsers** (`extract<X>ImportsRaw`, `map<X>Severity`,
+   anything reading source code or severity-string mappings) →
+   **synthetic inline strings**, no fixture file. Language syntax is
+   stable; real fixtures add toil without catching bugs at this layer.
+
+2. **Tool-output parsers** (`parse<X>LintOutput`,
+   `parse<X>CoverageOutput`, `parse<X>DepVulnsOutput`, anything
+   reading JSON/XML/text from an external tool) → **REAL fixture
+   file** under `test/fixtures/raw/<id>/`. Capture commands live in
+   that dir's `HARVEST.md`. The C# defect (Phase 10h.6.8 — parser
+   passed synthetic-JSON unit tests for 5 months while returning 0
+   findings on real `dotnet list package --vulnerable` output) is
+   the cautionary tale that justifies this discipline.
+
+The split matters because the failure modes differ: source-text
+parsers fail when language grammar changes (rare, loud); tool-output
+parsers fail when the upstream tool ships a schema tweak (frequent,
+silent). Real fixtures defend against the latter.
 
 #### What the pack declares (`LanguageSupport`)
 
