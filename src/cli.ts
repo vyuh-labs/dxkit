@@ -287,31 +287,36 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        // Save markdown report (unless --no-save)
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `health-audit-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json so consumers don't need separate
+      // `--detailed` and `--detailed --json` invocations (closes D018).
+      // `logger.success` routes to stderr in --json mode, so it's safe to
+      // call unconditionally.
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `health-audit-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed && healthMetrics) {
-            const { buildHealthDetailed, formatHealthDetailedMarkdown } =
-              await import('./analyzers/health/detailed');
-            const detailed = buildHealthDetailed(report, healthMetrics);
-            const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed && healthMetrics) {
+          const { buildHealthDetailed, formatHealthDetailedMarkdown } =
+            await import('./analyzers/health/detailed');
+          const detailed = buildHealthDetailed(report, healthMetrics);
+          const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
+          const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
+          fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
+          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
+      }
 
-        // Hint about missing tools (exclude project-side config errors)
+      if (!values.json) {
+        // Hint about missing tools (exclude project-side config errors).
         const PROJECT_ISSUES = ['config error', 'legacy .eslintrc', 'no eslint config'];
         const trulyMissing = report.toolsUnavailable.filter(
           (t) => !PROJECT_ISSUES.some((p) => t.includes(p)),
@@ -396,30 +401,28 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
-              await import('./analyzers/security/detailed');
-            const detailed = buildSecurityDetailed(report);
-            const detailedMdPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.md`);
-            const detailedJsonPath = path.join(
-              reportDir,
-              `vulnerability-scan-${date}-detailed.json`,
-            );
-            fs.writeFileSync(detailedMdPath, formatSecurityDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
+            await import('./analyzers/security/detailed');
+          const detailed = buildSecurityDetailed(report);
+          const detailedMdPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.md`);
+          const detailedJsonPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.json`);
+          fs.writeFileSync(detailedMdPath, formatSecurityDetailedMarkdown(detailed, elapsed));
+          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
       }
       break;
@@ -452,27 +455,28 @@ export async function run(argv: string[]): Promise<void> {
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
-              await import('./analyzers/tests/detailed');
-            const detailed = buildTestGapsDetailed(report);
-            const detailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatTestGapsDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
+            await import('./analyzers/tests/detailed');
+          const detailed = buildTestGapsDetailed(report);
+          const detailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
+          const detailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
+          fs.writeFileSync(detailedMdPath, formatTestGapsDetailedMarkdown(detailed, elapsed));
+          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
       }
       break;
@@ -530,27 +534,28 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `quality-review-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `quality-review-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildQualityDetailed, formatQualityDetailedMarkdown } =
-              await import('./analyzers/quality/detailed');
-            const detailed = buildQualityDetailed(report);
-            const detailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `quality-review-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatQualityDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          const { buildQualityDetailed, formatQualityDetailedMarkdown } =
+            await import('./analyzers/quality/detailed');
+          const detailed = buildQualityDetailed(report);
+          const detailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
+          const detailedJsonPath = path.join(reportDir, `quality-review-${date}-detailed.json`);
+          fs.writeFileSync(detailedMdPath, formatQualityDetailedMarkdown(detailed, elapsed));
+          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
       }
       break;
@@ -590,32 +595,32 @@ export async function run(argv: string[]): Promise<void> {
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `developer-report-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `developer-report-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildDevDetailed, formatDevDetailedMarkdown } =
-              await import('./analyzers/developer/detailed');
-            const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
-            const sinceDate =
-              sinceFlag ||
-              new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-            const vague = gatherVagueCommitExamples(targetPath, sinceDate);
-            const detailed = buildDevDetailed(report, vague);
-            const detailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatDevDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          const { buildDevDetailed, formatDevDetailedMarkdown } =
+            await import('./analyzers/developer/detailed');
+          const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
+          const sinceDate =
+            sinceFlag || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const vague = gatherVagueCommitExamples(targetPath, sinceDate);
+          const detailed = buildDevDetailed(report, vague);
+          const detailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
+          const detailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
+          fs.writeFileSync(detailedMdPath, formatDevDetailedMarkdown(detailed, elapsed));
+          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
       }
       break;
@@ -654,43 +659,40 @@ export async function run(argv: string[]): Promise<void> {
         console.log(''); // slop-ok
         logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `licenses-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
-          console.log(''); // slop-ok
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `licenses-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed || values.xlsx) {
-            const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
-              await import('./analyzers/licenses/detailed');
-            const detailed = buildLicensesDetailed(report);
+        if (values.detailed || values.xlsx) {
+          const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
+            await import('./analyzers/licenses/detailed');
+          const detailed = buildLicensesDetailed(report);
 
-            if (values.detailed) {
-              const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
-              const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
-              fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
-              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-              logger.success(
-                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
-              );
-              logger.success(
-                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
-              );
-            }
+          if (values.detailed) {
+            const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
 
-            if (values.xlsx) {
-              const { toLicensesXlsx } = await import('./analyzers/xlsx');
-              const xlsxPath = values.output
-                ? path.resolve(values.output as string)
-                : path.join(reportDir, `licenses-${date}.xlsx`);
-              const buf = await toLicensesXlsx(detailed);
-              fs.writeFileSync(xlsxPath, buf);
-              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-            }
+          if (values.xlsx) {
+            const { toLicensesXlsx } = await import('./analyzers/xlsx');
+            const xlsxPath = values.output
+              ? path.resolve(values.output as string)
+              : path.join(reportDir, `licenses-${date}.xlsx`);
+            const buf = await toLicensesXlsx(detailed);
+            fs.writeFileSync(xlsxPath, buf);
+            logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
           }
         }
       }
@@ -759,43 +761,40 @@ export async function run(argv: string[]): Promise<void> {
         console.log(''); // slop-ok
         logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `bom-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
-          console.log(''); // slop-ok
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `bom-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed || values.xlsx) {
-            const { buildBomDetailed, formatBomDetailedMarkdown } =
-              await import('./analyzers/bom/detailed');
-            const detailed = buildBomDetailed(report);
+        if (values.detailed || values.xlsx) {
+          const { buildBomDetailed, formatBomDetailedMarkdown } =
+            await import('./analyzers/bom/detailed');
+          const detailed = buildBomDetailed(report);
 
-            if (values.detailed) {
-              const detailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
-              const detailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
-              fs.writeFileSync(detailedMdPath, formatBomDetailedMarkdown(detailed, elapsed));
-              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-              logger.success(
-                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
-              );
-              logger.success(
-                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
-              );
-            }
+          if (values.detailed) {
+            const detailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
+            const detailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
+            fs.writeFileSync(detailedMdPath, formatBomDetailedMarkdown(detailed, elapsed));
+            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          }
 
-            if (values.xlsx) {
-              const { toBomXlsx } = await import('./analyzers/xlsx');
-              const xlsxPath = values.output
-                ? path.resolve(values.output as string)
-                : path.join(reportDir, `bom-${date}.xlsx`);
-              const buf = await toBomXlsx(report);
-              fs.writeFileSync(xlsxPath, buf);
-              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-            }
+          if (values.xlsx) {
+            const { toBomXlsx } = await import('./analyzers/xlsx');
+            const xlsxPath = values.output
+              ? path.resolve(values.output as string)
+              : path.join(reportDir, `bom-${date}.xlsx`);
+            const buf = await toBomXlsx(report);
+            fs.writeFileSync(xlsxPath, buf);
+            logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
           }
         }
       }
