@@ -233,62 +233,11 @@ export function scoreDocumentation(input: ScoreInput): DimensionScore {
   };
 }
 
-/** Security: 0-100 */
-export function scoreSecurity(input: ScoreInput): DimensionScore {
-  const m = input.metrics;
-  const c = input.capabilities;
-
-  const secretFindings = c.secrets?.findings.length ?? 0;
-  const depVulnCritical = c.depVulns?.counts.critical ?? 0;
-  const depVulnHigh = c.depVulns?.counts.high ?? 0;
-  const depVulnMedium = c.depVulns?.counts.medium ?? 0;
-  const depVulnLow = c.depVulns?.counts.low ?? 0;
-  const depAuditTool = c.depVulns?.tool ?? null;
-
-  let score = 100;
-
-  if (secretFindings > 10) score -= 25;
-  else if (secretFindings > 5) score -= 20;
-  else if (secretFindings > 0) score -= 15;
-
-  if (m.privateKeyFiles > 0) score -= 20;
-
-  if (m.evalCount > 3) score -= 10;
-  else if (m.evalCount > 0) score -= 5;
-
-  if (m.envFilesInGit > 0) score -= 10;
-
-  if (m.tlsDisabledCount > 0) score -= 10;
-
-  if (depVulnCritical > 0) score -= 15;
-  if (depVulnHigh > 5) score -= 10;
-  else if (depVulnHigh > 0) score -= 5;
-
-  score = clamp(score);
-  return {
-    score,
-    maxScore: 100,
-    status: status(score),
-    // Schema v11: `metrics` surfaces only the non-capability signals.
-    // Secret findings live in `report.capabilities.secrets`; dep-vuln
-    // counts + audit-tool name live in `report.capabilities.depVulns`.
-    metrics: {
-      privateKeyFiles: m.privateKeyFiles,
-      evalCount: m.evalCount,
-      envFilesInGit: m.envFilesInGit,
-      tlsDisabledCount: m.tlsDisabledCount,
-    },
-    details:
-      `${secretFindings} hardcoded secret patterns found` +
-      `. ${m.privateKeyFiles} private key files in repo` +
-      `. ${m.evalCount} eval/exec calls` +
-      `. ${m.envFilesInGit} .env files tracked in git` +
-      `. ${m.tlsDisabledCount} TLS verification disabled` +
-      `. Dependency vulns: ${depVulnCritical} critical, ${depVulnHigh} high, ${depVulnMedium} medium, ${depVulnLow} low` +
-      (depAuditTool ? ` (${depAuditTool})` : '') +
-      '.',
-  };
-}
+// The Security dimension scorer used to live here; as of 2.4.7 the
+// canonical formula is owned by `security/scoring.ts` and consumed by
+// both health-side (`security/shallow.ts:scoreSecurityDimension`) and
+// the standalone vuln scan (`security/detailed.ts`). See D023 closure
+// notes in `security/scoring.ts` for the unification rationale.
 
 /** Maintainability: 0-100 */
 export function scoreMaintainability(input: ScoreInput): DimensionScore {

@@ -5,22 +5,24 @@ import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
-import { SecurityCounts, scoreSecurityCounts } from './scoring';
+import { SecurityScoreInput, scoreSecurityFromInput } from './scoring';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
   securityScore: number;
-  actions: Array<RankedAction<SecurityCounts>>;
+  actions: Array<RankedAction<SecurityScoreInput>>;
 }
 
 export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedReport {
-  const counts = countsFromReport(report);
-  const actions = rank(buildSecurityActions(report), counts, scoreSecurityCounts);
+  const input = countsFromReport(report);
+  const actions = rank(buildSecurityActions(report), input, scoreSecurityFromInput);
   return {
     ...report,
-    // v12 adds per-advisory dep-vuln detail under summary.dependencies.findings.
-    schemaVersion: '12',
-    securityScore: scoreSecurityCounts(counts).score,
+    // v13 (D023 unification): securityScore now uses the canonical
+    // unified formula in `security/scoring.ts`, identical to the
+    // health audit's Security dimension score.
+    schemaVersion: '13',
+    securityScore: scoreSecurityFromInput(input).score,
     actions,
   };
 }
@@ -40,13 +42,8 @@ export function formatSecurityDetailedMarkdown(
   L.push(`**Date:** ${detailed.analyzedAt.slice(0, 10)}`);
   L.push(`**Repository:** ${detailed.repo}`);
   L.push(`**Branch:** ${detailed.branch} (${detailed.commitSha})`);
-  L.push(`**Vulnerability Score:** ${detailed.securityScore}/100`);
+  L.push(`**Security Score:** ${detailed.securityScore}/100`);
   L.push(`**Schema version:** ${detailed.schemaVersion}`);
-  L.push('');
-  L.push('> _This score is computed over findings + dependency vulnerabilities only._');
-  L.push(
-    '> _For the comprehensive Security dimension (also covering TLS config, env files in git, eval usage, private keys), see the Health Audit report._',
-  );
   L.push('');
   L.push('---');
   L.push('');

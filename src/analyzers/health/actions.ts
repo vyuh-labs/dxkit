@@ -36,10 +36,11 @@ import {
   scoreTest,
   scoreQuality,
   scoreDocumentation,
-  scoreSecurity,
   scoreMaintainability,
   scoreDeveloperExperience,
 } from '../scoring';
+// Security scorer lives with the analyzer post-D023 unification.
+import { scoreSecurityFromScoreInput } from '../security/shallow';
 
 type HealthAction = RemediationAction<ScoreInput>;
 
@@ -406,7 +407,7 @@ export function buildHealthPlans(input: ScoreInput): DimensionPlan[] {
     { name: 'Testing', scorer: scoreTest, build: testingActions },
     { name: 'Quality', scorer: scoreQuality, build: qualityActions },
     { name: 'Documentation', scorer: scoreDocumentation, build: docsActions },
-    { name: 'Security', scorer: scoreSecurity, build: securityActions },
+    { name: 'Security', scorer: scoreSecurityFromScoreInput, build: securityActions },
     { name: 'Maintainability', scorer: scoreMaintainability, build: maintainabilityActions },
     { name: 'Developer Experience', scorer: scoreDeveloperExperience, build: dxActions },
   ];

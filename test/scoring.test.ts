@@ -3,7 +3,6 @@ import {
   scoreTest,
   scoreQuality,
   scoreDocumentation,
-  scoreSecurity,
   scoreMaintainability,
   scoreDeveloperExperience,
   computeOverall,
@@ -11,9 +10,7 @@ import {
 import { DimensionScore } from '../src/analyzers/types';
 import {
   coverageCapability,
-  depVulnCapability,
   lintCapability,
-  secretsCapabilityWithCount,
   structuralCapability,
   withInput,
 } from './fixtures/score-input';
@@ -238,63 +235,11 @@ describe('scoreDocumentation', () => {
   });
 });
 
-describe('scoreSecurity', () => {
-  it('starts at 100 with no issues', () => {
-    expect(scoreSecurity(withInput()).score).toBe(100);
-  });
-
-  it('deducts tiered for secrets', () => {
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(1) } })).score,
-    ).toBe(85);
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(6) } })).score,
-    ).toBe(80);
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(11) } })).score,
-    ).toBe(75);
-  });
-
-  it('deducts 20 for any private keys', () => {
-    expect(scoreSecurity(withInput({ metrics: { privateKeyFiles: 1 } })).score).toBe(80);
-    expect(scoreSecurity(withInput({ metrics: { privateKeyFiles: 5 } })).score).toBe(80);
-  });
-
-  it('deducts tiered for eval usage', () => {
-    expect(scoreSecurity(withInput({ metrics: { evalCount: 1 } })).score).toBe(95);
-    expect(scoreSecurity(withInput({ metrics: { evalCount: 5 } })).score).toBe(90);
-  });
-
-  it('deducts for dependency vulns tiered', () => {
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(1, 0) } })).score,
-    ).toBe(85);
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(0, 3) } })).score,
-    ).toBe(95);
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(0, 10) } })).score,
-    ).toBe(90);
-  });
-
-  it('stacks penalties, clamps to 0', () => {
-    const s = scoreSecurity(
-      withInput({
-        metrics: {
-          privateKeyFiles: 5,
-          evalCount: 10,
-          envFilesInGit: 1,
-          tlsDisabledCount: 1,
-        },
-        capabilities: {
-          secrets: secretsCapabilityWithCount(20),
-          depVulns: depVulnCapability(5, 20),
-        },
-      }),
-    );
-    expect(s.score).toBe(0);
-  });
-});
+// scoreSecurity tests moved to test/scoring-dimensions.test.ts as part of
+// the D023 unification — the canonical security scorer now lives in
+// `src/analyzers/security/scoring.ts` and is exercised through both
+// `scoreSecurityDimension` (health-side) and `scoreSecurityFromInput`
+// (standalone), with a parity test asserting they agree.
 
 describe('scoreMaintainability', () => {
   it('baseline starts at 70', () => {

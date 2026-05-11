@@ -12,6 +12,8 @@
 import { CapabilityReport, HealthMetrics } from '../../src/analyzers/types';
 import { ScoreInput } from '../../src/analyzers/scoring';
 import type {
+  CodePatternFinding,
+  CodePatternsResult,
   CoverageResult,
   DepVulnResult,
   LintResult,
@@ -131,6 +133,39 @@ export function secretsCapabilityWithCount(count: number, tool = 'gitleaks'): Se
     severity: 'high',
   }));
   return secretsCapability(findings, tool);
+}
+
+/**
+ * codePatterns capability with a given per-severity finding count.
+ * Used by security-scoring tests to drive the unified scorer's
+ * `codeFindings` bucket without standing up a real semgrep envelope.
+ */
+export function codePatternsCapabilityWithFindings(
+  counts: Partial<{ critical: number; high: number; medium: number; low: number }> = {},
+  tool = 'semgrep',
+): CodePatternsResult {
+  const severities: Array<'critical' | 'high' | 'medium' | 'low'> = [
+    'critical',
+    'high',
+    'medium',
+    'low',
+  ];
+  const findings: CodePatternFinding[] = [];
+  let i = 0;
+  for (const sev of severities) {
+    for (let k = 0; k < (counts[sev] ?? 0); k++) {
+      findings.push({
+        file: `src/code-${i}.ts`,
+        line: 1,
+        rule: `pattern-${sev}-${k}`,
+        severity: sev,
+        title: `Code pattern ${sev}`,
+        cwe: '',
+      });
+      i++;
+    }
+  }
+  return { schemaVersion: 1, tool, findings, suppressedCount: 0 };
 }
 
 /**

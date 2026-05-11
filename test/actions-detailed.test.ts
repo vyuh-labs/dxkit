@@ -82,17 +82,21 @@ function securityReport(overrides: Partial<SecurityReport> = {}): SecurityReport
       {
         rule: 'hardcoded-secret',
         severity: 'critical',
+        category: 'secret',
+        cwe: 'CWE-798',
+        title: 'API key found',
         file: 'src/config.ts',
         line: 42,
-        message: 'API key found',
         tool: 'gitleaks',
       },
       {
         rule: 'eval-usage',
         severity: 'high',
+        category: 'code',
+        cwe: 'CWE-95',
+        title: 'eval() use',
         file: 'src/parser.ts',
         line: 100,
-        message: 'eval() use',
         tool: 'semgrep',
       },
     ],
@@ -323,12 +327,18 @@ function devReport(): DevReport {
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe('security/actions', () => {
-  it('countsFromReport projects findings + deps into SecurityCounts', () => {
+  it('countsFromReport projects findings + deps into SecurityScoreInput', () => {
     const c = securityCountsFromReport(securityReport());
-    expect(c.critical).toBe(2);
-    expect(c.high).toBe(5);
-    expect(c.depCritical).toBe(1);
-    expect(c.depHigh).toBe(3);
+    // The fixture has 2 findings: one gitleaks secret (critical, category=secret)
+    // and one semgrep code finding (high, category=code).
+    expect(c.secretFindings).toBe(1);
+    expect(c.privateKeyFiles).toBe(0);
+    expect(c.envFilesInGit).toBe(0);
+    expect(c.codeFindings.high).toBe(1);
+    expect(c.codeFindings.critical).toBe(0);
+    // Dep counts mirror summary.dependencies.
+    expect(c.depVulns.critical).toBe(1);
+    expect(c.depVulns.high).toBe(3);
   });
 
   it('buildSecurityActions returns ranked actions', () => {
