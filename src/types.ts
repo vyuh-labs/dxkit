@@ -28,6 +28,22 @@ export interface ToolRequirement {
   check: string;
   for: string;
   layer: 'universal' | 'language' | 'optional';
+  /**
+   * Where the tool gets installed. `global` = system-level binary
+   * (brew, pipx, apt, go install, cargo install, npm -g). `project-
+   * local` = lives in the consuming project's dependency manifest
+   * (`npm install --save-dev`, `bundle add`, gem inside Gemfile.lock).
+   *
+   * Drives the F-UX-3 fix to `tools list`: project-local missing
+   * tools shouldn't hint "run `vyuh-dxkit tools install`" — they're
+   * already declared in the consumer's package.json/Gemfile and just
+   * need `npm ci` / `bundle install`. dxkit shouldn't try to install
+   * project deps on the consumer's behalf.
+   *
+   * Defaults to `global` when omitted — keeps the JSON-shape stable
+   * for the existing definitions.
+   */
+  installScope?: 'global' | 'project-local';
 }
 
 export interface DetectedStack {

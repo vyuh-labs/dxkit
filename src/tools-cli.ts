@@ -89,7 +89,13 @@ function formatStatusLine(s: ToolStatus): string {
     const src = s.source === 'path' ? '' : ` (${s.source})`;
     return `  ${icon} ${name}  ${layer}  ${forStack}  ${logger.bold('found')}${src}`;
   }
-  return `  ${icon} ${name}  ${layer}  ${forStack}  \x1b[2mmissing\x1b[0m`;
+  // Project-local tools (F-UX-3): annotate so users don't confuse a
+  // missing dev-dep with a missing system tool.
+  const scopeNote =
+    s.requirement.installScope === 'project-local'
+      ? ' \x1b[2m(project-local — `npm ci`)\x1b[0m'
+      : '';
+  return `  ${icon} ${name}  ${layer}  ${forStack}  \x1b[2mmissing\x1b[0m${scopeNote}`;
 }
 
 /** Show tool status for the repo's detected stack. */
@@ -128,7 +134,29 @@ function showStatus(targetPath: string): ToolStatus[] {
   } else {
     logger.warn(`${missing.length}/${total} tools missing.`);
     console.log('');
-    logger.dim(`Run \`vyuh-dxkit tools install\` to install missing tools interactively.`);
+
+    // F-UX-3: partition missing by install scope so the hint matches
+    // where each tool actually lives. Project-local tools (eslint,
+    // @vitest/coverage-v8) are declared in the consumer's package.json
+    // — dxkit shouldn't try to add them on the consumer's behalf;
+    // `npm ci` already populates `node_modules/.bin/`. Globally-
+    // installed tools (semgrep, gitleaks, cloc) are dxkit's
+    // responsibility.
+    const projectLocalMissing = missing.filter(
+      (s) => s.requirement.installScope === 'project-local',
+    );
+    const globalMissing = missing.filter((s) => s.requirement.installScope !== 'project-local');
+
+    if (projectLocalMissing.length > 0) {
+      logger.dim(
+        `${projectLocalMissing.length} project-local tool${projectLocalMissing.length === 1 ? '' : 's'} (${projectLocalMissing.map((s) => s.name).join(', ')}) — run \`npm ci\` (or \`npm install\`) in this repo to provision them from package.json devDependencies.`,
+      );
+    }
+    if (globalMissing.length > 0) {
+      logger.dim(
+        `${globalMissing.length} global tool${globalMissing.length === 1 ? '' : 's'} — run \`vyuh-dxkit tools install\` to install interactively.`,
+      );
+    }
   }
   return statuses;
 }

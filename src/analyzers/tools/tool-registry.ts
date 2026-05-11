@@ -501,6 +501,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     check: 'npx eslint --version',
     for: 'node',
     layer: 'language',
+    // Project-local dev-dep: lives in the consumer's package.json,
+    // not a global binary. F-UX-3 hint logic surfaces "run npm ci"
+    // for missing tools in this scope, not "vyuh-dxkit tools install".
+    installScope: 'project-local',
     binaries: ['eslint', 'lb-eslint'],
     versionCheck: 'npx eslint --version 2>/dev/null',
     installCommands: {
@@ -790,6 +794,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     check: 'node -e "require(\'@vitest/coverage-v8\')"',
     for: 'node',
     layer: 'language',
+    installScope: 'project-local',
     binaries: [],
     nodePackage: '@vitest/coverage-v8',
     // Version auto-detect via `require('vitest/package.json')` assumed
