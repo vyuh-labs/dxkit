@@ -5,11 +5,49 @@ import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 
+/**
+ * Two-tier doctor (F-UX-1, closes the 2026-05-07 "Fail: 10" credibility
+ * issue from the real-user UX session).
+ *
+ * Tier 1 — Reports prerequisites: the small set of things that must
+ * be present for ANY dxkit CLI command to work. Node 18+ and git.
+ * Failure here = dxkit can't function = exit 1.
+ *
+ * Tier 2 — Claude Code DX prerequisites: the `.vyuh-dxkit.json`
+ * manifest + the `.claude/*` scaffolding that `vyuh-dxkit init`
+ * generates. These only matter if you want Claude Code DX features.
+ * Failure here = informational warn + a hint to run `init`; exit
+ * code is unaffected.
+ *
+ * Pre-F-UX-1, both tiers were lumped together. A fresh repo without
+ * `.claude/` reported "Fail: 10" — making users think dxkit was
+ * broken when actually the reports CLI worked fine. The new framing
+ * keeps the diagnostic value of the DX checks while making clear
+ * what's required vs. nice-to-have.
+ */
+
+interface DoctorResult {
+  /** Reports-tier checks (mandatory). */
+  reports: { pass: number; fail: number };
+  /** Claude Code DX-tier checks (informational). */
+  dx: { pass: number; fail: number };
+}
+
 function check(label: string, condition: boolean): boolean {
   if (condition) {
     logger.success(label);
   } else {
     logger.fail(label);
+  }
+  return condition;
+}
+
+/** Informational variant of `check` — failures render as warn, not fail. */
+function checkInfo(label: string, condition: boolean): boolean {
+  if (condition) {
+    logger.success(label);
+  } else {
+    logger.warn(label);
   }
   return condition;
 }
@@ -23,75 +61,97 @@ function commandAvailable(cmd: string): boolean {
   }
 }
 
+function nodeMajorVersion(): number {
+  const raw = process.versions.node;
+  const m = raw.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 export async function runDoctor(cwd: string): Promise<void> {
   logger.header('vyuh-dxkit doctor');
 
-  let pass = 0;
-  let fail = 0;
-
-  function track(ok: boolean) {
-    if (ok) pass++;
-    else fail++;
+  const result: DoctorResult = {
+    reports: { pass: 0, fail: 0 },
+    dx: { pass: 0, fail: 0 },
+  };
+  function trackReports(ok: boolean) {
+    if (ok) result.reports.pass++;
+    else result.reports.fail++;
+  }
+  function trackDx(ok: boolean) {
+    if (ok) result.dx.pass++;
+    else result.dx.fail++;
   }
 
-  // 1. Manifest
+  // ─── Tier 1: Reports prerequisites (mandatory) ─────────────────────────
+  logger.info('Reports prerequisites (required to run any dxkit command):');
+  const nodeMajor = nodeMajorVersion();
+  trackReports(check(`Node ≥ 18 (running ${process.versions.node})`, nodeMajor >= 18));
+  trackReports(check('git', commandAvailable('git')));
+
+  // ─── Tier 2: Claude Code DX prerequisites (informational) ──────────────
+  console.log(''); // slop-ok
+  logger.info('Claude Code DX prerequisites (only required for `init`-generated artifacts):');
+
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   const hasManifest = fs.existsSync(manifestPath);
-  track(check('.vyuh-dxkit.json exists', hasManifest));
+  trackDx(checkInfo('.vyuh-dxkit.json exists', hasManifest));
 
   let manifest: Manifest | null = null;
   if (hasManifest) {
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-      track(check('.vyuh-dxkit.json is valid JSON', true));
+      trackDx(checkInfo('.vyuh-dxkit.json is valid JSON', true));
     } catch {
-      track(check('.vyuh-dxkit.json is valid JSON', false));
+      trackDx(checkInfo('.vyuh-dxkit.json is valid JSON', false));
     }
   }
 
-  // 2. Core files
-  console.log('');
-  logger.info('Core files:');
-  track(check('CLAUDE.md', fs.existsSync(path.join(cwd, 'CLAUDE.md'))));
-  track(check('.claude/settings.json', fs.existsSync(path.join(cwd, '.claude', 'settings.json'))));
-  track(check('.claude/skills/', fs.existsSync(path.join(cwd, '.claude', 'skills'))));
-  track(check('.claude/commands/', fs.existsSync(path.join(cwd, '.claude', 'commands'))));
-  track(check('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
-  track(
-    check(
+  trackDx(checkInfo('CLAUDE.md', fs.existsSync(path.join(cwd, 'CLAUDE.md'))));
+  trackDx(
+    checkInfo('.claude/settings.json', fs.existsSync(path.join(cwd, '.claude', 'settings.json'))),
+  );
+  trackDx(checkInfo('.claude/skills/', fs.existsSync(path.join(cwd, '.claude', 'skills'))));
+  trackDx(checkInfo('.claude/commands/', fs.existsSync(path.join(cwd, '.claude', 'commands'))));
+  trackDx(checkInfo('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
+  trackDx(
+    checkInfo(
       '.claude/agents-available/',
       fs.existsSync(path.join(cwd, '.claude', 'agents-available')),
     ),
   );
 
-  // 3. Settings.json validity
+  // Settings.json validity (only when the file exists; absence already
+  // counted above).
   const settingsPath = path.join(cwd, '.claude', 'settings.json');
   if (fs.existsSync(settingsPath)) {
     try {
       JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      track(check('settings.json is valid JSON', true));
+      trackDx(checkInfo('settings.json is valid JSON', true));
     } catch {
-      track(check('settings.json is valid JSON', false));
+      trackDx(checkInfo('settings.json is valid JSON', false));
     }
   }
 
-  // 4. Evolved files
-  console.log('');
-  logger.info('Evolving files:');
-  track(
-    check(
+  // Evolving files. These start empty after `init` and accumulate as
+  // Claude learns — their absence is mildly informational, not a
+  // problem in any tier.
+  console.log(''); // slop-ok
+  logger.info('Claude Code DX — evolving files (start empty, fill over time):');
+  trackDx(
+    checkInfo(
       'learned/gotchas.md',
       fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'gotchas.md')),
     ),
   );
-  track(
-    check(
+  trackDx(
+    checkInfo(
       'learned/conventions.md',
       fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'conventions.md')),
     ),
   );
-  track(
-    check(
+  trackDx(
+    checkInfo(
       'deny-recommendations.md',
       fs.existsSync(
         path.join(cwd, '.claude', 'skills', 'learned', 'references', 'deny-recommendations.md'),
@@ -99,45 +159,74 @@ export async function runDoctor(cwd: string): Promise<void> {
     ),
   );
 
-  // 5. Full mode checks
+  // Full mode infrastructure (informational, only relevant when the
+  // manifest declares full mode). Same tier — fails here don't break
+  // any CLI command, they just signal that the `init --full` template
+  // hasn't been (re-)applied.
   if (manifest?.mode === 'full') {
-    console.log('');
-    logger.info('Full mode infrastructure:');
-    track(check('.project.yaml', fs.existsSync(path.join(cwd, '.project.yaml'))));
-    track(check('.project/ directory', fs.existsSync(path.join(cwd, '.project'))));
-    track(check('Makefile', fs.existsSync(path.join(cwd, 'Makefile'))));
-    track(check('.ai/ directory', fs.existsSync(path.join(cwd, '.ai'))));
+    console.log(''); // slop-ok
+    logger.info('Claude Code DX — full-mode infrastructure:');
+    trackDx(checkInfo('.project.yaml', fs.existsSync(path.join(cwd, '.project.yaml'))));
+    trackDx(checkInfo('.project/ directory', fs.existsSync(path.join(cwd, '.project'))));
+    trackDx(checkInfo('Makefile', fs.existsSync(path.join(cwd, 'Makefile'))));
+    trackDx(checkInfo('.ai/ directory', fs.existsSync(path.join(cwd, '.ai'))));
 
-    // Toolchain checks — pack-driven via `LanguageSupport.cliBinaries`.
-    // Note: pre-LP.1, this block missed C# entirely (no `dotnet` check).
-    // The pack-driven iteration auto-fixes that — csharp pack now
-    // declares `cliBinaries: ['dotnet']` so doctor surfaces missing
-    // dotnet as a failure on .NET projects.
-    console.log('');
-    logger.info('Toolchains:');
+    // Toolchain CLIs — pack-driven via `LanguageSupport.cliBinaries`.
+    // These are informational (a missing toolchain just disables that
+    // language's analyzers — the rest of dxkit keeps working).
+    console.log(''); // slop-ok
+    logger.info('Claude Code DX — toolchains:');
     for (const lang of activeLanguagesFromStack(manifest.config)) {
       for (const bin of lang.cliBinaries ?? []) {
-        track(check(bin, commandAvailable(bin)));
+        trackDx(checkInfo(bin, commandAvailable(bin)));
       }
     }
     if (manifest.config.tools.gcloud) {
-      track(check('gcloud', commandAvailable('gcloud')));
+      trackDx(checkInfo('gcloud', commandAvailable('gcloud')));
     }
     if (manifest.config.tools.infisical) {
-      track(check('infisical', commandAvailable('infisical')));
+      trackDx(checkInfo('infisical', commandAvailable('infisical')));
     }
   }
 
-  // Summary
-  console.log('');
+  // ─── Summary ───────────────────────────────────────────────────────────
+  console.log(''); // slop-ok
   logger.header('Results');
-  logger.success(`Pass: ${pass}`);
-  if (fail > 0) {
-    logger.fail(`Fail: ${fail}`);
-    console.log('');
-    logger.dim('Run `vyuh-dxkit init` or `vyuh-dxkit update` to fix missing files');
+  if (result.reports.fail === 0) {
+    logger.success(
+      `Reports: ${result.reports.pass}/${result.reports.pass + result.reports.fail} — ready to run dxkit`,
+    );
   } else {
-    logger.success('All checks passed!');
+    logger.fail(
+      `Reports: ${result.reports.pass}/${result.reports.pass + result.reports.fail} — fix the failures above before running other dxkit commands`,
+    );
   }
-  console.log('');
+
+  const dxTotal = result.dx.pass + result.dx.fail;
+  if (dxTotal > 0) {
+    if (result.dx.fail === 0) {
+      logger.success(`Claude Code DX: ${result.dx.pass}/${dxTotal} — fully scaffolded`);
+    } else {
+      logger.warn(`Claude Code DX: ${result.dx.pass}/${dxTotal} — partial scaffolding`);
+      console.log(''); // slop-ok
+      if (!hasManifest) {
+        logger.dim(
+          '💡 Run `vyuh-dxkit init` to enable Claude Code DX features (skills, agents, slash commands). Reports CLI works without it.',
+        );
+      } else {
+        logger.dim(
+          '💡 Run `vyuh-dxkit update` to refresh missing Claude Code DX files (the manifest already exists).',
+        );
+      }
+    }
+  }
+
+  console.log(''); // slop-ok
+
+  // Exit non-zero only when the reports tier failed — DX-tier failures
+  // are informational and shouldn't break CI scripts that gate on
+  // `dxkit doctor`.
+  if (result.reports.fail > 0) {
+    process.exitCode = 1;
+  }
 }
