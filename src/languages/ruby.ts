@@ -458,12 +458,6 @@ export function parseSimpleCovResultset(
  * `coverage/coverage.json` (less common). We probe the canonical
  * path first — it ships with vanilla SimpleCov and is the most
  * likely to exist.
- *
- * HTML-only fallback (no JSON, only `coverage/index.html`) is currently
- * not parseable — the analyzer reports "no coverage" in that state,
- * which is indistinguishable from "tool didn't run." Tracked as a
- * Recipe v4 candidate (extend the coverage outcome enum to distinguish
- * 'output-format-incompatible' from 'unavailable').
  */
 function findSimpleCovResultset(cwd: string): string | null {
   const candidates = ['coverage/.resultset.json', 'coverage/coverage.json'];
@@ -474,21 +468,81 @@ function findSimpleCovResultset(cwd: string): string | null {
 }
 
 /**
+ * Discriminated outcome of a SimpleCov coverage probe (Recipe v4 G_v4_3).
+ *
+ * Pre-G_v4_3, `gatherSimpleCovCoverageResult` returned `CoverageResult |
+ * null` and the `null` branch silently merged two genuinely different
+ * states: "SimpleCov never ran" and "SimpleCov ran but only produced
+ * HTML output." The second is a legitimate user state (vanilla
+ * SimpleCov ships HTML by default; JSON requires either the binary-
+ * intermediate `.resultset.json` — produced by default but undocumented
+ * as stable — or the third-party `simplecov-json` gem). Users in that
+ * state need actionable guidance, not a silent "no coverage data."
+ *
+ * The capability dispatcher contract (`CoverageResult | null`) is
+ * unchanged — the adapter still returns null for both unavailable and
+ * html-only states so existing consumers keep working. Consumers that
+ * want the richer signal (coverage CLI under D021, dashboard renderer)
+ * call `gatherSimpleCovOutcome` directly.
+ */
+export type SimpleCovOutcome =
+  | { kind: 'unavailable' }
+  | { kind: 'html-only'; hint: string }
+  | { kind: 'success'; envelope: CoverageResult };
+
+/**
+ * Probe SimpleCov state and produce the discriminated outcome. Three
+ * paths, all distinguishable downstream:
+ *   1. `success`     — parseable JSON found at `.resultset.json` or
+ *                      `coverage.json`; envelope ready to ship.
+ *   2. `html-only`   — `coverage/index.html` exists but no JSON;
+ *                      SimpleCov ran, but in a format we can't parse.
+ *                      Includes a hint string for the user.
+ *   3. `unavailable` — neither JSON nor HTML; tool didn't run.
+ */
+export function gatherSimpleCovOutcome(cwd: string): SimpleCovOutcome {
+  const reportRel = findSimpleCovResultset(cwd);
+  if (reportRel) {
+    try {
+      const raw = fs.readFileSync(path.join(cwd, reportRel), 'utf-8');
+      const coverage = parseSimpleCovResultset(raw, reportRel, cwd);
+      if (coverage) {
+        return {
+          kind: 'success',
+          envelope: { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage },
+        };
+      }
+    } catch {
+      // Fall through to the html-only / unavailable check — a corrupt
+      // JSON shouldn't masquerade as "tool didn't run" when the user
+      // clearly did run SimpleCov (HTML is the tell).
+    }
+  }
+  if (fileExists(cwd, 'coverage/index.html')) {
+    return {
+      kind: 'html-only',
+      hint:
+        'SimpleCov produced HTML output only. ' +
+        'Install the simplecov-json gem to emit `coverage/coverage.json`, ' +
+        'or keep the default formatter (which produces the binary intermediate ' +
+        '`coverage/.resultset.json` that dxkit also reads).',
+    };
+  }
+  return { kind: 'unavailable' };
+}
+
+/**
  * Single source of truth for the ruby pack's coverage gathering.
  * Consumed by `rubyCoverageProvider` (capability dispatcher).
+ *
+ * Thin adapter over `gatherSimpleCovOutcome`: collapses the three-way
+ * outcome to the dispatcher's binary `CoverageResult | null` contract.
+ * Callers that need the html-only signal should use
+ * `gatherSimpleCovOutcome` directly.
  */
 function gatherSimpleCovCoverageResult(cwd: string): CoverageResult | null {
-  const reportRel = findSimpleCovResultset(cwd);
-  if (!reportRel) return null;
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path.join(cwd, reportRel), 'utf-8');
-  } catch {
-    return null;
-  }
-  const coverage = parseSimpleCovResultset(raw, reportRel, cwd);
-  if (!coverage) return null;
-  return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+  const outcome = gatherSimpleCovOutcome(cwd);
+  return outcome.kind === 'success' ? outcome.envelope : null;
 }
 
 const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
