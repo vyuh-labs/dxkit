@@ -159,8 +159,10 @@ describe('csharp registration', () => {
     expect(csharp.displayName).toBe('C#');
   });
 
-  it('declares dotnet-format + nuget-license tools', () => {
-    expect(csharp.tools).toEqual(['dotnet-format', 'nuget-license']);
+  it('declares dotnet-format + nuget-license + osv-scanner tools', () => {
+    // D025f (2.4.7) added osv-scanner as the direct-PackageReference
+    // fallback when `dotnet list package` can't produce output (D036).
+    expect(csharp.tools).toEqual(['dotnet-format', 'nuget-license', 'osv-scanner']);
   });
 
   it('declares empty semgrep rulesets (p/csharp is sparse)', () => {

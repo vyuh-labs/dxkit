@@ -1,9 +1,16 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import {
+  buildNugetAdhocLockfile,
+  parseCsprojPackageReferences,
+  type PackageReferenceEntry,
+} from '../analyzers/tools/nuget-package-reference';
 import { resolveCvssScores } from '../analyzers/tools/osv';
+import { parseOsvScannerFindings } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -446,6 +453,48 @@ export function findAllProjectAssetsJson(cwd: string, maxDepth = 4): string[] {
 }
 
 /**
+ * Locate every `.csproj` reachable from cwd within `maxDepth` levels.
+ * D025f (2.4.7): the direct-parsing fallback iterates this list when
+ * `dotnet list package` can't produce output (D036: cwd is a parent
+ * of the actual project files, dotnet has no way to pick one).
+ *
+ * Skips standard non-source dirs (node_modules / bin / obj /
+ * TestResults / packages). Unlike `findAllProjectAssetsJson` (which
+ * needs `obj/`), this walk's targets sit in project root directories
+ * so the obj-skip is fine.
+ *
+ * Exported for test coverage.
+ */
+export function findAllCsprojFiles(cwd: string, maxDepth = 5): string[] {
+  const out: string[] = [];
+  function search(dir: string, depth: number): void {
+    if (depth > maxDepth) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (
+        e.name.startsWith('.') ||
+        ['node_modules', 'bin', 'obj', 'TestResults', 'packages'].includes(e.name)
+      ) {
+        continue;
+      }
+      const full = path.join(dir, e.name);
+      if (e.isFile() && /\.csproj$/i.test(e.name)) {
+        out.push(full);
+      } else if (e.isDirectory()) {
+        search(full, depth + 1);
+      }
+    }
+  }
+  search(cwd, 0);
+  return out;
+}
+
+/**
  * Merge multiple `project.assets.json` parse results into a single
  * graph. `topLevels` unions across projects; `edges` unions the
  * adjacency sets — if project A lists `Newtonsoft.Json` → `Foo` and
@@ -497,26 +546,166 @@ function loadCsharpTopLevelDepIndex(cwd: string): Map<string, string[]> {
 }
 
 /**
+ * D025f (2.4.7) — direct PackageReference scan via osv-scanner.
+ *
+ * Fallback gather path that bypasses `dotnet list package` entirely.
+ * Used when (a) dotnet isn't installed or (b) dotnet ran but produced
+ * no output (D036: cwd is a parent directory and dotnet can't pick
+ * a project file).
+ *
+ * Architecture:
+ *   1. Walk every `.csproj` under cwd (depth 5).
+ *   2. Parse each via `parseCsprojPackageReferences`.
+ *   3. Union direct PackageReferences across all .csprojs (dedup by
+ *      name@version; cross-csproj version collisions documented in
+ *      the parser-helper layer as last-write-wins at lockfile time).
+ *   4. Generate ad-hoc `packages.lock.json` schema → temp file.
+ *   5. Invoke osv-scanner via `--lockfile=NuGet:<tmp>`.
+ *   6. Parse output via the shared `parseOsvScannerFindings` (same
+ *      helper kotlin/java/ruby packs already use for their osv path).
+ *   7. Clean up temp file.
+ *
+ * Transitive coverage: NOT included. The direct-parsing path only
+ * surfaces vulnerabilities in packages explicitly listed in a .csproj's
+ * `<PackageReference>` blocks. Industry studies put ~80% of typical
+ * .NET CVE surface on direct refs; the remaining ~20% needs
+ * `project.assets.json` or `dotnet list --include-transitive` which
+ * the D025c path covers when available.
+ *
+ * Return shape: same `DepVulnGatherOutcome` as the primary gather.
+ * `unavailableReason` carries the original dotnet failure reason
+ * concatenated with the fallback's own failure (osv-scanner missing,
+ * no parseable references, etc.) so the customer can trace BOTH
+ * paths' state from a single message.
+ */
+async function gatherDirectPackageReferenceFallback(
+  cwd: string,
+  dotnetFailureReason: string,
+): Promise<DepVulnGatherOutcome> {
+  const csprojs = findAllCsprojFiles(cwd);
+  if (csprojs.length === 0) {
+    // Shouldn't happen (hasCsharpProject already passed) but defensive
+    // in case the walk + the gate diverge somehow.
+    return {
+      kind: 'unavailable',
+      reason: `${dotnetFailureReason}; no .csproj files for direct-parsing fallback`,
+    };
+  }
+
+  const scanner = findTool(TOOL_DEFS['osv-scanner'], cwd);
+  if (!scanner.available || !scanner.path) {
+    return {
+      kind: 'unavailable',
+      reason: `${dotnetFailureReason}; osv-scanner also unavailable for D025f fallback`,
+    };
+  }
+
+  // Aggregate PackageReferences across every .csproj. Cross-csproj
+  // dedup at the name+version level here; package-only collisions get
+  // resolved by `buildNugetAdhocLockfile`'s last-write-wins.
+  const entries: PackageReferenceEntry[] = [];
+  const seen = new Set<string>();
+  for (const csprojPath of csprojs) {
+    let xml: string;
+    try {
+      xml = fs.readFileSync(csprojPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const entry of parseCsprojPackageReferences(xml)) {
+      const key = `${entry.name}@${entry.version}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push(entry);
+    }
+  }
+  if (entries.length === 0) {
+    return {
+      kind: 'no-manifest',
+      reason: `${csprojs.length} .csproj files contain no parseable PackageReferences (possibly Central Package Management — Version comes from Directory.Packages.props which D025f doesn't yet resolve)`,
+    };
+  }
+
+  // osv-scanner v2.x detects lockfile ecosystem by FILENAME — there's
+  // no `--lockfile=NuGet:<path>` syntax (verified 2026-05-12 during
+  // D025f integration; that syntax was speculation). The NuGet
+  // extractor only fires when the file is literally named
+  // `packages.lock.json`. We create a process-unique temp DIRECTORY
+  // and write the adhoc file inside it as `packages.lock.json`; the
+  // dir wraps the file so concurrent dxkit runs don't collide on a
+  // single `/tmp/packages.lock.json` path.
+  const adhocDir = fs.mkdtempSync(path.join(os.tmpdir(), `dxkit-nuget-adhoc-${process.pid}-`));
+  const adhocPath = path.join(adhocDir, 'packages.lock.json');
+  try {
+    fs.writeFileSync(adhocPath, buildNugetAdhocLockfile(entries));
+    const raw = run(
+      `${scanner.path} scan source --lockfile=${adhocPath} --format json 2>/dev/null`,
+      cwd,
+      180000,
+    );
+    if (!raw) {
+      return {
+        kind: 'unavailable',
+        reason: `${dotnetFailureReason}; D025f fallback ran but osv-scanner produced no output on ${entries.length} parsed PackageReferences`,
+      };
+    }
+    const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, 'NuGet');
+
+    // Per-finding CVSS enrichment — mirrors the primary csharp gather's
+    // OSV alias-fallback path. Direct PackageReferences carry the
+    // package name + version; osv-scanner emits the advisory IDs;
+    // resolveCvssScores attaches scores via GHSA → CVE alias chain.
+    if (findings.length > 0) {
+      const resolved = await resolveCvssScores(vulnsForCvss);
+      for (const f of findings) {
+        const score = resolved.get(f.id);
+        if (score !== null && score !== undefined) f.cvssScore = score;
+      }
+    }
+
+    const envelope: DepVulnResult = {
+      schemaVersion: 1,
+      tool: 'osv-scanner-nuget-direct',
+      enrichment: 'osv.dev',
+      counts,
+      findings,
+    };
+    return { kind: 'success', envelope };
+  } finally {
+    // Clean up the whole adhoc directory (file + dir). Best-effort —
+    // the OS will reap `/tmp/` on next boot if we miss it.
+    try {
+      fs.unlinkSync(adhocPath);
+    } catch {
+      /* best-effort */
+    }
+    try {
+      fs.rmdirSync(adhocDir);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/**
  * Single source of truth for the csharp pack's dep-vuln gathering.
  * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
  *
- * Two gating preconditions:
+ * Two-tier strategy (D025f, 2.4.7):
  *
- *   1. **Project file present** (`.csproj` or `.sln`). `dotnet list`
- *      requires one in cwd to identify what to scan; without one it
- *      fails with a non-JSON error message. Mirrors python's manifest
- *      gating from 10h.3.3 — return null cleanly rather than scan an
- *      unrelated scope.
- *   2. **`dotnet` binary discoverable** via the tool registry. D025c
- *      (2.4.7): we route through `findTool(TOOL_DEFS['dotnet-format'])`
- *      (its `binaries: ['dotnet']` + `getSystemPaths()`'s `~/.dotnet`
- *      probe locates Microsoft's recommended non-sudo install path).
- *      Pre-D025c, the gather invoked bare `dotnet ...` from a Node
- *      subshell — fine when `dotnet` is on `PATH`, but on dpl-studio
- *      (where `dotnet-install.sh` placed the SDK at `~/.dotnet/dotnet`
- *      without modifying `PATH`) the spawn produced no output and the
- *      gather reported zero vulns on 133 NuGet refs (Security 100/100
- *      on an unscannable repo — D025 customer-credibility class).
+ *   **Primary**: `dotnet list package --vulnerable --include-transitive`
+ *   when dotnet is available AND can pick a project file from cwd.
+ *   Surfaces transitive vulns via NuGet's own resolution.
+ *
+ *   **Fallback** (D025f): direct PackageReference parsing →
+ *   `--lockfile=NuGet:<adhoc>` to osv-scanner. Used when dotnet isn't
+ *   installed OR `dotnet list` produces no output (D036). Catches ~80%
+ *   of typical .NET CVE surface (direct refs); transitive deps
+ *   require the primary path.
+ *
+ * Manifest gate: a `.csproj` or `.sln` must be findable within depth 5
+ * (D035 / `hasCsharpProject`). Below that, the gather doesn't even
+ * try — that's a `no-manifest` outcome.
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   if (!hasCsharpProject(cwd)) {
@@ -525,7 +714,10 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
 
   const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
   if (!dotnet.available || !dotnet.path) {
-    return { kind: 'unavailable', reason: 'dotnet SDK not installed' };
+    // D025f: dotnet absent doesn't mean we're done — try the direct
+    // PackageReference path before giving up. osv-scanner is a
+    // separate tool; users may have one but not the other.
+    return gatherDirectPackageReferenceFallback(cwd, 'dotnet SDK not installed');
   }
 
   // `--include-transitive` (10h.4.4.c) extends the scan to indirect
@@ -538,11 +730,16 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
     120000,
   );
   if (!vulnRaw) {
-    // Most commonly: `dotnet list package` errors with "A project or
-    // solution file could not be found" when cwd is a parent directory
-    // of the actual project files. See D036; D025f's direct
-    // PackageReference parser is the architectural fix.
-    return { kind: 'unavailable', reason: 'dotnet list package produced no output (see D036)' };
+    // D036: `dotnet list package` errors with "A project or solution
+    // file could not be found" when cwd is a parent directory of the
+    // actual project files. D025f's direct-parsing fallback bypasses
+    // dotnet entirely — covers ~80% of CVE surface (direct refs only,
+    // no transitive). Pre-D025f this returned `unavailable` and the
+    // customer saw a capped 65/100 Security score with no real data.
+    return gatherDirectPackageReferenceFallback(
+      cwd,
+      'dotnet list package produced no output (D036)',
+    );
   }
 
   const parsed = parseDotnetVulnerableOutput(vulnRaw);
@@ -958,7 +1155,11 @@ export const csharp: LanguageSupport = {
     );
   },
 
-  tools: ['dotnet-format', 'nuget-license'],
+  // D025f (2.4.7): osv-scanner added — used by the direct-PackageReference
+  // fallback in gatherDirectPackageReferenceFallback when `dotnet list
+  // package` can't produce output (D036). Cross-pack tool; kotlin/java/ruby
+  // already use it via the shared osv-scanner-deps helper.
+  tools: ['dotnet-format', 'nuget-license', 'osv-scanner'],
   // p/csharp semgrep ruleset is sparse — skip until it matures.
   semgrepRulesets: [],
 

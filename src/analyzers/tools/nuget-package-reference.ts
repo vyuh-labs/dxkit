@@ -4,8 +4,10 @@
  * Extracts NuGet PackageReference entries from `.csproj` XML text
  * without invoking `dotnet restore` or any other .NET toolchain. The
  * output feeds an ad-hoc `packages.lock.json`-shaped file that
- * osv-scanner ingests via `--lockfile=NuGet:<path>`, closing the
- * D036 customer-outcome gap on dpl-studio (where `dotnet list package`
+ * osv-scanner ingests via `--lockfile=<path>` (the file MUST be
+ * literally named `packages.lock.json` — osv-scanner v2.x detects the
+ * NuGet ecosystem by filename, not by a prefix). This closes the D036
+ * customer-outcome gap on dpl-studio (where `dotnet list package`
  * couldn't run from a multi-project parent directory).
  *
  * Lives under `src/analyzers/tools/` (alongside `osv-scanner-deps.ts`,
@@ -136,8 +138,10 @@ function pushEntry(
 
 /**
  * Generate the body of an ad-hoc `packages.lock.json` that osv-scanner
- * v2.x reads via `--lockfile=NuGet:<path>`. The schema matches NuGet's
- * native `dotnet restore`-produced lockfile (which osv-scanner already
+ * v2.x reads via `--lockfile=<path>` (caller MUST write this content to
+ * a file literally named `packages.lock.json` — osv-scanner detects
+ * ecosystem by filename). The schema matches NuGet's native
+ * `dotnet restore`-produced lockfile (which osv-scanner already
  * supports natively), simplified to the minimum osv-scanner consults
  * for vulnerability matching:
  *
