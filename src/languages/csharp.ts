@@ -581,28 +581,24 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
   return { kind: 'success', envelope };
 }
 
-/** True if `cwd` has a .csproj or .sln file at depth 0 or 1 (workspace
- *  layouts often nest projects one level under the repo root). */
+/**
+ * True if `cwd` (or any nested directory up to depth 5) contains a
+ * `.csproj` or `.sln` file. Used as the depVulns gather preflight —
+ * `dotnet list package --vulnerable` needs a project file in scope.
+ *
+ * Depth 5 mirrors `csharp.detect()`'s recursive walk (D024 / 2.4.7):
+ * enterprise layouts like dpl-studio nest .csproj under
+ * `Code/Source/Dev/Core/<Module>/`. Pre-D035, this was a depth-1
+ * custom walk; symmetrical with detect()'s old depth-3 limit until
+ * D024 broke the symmetry. The Sprint A dpl-studio validation
+ * (2026-05-12) surfaced the inconsistency — D025c's tool-registry
+ * probe was unreachable from `Code/Source/` because this preflight
+ * rejected before reaching it. See D035 in tmp/known-defects.md.
+ */
 function hasCsharpProject(cwd: string): boolean {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(cwd, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  for (const e of entries) {
-    if (e.isFile() && (e.name.endsWith('.csproj') || e.name.endsWith('.sln'))) return true;
-    if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-      try {
-        const sub = fs.readdirSync(path.join(cwd, e.name), { withFileTypes: true });
-        if (sub.some((s) => s.isFile() && (s.name.endsWith('.csproj') || s.name.endsWith('.sln'))))
-          return true;
-      } catch {
-        /* unreadable subdir — ignore */
-      }
-    }
-  }
-  return false;
+  return (
+    dirHasMatching(cwd, /\.(sln|csproj)$/) || findMatchingRecursive(cwd, /\.csproj$/, 5) !== null
+  );
 }
 
 const csharpDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
