@@ -494,24 +494,38 @@ function loadCsharpTopLevelDepIndex(cwd: string): Map<string, string[]> {
 
 /**
  * Single source of truth for the csharp pack's dep-vuln gathering.
- * Consumed by `csharpDepVulnsProvider` (capability dispatcher). Runs
- * independently of `dotnet-format` availability — historical bug where
- * projects with `dotnet` but no `dotnet-format` saw zero vuln data.
+ * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
  *
- * Project-file gating: dotnet list requires a .csproj or .sln in cwd
- * to identify what to scan. Without one it'd fail with a non-JSON
- * error message. Mirrors the python pack manifest gating from 10h.3.3
- * — return null cleanly rather than scan an unrelated scope.
+ * Two gating preconditions:
+ *
+ *   1. **Project file present** (`.csproj` or `.sln`). `dotnet list`
+ *      requires one in cwd to identify what to scan; without one it
+ *      fails with a non-JSON error message. Mirrors python's manifest
+ *      gating from 10h.3.3 — return null cleanly rather than scan an
+ *      unrelated scope.
+ *   2. **`dotnet` binary discoverable** via the tool registry. D025c
+ *      (2.4.7): we route through `findTool(TOOL_DEFS['dotnet-format'])`
+ *      (its `binaries: ['dotnet']` + `getSystemPaths()`'s `~/.dotnet`
+ *      probe locates Microsoft's recommended non-sudo install path).
+ *      Pre-D025c, the gather invoked bare `dotnet ...` from a Node
+ *      subshell — fine when `dotnet` is on `PATH`, but on dpl-studio
+ *      (where `dotnet-install.sh` placed the SDK at `~/.dotnet/dotnet`
+ *      without modifying `PATH`) the spawn produced no output and the
+ *      gather reported zero vulns on 133 NuGet refs (Security 100/100
+ *      on an unscannable repo — D025 customer-credibility class).
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   if (!hasCsharpProject(cwd)) return { kind: 'tool-missing' };
+
+  const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
+  if (!dotnet.available || !dotnet.path) return { kind: 'tool-missing' };
 
   // `--include-transitive` (10h.4.4.c) extends the scan to indirect
   // deps; without it NuGet would only report vulns where the
   // vulnerable package is itself declared in .csproj. Transitive
   // attribution lands via `project.assets.json` below.
   const vulnRaw = run(
-    'dotnet list package --vulnerable --include-transitive --format json 2>/dev/null',
+    `${dotnet.path} list package --vulnerable --include-transitive --format json 2>/dev/null`,
     cwd,
     120000,
   );
