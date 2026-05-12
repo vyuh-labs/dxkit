@@ -4,6 +4,16 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <RootNamespace>Dxkit.Benchmark.Nested</RootNamespace>
+    <!-- Suppress warnings noisy on a fixture; this is not production code. -->
+    <NoWarn>NU1701;NU1903</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned vulnerable dep — Newtonsoft.Json 9.0.1 has GHSA-5crp-9r3c-p9vr.
+         Dormant for D025c+D035 (no live dotnet invocation in tests); becomes
+         a live assertion in sub-branch #3 when D025f's PackageReference
+         parser ingests it (.csproj at depth 5 → osv-scanner adhoc lockfile). -->
+    <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
+  </ItemGroup>
 
 </Project>
