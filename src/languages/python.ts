@@ -5,9 +5,10 @@ import { type Coverage, type FileCoverage, round1, toRelative } from '../analyze
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -576,10 +577,57 @@ function gatherPyCoverageResult(cwd: string): CoverageResult | null {
   }
 }
 
+/**
+ * Run `python -m pytest --cov --cov-report=json:coverage.json` from cwd
+ * (D021). Prefer the project's own venv python (`.venv`, poetry, pipenv)
+ * when resolvable so the test run uses the env that has pytest +
+ * pytest-cov installed — falling back to the user's PATH `python`
+ * otherwise.
+ *
+ * Preflight: require at least one Python manifest (pyproject.toml,
+ * setup.py, requirements.txt, Pipfile). Without one, this is almost
+ * certainly not a Python project (or it's a script-only directory that
+ * would need explicit `--lang python` to opt in).
+ *
+ * Note: pytest-cov plugin presence is NOT preflighted — there is no
+ * TOOL_DEFS entry for it, and the spawn outcome is sufficiently clear
+ * when it's missing (`pytest: unrecognized arguments: --cov`). The
+ * `coverage-py` tool is registry-tracked but the design-doc command
+ * uses pytest-cov, not standalone coverage.py.
+ */
+function runPyTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'python',
+      cmd: (() => {
+        const venvPython = findPyProjectVenvPython(cwd);
+        const py = venvPython ?? 'python';
+        return `${py} -m pytest --cov --cov-report=json:coverage.json`;
+      })(),
+      cwd,
+      artifact: 'coverage.json',
+      preflight: (cwd) => {
+        const hasManifest =
+          fileExists(cwd, 'pyproject.toml') ||
+          fileExists(cwd, 'setup.py') ||
+          fileExists(cwd, 'requirements.txt') ||
+          fileExists(cwd, 'Pipfile');
+        if (!hasManifest) {
+          return 'no Python project manifest (pyproject.toml/setup.py/requirements.txt/Pipfile) in this directory';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'python',
   async gather(cwd) {
     return gatherPyCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runPyTestsWithCoverage(cwd);
   },
 };
 

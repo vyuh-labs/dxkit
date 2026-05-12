@@ -101,7 +101,23 @@ export function runTestsWithCoverage(args: RunTestsArgs): RunTestsOutcome {
   // Test runner returned non-zero. Could be compile failure, test
   // failure, or coverage-config errors. The user already saw the
   // output (inherited stdio); we just record the disposition.
+  //
+  // Special cases by bash convention: 127 = "command not found",
+  // 126 = "found but not executable". These describe an environment
+  // problem (a binary is missing from PATH) rather than a test failure,
+  // so they get the `unavailable` framing — same as the direct-spawn
+  // ENOENT path above. Without this re-mapping, the user sees
+  // "test command exited with status 127" which is opaque; routing
+  // through `unavailable` surfaces the actual binary name in the
+  // CLI table.
   if (typeof result.status === 'number' && result.status !== 0) {
+    const firstWord = cmd.trim().split(/\s+/)[0];
+    if (result.status === 127) {
+      return { kind: 'unavailable', reason: `command not found: ${firstWord}` };
+    }
+    if (result.status === 126) {
+      return { kind: 'unavailable', reason: `command not executable: ${firstWord}` };
+    }
     return {
       kind: 'failed',
       reason: `${pack}: test command exited with status ${result.status}`,

@@ -12,8 +12,9 @@ import {
   gatherOsvScannerFixPlans,
 } from '../analyzers/tools/osv-scanner-fix';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -698,10 +699,103 @@ function gatherTsCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Resolve the command this repo uses to run tests with coverage (D021).
+ *
+ * Three-tier fallback, cheapest + most-respectful-of-project-config
+ * first:
+ *
+ *   1. **Project-declared script** — if `package.json#scripts` defines
+ *      a `test:coverage` (preferred) or `coverage` entry, use that.
+ *      Honors whatever the project has chosen — pre/post hooks,
+ *      monorepo workspace setup, custom flags. This is the right
+ *      answer for any non-trivial codebase.
+ *
+ *   2. **Vitest in deps** — if `vitest` is installed, run
+ *      `npx vitest run --coverage`. The `--coverage` flag triggers the
+ *      configured coverage provider (typically `@vitest/coverage-v8`,
+ *      which we surface as a project-local tool requirement). `run`
+ *      mode is essential — without it vitest enters watch mode.
+ *
+ *   3. **Jest in deps** — if `jest` is installed, run
+ *      `npx jest --coverage`. Istanbul-compatible output to
+ *      `coverage/coverage-final.json` matches what `gatherTsCoverageResult`
+ *      already reads.
+ *
+ * Returns null if none of the above can resolve (e.g. mocha-only
+ * repos), letting the preflight surface an actionable hint instead of
+ * the spawn flailing.
+ */
+function resolveTsCoverageCmd(cwd: string): string | null {
+  const pkgPath = path.join(cwd, 'package.json');
+  try {
+    const raw = fs.readFileSync(pkgPath, 'utf-8');
+    const pkg = JSON.parse(raw) as {
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    const scripts = pkg.scripts ?? {};
+    if (typeof scripts['test:coverage'] === 'string') return 'npm run test:coverage';
+    if (typeof scripts.coverage === 'string') return 'npm run coverage';
+    const allDeps: Record<string, string> = {
+      ...(pkg.dependencies ?? {}),
+      ...(pkg.devDependencies ?? {}),
+    };
+    if ('vitest' in allDeps) return 'npx vitest run --coverage';
+    if ('jest' in allDeps) return 'npx jest --coverage';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run the project's TS/JS test runner with coverage (D021).
+ *
+ * Preflight: require `package.json`. Without it this isn't a Node
+ * project. Additionally, `resolveTsCoverageCmd` must return non-null —
+ * otherwise we have no canonical command (mocha-only / ava / tap
+ * projects fall through; users with those runners can add a
+ * `test:coverage` script to opt in to tier 1).
+ *
+ * Artifact: `coverage/coverage-summary.json` is the canonical Istanbul
+ * summary that `gatherTsCoverageResult` reads first. Tier-1 scripts
+ * may emit elsewhere, but Istanbul's default conventions put the
+ * artifact here for both vitest-v8 and jest.
+ */
+function runTsTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'typescript',
+      cmd: resolveTsCoverageCmd(cwd) ?? 'npx vitest run --coverage',
+      cwd,
+      artifact: (cwd) => {
+        for (const c of ['coverage/coverage-summary.json', 'coverage/coverage-final.json']) {
+          if (fileExists(cwd, c)) return c;
+        }
+        return null;
+      },
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'package.json')) {
+          return 'no package.json in this directory — not a Node project';
+        }
+        if (resolveTsCoverageCmd(cwd) === null) {
+          return 'no test:coverage script and no vitest/jest in deps — add a `test:coverage` npm script or install vitest/jest';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'typescript',
   async gather(cwd) {
     return gatherTsCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runTsTestsWithCoverage(cwd);
   },
 };
 

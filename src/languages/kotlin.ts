@@ -6,8 +6,9 @@ import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnResult,
@@ -201,10 +202,85 @@ const kotlinLintProvider: CapabilityProvider<LintResult> = {
 // — language-agnostic SSOT (CLAUDE.md rule #2). The kotlin pack just
 // declares its provider and delegates. Java pack does the same.
 
+/**
+ * Locate the JaCoCo XML report after a test run (D021). Gradle's
+ * default emits to `build/reports/jacoco/test/jacocoTestReport.xml`,
+ * Maven's to `target/site/jacoco/jacoco.xml`. The function-form
+ * `artifact` param lets us check both; whichever path the build tool
+ * wrote to is the one `gatherJaCoCoCoverageResult` will pick up on
+ * the next dispatcher pass (it already knows both candidate paths).
+ */
+function findJacocoXmlArtifact(cwd: string): string | null {
+  const candidates = [
+    'build/reports/jacoco/test/jacocoTestReport.xml',
+    'target/site/jacoco/jacoco.xml',
+    'target/site/jacoco-aggregate/jacoco.xml',
+  ];
+  for (const c of candidates) {
+    if (fileExists(cwd, c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Run the JVM build tool's "test + JaCoCo report" cycle from cwd (D021).
+ *
+ * Picks the command by build manifest, preferring Gradle when both are
+ * present (modern Kotlin projects are Gradle-first; the Maven path is
+ * here for fixture parity with the java pack and for the rare Kotlin-
+ * on-Maven layouts seen in older codebases):
+ *
+ *   - `gradlew` or `build.gradle{,.kts}` → `./gradlew jacocoTestReport`
+ *   - `pom.xml`                          → `mvn test jacoco:report`
+ *
+ * Preflight: require at least one of the above. Without a build
+ * manifest, there's no canonical command to run.
+ *
+ * The JaCoCo plugin must be wired into the build (`apply plugin: 'jacoco'`
+ * for Gradle, the `jacoco-maven-plugin` in `pom.xml` for Maven). When
+ * it isn't, the command succeeds but no XML is produced — that surfaces
+ * as `failed` with the helper's "tests succeeded but no coverage
+ * artifact was produced" framing, which is the right hint.
+ */
+function runKotlinTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'kotlin',
+      cmd: (() => {
+        if (
+          fileExists(cwd, 'gradlew') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'build.gradle')
+        ) {
+          const gradle = fileExists(cwd, 'gradlew') ? './gradlew' : 'gradle';
+          return `${gradle} jacocoTestReport`;
+        }
+        return 'mvn test jacoco:report';
+      })(),
+      cwd,
+      artifact: (cwd) => findJacocoXmlArtifact(cwd),
+      preflight: (cwd) => {
+        const hasGradle =
+          fileExists(cwd, 'build.gradle') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'gradlew');
+        const hasMaven = fileExists(cwd, 'pom.xml');
+        if (!hasGradle && !hasMaven) {
+          return 'no Gradle/Maven build manifest — cannot run JaCoCo coverage';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const kotlinCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'kotlin',
   async gather(cwd) {
     return gatherJaCoCoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runKotlinTestsWithCoverage(cwd);
   },
 };
 

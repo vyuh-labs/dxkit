@@ -5,8 +5,9 @@ import { type Coverage, type FileCoverage, round1, toRelative } from '../analyze
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnResult,
@@ -545,10 +546,91 @@ function gatherSimpleCovCoverageResult(cwd: string): CoverageResult | null {
   return outcome.kind === 'success' ? outcome.envelope : null;
 }
 
+/**
+ * Check that SimpleCov is required + started in the project's
+ * `spec_helper.rb` or `rails_helper.rb`. Without this, `bundle exec
+ * rspec` runs cleanly but writes no `.resultset.json` — the user
+ * spends 30+ seconds running tests then sees "tests ran but no
+ * coverage artifact was produced." Better to short-circuit upfront
+ * with the actionable hint.
+ *
+ * Looks for the canonical setup form: `require 'simplecov'` followed
+ * eventually by `SimpleCov.start`. Tolerates double quotes and any
+ * whitespace. spec_helper / rails_helper are the conventional
+ * locations; we check both because Rails projects use the latter.
+ */
+function simplecovIsRequired(cwd: string): boolean {
+  const candidates = ['spec/spec_helper.rb', 'spec/rails_helper.rb', 'test/test_helper.rb'];
+  for (const c of candidates) {
+    const abs = path.join(cwd, c);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    const hasRequire = /\brequire\s+['"]simplecov['"]/.test(raw);
+    const hasStart = /\bSimpleCov\.start\b/.test(raw);
+    if (hasRequire && hasStart) return true;
+  }
+  return false;
+}
+
+/**
+ * Run `bundle exec rspec` from cwd (D021).
+ *
+ * SimpleCov is the canonical Ruby coverage tool. It's required from
+ * `spec_helper.rb` (not invoked separately) and writes its resultset
+ * during the rspec run itself — `bundle exec rspec` is therefore the
+ * coverage command, no extra flags needed.
+ *
+ * Preflight (in order, cheapest first):
+ *   1. `Gemfile` must exist — without one, bundler can't resolve the
+ *      gem set and rspec won't be invokable.
+ *   2. `simplecov` gem must be installed (registry-tracked via
+ *      `TOOL_DEFS.simplecov`, library-only gem detected via
+ *      `gemPackage`).
+ *   3. `simplecov` must be `require`d AND `SimpleCov.start` called in
+ *      `spec_helper.rb` / `rails_helper.rb` / `test_helper.rb`. SimpleCov
+ *      is opt-in per-project; merely installing the gem doesn't
+ *      instrument the test run. This check matches the G_v4_3
+ *      gatherSimpleCovOutcome shape (html-only outcome surfaces
+ *      separately on the read side).
+ *
+ * If all three pass, rspec is invoked via bundler so it resolves to
+ * the project's pinned version + plugins. Artifact is the canonical
+ * `coverage/.resultset.json` that `gatherSimpleCovOutcome` reads.
+ */
+function runRubyTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'ruby',
+      cmd: 'bundle exec rspec',
+      cwd,
+      artifact: 'coverage/.resultset.json',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'Gemfile')) {
+          return 'no Gemfile in this directory — not a Ruby/bundler project';
+        }
+        if (!findTool(TOOL_DEFS.simplecov, cwd).available) {
+          return 'simplecov gem not installed — run `vyuh-dxkit tools install`';
+        }
+        if (!simplecovIsRequired(cwd)) {
+          return "simplecov not required/started in spec_helper.rb — add `require 'simplecov'` + `SimpleCov.start` at the top";
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'ruby',
   async gather(cwd) {
     return gatherSimpleCovCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runRubyTestsWithCoverage(cwd);
   },
 };
 

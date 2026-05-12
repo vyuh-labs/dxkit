@@ -5,8 +5,9 @@ import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -665,10 +666,58 @@ function gatherCsharpCoverageResult(cwd: string): CoverageResult | null {
   return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
 }
 
+/**
+ * Run `dotnet test --collect:"XPlat Code Coverage"` from cwd (D021).
+ *
+ * `dotnet test --collect` is the canonical way to materialize coverage
+ * across the whole solution. It auto-discovers test projects and writes
+ * a cobertura XML into `TestResults/<guid>/coverage.cobertura.xml`,
+ * where `<guid>` is generated per test run. The artifact param uses
+ * the function form so the helper locates the actual file post-run via
+ * the existing `findCoberturaArtifact` (which already knows the
+ * TestResults layout and the explicit `coverage/coverage.cobertura.xml`
+ * fallback).
+ *
+ * `--results-directory TestResults` pins the parent directory so
+ * `findCoberturaArtifact` doesn't have to walk arbitrary roots — the
+ * GUID-named subdirectory underneath is still non-deterministic but
+ * bounded.
+ *
+ * Preflight: require a `.csproj` or `.sln` in cwd. Without one, this
+ * isn't a .NET project root. We don't preflight `dotnet` itself — the
+ * spawn ENOENT path classifies it as `unavailable` cleanly.
+ */
+function runCsharpTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'csharp',
+      cmd: 'dotnet test --collect:"XPlat Code Coverage" --results-directory TestResults',
+      cwd,
+      artifact: (cwd) => {
+        const abs = findCoberturaArtifact(cwd);
+        if (!abs) return null;
+        return path.relative(cwd, abs).split(path.sep).join('/');
+      },
+      preflight: (cwd) => {
+        const hasCsproj =
+          dirHasMatching(cwd, /\.csproj$/i) || !!findMatchingRecursive(cwd, /\.csproj$/i, 3);
+        const hasSln = dirHasMatching(cwd, /\.sln$/i);
+        if (!hasCsproj && !hasSln) {
+          return 'no .csproj or .sln in this directory tree — not a .NET project';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const csharpCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'csharp',
   async gather(cwd) {
     return gatherCsharpCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runCsharpTestsWithCoverage(cwd);
   },
 };
 

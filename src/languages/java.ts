@@ -5,8 +5,9 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnResult,
@@ -327,10 +328,73 @@ const javaLintProvider: CapabilityProvider<LintResult> = {
 // share the same candidate list because they're mutually exclusive on
 // any given project root.
 
+/**
+ * Locate the JaCoCo XML report after a test run (D021). Same shape as
+ * the kotlin pack's helper — Java codebases lean Maven-first, Kotlin
+ * codebases Gradle-first, but the candidate paths are the same.
+ */
+function findJacocoXmlArtifact(cwd: string): string | null {
+  const candidates = [
+    'target/site/jacoco/jacoco.xml',
+    'target/site/jacoco-aggregate/jacoco.xml',
+    'build/reports/jacoco/test/jacocoTestReport.xml',
+  ];
+  for (const c of candidates) {
+    if (fileExists(cwd, c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Run the JVM build tool's "test + JaCoCo report" cycle from cwd (D021).
+ *
+ * Picks the command by build manifest, preferring Maven when both are
+ * present (Java codebases lean Maven-first; the Gradle path is here for
+ * the increasingly common Java-on-Gradle projects):
+ *
+ *   - `pom.xml`                          → `mvn test jacoco:report`
+ *   - `gradlew` or `build.gradle{,.kts}` → `./gradlew jacocoTestReport`
+ *
+ * Preflight + artifact discovery identical to the kotlin pack's shape.
+ * The JaCoCo plugin must be wired into the build for the XML to be
+ * emitted; without it the command succeeds but no artifact is produced
+ * and the helper classifies as `failed`.
+ */
+function runJavaTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'java',
+      cmd: (() => {
+        if (fileExists(cwd, 'pom.xml')) {
+          return 'mvn test jacoco:report';
+        }
+        const gradle = fileExists(cwd, 'gradlew') ? './gradlew' : 'gradle';
+        return `${gradle} jacocoTestReport`;
+      })(),
+      cwd,
+      artifact: (cwd) => findJacocoXmlArtifact(cwd),
+      preflight: (cwd) => {
+        const hasGradle =
+          fileExists(cwd, 'build.gradle') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'gradlew');
+        const hasMaven = fileExists(cwd, 'pom.xml');
+        if (!hasGradle && !hasMaven) {
+          return 'no Gradle/Maven build manifest — cannot run JaCoCo coverage';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'java',
   async gather(cwd) {
     return gatherJaCoCoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runJavaTestsWithCoverage(cwd);
   },
 };
 
