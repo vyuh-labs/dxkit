@@ -6,9 +6,10 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -545,10 +546,53 @@ function gatherRustCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Run `cargo llvm-cov --lcov --output-path lcov.info` from cwd (D021).
+ *
+ * cargo-llvm-cov drives the standard `cargo test` runner under LLVM
+ * source-based coverage instrumentation, so this is the canonical
+ * "test + coverage" command for any Cargo workspace. The output file
+ * `lcov.info` is the first artifact `gatherRustCoverageResult` looks
+ * for on the next dispatcher pass.
+ *
+ * Preflight:
+ *   - `Cargo.toml` must exist — otherwise this isn't a Rust project
+ *     and cargo's own "could not find Cargo.toml" framing is worse than
+ *     a fast "skipped" outcome.
+ *   - `cargo-llvm-cov` must be installed. Unlike Go's built-in
+ *     `go test -cover`, Rust coverage requires the third-party subcommand;
+ *     without it `cargo` would exit non-zero with "no such command:
+ *     llvm-cov", which we'd classify as `failed` — misleading framing for
+ *     what is really a missing tool. Route the user to the install path
+ *     instead (per CLAUDE.md rule #1: tools go through the registry).
+ */
+function runRustTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'rust',
+      cmd: 'cargo llvm-cov --lcov --output-path lcov.info',
+      cwd,
+      artifact: 'lcov.info',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'Cargo.toml')) {
+          return 'no Cargo.toml in this directory — not a Rust project';
+        }
+        if (!findTool(TOOL_DEFS['cargo-llvm-cov'], cwd).available) {
+          return 'cargo-llvm-cov not installed — run `vyuh-dxkit tools install`';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const rustCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'rust',
   async gather(cwd) {
     return gatherRustCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runRustTestsWithCoverage(cwd);
   },
 };
 
