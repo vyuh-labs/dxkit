@@ -6,6 +6,7 @@ import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { timed, timedAsync } from '../tools/timing';
 import { gatherSecrets, gatherFileFindings, gatherCodePatterns, gatherDepVulns } from './gather';
+import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 
 export type { SecurityReport, SecurityFinding } from './types';
@@ -125,9 +126,39 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     L.push(`| LOW      | ${d.low} |`);
     L.push(`| **Subtotal** | **${d.total}** |`);
     L.push('');
+    // D025e: if at least one pack scanned successfully (tool set) but
+    // another active pack returned unavailable, the totals are partial.
+    // Surface this rather than letting the customer assume the table is
+    // exhaustive across their stack.
+    if (!d.available) {
+      L.push(`> ⚠ **Partial scan**: ${d.unavailableReason}. The table above`);
+      L.push(`> reflects only the packs whose dep-vuln tooling succeeded;`);
+      L.push(`> findings in the unscanned pack may be present but not listed.`);
+      L.push('');
+    }
     L.push(`**Total signals:** ${s.total + d.total} (${s.total} code + ${d.total} dependency)`);
+  } else if (!d.available) {
+    // D025e: scan was attempted but couldn't run for any active pack.
+    // Pre-D025e this case shared the "no language pack with a depVulns
+    // provider was active" string with the genuinely-inactive case — a
+    // factually-wrong framing because pack WAS active, just blocked.
+    L.push(`> ⚠ **Dependency vulnerability scan unavailable**: ${d.unavailableReason}.`);
+    L.push(`>`);
+    L.push(`> The dep-audit tool didn't run on this repo, so the count below`);
+    L.push(`> is not "0 vulnerabilities found" — it's "0 vulnerabilities`);
+    L.push(`> reported because the scan didn't complete." The Security`);
+    L.push(
+      `> dimension score is capped at ${DEP_VULNS_UNAVAILABLE_CAP}/100 until the underlying tool`,
+    );
+    L.push(`> becomes available or a fallback path produces real data.`);
+    L.push('');
+    L.push(`**Total signals:** ${s.total} (code only — dep-audit incomplete)`);
   } else {
-    L.push('_No dependency audit data — no language pack with a depVulns provider was active._');
+    // D025e: genuinely-inactive case. No active language pack exposes a
+    // depVulns provider — either the repo is non-code (docs/assets only)
+    // or every active pack legitimately reported `no-manifest` (a
+    // polyglot repo where the pack activates but has nothing to scan).
+    L.push('_No dependency audit data — no active language pack reported a manifest to scan._');
     L.push('');
     L.push(`**Total signals:** ${s.total} (code only)`);
   }
