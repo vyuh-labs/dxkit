@@ -306,6 +306,8 @@ describe('D023 parity: unified security scorer', () => {
           total: 3,
           tool: 'npm-audit',
           findings: [],
+          available: true,
+          unavailableReason: '',
         },
       },
       findings: [

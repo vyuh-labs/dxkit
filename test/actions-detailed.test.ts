@@ -363,6 +363,8 @@ describe('security/actions', () => {
           total: 0,
           tool: null,
           findings: [],
+          available: true,
+          unavailableReason: '',
         },
       },
       findings: [],
