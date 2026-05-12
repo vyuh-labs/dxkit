@@ -47,6 +47,7 @@ import {
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
+import { hygieneIncludeFlags } from '../src/analyzers/quality/gather';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -120,6 +121,19 @@ describe('recipe playbook — synthetic pack', () => {
     const patterns = allTestFilePatterns();
     expect(patterns).toContain('*Test.pbk');
     expect(patterns).toContain('src/test/playbook/*.pbk');
+  });
+
+  // D030 (2.4.7): hygiene grep's `--include='*.<ext>'` list was hardcoded
+  // since Phase 6. After D030 it derives from `allSourceExtensions()`. The
+  // playbook test guards against re-introduction of a hardcoded list: when
+  // a synthetic pack is added to the registry, its extensions MUST flow
+  // into `hygieneIncludeFlags()` without code changes in gather.ts.
+  // LP-A5 in `scripts/check-architecture.sh` catches the static shape;
+  // this assertion catches semantic drift at runtime.
+  it('hygieneIncludeFlags includes the mock pack extensions (D030 / LP-A5)', () => {
+    const flags = hygieneIncludeFlags();
+    expect(flags).toContain("--include='*.pbk'");
+    expect(flags).toContain("--include='*.pbkx'");
   });
 
   // DEFAULT_VERSIONS is captured at module load, BEFORE this test's

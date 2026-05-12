@@ -113,10 +113,9 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   // Documentation
   const readmeExists = fileExists(cwd, 'README.md', 'readme.md');
   const readmeLines = parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", cwd)) || 0;
-  const docCommentFiles = countLines(
-    "grep -rlE '/\\*\\*|^\"\"\"|^[[:space:]]*#[[:space:]]' --include='*.ts' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist",
-    cwd,
-  );
+  // prettier-ignore
+  const docCommentCmd = "grep -rlE '/\\*\\*|^\"\"\"|^[[:space:]]*#[[:space:]]' --include='*.ts' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist"; // lp-recipe-ok: see D027 — doc-comment heuristic is JS-shaped; per-language patterns land with 2.4.8 doc-comment refactor
+  const docCommentFiles = countLines(docCommentCmd, cwd);
   const apiDocsExist = fileExists(
     cwd,
     'openapi.json',
@@ -134,26 +133,18 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   // `secretFindings` / `secretDetails` fields. When gitleaks is absent
   // the report surfaces that fact through `toolsUnavailable` and the
   // capability envelope is simply absent.
-  const evalCount =
-    parseInt(
-      run(
-        "grep -rnE '\\beval\\(' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | grep -v dist | wc -l",
-        cwd,
-      ),
-    ) || 0;
+  // prettier-ignore
+  const evalCountCmd = "grep -rnE '\\beval\\(' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | grep -v dist | wc -l"; // lp-recipe-ok: see D033 — eval() is JS/Py-affinity; Rust/Java/Kotlin/C# need separate per-pattern language scoping
+  const evalCount = parseInt(run(evalCountCmd, cwd)) || 0;
 
   const privateKeyFiles = countLines(
     `find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE} 2>/dev/null`,
     cwd,
   );
   const envFilesInGit = countLines('git ls-files .env .env.* 2>/dev/null', cwd);
-  const tlsDisabledCount =
-    parseInt(
-      run(
-        "grep -rnE 'NODE_TLS_REJECT_UNAUTHORIZED.*0|rejectUnauthorized.*false|VERIFY_SSL.*false' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | wc -l",
-        cwd,
-      ),
-    ) || 0;
+  // prettier-ignore
+  const tlsDisabledCmd = "grep -rnE 'NODE_TLS_REJECT_UNAUTHORIZED.*0|rejectUnauthorized.*false|VERIFY_SSL.*false' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | wc -l"; // lp-recipe-ok: see D034 — each TLS-bypass pattern is ecosystem-specific (Node, JS-anywhere, Python)
+  const tlsDisabledCount = parseInt(run(tlsDisabledCmd, cwd)) || 0;
 
   // Maintainability
   const controllers = countLines(

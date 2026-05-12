@@ -156,6 +156,32 @@ if [ -n "$LP_GLOB_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# LP-A5: No hardcoded multi-language `--include='*.<ext>'` grep flags.
+# D030 (2.4.7) discovered the quality hygiene grep had carried a
+# hardcoded `*.ts/*.tsx/*.js/*.jsx/*.py/*.go` list since Phase 6
+# (2026-04-13). The list pre-dated the language-pack registry; 5
+# subsequent pack additions (rust, csharp, kotlin, java, ruby) never
+# updated it, so dpl-studio reported 0 TODOs on 3,234 `.cs` files —
+# the hygiene grep silently skipped every C# source.
+#
+# Cross-cutting `grep --include='*.<ext>'` lists MUST derive from
+# `allSourceExtensions()` (see src/analyzers/quality/gather.ts:
+# hygieneIncludeFlags for the pattern). Same constraint as LP-A4:
+# extension list is hardcoded in this regex (not derived) because
+# pack sourceExtensions can be const references (typescript's
+# `TS_JS_EXT`) that bash can't resolve without evaluating TS.
+# Defense fires on 2+ `--include` flags on the same line targeting
+# known language extensions — partial drift still triggers.
+LP_INCLUDE_VIOLATIONS=$(grep -rnE "\-\-include=['\"]\*\.(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)['\"].*\-\-include=['\"]\*\.(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)['\"]" src/ 2>/dev/null \
+  | grep -v "// lp-recipe-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$LP_INCLUDE_VIOLATIONS" ]; then
+  echo "❌ LP recipe violation: hardcoded multi-language --include='*.<ext>' grep flags:"
+  echo "$LP_INCLUDE_VIOLATIONS"
+  echo "   → Derive from allSourceExtensions() in src/languages/index.ts. See src/analyzers/quality/gather.ts:hygieneIncludeFlags for the pattern."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

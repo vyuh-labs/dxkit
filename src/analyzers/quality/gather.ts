@@ -17,7 +17,7 @@ import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
 import { gatherClocMetrics } from '../tools/cloc';
-import { detectActiveLanguages } from '../../languages';
+import { allSourceExtensions, detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
 import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
@@ -57,6 +57,27 @@ export async function gatherDuplication(cwd: string): Promise<{
 // ─── grep: per-file hygiene offender counts ─────────────────────────────────
 
 /**
+ * Build the `grep --include='*.<ext>' ...` argument list from the
+ * language-pack registry. D030 (2.4.7): pre-D030 this was a hardcoded
+ * `*.ts/*.tsx/*.js/*.jsx/*.py/*.go` list inherited from Phase 6
+ * (2026-04-13, pre-LP architecture). After 5 subsequent pack additions
+ * (rust, csharp, kotlin, java, ruby) the list silently under-reported
+ * — dpl-studio reported 0 TODOs on 3,234 .cs files because `*.cs`
+ * wasn't in the include set. CLAUDE.md rule #3: language facts derive
+ * from the registry, never hardcoded.
+ *
+ * Scoped to `allSourceExtensions()` (every registered pack), not
+ * `detectActiveLanguages(cwd)`, because hygiene markers are
+ * pure-text concerns — they apply to any source file regardless of
+ * whether the pack's lint/depvuln tooling is active.
+ */
+export function hygieneIncludeFlags(): string {
+  return allSourceExtensions()
+    .map((ext) => `--include='*${ext}'`)
+    .join(' ');
+}
+
+/**
  * Count matches per file and return the top N offenders.
  * Uses `grep -rc` which emits `file:count` per matched file.
  */
@@ -64,8 +85,9 @@ function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
   const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
   fs.writeFileSync(patternFile, pattern);
   const excludeDirs = getGrepExcludeDirFlags(cwd);
+  const includes = hygieneIncludeFlags();
   const raw = run(
-    `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
+    `grep -rcEf '${patternFile}' ${excludeDirs} ${includes} . 2>/dev/null`,
     cwd,
     60000,
   );
@@ -195,8 +217,9 @@ export function gatherHygieneMarkers(cwd: string): {
     const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
     fs.writeFileSync(patternFile, pattern);
     const excludeDirs = getGrepExcludeDirFlags(cwd);
+    const includes = hygieneIncludeFlags();
     const result = run(
-      `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
+      `grep -rcEf '${patternFile}' ${excludeDirs} ${includes} . 2>/dev/null`,
       cwd,
       60000,
     );
