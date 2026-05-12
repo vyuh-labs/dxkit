@@ -289,10 +289,12 @@ function loadGoTopLevelDepIndex(cwd: string): Map<string, string[]> {
  */
 async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vuln = findTool(TOOL_DEFS.govulncheck, cwd);
-  if (!vuln.available || !vuln.path) return { kind: 'tool-missing' };
+  if (!vuln.available || !vuln.path) {
+    return { kind: 'unavailable', reason: 'govulncheck not installed' };
+  }
 
   const raw = run(`${vuln.path} -json ./... 2>/dev/null`, cwd, 120000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'govulncheck produced no output' };
 
   try {
     // govulncheck -json emits a stream of *pretty-printed* JSON objects
@@ -429,8 +431,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `govulncheck parse error: ${(err as Error).message}` };
   }
 }
 

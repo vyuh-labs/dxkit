@@ -172,17 +172,24 @@ export async function gatherOsvScannerDepVulnsResult(
       break;
     }
   }
-  if (!manifest) return { kind: 'tool-missing' };
+  if (!manifest) {
+    return {
+      kind: 'no-manifest',
+      reason: `no lockfile found (looked for: ${manifestCandidates.join(', ')})`,
+    };
+  }
 
   const scanner = findTool(TOOL_DEFS['osv-scanner'], cwd);
-  if (!scanner.available || !scanner.path) return { kind: 'tool-missing' };
+  if (!scanner.available || !scanner.path) {
+    return { kind: 'unavailable', reason: 'osv-scanner not installed' };
+  }
 
   const raw = run(
     `${scanner.path} scan source --lockfile ${manifest} --format json 2>/dev/null`,
     cwd,
     180000,
   );
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'osv-scanner produced no output' };
 
   const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem);
 

@@ -410,15 +410,19 @@ function loadRustTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * for entries where cargo-audit's bundled vector is missing.
  */
 async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!fileExists(cwd, 'Cargo.lock')) return { kind: 'tool-missing' };
+  if (!fileExists(cwd, 'Cargo.lock')) {
+    return { kind: 'no-manifest', reason: 'no Cargo.lock — run cargo generate-lockfile first' };
+  }
   const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
-  if (!audit.available || !audit.path) return { kind: 'tool-missing' };
+  if (!audit.available || !audit.path) {
+    return { kind: 'unavailable', reason: 'cargo-audit not installed' };
+  }
 
   const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'cargo-audit produced no output' };
 
   const parsed = parseCargoAuditOutput(raw);
-  if (!parsed) return { kind: 'parse-error' };
+  if (!parsed) return { kind: 'unavailable', reason: 'cargo-audit output failed JSON parse' };
 
   const { counts, findings } = parsed;
 

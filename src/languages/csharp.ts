@@ -515,10 +515,14 @@ function loadCsharpTopLevelDepIndex(cwd: string): Map<string, string[]> {
  *      on an unscannable repo — D025 customer-credibility class).
  */
 async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!hasCsharpProject(cwd)) return { kind: 'tool-missing' };
+  if (!hasCsharpProject(cwd)) {
+    return { kind: 'no-manifest', reason: 'no .csproj or .sln found within depth 5' };
+  }
 
   const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
-  if (!dotnet.available || !dotnet.path) return { kind: 'tool-missing' };
+  if (!dotnet.available || !dotnet.path) {
+    return { kind: 'unavailable', reason: 'dotnet SDK not installed' };
+  }
 
   // `--include-transitive` (10h.4.4.c) extends the scan to indirect
   // deps; without it NuGet would only report vulns where the
@@ -529,10 +533,18 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
     cwd,
     120000,
   );
-  if (!vulnRaw) return { kind: 'no-output' };
+  if (!vulnRaw) {
+    // Most commonly: `dotnet list package` errors with "A project or
+    // solution file could not be found" when cwd is a parent directory
+    // of the actual project files. See D036; D025f's direct
+    // PackageReference parser is the architectural fix.
+    return { kind: 'unavailable', reason: 'dotnet list package produced no output (see D036)' };
+  }
 
   const parsed = parseDotnetVulnerableOutput(vulnRaw);
-  if (!parsed) return { kind: 'parse-error' };
+  if (!parsed) {
+    return { kind: 'unavailable', reason: 'dotnet list package output failed JSON parse' };
+  }
 
   const { counts, findings } = parsed;
 

@@ -366,15 +366,35 @@ export interface StructuralResult extends CapabilityEnvelope {
  * Internal outcome shape used by language packs' `gatherDepVulnsResult`
  * helpers. The pack's `capabilities.depVulns` provider unwraps the
  * envelope (returning null for every non-success kind) so the dispatcher
- * surface stays `T | null`; keeping the richer outcome here lets the
- * pack's own code distinguish e.g. "tool missing" from "tool ran but
- * produced no output" if a future caller needs that detail.
+ * surface stays `T | null`; keeping the richer outcome here lets
+ * availability-aware analyzers (health-audit security scorer, standalone
+ * vulnerability scan) distinguish "tool absent / scan didn't run" from
+ * "scan ran cleanly, no findings."
+ *
+ * D025a (2.4.7): the pre-2.4.7 enum had four variants (`success`,
+ * `tool-missing`, `no-output`, `parse-error`) that lumped together two
+ * semantically distinct cases:
+ *
+ *   1. **The dep-vuln scan was infrastructurally unavailable** — tool
+ *      not installed, tool produced no output, output unparseable. From
+ *      the user's perspective: "dxkit couldn't tell me if my deps are
+ *      safe." This is the F4 baseline customer-credibility case
+ *      (Security 100/100 on an unscannable repo). Maps to `unavailable`.
+ *
+ *   2. **There's nothing in this stack to scan** — no `.csproj` in a
+ *      csharp pack run, no `Cargo.lock` in a rust pack run, no
+ *      `requirements.txt` in a python pack run. Legitimate state for
+ *      polyglot repos where one pack activates but contributes no
+ *      manifests. Maps to `no-manifest`.
+ *
+ * The split lets downstream scorers cap on (1) without penalizing (2).
+ * Pre-2.4.7 they both collapsed to `tool-missing` and the security
+ * scorer had no way to differentiate.
  */
 export type DepVulnGatherOutcome =
   | { kind: 'success'; envelope: DepVulnResult }
-  | { kind: 'tool-missing' }
-  | { kind: 'parse-error' }
-  | { kind: 'no-output' };
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'no-manifest'; reason: string };
 
 /**
  * Internal outcome shape for the lint capability. Simpler than depVulns:

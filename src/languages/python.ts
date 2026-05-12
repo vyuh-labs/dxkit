@@ -352,13 +352,17 @@ function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
  */
 async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
-  if (!pipAudit.available || !pipAudit.path) return { kind: 'tool-missing' };
+  if (!pipAudit.available || !pipAudit.path) {
+    return { kind: 'unavailable', reason: 'pip-audit not installed' };
+  }
 
   const cmd = buildPipAuditCommand(cwd, pipAudit.path);
-  if (!cmd) return { kind: 'tool-missing' };
+  if (!cmd) {
+    return { kind: 'no-manifest', reason: 'no pyproject.toml / setup.py / requirements.txt' };
+  }
 
   const raw = run(cmd, cwd, 120000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'pip-audit produced no output' };
 
   try {
     const data = JSON.parse(raw) as PipAuditReport;
@@ -488,8 +492,8 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `pip-audit parse error: ${(err as Error).message}` };
   }
 }
 

@@ -315,9 +315,11 @@ function loadTsTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * (Vulnerability Issues) is per-advisory.
  */
 async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!fileExists(cwd, 'package.json')) return { kind: 'tool-missing' };
+  if (!fileExists(cwd, 'package.json')) {
+    return { kind: 'no-manifest', reason: 'no package.json' };
+  }
   const auditRaw = run('npm audit --json 2>&1', cwd, 60000);
-  if (!auditRaw) return { kind: 'no-output' };
+  if (!auditRaw) return { kind: 'unavailable', reason: 'npm audit produced no output' };
   try {
     const auditData = JSON.parse(auditRaw) as AuditV1 & AuditV2;
     let critical = 0;
@@ -442,8 +444,8 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `npm audit parse error: ${(err as Error).message}` };
   }
 }
 
