@@ -15,7 +15,6 @@ import type {
 } from './capabilities/provider';
 import type {
   CoverageResult,
-  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,

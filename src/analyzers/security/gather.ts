@@ -26,7 +26,6 @@ import {
   SECRETS,
 } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
-import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
 
 // ─── dispatcher-driven secrets gather ────────────────────────────────────────
