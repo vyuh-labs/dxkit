@@ -65,7 +65,38 @@ export interface SecurityScoreInput {
   codeFindings: SeverityCounts;
   /** Dependency-vulnerability counts unioned across active packs. */
   depVulns: SeverityCounts;
+  /**
+   * D025b (2.4.7): true if at least one active pack's depVulns gather
+   * reached success OR cleanly reported `no-manifest`; false if any
+   * pack returned `unavailable` (tool absent / no output / parse fail).
+   *
+   * When false, `scoreSecurityFromInput` caps the final score at
+   * `DEP_VULNS_UNAVAILABLE_CAP` (65) regardless of how clean the other
+   * signals are. The cap closes the F4 baseline lie (dpl-studio:
+   * Security 100/100 on 133 unscanned NuGet refs) — dxkit can't
+   * honestly claim a top-tier score when it couldn't actually scan
+   * the deps.
+   *
+   * Adapters MUST populate this from `DepVulnSummary.available`:
+   *   - `toSecurityScoreInput` (health side, security/shallow.ts)
+   *   - `countsFromReport` (standalone side, security/actions.ts) —
+   *     plumbed in D025d (next commit, same sub-branch).
+   */
+  depVulnsAvailable: boolean;
 }
+
+/**
+ * Score ceiling applied when `depVulnsAvailable === false`. Picked
+ * after the dpl-studio F4 baseline forensic suggested "cap at
+ * ~60-70/100." 65 is the midpoint — close enough to "C grade / fair"
+ * that no customer reads it as "excellent" but high enough that other
+ * security signals (secrets, semgrep, TLS) can still subtract from it
+ * meaningfully when they ALSO have issues. Compare F-RPT-2's testing
+ * dimension cap at 35/100, which was more aggressive because no
+ * coverage data means zero signal; here the rest of the security
+ * signal chain still contributes, so the cap is less severe.
+ */
+export const DEP_VULNS_UNAVAILABLE_CAP = 65;
 
 /**
  * Compute the 0-100 security score from the canonical input shape.
@@ -109,5 +140,16 @@ export function scoreSecurityFromInput(input: SecurityScoreInput): { score: numb
   if (input.depVulns.high > 5) score -= 10;
   else if (input.depVulns.high > 0) score -= 5;
 
-  return { score: Math.max(0, Math.min(100, score)) };
+  // D025b honesty cap: when dxkit couldn't actually scan the deps,
+  // the dimension can't honestly claim a top-tier score regardless
+  // of how clean the other signals are. Applied AFTER all penalties
+  // so the cap is a ceiling, not a floor — a repo with both
+  // unavailable deps AND a critical-secret leak still scores below
+  // 65 (the secret leak's -25 wins over the cap). Both penalties +
+  // cap compose monotonically.
+  let final = Math.max(0, Math.min(100, score));
+  if (!input.depVulnsAvailable && final > DEP_VULNS_UNAVAILABLE_CAP) {
+    final = DEP_VULNS_UNAVAILABLE_CAP;
+  }
+  return { score: final };
 }

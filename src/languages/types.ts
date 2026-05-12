@@ -1,8 +1,7 @@
 import type { LanguageId, ResolvedConfig } from '../types';
-import type { CapabilityProvider } from './capabilities/provider';
+import type { CapabilityProvider, DepVulnsProvider } from './capabilities/provider';
 import type {
   CoverageResult,
-  DepVulnResult,
   ImportsResult,
   LicensesResult,
   LintResult,
@@ -24,7 +23,7 @@ export type LintSeverity = 'critical' | 'high' | 'medium' | 'low';
  * pack can ship incrementally as underlying tool support lands.
  */
 export interface LanguagePackCapabilities {
-  depVulns?: CapabilityProvider<DepVulnResult>;
+  depVulns?: DepVulnsProvider;
   lint?: CapabilityProvider<LintResult>;
   coverage?: CapabilityProvider<CoverageResult>;
   testFramework?: CapabilityProvider<TestFrameworkResult>;

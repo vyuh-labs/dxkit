@@ -7,7 +7,11 @@ import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-d
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnResult,
@@ -652,7 +656,7 @@ const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 const RUBY_DEP_MANIFESTS = ['Gemfile.lock'];
 
-const rubyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const rubyDepVulnsProvider: DepVulnsProvider = {
   source: 'ruby',
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
@@ -662,6 +666,9 @@ const rubyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
       RUBY_DEP_MANIFESTS,
     );
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'ruby', 'RubyGems', RUBY_DEP_MANIFESTS);
   },
 };
 

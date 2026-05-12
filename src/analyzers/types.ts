@@ -117,6 +117,24 @@ export interface CapabilityReport {
   codePatterns?: CodePatternsResult;
   duplication?: DuplicationResult;
   structural?: StructuralResult;
+  /**
+   * D025b (2.4.7): availability metadata for the depVulns aggregation.
+   * Sibling field rather than nested into `depVulns` so the envelope
+   * shape stays a clean `DepVulnResult` (matches the other capability
+   * fields). `available === false` only when at least one active pack
+   * returned an `'unavailable'` outcome (tool missing, no output, parse
+   * fail). `no-manifest` outcomes do NOT degrade availability — that's
+   * a clean "nothing to scan here" state. `unavailableReason` carries
+   * the pack name + reason of the first unavailable outcome for the
+   * markdown notice (e.g. "csharp: dotnet list package produced no
+   * output (see D036)"). Empty when available.
+   *
+   * Read by the health-side adapter `toSecurityScoreInput` to set
+   * `SecurityScoreInput.depVulnsAvailable`, which the security scorer
+   * uses to cap the dimension at 65/100. Populated by
+   * `gatherDepVulnsWithAvailability` in `analyzers/security/gather.ts`.
+   */
+  depVulnsAvailability?: { available: boolean; unavailableReason: string };
 }
 
 /** Complete health report. */

@@ -144,6 +144,12 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
   total: 0,
   tool: null,
   findings: [],
+  // No active pack → genuinely "nothing to scan" (not "scan failed"). The
+  // security scorer should not cap the dimension in this case; e.g. a
+  // pure-static-asset repo with no language packs active legitimately
+  // has no deps to audit. available=true preserves this.
+  available: true,
+  unavailableReason: '',
 };
 
 /**
@@ -155,15 +161,82 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
  * provider, or when every provider returned null (no tool installed
  * / nothing to audit).
  */
-export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
-  const providers: CapabilityProvider<DepVulnResult>[] = [];
-  for (const lang of detectActiveLanguages(cwd)) {
-    if (lang.capabilities?.depVulns) providers.push(lang.capabilities.depVulns);
+/**
+ * Shared primitive for availability-aware dep-vuln aggregation. Used by
+ * both `gatherDepVulns` (standalone scan + BoM, with enrichment) and
+ * `gatherCapabilityReport` in health.ts (no enrichment). Bypassing the
+ * dispatcher is the whole point — the dispatcher's `gather()` path
+ * collapses every non-success outcome to null, which makes the scorer
+ * blind to "tool unavailable" vs "no findings" (the F4 dpl-studio
+ * customer-credibility lie). Calling `gatherOutcome` directly preserves
+ * the discriminant, then we aggregate via the existing DEP_VULNS
+ * descriptor's aggregator.
+ *
+ * Returned envelope is null only when NO success outcomes occurred;
+ * `available` is false when at least one active pack returned
+ * `unavailable`. `no-manifest` outcomes do NOT degrade availability —
+ * polyglot repos where one pack activates but has nothing to scan are
+ * a clean "we checked, found nothing here" state.
+ */
+export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
+  envelope: DepVulnResult | null;
+  available: boolean;
+  unavailableReason: string;
+}> {
+  const activePacks = detectActiveLanguages(cwd).filter((l) => l.capabilities?.depVulns);
+  if (activePacks.length === 0) {
+    return { envelope: null, available: true, unavailableReason: '' };
   }
-  if (providers.length === 0) return EMPTY_DEP_VULNS;
 
-  const envelope = await defaultDispatcher.gather(cwd, DEP_VULNS, providers);
-  if (!envelope) return EMPTY_DEP_VULNS;
+  const outcomes = await Promise.allSettled(
+    activePacks.map((l) => l.capabilities!.depVulns!.gatherOutcome(cwd)),
+  );
+  const successEnvelopes: DepVulnResult[] = [];
+  let firstUnavailable: { pack: string; reason: string } | null = null;
+  for (let i = 0; i < outcomes.length; i++) {
+    const r = outcomes[i];
+    if (r.status === 'rejected') {
+      if (!firstUnavailable) {
+        firstUnavailable = {
+          pack: activePacks[i].id,
+          reason: `provider threw: ${(r.reason as Error)?.message ?? 'unknown error'}`,
+        };
+      }
+      continue;
+    }
+    const outcome = r.value;
+    if (outcome.kind === 'success') {
+      successEnvelopes.push(outcome.envelope);
+    } else if (outcome.kind === 'unavailable' && !firstUnavailable) {
+      firstUnavailable = { pack: activePacks[i].id, reason: outcome.reason };
+    }
+  }
+
+  const envelope = successEnvelopes.length > 0 ? DEP_VULNS.aggregate(successEnvelopes) : null;
+  return {
+    envelope,
+    available: firstUnavailable === null,
+    unavailableReason: firstUnavailable
+      ? `${firstUnavailable.pack}: ${firstUnavailable.reason}`
+      : '',
+  };
+}
+
+export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
+  // D025b (2.4.7): delegates to `gatherDepVulnsWithAvailability` for
+  // the availability-aware aggregation; this function adds the
+  // enrichment passes (EPSS, KEV, reachability, risk scoring) on top.
+  // Health audit calls the shared primitive directly without enrichment;
+  // standalone vuln scan + BoM call this function for the enriched path.
+  const { envelope, available, unavailableReason } = await gatherDepVulnsWithAvailability(cwd);
+
+  if (!envelope) {
+    return {
+      ...EMPTY_DEP_VULNS,
+      available,
+      unavailableReason,
+    };
+  }
 
   // Cross-pack EPSS enrichment. Every pack's dep-vuln provider emits
   // findings with an `id` + optional `aliases` list; we hoist CVE IDs
@@ -266,5 +339,12 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     total: critical + high + medium + low,
     tool: envelope.tool,
     findings,
+    // Even with successful envelopes from some packs, ONE pack returning
+    // unavailable means the overall scan was partial — cap honesty
+    // applies. The dpl-studio shape post-D025f (sub-branch #3) will have
+    // csharp surfacing real CVEs AND any other unavailable pack still
+    // capping; that's the architecturally-correct outcome.
+    available,
+    unavailableReason,
   };
 }

@@ -8,7 +8,11 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -497,11 +501,14 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
   }
 }
 
-const pyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const pyDepVulnsProvider: DepVulnsProvider = {
   source: 'python',
   async gather(cwd) {
     const outcome = await gatherPyDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherPyDepVulnsResult(cwd);
   },
 };
 

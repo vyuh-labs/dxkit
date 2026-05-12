@@ -123,6 +123,10 @@ function emptyScoreInput(overrides: Partial<SecurityScoreInput> = {}): SecurityS
     envFilesInGit: 0,
     codeFindings: { critical: 0, high: 0, medium: 0, low: 0 },
     depVulns: { critical: 0, high: 0, medium: 0, low: 0 },
+    // D025b default: helper models the "happy path" where the dep-vuln
+    // scan ran cleanly. Tests for the cap explicitly override
+    // `depVulnsAvailable: false`.
+    depVulnsAvailable: true,
     ...overrides,
   };
 }
@@ -226,6 +230,56 @@ describe('scoreSecurityFromInput', () => {
       }),
     );
     expect(s.score).toBe(0);
+  });
+
+  // ── D025b honesty cap ─────────────────────────────────────────────────
+
+  it('caps at 65 when depVulnsAvailable is false on otherwise-clean signals', () => {
+    // Pre-D025b: this would return 100 (no penalties applied).
+    // Post-D025b: cap fires because dxkit can't honestly claim "excellent"
+    // when it never actually scanned the deps. This is the F4 baseline
+    // dpl-studio lie closure.
+    const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: false }));
+    expect(s.score).toBe(65);
+  });
+
+  it('does NOT cap when depVulnsAvailable is true and signals are clean', () => {
+    // Sanity check: cap only fires on the false case.
+    const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: true }));
+    expect(s.score).toBe(100);
+  });
+
+  it('cap is a ceiling, not a floor — other penalties still drop the score below 65', () => {
+    // 100 - 25 (secrets > 10) - 20 (privateKey) = 55. Below the 65 cap,
+    // so penalties win. The cap composes monotonically: max(0,
+    // min(100, penalties_score), then if !available: min(cap)).
+    const s = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: false,
+        secretFindings: 20,
+        privateKeyFiles: 1,
+      }),
+    );
+    expect(s.score).toBe(55);
+  });
+
+  it('cap applies to a score that would otherwise be between cap and 100', () => {
+    // 100 - 15 (1 critical code finding) = 85. With depVulnsAvailable=false,
+    // capped to 65. Without it, would stay at 85.
+    const capped = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: false,
+        codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
+      }),
+    );
+    expect(capped.score).toBe(65);
+    const uncapped = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: true,
+        codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
+      }),
+    );
+    expect(uncapped.score).toBe(85);
   });
 });
 

@@ -8,7 +8,7 @@
  * Go-only repo); the dispatcher filters nulls before aggregating.
  */
 
-import type { CapabilityEnvelope } from './types';
+import type { CapabilityEnvelope, DepVulnGatherOutcome, DepVulnResult } from './types';
 
 /**
  * Outcome of a side-effecting `runTests()` invocation (D021).
@@ -53,4 +53,32 @@ export interface CapabilityProvider<T extends CapabilityEnvelope> {
    * output file).
    */
   runTests?(cwd: string): Promise<RunTestsOutcome>;
+}
+
+/**
+ * Specialized provider for dependency-vulnerability gathering. Extends
+ * `CapabilityProvider<DepVulnResult>` with a required `gatherOutcome`
+ * method that exposes the underlying `DepVulnGatherOutcome` discriminant
+ * (success / unavailable / no-manifest) to availability-aware analyzers.
+ *
+ * D025b (2.4.7): the dispatcher-routed `gather()` method collapses every
+ * non-success outcome to `null`, which makes the security scorer blind
+ * to the difference between "tool ran cleanly with zero findings" and
+ * "tool wasn't available / no manifest" — the dpl-studio F4 baseline
+ * (Security 100/100 on 133 unscanned NuGet refs). `gatherOutcome` is
+ * the channel by which `gatherDepVulns` in `analyzers/security/gather.ts`
+ * computes `DepVulnSummary.available`, which the security scorer reads
+ * via `SecurityScoreInput.depVulnsAvailable` to cap the dimension at
+ * 65/100 when false.
+ *
+ * Both methods on this interface delegate to the same underlying pack
+ * helper (e.g. `gatherCsharpDepVulnsResult`); implementations should NOT
+ * duplicate work between them — call the helper once and unwrap for
+ * `gather()`, return the full outcome for `gatherOutcome()`. In practice
+ * `gatherDepVulns` only calls `gatherOutcome` (and unwraps locally), so
+ * `gather()` is preserved for legacy/dispatcher consumers and isn't
+ * invoked on the hot path.
+ */
+export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
+  gatherOutcome(cwd: string): Promise<DepVulnGatherOutcome>;
 }

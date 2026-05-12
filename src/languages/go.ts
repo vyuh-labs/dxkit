@@ -13,7 +13,11 @@ import {
 import { fileExists, parseJsonStream, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -436,11 +440,14 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
   }
 }
 
-const goDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const goDepVulnsProvider: DepVulnsProvider = {
   source: 'go',
   async gather(cwd) {
     const outcome = await gatherGoDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherGoDepVulnsResult(cwd);
   },
 };
 

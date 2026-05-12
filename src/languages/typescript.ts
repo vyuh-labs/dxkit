@@ -14,7 +14,11 @@ import {
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -449,11 +453,14 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
   }
 }
 
-const tsDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const tsDepVulnsProvider: DepVulnsProvider = {
   source: 'typescript',
   async gather(cwd) {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherTsDepVulnsResult(cwd);
   },
 };
 

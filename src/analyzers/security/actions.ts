@@ -53,6 +53,13 @@ export function countsFromReport(report: SecurityReport): SecurityScoreInput {
       medium: d.medium,
       low: d.low,
     },
+    // D025b/D025d: read directly from DepVulnSummary.available. Both
+    // health side (via toSecurityScoreInput) and standalone side
+    // (countsFromReport here) now plumb the same boolean into the
+    // unified scorer — drift parity closes automatically. Default
+    // `true` for fixtures that pre-date the field (legacy report JSONs
+    // saved before 2.4.7).
+    depVulnsAvailable: d.available ?? true,
   };
 }
 

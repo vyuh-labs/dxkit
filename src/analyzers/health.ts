@@ -19,7 +19,6 @@ import { defaultDispatcher } from './dispatcher';
 import {
   CODE_PATTERNS,
   COVERAGE,
-  DEP_VULNS,
   DUPLICATION,
   IMPORTS,
   LINT,
@@ -28,6 +27,7 @@ import {
   TEST_FRAMEWORK,
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
+import { gatherDepVulnsWithAvailability } from './security/gather';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -257,8 +257,16 @@ function splitToolNames(tool: string): string[] {
  * isolates provider failures.
  */
 async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
+  // D025b (2.4.7): depVulns gathers via `gatherDepVulnsWithAvailability`
+  // (NOT the dispatcher) so the per-pack availability discriminant
+  // survives to the health-side scorer. Health doesn't need the
+  // enrichment passes (EPSS/KEV/reachability/risk) that the standalone
+  // vuln scan does — those run on the standalone path inside
+  // `gatherDepVulns`. The shared primitive returns the same
+  // `DepVulnResult` envelope shape the dispatcher would produce, plus
+  // the availability metadata.
   const [
-    depVulns,
+    depVulnsWithAvail,
     lint,
     coverage,
     imports,
@@ -268,7 +276,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     duplication,
     structural,
   ] = await Promise.all([
-    defaultDispatcher.gather(cwd, DEP_VULNS, providersFor(DEP_VULNS, cwd)),
+    gatherDepVulnsWithAvailability(cwd),
     defaultDispatcher.gather(cwd, LINT, providersFor(LINT, cwd)),
     defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
@@ -279,7 +287,14 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
   ]);
   const report: CapabilityReport = {};
-  if (depVulns) report.depVulns = depVulns;
+  if (depVulnsWithAvail.envelope) report.depVulns = depVulnsWithAvail.envelope;
+  // Always plumb availability — even when envelope is null, the bool
+  // disambiguates "no active pack" (available=true, no cap) from
+  // "active pack returned unavailable" (available=false, cap fires).
+  report.depVulnsAvailability = {
+    available: depVulnsWithAvail.available,
+    unavailableReason: depVulnsWithAvail.unavailableReason,
+  };
   if (lint) report.lint = lint;
   if (coverage) report.coverage = coverage;
   if (imports) report.imports = imports;

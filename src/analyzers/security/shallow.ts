@@ -77,6 +77,13 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
       medium: c.depVulns?.counts.medium ?? 0,
       low: c.depVulns?.counts.low ?? 0,
     },
+    // D025b (2.4.7): default to `true` when `depVulnsAvailability` is
+    // absent. The field is populated only by `gatherCapabilityReport`
+    // (the health path); legacy test fixtures and pre-2.4.7 inputs may
+    // omit it. true = "no cap applies" — safer default because the cap
+    // is a downgrade; an explicit `false` from the gather is the only
+    // signal we trust to apply it.
+    depVulnsAvailable: c.depVulnsAvailability?.available ?? true,
   };
 }
 

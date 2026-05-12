@@ -8,7 +8,11 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider, RunTestsOutcome } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnResult,
@@ -294,7 +298,7 @@ const kotlinCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 const KOTLIN_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
 
-const kotlinDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const kotlinDepVulnsProvider: DepVulnsProvider = {
   source: 'kotlin',
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
@@ -304,6 +308,9 @@ const kotlinDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
       KOTLIN_DEP_MANIFESTS,
     );
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'kotlin', 'Maven', KOTLIN_DEP_MANIFESTS);
   },
 };
 
