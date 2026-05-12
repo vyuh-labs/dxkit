@@ -921,8 +921,11 @@ export const csharp: LanguageSupport = {
   extraExcludes: ['bin', 'obj', 'TestResults', 'packages'],
 
   detect(cwd) {
+    // Depth 5 covers enterprise .NET layouts like
+    // `Code/Source/Dev/Core/<Module>/<Module>.csproj` (D024 / dpl-studio).
+    // Lower limits silently miss these from the repo root.
     return (
-      dirHasMatching(cwd, /\.(sln|csproj)$/) || findMatchingRecursive(cwd, /\.csproj$/, 3) !== null
+      dirHasMatching(cwd, /\.(sln|csproj)$/) || findMatchingRecursive(cwd, /\.csproj$/, 5) !== null
     );
   },
 

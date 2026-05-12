@@ -31,9 +31,36 @@ describe('csharp.detect', () => {
     expect(csharp.detect(tmp)).toBe(true);
   });
 
+  // D024: enterprise .NET layouts (e.g. dpl-studio) nest .csproj 5 levels
+  // below the repo root. The depth bump 3→5 in detect() lifts the cutoff
+  // to cover these without descending into deeply-nested package dirs.
+  it('detects via .csproj nested at depth 5 (D024)', () => {
+    const deep = path.join(tmp, 'Code', 'Source', 'Dev', 'Core', 'Module');
+    fs.mkdirSync(deep, { recursive: true });
+    fs.writeFileSync(path.join(deep, 'Module.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(true);
+  });
+
+  // Boundary regression guard: a .csproj at depth 6 should NOT match, so
+  // a future tweak that quietly removes the depth cap is caught.
+  it('does NOT detect a .csproj nested at depth 6', () => {
+    const deeper = path.join(tmp, 'a', 'b', 'c', 'd', 'e', 'f');
+    fs.mkdirSync(deeper, { recursive: true });
+    fs.writeFileSync(path.join(deeper, 'Project.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(false);
+  });
+
   it('returns false for unrelated directory', () => {
     fs.writeFileSync(path.join(tmp, 'README.md'), '');
     expect(csharp.detect(tmp)).toBe(false);
+  });
+
+  // D024: also verify the committed fixture (mirrors dpl-studio shape)
+  // is detectable from its root. Catches drift between the fixture's
+  // depth and the detect() cutoff.
+  it('detects the committed csharp-nested benchmark fixture (D024)', () => {
+    const fixture = path.resolve(__dirname, 'fixtures/benchmarks/csharp-nested');
+    expect(csharp.detect(fixture)).toBe(true);
   });
 });
 
