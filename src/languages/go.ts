@@ -16,6 +16,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
+  LicensesProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -25,6 +26,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -804,14 +806,18 @@ function goVersionForPackage(pkgPath: string, modules: Map<string, string>): str
  * without go-licenses installed, without go.mod, or when the tool
  * fails (commonly because `go mod download` hasn't been run).
  */
-function gatherGoLicensesResult(cwd: string): LicensesResult | null {
-  if (!fileExists(cwd, 'go.mod')) return null;
+function gatherGoLicensesResult(cwd: string): LicensesGatherOutcome {
+  if (!fileExists(cwd, 'go.mod')) {
+    return { kind: 'no-manifest', reason: 'no go.mod' };
+  }
 
   const status = findTool(TOOL_DEFS['go-licenses'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'go-licenses not installed' };
+  }
 
   const csvRaw = run(`${status.path} report . 2>/dev/null`, cwd, 180000);
-  if (!csvRaw) return null;
+  if (!csvRaw) return { kind: 'unavailable', reason: 'go-licenses produced no output' };
 
   const listRaw = run('go list -m -json all 2>/dev/null', cwd, 60000);
   const versions = new Map<string, string>();
@@ -852,16 +858,21 @@ function gatherGoLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'go-licenses',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const goLicensesProvider: CapabilityProvider<LicensesResult> = {
+const goLicensesProvider: LicensesProvider = {
   source: 'go',
   async gather(cwd) {
+    const outcome = gatherGoLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherGoLicensesResult(cwd);
   },
 };

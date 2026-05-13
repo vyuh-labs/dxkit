@@ -17,6 +17,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
+  LicensesProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -26,6 +27,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -987,20 +989,27 @@ function splitTsLicenseCheckerKey(key: string): { package: string; version: stri
  * `licenseFile` path on disk — the customer's existing workflow does
  * the same thing (see `license-generation.sh` in vyuhlabs-platform).
  */
-async function gatherTsLicensesResult(cwd: string): Promise<LicensesResult | null> {
-  if (!fileExists(cwd, 'package.json')) return null;
+async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcome> {
+  if (!fileExists(cwd, 'package.json')) {
+    return { kind: 'no-manifest', reason: 'no package.json' };
+  }
 
   const status = findTool(TOOL_DEFS['license-checker-rseidelsohn'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'license-checker-rseidelsohn not installed' };
+  }
 
   const raw = run(`${status.path} --json --excludePrivatePackages 2>/dev/null`, cwd, 120000);
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'license-checker produced no output' };
 
   let data: Record<string, LicenseCheckerEntry>;
   try {
     data = JSON.parse(raw) as Record<string, LicenseCheckerEntry>;
-  } catch {
-    return null;
+  } catch (err) {
+    return {
+      kind: 'unavailable',
+      reason: `license-checker parse error: ${(err as Error).message}`,
+    };
   }
 
   // Load the top-level index once and project it down to `isTopLevel`
@@ -1060,16 +1069,21 @@ async function gatherTsLicensesResult(cwd: string): Promise<LicensesResult | nul
     if (iso) f.releaseDate = iso;
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'license-checker-rseidelsohn',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const tsLicensesProvider: CapabilityProvider<LicensesResult> = {
+const tsLicensesProvider: LicensesProvider = {
   source: 'typescript',
   async gather(cwd) {
+    const outcome = await gatherTsLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherTsLicensesResult(cwd);
   },
 };

@@ -12,6 +12,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
+  LicensesProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -21,6 +22,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -709,22 +711,28 @@ interface CargoLicenseEntry {
  * (no per-package disk read needed). Returns null cleanly when the repo
  * isn't a Cargo workspace or the tool isn't installed.
  */
-function gatherRustLicensesResult(cwd: string): LicensesResult | null {
-  if (!fileExists(cwd, 'Cargo.toml')) return null;
+function gatherRustLicensesResult(cwd: string): LicensesGatherOutcome {
+  if (!fileExists(cwd, 'Cargo.toml')) {
+    return { kind: 'no-manifest', reason: 'no Cargo.toml' };
+  }
 
   const status = findTool(TOOL_DEFS['cargo-license'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'cargo-license not installed' };
+  }
 
   const raw = run(`${status.path} --json 2>/dev/null`, cwd, 120000);
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'cargo-license produced no output' };
 
   let data: CargoLicenseEntry[];
   try {
     data = JSON.parse(raw) as CargoLicenseEntry[];
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'unavailable', reason: `cargo-license parse error: ${(err as Error).message}` };
   }
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data)) {
+    return { kind: 'unavailable', reason: 'cargo-license output was not a JSON array' };
+  }
 
   // Same self-parent invariant as the other packs: cargo metadata's
   // resolve graph seeds BFS from each direct dep, so `index[top]`
@@ -749,16 +757,21 @@ function gatherRustLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'cargo-license',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const rustLicensesProvider: CapabilityProvider<LicensesResult> = {
+const rustLicensesProvider: LicensesProvider = {
   source: 'rust',
   async gather(cwd) {
+    const outcome = gatherRustLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherRustLicensesResult(cwd);
   },
 };

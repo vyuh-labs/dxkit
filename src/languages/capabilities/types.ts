@@ -405,3 +405,36 @@ export type DepVulnGatherOutcome =
 export type LintGatherOutcome =
   | { kind: 'success'; envelope: LintResult }
   | { kind: 'unavailable'; reason: string };
+
+/**
+ * Internal outcome shape for the licenses capability. D031 (2.4.7):
+ * mirrors `DepVulnGatherOutcome`'s three-state discriminant so the
+ * licenses report can differentiate three distinct customer-facing
+ * states:
+ *
+ *   - **success**: the canonical license extraction tool ran
+ *     cleanly (e.g. `nuget-license` for csharp, `pip-licenses` for
+ *     python, `cargo-license` for rust, etc.). Envelope carries the
+ *     per-package license inventory.
+ *
+ *   - **unavailable**: tool isn't installed OR the gather failed
+ *     mid-run. F12 in dpl-studio's baseline was exactly this:
+ *     `nuget-license` absent → pre-D031 the licenses report rendered
+ *     "0 packages" with no caveat, indistinguishable from a repo
+ *     that legitimately has no third-party deps.
+ *
+ *   - **no-manifest**: pack is active but the repo has no dep
+ *     manifest in scope (no `.csproj` for csharp, no `package.json`
+ *     for ts, no `Cargo.toml` for rust, no `requirements.txt`/
+ *     `pyproject.toml` for python). Legitimate "nothing to license."
+ *
+ * The provider's `gather()` method continues to collapse non-success
+ * to null for dispatcher consumers; availability-aware analyzers
+ * (the licenses report + standalone scan) read the discriminant via
+ * `LicensesProvider.gatherOutcome` directly. Same architectural
+ * shape D025b established for DepVulnsProvider.
+ */
+export type LicensesGatherOutcome =
+  | { kind: 'success'; envelope: LicensesResult }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'no-manifest'; reason: string };

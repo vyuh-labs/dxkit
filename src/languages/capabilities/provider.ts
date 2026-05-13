@@ -8,7 +8,13 @@
  * Go-only repo); the dispatcher filters nulls before aggregating.
  */
 
-import type { CapabilityEnvelope, DepVulnGatherOutcome, DepVulnResult } from './types';
+import type {
+  CapabilityEnvelope,
+  DepVulnGatherOutcome,
+  DepVulnResult,
+  LicensesGatherOutcome,
+  LicensesResult,
+} from './types';
 
 /**
  * Outcome of a side-effecting `runTests()` invocation (D021).
@@ -81,4 +87,31 @@ export interface CapabilityProvider<T extends CapabilityEnvelope> {
  */
 export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
   gatherOutcome(cwd: string): Promise<DepVulnGatherOutcome>;
+}
+
+/**
+ * Specialized provider for license inventory gathering. D031 (2.4.7):
+ * extends `CapabilityProvider<LicensesResult>` with a required
+ * `gatherOutcome` method exposing the underlying
+ * `LicensesGatherOutcome` discriminant. Same architectural shape as
+ * `DepVulnsProvider` (D025b) — solves the same customer-credibility
+ * lie (the licenses report rendering "0 packages" on dpl-studio when
+ * `nuget-license` is absent, indistinguishable from a repo with
+ * legitimately zero third-party deps).
+ *
+ * `gatherOutcome` channels the discriminant to `gatherLicensesWith
+ * Availability` in `analyzers/licenses/gather.ts`, which feeds it
+ * into the licenses report's framing block (success → full
+ * inventory; unavailable → ⚠ notice + degraded fallback path;
+ * no-manifest → "no packages to license" honest framing). The
+ * dispatcher-routed `gather()` continues to collapse non-success
+ * outcomes to null for legacy consumers.
+ *
+ * Both methods on this interface delegate to the same underlying
+ * pack helper (e.g. `gatherCsharpLicensesResult`); implementations
+ * should NOT duplicate work — call the helper once, unwrap for
+ * `gather()`, return the full outcome for `gatherOutcome()`.
+ */
+export interface LicensesProvider extends CapabilityProvider<LicensesResult> {
+  gatherOutcome(cwd: string): Promise<LicensesGatherOutcome>;
 }

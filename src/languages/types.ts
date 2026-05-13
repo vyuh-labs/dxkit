@@ -1,9 +1,12 @@
 import type { LanguageId, ResolvedConfig } from '../types';
-import type { CapabilityProvider, DepVulnsProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   ImportsResult,
-  LicensesResult,
   LintResult,
   TestFrameworkResult,
 } from './capabilities/types';
@@ -28,7 +31,7 @@ export interface LanguagePackCapabilities {
   coverage?: CapabilityProvider<CoverageResult>;
   testFramework?: CapabilityProvider<TestFrameworkResult>;
   imports?: CapabilityProvider<ImportsResult>;
-  licenses?: CapabilityProvider<LicensesResult>;
+  licenses?: LicensesProvider;
 }
 
 /**

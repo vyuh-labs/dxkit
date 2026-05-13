@@ -17,6 +17,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
+  LicensesProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -26,6 +27,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -1078,23 +1080,29 @@ function findCsharpLicenseInput(cwd: string): string | null {
  * tool, wrapped. Returns null cleanly when no .sln/.csproj is present
  * or when the tool isn't installed.
  */
-function gatherCsharpLicensesResult(cwd: string): LicensesResult | null {
+function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
   const input = findCsharpLicenseInput(cwd);
-  if (!input) return null;
+  if (!input) {
+    return { kind: 'no-manifest', reason: 'no .csproj or .sln found within depth 3' };
+  }
 
   const status = findTool(TOOL_DEFS['nuget-license'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'nuget-license not installed' };
+  }
 
   const raw = run(`${status.path} -i "${input}" -o JsonPretty 2>/dev/null`, cwd, 180000);
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'nuget-license produced no output' };
 
   let data: NugetLicenseEntry[];
   try {
     data = JSON.parse(raw) as NugetLicenseEntry[];
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'unavailable', reason: `nuget-license parse error: ${(err as Error).message}` };
   }
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data)) {
+    return { kind: 'unavailable', reason: 'nuget-license output was not a JSON array' };
+  }
 
   // Top-level attribution reuses project.assets.json via
   // loadCsharpTopLevelDepIndex. Same self-parent invariant as the
@@ -1123,16 +1131,21 @@ function gatherCsharpLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'nuget-license',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const csharpLicensesProvider: CapabilityProvider<LicensesResult> = {
+const csharpLicensesProvider: LicensesProvider = {
   source: 'csharp',
   async gather(cwd) {
+    const outcome = gatherCsharpLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherCsharpLicensesResult(cwd);
   },
 };

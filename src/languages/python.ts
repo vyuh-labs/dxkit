@@ -11,6 +11,7 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
+  LicensesProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -20,6 +21,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -878,34 +880,45 @@ export function findPyProjectVenvPython(cwd: string): string | null {
  * (i.e. garbage). Returns null when either prerequisite is missing so
  * the dispatcher drops the pack cleanly.
  */
-function gatherPyLicensesResult(cwd: string): LicensesResult | null {
+function gatherPyLicensesResult(cwd: string): LicensesGatherOutcome {
   const hasManifest =
     fileExists(cwd, 'pyproject.toml') ||
     fileExists(cwd, 'setup.py') ||
     fileExists(cwd, 'requirements.txt') ||
     fileExists(cwd, 'Pipfile');
-  if (!hasManifest) return null;
+  if (!hasManifest) {
+    return {
+      kind: 'no-manifest',
+      reason: 'no pyproject.toml / setup.py / requirements.txt / Pipfile',
+    };
+  }
 
   const venvPython = findPyProjectVenvPython(cwd);
-  if (!venvPython) return null;
+  if (!venvPython) {
+    return { kind: 'unavailable', reason: 'no resolvable project venv python' };
+  }
 
   const status = findTool(TOOL_DEFS['pip-licenses'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'pip-licenses not installed' };
+  }
 
   const raw = run(
     `${status.path} --python ${venvPython} --format=json --with-license-file --no-license-path --with-description --with-urls --with-authors 2>/dev/null`,
     cwd,
     120000,
   );
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'pip-licenses produced no output' };
 
   let data: PipLicensesEntry[];
   try {
     data = JSON.parse(raw) as PipLicensesEntry[];
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'unavailable', reason: `pip-licenses parse error: ${(err as Error).message}` };
   }
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data)) {
+    return { kind: 'unavailable', reason: 'pip-licenses output was not a JSON array' };
+  }
 
   // Top-level attribution reuses the same pip-show-graph BFS the
   // depVulns path builds. Self-parent invariant (`index[top]` contains
@@ -933,16 +946,21 @@ function gatherPyLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'pip-licenses',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const pyLicensesProvider: CapabilityProvider<LicensesResult> = {
+const pyLicensesProvider: LicensesProvider = {
   source: 'python',
   async gather(cwd) {
+    const outcome = gatherPyLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherPyLicensesResult(cwd);
   },
 };
