@@ -440,6 +440,20 @@ export const java: LanguageSupport = {
   // out). Universal exclusions live in src/analyzers/tools/exclusions.ts.
   extraExcludes: ['target', 'build', '.gradle', 'out'],
 
+  // D027 (2.4.7): Javadoc uses the `/**` block opener.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): JVM TLS-bypass idioms (same set as the kotlin pack
+  // — both share the underlying javax.net.ssl APIs). The tokens are
+  // class/method names that exist solely for permissive variants;
+  // false-positive rate is negligible.
+  tlsBypassPatterns: [
+    'TrustAllX509TrustManager',
+    'NaiveTrustManager',
+    'NoopHostnameVerifier',
+    'ALLOW_ALL_HOSTNAME_VERIFIER',
+  ],
+
   detect: detectJava,
 
   tools: ['pmd', 'osv-scanner'],

@@ -9,7 +9,9 @@ import { run, countLines, fileExists } from './runner';
 import { getFindExcludeFlags } from './exclusions';
 import {
   allAutogenSourcePatterns,
+  allDocCommentPatterns,
   allSourceExtensions,
+  allTlsBypassPatterns,
   splitTestFilePatterns,
 } from '../../languages';
 
@@ -18,6 +20,71 @@ import {
 // exclusions.ts is used for find-based counts. Widening this filter would
 // change legitimate metric totals and should be a separate, intentional change.
 const GREP_PIPELINE_FILTER = 'grep -v node_modules | grep -v dist | grep -v __pycache__';
+
+/**
+ * Build the shared `grep --include='*.<ext>' ...` flag list from the
+ * pack registry. Used by every registry-driven grep helper in this
+ * module (D027 doc-comments, D034 TLS-bypass) so adding a new pack
+ * auto-extends the search scope.
+ */
+function sourceIncludeFlags(): string {
+  return allSourceExtensions()
+    .map((ext) => `--include='*${ext}'`)
+    .join(' ');
+}
+
+/**
+ * Run a registry-derived grep alternation against every pack's
+ * source extensions and return either the matching-file count
+ * (`mode: 'l'`, like `grep -rlE`) or the matching-line count
+ * (`mode: 'n'`, like `grep -rnE | wc -l`).
+ *
+ * Builds a temp pattern file (one regex per line — grep -Ef syntax)
+ * to avoid shell-escaping issues when patterns contain single
+ * quotes, double quotes, `::`, etc. (Python docstrings, Ruby
+ * `OpenSSL::SSL::VERIFY_NONE` etc.). Short-circuits to 0 when no
+ * pack declares any patterns.
+ */
+function countRegistryGrep(cwd: string, patterns: string[], mode: 'l' | 'n'): number {
+  if (patterns.length === 0) return 0;
+  const includeFlags = sourceIncludeFlags();
+  const patternFile = `/tmp/dxkit-grep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
+  fs.writeFileSync(patternFile, patterns.join('\n'));
+  try {
+    const flag = mode === 'l' ? '-rlEf' : '-rnEf';
+    const raw = run(
+      `grep ${flag} '${patternFile}' ${includeFlags} . 2>/dev/null | grep -v node_modules | grep -v dist | wc -l`,
+      cwd,
+    );
+    return parseInt(raw) || 0;
+  } finally {
+    try {
+      fs.unlinkSync(patternFile);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Count files containing at least one doc-comment marker (D027 /
+ * 2.4.7). Per-language regex shapes contributed by each pack's
+ * `docCommentPatterns`.
+ */
+function countDocCommentFiles(cwd: string): number {
+  return countRegistryGrep(cwd, allDocCommentPatterns(), 'l');
+}
+
+/**
+ * Count lines containing a TLS / cert-validation bypass idiom
+ * (D034 / 2.4.7). Per-language regex shapes contributed by each
+ * pack's `tlsBypassPatterns`. Counts lines (not files) because a
+ * single file may carry multiple distinct bypass points — each one
+ * is a separate finding for the Security score.
+ */
+function countTlsBypassLines(cwd: string): number {
+  return countRegistryGrep(cwd, allTlsBypassPatterns(), 'n');
+}
 
 /** Reliable grep count that avoids shell escaping issues by writing pattern to a temp file. */
 function grepCount(cwd: string, pattern: string, includes: string[]): number {
@@ -170,9 +237,12 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   const readmeExists = fileExists(repoRoot, 'README.md', 'readme.md');
   const readmeLines =
     parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", repoRoot)) || 0;
-  // prettier-ignore
-  const docCommentCmd = "grep -rlE '/\\*\\*|^\"\"\"|^[[:space:]]*#[[:space:]]' --include='*.ts' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist"; // lp-recipe-ok: see D027 — doc-comment heuristic is JS-shaped; per-language patterns land with 2.4.8 doc-comment refactor
-  const docCommentFiles = countLines(docCommentCmd, cwd);
+  // D027 (2.4.7): doc-comment regex + include flags both derive from
+  // the language pack registry. Pre-D027 both were hardcoded to
+  // TS/Python/Go shapes; csharp `///`, rust `///|//!`, kotlin/java
+  // `/**`, ruby `##` were never counted, pinning Documentation scores
+  // at 0/100 for any project outside that initial 3-pack set.
+  const docCommentFiles = countDocCommentFiles(cwd);
   const apiDocsExist = fileExists(
     repoRoot,
     'openapi.json',
@@ -199,9 +269,15 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
     cwd,
   );
   const envFilesInGit = countLines('git ls-files .env .env.* 2>/dev/null', cwd);
-  // prettier-ignore
-  const tlsDisabledCmd = "grep -rnE 'NODE_TLS_REJECT_UNAUTHORIZED.*0|rejectUnauthorized.*false|VERIFY_SSL.*false' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | wc -l"; // lp-recipe-ok: see D034 — each TLS-bypass pattern is ecosystem-specific (Node, JS-anywhere, Python)
-  const tlsDisabledCount = parseInt(run(tlsDisabledCmd, cwd)) || 0;
+  // D034 (2.4.7): TLS-bypass detection derives from the pack
+  // registry. Pre-D034 only Node-shaped (`NODE_TLS_REJECT_UNAUTHORIZED`,
+  // `rejectUnauthorized: false`) and Python-shaped (`VERIFY_SSL`)
+  // idioms matched against a hardcoded `*.ts/*.js/*.py` include
+  // list. csharp `ServerCertificateValidationCallback`, go
+  // `InsecureSkipVerify`, rust `danger_accept_invalid_certs`,
+  // java/kotlin `TrustAllX509TrustManager`, ruby `OpenSSL::SSL::VERIFY_NONE`
+  // were never detected.
+  const tlsDisabledCount = countTlsBypassLines(cwd);
 
   // Maintainability
   const controllers = countLines(

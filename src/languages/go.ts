@@ -884,6 +884,20 @@ export const go: LanguageSupport = {
   testFilePatterns: ['*_test.go'],
   extraExcludes: ['vendor'],
 
+  // D027 (2.4.7): godoc convention is a comment starting with the
+  // exported symbol's name in sentence case (e.g. "// HandlerFunc
+  // serves..."). Approximate with "// " followed by capital letter
+  // at line start; matches the dominant godoc pattern across
+  // standard library + idiomatic projects.
+  docCommentPatterns: ['^// [A-Z]'],
+
+  // D034 (2.4.7): `tls.Config{InsecureSkipVerify: true}` is the
+  // canonical Go pattern for disabling cert verification — applied
+  // to `http.Transport.TLSClientConfig`, gRPC `credentials.NewTLS`,
+  // and similar. Pre-D034 it never matched (Go wasn't in the include
+  // list at all).
+  tlsBypassPatterns: ['InsecureSkipVerify[[:space:]]*:[[:space:]]*true'],
+
   detect(cwd) {
     return fileExists(cwd, 'go.mod');
   },

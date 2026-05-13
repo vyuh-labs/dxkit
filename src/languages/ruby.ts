@@ -689,6 +689,20 @@ export const ruby: LanguageSupport = {
 
   extraExcludes: ['vendor/bundle', '.bundle', 'coverage', 'tmp', 'log'],
 
+  // D027 (2.4.7): YARD documentation convention uses `##` block
+  // comments (distinguished from regular `#` line comments). Plain
+  // `#` would over-match every commented-out line; `##` is the
+  // documented-block marker.
+  docCommentPatterns: ['^[[:space:]]*##'],
+
+  // D034 (2.4.7): OpenSSL TLS-bypass idioms for Ruby's stdlib
+  // `net/http` and `httpclient` gems. `VERIFY_NONE` is the constant
+  // ruby code sets on `http.verify_mode` to disable cert checks.
+  tlsBypassPatterns: [
+    'OpenSSL::SSL::VERIFY_NONE',
+    'verify_mode[[:space:]]*=[[:space:]]*.*VERIFY_NONE',
+  ],
+
   detect: detectRuby,
 
   tools: ['osv-scanner', 'rubocop', 'simplecov'],

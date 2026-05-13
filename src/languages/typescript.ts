@@ -1108,6 +1108,17 @@ export const typescript: LanguageSupport = {
   ],
   extraExcludes: ['node_modules', 'dist', '.next', '.turbo', 'coverage', '.cache'],
 
+  // D027 (2.4.7): JSDoc / TSDoc block comments are the conventional
+  // documentation marker. Per-pack pattern replaces the pre-D027
+  // hardcoded JS-shaped regex in generic.ts.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): Node / browser TLS-bypass idioms. The env-var
+  // `NODE_TLS_REJECT_UNAUTHORIZED=0` disables verification process-
+  // wide; `rejectUnauthorized: false` is the per-request opt-out on
+  // `https.Agent` / `tls.connect` / `node-fetch` agents.
+  tlsBypassPatterns: ['NODE_TLS_REJECT_UNAUTHORIZED.*0', 'rejectUnauthorized.*false'],
+
   detect(cwd) {
     return fileExists(cwd, 'package.json');
   },

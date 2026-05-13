@@ -832,6 +832,17 @@ export const rust: LanguageSupport = {
   testFilePatterns: ['*_test.rs', 'tests/*.rs'],
   extraExcludes: ['target'],
 
+  // D027 (2.4.7): rustdoc uses outer (`///`) and inner (`//!`)
+  // doc-comment markers. Both at the start of a (possibly indented)
+  // line.
+  docCommentPatterns: ['^[[:space:]]*///', '^[[:space:]]*//!'],
+
+  // D034 (2.4.7): `reqwest`'s permissive opt-outs are the dominant
+  // Rust TLS-bypass idiom (`Client::builder().danger_accept_invalid_certs(true)`).
+  // Function names are explicitly `danger_*` — high-signal greppable
+  // tokens with near-zero false-positive rate.
+  tlsBypassPatterns: ['danger_accept_invalid_certs', 'danger_accept_invalid_hostnames'],
+
   detect(cwd) {
     return fileExists(cwd, 'Cargo.toml');
   },

@@ -450,6 +450,24 @@ export const kotlin: LanguageSupport = {
   // `out` = IntelliJ IDE build output.
   extraExcludes: ['build', '.gradle', 'out'],
 
+  // D027 (2.4.7): KDoc uses the JSDoc-style `/**` block opener.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): JVM TLS-bypass idioms. Shared with the java pack
+  // since Kotlin uses the same SSL APIs. Tokens are class/method
+  // names that exist solely for permissive/insecure variants:
+  //   - TrustAllX509TrustManager / NaiveTrustManager — custom
+  //     "trust everything" implementations
+  //   - NoopHostnameVerifier — Apache HttpClient's no-op verifier
+  //   - ALLOW_ALL_HOSTNAME_VERIFIER — legacy SSLConnectionSocketFactory
+  //     constant for accepting any hostname
+  tlsBypassPatterns: [
+    'TrustAllX509TrustManager',
+    'NaiveTrustManager',
+    'NoopHostnameVerifier',
+    'ALLOW_ALL_HOSTNAME_VERIFIER',
+  ],
+
   detect: detectKotlin,
 
   tools: ['detekt', 'osv-scanner'],

@@ -972,6 +972,18 @@ export const python: LanguageSupport = {
   testFilePatterns: ['test_*.py', '*_test.py'],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],
 
+  // D027 (2.4.7): Python module/class/function docstrings use either
+  // triple-double or triple-single quotes. Match the docstring opener
+  // at the start of a (possibly indented) line.
+  docCommentPatterns: ['^[[:space:]]*"""', "^[[:space:]]*'''"],
+
+  // D034 (2.4.7): `requests` and `urllib3` TLS-bypass idioms.
+  // `verify=False` is the canonical opt-out on every `requests` call;
+  // `disable_warnings(InsecureRequestWarning)` typically accompanies it
+  // to silence the runtime warning. `VERIFY_SSL=false` is a common
+  // env-var convention in Django/Flask configs.
+  tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
+
   detect(cwd) {
     return (
       fileExists(cwd, 'pyproject.toml') ||

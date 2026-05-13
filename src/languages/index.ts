@@ -90,6 +90,38 @@ export function allAutogenSourcePatterns(): string[] {
 }
 
 /**
+ * All doc-comment regex patterns across every registered pack,
+ * deduplicated. D027 (2.4.7): consumed by `generic.ts` to build a
+ * union grep alternation for `docCommentFiles`. Empty array when no
+ * pack declares any patterns — caller short-circuits to 0.
+ *
+ * Scope mirrors `allAutogenSourcePatterns`: union across all packs
+ * (active + inactive). A `///` line in a `.cs` file inside a
+ * polyglot repo gets counted even if csharp isn't the dominant pack
+ * — the false-positive rate across language boundaries is negligible
+ * (e.g. `///` doesn't appear in `.py` files).
+ */
+export function allDocCommentPatterns(): string[] {
+  return [...new Set(LANGUAGES.flatMap((l) => l.docCommentPatterns ?? []))];
+}
+
+/**
+ * All TLS-bypass regex patterns across every registered pack,
+ * deduplicated. D034 (2.4.7): consumed by `generic.ts` to build a
+ * union grep alternation for `tlsDisabledCount` — a Security-score
+ * input that previously matched only Node-shaped idioms.
+ *
+ * Scope mirrors `allDocCommentPatterns`: union across all packs
+ * (active + inactive). A `.cs` file containing
+ * `ServerCertificateValidationCallback = ...` in a polyglot repo
+ * gets flagged regardless of which pack the customer "primarily" uses
+ * — security findings should never be silently scoped out.
+ */
+export function allTlsBypassPatterns(): string[] {
+  return [...new Set(LANGUAGES.flatMap((l) => l.tlsBypassPatterns ?? []))];
+}
+
+/**
  * Split test-file patterns into the two shapes find treats differently:
  * basename patterns (matched via `-name`) and path-anchored patterns
  * (matched via `-path`). Pre-LP.3, generic.ts used only `-name` and

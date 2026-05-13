@@ -1285,6 +1285,37 @@ export const csharp: LanguageSupport = {
     'Reference.cs',
   ],
 
+  // D027 (2.4.7): C# uses XML-doc triple-slash comments above
+  // public APIs. Pre-D027 the generic doc-comment heuristic
+  // matched JSDoc `/**` only, so dpl-studio's 3,234 .cs files
+  // contributed zero to docCommentFiles even though many carry
+  // `/// <summary>` blocks. POSIX class `[[:space:]]` for cross-
+  // platform grep (BSD vs GNU).
+  docCommentPatterns: ['^[[:space:]]*///'],
+
+  // D034 (2.4.7): canonical .NET TLS-bypass idioms. Pre-D034 only
+  // Node-shaped (`NODE_TLS_REJECT_UNAUTHORIZED`) and Python-shaped
+  // (`VERIFY_SSL`) tokens were grep'd — every C# project reported
+  // zero TLS-bypass findings even when using
+  // `ServerCertificateValidationCallback = (s,c,ch,e) => true` (the
+  // canonical "accept any certificate" pattern). dpl-studio is the
+  // motivating case: WCF + enterprise integration code commonly
+  // ships permissive callbacks.
+  //
+  // Listed tokens:
+  //   - ServicePointManager.ServerCertificateValidationCallback (legacy)
+  //   - HttpClientHandler.ServerCertificateCustomValidationCallback
+  //     (HttpClient — .NET Core / 5+)
+  //   - SslStream.AuthenticateAsClient* with RemoteCertificateValidationCallback
+  //   - HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+  //     (.NET 5+ shorthand — literally named `Dangerous*`)
+  tlsBypassPatterns: [
+    'ServerCertificateValidationCallback',
+    'ServerCertificateCustomValidationCallback',
+    'RemoteCertificateValidationCallback',
+    'DangerousAcceptAnyServerCertificateValidator',
+  ],
+
   detect(cwd) {
     // Depth 5 covers enterprise .NET layouts like
     // `Code/Source/Dev/Core/<Module>/<Module>.csproj` (D024 / dpl-studio).
