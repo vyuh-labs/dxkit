@@ -29,6 +29,7 @@ export function baseMetrics(): HealthMetrics {
     sourceFiles: 100,
     testFiles: 0,
     totalLines: 0,
+    largestFiles: [],
     testsPass: null,
     testsPassing: 0,
     testsFailing: 0,
