@@ -728,7 +728,12 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'csharp',
     layer: 'language',
     binaries: ['nuget-license'],
-    probePaths: ['~/.dotnet/tools'],
+    // D-fix (2.4.7): use resolved home path. The literal `~/.dotnet/
+    // tools` string was passed verbatim to `path.join(...)` in
+    // `findInProbePaths`, which never expands the tilde — so the
+    // probe silently missed `nuget-license` even when installed at
+    // its canonical `dotnet tool install --global` location.
+    probePaths: [path.join(os.homedir(), '.dotnet', 'tools')],
     versionCheck: 'nuget-license --version 2>/dev/null',
     installCommands: {
       macos: 'dotnet tool install --global nuget-license',
