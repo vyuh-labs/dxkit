@@ -707,6 +707,8 @@ export const ruby: LanguageSupport = {
     return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;
   },
 
+  clocLanguageNames: ['Ruby'],
+
   detect: detectRuby,
 
   tools: ['osv-scanner', 'rubocop', 'simplecov'],

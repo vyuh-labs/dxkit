@@ -903,6 +903,8 @@ export const go: LanguageSupport = {
     return `go get ${name}@v${version}`;
   },
 
+  clocLanguageNames: ['Go'],
+
   detect(cwd) {
     return fileExists(cwd, 'go.mod');
   },

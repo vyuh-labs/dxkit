@@ -1124,6 +1124,8 @@ export const typescript: LanguageSupport = {
     return `npm install ${name}@${version}`;
   },
 
+  clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
+
   detect(cwd) {
     return fileExists(cwd, 'package.json');
   },

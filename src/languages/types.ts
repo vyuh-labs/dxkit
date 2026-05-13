@@ -149,6 +149,28 @@ export interface LanguageSupport {
    */
   upgradeCommand?(name: string, version: string): string | null;
 
+  /**
+   * D073 (2.4.7): language names cloc emits in its `--json` output
+   * for this pack. cloc's per-language keys are NOT 1:1 with file
+   * extensions — `.ts` and `.tsx` both report as `"TypeScript"`,
+   * `.kt` and `.kts` both as `"Kotlin"`, etc. The full canonical list
+   * lives at https://github.com/AlDanial/cloc; each pack declares the
+   * names relevant to its own ecosystem.
+   *
+   * `gatherClocMetrics` filters its language summary + `totalLines`
+   * aggregation to the union of every active pack's declarations.
+   * Pre-D073 the cloc result included markup/data formats (JSON, XML,
+   * CSV, YAML) in the `totalLines` denominator, deflating the quality
+   * report's "Comment Ratio" (1.6M JSON lines on dpl-studio dragged
+   * the C# comment ratio from ~25% down to 4.3%). Filter lets cloc
+   * stay the authoritative line counter for actual source code while
+   * data files stop polluting source metrics.
+   *
+   * Optional — packs without a meaningful cloc representation omit it
+   * (rare; every shipped pack today has at least one cloc name).
+   */
+  clocLanguageNames?: string[];
+
   detect(cwd: string): boolean;
 
   tools: string[];

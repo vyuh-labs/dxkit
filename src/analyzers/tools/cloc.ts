@@ -5,6 +5,7 @@
 import { HealthMetrics } from '../types';
 import { runJSON } from './runner';
 import { getClocExcludeFlags } from './exclusions';
+import { allClocLanguageNames } from '../../languages';
 
 interface ClocOutput {
   header: { n_files: number; n_lines: number };
@@ -39,12 +40,27 @@ export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
 }
 
 function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
+  // D073 (2.4.7): filter cloc's per-language summary to the names
+  // declared by registered packs. Pre-D073 the language table + the
+  // `totalLines` denominator included markup/data formats (JSON,
+  // XML, CSV, YAML, Markdown) that cloc lists alongside "real"
+  // languages. On dpl-studio the 1.6M-line JSON + 1.3M-line XML
+  // dragged the quality "Comment Ratio" from a true ~25% (C#
+  // comments / C# total) to 4.3% (all comments / all-cloc-totals).
+  // The pack registry is the canonical source of "what counts as
+  // source code"; cloc's own categorization is intentionally broad.
+  const packLanguages = new Set(allClocLanguageNames());
+
   const clocLanguages: HealthMetrics['clocLanguages'] = [];
+  let totalCode = 0;
+  let totalComment = 0;
+  let totalBlank = 0;
 
   for (const [key, value] of Object.entries(result)) {
     if (SKIP_KEYS.has(key)) continue;
     const lang = value as { nFiles: number; blank: number; comment: number; code: number };
     if (typeof lang.nFiles !== 'number') continue;
+    if (!packLanguages.has(key)) continue;
     clocLanguages.push({
       language: key,
       files: lang.nFiles,
@@ -52,6 +68,9 @@ function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
       comment: lang.comment,
       blank: lang.blank,
     });
+    totalCode += lang.code;
+    totalComment += lang.comment;
+    totalBlank += lang.blank;
   }
 
   // Sort by code lines descending
@@ -65,11 +84,10 @@ function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
   // counts + language breakdown. (Class-fix tracked as G_v4_8 in
   // recipe v4 — "each gather declares which fields it owns; merger
   // errors on overlap".)
-  // totalLines stays cloc-authoritative because the find-based
-  // wc pass in generic.ts can timeout on enormous trees; cloc is
-  // the higher-fidelity source when available.
+  // totalLines is now derived from the pack-filtered language sum so
+  // it represents source lines, not source+markup+data lines.
   return {
-    totalLines: result.SUM.code + result.SUM.comment + result.SUM.blank,
+    totalLines: totalCode + totalComment + totalBlank,
     clocLanguages,
     toolsUsed: ['cloc'],
   };

@@ -848,6 +848,8 @@ export const rust: LanguageSupport = {
     return `cargo update -p ${name} --precise ${version}`;
   },
 
+  clocLanguageNames: ['Rust'],
+
   detect(cwd) {
     return fileExists(cwd, 'Cargo.toml');
   },

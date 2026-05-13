@@ -458,6 +458,8 @@ export const java: LanguageSupport = {
     return `# Edit pom.xml: bump ${name} <version>${version}</version>, then \`mvn install\``;
   },
 
+  clocLanguageNames: ['Java'],
+
   detect: detectJava,
 
   tools: ['pmd', 'osv-scanner'],

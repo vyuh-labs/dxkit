@@ -122,6 +122,26 @@ export function allTlsBypassPatterns(): string[] {
 }
 
 /**
+ * Cloc language names declared by every pack, deduplicated. D073
+ * (2.4.7): consumed by `gatherClocMetrics` to filter cloc's per-
+ * language summary + `totalLines` aggregation down to "actual source
+ * code" — JSON / XML / CSV / Markdown that cloc emits stay out of the
+ * source-line counters that quality's Comment Ratio + health's
+ * Documentation derive from. Pre-D073 cloc's `SUM` summed every
+ * language including markup/data, deflating the dpl-studio comment
+ * ratio (1.6M JSON lines dragged 25%-true C# comment ratio down to
+ * 4.3%).
+ *
+ * Scope mirrors `allAutogenSourcePatterns` — union across active +
+ * inactive packs. A `.cs` file in a polyglot repo gets counted even
+ * when csharp isn't the detect-time dominant pack, which is fine:
+ * cloc names map to languages, not pack-presence signals.
+ */
+export function allClocLanguageNames(): string[] {
+  return [...new Set(LANGUAGES.flatMap((l) => l.clocLanguageNames ?? []))];
+}
+
+/**
  * Split test-file patterns into the two shapes find treats differently:
  * basename patterns (matched via `-name`) and path-anchored patterns
  * (matched via `-path`). Pre-LP.3, generic.ts used only `-name` and

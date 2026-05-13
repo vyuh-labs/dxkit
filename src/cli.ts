@@ -245,17 +245,23 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'health': {
       const targetPath = resolveRepoPath(positionals[1]);
-      const { analyzeHealth, analyzeHealthWithMetrics } = await import('./analyzers/health');
+      const { analyzeHealthWithMetrics } = await import('./analyzers/health');
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
       // Detailed mode needs HealthMetrics for remediation planning; pull both.
-      const healthResult = values.detailed
-        ? await analyzeHealthWithMetrics(targetPath, { verbose: !!values.verbose })
-        : {
-            report: await analyzeHealth(targetPath, { verbose: !!values.verbose }),
-            metrics: null,
-          };
+      // D032 (2.4.7): always gather the underlying metrics so the
+      // `-detailed.json` write below has the data it needs. Pre-fix
+      // the metrics-bearing path was gated on `--detailed`, so the
+      // dashboard's input JSON was only produced when the user opted
+      // into detailed reporting — making the dashboard headline numbers
+      // silently stale or zero on a default `dxkit health . && dxkit
+      // dashboard .` workflow. Both internal entry points share
+      // `analyzeHealthInternal`, so the only cost is keeping a metrics
+      // reference live (no extra compute).
+      const healthResult = await analyzeHealthWithMetrics(targetPath, {
+        verbose: !!values.verbose,
+      });
       const report = healthResult.report;
       const healthMetrics = healthResult.metrics;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -306,14 +312,23 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-        if (values.detailed && healthMetrics) {
-          const { buildHealthDetailed, formatHealthDetailedMarkdown } =
-            await import('./analyzers/health/detailed');
-          const detailed = buildHealthDetailed(report, healthMetrics);
-          const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
-          const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
-          fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
-          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+        // D032 (2.4.7): always write BOTH `-detailed.json` AND
+        // `-detailed.md` so `vyuh-dxkit dashboard` finds fresh inputs
+        // on every run. The dashboard reads JSON for tile metrics and
+        // embeds the markdown for tab content (Language Breakdown +
+        // Plans live only in the detailed.md). Pre-fix gating these
+        // on `--detailed` meant a default `health → dashboard` workflow
+        // showed stale tile values + stale tab content from whichever
+        // run last passed `--detailed`. The `--detailed` flag now only
+        // controls the console success-log lines.
+        const { buildHealthDetailed, formatHealthDetailedMarkdown } =
+          await import('./analyzers/health/detailed');
+        const detailed = buildHealthDetailed(report, healthMetrics);
+        const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
+        const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
+        fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+        fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
+        if (values.detailed) {
           logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
           logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
@@ -417,16 +432,30 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
+          await import('./analyzers/security/detailed');
+        const securityDetailed = buildSecurityDetailed(report);
+        const securityDetailedJsonPath = path.join(
+          reportDir,
+          `vulnerability-scan-${date}-detailed.json`,
+        );
+        const securityDetailedMdPath = path.join(
+          reportDir,
+          `vulnerability-scan-${date}-detailed.md`,
+        );
+        fs.writeFileSync(securityDetailedJsonPath, JSON.stringify(securityDetailed, null, 2));
+        fs.writeFileSync(
+          securityDetailedMdPath,
+          formatSecurityDetailedMarkdown(securityDetailed, elapsed),
+        );
         if (values.detailed) {
-          const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
-            await import('./analyzers/security/detailed');
-          const detailed = buildSecurityDetailed(report);
-          const detailedMdPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.md`);
-          const detailedJsonPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.json`);
-          fs.writeFileSync(detailedMdPath, formatSecurityDetailedMarkdown(detailed, elapsed));
-          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, securityDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, securityDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -471,16 +500,24 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
+          await import('./analyzers/tests/detailed');
+        const testGapsDetailed = buildTestGapsDetailed(report);
+        const testGapsDetailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
+        const testGapsDetailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
+        fs.writeFileSync(testGapsDetailedJsonPath, JSON.stringify(testGapsDetailed, null, 2));
+        fs.writeFileSync(
+          testGapsDetailedMdPath,
+          formatTestGapsDetailedMarkdown(testGapsDetailed, elapsed),
+        );
         if (values.detailed) {
-          const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
-            await import('./analyzers/tests/detailed');
-          const detailed = buildTestGapsDetailed(report);
-          const detailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
-          const detailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
-          fs.writeFileSync(detailedMdPath, formatTestGapsDetailedMarkdown(detailed, elapsed));
-          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, testGapsDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, testGapsDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -550,16 +587,27 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildQualityDetailed, formatQualityDetailedMarkdown } =
+          await import('./analyzers/quality/detailed');
+        const qualityDetailed = buildQualityDetailed(report);
+        const qualityDetailedJsonPath = path.join(
+          reportDir,
+          `quality-review-${date}-detailed.json`,
+        );
+        const qualityDetailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
+        fs.writeFileSync(qualityDetailedJsonPath, JSON.stringify(qualityDetailed, null, 2));
+        fs.writeFileSync(
+          qualityDetailedMdPath,
+          formatQualityDetailedMarkdown(qualityDetailed, elapsed),
+        );
         if (values.detailed) {
-          const { buildQualityDetailed, formatQualityDetailedMarkdown } =
-            await import('./analyzers/quality/detailed');
-          const detailed = buildQualityDetailed(report);
-          const detailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
-          const detailedJsonPath = path.join(reportDir, `quality-review-${date}-detailed.json`);
-          fs.writeFileSync(detailedMdPath, formatQualityDetailedMarkdown(detailed, elapsed));
-          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, qualityDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, qualityDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -611,20 +659,25 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildDevDetailed, formatDevDetailedMarkdown } =
+          await import('./analyzers/developer/detailed');
+        const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
+        const sinceDate =
+          sinceFlag || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const vague = gatherVagueCommitExamples(targetPath, sinceDate);
+        const devDetailed = buildDevDetailed(report, vague);
+        const devDetailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
+        const devDetailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
+        fs.writeFileSync(devDetailedJsonPath, JSON.stringify(devDetailed, null, 2));
+        fs.writeFileSync(devDetailedMdPath, formatDevDetailedMarkdown(devDetailed, elapsed));
         if (values.detailed) {
-          const { buildDevDetailed, formatDevDetailedMarkdown } =
-            await import('./analyzers/developer/detailed');
-          const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
-          const sinceDate =
-            sinceFlag || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-          const vague = gatherVagueCommitExamples(targetPath, sinceDate);
-          const detailed = buildDevDetailed(report, vague);
-          const detailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
-          const detailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
-          fs.writeFileSync(detailedMdPath, formatDevDetailedMarkdown(detailed, elapsed));
-          fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, devDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, devDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -675,29 +728,35 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-        if (values.detailed || values.xlsx) {
-          const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
-            await import('./analyzers/licenses/detailed');
-          const detailed = buildLicensesDetailed(report);
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
+          await import('./analyzers/licenses/detailed');
+        const licensesDetailed = buildLicensesDetailed(report);
+        const licensesDetailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
+        const licensesDetailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
+        fs.writeFileSync(licensesDetailedJsonPath, JSON.stringify(licensesDetailed, null, 2));
+        fs.writeFileSync(
+          licensesDetailedMdPath,
+          formatLicensesDetailedMarkdown(licensesDetailed, elapsed),
+        );
 
-          if (values.detailed) {
-            const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, licensesDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, licensesDetailedJsonPath)}`,
+          );
+        }
 
-          if (values.xlsx) {
-            const { toLicensesXlsx } = await import('./analyzers/xlsx');
-            const xlsxPath = values.output
-              ? path.resolve(values.output as string)
-              : path.join(reportDir, `licenses-${date}.xlsx`);
-            const buf = await toLicensesXlsx(detailed);
-            fs.writeFileSync(xlsxPath, buf);
-            logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-          }
+        if (values.xlsx) {
+          const { toLicensesXlsx } = await import('./analyzers/xlsx');
+          const xlsxPath = values.output
+            ? path.resolve(values.output as string)
+            : path.join(reportDir, `licenses-${date}.xlsx`);
+          const buf = await toLicensesXlsx(licensesDetailed);
+          fs.writeFileSync(xlsxPath, buf);
+          logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
         }
       }
       break;
@@ -777,29 +836,32 @@ export async function run(argv: string[]): Promise<void> {
         if (!values.json) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-        if (values.detailed || values.xlsx) {
-          const { buildBomDetailed, formatBomDetailedMarkdown } =
-            await import('./analyzers/bom/detailed');
-          const detailed = buildBomDetailed(report);
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildBomDetailed, formatBomDetailedMarkdown } =
+          await import('./analyzers/bom/detailed');
+        const bomDetailed = buildBomDetailed(report);
+        const bomDetailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
+        const bomDetailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
+        fs.writeFileSync(bomDetailedJsonPath, JSON.stringify(bomDetailed, null, 2));
+        fs.writeFileSync(bomDetailedMdPath, formatBomDetailedMarkdown(bomDetailed, elapsed));
 
-          if (values.detailed) {
-            const detailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatBomDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, bomDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, bomDetailedJsonPath)}`,
+          );
+        }
 
-          if (values.xlsx) {
-            const { toBomXlsx } = await import('./analyzers/xlsx');
-            const xlsxPath = values.output
-              ? path.resolve(values.output as string)
-              : path.join(reportDir, `bom-${date}.xlsx`);
-            const buf = await toBomXlsx(report);
-            fs.writeFileSync(xlsxPath, buf);
-            logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-          }
+        if (values.xlsx) {
+          const { toBomXlsx } = await import('./analyzers/xlsx');
+          const xlsxPath = values.output
+            ? path.resolve(values.output as string)
+            : path.join(reportDir, `bom-${date}.xlsx`);
+          const buf = await toBomXlsx(report);
+          fs.writeFileSync(xlsxPath, buf);
+          logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
         }
       }
       break;

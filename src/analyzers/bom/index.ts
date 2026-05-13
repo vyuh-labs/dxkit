@@ -262,8 +262,13 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
     L.push('| Risk | ID | Package@Version | Rationale | Fix |');
     L.push('|-----:|----|-----------------|-----------|-----|');
     for (const row of triage) {
+      // D063 (2.4.7): one-decimal precision matches the "Vulnerable
+      // Packages" table so threshold-vs-rendering doesn't mislead. A
+      // package at 14.8 reads as `14.8` here and there — neither
+      // table rounds it up to `15`, which would make the
+      // triage-threshold gap (≥ 15.0) invisible.
       L.push(
-        `| **${row.risk.toFixed(0)}** | \`${row.id}\` | \`${row.packageAtVersion}\` | ${row.rationale} | ${row.fix} |`,
+        `| **${row.risk.toFixed(1)}** | \`${row.id}\` | \`${row.packageAtVersion}\` | ${row.rationale} | ${row.fix} |`,
       );
     }
     L.push('');
@@ -438,16 +443,28 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // KEV cell: `⚠` when any advisory is in the CISA KEV catalog —
       // the strongest "fix now" signal we can surface. Empty otherwise.
       const kevCell = e.vulns.some((v) => v.kev) ? '⚠' : '';
-      // Reach cell: `✓` when the repo's source imports this package
-      // (any advisory on it is reachable); empty cell when every
-      // advisory's `reachable === false`. Unset → blank (treated as
-      // "don't know", which is safer than implying non-reachability).
-      const reachCell = e.vulns.some((v) => v.reachable === true) ? '✓' : '';
+      // Reach cell: three-state per D064 (2.4.7) —
+      //   `✓` when ANY advisory is reachable from source imports,
+      //   `✗` when EVERY advisory recorded `reachable === false`
+      //       (positive evidence of non-reachability — deprioritize),
+      //   blank when no advisory has a reachability signal (unknown).
+      // Pre-D064 the cell was blank for both `false` and `undefined`,
+      // which silently merged "we checked and it's not reachable"
+      // with "we have no idea." Customers couldn't tell which.
+      const reachCell = e.vulns.some((v) => v.reachable === true)
+        ? '✓'
+        : e.vulns.some((v) => v.reachable === false)
+          ? '✗'
+          : '';
       // Risk: max composite riskScore across the package's advisories.
-      // Leading column so the eye catches priority first. Dash when
-      // no advisory had a CVSS (riskScore uncomputable).
+      // Leading column so the eye catches priority first. D063 (2.4.7):
+      // render with one decimal so the triage cutoff is visible — pre-
+      // fix `toFixed(0)` rounded 14.8 → 15, making it look like the
+      // package should appear in the ≥15 triage when it was actually
+      // just below threshold. One decimal lets the reader compare 14.8
+      // vs 15.0 and understand the gap.
       const risk = maxRisk(e);
-      const riskCell = risk >= 0 ? `**${risk.toFixed(0)}**` : '—';
+      const riskCell = risk >= 0 ? `**${risk.toFixed(1)}**` : '—';
       L.push(
         `| ${riskCell} | ${SEV_BADGE[e.maxSeverity!]} | ${cvssCell} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${reachCell} | ${epssCell} | ${advice} |`,
       );

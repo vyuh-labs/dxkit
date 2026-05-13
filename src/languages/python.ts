@@ -989,6 +989,8 @@ export const python: LanguageSupport = {
     return `pip install '${name}==${version}'`;
   },
 
+  clocLanguageNames: ['Python'],
+
   detect(cwd) {
     return (
       fileExists(cwd, 'pyproject.toml') ||

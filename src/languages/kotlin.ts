@@ -472,6 +472,8 @@ export const kotlin: LanguageSupport = {
     return `# Edit build.gradle(.kts): bump ${name} to ${version}, then \`./gradlew build\``;
   },
 
+  clocLanguageNames: ['Kotlin'],
+
   detect: detectKotlin,
 
   tools: ['detekt', 'osv-scanner'],

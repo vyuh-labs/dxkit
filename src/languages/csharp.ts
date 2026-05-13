@@ -1357,6 +1357,8 @@ export const csharp: LanguageSupport = {
     return `dotnet add package ${name} --version ${version}`;
   },
 
+  clocLanguageNames: ['C#'],
+
   detect(cwd) {
     // Depth 5 covers enterprise .NET layouts like
     // `Code/Source/Dev/Core/<Module>/<Module>.csproj` (D024 / dpl-studio).
