@@ -110,6 +110,58 @@ describe('analyzeDashboard', () => {
     expect(result.html).toContain('Security');
   });
 
+  it('aggregates dep-vulns from summary.dependencies.findings into the Vulnerabilities tile (regression guard)', () => {
+    // Pre-fix bug (caught 2026-05-13 on dpl-studio): the dashboard
+    // read only `vulns.findings` (code findings — semgrep/gitleaks).
+    // Dependency vulnerabilities live in
+    // `vulns.summary.dependencies.findings`. Reading only the code
+    // array caused the Vulnerabilities tile to show 0 on dpl-studio
+    // even when osv-scanner-nuget-direct surfaced real CVEs. Both
+    // streams must be unioned for tile counts AND for the "Critical
+    // Issues at a Glance" surfacing.
+    write('vulnerability-scan-2026-05-11.md', '# Vuln');
+    write(
+      'vulnerability-scan-2026-05-11-detailed.json',
+      JSON.stringify({
+        findings: [], // no code findings
+        summary: {
+          findings: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+          dependencies: {
+            critical: 0,
+            high: 1,
+            medium: 1,
+            low: 0,
+            total: 2,
+            tool: 'osv-scanner-nuget-direct',
+            findings: [
+              {
+                id: 'GHSA-7j9m-j397-g4wx',
+                package: 'MongoDB.Driver',
+                installedVersion: '2.13.1',
+                tool: 'osv-scanner',
+                severity: 'high',
+              },
+              {
+                id: 'GHSA-6c8g-7p36-r338',
+                package: 'SharpCompress',
+                installedVersion: '0.30.1',
+                tool: 'osv-scanner',
+                severity: 'medium',
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const result = analyzeDashboard(tmp);
+    // Tile total reflects union of code + dep findings (2 dep here).
+    expect(result.summary.vulnCount).toBe(2);
+    // Critical Issues section includes the HIGH dep-vuln (MongoDB).
+    expect(result.criticalIssueCount).toBeGreaterThan(0);
+    expect(result.html).toContain('GHSA-7j9m-j397-g4wx');
+  });
+
   it('degrades gracefully when JSON envelopes are missing or malformed', () => {
     write('health-audit-2026-05-11.md', '# Health');
     write('health-audit-2026-05-11-detailed.json', '{ this is not valid json');

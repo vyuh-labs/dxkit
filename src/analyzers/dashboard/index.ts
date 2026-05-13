@@ -173,9 +173,24 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     package?: string;
     installedVersion?: string;
   };
-  const vulnFindings: VulnFinding[] = Array.isArray(vulns.findings)
+  // D047 (2.4.7 fix-forward): the dashboard previously read only
+  // `vulns.findings` (code findings — semgrep/gitleaks). Dependency
+  // vulnerabilities live in `vulns.summary.dependencies.findings`
+  // (per VulnReport schema v11+). Reading only the code-findings
+  // array caused the Vulnerabilities tile to show 0 on dpl-studio
+  // even when osv-scanner-nuget-direct surfaced 1 HIGH (MongoDB.Driver)
+  // + 1 MEDIUM (SharpCompress). Union both arrays so the tile and
+  // the "Critical Issues at a Glance" section reflect the full
+  // security signal.
+  const codeFindings: VulnFinding[] = Array.isArray(vulns.findings)
     ? (vulns.findings as VulnFinding[])
     : [];
+  const depSummary = (vulns.summary as { dependencies?: { findings?: VulnFinding[] } } | undefined)
+    ?.dependencies;
+  const depFindings: VulnFinding[] = Array.isArray(depSummary?.findings)
+    ? (depSummary?.findings as VulnFinding[])
+    : [];
+  const vulnFindings: VulnFinding[] = [...codeFindings, ...depFindings];
   const vulnBySeverity = { critical: 0, high: 0, medium: 0, low: 0 } as Record<string, number>;
   for (const f of vulnFindings) {
     const sev = f.severity ?? 'unknown';
@@ -636,7 +651,7 @@ function renderHtml(a: RenderArgs): string {
             <div class="sub">${a.topPackages} top-level packages of ${a.totalPackages} total</div>
           </div>
           <div class="stat-card">
-            <div class="label">Code Quality</div>
+            <div class="label">Slop Score</div>
             <div class="value" style="color:${a.slopScore !== null && a.slopScore < 50 ? 'var(--accent-orange)' : 'var(--accent-green)'}">${a.slopScore !== null ? `${a.slopScore}/100` : 'n/a'}</div>
             <div class="sub">${a.qualityMetrics.duplication?.percentage !== undefined ? `${a.qualityMetrics.duplication.percentage}% duplication` : ''}${a.qualityMetrics.lintErrors !== undefined ? ` · ${a.qualityMetrics.lintErrors} lint errors` : ''}</div>
           </div>
