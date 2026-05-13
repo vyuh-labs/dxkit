@@ -1168,7 +1168,18 @@ function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
   }
 
   const raw = run(`${status.path} -i "${input}" -o JsonPretty 2>/dev/null`, cwd, 180000);
-  if (!raw) return { kind: 'unavailable', reason: 'nuget-license produced no output' };
+  if (!raw) {
+    // D031-2 extended (2.4.7): nuget-license commonly produces no
+    // output when `dotnet restore` hasn't been run (no
+    // `obj/project.assets.json` for it to read). Rather than tell
+    // the customer "0 packages," fall back to direct PackageReference
+    // parsing so they get a real inventory. Validated on dpl-studio
+    // 2026-05-13: 53 packages surface via the fallback when
+    // nuget-license itself returns empty.
+    const degraded = gatherCsharpLicensesDegradedInventory(cwd);
+    if (degraded) return { kind: 'success', envelope: degraded };
+    return { kind: 'unavailable', reason: 'nuget-license produced no output' };
+  }
 
   let data: NugetLicenseEntry[];
   try {
@@ -1205,6 +1216,20 @@ function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
       supplier: entry.Authors && entry.Authors.length > 0 ? entry.Authors : undefined,
       isTopLevel: hasIndex ? (parents?.includes(entry.PackageId) ?? false) : undefined,
     });
+  }
+
+  // D031-2 extended (2.4.7): if nuget-license ran AND parsed cleanly
+  // but produced zero valid findings, the canonical scan failed
+  // silently (typically: assets.json absent → tool emits an empty
+  // array). Same customer-visibility concern as the no-output path
+  // — fall back to degraded inventory so the customer sees real
+  // packages instead of "0 packages." If the degraded path also
+  // returns null (no .csproj parseable), drop through to the
+  // empty-success path (legitimate "no licenseable deps in this
+  // pack's scope").
+  if (findings.length === 0) {
+    const degraded = gatherCsharpLicensesDegradedInventory(cwd);
+    if (degraded) return { kind: 'success', envelope: degraded };
   }
 
   const envelope: LicensesResult = {
@@ -1252,6 +1277,12 @@ export const csharp: LanguageSupport = {
     '*.generated.cs',
     '*.AssemblyInfo.cs',
     '*.AssemblyAttributes.cs',
+    // WCF "Connected Services" auto-generated proxy classes
+    // (svcutil.exe / Add Service Reference). dpl-studio's
+    // `Reference.cs` was 42,370 lines of WCF proxy. Other tools'
+    // service-reference output (gRPC tools, OpenAPI generators)
+    // commonly also emit `Reference.cs`.
+    'Reference.cs',
   ],
 
   detect(cwd) {
