@@ -191,6 +191,28 @@ export function formatBomDetailedMarkdown(detailed: BomDetailedReport, elapsed: 
     L.push(`- **Vuln-only entries (license gap):** ${s.vulnOnlyPackages}`);
   }
   L.push('');
+
+  // D070 (2.4.7): full per-root listing lives in the detailed report
+  // only — the main report collapses to a count + 5-root preview to
+  // stay scannable. One root per line here so customers auditing
+  // per-root attribution can grep / sort cleanly.
+  if (s.projectRoots.length > 1) {
+    L.push(`## Project Roots (${s.projectRoots.length})`);
+    L.push('');
+    L.push(
+      'Each row in the package tables unions the roots that installed the ' +
+        'package; the full list is reproduced here for per-root audit. See the ' +
+        '`sources` column in `bom-<date>.xlsx` (when `--xlsx` is passed) for ' +
+        'machine-readable per-row attribution.',
+    );
+    L.push('');
+    for (const r of s.projectRoots) {
+      L.push(`- \`${r}\``);
+    }
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
   L.push(
     `> Reconciles with \`vyuh-dxkit vulnerabilities\`: that command counts ` +
       `per-advisory (${s.totalAdvisories}); bom collapses per-package ` +

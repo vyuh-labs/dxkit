@@ -237,12 +237,18 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   const totalLicensePkgs = licenseSummary.totalPackages ?? 0;
   const unknownLicenses = licenseSummary.unknownCount ?? 0;
 
-  // Top critical issues from each surface.
+  // Top critical issues from each surface. D068 (2.4.7): track the
+  // unfiltered totals alongside the capped slice so the renderer can
+  // disclose "showing N of M" when items are dropped. Pre-fix the
+  // dashboard silently capped at 3+3+2 = 8 with no indication that
+  // more critical issues exist — a customer with 20 CRITICAL untested
+  // files would see 3 and infer "only 3 critical things in the repo."
   const criticalIssues: Array<{ type: string; label: string; detail: string; severity: string }> =
     [];
-  for (const f of vulnFindings
-    .filter((f) => f.severity === 'critical' || f.severity === 'high')
-    .slice(0, 3)) {
+  const vulnCriticals = vulnFindings.filter(
+    (f) => f.severity === 'critical' || f.severity === 'high',
+  );
+  for (const f of vulnCriticals.slice(0, 3)) {
     criticalIssues.push({
       type: 'vuln',
       label: `${f.tool ?? 'security'} · ${f.rule ?? f.id ?? 'finding'}`,
@@ -254,7 +260,8 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
       severity: f.severity ?? 'high',
     });
   }
-  for (const g of gaps.filter((g) => g.risk === 'critical' || g.risk === 'high').slice(0, 3)) {
+  const gapCriticals = gaps.filter((g) => g.risk === 'critical' || g.risk === 'high');
+  for (const g of gapCriticals.slice(0, 3)) {
     criticalIssues.push({
       type: 'gap',
       label: `Untested (${g.risk}): ${g.path ?? g.file ?? '?'}`,
@@ -262,7 +269,8 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
       severity: g.risk ?? 'high',
     });
   }
-  for (const t of (bomSummary.triage ?? []).slice(0, 2)) {
+  const bomTriage = bomSummary.triage ?? [];
+  for (const t of bomTriage.slice(0, 2)) {
     criticalIssues.push({
       type: 'bom',
       label: `Upgrade: ${t.package ?? '?'} → resolves ${t.advisoryCount ?? '?'} advisories`,
@@ -270,6 +278,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
       severity: t.severity ?? 'high',
     });
   }
+  const criticalIssuesTotal = vulnCriticals.length + gapCriticals.length + bomTriage.length;
 
   // Fill in sidebar badges now that we have the synthesis numbers.
   for (const e of navEntries) {
@@ -308,6 +317,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
         | { sourceFiles?: number; activeTestFiles?: number; coverageSource?: string }
         | undefined) ?? {},
     criticalIssues,
+    criticalIssuesTotal,
     reports,
     navEntries,
   });
@@ -428,6 +438,7 @@ interface RenderArgs {
   licenseByCount: number;
   testGapsSummary: { sourceFiles?: number; activeTestFiles?: number; coverageSource?: string };
   criticalIssues: Array<{ label: string; detail: string; severity: string }>;
+  criticalIssuesTotal: number;
   reports: Record<string, string>;
   navEntries: Array<{
     key: string;
@@ -670,7 +681,11 @@ function renderHtml(a: RenderArgs): string {
         ${
           a.criticalIssues.length > 0
             ? `
-        <div class="section-title">Critical Issues at a Glance</div>
+        <div class="section-title">Critical Issues at a Glance${
+          a.criticalIssuesTotal > a.criticalIssues.length
+            ? ` <span style="font-weight:400;color:var(--text-muted);font-size:13px">(showing ${a.criticalIssues.length} of ${a.criticalIssuesTotal} — see report tabs for full lists)</span>`
+            : ''
+        }</div>
         <div class="crit-list">
           ${a.criticalIssues
             .map(

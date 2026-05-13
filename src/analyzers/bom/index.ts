@@ -281,10 +281,24 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   L.push('## Summary');
   L.push('');
   if (s.projectRoots.length > 1) {
+    // D070 (2.4.7): collapse multi-root listings. Pre-fix dpl-studio
+    // rendered all 68 roots in one paragraph (one long comma-joined
+    // line) — visually unreadable on any screen. Main report now
+    // surfaces only the count + first few roots as a sample; the
+    // detailed.md (`bom-<date>-detailed.md`) carries the full list
+    // for customers who need to audit per-root attribution.
+    const previewCount = 5;
+    const preview = s.projectRoots
+      .slice(0, previewCount)
+      .map((r) => `\`${r}\``)
+      .join(', ');
+    const suffix =
+      s.projectRoots.length > previewCount
+        ? ` … and ${s.projectRoots.length - previewCount} more (see \`bom-${report.analyzedAt.slice(0, 10)}-detailed.md\` for the full list)`
+        : '';
     L.push(
-      `**Aggregated across ${s.projectRoots.length} project roots** — ` +
-        s.projectRoots.map((r) => `\`${r}\``).join(', ') +
-        '. Each row unions the roots that installed the package (see `sources`).',
+      `**Aggregated across ${s.projectRoots.length} project roots** — ${preview}${suffix}. ` +
+        'Each row unions the roots that installed the package (see `sources`).',
     );
     L.push('');
   }

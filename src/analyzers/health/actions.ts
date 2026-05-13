@@ -239,7 +239,15 @@ function docsActions(input: ScoreInput): HealthAction[] {
       patch: (cur) => withMetrics(cur, { architectureDocsExist: true }),
     });
   }
-  if (!m.apiDocsExist && (m.controllers > 0 || m.sourceFiles > 100)) {
+  // D065 (2.4.7): only recommend API docs when there's actually an API
+  // surface to document. Pre-fix the `|| m.sourceFiles > 100` branch
+  // recommended OpenAPI/Swagger on every nontrivial codebase — including
+  // desktop apps with zero HTTP controllers (dpl-studio: 1537 source
+  // files, 0 controllers → still recommended "Add API documentation"
+  // with rationale "With controllers/routes present, API surface should
+  // be documented" — self-contradicting). The recommendation now fires
+  // only when controllers are actually detected.
+  if (!m.apiDocsExist && m.controllers > 0) {
     actions.push({
       id: 'health.docs.add-api-docs',
       title: 'Add API documentation',
