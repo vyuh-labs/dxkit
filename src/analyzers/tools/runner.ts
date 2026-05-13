@@ -62,6 +62,16 @@ export function run(cmd: string, cwd: string, timeoutMs = 30000): string {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
+      // Node's default `maxBuffer` is 1MB. Tools that produce large
+      // outputs on enterprise codebases (jscpd's 25MB report on
+      // dpl-studio, semgrep on a huge ruleset, gitleaks on a leaky
+      // repo, npm audit on deep dep trees) silently truncated past
+      // that cap pre-fix — execSync threw `ENOBUFS`, the catch below
+      // returned empty string, and the calling gather function
+      // reported the tool as "unavailable" with reason "no output."
+      // 64MB handles the dpl-studio-class observation (25MB) plus
+      // ~2x headroom without inviting runaway-tool memory explosion.
+      maxBuffer: 64 * 1024 * 1024,
     }).trim();
   } catch (err: unknown) {
     // Some tools (npm audit) write valid output to stdout even on non-zero exit

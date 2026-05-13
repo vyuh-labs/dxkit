@@ -12,6 +12,7 @@
  * provider picks them up via `detectActiveLanguages(cwd)`.
  */
 
+import * as fs from 'fs';
 import { detectActiveLanguages } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { CodePatternFinding, CodePatternsResult } from '../../languages/capabilities/types';
@@ -101,7 +102,17 @@ export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
     cwd,
     300000,
   );
-  const raw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
+  // Read the report file directly. Pre-fix this used `run('cat
+  // <path>')` which routed through execSync's 1MB default maxBuffer —
+  // semgrep reports on enterprise codebases with many lint hits or
+  // many active rulesets can easily exceed that and silently return
+  // empty (same bug class as jscpd.ts + gitleaks.ts pre-fix).
+  let raw: string;
+  try {
+    raw = fs.readFileSync(reportPath, 'utf-8');
+  } catch {
+    raw = '';
+  }
   run(`rm -f '${reportPath}'`, cwd);
 
   if (!raw) return { kind: 'unavailable', reason: 'no output' };

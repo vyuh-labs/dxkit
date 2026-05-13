@@ -8,6 +8,7 @@
  * `tools/parallel.ts`. Memoized per-cwd so both callers share one
  * invocation per analyzer run.
  */
+import * as fs from 'fs';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
@@ -74,7 +75,19 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     cwd,
     120000,
   );
-  const reportRaw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
+  // Read the report file directly. Pre-fix this used `run('cat
+  // <path>')` which routed through execSync — large reports on
+  // enterprise codebases would exceed the 1MB default maxBuffer and
+  // silently return empty (same bug class as jscpd.ts). Direct file
+  // read sidesteps the buffer entirely; gitleaks reports on
+  // dpl-studio-class repos can reach MB-range when many findings are
+  // surfaced.
+  let reportRaw: string;
+  try {
+    reportRaw = fs.readFileSync(reportPath, 'utf-8');
+  } catch {
+    reportRaw = '';
+  }
   run(`rm -f '${reportPath}'`, cwd);
 
   if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };

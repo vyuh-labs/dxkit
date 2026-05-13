@@ -14,6 +14,8 @@
  * change rather than a cross-cutting edit here.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { LANGUAGES } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DuplicationClone, DuplicationResult } from '../../languages/capabilities/types';
@@ -108,7 +110,20 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
     600000, // 10 min — bumped from 300000 in 2.4.7 (was timing out on 1700+-dep frontend repos during real-user UX session 2026-05-07)
   );
 
-  const reportRaw = run(`cat '${reportDir}/jscpd-report.json' 2>/dev/null`, cwd);
+  // Read the report file directly. Pre-D-fix this used
+  // `run('cat <path>')` which routed through execSync with the default
+  // 1MB maxBuffer — jscpd reports on enterprise codebases routinely
+  // exceed that (dpl-studio's was 25MB / 395k lines), causing execSync
+  // to truncate the output to empty and the gather to misreport
+  // jscpd as "unavailable" even after a fully-successful run.
+  // Direct file read sidesteps the buffer entirely.
+  const reportPath = path.join(reportDir, 'jscpd-report.json');
+  let reportRaw: string;
+  try {
+    reportRaw = fs.readFileSync(reportPath, 'utf-8');
+  } catch {
+    reportRaw = '';
+  }
   run(`rm -rf '${reportDir}'`, cwd);
 
   if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };
