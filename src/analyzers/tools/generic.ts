@@ -57,9 +57,33 @@ const TEST_PATTERNS = (() => {
   return `\\( ${[...nameClauses, ...pathClauses].join(' -o ')} \\)`;
 })();
 
+/**
+ * Resolve the git toplevel for `cwd`. D026 (2.4.7): cross-cutting repo
+ * artifacts (`.github/`, `README.md`, `CONTRIBUTING.md`, `Makefile`,
+ * `.env.example`, etc.) conventionally live at the repo root, not in
+ * the subdirectory a user happens to scan. dpl-studio's baseline F8:
+ * customer ran `dxkit health Code/Source/`; both Documentation and DX
+ * dimensions returned 0/100 because none of those probes found
+ * matches in `Code/Source/`. The fix scopes those probes to the
+ * git toplevel.
+ *
+ * Returns `cwd` unchanged when `git rev-parse --show-toplevel` fails
+ * (not in a git repo, or git missing) so non-git workflows keep
+ * working — they just don't get the toplevel-scoped improvement.
+ */
+function resolveGitToplevel(cwd: string): string {
+  const top = run('git rev-parse --show-toplevel 2>/dev/null', cwd).trim();
+  return top.length > 0 ? top : cwd;
+}
+
 /** Gather metrics using only built-in Unix tools. */
 export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   const EXCLUDE = getFindExcludeFlags(cwd);
+  // D026 (2.4.7): repo-level artifacts probed from git toplevel; code-
+  // level metrics (source-file counts, hygiene grep, semgrep) stay
+  // scoped to `cwd` so analyzing a subdirectory still measures that
+  // subdir's code quality.
+  const repoRoot = resolveGitToplevel(cwd);
 
   // File counts
   const sourceFiles = countLines(`find . -type f ${SOURCE_EXTS} ${EXCLUDE}`, cwd);
@@ -110,22 +134,27 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   // TypeScript ": any" count
   const anyTypeCount = grepCount(cwd, ': any', ['*.ts', '*.tsx']);
 
-  // Documentation
-  const readmeExists = fileExists(cwd, 'README.md', 'readme.md');
-  const readmeLines = parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", cwd)) || 0;
+  // Documentation — D026 (2.4.7): probe from repo root, not from cwd.
+  // dpl-studio's `Code/Source/` doesn't have README.md/etc.; the repo
+  // root does. docCommentFiles stays cwd-scoped because it counts
+  // source-file doc-comment density inside whatever subtree the user
+  // chose to analyze.
+  const readmeExists = fileExists(repoRoot, 'README.md', 'readme.md');
+  const readmeLines =
+    parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", repoRoot)) || 0;
   // prettier-ignore
   const docCommentCmd = "grep -rlE '/\\*\\*|^\"\"\"|^[[:space:]]*#[[:space:]]' --include='*.ts' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist"; // lp-recipe-ok: see D027 — doc-comment heuristic is JS-shaped; per-language patterns land with 2.4.8 doc-comment refactor
   const docCommentFiles = countLines(docCommentCmd, cwd);
   const apiDocsExist = fileExists(
-    cwd,
+    repoRoot,
     'openapi.json',
     'openapi.yaml',
     'swagger.json',
     'swagger.yaml',
   );
-  const architectureDocsExist = fileExists(cwd, 'ARCHITECTURE.md', 'docs/', 'ADR/', 'adr/');
-  const contributingExists = fileExists(cwd, 'CONTRIBUTING.md');
-  const changelogExists = fileExists(cwd, 'CHANGELOG.md', 'CHANGES.md');
+  const architectureDocsExist = fileExists(repoRoot, 'ARCHITECTURE.md', 'docs/', 'ADR/', 'adr/');
+  const contributingExists = fileExists(repoRoot, 'CONTRIBUTING.md');
+  const changelogExists = fileExists(repoRoot, 'CHANGELOG.md', 'CHANGES.md');
 
   // Security — secret scanning lives entirely under the SECRETS capability
   // (gitleaks, 800+ patterns). The 7-pattern grep fallback that used to
@@ -157,25 +186,30 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
   );
   const directories = countLines(`find . -type d ${EXCLUDE} 2>/dev/null`, cwd);
 
-  // Developer Experience
+  // Developer Experience — D026 (2.4.7): probe repo root. CI/Docker/
+  // pre-commit/Makefile/env-example conventionally live at the repo
+  // root. dpl-studio: pre-D026 these all returned 0 when run from
+  // `Code/Source/` because `.github/workflows/` etc. live one level up.
   const ciConfigCount = countLines(
     'find .github/workflows -name "*.yml" -o -name "*.yaml" 2>/dev/null; ls .gitlab-ci.yml Jenkinsfile .circleci/config.yml 2>/dev/null',
-    cwd,
+    repoRoot,
   );
   const dockerConfigCount = countLines(
     'ls Dockerfile docker-compose.yml docker-compose.yaml .devcontainer/devcontainer.json 2>/dev/null',
-    cwd,
+    repoRoot,
   );
   const precommitConfigCount = countLines(
     'ls -d .husky .pre-commit-config.yaml .git/hooks/pre-commit 2>/dev/null',
-    cwd,
+    repoRoot,
   );
-  const makefileExists = fileExists(cwd, 'Makefile', 'justfile', 'Taskfile.yml');
-  const envExampleExists = fileExists(cwd, '.env.example', '.env.sample', '.env.template');
+  const makefileExists = fileExists(repoRoot, 'Makefile', 'justfile', 'Taskfile.yml');
+  const envExampleExists = fileExists(repoRoot, '.env.example', '.env.sample', '.env.template');
 
-  // Coverage config
+  // Coverage config — D026 (2.4.7): also repo-root-scoped. Most test
+  // runners look for these at the project root; scanning a subdirectory
+  // shouldn't make dxkit forget the test setup exists at the top.
   const coverageConfigExists = fileExists(
-    cwd,
+    repoRoot,
     '.nycrc',
     '.nycrc.json',
     '.c8rc',
