@@ -351,9 +351,9 @@ function compilePatterns(patterns: RegExp[] | string[]): RegExp[] {
   return out;
 }
 
-type CommentSyntax = 'slash' | 'hash' | 'none';
+export type CommentSyntax = 'slash' | 'hash' | 'none';
 
-function commentSyntaxFor(relPath: string): CommentSyntax {
+export function commentSyntaxFor(relPath: string): CommentSyntax {
   const ext = path.extname(relPath).toLowerCase();
   switch (ext) {
     case '.ts':
@@ -392,7 +392,7 @@ function commentSyntaxFor(relPath: string): CommentSyntax {
   }
 }
 
-function isCommentLine(rawLine: string, syntax: CommentSyntax): boolean {
+export function isCommentLine(rawLine: string, syntax: CommentSyntax): boolean {
   if (syntax === 'none') return false;
   const trimmed = rawLine.trimStart();
   if (!trimmed) return false;
