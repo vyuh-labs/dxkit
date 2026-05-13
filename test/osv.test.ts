@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   classifyOsvSeverity,
   enrichOsv,
+  extractOsvFixVersion,
   parseCvssV3BaseScore,
   resolveCvssScores,
   scoreToTier,
@@ -284,5 +285,73 @@ describe('resolveCvssScores', () => {
     expect(calls).toBe(1);
     expect(result.get('GHSA-1')).toBe(5.0);
     expect(result.get('PYSEC-2')).toBeGreaterThan(0);
+  });
+});
+
+// D042 (2.4.7) — patch-version surfacing from OSV records.
+describe('extractOsvFixVersion', () => {
+  it('returns the first `fixed` event from affected[].ranges[].events[]', () => {
+    const vuln: OsvVuln = {
+      id: 'GHSA-test',
+      affected: [
+        {
+          ranges: [
+            {
+              events: [{ introduced: '0.0.0' }, { fixed: '13.0.1' }],
+            },
+          ],
+        },
+      ],
+    };
+    expect(extractOsvFixVersion(vuln)).toBe('13.0.1');
+  });
+
+  it('walks multiple affected entries; first non-empty fixed wins', () => {
+    // Advisory may list multiple affected version branches (e.g.,
+    // 1.x and 2.x). Document-order traversal returns the first patch.
+    const vuln: OsvVuln = {
+      id: 'GHSA-multi',
+      affected: [
+        { ranges: [{ events: [{ introduced: '0.0.0' }] }] },
+        { ranges: [{ events: [{ introduced: '1.0.0' }, { fixed: '1.5.2' }] }] },
+        { ranges: [{ events: [{ fixed: '2.1.0' }] }] },
+      ],
+    };
+    expect(extractOsvFixVersion(vuln)).toBe('1.5.2');
+  });
+
+  it('returns undefined when no `fixed` event exists (patch unreleased)', () => {
+    const vuln: OsvVuln = {
+      id: 'GHSA-no-fix',
+      affected: [
+        {
+          ranges: [{ events: [{ introduced: '0.0.0' }] }],
+        },
+      ],
+    };
+    expect(extractOsvFixVersion(vuln)).toBeUndefined();
+  });
+
+  it('returns undefined for empty affected / ranges / events arrays', () => {
+    expect(extractOsvFixVersion({ id: 'x' })).toBeUndefined();
+    expect(extractOsvFixVersion({ id: 'x', affected: [] })).toBeUndefined();
+    expect(extractOsvFixVersion({ id: 'x', affected: [{}] })).toBeUndefined();
+    expect(extractOsvFixVersion({ id: 'x', affected: [{ ranges: [] }] })).toBeUndefined();
+    expect(extractOsvFixVersion({ id: 'x', affected: [{ ranges: [{}] }] })).toBeUndefined();
+    expect(
+      extractOsvFixVersion({ id: 'x', affected: [{ ranges: [{ events: [] }] }] }),
+    ).toBeUndefined();
+  });
+
+  it('skips empty-string `fixed` values', () => {
+    const vuln: OsvVuln = {
+      id: 'GHSA-empty-fix',
+      affected: [
+        {
+          ranges: [{ events: [{ fixed: '' }, { fixed: '3.2.1' }] }],
+        },
+      ],
+    };
+    expect(extractOsvFixVersion(vuln)).toBe('3.2.1');
   });
 });

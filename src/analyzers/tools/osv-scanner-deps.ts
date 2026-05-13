@@ -25,7 +25,13 @@
  * existing candidate wins. Without any of them, returns
  * `tool-missing` (matches python/csharp's manifest-gating pattern).
  */
-import { classifyOsvSeverity, extractOsvCvssScore, resolveCvssScores, type OsvVuln } from './osv';
+import {
+  classifyOsvSeverity,
+  extractOsvCvssScore,
+  extractOsvFixVersion,
+  resolveCvssScores,
+  type OsvVuln,
+} from './osv';
 import { fileExists, run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import type {
@@ -118,6 +124,14 @@ export function parseOsvScannerFindings(
         if (cvss !== null) finding.cvssScore = cvss;
         if (aliases.length > 0) finding.aliases = aliases;
         if (vuln.summary) finding.summary = vuln.summary;
+        // D042: surface the patch version when OSV's `affected[].
+        // ranges[].events[].fixed` is populated. This is the customer's
+        // actionable next-step (e.g. "upgrade Newtonsoft.Json from
+        // 9.0.1 to 13.0.1 to clear GHSA-5crp-9r3c-p9vr"). Pre-D042 the
+        // standalone scan rendered `Fix: —` for every osv-scanner-
+        // sourced finding because this field went unread.
+        const fixVersion = extractOsvFixVersion(vuln);
+        if (fixVersion) finding.fixedVersion = fixVersion;
         // OSV.dev hosts a canonical page per id — synthesize when the
         // record's `references[]` is empty, otherwise keep the
         // tool-supplied URLs.

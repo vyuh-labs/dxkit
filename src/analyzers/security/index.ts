@@ -225,7 +225,11 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     for (const f of shown) {
       const risk = typeof f.riskScore === 'number' ? `**${f.riskScore.toFixed(0)}**` : '—';
       const kev = f.kev ? '⚠' : '';
-      const reach = f.reachable === true ? '✓' : f.reachable === false ? '·' : '';
+      // D044 (2.4.7): three-state reachability rendering. Pre-D044
+      // `reachable === false` rendered as a mid-dot `·` which customers
+      // misread as "unknown/not-checked." Use ✓/✗/— for clarity and
+      // pair with the legend below the table.
+      const reach = f.reachable === true ? '✓' : f.reachable === false ? '✗' : '—';
       const epss = typeof f.epssScore === 'number' ? `${(f.epssScore * 100).toFixed(2)}%` : '—';
       L.push(
         `| ${risk} | ${f.severity.toUpperCase()} | ${kev} | ${reach} | \`${f.package}@${f.installedVersion ?? '?'}\` | \`${f.id}\` | ${f.fixedVersion ?? '—'} | ${epss} | ${f.tool} |`,
@@ -237,6 +241,28 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
         `_Showing ${cap} of ${sorted.length} advisories ranked by risk score. Run with \`--detailed\` for the full inventory + CVSS column._`,
       );
     }
+
+    // D043 + D044 (2.4.7): column legends. Customers shouldn't have to
+    // infer what `·` / `✓` / `**19**` mean. Brief explanations keep the
+    // table interpretable without external docs.
+    L.push('');
+    L.push('**Column legend**:');
+    L.push('');
+    L.push(
+      `- **Risk**: composite score combining CVSS base score, KEV-listing, EPSS exploitation probability, and source-code reachability. Higher is worse. Tiers (post-D023 / risk-score.ts): \`< 10\` deprioritized · \`10-25\` watch · \`25-50\` plan-and-patch · \`> 50\` patch-now.`,
+    );
+    L.push(
+      `- **KEV**: \`⚠\` means the CVE appears in CISA's Known Exploited Vulnerabilities catalog (active in-the-wild exploitation). Blank = not-KEV (verified, not omitted).`,
+    );
+    L.push(
+      `- **Reach**: \`✓\` = an active language-pack's imports capability found this package in source (reachable). \`✗\` = imports walked but this package is declared in manifest only, not imported in code. \`—\` = imports capability didn't run (no active pack, no source files, etc.) — unknown reachability.`,
+    );
+    L.push(
+      `- **Fix**: minimum upgrade version that clears the advisory (extracted from OSV's \`affected.ranges.events.fixed\`). \`—\` = no patch released yet (consider mitigations) OR the source tool didn't surface fix info.`,
+    );
+    L.push(
+      `- **EPSS**: probability the CVE is exploited within the next 30 days (FIRST.org's exploit-prediction scoring system). Blank/\`—\` = no EPSS data (typically GHSA without a CVE alias).`,
+    );
     L.push('');
     L.push('---');
     L.push('');
