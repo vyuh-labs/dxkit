@@ -53,10 +53,17 @@ export interface RiskScoreInputs {
 /**
  * Compute the composite risk score for one finding, or null when
  * CVSS is missing (we don't fabricate severity from side signals).
+ *
+ * D078 (2.4.7): treat `cvssScore === 0` the same as `undefined` —
+ * upstream feeds (OSV.dev) emit `cvssScore: 0` for advisories whose
+ * severity bucket comes from GHSA's categorical rating rather than
+ * CVSS. Rendering `**0.0**` next to a HIGH-bucket finding misleads
+ * users into reading "high severity, zero risk." Returning null
+ * here propagates through to a `—` cell in the BoM render.
  */
 export function computeRiskScore(inputs: RiskScoreInputs): number | null {
   const cvss = inputs.cvssScore;
-  if (cvss === undefined) return null;
+  if (cvss === undefined || cvss === 0) return null;
 
   const base = cvss * 10;
   const kevMul = inputs.kev ? 2.0 : 1.0;
