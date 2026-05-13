@@ -7,6 +7,172 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.7] - 2026-05-13
+
+Audit-driven release. A critical post-shipment audit on a real-world
+customer codebase (dpl-studio, enterprise C# / 1500+ files / 68 sub-
+projects / 1.6M lines of cloc-counted JSON) surfaced a 17-defect
+cascade rooted in one bug. 2.4.7 closes the credibility-critical
+ones, the visible-UX defects, the cosmetic follow-ups, AND the
+long-deferred D021 (coverage workflow), all on the same branch.
+
+The cascade taught us that test-green ≠ report-correct: all 1091
+tests passed before the audit. Reinforces
+`feedback_critical_audit_before_shipping.md` — pre-delivery audit on
+real customer reports is the gold standard, not the unit-test suite.
+
+### Added — D021 close (coverage workflow)
+
+Four pieces shipped together:
+
+- **`coverageFidelity` tier** classifies the `coverageSource` field
+  into three trust levels:
+  - `line-coverage` — real artifact (istanbul / coverage-py / jacoco /
+    simplecov / lcov / cobertura / go). The percent is line-coverage
+    truth.
+  - `import-graph` — derived from test-file import edges (up to N
+    hops). Informed heuristic.
+  - `filename-match` — share of source files with a name-matched
+    test. Pure heuristic.
+  Test-gap reports lead with a ⚠️ / ℹ️ banner when fidelity isn't
+  `line-coverage`, so a 0% from a heuristic can't be confused with a
+  0% from a real coverage run.
+- **`--with-coverage` flag** on `health` and `test-gaps`. Materializes
+  the coverage artifact via per-pack `runTests()` BEFORE analysis, so
+  `loadCoverage()` finds it and the report reads line-coverage truth.
+  Shares the same runner the `coverage` command uses.
+- **`vyuh-dxkit report` orchestrator**. Single command that runs
+  every analyzer + dashboard in dependency order. `--with-coverage`
+  runs the coverage step ONCE upfront rather than per-command, so
+  `health` and `test-gaps` share the artifact without re-running the
+  test suite per analyzer.
+- **Cross-ecosystem matrix coverage row × 8 packs** in
+  `test/integration/cross-ecosystem.test.ts` + per-pack contract
+  conformance assertions in `test/languages-contract.test.ts`. Locks
+  in the round-trip from "test runner" to "coverageFidelity:
+  line-coverage" across python / typescript / go / rust / csharp /
+  kotlin / java / ruby.
+
+### Added — language pack contracts
+
+- **`LanguageSupport.upgradeCommand?(name, version)`** (G_v4_4) —
+  each pack ships its own per-ecosystem package upgrade template
+  (`dotnet add package`, `npm install`, `pip install`, `cargo update`,
+  `go get`, edit-pom for Maven, edit-Gemfile for Bundler). Replaces
+  the hardcoded switch on `tool` in `buildUpgradeCommand`
+  (security/index.ts). Dispatch now routes through
+  `getLanguage(packId).upgradeCommand()` — no language branching in
+  non-pack code (CLAUDE.md rule 6).
+- **`DepVulnFinding.packId`** stamped at every producer site
+  (npm-audit / pip-audit / govulncheck / cargo-audit /
+  dotnet-vulnerable / osv-scanner-deps via new `packId` parameter on
+  `parseOsvScannerFindings` and `gatherOsvScannerDepVulnsResult`). The
+  vuln-scan "Remediation Commands" block now ships actual runnable
+  commands instead of bare `#` prose for every ecosystem.
+- **`LanguageSupport.clocLanguageNames?`** (D073) — each pack
+  declares the names cloc emits in its `--json` output. cloc's
+  per-language summary + `totalLines` aggregation now filter to the
+  active-pack set, so markup/data formats (JSON / XML / CSV /
+  Markdown) stop deflating quality metrics. On dpl-studio: Comment
+  Ratio 4.3% → 27.9% (a 1.6M JSON denominator vs C#'s 568K).
+
+### Fixed — Tier 1 (credibility critical)
+
+The post-shipment audit's master bug + its direct cascade:
+
+- **D055** — `.dxkit-ignore` multi-segment paths flatten to basenames
+  in cloc / graphify / grep. `Dev/Addons/DPLAddon/SAPB1/` silently
+  became `{Dev, Addons, DPLAddon, SAPB1}` — cloc then excluded every
+  directory named `Dev` in the tree, killing 90% of source visibility.
+  Fix: `getClocExcludeFlags` emits `--exclude-dir` (basenames) PLUS
+  `--fullpath --not-match-d` (Perl regex on full path).
+  `getPythonExcludeFilter` emits both a basename set AND a multi-
+  segment path list for graphify's walker. Grep callers post-filter
+  via `isExcludedPath()`.
+- **D056** — Registry-driven greps (docCommentFiles, tlsBypassFindings)
+  now post-filter through `isExcludedPath()`. Pre-fix the shell pipe
+  only filtered hardcoded `node_modules` + `dist` — every other
+  exclusion was silently ignored.
+- **D057** — Cloc no longer writes `sourceFiles`. Generic.ts owns
+  the source-file count; cloc owns line counts + language breakdown.
+  Pre-fix `mergeLayer2` blindly overwrote generic's find-based 1537
+  with cloc's broken 141. Class-fix (merger field-ownership claims,
+  G_v4_8) deferred to 2.4.8.
+- **D072** — Registry-greps now apply the SAME autogen filters
+  (`autogeneratedSourcePatterns` basename glob + `isAutogeneratedByHeader`
+  content marker) that `gatherGenericMetrics` uses for `sourceFiles`.
+  Pre-D072 docCommentFiles counted designer.cs / .g.cs files in the
+  numerator but not in `sourceFiles`'s denominator, producing 104%
+  docRatio on dpl-studio even after D055.
+- **D062** closure via **G_v4_4** above.
+
+### Fixed — Tier 2 (visible UX bugs)
+
+- **D060** — Weekly velocity fills empty weeks with 0-row entries
+  between first and last week with commits. Pre-fix `W08 2, W09 1,
+  W10 7, W14 1, W16 6, ...` had silent gaps that implied "data
+  missing" when reality was zero commits.
+- **D061** — Hot Files filters auto-generated files via the existing
+  `autogeneratedSourcePatterns` registry. Pre-fix dpl-studio's hot
+  list included `*.Designer.cs` files (WinForms designer regeneration
+  noise).
+- **D063** — BoM Risk column rendered to one decimal (`18.5`,
+  `14.8`) in both Triage and Vulnerable Packages tables. Pre-fix
+  `toFixed(0)` rounded 14.8 → 15, making it look like SharpCompress
+  should appear in the ≥15 triage when it was actually 14.8 (below
+  threshold).
+- **D064** — BoM Reach column three-state: `✓` / `✗` / blank. Pre-
+  fix blank silently merged "checked and not reachable" with "no
+  data."
+- **D032** — Two-part dashboard-input fix. `analyzeHealthWithMetrics`
+  runs unconditionally (was gated on `--detailed`); every report
+  command writes BOTH `-detailed.json` AND `-detailed.md`
+  unconditionally. `--detailed` flag now only controls the
+  success-log console output. Pre-fix a default `dxkit health . &&
+  dxkit dashboard .` workflow showed stale tile numbers + stale tab
+  content from whatever the last `--detailed` run had left behind.
+
+### Fixed — Tier 3 (cosmetic)
+
+- **D065** — Health "Add API documentation" recommendation no longer
+  fires when `controllers === 0`. Pre-fix it triggered for any 100+
+  source file repo, including desktop apps with no HTTP surface.
+- **D068** — Dashboard "Critical Issues at a Glance" discloses
+  "(showing N of M)" when the per-surface caps (3 vulns + 3 gaps +
+  2 bom-triage) drop items. Pre-fix a customer with 20 CRITICAL
+  untested files saw 3 and could reasonably infer "only 3 critical
+  things in the repo."
+- **D070** — BoM main report collapses the project-roots paragraph
+  to a 5-root preview + count; the full list moves to the detailed
+  report under a dedicated `## Project Roots (N)` section, one root
+  per line for grep / sort.
+
+### Recipe v4 status
+
+- **G_v4_4** (per-pack `upgradeCommand`) — **delivered** (promoted
+  from 2.4.8 because D062 fix was otherwise a switch-statement patch).
+- Still queued for 2.4.8: G_v4_5 (per-pack
+  `autogeneratedHeaderPatterns`), G_v4_6 (unified TLS bypass count +
+  findings), G_v4_7 (`walkSourceFiles` unified helper, class-fix for
+  D072), G_v4_8 (merger field-ownership claims, class-fix for D057),
+  G_v4_inherited_G2opt2 / _G3 / _G7.
+
+### Architecture — class lessons from the cascade
+
+Two layering insights from D057 and D072, both with concrete class-
+fix candidates queued for 2.4.8:
+
+- **Layer ownership** — when two gather functions write the same
+  field (e.g. generic.ts and cloc.ts both writing `sourceFiles`),
+  the merger should reject overlap rather than last-write-wins.
+  Tracked as G_v4_8.
+- **Source-file definition uniformity** — every metric claiming
+  "files matching X among source files" must share the predicate
+  `sourceFiles` uses (exclusions + autogen-basename + autogen-header).
+  Tracked as G_v4_7 (`walkSourceFiles` shared helper). Until it
+  lands, every grep caller funnels through
+  `isCountedSourceFile(cwd, relPath)` in `tools/generic.ts`.
+
 ## [2.4.6] - 2026-05-07
 
 ### Added — Ruby language pack (Phase 10k.2)
