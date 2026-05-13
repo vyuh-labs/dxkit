@@ -35,6 +35,30 @@ export type CoverageSource =
   | 'filename-match' // No artifact and no import-graph data available
   | 'import-graph'; // Derived from test files' import edges (up to N hops)
 
+/**
+ * D021 (sub-branch #6, 2.4.7): tier-classification of `coverageSource`.
+ * Surfaces the trust level of `effectiveCoverage` so reports + the
+ * dashboard can warn users when the headline is heuristic vs ground-truth.
+ *
+ *   `line-coverage` — real artifact (istanbul, coverage-py, jacoco,
+ *                     simplecov, lcov, cobertura, go, ...). The percent
+ *                     is line-coverage truth — what your test run
+ *                     actually exercised.
+ *   `import-graph`  — derived from test files' import edges (up to N
+ *                     hops). Stronger than filename-match because
+ *                     it follows real call paths, but it doesn't know
+ *                     what actually executed at runtime.
+ *   `filename-match`— share of source files with a name-matched test.
+ *                     Pure heuristic: a 200-line file with a 5-line
+ *                     test passes the predicate. Install a coverage
+ *                     pipeline to get line-level truth.
+ *
+ * Computed deterministically from `coverageSource` via
+ * `tierFromCoverageSource()` in `tests/index.ts`; no separate input
+ * needed.
+ */
+export type CoverageFidelity = 'line-coverage' | 'import-graph' | 'filename-match';
+
 export interface TestGapsReport {
   repo: string;
   analyzedAt: string;
@@ -52,6 +76,12 @@ export interface TestGapsReport {
     effectiveCoverage: number;
     /** Which signal produced `effectiveCoverage`. */
     coverageSource: CoverageSource;
+    /**
+     * D021 (2.4.7): tier-classification of `coverageSource` so consumers
+     * can render trust banners + filter on heuristic-vs-ground-truth
+     * without re-parsing the source string. See `CoverageFidelity`.
+     */
+    coverageFidelity: CoverageFidelity;
     /** Project-relative path of the artifact, when one was used. */
     coverageSourceFile?: string;
     sourceFiles: number;

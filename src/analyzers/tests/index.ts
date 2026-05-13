@@ -8,9 +8,29 @@ import { timed, timedAsync } from '../tools/timing';
 import { loadCoverage } from '../tools/coverage';
 import { buildReachable } from './import-graph';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
-import { TestGapsReport, SourceFile, CoverageSource } from './types';
+import { TestGapsReport, SourceFile, CoverageSource, CoverageFidelity } from './types';
 
-export type { TestGapsReport, SourceFile, TestFile, CoverageSource } from './types';
+export type {
+  TestGapsReport,
+  SourceFile,
+  TestFile,
+  CoverageSource,
+  CoverageFidelity,
+} from './types';
+
+/**
+ * D021 (2.4.7): classify `coverageSource` into a fidelity tier. Returns
+ * `line-coverage` for any real artifact (everything in
+ * `tools/coverage.ts:CoverageSource`), `import-graph` for the
+ * derived call-edge signal, `filename-match` for the heuristic
+ * fallback. Pure function — exported for unit tests + reuse from
+ * the report orchestrator.
+ */
+export function tierFromCoverageSource(source: CoverageSource): CoverageFidelity {
+  if (source === 'filename-match') return 'filename-match';
+  if (source === 'import-graph') return 'import-graph';
+  return 'line-coverage';
+}
 
 export interface AnalyzeTestGapsOptions {
   verbose?: boolean;
@@ -109,6 +129,7 @@ export async function analyzeTestGaps(
       commentedOutFiles: commentedOut.length,
       effectiveCoverage,
       coverageSource,
+      coverageFidelity: tierFromCoverageSource(coverageSource),
       coverageSourceFile: coverage?.sourceFile,
       sourceFiles: sourceFiles.length,
       untestedCritical: untestedByRisk.critical,
@@ -159,11 +180,37 @@ export function formatTestGapsReport(report: TestGapsReport, elapsed: string): s
   L.push(`**Repository:** ${report.repo}`);
   L.push(`**Branch:** ${report.branch} (${report.commitSha})`);
   L.push('');
+
+  // D021 (2.4.7): coverage-fidelity banner. Surface the trust level of
+  // the headline percentage up-front so customers don't read a 0% from
+  // filename-match the same way they'd read a 0% from a real coverage
+  // run. The `coverage-pipeline` install hint points at the per-pack
+  // `runTests` capability — `vyuh-dxkit health --with-coverage` (D021
+  // sub-piece 2) materializes the artifact before analysis.
+  const s = report.summary;
+  if (s.coverageFidelity === 'filename-match') {
+    L.push(
+      `> ⚠️ **Heuristic coverage**: the ${s.effectiveCoverage}% headline is a ` +
+        `filename-match estimate — it counts source files with a name-matched ` +
+        `test, not lines actually exercised. A 200-line file with a 5-line test ` +
+        `passes. Run \`vyuh-dxkit coverage\` (or \`vyuh-dxkit health --with-coverage\`) ` +
+        `to materialize a real coverage artifact for line-level truth.`,
+    );
+    L.push('');
+  } else if (s.coverageFidelity === 'import-graph') {
+    L.push(
+      `> ℹ️ **Import-graph coverage**: the ${s.effectiveCoverage}% headline is ` +
+        `derived from test files' import edges (up to N hops) — stronger than ` +
+        `filename-match because it follows real call paths, but it doesn't know ` +
+        `what executed at runtime. Run a coverage pipeline for line-level truth.`,
+    );
+    L.push('');
+  }
+
   L.push('---');
   L.push('');
 
   // Executive summary
-  const s = report.summary;
   L.push('## Executive Summary');
   L.push('');
   L.push('| Metric | Value |');
