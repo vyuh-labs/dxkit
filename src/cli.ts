@@ -59,16 +59,18 @@ function printUsage(): void {
     --rescan     Re-run codebase analysis
 
   ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses, bom):')}
-    --json       Print report as JSON to stdout
-    --verbose    Print per-tool timing to stderr
-    --no-save    Skip writing the markdown report file
-    --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
-    --xlsx       Licenses/bom: also write 15-col BOM XLSX
-    --since      Dev-report: start date (YYYY-MM-DD)
-    --filter     Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
-                 advisory rollup under byTopLevelDep still reflects transitives)
-    --no-nested  Bom: disable nested-project aggregation (default scans the repo
-                 for all sub-projects with manifests and merges their BOMs)
+    --json            Print report as JSON to stdout
+    --verbose         Print per-tool timing to stderr
+    --no-save         Skip writing the markdown report file
+    --detailed        Also write <name>-detailed.md + .json with evidence + ranked actions
+    --xlsx            Licenses/bom: also write 15-col BOM XLSX
+    --since           Dev-report: start date (YYYY-MM-DD)
+    --filter          Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
+                      advisory rollup under byTopLevelDep still reflects transitives)
+    --no-nested       Bom: disable nested-project aggregation (default scans the repo
+                      for all sub-projects with manifests and merges their BOMs)
+    --with-coverage   Health/test-gaps: materialize coverage artifacts via per-pack
+                      runTests() before analysis (line-coverage truth vs filename match)
 
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
@@ -110,6 +112,7 @@ export async function run(argv: string[]): Promise<void> {
       lang: { type: 'string' },
       timeout: { type: 'string' },
       'no-fail-fast': { type: 'boolean', default: false },
+      'with-coverage': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -249,6 +252,33 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
+
+      // D021 (2.4.7): --with-coverage materializes the coverage artifact
+      // BEFORE the analyzer runs, so the report reads line-coverage
+      // truth (`coverageFidelity: 'line-coverage'`) instead of falling
+      // back to the filename-match heuristic. Shares the same per-pack
+      // runner the `coverage` command uses; honors --lang to limit
+      // scope on polyglot repos.
+      if (values['with-coverage']) {
+        const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
+        const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+        logger.info('Running test-with-coverage across active packs...');
+        const { rows } = await runCoverageAcrossPacks(targetPath, {
+          langFilter,
+          failFast: !values['no-fail-fast'],
+          onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+        });
+        const successes = rows.filter((r) => r.status === 'success').length;
+        if (successes > 0) {
+          logger.success(`${successes}/${rows.length} packs produced coverage artifacts`);
+        } else {
+          logger.warn(
+            `0/${rows.length} packs produced coverage artifacts — falling back to heuristic`,
+          );
+        }
+        console.log(''); // slop-ok
+      }
+
       // Detailed mode needs HealthMetrics for remediation planning; pull both.
       // D032 (2.4.7): always gather the underlying metrics so the
       // `-detailed.json` write below has the data it needs. Pre-fix
@@ -467,6 +497,31 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit test-gaps');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
+
+      // D021 (2.4.7): --with-coverage materializes the coverage artifact
+      // before analysis so the test-gaps report reads line-coverage
+      // truth instead of falling back to filename-match. Same runner
+      // health --with-coverage uses.
+      if (values['with-coverage']) {
+        const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
+        const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+        logger.info('Running test-with-coverage across active packs...');
+        const { rows } = await runCoverageAcrossPacks(targetPath, {
+          langFilter,
+          failFast: !values['no-fail-fast'],
+          onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+        });
+        const successes = rows.filter((r) => r.status === 'success').length;
+        if (successes > 0) {
+          logger.success(`${successes}/${rows.length} packs produced coverage artifacts`);
+        } else {
+          logger.warn(
+            `0/${rows.length} packs produced coverage artifacts — falling back to heuristic`,
+          );
+        }
+        console.log(''); // slop-ok
+      }
+
       const report = await analyzeTestGaps(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -922,6 +977,7 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'coverage': {
       const targetPath = resolveRepoPath(positionals[1]);
+      const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
       const { detectActiveLanguages } = await import('./languages');
       logger.header('vyuh-dxkit coverage');
 
@@ -929,12 +985,7 @@ export async function run(argv: string[]): Promise<void> {
       const langFilter = (values as Record<string, unknown>).lang as string | undefined;
       const failFast = !values['no-fail-fast'];
 
-      // Filter to packs that (a) match --lang if given, AND (b) actually
-      // expose a coverage capability with runTests. Packs without
-      // runTests are still rendered as a "skipped — no test runner
-      // wired" row so the user sees the full active-pack set.
       const candidates = active.filter((p) => !langFilter || p.id === langFilter);
-
       if (candidates.length === 0) {
         logger.fail(
           langFilter
@@ -947,58 +998,11 @@ export async function run(argv: string[]): Promise<void> {
       logger.info(`Stack: ${candidates.map((p) => p.id).join(', ')}`);
       console.log(''); // slop-ok
 
-      const rows: Array<{
-        pack: string;
-        status: 'success' | 'unavailable' | 'failed' | 'skipped';
-        durationMs: number;
-        artifact: string | null;
-        reason: string | null;
-      }> = [];
-
-      for (const pack of candidates) {
-        const provider = pack.capabilities?.coverage;
-        if (!provider?.runTests) {
-          rows.push({
-            pack: pack.id,
-            status: 'skipped',
-            durationMs: 0,
-            artifact: null,
-            reason: 'no runTests() implementation yet (pack coverage capability is read-only)',
-          });
-          continue;
-        }
-        process.stderr.write(`  → ${pack.id}: running tests with coverage...\n`);
-        const outcome = await provider.runTests(targetPath);
-        if (outcome.kind === 'success') {
-          rows.push({
-            pack: pack.id,
-            status: 'success',
-            durationMs: outcome.durationMs,
-            artifact: outcome.artifact,
-            reason: null,
-          });
-        } else if (outcome.kind === 'unavailable') {
-          rows.push({
-            pack: pack.id,
-            status: 'unavailable',
-            durationMs: 0,
-            artifact: null,
-            reason: outcome.reason,
-          });
-        } else {
-          rows.push({
-            pack: pack.id,
-            status: 'failed',
-            durationMs: outcome.durationMs,
-            artifact: null,
-            reason: outcome.reason,
-          });
-          if (failFast) {
-            // Render the table so far so the user sees what ran before the bail.
-            break;
-          }
-        }
-      }
+      const { rows } = await runCoverageAcrossPacks(targetPath, {
+        langFilter,
+        failFast,
+        onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+      });
 
       // Render summary table via the same drain-aware stdout primitive
       // emitJson uses — wide table rows would otherwise trip the
