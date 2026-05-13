@@ -28,4 +28,16 @@ export interface LicensesReport {
   findings: ReadonlyArray<LicenseFinding>;
   toolsUsed: string[];
   toolsUnavailable: string[];
+  /**
+   * D031 (2.4.7): availability metadata for the licenses aggregation.
+   * `available === false` only when at least one active pack's
+   * licenses provider returned an `'unavailable'` outcome (tool
+   * missing, no output, parse fail). `'no-manifest'` outcomes do NOT
+   * degrade availability (polyglot legit "nothing to license").
+   * `unavailableReason` carries the pack name + reason for the
+   * markdown framing notice. Empty when available.
+   *
+   * Optional for backwards compat with pre-D031 report JSONs.
+   */
+  availability?: { available: boolean; unavailableReason: string };
 }

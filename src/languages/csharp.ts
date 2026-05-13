@@ -1080,6 +1080,67 @@ function findCsharpLicenseInput(cwd: string): string | null {
  * tool, wrapped. Returns null cleanly when no .sln/.csproj is present
  * or when the tool isn't installed.
  */
+/**
+ * D031-2 (2.4.7) — degraded license inventory fallback.
+ *
+ * When `nuget-license` is unavailable but we have `.csproj` files,
+ * parse direct PackageReferences from each .csproj and emit a
+ * LicensesResult with `licenseType: 'UNKNOWN'` per package — name +
+ * version only. Reuses the D025f-1 `parseCsprojPackageReferences`
+ * helper (and `findAllCsprojFiles` walker) so this fallback shares
+ * one truth source with the depVulns direct-scan path.
+ *
+ * Customer outcome on dpl-studio: pre-D031 → "0 packages" (with the
+ * pack reporting `unavailable` because `nuget-license` is missing).
+ * Post-D031 → "53 packages identified; license info unavailable" via
+ * the markdown framing banner from `analyzers/licenses/index.ts`.
+ * The customer can decide remediation BEFORE installing nuget-license
+ * (e.g., "we have 53 NuGet deps; install nuget-license to see their
+ * licenses" is more actionable than "0 packages").
+ *
+ * Returns `null` when the degraded path itself can't produce data
+ * (no .csproj files at all, or every .csproj has zero parseable
+ * PackageReferences). Caller propagates the original `unavailable`
+ * outcome in those cases.
+ */
+function gatherCsharpLicensesDegradedInventory(cwd: string): LicensesResult | null {
+  const csprojs = findAllCsprojFiles(cwd);
+  if (csprojs.length === 0) return null;
+
+  const entries: PackageReferenceEntry[] = [];
+  const seen = new Set<string>();
+  for (const csprojPath of csprojs) {
+    let xml: string;
+    try {
+      xml = fs.readFileSync(csprojPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const entry of parseCsprojPackageReferences(xml)) {
+      const key = `${entry.name}@${entry.version}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push(entry);
+    }
+  }
+  if (entries.length === 0) return null;
+
+  const findings: LicenseFinding[] = entries.map((e) => ({
+    package: e.name,
+    version: e.version,
+    licenseType: 'UNKNOWN',
+    // No license URL / description / supplier — the degraded path only
+    // has the manifest reference. Customer can identify what's
+    // installed; install nuget-license for the full inventory.
+  }));
+
+  return {
+    schemaVersion: 1,
+    tool: 'csharp-package-reference-degraded',
+    findings,
+  };
+}
+
 function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
   const input = findCsharpLicenseInput(cwd);
   if (!input) {
@@ -1088,6 +1149,21 @@ function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
 
   const status = findTool(TOOL_DEFS['nuget-license'], cwd);
   if (!status.available || !status.path) {
+    // D031-2: degraded-inventory fallback. nuget-license is the
+    // canonical tool but parsing direct PackageReferences gives the
+    // customer at minimum a name+version inventory while the tool
+    // is being installed. We surface this through the SUCCESS path
+    // (envelope's tool name carries the `-degraded` suffix so
+    // downstream renderers can disambiguate) so the LicensesReport's
+    // summary count reflects real data — the framing banner from
+    // `analyzers/licenses/index.ts` explains the asterisk.
+    //
+    // Path B (no .csproj or empty PackageReferences across all
+    // csprojs): degraded inventory returns null; we propagate the
+    // original `unavailable` so the report frames the gap honestly
+    // ("0 packages" with the explanatory ⚠ banner).
+    const degraded = gatherCsharpLicensesDegradedInventory(cwd);
+    if (degraded) return { kind: 'success', envelope: degraded };
     return { kind: 'unavailable', reason: 'nuget-license not installed' };
   }
 
