@@ -16,7 +16,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { LANGUAGES } from '../../languages';
+import { LANGUAGES, allAutogenSourcePatterns } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DuplicationClone, DuplicationResult } from '../../languages/capabilities/types';
 import { run } from './runner';
@@ -104,8 +104,25 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
 
   const reportDir = `/tmp/dxkit-jscpd-${Date.now()}`;
   const pattern = buildJscpdPattern();
+  // D028 extended (2.4.7): pass the autogen patterns to jscpd's
+  // `--ignore` flag so duplication detection skips the same files
+  // generic.ts + test-gaps' source walk already skip. Pre-this-fix
+  // jscpd would scan WinForms `*.Designer.cs`, WCF `Reference.cs`,
+  // MSBuild `*.AssemblyInfo.cs` etc. and inflate the duplication
+  // percentage because those files repeat verbatim scaffolding by
+  // their nature. dpl-studio's 53.68% duplication was largely
+  // autogen artifact; real authored-code duplication is materially
+  // lower after this filter.
+  //
+  // jscpd's `--ignore` accepts a comma-separated glob list. Patterns
+  // get a `**/` prefix so they match at any directory depth, not
+  // just the scan root.
+  const autogenIgnore = allAutogenSourcePatterns()
+    .map((p) => `**/${p}`)
+    .join(',');
+  const ignoreFlag = autogenIgnore.length > 0 ? `--ignore '${autogenIgnore}'` : '';
   run(
-    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
+    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' ${ignoreFlag} --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
     cwd,
     600000, // 10 min — bumped from 300000 in 2.4.7 (was timing out on 1700+-dep frontend repos during real-user UX session 2026-05-07)
   );
