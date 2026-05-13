@@ -751,6 +751,42 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
 
   const { counts, findings } = parsed;
 
+  // D045-bom (2.4.7): `dotnet list package --vulnerable` reports 0
+  // findings when no `dotnet restore` has been run — the tool can't
+  // see the resolved dep graph without `obj/project.assets.json`.
+  // It returns valid JSON (`{"projects":[{"frameworks":[{}]}]}`)
+  // rather than failing, so the pre-D045-bom logic accepted the
+  // "0 findings" answer at face value and skipped the
+  // direct-PackageReference fallback (which only fired on EMPTY
+  // dotnet output).
+  //
+  // dpl-studio: BoM walks 68 per-root project directories. At each
+  // `Dev/Connectors/*/`, dotnet sees the local `.csproj` but no
+  // restore was done → returns 0 findings. BoM aggregator silently
+  // reported `totalAdvisories: 0` despite the standalone vuln scan
+  // (run at the repo root, where dotnet finds no project file and
+  // therefore falls back to osv-scanner-nuget-direct) correctly
+  // surfacing 2 NuGet CVEs.
+  //
+  // Fix: treat "0 findings AND no project.assets.json" as a
+  // suspicious answer worth verifying. Run the direct-PackageReference
+  // fallback as a safety net. If THAT also returns 0, the consensus
+  // is real. If it returns vulns, surface them.
+  if (findings.length === 0 && findAllProjectAssetsJson(cwd).length === 0) {
+    const fallback = await gatherDirectPackageReferenceFallback(
+      cwd,
+      'dotnet list package returned 0 vulns without project.assets.json — falling back to direct PackageReference scan',
+    );
+    // Only adopt the fallback when it actually surfaced findings.
+    // A `kind: 'unavailable'` fallback result preserves the trust-but-
+    // verify intent: dotnet's primary answer was 0, fallback couldn't
+    // run, return the original successful-but-empty result rather than
+    // masking the primary tool's identity with an unavailable error.
+    if (fallback.kind === 'success' && (fallback.envelope.findings?.length ?? 0) > 0) {
+      return fallback;
+    }
+  }
+
   // Attach top-level attribution to transitive findings (top-level
   // findings already carry self-attribution from the parser). Skipped
   // when project.assets.json is absent — user hasn't run

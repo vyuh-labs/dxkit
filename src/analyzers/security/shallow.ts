@@ -47,24 +47,36 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
   const codeFindings = { critical: 0, high: 0, medium: 0, low: 0 };
   if (c.codePatterns) {
     // Semgrep ran (envelope present) — trust the precise severity-
-    // tagged findings, including the zero-finding case. The grep-
-    // based HealthMetrics fallback below is a strict over-approximation
-    // (matches the literal text `eval(` inside our own source that
-    // *processes* eval-call findings, for example), so when semgrep
-    // is available it must win.
+    // tagged findings, including the zero-finding case. For `evalCount`
+    // the grep-based fallback is a strict over-approximation (matches
+    // the literal text `eval(` inside our own source that *processes*
+    // eval-call findings, for example), so when semgrep is available
+    // it must win for that signal.
     for (const f of c.codePatterns.findings) {
       codeFindings[f.severity]++;
     }
   } else {
-    // Semgrep unavailable. Fall back to the grep-based HealthMetrics
-    // counts so environments without semgrep don't lose all code-
-    // pattern coverage. Both eval calls and TLS-verification-disabled
-    // patterns are typically high-severity issues; bucket both into
-    // `high`. This is an approximation, not a precise severity
-    // assignment — it matches the pre-2.4.7 health-side scoring intent.
+    // Semgrep unavailable. Fall back to the grep-based eval count so
+    // environments without semgrep don't lose code-pattern coverage
+    // for eval calls.
     codeFindings.high += m.evalCount;
-    codeFindings.high += m.tlsDisabledCount;
   }
+
+  // D045 (2.4.7): `tlsDisabledCount` is ALWAYS added regardless of
+  // semgrep availability. Unlike `evalCount` (which over-matches text
+  // mentioning `eval(`), the TLS-bypass patterns are tight class/method
+  // names (`ServerCertificateValidationCallback`,
+  // `DangerousAcceptAnyServerCertificateValidator`,
+  // `InsecureSkipVerify: true`, etc. — per D034 `tlsBypassPatterns`).
+  // False-positive rate is near zero. Semgrep's `p/security-audit`
+  // ruleset doesn't include these per-language idioms — that's why
+  // D034's per-pack registry approach exists. Both signals complement
+  // each other.
+  //
+  // Pre-D045 dpl-studio surfaced `tlsDisabledCount: 1` in the metrics
+  // JSON but the Security prose said "0H code findings" (because
+  // semgrep ran with 0 findings and silently masked the grep signal).
+  codeFindings.high += m.tlsDisabledCount;
 
   return {
     secretFindings: c.secrets?.findings.length ?? 0,

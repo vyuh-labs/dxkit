@@ -7,6 +7,7 @@
  *   semgrep    → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
  *   dispatcher → dependency CVEs unioned across every active language pack
  */
+import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { enrichEpss, extractCveId } from '../tools/epss';
 import { stampFingerprints } from '../tools/fingerprint';
@@ -18,7 +19,7 @@ import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { SecurityFinding, DepVulnSummary } from './types';
 import { defaultDispatcher } from '../dispatcher';
-import { detectActiveLanguages } from '../../languages';
+import { allSourceExtensions, allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
 import {
   CODE_PATTERNS,
   DEP_VULNS,
@@ -98,6 +99,89 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   }
 
   return findings;
+}
+
+// ─── TLS / certificate-validation bypass gather (D045 / D034) ──────────────
+
+/**
+ * D045 (2.4.7): surface TLS-bypass idioms as first-class
+ * `SecurityFinding[]` entries with file:line attribution. Each pack
+ * declares its language-specific patterns via
+ * `LanguageSupport.tlsBypassPatterns` (D034); this gather runs the
+ * unioned alternation across every registered pack's source
+ * extensions and emits one finding per matching line.
+ *
+ * Architecture note (why this is independent of semgrep): semgrep's
+ * `p/security-audit` ruleset does not include per-language TLS-bypass
+ * idioms (`ServerCertificateValidationCallback`,
+ * `DangerousAcceptAnyServerCertificateValidator`,
+ * `InsecureSkipVerify: true`, `danger_accept_invalid_certs`,
+ * `TrustAllX509TrustManager`, `OpenSSL::SSL::VERIFY_NONE`, etc.). The
+ * registry-driven per-pack patterns ARE the source of truth for these
+ * checks; both the health-side `tlsDisabledCount` metric and the
+ * standalone vuln-scan Code Findings table flow through the same
+ * patterns. False-positive rate is near zero — these are tight
+ * class/method tokens, not loose word matches.
+ *
+ * Pre-D045 dpl-studio surfaced `tlsDisabledCount: 1` in
+ * `gatherGenericMetrics` (via `countTlsBypassLines`), but the
+ * standalone vuln scan's Code Findings table reported `_Sources:
+ * (none)_` with all zeros — the count never reached the standalone
+ * scan because TLS-bypass wasn't a first-class finding source. This
+ * gather closes that gap.
+ *
+ * Severity assignment: `high`. CWE: 295 (Improper Certificate
+ * Validation).
+ *
+ * Empty patterns array → returns []. Empty grep output → returns [].
+ * Both are legitimate "no TLS-bypass idioms in this codebase" states.
+ */
+export function gatherTlsBypassFindings(cwd: string): SecurityFinding[] {
+  const patterns = allTlsBypassPatterns();
+  if (patterns.length === 0) return [];
+  const includeFlags = allSourceExtensions()
+    .map((ext) => `--include='*${ext}'`)
+    .join(' ');
+  const patternFile = `/tmp/dxkit-tlsbypass-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
+  fs.writeFileSync(patternFile, patterns.join('\n'));
+  const findings: SecurityFinding[] = [];
+  try {
+    const raw = run(
+      `grep -rnEf '${patternFile}' ${includeFlags} . 2>/dev/null | grep -v node_modules | grep -v dist`,
+      cwd,
+    );
+    if (!raw) return findings;
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // grep -rn output: `./path/to/file:42:matched content here`
+      const m = trimmed.match(/^\.?\/?([^:]+):(\d+):(.*)$/);
+      if (!m) continue;
+      const file = m[1];
+      const lineNo = parseInt(m[2], 10);
+      const content = m[3].trim();
+      // Title carries a short snippet so reviewers can audit fast
+      // without opening the file.
+      const snippet = content.length > 100 ? `${content.slice(0, 97)}…` : content;
+      findings.push({
+        severity: 'high',
+        category: 'code',
+        cwe: 'CWE-295',
+        rule: 'tls-validation-disabled',
+        title: `TLS / certificate validation bypass: ${snippet}`,
+        file,
+        line: lineNo,
+        tool: 'tls-bypass-registry',
+      });
+    }
+    return findings;
+  } finally {
+    try {
+      fs.unlinkSync(patternFile);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // ─── dispatcher-driven codePatterns gather ──────────────────────────────────

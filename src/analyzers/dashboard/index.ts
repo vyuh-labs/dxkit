@@ -661,9 +661,9 @@ function renderHtml(a: RenderArgs): string {
             <div class="sub">${a.unknownLicenses} unknown · ${a.licenseByCount} distinct types</div>
           </div>
           <div class="stat-card">
-            <div class="label">Source Files</div>
+            <div class="label">Source Files (testable)</div>
             <div class="value">${a.testGapsSummary.sourceFiles ?? 'n/a'}</div>
-            <div class="sub">${a.testGapsSummary.activeTestFiles ?? 0} test files · coverage source: ${escapeHtml(a.testGapsSummary.coverageSource ?? 'n/a')}</div>
+            <div class="sub">${a.testGapsSummary.activeTestFiles ?? 0} test files · post-exclusion count · coverage source: ${escapeHtml(a.testGapsSummary.coverageSource ?? 'n/a')}</div>
           </div>
         </div>
 

@@ -204,21 +204,45 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   // don't litter /tmp across runs.
   const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-graphify-'));
   const scriptPath = path.join(scriptDir, 'run.py');
+  const stderrPath = path.join(scriptDir, 'stderr.log');
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
-  // Redirect stderr to suppress progress output, run from the tempdir
-  // so the script doesn't drop cache files inside the analyzed repo.
+  // D046 (2.4.7): redirect stderr to a tempfile (not /dev/null) so we
+  // can surface failure reasons. Pre-D046 dpl-studio reported
+  // "graphify (failed to run)" with no diagnostic — turned out to be
+  // a tree-sitter parse error on enterprise WCF code that was silent
+  // because stderr was discarded. Reading stderr on failure tells the
+  // customer (and us) *why* it failed.
   const output = run(
-    `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`,
+    `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>'${stderrPath}'`,
     cwd,
     300000, // 5 min — bumped from 120000 in 2.4.7 (was timing out on multi-thousand-file frontend repos during real-user UX session 2026-05-07)
   );
+  let stderrCapture = '';
+  try {
+    stderrCapture = fs.readFileSync(stderrPath, 'utf-8').trim();
+  } catch {
+    /* ignore */
+  }
   try {
     fs.rmSync(scriptDir, { recursive: true, force: true });
   } catch {
     /* ignore */
   }
 
-  if (!output) return { kind: 'unavailable', reason: 'failed to run' };
+  if (!output) {
+    // Surface the first meaningful stderr line so the customer can
+    // see what broke (tree-sitter parse error, Python ImportError,
+    // OOM kill, etc.). Truncate aggressively — toolsUnavailable[]
+    // entries shouldn't carry multi-line tracebacks.
+    const firstStderrLine = stderrCapture
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      ?.trim();
+    const reason = firstStderrLine
+      ? `failed: ${firstStderrLine.length > 200 ? firstStderrLine.slice(0, 197) + '...' : firstStderrLine}`
+      : 'failed to run (no stderr captured)';
+    return { kind: 'unavailable', reason };
+  }
 
   // Graphify prints progress to stdout before the JSON — extract only the JSON line.
   const jsonLine = output

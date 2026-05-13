@@ -5,7 +5,13 @@ import * as path from 'path';
 import { detect } from '../../detect';
 import { run } from '../tools/runner';
 import { timed, timedAsync } from '../tools/timing';
-import { gatherSecrets, gatherFileFindings, gatherCodePatterns, gatherDepVulns } from './gather';
+import {
+  gatherSecrets,
+  gatherFileFindings,
+  gatherCodePatterns,
+  gatherDepVulns,
+  gatherTlsBypassFindings,
+} from './gather';
 import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 
@@ -19,6 +25,60 @@ function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> 
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const f of findings) counts[f.severity]++;
   return counts;
+}
+
+/**
+ * 2.4.7: per-ecosystem install command template for a dep-vuln
+ * finding's `fixedVersion`. Discriminates by the source tool name
+ * (each pack's depVulns provider sets a stable identifier). Returns
+ * `null` when no remediation path is known.
+ *
+ * For ecosystems whose manifests can't be patched from a single
+ * command (Maven `pom.xml`, Gradle `build.gradle`, bundler `Gemfile`),
+ * emits a `#` comment with the edit instruction rather than a runnable
+ * command. Customers can still copy and execute the patchable ones in
+ * bulk while seeing the manual-edit candidates inline.
+ *
+ * Strategic refactor candidate (2.4.8): move this to
+ * `LanguageSupport.upgradeCommand?(name, version)` so each pack
+ * declares its own ecosystem template (mirrors the per-pack pattern
+ * shape used for autogen / docComment / tlsBypass). Until then this
+ * is the single point of fan-out.
+ */
+function buildUpgradeCommand(f: {
+  tool?: string;
+  package: string;
+  fixedVersion?: string;
+  installedVersion?: string;
+}): string | null {
+  if (!f.fixedVersion) {
+    return `# ${f.package}: no patched version available — review references for mitigations`;
+  }
+  switch (f.tool) {
+    case 'dotnet-vulnerable':
+    case 'osv-scanner-nuget-direct':
+      return `dotnet add package ${f.package} --version ${f.fixedVersion}`;
+    case 'npm-audit':
+      return `npm install ${f.package}@${f.fixedVersion}`;
+    case 'pip-audit':
+      return `pip install '${f.package}==${f.fixedVersion}'`;
+    case 'govulncheck':
+    case 'osv-scanner-go':
+      return `go get ${f.package}@v${f.fixedVersion}`;
+    case 'cargo-audit':
+    case 'osv-scanner-cargo':
+      return `cargo update -p ${f.package} --precise ${f.fixedVersion}`;
+    case 'osv-scanner-maven':
+      return `# Edit pom.xml: bump ${f.package} <version>${f.fixedVersion}</version>, then \`mvn install\``;
+    case 'osv-scanner-gradle':
+      return `# Edit build.gradle(.kts): bump ${f.package} to ${f.fixedVersion}, then \`./gradlew build\``;
+    case 'osv-scanner-gems':
+      return `# Edit Gemfile: \`gem '${f.package}', '${f.fixedVersion}'\`, then \`bundle install\``;
+    default:
+      // Unknown tool — generic prose fallback. Better than nothing for
+      // a customer trying to act on the finding.
+      return `# Upgrade ${f.package} to ${f.fixedVersion} (source tool: ${f.tool ?? 'unknown'})`;
+  }
 }
 
 export async function analyzeSecurity(
@@ -53,7 +113,15 @@ export async function analyzeSecurity(
     toolsUnavailable.push('dep-audit');
   }
 
-  const allFindings = [...secrets.findings, ...files, ...code.findings];
+  // 5. TLS / certificate-validation bypass (D045 / D034) — per-pack
+  //    registry-driven patterns. Complements semgrep's `p/security-audit`
+  //    ruleset, which doesn't ship the per-language idioms each pack
+  //    declares (csharp `ServerCertificateValidationCallback`, go
+  //    `InsecureSkipVerify`, rust `danger_accept_invalid_certs`, etc.).
+  const tlsBypass = timed('tls-bypass', verbose, () => gatherTlsBypassFindings(repoPath));
+  if (tlsBypass.length > 0) toolsUsed.push('tls-bypass-registry');
+
+  const allFindings = [...secrets.findings, ...files, ...code.findings, ...tlsBypass];
   const counts = countBySeverity(allFindings);
 
   return {
@@ -266,6 +334,35 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     L.push('');
     L.push('---');
     L.push('');
+
+    // 2.4.7: Remediation Commands section. For each advisory with a
+    // fixedVersion, generate the ecosystem-specific install command so
+    // the customer can copy-paste the patch. Findings without a known
+    // remediation path (no fixedVersion, or unrecognized tool) are
+    // listed with a `# (no patch / manual)` placeholder so they're
+    // visible but distinct.
+    const remediations = report.summary.dependencies.findings
+      .map((f) => ({ finding: f, cmd: buildUpgradeCommand(f) }))
+      .filter((r) => r.cmd !== null);
+    if (remediations.length > 0) {
+      L.push('## Remediation Commands');
+      L.push('');
+      L.push('Copy-paste to upgrade each vulnerable package (run from the project root):');
+      L.push('');
+      L.push('```bash');
+      for (const r of remediations) {
+        const f = r.finding;
+        L.push(
+          `# ${f.package}@${f.installedVersion ?? '?'} → ${f.fixedVersion ?? '(no patch)'} (${f.id})`,
+        );
+        L.push(r.cmd as string);
+        L.push('');
+      }
+      L.push('```');
+      L.push('');
+      L.push('---');
+      L.push('');
+    }
   }
 
   // Footer

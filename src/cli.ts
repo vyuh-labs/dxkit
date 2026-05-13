@@ -1097,6 +1097,23 @@ function formatMarkdownReport(
     lines.push('');
   }
 
+  // 2.4.7: top-N largest files. Surfaces the file-size distribution
+  // beyond the single "largest" callout in the Code Quality /
+  // Maintainability dimensions. Skipped when the array is empty
+  // (no source files counted or autogen excluded everything).
+  if (report.largestFiles && report.largestFiles.length > 0) {
+    lines.push('## Top Files by Size');
+    lines.push('');
+    lines.push('| Rank | File | Lines |');
+    lines.push('|-----:|------|------:|');
+    report.largestFiles.forEach((f, i) => {
+      lines.push(`| ${i + 1} | \`${f.path}\` | ${f.lines.toLocaleString()} |`);
+    });
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
   // Score calculation table
   lines.push('## Score Calculation');
   lines.push('');

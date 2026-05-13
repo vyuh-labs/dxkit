@@ -43,6 +43,14 @@ export interface HealthMetrics {
   filesOver500Lines: number;
   largestFileLines: number;
   largestFilePath: string;
+  /**
+   * 2.4.7 — top N largest files by line count, sorted desc. Backing
+   * data for the "Top Files by Size" markdown section. Index 0 is the
+   * single largest (mirrors `largestFileLines` / `largestFilePath`,
+   * kept for back-compat). Capped to top 10 to keep the report
+   * compact.
+   */
+  largestFiles: Array<{ path: string; lines: number }>;
   consoleLogCount: number;
   anyTypeCount: number;
 
@@ -156,6 +164,13 @@ export interface HealthReport {
     developerExperience: DimensionScore;
   };
   languages: Array<{ name: string; files: number; lines: number; percentage: number }>;
+  /**
+   * 2.4.7 — top 10 largest source files by line count (post-autogen
+   * exclusion). Surfaced verbatim from `HealthMetrics.largestFiles`
+   * so consumers (markdown report, dashboard, AI agent) don't have
+   * to re-derive. Empty array when no source files were counted.
+   */
+  largestFiles: Array<{ path: string; lines: number }>;
   toolsUsed: string[];
   toolsUnavailable: string[];
   /**
