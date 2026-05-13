@@ -12,12 +12,11 @@
  *   eslint    → lint errors/warnings (when available)
  *   grep      → hygiene markers (TODO, FIXME, HACK, console.log)
  */
-import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
-import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
 import { gatherClocMetrics } from '../tools/cloc';
-import { allSourceExtensions, detectActiveLanguages } from '../../languages';
+import { walkSourceFiles, countLineMatches } from '../tools/walk-source-files';
+import { detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
 import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
@@ -54,63 +53,40 @@ export async function gatherDuplication(cwd: string): Promise<{
   };
 }
 
-// ─── grep: per-file hygiene offender counts ─────────────────────────────────
+// ─── canonical hygiene counters (G_v4_7 / D079 / D074) ──────────────────────
 
 /**
- * Build the `grep --include='*.<ext>' ...` argument list from the
- * language-pack registry. D030 (2.4.7): pre-D030 this was a hardcoded
- * `*.ts/*.tsx/*.js/*.jsx/*.py/*.go` list inherited from Phase 6
- * (2026-04-13, pre-LP architecture). After 5 subsequent pack additions
- * (rust, csharp, kotlin, java, ruby) the list silently under-reported
- * — dpl-studio reported 0 TODOs on 3,234 .cs files because `*.cs`
- * wasn't in the include set. CLAUDE.md rule #3: language facts derive
- * from the registry, never hardcoded.
+ * Routes every quality-side hygiene count through `walkSourceFiles` +
+ * `countLineMatches`. Replaces the legacy `grep -rcEf` shell pipeline
+ * + `grepPerFile` + `grepCountSimple` duplicates.
  *
- * Scoped to `allSourceExtensions()` (every registered pack), not
- * `detectActiveLanguages(cwd)`, because hygiene markers are
- * pure-text concerns — they apply to any source file regardless of
- * whether the pack's lint/depvuln tooling is active.
+ * D079 closure: identical line-counter implementation to `generic.ts`,
+ * so health and quality reports cannot drift on the same metric.
+ *
+ * D074 closure for the JS print-family count only: commented-out
+ * matches do NOT count toward that metric on either report.
+ * TODO/FIXME/HACK counters explicitly KEEP comments (they ARE
+ * comments by definition; skipping them would zero those counters
+ * out).
+ *
+ * `includeTests: true` preserves pre-migration semantics — the legacy
+ * grep pipeline matched in test files too.
  */
-export function hygieneIncludeFlags(): string {
-  return allSourceExtensions()
-    .map((ext) => `--include='*${ext}'`)
-    .join(' ');
+function hygieneFiles(cwd: string): string[] {
+  return walkSourceFiles(cwd, { includeTests: true });
 }
 
-/**
- * Count matches per file and return the top N offenders.
- * Uses `grep -rc` which emits `file:count` per matched file.
- */
-function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
-  const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
-  fs.writeFileSync(patternFile, pattern);
-  const excludeDirs = getGrepExcludeDirFlags(cwd);
-  const includes = hygieneIncludeFlags();
-  const raw = run(
-    `grep -rcEf '${patternFile}' ${excludeDirs} ${includes} . 2>/dev/null`,
-    cwd,
-    60000,
-  );
-  try {
-    fs.unlinkSync(patternFile);
-  } catch {
-    /* ignore */
-  }
-  if (!raw) return [];
-  const offenders: FileOffender[] = [];
-  for (const line of raw.split('\n')) {
-    const idx = line.lastIndexOf(':');
-    if (idx < 0) continue;
-    const file = line.slice(0, idx);
-    const count = parseInt(line.slice(idx + 1), 10);
-    if (!count || !file) continue;
-    // grep's --exclude-dir is basename-only; use centralized predicate to
-    // drop multi-segment path exclusions (public/assets) + file patterns.
-    if (isExcludedPath(cwd, file.replace(/^\.\//, ''))) continue;
-    offenders.push({ file, count });
-  }
-  offenders.sort((a, b) => b.count - a.count);
-  return offenders.slice(0, limit);
+function topOffenders(
+  cwd: string,
+  pattern: string,
+  skipComments: boolean,
+  limit = 10,
+): FileOffender[] {
+  const result = countLineMatches(cwd, hygieneFiles(cwd), [pattern], {
+    perFileTopN: limit,
+    skipComments,
+  });
+  return result.perFile.map((p) => ({ file: p.file, count: p.count }));
 }
 
 // ─── dispatcher-driven structural gather ────────────────────────────────────
@@ -190,15 +166,21 @@ export function gatherCommentRatio(cwd: string): {
 
 // ─── grep: hygiene markers ──────────────────────────────────────────────────
 
-/** Collect per-file top offenders for detailed reports. Slow — only call when needed. */
+/** Collect per-file top offenders for detailed reports. */
 export function gatherHygieneTopOffenders(cwd: string): {
   topConsoleFiles: FileOffender[];
   topTodoFiles: FileOffender[];
 } {
   return {
-    topConsoleFiles: grepPerFile(cwd, 'console\\.(log|error|warn)'),
-    topTodoFiles: grepPerFile(cwd, '(TODO|FIXME|HACK)'),
+    // D074: print-family skipComments=true → same convention as health. slop-ok
+    topConsoleFiles: topOffenders(cwd, 'console\\.(log|error|warn)', true),
+    // TODO/FIXME/HACK are inherently in comments; skipComments would zero them.
+    topTodoFiles: topOffenders(cwd, '(TODO|FIXME|HACK)', false),
   };
+}
+
+function hygieneCount(cwd: string, pattern: string, skipComments: boolean): number {
+  return countLineMatches(cwd, hygieneFiles(cwd), [pattern], { skipComments }).lines;
 }
 
 export function gatherHygieneMarkers(cwd: string): {
@@ -209,40 +191,6 @@ export function gatherHygieneMarkers(cwd: string): {
   staleFiles: string[];
   mixedLanguages: boolean;
 } {
-  // Sum match counts across source files, excluding vendored paths.
-  // grep --exclude-dir handles basename dirs (node_modules etc.) at traversal.
-  // Path-based exclusions (public/assets, static/js) are post-filtered because
-  // grep's --exclude-dir only matches basenames, not paths.
-  function grepCountSimple(pattern: string): number {
-    const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
-    fs.writeFileSync(patternFile, pattern);
-    const excludeDirs = getGrepExcludeDirFlags(cwd);
-    const includes = hygieneIncludeFlags();
-    const result = run(
-      `grep -rcEf '${patternFile}' ${excludeDirs} ${includes} . 2>/dev/null`,
-      cwd,
-      60000,
-    );
-    try {
-      fs.unlinkSync(patternFile);
-    } catch {
-      /* ignore */
-    }
-    if (!result) return 0;
-    let total = 0;
-    for (const line of result.split('\n')) {
-      const idx = line.lastIndexOf(':');
-      if (idx < 0) continue;
-      const file = line.slice(0, idx);
-      const count = parseInt(line.slice(idx + 1), 10);
-      if (!count || !file) continue;
-      // Centralized filter — same predicate used by security/quality/tests.
-      if (isExcludedPath(cwd, file.replace(/^\.\//, ''))) continue;
-      total += count;
-    }
-    return total;
-  }
-
   // Stale files: vim swap, backup, temp files tracked in git
   const staleRaw = run(
     `git ls-files '*.swp' '*.swo' '*.bak' '*.orig' '*.tmp' '*.log' '*.pyc' 2>/dev/null`,
@@ -262,10 +210,12 @@ export function gatherHygieneMarkers(cwd: string): {
   const mixedLanguages = !!(jsInSrc && tsInSrc);
 
   return {
-    todoCount: grepCountSimple('TODO'),
-    fixmeCount: grepCountSimple('FIXME'),
-    hackCount: grepCountSimple('HACK'),
-    consoleLogCount: grepCountSimple('console\\.(log|error|warn)'),
+    todoCount: hygieneCount(cwd, 'TODO', false),
+    fixmeCount: hygieneCount(cwd, 'FIXME', false),
+    hackCount: hygieneCount(cwd, 'HACK', false),
+    // D079 closure: same implementation as health.consoleLogCount, so the
+    // two reports cannot drift. D074: skipComments=true matches health.
+    consoleLogCount: hygieneCount(cwd, 'console\\.(log|error|warn)', true),
     staleFiles,
     mixedLanguages,
   };

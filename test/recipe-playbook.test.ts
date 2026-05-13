@@ -50,7 +50,7 @@ import {
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
-import { hygieneIncludeFlags } from '../src/analyzers/quality/gather';
+import { allSourceExtensions } from '../src/languages';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -167,17 +167,18 @@ describe('recipe playbook — synthetic pack', () => {
     expect(patterns).toContain('NODE_TLS_REJECT_UNAUTHORIZED.*0'); // typescript
   });
 
-  // D030 (2.4.7): hygiene grep's `--include='*.<ext>'` list was hardcoded
-  // since Phase 6. After D030 it derives from `allSourceExtensions()`. The
-  // playbook test guards against re-introduction of a hardcoded list: when
-  // a synthetic pack is added to the registry, its extensions MUST flow
-  // into `hygieneIncludeFlags()` without code changes in gather.ts.
-  // LP-A5 in `scripts/check-architecture.sh` catches the static shape;
-  // this assertion catches semantic drift at runtime.
-  it('hygieneIncludeFlags includes the mock pack extensions (D030 / LP-A5)', () => {
-    const flags = hygieneIncludeFlags();
-    expect(flags).toContain("--include='*.pbk'");
-    expect(flags).toContain("--include='*.pbkx'");
+  // D030 (2.4.7): hygiene scope's extension list was hardcoded since
+  // Phase 6. After D030 it derives from `allSourceExtensions()`. After
+  // G_v4_7 (2.4.7 class-fix) the consumer of that registry is
+  // `walkSourceFiles` (default opts) instead of a `--include` flag
+  // string, but the invariant is identical: when a synthetic pack
+  // joins the registry, its extensions MUST flow without code changes
+  // in gather.ts. LP-A5 in `scripts/check-architecture.sh` catches
+  // the static shape; this assertion catches semantic drift at runtime.
+  it('allSourceExtensions includes the mock pack extensions (D030 / LP-A5 / G_v4_7)', () => {
+    const exts = allSourceExtensions();
+    expect(exts).toContain('.pbk');
+    expect(exts).toContain('.pbkx');
   });
 
   // DEFAULT_VERSIONS is captured at module load, BEFORE this test's
