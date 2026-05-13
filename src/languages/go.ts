@@ -383,6 +383,7 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         package: pkgName,
         installedVersion: trace0.version,
         tool: 'govulncheck',
+        packId: 'go',
         severity: severityById.get(grouped.osv) ?? 'high',
         reachable: true,
       };
@@ -897,6 +898,10 @@ export const go: LanguageSupport = {
   // and similar. Pre-D034 it never matched (Go wasn't in the include
   // list at all).
   tlsBypassPatterns: ['InsecureSkipVerify[[:space:]]*:[[:space:]]*true'],
+
+  upgradeCommand(name, version) {
+    return `go get ${name}@v${version}`;
+  },
 
   detect(cwd) {
     return fileExists(cwd, 'go.mod');

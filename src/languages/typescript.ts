@@ -389,6 +389,7 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
             package: advisoryPkg,
             installedVersion: installedVersion(advisoryPkg),
             tool: 'npm-audit',
+            packId: 'typescript',
             severity: normalizeNpmSeverity(v.severity),
           };
           if (typeof v.cvss?.score === 'number') finding.cvssScore = v.cvss.score;
@@ -1118,6 +1119,10 @@ export const typescript: LanguageSupport = {
   // wide; `rejectUnauthorized: false` is the per-request opt-out on
   // `https.Agent` / `tls.connect` / `node-fetch` agents.
   tlsBypassPatterns: ['NODE_TLS_REJECT_UNAUTHORIZED.*0', 'rejectUnauthorized.*false'],
+
+  upgradeCommand(name, version) {
+    return `npm install ${name}@${version}`;
+  },
 
   detect(cwd) {
     return fileExists(cwd, 'package.json');

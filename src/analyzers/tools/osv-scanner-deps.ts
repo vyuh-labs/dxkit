@@ -40,6 +40,7 @@ import type {
   DepVulnResult,
   SeverityCounts,
 } from '../../languages/capabilities/types';
+import type { LanguageId } from '../../types';
 
 /** Per-package shape from osv-scanner v2.x JSON output. */
 interface OsvScannerPackage {
@@ -72,6 +73,7 @@ interface OsvScannerOutput {
 export function parseOsvScannerFindings(
   raw: string,
   ecosystem: string,
+  packId?: LanguageId,
 ): {
   counts: SeverityCounts;
   findings: DepVulnFinding[];
@@ -121,6 +123,11 @@ export function parseOsvScannerFindings(
           tool: 'osv-scanner',
           severity: tier,
         };
+        // G_v4_4 (2.4.7): stamp the producing pack so `buildUpgradeCommand`
+        // can dispatch to the right `LanguageSupport.upgradeCommand` without
+        // a hardcoded switch on `tool`. Caller passes the pack id; absent
+        // (`undefined`) only on legacy paths we haven't migrated yet.
+        if (packId) finding.packId = packId;
         if (cvss !== null) finding.cvssScore = cvss;
         if (aliases.length > 0) finding.aliases = aliases;
         if (vuln.summary) finding.summary = vuln.summary;
@@ -175,7 +182,7 @@ export function parseOsvScannerFindings(
  */
 export async function gatherOsvScannerDepVulnsResult(
   cwd: string,
-  source: string,
+  packId: LanguageId,
   ecosystem: string,
   manifestCandidates: string[],
 ): Promise<DepVulnGatherOutcome> {
@@ -205,7 +212,7 @@ export async function gatherOsvScannerDepVulnsResult(
   );
   if (!raw) return { kind: 'unavailable', reason: 'osv-scanner produced no output' };
 
-  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem);
+  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem, packId);
 
   if (findings.length > 0) {
     const resolved = await resolveCvssScores(vulnsForCvss);
@@ -222,11 +229,9 @@ export async function gatherOsvScannerDepVulnsResult(
     counts,
     findings,
   };
-  // Note: `source` is unused at the envelope level today — DepVulnResult
-  // carries `tool: 'osv-scanner'` as the producer attribution. Reserved
-  // for a future enhancement that distinguishes per-pack provenance
-  // (e.g., when both kotlin and java packs run on a mixed monorepo and
-  // we want to attribute findings to the originating pack).
-  void source;
+  // G_v4_4 (2.4.7): `packId` is forwarded into `parseOsvScannerFindings`
+  // so each finding carries the producing pack, which `buildUpgradeCommand`
+  // dispatches on. Envelope-level `tool: 'osv-scanner'` stays as the
+  // tool-attribution string used in `toolsUsed`.
   return { kind: 'success', envelope };
 }

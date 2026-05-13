@@ -436,6 +436,7 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           package: dep.name ?? 'unknown',
           installedVersion: dep.version,
           tool: 'pip-audit',
+          packId: 'python',
           severity,
         };
         // Embedded score from the primary enrichment pass; alias-fallback
@@ -983,6 +984,10 @@ export const python: LanguageSupport = {
   // to silence the runtime warning. `VERIFY_SSL=false` is a common
   // env-var convention in Django/Flask configs.
   tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
+
+  upgradeCommand(name, version) {
+    return `pip install '${name}==${version}'`;
+  },
 
   detect(cwd) {
     return (

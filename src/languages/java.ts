@@ -454,6 +454,10 @@ export const java: LanguageSupport = {
     'ALLOW_ALL_HOSTNAME_VERIFIER',
   ],
 
+  upgradeCommand(name, version) {
+    return `# Edit pom.xml: bump ${name} <version>${version}</version>, then \`mvn install\``;
+  },
+
   detect: detectJava,
 
   tools: ['pmd', 'osv-scanner'],

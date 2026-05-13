@@ -121,6 +121,34 @@ export interface LanguageSupport {
    */
   tlsBypassPatterns?: string[];
 
+  /**
+   * G_v4_4 (2.4.7): build the per-ecosystem package upgrade command
+   * surfaced under "Remediation Commands" in the standalone vuln scan.
+   * Each pack owns its own template (`dotnet add package`, `npm install`,
+   * `pip install`, `cargo update`, `go get`, edit-pom-and-rebuild for
+   * gradle/maven, edit-Gemfile-and-bundle for ruby).
+   *
+   * Pre-G_v4_4 the dispatch lived in `buildUpgradeCommand`
+   * (security/index.ts) as a hardcoded switch on the `tool` field —
+   * which violates CLAUDE.md rule 6 (no language-specific branching in
+   * non-pack code) and broke when generic tool names (`osv-scanner`,
+   * via `osv-scanner-deps.ts`) didn't match the pack-aliased switch
+   * keys (`osv-scanner-nuget-direct`). Findings then shipped as bare
+   * comments instead of actionable commands. D062 is the dpl-studio
+   * manifestation.
+   *
+   * Contract: receives the vulnerable package name and the patched
+   * version (caller short-circuits on missing fixedVersion). Returns
+   * a single line of shell to run, OR a `#`-prefixed prose hint when
+   * the ecosystem requires a manifest edit (gradle/maven/gemfile).
+   * Returning `null` is reserved for "this pack genuinely cannot
+   * remediate" — caller falls back to generic prose. Implementations
+   * should be pure (no side effects, no cwd lookups).
+   *
+   * Optional — packs without a depVulns capability omit it.
+   */
+  upgradeCommand?(name: string, version: string): string | null;
+
   detect(cwd: string): boolean;
 
   tools: string[];

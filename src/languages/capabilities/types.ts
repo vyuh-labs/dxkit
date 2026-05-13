@@ -20,6 +20,7 @@
  */
 
 import type { Coverage } from '../../analyzers/tools/coverage';
+import type { LanguageId } from '../../types';
 
 /** Four-tier severity counts, the project-wide convention. */
 export interface SeverityCounts {
@@ -108,6 +109,15 @@ export interface DepVulnFinding {
   // Producer — denormalized from envelope.tool so per-finding attribution
   // survives merges across multiple providers (e.g. snyk + npm-audit).
   tool: string;
+
+  // G_v4_4 (2.4.7): the language pack that produced this finding. Drives
+  // remediation-command dispatch in `buildUpgradeCommand` (security/index.ts)
+  // so the per-ecosystem upgrade syntax (`dotnet add package`, `npm install`,
+  // `cargo update`, `go get`, ...) routes through `LanguageSupport.upgradeCommand`
+  // instead of a hardcoded switch on `tool`. Pre-G_v4_4 the switch silently
+  // produced bare prose comments when the tool name was generic (`osv-scanner`),
+  // because the switch only knew the pack-specific aliases.
+  packId?: LanguageId;
 
   // Severity — ordinal bucket (always) + numeric CVSS base score (when
   // the producing tool reports it).

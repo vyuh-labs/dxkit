@@ -20,7 +20,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
-import { getPythonExcludeSet } from './exclusions';
+import { getPythonExcludeFilter } from './exclusions';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { StructuralResult } from '../../languages/capabilities/types';
 
@@ -40,6 +40,7 @@ interface GraphifyResult {
 
 /** Build the graphify Python script with cwd-specific exclusions baked in. */
 function buildGraphifyScript(cwd: string): string {
+  const { dirsSet, pathsList } = getPythonExcludeFilter(cwd);
   return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
 import json, sys, os, tempfile
 from pathlib import Path
@@ -59,10 +60,29 @@ except ImportError:
 
 target = Path(sys.argv[1])
 
-# collect_files doesn't exclude node_modules etc, so filter manually
-EXCLUDE_DIRS = ${getPythonExcludeSet(cwd)}
+# D055 (2.4.7): two-axis exclusion. EXCLUDE_DIRS is basename-only (any
+# path segment matching skips the file). EXCLUDE_PATHS holds multi-
+# segment relative paths from .dxkit-ignore (e.g. 'Dev/Addons/DPLAddon/SAPB1')
+# and matches via substring on the file's relpath, so the subtree is
+# pruned without basename flattening.
+EXCLUDE_DIRS = ${dirsSet}
+EXCLUDE_PATHS = ${pathsList}
+
+def _is_excluded(f):
+    if any(seg in EXCLUDE_DIRS for seg in f.parts):
+        return True
+    if EXCLUDE_PATHS:
+        try:
+            rel = str(f.relative_to(target)).replace(os.sep, '/')
+        except ValueError:
+            rel = str(f).replace(os.sep, '/')
+        for p in EXCLUDE_PATHS:
+            if rel == p or rel.startswith(p + '/') or ('/' + p + '/') in ('/' + rel + '/'):
+                return True
+    return False
+
 all_files = collect_files(target)
-files = [f for f in all_files if not any(ex in f.parts for ex in EXCLUDE_DIRS)]
+files = [f for f in all_files if not _is_excluded(f)]
 if not files:
     print(json.dumps({"error": "no files found"}))
     sys.exit(0)

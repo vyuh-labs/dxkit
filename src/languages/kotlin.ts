@@ -468,6 +468,10 @@ export const kotlin: LanguageSupport = {
     'ALLOW_ALL_HOSTNAME_VERIFIER',
   ],
 
+  upgradeCommand(name, version) {
+    return `# Edit build.gradle(.kts): bump ${name} to ${version}, then \`./gradlew build\``;
+  },
+
   detect: detectKotlin,
 
   tools: ['detekt', 'osv-scanner'],

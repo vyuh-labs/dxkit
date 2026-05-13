@@ -14,6 +14,8 @@ import {
 } from './gather';
 import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
 import { SecurityReport, SecurityFinding, Severity } from './types';
+import { getLanguage } from '../../languages';
+import type { LanguageId } from '../../types';
 
 export type { SecurityReport, SecurityFinding } from './types';
 
@@ -28,25 +30,27 @@ function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> 
 }
 
 /**
- * 2.4.7: per-ecosystem install command template for a dep-vuln
- * finding's `fixedVersion`. Discriminates by the source tool name
- * (each pack's depVulns provider sets a stable identifier). Returns
- * `null` when no remediation path is known.
+ * G_v4_4 (2.4.7): build the "Remediation Commands" entry for one
+ * dep-vuln finding by dispatching through the producing pack's
+ * `LanguageSupport.upgradeCommand`. Replaces the pre-G_v4_4 switch on
+ * `tool` (D062 — switch keyed on `osv-scanner-nuget-direct` but generic
+ * osv-scanner findings carried `tool: 'osv-scanner'`, so dotnet-NuGet
+ * advisories shipped as bare prose comments). Each pack now owns its
+ * own template; non-pack code stays language-agnostic per CLAUDE.md
+ * rule 6.
  *
- * For ecosystems whose manifests can't be patched from a single
- * command (Maven `pom.xml`, Gradle `build.gradle`, bundler `Gemfile`),
- * emits a `#` comment with the edit instruction rather than a runnable
- * command. Customers can still copy and execute the patchable ones in
- * bulk while seeing the manual-edit candidates inline.
+ * Dispatch order:
+ *   1. `f.packId` set → call pack's `upgradeCommand` (cardinal path).
+ *   2. No `packId` (legacy / non-pack producers) → generic prose fallback.
+ *   3. `upgradeCommand` returns `null` → generic prose fallback.
  *
- * Strategic refactor candidate (2.4.8): move this to
- * `LanguageSupport.upgradeCommand?(name, version)` so each pack
- * declares its own ecosystem template (mirrors the per-pack pattern
- * shape used for autogen / docComment / tlsBypass). Until then this
- * is the single point of fan-out.
+ * No-fixedVersion case always falls back to the "no patched version
+ * available" hint — the pack template needs a version to format
+ * meaningfully.
  */
 function buildUpgradeCommand(f: {
   tool?: string;
+  packId?: LanguageId;
   package: string;
   fixedVersion?: string;
   installedVersion?: string;
@@ -54,31 +58,14 @@ function buildUpgradeCommand(f: {
   if (!f.fixedVersion) {
     return `# ${f.package}: no patched version available — review references for mitigations`;
   }
-  switch (f.tool) {
-    case 'dotnet-vulnerable':
-    case 'osv-scanner-nuget-direct':
-      return `dotnet add package ${f.package} --version ${f.fixedVersion}`;
-    case 'npm-audit':
-      return `npm install ${f.package}@${f.fixedVersion}`;
-    case 'pip-audit':
-      return `pip install '${f.package}==${f.fixedVersion}'`;
-    case 'govulncheck':
-    case 'osv-scanner-go':
-      return `go get ${f.package}@v${f.fixedVersion}`;
-    case 'cargo-audit':
-    case 'osv-scanner-cargo':
-      return `cargo update -p ${f.package} --precise ${f.fixedVersion}`;
-    case 'osv-scanner-maven':
-      return `# Edit pom.xml: bump ${f.package} <version>${f.fixedVersion}</version>, then \`mvn install\``;
-    case 'osv-scanner-gradle':
-      return `# Edit build.gradle(.kts): bump ${f.package} to ${f.fixedVersion}, then \`./gradlew build\``;
-    case 'osv-scanner-gems':
-      return `# Edit Gemfile: \`gem '${f.package}', '${f.fixedVersion}'\`, then \`bundle install\``;
-    default:
-      // Unknown tool — generic prose fallback. Better than nothing for
-      // a customer trying to act on the finding.
-      return `# Upgrade ${f.package} to ${f.fixedVersion} (source tool: ${f.tool ?? 'unknown'})`;
+  if (f.packId) {
+    const pack = getLanguage(f.packId);
+    if (pack && pack.upgradeCommand) {
+      const cmd = pack.upgradeCommand(f.package, f.fixedVersion);
+      if (cmd) return cmd;
+    }
   }
+  return `# Upgrade ${f.package} to ${f.fixedVersion} (source tool: ${f.tool ?? 'unknown'})`;
 }
 
 export async function analyzeSecurity(

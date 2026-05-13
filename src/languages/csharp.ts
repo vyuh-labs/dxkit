@@ -288,6 +288,7 @@ export function parseDotnetVulnerableOutput(
         package: pkgId,
         installedVersion: resolvedVersion,
         tool: 'dotnet-vulnerable',
+        packId: 'csharp',
         severity,
       };
       if (topLevelDep && topLevelDep.length > 0) finding.topLevelDep = topLevelDep;
@@ -651,7 +652,7 @@ async function gatherDirectPackageReferenceFallback(
         reason: `${dotnetFailureReason}; D025f fallback ran but osv-scanner produced no output on ${entries.length} parsed PackageReferences`,
       };
     }
-    const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, 'NuGet');
+    const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, 'NuGet', 'csharp');
 
     // Per-finding CVSS enrichment — mirrors the primary csharp gather's
     // OSV alias-fallback path. Direct PackageReferences carry the
@@ -1351,6 +1352,10 @@ export const csharp: LanguageSupport = {
     'RemoteCertificateValidationCallback',
     'DangerousAcceptAnyServerCertificateValidator',
   ],
+
+  upgradeCommand(name, version) {
+    return `dotnet add package ${name} --version ${version}`;
+  },
 
   detect(cwd) {
     // Depth 5 covers enterprise .NET layouts like

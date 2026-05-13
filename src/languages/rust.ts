@@ -261,6 +261,7 @@ export function parseCargoAuditOutput(
       package: v.package?.name ?? adv.package ?? 'unknown',
       installedVersion: v.package?.version,
       tool: 'cargo-audit',
+      packId: 'rust',
       severity,
     };
     if (cvssScore !== null) finding.cvssScore = cvssScore;
@@ -842,6 +843,10 @@ export const rust: LanguageSupport = {
   // Function names are explicitly `danger_*` — high-signal greppable
   // tokens with near-zero false-positive rate.
   tlsBypassPatterns: ['danger_accept_invalid_certs', 'danger_accept_invalid_hostnames'],
+
+  upgradeCommand(name, version) {
+    return `cargo update -p ${name} --precise ${version}`;
+  },
 
   detect(cwd) {
     return fileExists(cwd, 'Cargo.toml');

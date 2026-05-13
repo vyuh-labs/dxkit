@@ -703,6 +703,10 @@ export const ruby: LanguageSupport = {
     'verify_mode[[:space:]]*=[[:space:]]*.*VERIFY_NONE',
   ],
 
+  upgradeCommand(name, version) {
+    return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;
+  },
+
   detect: detectRuby,
 
   tools: ['osv-scanner', 'rubocop', 'simplecov'],

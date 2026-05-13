@@ -4,7 +4,7 @@
  */
 import { HealthMetrics } from '../types';
 import { runJSON } from './runner';
-import { getClocExcludeDirs } from './exclusions';
+import { getClocExcludeFlags } from './exclusions';
 
 interface ClocOutput {
   header: { n_files: number; n_lines: number };
@@ -17,9 +17,12 @@ const SKIP_KEYS = new Set(['header', 'SUM']);
 /** Gather metrics from cloc --json. */
 export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
-  // cloc uses basename matching for --exclude-dir, so use dir names without slashes
-  const excludeDirs = getClocExcludeDirs(cwd);
-  const flags = `--json --timeout 0 --exclude-dir=${excludeDirs}`;
+  // D055 (2.4.7): getClocExcludeFlags emits BOTH `--exclude-dir` (basenames)
+  // AND `--fullpath --not-match-d` (Perl regex on full path) so multi-segment
+  // `.dxkit-ignore` entries like `Dev/Addons/DPLAddon/SAPB1/` exclude the
+  // correct subtree instead of every dir named `Dev`.
+  const excludeFlags = getClocExcludeFlags(cwd);
+  const flags = `--json --timeout 0 ${excludeFlags}`;
 
   // Try system cloc first (faster), then npx as fallback
   const result = runJSON<ClocOutput>(`cloc . ${flags} 2>/dev/null`, cwd, 180000);
@@ -54,8 +57,18 @@ function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
   // Sort by code lines descending
   clocLanguages.sort((a, b) => b.code - a.code);
 
+  // D057 (2.4.7): cloc no longer writes `sourceFiles`. Pre-fix the
+  // mergeLayer2 overlay blindly overwrote generic's find-based count
+  // with cloc's, which (a) included markup/data files (JSON/XML/CSV)
+  // that aren't source, and (b) on dpl-studio was broken by D055.
+  // Field ownership: generic.ts owns sourceFiles; cloc owns line
+  // counts + language breakdown. (Class-fix tracked as G_v4_8 in
+  // recipe v4 — "each gather declares which fields it owns; merger
+  // errors on overlap".)
+  // totalLines stays cloc-authoritative because the find-based
+  // wc pass in generic.ts can timeout on enormous trees; cloc is
+  // the higher-fidelity source when available.
   return {
-    sourceFiles: result.SUM.nFiles,
     totalLines: result.SUM.code + result.SUM.comment + result.SUM.blank,
     clocLanguages,
     toolsUsed: ['cloc'],
