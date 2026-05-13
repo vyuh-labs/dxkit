@@ -40,6 +40,7 @@ function printUsage(): void {
     vyuh-dxkit bom [path]        Bill of Materials (licenses + vulnerabilities joined)
     vyuh-dxkit coverage [path]   Run per-pack test-with-coverage (side-effecting; materializes the coverage artifact health/test-gaps read)
     vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
+    vyuh-dxkit report [path]     Run every analyzer + dashboard in one shot (full audit)
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -1048,6 +1049,123 @@ export async function run(argv: string[]): Promise<void> {
           `${successes}/${rows.length} packs produced coverage. ` +
             `Run \`vyuh-dxkit health\` or \`vyuh-dxkit test-gaps\` to consume.`,
         );
+      }
+      break;
+    }
+
+    case 'report': {
+      // D021 (2.4.7 sub-piece 3): single orchestrator that runs every
+      // analyzer in sequence and produces a fully-populated dashboard.
+      // Child-process model rather than direct function calls: each
+      // analyzer command already owns its file-write flow (D032 made
+      // the detailed JSON + MD unconditional), so spawning preserves
+      // every side effect without duplicating code. The ~7 extra Node
+      // startups add ~10-15s on top of 5-10 minutes of real analysis —
+      // acceptable for a "press one button, get a complete audit"
+      // command. Direct function refactoring is recipe-v4 candidate
+      // territory (would touch every analyzer's CLI wiring).
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { spawnSync } = await import('child_process');
+      logger.header('vyuh-dxkit report');
+      logger.info(`Generating full audit for ${targetPath}...`);
+      console.log(''); // slop-ok
+
+      // Which analyzers run, in dependency order. `health` runs first
+      // so its detailed JSON exists when later commands or the
+      // dashboard look for it; `dashboard` runs last so every report
+      // it embeds is fresh.
+      const analyzerSteps: Array<{
+        label: string;
+        cmd: string;
+        extraFlags?: string[];
+      }> = [
+        { label: 'Health', cmd: 'health' },
+        { label: 'Vulnerabilities', cmd: 'vulnerabilities' },
+        { label: 'Test gaps', cmd: 'test-gaps' },
+        { label: 'Code quality', cmd: 'quality' },
+        { label: 'Developer report', cmd: 'dev-report' },
+        { label: 'BoM', cmd: 'bom' },
+        { label: 'Licenses', cmd: 'licenses' },
+      ];
+
+      // Forward common analyzer flags to each child so the orchestrator
+      // honors the same options the user would pass to a single command.
+      const passthroughFlags: string[] = [];
+      if (values.detailed) passthroughFlags.push('--detailed');
+      if (values.xlsx) passthroughFlags.push('--xlsx');
+      if (values.verbose) passthroughFlags.push('--verbose');
+      if (values.since) passthroughFlags.push('--since', values.since as string);
+      if (values.filter) passthroughFlags.push('--filter', values.filter as string);
+      if (values['no-nested']) passthroughFlags.push('--no-nested');
+
+      // --with-coverage handled ONCE upfront via `vyuh-dxkit coverage`;
+      // health + test-gaps then read the materialized artifact via
+      // `loadCoverage()` without re-running the test suite per command.
+      // Pre-fix `report --with-coverage` (had it existed) would have
+      // double-run tests for health and again for test-gaps.
+      const runStartedAt = Date.now();
+      const stepDurations: Array<{ label: string; ms: number; rc: number }> = [];
+
+      if (values['with-coverage']) {
+        logger.info('[setup] Materializing coverage artifacts (one run, shared)...');
+        const t0 = Date.now();
+        const rc = spawnSync(
+          process.execPath,
+          [
+            process.argv[1],
+            'coverage',
+            targetPath,
+            ...(values['no-fail-fast'] ? ['--no-fail-fast'] : []),
+          ],
+          { stdio: 'inherit' },
+        ).status;
+        stepDurations.push({ label: 'Coverage', ms: Date.now() - t0, rc: rc ?? -1 });
+        console.log(''); // slop-ok
+      }
+
+      for (const step of analyzerSteps) {
+        logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] ${step.label}...`);
+        const t0 = Date.now();
+        const rc = spawnSync(
+          process.execPath,
+          [process.argv[1], step.cmd, targetPath, ...passthroughFlags, ...(step.extraFlags ?? [])],
+          { stdio: 'inherit' },
+        ).status;
+        stepDurations.push({ label: step.label, ms: Date.now() - t0, rc: rc ?? -1 });
+        console.log(''); // slop-ok
+      }
+
+      logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] Dashboard...`);
+      const dashT0 = Date.now();
+      const dashRc = spawnSync(process.execPath, [process.argv[1], 'dashboard', targetPath], {
+        stdio: 'inherit',
+      }).status;
+      stepDurations.push({ label: 'Dashboard', ms: Date.now() - dashT0, rc: dashRc ?? -1 });
+
+      // Final summary. Always emit it so the user sees the dashboard
+      // location without scrolling through per-step output.
+      const totalElapsed = ((Date.now() - runStartedAt) / 1000).toFixed(1);
+      const failed = stepDurations.filter((s) => s.rc !== 0);
+      console.log(''); // slop-ok
+      logger.dim('─'.repeat(60));
+      for (const s of stepDurations) {
+        const status = s.rc === 0 ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+        const duration = `${(s.ms / 1000).toFixed(1)}s`.padStart(8);
+        process.stdout.write(`  ${status} ${s.label.padEnd(20)} ${duration}\n`);
+      }
+      logger.dim('─'.repeat(60));
+      console.log(''); // slop-ok
+      if (failed.length === 0) {
+        logger.success(
+          `All ${stepDurations.length} steps completed in ${totalElapsed}s. ` +
+            `Open .dxkit/reports/dashboard.html for the full picture.`,
+        );
+      } else {
+        logger.warn(
+          `${stepDurations.length - failed.length}/${stepDurations.length} steps completed (${failed.length} failed: ${failed.map((s) => s.label).join(', ')}). ` +
+            `Partial dashboard at .dxkit/reports/dashboard.html.`,
+        );
+        process.exit(1);
       }
       break;
     }
