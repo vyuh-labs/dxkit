@@ -230,6 +230,14 @@ export function gatherHygieneMarkers(cwd: string): {
  *
  * Collapse: critical + high → errors, medium + low → warnings, matching
  * the `lintErrors`/`lintWarnings` contract in the quality report shape.
+ *
+ * D080 (2.4.7): when a multi-pack repo has providers that return null
+ * silently (e.g. eslint config present but binary missing because
+ * `npm install` wasn't run), the rendered tool label surfaces that
+ * fact via `(not run: <sources>)` rather than silently dropping the
+ * provider. Pre-fix on platform (97% TS / 1% Python): label said just
+ * "ruff" — implying only Python was linted; reality was that eslint
+ * was attempted but its provider returned null.
  */
 export async function gatherLintMetrics(cwd: string): Promise<{
   errors: number;
@@ -242,13 +250,17 @@ export async function gatherLintMetrics(cwd: string): Promise<{
   }
   if (providers.length === 0) return { errors: 0, warnings: 0, tool: null };
 
-  const envelope = await defaultDispatcher.gather(cwd, LINT, providers);
-  if (!envelope) return { errors: 0, warnings: 0, tool: null };
+  const outcome = await defaultDispatcher.gatherWithProvenance(cwd, LINT, providers);
+  if (!outcome.envelope) return { errors: 0, warnings: 0, tool: null };
 
-  const c = envelope.counts;
+  const c = outcome.envelope.counts;
+  let tool = outcome.envelope.tool;
+  if (outcome.skipped.length > 0) {
+    tool = `${tool} (not run: ${outcome.skipped.join(', ')})`;
+  }
   return {
     errors: c.critical + c.high,
     warnings: c.medium + c.low,
-    tool: envelope.tool,
+    tool,
   };
 }
