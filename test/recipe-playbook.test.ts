@@ -50,7 +50,6 @@ import {
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
-import { allSourceExtensions } from '../src/languages';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
