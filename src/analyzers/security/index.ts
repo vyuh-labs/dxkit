@@ -328,6 +328,124 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
+  // C2.4 / D105: Top 5 prioritized actions surfaced at the TOP of the
+  // findings sections so a reader scanning the report sees the
+  // highest-leverage remediation first. Pre-C2.4 the report listed
+  // every finding by severity within category — a reader had to skim
+  // dozens of medium findings to spot the one KEV-listed dep that
+  // actually matters this week. Priority order codifies the
+  // remediation triage rubric:
+  //
+  //   1. KEV-listed dep vulns (active exploitation in the wild)
+  //   2. Hardcoded secrets (rotate now — already compromised)
+  //   3. `.env` in git (rotate + remove from history)
+  //   4. Private-key files on disk
+  //   5. High-severity dep vulns by composite risk score
+  //   6. Other code-pattern HIGH findings (TLS bypass, eval, SSRF, etc.)
+  //
+  // Capped at 5. Anything below the cap shows up in the per-category
+  // sections below.
+  type TopAction = { title: string; location: string; impact: string };
+  const topActions: TopAction[] = [];
+  const findings = report.findings;
+  const envInGit = findings.filter((f) => f.category === 'config' && f.rule === 'env-in-git');
+
+  // 1. KEV-listed deps
+  if (topActions.length < 5) {
+    const kev = (d.findings ?? [])
+      .filter((f) => f.kev)
+      .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+    for (const f of kev) {
+      if (topActions.length >= 5) break;
+      topActions.push({
+        title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
+        location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
+        impact: `**KEV (active exploitation)** · ${f.severity.toUpperCase()}`,
+      });
+    }
+  }
+  // 2. Hardcoded secrets (gitleaks)
+  if (topActions.length < 5) {
+    const secrets = findings.filter(
+      (f) => f.category === 'secret' && f.rule !== 'private-key-file',
+    );
+    for (const f of secrets) {
+      if (topActions.length >= 5) break;
+      topActions.push({
+        title: `Rotate exposed credential (\`${f.rule}\`)`,
+        location: `${f.file}${f.line ? ':' + f.line : ''}`,
+        impact: `${f.severity.toUpperCase()} · committed credential — presumed compromised`,
+      });
+    }
+  }
+  // 3. .env in git — one action covering all .env files
+  if (topActions.length < 5 && envInGit.length > 0) {
+    topActions.push({
+      title: `Remove \`.env\` from git tracking + rotate credentials`,
+      location: envInGit.map((f) => f.file).join(', '),
+      impact: `HIGH · ${envInGit.length} file${envInGit.length === 1 ? '' : 's'} — see callout below for full procedure`,
+    });
+  }
+  // 4. Private-key files on disk
+  if (topActions.length < 5) {
+    const keys = findings.filter((f) => f.rule === 'private-key-file');
+    for (const f of keys) {
+      if (topActions.length >= 5) break;
+      topActions.push({
+        title: `Remove private-key file from repo + rotate`,
+        location: f.file,
+        impact: `CRITICAL · key file on disk`,
+      });
+    }
+  }
+  // 5. Top dep vulns by composite risk score (excluding KEV-listed
+  //    already covered in slot 1)
+  if (topActions.length < 5) {
+    const topDeps = (d.findings ?? [])
+      .filter((f) => !f.kev)
+      .filter((f) => typeof f.riskScore === 'number' && (f.riskScore ?? 0) >= 25)
+      .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+    for (const f of topDeps) {
+      if (topActions.length >= 5) break;
+      topActions.push({
+        title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
+        location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
+        impact: `${f.severity.toUpperCase()} · risk score ${(f.riskScore ?? 0).toFixed(0)}`,
+      });
+    }
+  }
+  // 6. Code-pattern HIGH findings (TLS bypass, eval, SSRF, etc.)
+  if (topActions.length < 5) {
+    const codeHigh = findings
+      .filter((f) => f.category === 'code' && (f.severity === 'critical' || f.severity === 'high'))
+      .sort((a, b) => (a.severity === 'critical' ? -1 : 1) - (b.severity === 'critical' ? -1 : 1));
+    for (const f of codeHigh) {
+      if (topActions.length >= 5) break;
+      topActions.push({
+        title: `Fix ${f.rule}`,
+        location: `${f.file}${f.line ? ':' + f.line : ''}`,
+        impact: `${f.severity.toUpperCase()} · ${f.cwe || 'see source'}`,
+      });
+    }
+  }
+
+  if (topActions.length > 0) {
+    L.push('## 🎯 Top 5 Priority Actions');
+    L.push('');
+    L.push(
+      'Ranked by remediation leverage (active exploitation > committed credentials > high-risk dep upgrades > code patterns). Full inventory in the sections below.',
+    );
+    L.push('');
+    L.push('| # | Action | Location | Impact |');
+    L.push('|---|--------|----------|--------|');
+    topActions.forEach((a, i) => {
+      L.push(`| ${i + 1} | ${a.title} | \`${a.location}\` | ${a.impact} |`);
+    });
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
+
   // C2.3 / D099: `.env` files tracked in git get a dedicated callout
   // block with the specific remediation command. Pre-C2.3 these
   // findings appeared in the per-category list with no actionable
