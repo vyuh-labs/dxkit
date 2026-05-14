@@ -290,6 +290,45 @@ if [ -n "$G_V4_8_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# G_v4_10 (2.4.7 Phase C3): dep-action phrasing lives in ONE place.
+#
+# What this prevents:
+#   Re-introducing the `${fixedVersion ?? '(no patch)'}` literal in
+#   action titles, bash-comment headers, or any other rendered surface.
+#   D111 traced to that pattern producing the grammatically broken
+#   "Upgrade `SharpCompress` to (no patch)" on dpl-studio Top 5 when
+#   D108 sparse-tier floated a mitigation-only finding into the table.
+#
+# Canonical replacement: formatDepActionTitle(pkg, fixedVersion) in
+#   src/analyzers/security/index.ts — branches the phrasing so
+#   "upgrade" semantics never get glued onto "no patch" findings.
+#
+# Allowlist rationale:
+#   - index.ts itself: this IS the canonical site, plus the legitimate
+#     H3 heading "Mitigation required — no patch available" lives here.
+G_V4_10_ALLOWLIST="src/analyzers/security/index.ts"
+
+# Pattern: any literal `'(no patch)'` or `"(no patch)"` string.
+g_v4_10_re="'\(no patch\)'|\"\(no patch\)\""
+
+ALLOW_FILTER_10=""
+for f in $G_V4_10_ALLOWLIST; do
+  ALLOW_FILTER_10="$ALLOW_FILTER_10 -e ^${f}:"
+done
+
+G_V4_10_VIOLATIONS=$(grep -rnE "$g_v4_10_re" src/ 2>/dev/null \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_10" ] && grep -v $ALLOW_FILTER_10 || cat; })
+if [ -n "$G_V4_10_VIOLATIONS" ]; then
+  echo "❌ G_v4_10 violation: '(no patch)' literal outside the canonical dep-action helper:"
+  echo "$G_V4_10_VIOLATIONS"
+  echo "   → Route through formatDepActionTitle(pkg, fixedVersion) in"
+  echo "     src/analyzers/security/index.ts. The helper branches phrasing on"
+  echo "     whether a fix exists — never glue 'upgrade' semantics onto a"
+  echo "     mitigation-only finding (D111)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

@@ -39,9 +39,16 @@ export interface AnalyzeSecurityOptions {
  *   2. No `packId` (legacy / non-pack producers) → generic prose fallback.
  *   3. `upgradeCommand` returns `null` → generic prose fallback.
  *
- * No-fixedVersion case always falls back to the "no patched version
- * available" hint — the pack template needs a version to format
- * meaningfully.
+ * **Contract (G_v4_10 / D111 root fix):** caller MUST pre-filter to
+ * findings with `fixedVersion` set. The D090 renderer splits findings
+ * into Actionable (has fixedVersion → bash block via this helper) and
+ * Mitigation (no fixedVersion → markdown list, never enters this
+ * helper). Pre-D111 this function had a "no patched version
+ * available — review references" prose fallback for the no-fixedVersion
+ * case; that branch became dead after D090's split and gave the
+ * misleading impression that the helper handled both states. It does
+ * not — returning null here signals a contract violation (caller did
+ * not filter), and consumers should treat null as a skip.
  */
 function buildUpgradeCommand(f: {
   tool?: string;
@@ -50,9 +57,7 @@ function buildUpgradeCommand(f: {
   fixedVersion?: string;
   installedVersion?: string;
 }): string | null {
-  if (!f.fixedVersion) {
-    return `# ${f.package}: no patched version available — review references for mitigations`;
-  }
+  if (!f.fixedVersion) return null;
   if (f.packId) {
     const pack = getLanguage(f.packId);
     if (pack && pack.upgradeCommand) {
@@ -61,6 +66,26 @@ function buildUpgradeCommand(f: {
     }
   }
   return `# Upgrade ${f.package} to ${f.fixedVersion} (source tool: ${f.tool ?? 'unknown'})`;
+}
+
+/**
+ * G_v4_10 / D111 (2.4.7 Phase C3): canonical UI title for a dep-vuln
+ * action. Branches on `fixedVersion` because "upgrade" and "mitigate"
+ * are linguistically different actions — squashing them into one
+ * template with a `?? '(no patch)'` literal produced the grammatically
+ * broken "Upgrade `SharpCompress` to (no patch)" on dpl-studio when
+ * D108 sparse-tier fallback floated mitigation-only items into Top 5.
+ *
+ * This is the ONLY authorized site for phrasing "(no patch)" / "no
+ * patch available" in code; `scripts/check-architecture.sh` enforces
+ * G_v4_10 by banning the literal `'(no patch)'` outside this helper.
+ * Consumers (Top 5, future risk-prioritized lists, etc.) call this
+ * instead of templating inline.
+ */
+export function formatDepActionTitle(pkg: string, fixedVersion: string | undefined): string {
+  return fixedVersion
+    ? `Upgrade \`${pkg}\` to ${fixedVersion}`
+    : `Review advisory for \`${pkg}\` — no patch available`;
 }
 
 export async function analyzeSecurity(
@@ -358,7 +383,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     for (const f of kev) {
       if (topActions.length >= 5) break;
       topActions.push({
-        title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
+        title: formatDepActionTitle(f.package, f.fixedVersion),
         location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
         impact: `**KEV (active exploitation)** · ${f.severity.toUpperCase()}`,
       });
@@ -427,7 +452,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
       for (const f of tier) {
         if (topActions.length >= 5) break;
         topActions.push({
-          title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
+          title: formatDepActionTitle(f.package, f.fixedVersion),
           location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
           impact:
             typeof f.riskScore === 'number'
@@ -615,31 +640,63 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     L.push('---');
     L.push('');
 
-    // 2.4.7: Remediation Commands section. For each advisory with a
-    // fixedVersion, generate the ecosystem-specific install command so
-    // the customer can copy-paste the patch. Findings without a known
-    // remediation path (no fixedVersion, or unrecognized tool) are
-    // listed with a `# (no patch / manual)` placeholder so they're
-    // visible but distinct.
-    const remediations = report.summary.dependencies.findings
-      .map((f) => ({ finding: f, cmd: buildUpgradeCommand(f) }))
-      .filter((r) => r.cmd !== null);
-    if (remediations.length > 0) {
+    // C3.2 / D090 (2.4.7): "Remediation Commands" splits into two
+    // subsections so customers can distinguish patch-now upgrades from
+    // advisories that need manual mitigation. Pre-fix all entries went
+    // into one bash block which made `# no patched version available`
+    // prose dominate (platform: 84 prose lines next to 1 actual
+    // `npm install` command), drowning out the actionable subset.
+    //
+    //   - "Actionable upgrades"  →  findings with `fixedVersion` set.
+    //                               Pack's `upgradeCommand` emits a
+    //                               copy-pasteable install command.
+    //   - "Mitigation required"  →  findings with NO `fixedVersion`.
+    //                               Rendered as a markdown list with
+    //                               the advisory link (first reference)
+    //                               so the customer has a one-click
+    //                               path to upstream guidance.
+    const actionable = report.summary.dependencies.findings.filter((f) => !!f.fixedVersion);
+    const mitigation = report.summary.dependencies.findings.filter((f) => !f.fixedVersion);
+
+    if (actionable.length > 0 || mitigation.length > 0) {
       L.push('## Remediation Commands');
       L.push('');
-      L.push('Copy-paste to upgrade each vulnerable package (run from the project root):');
-      L.push('');
-      L.push('```bash');
-      for (const r of remediations) {
-        const f = r.finding;
-        L.push(
-          `# ${f.package}@${f.installedVersion ?? '?'} → ${f.fixedVersion ?? '(no patch)'} (${f.id})`,
-        );
-        L.push(r.cmd as string);
+
+      if (actionable.length > 0) {
+        L.push(`### Actionable upgrades (${actionable.length})`);
+        L.push('');
+        L.push('Copy-paste to upgrade each vulnerable package (run from the project root):');
+        L.push('');
+        L.push('```bash');
+        for (const f of actionable) {
+          // `actionable` is pre-filtered by `!!fixedVersion`; the `if`
+          // is a type-narrowing guard, not a runtime branch.
+          if (!f.fixedVersion) continue;
+          const cmd = buildUpgradeCommand(f);
+          if (cmd === null) continue;
+          L.push(`# ${f.package}@${f.installedVersion ?? '?'} → ${f.fixedVersion} (${f.id})`);
+          L.push(cmd);
+          L.push('');
+        }
+        L.push('```');
         L.push('');
       }
-      L.push('```');
-      L.push('');
+
+      if (mitigation.length > 0) {
+        L.push(`### Mitigation required — no patch available (${mitigation.length})`);
+        L.push('');
+        L.push(
+          'These advisories have no fixed version released. Review each upstream advisory for workarounds, then reduce exposure by upgrading the dependent package, pinning to a non-vulnerable transitive range, or removing the affected code path.',
+        );
+        L.push('');
+        for (const f of mitigation) {
+          const advisory = f.references?.[0];
+          const idCell = advisory ? `[${f.id}](${advisory})` : f.id;
+          L.push(`- \`${f.package}@${f.installedVersion ?? '?'}\` — ${idCell}`);
+        }
+        L.push('');
+      }
+
       L.push('---');
       L.push('');
     }
