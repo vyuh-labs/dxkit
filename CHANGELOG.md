@@ -19,6 +19,153 @@ pre-ship audits on platform and web-client surfaced 12 NEW defects
 (D074–D085), 9 of which were repeated instances of the same disease
 class fixed at different sites.
 
+### Phase C1 — Canonical security aggregator (2026-05-14)
+
+Three customer-facing aggregation-drift defects (D086, D087, D091)
+shared one root: **multiple consumers re-counting severity from raw
+envelope arrays with different inclusion rules**. Phase B closed
+this class at the GATHER layer (canonical `walkSourceFiles`); Phase
+C1 closes it at the AGGREGATION layer with the same class-fix
+discipline plus two newly-surfaced defects (D107 BoM vs vuln-scan
+disagreement, D091-boundary neighbor-bucket miss) caught during the
+pre-release audit and fixed before ship.
+
+- **Canonical `SecurityAggregate`** (commit `a3942f4`). New
+  `src/analyzers/security/aggregator.ts` exporting
+  `buildSecurityAggregate(envelopes) → SecurityAggregate`. The typed
+  contract carries three separately-named severity buckets
+  (`codeBySeverity`, `depBySeverity`, `secretsBySeverity`), two
+  distinct dep-count fields (`dependencyAdvisoryUniqueCount`
+  canonical user-facing + `dependencyFindingsRawCount` for audit),
+  fingerprint-stamped `CodeFinding[]` per category, dedup audit
+  trail, and per-source provenance. Renderers cannot accidentally
+  sum cross-axis or pick the wrong number — both defects become
+  impossible by the typed shape.
+
+- **Six consumers migrated** onto the aggregate (4 user-facing + 2
+  internal):
+  - `security/index.ts` standalone vuln-scan (commit `f3bd69f`, D087
+    closure — Subtotal now matches "N advisories" by reading
+    `dependencyAdvisoryUniqueCount` by name)
+  - `security/shallow.ts` health-side scorer (commit `c73c7ca`, D086
+    closure — code-finding prose reads `codeBySeverity` from the same
+    field vuln-scan reads)
+  - `dashboard/index.ts` (commit `9fb0220` — reads severity buckets
+    from `vulns.summary.findings + dependencies` instead of re-summing
+    finding arrays)
+  - BoM (commit `4ae69ed` C1.8, D107 closure — see below)
+  - C# pack (commit `14b02a7` C1.9, G_v4_9 — see below)
+  - Action planner + legacy fallback (`actions.ts`, `shallow.ts`)
+    annotated `// aggregator-ok` for the two legitimate exceptions
+    (rebuilding `SecurityScoreInput` from a `SecurityReport`; legacy
+    ScoreInput fixtures predating the aggregator field).
+
+- **D107 — BoM vs vuln-scan disagreement (NEW, surfaced in C1.7
+  audit)** (commit `4ae69ed`). dpl-studio: vuln-scan reported 2 dep
+  advisories (MongoDB.Driver HIGH + SharpCompress MEDIUM via
+  osv-scanner-nuget-direct) while BoM reported 0. Root cause: BoM
+  walks per-sub-root project directories and called `gatherDepVulns`
+  at each sub-root, hitting the csharp pack's cwd-sensitive routing
+  (at sub-root with stale `obj/project.assets.json`, dotnet returned
+  0; at repo-root with no `.csproj`, the fallback fired). Fix: BoM
+  now gathers dep-vulns ONCE at the repo root and passes the result
+  to every per-sub-root entry builder via a new `depVulnsOverride`
+  option. License-side stays per-sub-root (legitimately
+  per-project). Post-fix: dpl-studio BoM 2 ≡ vuln-scan 2.
+
+- **G_v4_9 — csharp pack cwd-invariant** (commit `14b02a7`). The
+  pack-contract defect underneath D107: `gatherCsharpDepVulnsResult`
+  produced different fingerprint sets depending on where `cwd`
+  pointed within the repo. Fix: always run BOTH `dotnet list package
+  --vulnerable` (when applicable) AND
+  `osv-scanner-nuget-direct` (the direct PackageReference parse)
+  in parallel, merge findings by `(package, installedVersion, id)`
+  fingerprint at the pack layer. Envelope counts recomputed from the
+  merged set; `tool` field joins what ran. Result: same fingerprint
+  set regardless of cwd. Any future multi-cwd caller now inherits
+  consistency.
+
+- **D091 boundary case (NEW, surfaced in C1.7 audit)** (commit
+  `c7b72e2`). Web-client `DBConfigureForm.js:43` (semgrep MEDIUM
+  `bypass-tls-verification`) and `:45` (registry HIGH
+  `tls-validation-disabled`) — same root, 2 lines apart, same
+  canonical rule — failed to collapse because the
+  `Math.floor(line/3)*3` bucketing put them in different buckets
+  (42 and 45, straddling a multiple-of-3). Documented as a known
+  edge case in the C1.1 commit; biting in production was the trigger
+  to fix it. Fix: after the natural-bucket lookup misses, check
+  neighbor buckets at `(canonicalRule, file, line ± 3)`. Two
+  MEDIUMs absorbed into HIGHs on web-client, reducing apparent
+  code-finding count from 13 → 11 in the right direction.
+
+- **G_v4_8 architectural gate** (commit `6e89131`) in
+  `scripts/check-architecture.sh`. Blocks the smoking-gun pattern
+  (`[<var>.severity]++` accumulator bump, or
+  `function countBySeverity(`) outside the canonical aggregator.
+  Static lookup maps (`SEV_RANK`, `SEV_LABEL`) and type-decl fields
+  inside interfaces don't match — only the actual aggregation shape.
+  BoM's per-package `[e.maxSeverity]++` naturally falls outside the
+  pattern (different attribute name) so BoM's legitimate per-package
+  aggregation is unaffected.
+
+- **Recipe codification (G_v4_8 + G_v4_9 in
+  `tmp/recipe-v4-working-doc.md`)**. Two recipe-playbook
+  synthetic-pack assertions in `test/recipe-playbook.test.ts`
+  (synthetic depVuln finding flows into `depBySeverity` +
+  `dependencyAdvisoryUniqueCount`; cross-tool TLS-bypass collapses
+  regardless of pack identity). Future language packs feeding
+  security data through standard capability descriptors
+  automatically inherit drift prevention.
+
+### Phase C1 — Defect closures
+
+| ID | Status | Closing commit(s) |
+| --- | --- | --- |
+| D086 | CLOSED (architectural) | `a3942f4` + `c73c7ca` — both surfaces read `aggregate.codeBySeverity` |
+| D087 | CLOSED | `a3942f4` + `f3bd69f` — `dependencyAdvisoryUniqueCount` field forces the canonical count |
+| D091 | CLOSED | `a3942f4` (canonical-rule registry + line-window) + `c7b72e2` (neighbor-bucket lookup for boundary case) |
+| D107 | CLOSED (NEW, two layers) | `4ae69ed` (BoM single-source) + `14b02a7` (G_v4_9 csharp cwd-invariant) |
+
+### Phase C1 — Empirical validation
+
+Cross-report parity audit on three customer repos (all numbers
+post-Phase-C1):
+
+- **platform** (1500+ TS/Node files, 2 project roots):
+  - vuln-scan Subtotal **81** ≡ "**81** advisories" ≡ "Showing 50 of
+    **81**" ≡ BoM `totalAdvisories` **81** ✓
+  - 5 cross-tool TLS-bypass collisions deduped (MEDIUM bucket
+    14 → 9)
+- **dpl-studio** (C#, 3 nested project roots):
+  - vuln-scan **2** ≡ BoM **2** ≡ health **2** (dep) ✓
+  - health code findings **1** ≡ vuln-scan code findings **1** ✓
+- **web-client** (JS-heavy, large repo with degraded license info):
+  - dep advisories **31** ≡ **31** ≡ **31** ✓
+  - D091-boundary case on `DBConfigureForm.js:43+:45` collapses (the
+    C1.10 fix)
+  - 2 MEDIUMs absorbed into HIGHs via neighbor-bucket lookup
+
+Tests: **1178 passed / 8 skipped** (1175 pre-Phase-C + 1 + 2 + 1 new
+unit/synthetic-pack assertions). Architecture gate clean. No
+regressions across the cross-ecosystem matrix.
+
+Open and deferred to Phase C2-C8 (still inside 2.4.7 per the
+2026-05-14 reprioritization):
+
+- C2: Security UX rework — split vuln-scan "Code Findings" section
+  into code-only + secret/config (closes the perception-level D086
+  drift even though architectural drift is gone), security rubric
+  weights secrets/.env heavily (D098), Top 5 actions in short
+  reports (D105), .env-in-git callout (D099)
+- C3: D094 CWE truncation (`**CWE:** C` still on 2 platform
+  semgrep findings), D090 Remediation Commands split
+- C4: D100 vendor-path exclusions
+- C5: D093 word-boundary truncation, D096 densest-file
+  clarification
+- C6: D106 agent rewrites
+- C7: Final pre-release validation
+- C8: PR → main → tag v2.4.7 → SLSA publish
+
 ### Phase B — Class-fix release (2026-05-14)
 
 Two architectural deliverables backed by 4 consumer-site migrations
