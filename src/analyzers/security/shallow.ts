@@ -67,11 +67,13 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
   } else {
     // Legacy fallback (test fixtures, pre-2.4.7 callers without
     // `securityAggregate`). Mirrors the pre-C1.3 behavior so existing
-    // unit tests keep passing.
+    // unit tests keep passing. The G_v4_8 gate's smoking-gun
+    // (`[f.severity]++`) appears here intentionally — it's the
+    // fallback path the gate's allowlist exists for.
     codeFindings = { critical: 0, high: 0, medium: 0, low: 0 };
     if (c.codePatterns) {
       for (const f of c.codePatterns.findings) {
-        codeFindings[f.severity]++;
+        codeFindings[f.severity]++; // aggregator-ok: legacy fallback when ScoreInput has no securityAggregate (test fixtures)
       }
     } else {
       codeFindings.high += m.evalCount;

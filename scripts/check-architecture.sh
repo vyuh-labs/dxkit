@@ -238,6 +238,58 @@ if [ -n "$G_V4_7_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# G_v4_8 (2.4.7 Phase C): security finding aggregation lives in ONE place.
+#
+# What this prevents:
+#   Re-introducing per-consumer countBySeverity / manual finding-array
+#   re-summing outside the canonical aggregator. D086/D087/D091 traced
+#   to multiple consumers (security/index.ts, security/shallow.ts,
+#   dashboard/index.ts) counting the same signal with different rules,
+#   producing drift between health.md, vulnerability-scan.md, and
+#   bom.md on the same repo.
+#
+# Canonical replacement: buildSecurityAggregate() in
+#   src/analyzers/security/aggregator.ts — produces SecurityAggregate
+#   once per run; every renderer reads `aggregate.codeBySeverity` /
+#   `aggregate.depBySeverity` / `aggregate.secretsBySeverity` by name.
+#
+# Allowlist rationale:
+#   - aggregator.ts itself: this IS the canonical site.
+G_V4_8_ALLOWLIST="src/analyzers/security/aggregator.ts"
+
+# Pattern: the SMOKING-GUN shape that caused D086 / D087 / D091. A
+# severity-keyed accumulator bump (`bucket[f.severity]++`) — i.e.
+# "iterate findings and tally by severity locally." Variants we catch:
+#   counts[f.severity]++
+#   bySeverity[f.severity]++
+#   vulnBySeverity[f.severity]++
+# We do NOT match static lookup maps (`SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, ... }`)
+# or type declarations (`bySeverity: Record<BomSeverity, number>` inside
+# an interface) — neither is the disease class.
+# BoM's per-package loop uses `[e.maxSeverity]++` (different attribute
+# name) so the gate naturally excludes BoM's legitimate per-package
+# aggregation without an allowlist.
+g_v4_8_re='\[[a-zA-Z_][a-zA-Z0-9_]*\.severity\][[:space:]]*\+\+|function[[:space:]]+countBySeverity\('
+
+ALLOW_FILTER_8=""
+for f in $G_V4_8_ALLOWLIST; do
+  ALLOW_FILTER_8="$ALLOW_FILTER_8 -e ^${f}:"
+done
+
+G_V4_8_VIOLATIONS=$(grep -rnE "$g_v4_8_re" src/ 2>/dev/null \
+  | grep -v "// aggregator-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_8" ] && grep -v $ALLOW_FILTER_8 || cat; })
+if [ -n "$G_V4_8_VIOLATIONS" ]; then
+  echo "❌ G_v4_8 violation: security severity-aggregation outside the canonical aggregator:"
+  echo "$G_V4_8_VIOLATIONS"
+  echo "   → Read from SecurityAggregate built by buildSecurityAggregate()."
+  echo "   → See src/analyzers/security/aggregator.ts."
+  echo "   → Annotate '// aggregator-ok' if your case is a genuinely distinct"
+  echo "     metric (e.g. per-package severity in BoM); review justification required."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

@@ -67,6 +67,20 @@ Three layers run pre-commit + CI to keep this rule honest:
 1. **`scripts/check-architecture.sh`** — greps for hardcoded `IF_<LANG>`
    references, direct `config.languages.<id>` lookups outside the
    registry-bridge files, and hardcoded `<lang>.md` rule-file strings.
+   Also enforces:
+   - **G_v4_7** (2.4.7 Phase B): no `grep -r{l,n,c,E,f}` recursive
+     content-scan inside `run()` / `execSync()` outside the 4-file
+     walker allowlist. Canonical replacement: `walkSourceFiles` +
+     `countLineMatches` in `src/analyzers/tools/walk-source-files.ts`.
+   - **G_v4_8** (2.4.7 Phase C1): no `[<var>.severity]++` accumulator
+     bump (or `function countBySeverity`) outside
+     `src/analyzers/security/aggregator.ts`. Canonical replacement:
+     `buildSecurityAggregate` produces ONE `SecurityAggregate` per
+     run; every consumer reads `aggregate.codeBySeverity` /
+     `aggregate.depBySeverity` / `aggregate.secretsBySeverity` by
+     name. Annotate `// aggregator-ok` for legitimate exceptions
+     (legacy fallback in `shallow.ts`, partition-for-deduction in
+     `actions.ts`).
 2. **`test/languages-contract.test.ts`** — for every `LanguageSupport`,
    verifies metadata completeness (`permissions`, `cliBinaries`,
    `defaultVersion`, `projectYamlBlock`) and `tools[]` ↔ source-call
@@ -75,6 +89,9 @@ Three layers run pre-commit + CI to keep this rule honest:
    test. Confirms each pack-iterating consumer (generator, doctor,
    detect, project-yaml, constants, coverage, generic, grep-secrets,
    tool-registry) picks up a hypothetical new pack's contributions.
+   Also asserts the canonical security aggregator picks up
+   synthetic-pack depVuln + cross-tool TLS-bypass contributions
+   regardless of pack identity (G_v4_8 recipe-codification).
    Catches "the architecture stopped being pack-driven" empirically.
 
 Adding a new language pack is a one-command scaffold + filling in TODOs:

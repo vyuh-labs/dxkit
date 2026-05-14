@@ -32,7 +32,7 @@ export function countsFromReport(report: SecurityReport): SecurityScoreInput {
     } else if (f.category === 'secret') {
       secretFindings++;
     } else if (f.category === 'code') {
-      codeFindings[f.severity]++;
+      codeFindings[f.severity]++; // aggregator-ok: rebuilding SecurityScoreInput partitions from SecurityReport (rehydration), not user-facing aggregation
     }
     // Other categories are intentionally ignored by the scorer; the
     // partition above covers every category the gather code emits today
@@ -117,7 +117,7 @@ function patchForRuleGroup(
 
   // Code findings: partition the group by severity, deduct each bucket.
   const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const f of findings) bySeverity[f.severity]++;
+  for (const f of findings) bySeverity[f.severity]++; // aggregator-ok: partition-for-deduction in remediation action planner, not user-facing aggregation
   return (cur) => ({
     ...cur,
     codeFindings: {

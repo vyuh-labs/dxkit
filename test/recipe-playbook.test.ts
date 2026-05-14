@@ -279,6 +279,104 @@ describe('recipe playbook — synthetic pack', () => {
     }
   });
 
+  // ─── G_v4_8 (2.4.7 Phase C1.6): canonical security aggregator
+  //     picks up contributions regardless of pack identity ─────────────
+  //
+  // The synthetic pack contributes a depVuln finding + (hypothetically)
+  // a TLS-bypass rule. The aggregator's behavior must NOT depend on
+  // which pack produced the data — language-agnostic per CLAUDE.md
+  // rule 6. These assertions are the recipe-codified regression guard:
+  // future language packs that feed security data through the standard
+  // capability descriptors automatically inherit drift prevention.
+  it('buildSecurityAggregate picks up depVuln findings regardless of pack identity (G_v4_8)', async () => {
+    const { buildSecurityAggregate } = await import('../src/analyzers/security/aggregator');
+    const aggregate = buildSecurityAggregate({
+      secrets: { findings: [], toolUsed: null },
+      fileFindings: [],
+      codePatterns: { findings: [], toolUsed: null },
+      tlsBypass: [],
+      tlsBypassPatternCount: 0,
+      depVulns: {
+        tool: 'playbookc-mock',
+        available: true,
+        unavailableReason: '',
+        findings: [
+          {
+            id: 'PBK-2026-001',
+            package: 'playbook-lib',
+            installedVersion: '1.0.0',
+            severity: 'high',
+            tool: 'playbookc-mock',
+            fingerprint: 'fp-playbook-001',
+          },
+          {
+            id: 'PBK-2026-002',
+            package: 'playbook-lib',
+            installedVersion: '1.0.0',
+            severity: 'critical',
+            tool: 'playbookc-mock',
+            fingerprint: 'fp-playbook-002',
+          },
+        ],
+      },
+    });
+    expect(aggregate.dependencyAdvisoryUniqueCount).toBe(2);
+    expect(aggregate.depBySeverity.critical).toBe(1);
+    expect(aggregate.depBySeverity.high).toBe(1);
+    expect(aggregate.findingsByCategory.dependency).toHaveLength(2);
+  });
+
+  it('buildSecurityAggregate collapses cross-tool TLS-bypass regardless of pack identity (G_v4_8 / D091)', async () => {
+    const { buildSecurityAggregate } = await import('../src/analyzers/security/aggregator');
+    // Synthetic pack contributes a `.pbk` file with a TLS-bypass
+    // construct. The aggregator must collapse the two raw findings
+    // (semgrep at line 72, registry at line 74) into ONE
+    // CodeFinding via canonical-rule + line-window dedup — same
+    // collapse rule that fires for TypeScript / C# / etc. Mirrors
+    // D091's exact line numbers from the platform repo (ldap-spec.ts).
+    const aggregate = buildSecurityAggregate({
+      secrets: { findings: [], toolUsed: null },
+      fileFindings: [],
+      codePatterns: {
+        toolUsed: 'semgrep',
+        findings: [
+          {
+            severity: 'medium',
+            category: 'code',
+            cwe: 'CWE-295',
+            rule: 'bypass-tls-verification',
+            tool: 'semgrep',
+            file: 'src/playbook/transport.pbk',
+            line: 72,
+            title: 'TLS bypass via semgrep',
+          },
+        ],
+      },
+      tlsBypass: [
+        {
+          severity: 'high',
+          category: 'code',
+          cwe: 'CWE-295',
+          rule: 'tls-validation-disabled',
+          tool: 'tls-bypass-registry',
+          file: 'src/playbook/transport.pbk',
+          line: 74,
+          title: 'TLS bypass via registry grep',
+        },
+      ],
+      tlsBypassPatternCount: 1, // synthetic pack declares one TLS-bypass pattern
+      depVulns: { findings: [], tool: null, available: true, unavailableReason: '' },
+    });
+    expect(aggregate.findingsByCategory.code).toHaveLength(1);
+    expect(aggregate.findingsByCategory.code[0].severity).toBe('high'); // max
+    expect(aggregate.findingsByCategory.code[0].producedBy).toEqual([
+      'semgrep',
+      'tls-bypass-registry',
+    ]);
+    expect(aggregate.codeBySeverity.high).toBe(1);
+    expect(aggregate.dedupCollisions).toHaveLength(1);
+  });
+
   it('detectActiveLanguages calls the mock pack’s detect() and respects its return value', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'recipe-playbook-'));
     try {

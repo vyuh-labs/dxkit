@@ -224,6 +224,14 @@ function canonicalRuleFor(tool: string, rule: string): string {
  * on the assignment — D091's `:72` vs `:74` shape). 3-line buckets
  * absorb that drift without collapsing genuinely-different findings
  * in the same file.
+ *
+ * Known edge case: fixed-boundary bucketing can miss adjacent
+ * findings that straddle a multiple-of-3 line. E.g. lines 100 (bucket
+ * 99) and 101 (bucket 99) collapse cleanly, but lines 101 (bucket 99)
+ * and 102 (bucket 102) do not. D091's real-world case (lines 72 +
+ * 74, both bucket 72) is caught. A sliding-window comparator would
+ * close the boundary case at the cost of one extra dictionary lookup
+ * per finding — punt-able to v4 if observed in the wild.
  */
 function lineWindowFor(line: number): number {
   return Math.floor(line / 3) * 3;
