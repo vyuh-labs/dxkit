@@ -136,20 +136,37 @@ describe('scoreSecurityFromInput', () => {
     expect(scoreSecurityFromInput(emptyScoreInput()).score).toBe(100);
   });
 
-  it('tiers secret penalties: 1→15, 6→20, 11→25', () => {
-    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 1 })).score).toBe(85);
-    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 6 })).score).toBe(80);
-    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 11 })).score).toBe(75);
+  it('C2.2 / D098: every secret-class signal caps the score at 40', () => {
+    // Pre-C2.2: secretFindings tier penalties produced 85 / 80 / 75
+    // and privateKeyFiles produced 80 — all "Good" or "Excellent"
+    // territory despite committed credentials. Post-C2.2:
+    // SECRETS_PRESENT_CAP forces the dimension to ≤ 40 ("Fair") for
+    // ANY non-zero count. Foundational trust failure regardless of
+    // magnitude.
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 6 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 11 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 5 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 7 })).score).toBe(40);
   });
 
-  it('deducts 20 for any private keys regardless of count', () => {
-    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 1 })).score).toBe(80);
-    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 5 })).score).toBe(80);
-  });
-
-  it('deducts 10 for any .env tracked in git', () => {
-    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 1 })).score).toBe(90);
-    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 7 })).score).toBe(90);
+  it('C2.2 / D098: secrets cap compounds with deeper penalties below the cap', () => {
+    // The cap is a CEILING, not a floor. When other penalties drive
+    // the score below 40, the cap doesn't lift it back up. A repo
+    // with 11 secrets (-25) + 11 critical code findings (-25) +
+    // private keys (-20) starts at 100 - 70 = 30, which is below 40.
+    // Final = 30.
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({
+          secretFindings: 11,
+          privateKeyFiles: 1,
+          codeFindings: { critical: 11, high: 0, medium: 0, low: 0 },
+        }),
+      ).score,
+    ).toBe(30);
   });
 
   it('tiers code-finding penalties by severity', () => {
@@ -249,18 +266,30 @@ describe('scoreSecurityFromInput', () => {
     expect(s.score).toBe(100);
   });
 
-  it('cap is a ceiling, not a floor — other penalties still drop the score below 65', () => {
-    // 100 - 25 (secrets > 10) - 20 (privateKey) = 55. Below the 65 cap,
-    // so penalties win. The cap composes monotonically: max(0,
-    // min(100, penalties_score), then if !available: min(cap)).
+  it('dep-availability cap is a ceiling, not a floor — other penalties still drop the score below 65', () => {
+    // 100 - 15 (1 critical code finding) - 5 (1 high) - 10 (>5 high) - 25 (>10 critical) ... etc.
+    // Adjusted post-C2.2 to use code-only inputs (no secrets/private-
+    // keys/.env so the SECRETS_PRESENT_CAP at 40 doesn't fire). This
+    // test specifically pins the DEP_VULNS_UNAVAILABLE_CAP composition
+    // with other penalties below the cap.
+    //
+    // 11 critical code findings → 100 - 25 = 75. With depVulnsAvailable
+    // false, capped to 65. Adding 11 more critical → 100 - 25 = 75
+    // unchanged (the > 10 tier maxes out). So we use 11 critical +
+    // 11 high to trigger an additional -10 = 65, then need MORE to
+    // drop below 65.
+    //
+    // Final: 100 - 25 (critical>10) - 10 (high>5) - 5 (med>10) - 15
+    // (critical dep) - 10 (high dep > 5) = 35. The dep-cap is a
+    // ceiling at 65 but penalties already drove us to 35.
     const s = scoreSecurityFromInput(
       emptyScoreInput({
         depVulnsAvailable: false,
-        secretFindings: 20,
-        privateKeyFiles: 1,
+        codeFindings: { critical: 11, high: 6, medium: 11, low: 0 },
+        depVulns: { critical: 1, high: 6, medium: 0, low: 0 },
       }),
     );
-    expect(s.score).toBe(55);
+    expect(s.score).toBe(35);
   });
 
   it('cap applies to a score that would otherwise be between cap and 100', () => {

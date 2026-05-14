@@ -99,6 +99,33 @@ export interface SecurityScoreInput {
 export const DEP_VULNS_UNAVAILABLE_CAP = 65;
 
 /**
+ * C2.2 / D098 (2.4.7 Phase C2): score ceiling applied when ANY of:
+ *   - `secretFindings > 0` (gitleaks found hardcoded credentials)
+ *   - `privateKeyFiles > 0` (`.key` / `.pem` files on disk)
+ *   - `envFilesInGit > 0` (`.env` tracked in git history)
+ *
+ * Origin: web-client baseline scored 60/100 "Good" despite 4 hardcoded
+ * secrets + 1 `.env` in git — credentials exposed in source-control
+ * are a foundational trust failure, not a "Good" status. Health
+ * customers reading the score made remediation-deferral decisions
+ * because "60/100 Good" reads as deprioritisable.
+ *
+ * Rationale for 40: matches the status-threshold boundary (≥ 40 is
+ * "Fair", < 40 is "Poor"). A repo with leaked secrets cannot honestly
+ * claim better than "Fair" regardless of other signals — credentials
+ * once committed are presumed compromised even after rotation
+ * (history walks pull them). The cap is high enough that fully clean
+ * everything else still surfaces "Fair" (40), low enough that no
+ * stakeholder reads it as "this is acceptable."
+ *
+ * Compare DEP_VULNS_UNAVAILABLE_CAP = 65 — the dep-availability cap
+ * is "we couldn't scan, so we can't say it's perfect" (uncertain).
+ * The secrets cap is "we ARE certain credentials leaked" (definite),
+ * so the ceiling is more aggressive.
+ */
+export const SECRETS_PRESENT_CAP = 40;
+
+/**
  * Compute the 0-100 security score from the canonical input shape.
  * Same formula, same inputs, same output — applied by both the health
  * dimension rollup and the standalone vuln scan.
@@ -150,6 +177,18 @@ export function scoreSecurityFromInput(input: SecurityScoreInput): { score: numb
   let final = Math.max(0, Math.min(100, score));
   if (!input.depVulnsAvailable && final > DEP_VULNS_UNAVAILABLE_CAP) {
     final = DEP_VULNS_UNAVAILABLE_CAP;
+  }
+  // C2.2 / D098: secrets-in-source cap. Any committed credential
+  // (hardcoded secret, private key on disk, or .env in git) is a
+  // foundational trust failure that bounds the dimension at ≤ 40
+  // ("Fair" or worse) regardless of how clean other signals are.
+  // Applied last so it's a ceiling that composes with everything
+  // else.
+  if (
+    (input.secretFindings > 0 || input.privateKeyFiles > 0 || input.envFilesInGit > 0) &&
+    final > SECRETS_PRESENT_CAP
+  ) {
+    final = SECRETS_PRESENT_CAP;
   }
   return { score: final };
 }
