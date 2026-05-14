@@ -19,7 +19,8 @@ import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-source-files';
 import * as path from 'path';
-import { SecurityFinding, DepVulnSummary } from './types';
+import { SecurityFinding, DepVulnSummary, Severity } from './types';
+import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
 import { defaultDispatcher } from '../dispatcher';
 import { allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
 import {
@@ -305,6 +306,18 @@ export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
   }
 
   const envelope = successEnvelopes.length > 0 ? DEP_VULNS.aggregate(successEnvelopes) : null;
+  // G_v4_8 (2.4.7 Phase C1.3): stamp fingerprints on the envelope's
+  // findings here, in the shared primitive, so BOTH the health path
+  // and the enrichment path (`gatherDepVulns`) produce fingerprint-
+  // stamped findings. The aggregator's dep-side dedup needs the
+  // fingerprint key; without it, unstamped findings each get a
+  // synthetic unique key (no dedup), and health's
+  // `depBySeverity` / `dependencyAdvisoryUniqueCount` would drift
+  // from vuln-scan's. Idempotent — re-stamping in `gatherDepVulns`
+  // produces the same hashes.
+  if (envelope?.findings) {
+    stampFingerprints(envelope.findings);
+  }
   return {
     envelope,
     available: firstUnavailable === null,
@@ -439,4 +452,98 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     available,
     unavailableReason,
   };
+}
+
+// ─── Shared aggregate builder for health (G_v4_8 / C1.3) ─────────────────────
+
+/**
+ * Build the canonical `SecurityAggregate` from inputs available to the
+ * health analyzer. Re-uses the capability envelopes already gathered by
+ * `gatherCapabilityReport` (no double-shells — dispatcher cache hits
+ * are free), additionally invoking the two finders not represented in
+ * the capability layer (TLS-bypass-registry walk, file findings for
+ * private keys + `.env`-in-git).
+ *
+ * D086 closure foundation: health's `scoreSecurityDimension` reads
+ * from this aggregate via `c.securityAggregate?.codeBySeverity`,
+ * which is the SAME field the standalone vuln-scan reads after C1.2.
+ * Two consumers, one source — no drift possible.
+ */
+export async function buildSecurityAggregateForHealth(
+  cwd: string,
+  secrets:
+    | {
+        tool: string;
+        findings: ReadonlyArray<{
+          severity: Severity;
+          rule: string;
+          title?: string;
+          file: string;
+          line: number;
+        }>;
+      }
+    | undefined,
+  codePatterns:
+    | {
+        tool: string;
+        findings: ReadonlyArray<{
+          severity: Severity;
+          rule: string;
+          title: string;
+          file: string;
+          line: number;
+          cwe: string;
+        }>;
+      }
+    | undefined,
+  depVulnsEnvelope: DepVulnResult | undefined,
+  depVulnsAvailable: boolean,
+  depVulnsUnavailableReason: string,
+): Promise<SecurityAggregate> {
+  // The two gathers not represented in CapabilityReport (vuln-scan-only).
+  // Both are cheap: `gatherTlsBypassFindings` is a JS line-scan via
+  // `walkSourceFiles`; `gatherFileFindings` is one `find` + one `git
+  // ls-files`. Total ~0.5s on a 500-file repo.
+  const tlsBypass = gatherTlsBypassFindings(cwd);
+  const fileFindings = gatherFileFindings(cwd);
+
+  const secretFindings: SecurityFinding[] = secrets
+    ? secrets.findings.map((f) => ({
+        severity: f.severity,
+        category: 'secret' as const,
+        cwe: 'CWE-798',
+        rule: f.rule,
+        title: f.title ?? `Secret detected: ${f.rule}`,
+        file: f.file,
+        line: f.line,
+        tool: secrets.tool,
+      }))
+    : [];
+
+  const codeFindings: SecurityFinding[] = codePatterns
+    ? codePatterns.findings.map((f) => ({
+        severity: f.severity,
+        category: 'code' as const,
+        cwe: f.cwe,
+        rule: f.rule,
+        title: f.title,
+        file: f.file,
+        line: f.line,
+        tool: codePatterns.tool,
+      }))
+    : [];
+
+  return buildSecurityAggregate({
+    secrets: { findings: secretFindings, toolUsed: secrets?.tool ?? null },
+    fileFindings,
+    codePatterns: { findings: codeFindings, toolUsed: codePatterns?.tool ?? null },
+    tlsBypass,
+    tlsBypassPatternCount: allTlsBypassPatterns().length,
+    depVulns: {
+      findings: depVulnsEnvelope?.findings ?? [],
+      tool: depVulnsEnvelope?.tool ?? null,
+      available: depVulnsAvailable,
+      unavailableReason: depVulnsUnavailableReason,
+    },
+  });
 }

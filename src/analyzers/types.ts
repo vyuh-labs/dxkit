@@ -18,6 +18,7 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../languages/capabilities/types';
+import type { SecurityAggregate } from './security/aggregator';
 
 /**
  * Raw metrics gathered by tool runners — the non-capability signals that
@@ -143,6 +144,19 @@ export interface CapabilityReport {
    * `gatherDepVulnsWithAvailability` in `analyzers/security/gather.ts`.
    */
   depVulnsAvailability?: { available: boolean; unavailableReason: string };
+
+  /**
+   * G_v4_8 (2.4.7 Phase C1): the canonical `SecurityAggregate` built
+   * once per analyzer run from every gathered security envelope
+   * (secrets, file findings, code patterns, tls-bypass, dep vulns).
+   * Health-side scorers (`security/shallow.ts`) read severity buckets
+   * from this field — same source the standalone vuln-scan uses,
+   * which closes the D086 class of "two consumers disagree on the
+   * same metric." Optional so legacy `ScoreInput` fixtures (no
+   * health gather pipeline) still typecheck; consumers fall back to
+   * the pre-aggregator path when absent.
+   */
+  securityAggregate?: SecurityAggregate;
 }
 
 /** Complete health report. */

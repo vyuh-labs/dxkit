@@ -27,7 +27,7 @@ import {
   TEST_FRAMEWORK,
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
-import { gatherDepVulnsWithAvailability } from './security/gather';
+import { buildSecurityAggregateForHealth, gatherDepVulnsWithAvailability } from './security/gather';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -305,6 +305,22 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   if (codePatterns) report.codePatterns = codePatterns;
   if (duplication) report.duplication = duplication;
   if (structural) report.structural = structural;
+
+  // G_v4_8 (C1.3): build the canonical aggregate from everything we
+  // just gathered, plus the two security finders not represented in
+  // the capability layer (tls-bypass-registry walk, file findings).
+  // Stored on the CapabilityReport so dimension scorers — currently
+  // `security/shallow.ts` — read the SAME aggregate the standalone
+  // vuln-scan reads. Closes the D086 class of cross-consumer drift
+  // by construction.
+  report.securityAggregate = await buildSecurityAggregateForHealth(
+    cwd,
+    secrets ?? undefined,
+    codePatterns ?? undefined,
+    depVulnsWithAvail.envelope ?? undefined,
+    depVulnsWithAvail.available,
+    depVulnsWithAvail.unavailableReason,
+  );
   return report;
 }
 
