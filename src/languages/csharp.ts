@@ -691,58 +691,35 @@ async function gatherDirectPackageReferenceFallback(
 }
 
 /**
- * Single source of truth for the csharp pack's dep-vuln gathering.
- * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
+ * Run `dotnet list package --vulnerable --include-transitive` on cwd
+ * and return a DepVulnGatherOutcome. The "primary" half of the
+ * always-merge G_v4_9 strategy. Pulled out of
+ * `gatherCsharpDepVulnsResult` so both halves can run in parallel.
  *
- * Two-tier strategy (D025f, 2.4.7):
- *
- *   **Primary**: `dotnet list package --vulnerable --include-transitive`
- *   when dotnet is available AND can pick a project file from cwd.
- *   Surfaces transitive vulns via NuGet's own resolution.
- *
- *   **Fallback** (D025f): direct PackageReference parsing →
- *   `--lockfile=NuGet:<adhoc>` to osv-scanner. Used when dotnet isn't
- *   installed OR `dotnet list` produces no output (D036). Catches ~80%
- *   of typical .NET CVE surface (direct refs); transitive deps
- *   require the primary path.
- *
- * Manifest gate: a `.csproj` or `.sln` must be findable within depth 5
- * (D035 / `hasCsharpProject`). Below that, the gather doesn't even
- * try — that's a `no-manifest` outcome.
+ * Returns no-manifest for the dotnet-not-installed case (the
+ * dotnet-vulnerable path simply can't run); the fallback-half is
+ * the source of truth in that case.
  */
-async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!hasCsharpProject(cwd)) {
-    return { kind: 'no-manifest', reason: 'no .csproj or .sln found within depth 5' };
-  }
-
+async function runDotnetVulnerablePath(cwd: string): Promise<DepVulnGatherOutcome> {
   const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
   if (!dotnet.available || !dotnet.path) {
-    // D025f: dotnet absent doesn't mean we're done — try the direct
-    // PackageReference path before giving up. osv-scanner is a
-    // separate tool; users may have one but not the other.
-    return gatherDirectPackageReferenceFallback(cwd, 'dotnet SDK not installed');
+    return {
+      kind: 'no-manifest',
+      reason: 'dotnet SDK not installed (osv-scanner path covers this case)',
+    };
   }
 
-  // `--include-transitive` (10h.4.4.c) extends the scan to indirect
-  // deps; without it NuGet would only report vulns where the
-  // vulnerable package is itself declared in .csproj. Transitive
-  // attribution lands via `project.assets.json` below.
   const vulnRaw = run(
     `${dotnet.path} list package --vulnerable --include-transitive --format json 2>/dev/null`,
     cwd,
     120000,
   );
   if (!vulnRaw) {
-    // D036: `dotnet list package` errors with "A project or solution
-    // file could not be found" when cwd is a parent directory of the
-    // actual project files. D025f's direct-parsing fallback bypasses
-    // dotnet entirely — covers ~80% of CVE surface (direct refs only,
-    // no transitive). Pre-D025f this returned `unavailable` and the
-    // customer saw a capped 65/100 Security score with no real data.
-    return gatherDirectPackageReferenceFallback(
-      cwd,
-      'dotnet list package produced no output (D036)',
-    );
+    // D036 case: dotnet couldn't pick a project from this cwd (e.g.
+    // cwd is the repo root, the .csproj lives in a sub-dir). Treat
+    // as no-manifest at this layer; the always-merge wrapper relies
+    // on the osv-scanner-nuget-direct half to surface vulns instead.
+    return { kind: 'no-manifest', reason: 'dotnet list package produced no output (D036)' };
   }
 
   const parsed = parseDotnetVulnerableOutput(vulnRaw);
@@ -752,47 +729,10 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
 
   const { counts, findings } = parsed;
 
-  // D045-bom (2.4.7): `dotnet list package --vulnerable` reports 0
-  // findings when no `dotnet restore` has been run — the tool can't
-  // see the resolved dep graph without `obj/project.assets.json`.
-  // It returns valid JSON (`{"projects":[{"frameworks":[{}]}]}`)
-  // rather than failing, so the pre-D045-bom logic accepted the
-  // "0 findings" answer at face value and skipped the
-  // direct-PackageReference fallback (which only fired on EMPTY
-  // dotnet output).
-  //
-  // dpl-studio: BoM walks 68 per-root project directories. At each
-  // `Dev/Connectors/*/`, dotnet sees the local `.csproj` but no
-  // restore was done → returns 0 findings. BoM aggregator silently
-  // reported `totalAdvisories: 0` despite the standalone vuln scan
-  // (run at the repo root, where dotnet finds no project file and
-  // therefore falls back to osv-scanner-nuget-direct) correctly
-  // surfacing 2 NuGet CVEs.
-  //
-  // Fix: treat "0 findings AND no project.assets.json" as a
-  // suspicious answer worth verifying. Run the direct-PackageReference
-  // fallback as a safety net. If THAT also returns 0, the consensus
-  // is real. If it returns vulns, surface them.
-  if (findings.length === 0 && findAllProjectAssetsJson(cwd).length === 0) {
-    const fallback = await gatherDirectPackageReferenceFallback(
-      cwd,
-      'dotnet list package returned 0 vulns without project.assets.json — falling back to direct PackageReference scan',
-    );
-    // Only adopt the fallback when it actually surfaced findings.
-    // A `kind: 'unavailable'` fallback result preserves the trust-but-
-    // verify intent: dotnet's primary answer was 0, fallback couldn't
-    // run, return the original successful-but-empty result rather than
-    // masking the primary tool's identity with an unavailable error.
-    if (fallback.kind === 'success' && (fallback.envelope.findings?.length ?? 0) > 0) {
-      return fallback;
-    }
-  }
-
   // Attach top-level attribution to transitive findings (top-level
   // findings already carry self-attribution from the parser). Skipped
   // when project.assets.json is absent — user hasn't run
-  // `dotnet restore`, or the obj/ dir was cleaned. Findings ship with
-  // `topLevelDep` unset in that case, matching Python's no-venv path.
+  // `dotnet restore`, or the obj/ dir was cleaned.
   const transitiveNeedsAttribution = findings.some(
     (f) => !f.topLevelDep || f.topLevelDep.length === 0,
   );
@@ -807,28 +747,134 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
     }
   }
 
-  // Alias-fallback CVSS pass: dotnet --vulnerable ships zero CVSS data
-  // per advisory; the GHSA id (extracted from advisoryUrl) is the only
-  // anchor. resolveCvssScores looks up via GHSA → CVE alias chain.
-  if (findings.length > 0) {
-    const cvssInputs = findings.map((f) => ({
-      primaryId: f.id,
-      embeddedCvss: f.cvssScore ?? null,
-      aliases: f.aliases ?? [],
-    }));
-    const resolved = await resolveCvssScores(cvssInputs);
-    for (const f of findings) {
-      const score = resolved.get(f.id);
-      if (score !== null && score !== undefined) f.cvssScore = score;
-    }
-  }
-
   const envelope: DepVulnResult = {
     schemaVersion: 1,
     tool: 'dotnet-vulnerable',
     enrichment: null,
     counts,
     findings,
+  };
+  return { kind: 'success', envelope };
+}
+
+/**
+ * Single source of truth for the csharp pack's dep-vuln gathering.
+ * Consumed by `csharpDepVulnsProvider` (capability dispatcher).
+ *
+ * G_v4_9 (2.4.7 Phase C1.9) always-merge strategy:
+ *
+ *   **Both tools run, results merge by fingerprint** when each is
+ *   available. The csharp pack's gather is now cwd-invariant: the
+ *   same fingerprint set is produced regardless of where cwd points
+ *   within the repo. Pre-G_v4_9 the gather was cwd-sensitive (D107):
+ *   at sub-roots with stale `obj/project.assets.json`, dotnet
+ *   returned 0 findings and the safety-net fallback didn't fire
+ *   (its condition required no project.assets.json); at repo-root,
+ *   dotnet returned no output (D036) and the fallback fired correctly,
+ *   surfacing 2 NuGet CVEs on dpl-studio. Different cwd, different
+ *   totals — same disease class as D086/D087/D091 at the pack-contract
+ *   layer instead of the consumer layer.
+ *
+ *   **dotnet path** (`dotnet list package --vulnerable --include-transitive`):
+ *   surfaces transitive vulns via NuGet's own resolution when
+ *   `dotnet restore` has been run.
+ *
+ *   **osv-scanner-nuget-direct path**: parses every `.csproj` for
+ *   direct PackageReferences, writes an adhoc `packages.lock.json`,
+ *   runs osv-scanner. Covers ~80% of typical .NET CVE surface
+ *   (direct refs only — no transitive resolution).
+ *
+ *   Findings union, fingerprint-deduped at (package, installedVersion,
+ *   id). Envelope counts recomputed from the merged set. Both tool
+ *   names join in the envelope's `tool` field so users see what
+ *   actually ran.
+ *
+ * Manifest gate: a `.csproj` or `.sln` must be findable within depth 5
+ * (D035 / `hasCsharpProject`). Below that, the gather doesn't even
+ * try — that's a `no-manifest` outcome.
+ */
+async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+  if (!hasCsharpProject(cwd)) {
+    return { kind: 'no-manifest', reason: 'no .csproj or .sln found within depth 5' };
+  }
+
+  // Run both tools in parallel. Each returns a DepVulnGatherOutcome;
+  // we merge whatever succeeds.
+  const [primaryOutcome, fallbackOutcome] = await Promise.all([
+    runDotnetVulnerablePath(cwd),
+    gatherDirectPackageReferenceFallback(cwd, 'G_v4_9 always-merge'),
+  ]);
+
+  // Pick the better outcome when both fail to succeed.
+  if (primaryOutcome.kind !== 'success' && fallbackOutcome.kind !== 'success') {
+    // Surface the more-informative reason. `unavailable` (tool ran
+    // and failed) beats `no-manifest` (tool didn't apply).
+    if (primaryOutcome.kind === 'unavailable') return primaryOutcome;
+    if (fallbackOutcome.kind === 'unavailable') return fallbackOutcome;
+    // Both no-manifest → genuinely nothing to scan.
+    return {
+      kind: 'no-manifest',
+      reason:
+        'csharp dep-vuln scan unavailable on this cwd: both dotnet and osv-scanner-nuget-direct returned no-manifest',
+    };
+  }
+
+  // Merge findings from whichever succeeded. Dedup at the pack layer
+  // by (package, installedVersion, id) so envelope counts are honest;
+  // downstream aggregator also fingerprints to be safe.
+  const primaryFindings =
+    primaryOutcome.kind === 'success' ? (primaryOutcome.envelope.findings ?? []) : [];
+  const fallbackFindings =
+    fallbackOutcome.kind === 'success' ? (fallbackOutcome.envelope.findings ?? []) : [];
+  const merged: DepVulnFinding[] = [];
+  const seen = new Set<string>();
+  for (const f of [...primaryFindings, ...fallbackFindings]) {
+    const key = `${f.package}\0${f.installedVersion ?? ''}\0${f.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
+  }
+
+  // Alias-fallback CVSS pass: dotnet --vulnerable ships zero CVSS data
+  // per advisory; the GHSA id (extracted from advisoryUrl) is the only
+  // anchor. resolveCvssScores looks up via GHSA → CVE alias chain.
+  // Run on the merged set so fallback findings also get enriched if
+  // dotnet's path didn't carry them.
+  if (merged.length > 0) {
+    const cvssInputs = merged.map((f) => ({
+      primaryId: f.id,
+      embeddedCvss: f.cvssScore ?? null,
+      aliases: f.aliases ?? [],
+    }));
+    const resolved = await resolveCvssScores(cvssInputs);
+    for (const f of merged) {
+      const score = resolved.get(f.id);
+      if (score !== null && score !== undefined) f.cvssScore = score;
+    }
+  }
+
+  // Recompute counts from merged set so the envelope is internally
+  // consistent (pre-G_v4_9 each path computed its own counts; sum
+  // would double-count overlapping advisories). aggregator-ok: this
+  // builds the pack's DepVulnResult envelope from its OWN findings,
+  // which is the dispatcher input — distinct from consumer-side
+  // re-aggregation across envelopes that G_v4_8 prohibits.
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of merged) counts[f.severity]++; // aggregator-ok: pack envelope counts from own merged findings
+
+  // Compose envelope tool names from what actually succeeded.
+  const tools: string[] = [];
+  if (primaryOutcome.kind === 'success') tools.push(primaryOutcome.envelope.tool);
+  if (fallbackOutcome.kind === 'success') tools.push(fallbackOutcome.envelope.tool);
+  const enrichment =
+    fallbackOutcome.kind === 'success' ? fallbackOutcome.envelope.enrichment : null;
+
+  const envelope: DepVulnResult = {
+    schemaVersion: 1,
+    tool: tools.join(', '),
+    enrichment,
+    counts,
+    findings: merged,
   };
   return { kind: 'success', envelope };
 }
