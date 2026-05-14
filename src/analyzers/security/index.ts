@@ -398,20 +398,44 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
       });
     }
   }
-  // 5. Top dep vulns by composite risk score (excluding KEV-listed
-  //    already covered in slot 1)
+  // 5. Top non-KEV dep vulns. D108 closure: graceful tiering for
+  //    sparse repos. Pre-D108 the filter `riskScore >= 25` excluded
+  //    the "watch" tier (10-25); on dpl-studio with MongoDB.Driver
+  //    risk 19 + SharpCompress risk 15, no deps surfaced in Top 5
+  //    even though both have unpatched advisories. Fix: iterate
+  //    risk-score tiers and stop only when Top 5 is full.
+  //
+  //    Tier order matches risk-score.ts:
+  //      patch-now (≥ 50) → plan-and-patch (25-50) → watch (10-25)
+  //      → deprioritized (< 10)
+  //    Within each tier, sort by risk score desc.
   if (topActions.length < 5) {
-    const topDeps = (d.findings ?? [])
-      .filter((f) => !f.kev)
-      .filter((f) => typeof f.riskScore === 'number' && (f.riskScore ?? 0) >= 25)
-      .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
-    for (const f of topDeps) {
+    const SCORE_TIERS = [50, 25, 10, 0];
+    const usedFingerprints = new Set<string>();
+    for (const minScore of SCORE_TIERS) {
       if (topActions.length >= 5) break;
-      topActions.push({
-        title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
-        location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
-        impact: `${f.severity.toUpperCase()} · risk score ${(f.riskScore ?? 0).toFixed(0)}`,
-      });
+      const tier = (d.findings ?? [])
+        .filter((f) => !f.kev)
+        .filter((f) => !usedFingerprints.has(f.fingerprint ?? ''))
+        .filter((f) => {
+          const score = f.riskScore ?? 0;
+          // For the lowest tier (>= 0), include findings without a
+          // scored risk too (some packs don't compute risk yet).
+          return minScore === 0 ? true : score >= minScore;
+        })
+        .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+      for (const f of tier) {
+        if (topActions.length >= 5) break;
+        topActions.push({
+          title: `Upgrade \`${f.package}\` to ${f.fixedVersion ?? '(no patch)'}`,
+          location: `${f.package}@${f.installedVersion ?? '?'} · ${f.id}`,
+          impact:
+            typeof f.riskScore === 'number'
+              ? `${f.severity.toUpperCase()} · risk score ${f.riskScore.toFixed(0)}`
+              : `${f.severity.toUpperCase()} · ${f.id}`,
+        });
+        usedFingerprints.add(f.fingerprint ?? '');
+      }
     }
   }
   // 6. Code-pattern HIGH findings (TLS bypass, eval, SSRF, etc.)
