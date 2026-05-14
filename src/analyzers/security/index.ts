@@ -144,6 +144,26 @@ export async function analyzeSecurity(
     total: codeFindings.length,
   };
 
+  // C2.1 (perception-D086 closure): code-only + secrets-only severity
+  // breakdowns surfaced as siblings of `summary.findings`. Renderer
+  // splits the executive-summary "Code Findings" table into two
+  // labeled sections so a reader scanning health + vuln-scan sees
+  // the SAME number under the SAME label.
+  const codeOnlySummary = {
+    critical: aggregate.codeBySeverity.critical,
+    high: aggregate.codeBySeverity.high,
+    medium: aggregate.codeBySeverity.medium,
+    low: aggregate.codeBySeverity.low,
+    total: aggregate.findingsByCategory.code.length,
+  };
+  const secretsOnlySummary = {
+    critical: aggregate.secretsBySeverity.critical,
+    high: aggregate.secretsBySeverity.high,
+    medium: aggregate.secretsBySeverity.medium,
+    low: aggregate.secretsBySeverity.low,
+    total: aggregate.findingsByCategory.secret.length + aggregate.findingsByCategory.config.length,
+  };
+
   // D087 closure: dependency totals now read the canonical
   // unique-by-fingerprint count from the aggregate, matching BoM's
   // semantics. critical/high/medium/low are derived from the unique
@@ -166,6 +186,8 @@ export async function analyzeSecurity(
     branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
     summary: {
       findings: codeSummary,
+      codeOnly: codeOnlySummary,
+      secretsOnly: secretsOnlySummary,
       dependencies: depSummary,
     },
     findings: codeFindings,
@@ -185,35 +207,70 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // Executive summary — two independent axes that must NOT be summed
-  // naïvely. Code findings are issues your team owns and patches in
-  // source; dependency vulns are issues in third-party packages that
-  // upgrade-bumps resolve. Reporting them separately keeps the
-  // remediation owner unambiguous.
+  // C2.1 (perception D086 closure): three independent axes, each with
+  // its own labeled table. Pre-C2.1 the executive summary had a single
+  // "Code Findings" table that combined code+secret+config under one
+  // label — health's "code findings" prose meant code-only, so the
+  // two surfaces showed different numbers under the same name. Now
+  // each surface reads its own named field and the labels match.
   const s = report.summary.findings;
+  const c = report.summary.codeOnly;
+  const k = report.summary.secretsOnly;
   const d = report.summary.dependencies;
   L.push('## Executive Summary');
   L.push('');
-  L.push('Security signals split across two independent axes:');
-  L.push('- **Code findings** — vulnerabilities in source your team owns. Fix by patching code.');
+  L.push('Security signals split across three independent axes:');
+  L.push(
+    '- **Code findings** — code-pattern vulnerabilities your team owns (semgrep + TLS-bypass-registry). Fix by patching code.',
+  );
+  L.push(
+    '- **Secret & config findings** — hardcoded secrets, private-key files, `.env` tracked in git. Fix by rotating + removing from history.',
+  );
   L.push(
     '- **Dependency vulnerabilities** — vulnerabilities in third-party packages. Fix by upgrading the dep.',
   );
   L.push('');
 
+  // Code-only severity table. Reads `summary.codeOnly` directly from
+  // the canonical aggregator field `codeBySeverity`. Health's
+  // `Xc Yh Zm Wl code findings` prose comes from the same field —
+  // numbers match by construction.
+  const codeSources = [
+    ...new Set(report.findings.filter((f) => f.category === 'code').map((f) => f.tool)),
+  ].sort();
   L.push('### Code Findings');
   L.push('');
-  L.push(
-    `_Sources: ${[...new Set(report.findings.map((f) => f.tool))].sort().join(', ') || '(none)'}_`,
-  );
+  L.push(`_Sources: ${codeSources.join(', ') || '(none)'}_`);
   L.push('');
   L.push('| Severity | Count |');
   L.push('|----------|------:|');
-  L.push(`| CRITICAL | ${s.critical} |`);
-  L.push(`| HIGH     | ${s.high} |`);
-  L.push(`| MEDIUM   | ${s.medium} |`);
-  L.push(`| LOW      | ${s.low} |`);
-  L.push(`| **Subtotal** | **${s.total}** |`);
+  L.push(`| CRITICAL | ${c.critical} |`);
+  L.push(`| HIGH     | ${c.high} |`);
+  L.push(`| MEDIUM   | ${c.medium} |`);
+  L.push(`| LOW      | ${c.low} |`);
+  L.push(`| **Subtotal** | **${c.total}** |`);
+  L.push('');
+
+  // Secret + config severity table. Reads `summary.secretsOnly` from
+  // the aggregator's `secretsBySeverity` axis.
+  const secretSources = [
+    ...new Set(
+      report.findings
+        .filter((f) => f.category === 'secret' || f.category === 'config')
+        .map((f) => f.tool),
+    ),
+  ].sort();
+  L.push('### Secret & Config Findings');
+  L.push('');
+  L.push(`_Sources: ${secretSources.join(', ') || '(none)'}_`);
+  L.push('');
+  L.push('| Severity | Count |');
+  L.push('|----------|------:|');
+  L.push(`| CRITICAL | ${k.critical} |`);
+  L.push(`| HIGH     | ${k.high} |`);
+  L.push(`| MEDIUM   | ${k.medium} |`);
+  L.push(`| LOW      | ${k.low} |`);
+  L.push(`| **Subtotal** | **${k.total}** |`);
   L.push('');
 
   L.push('### Dependency Vulnerabilities');
@@ -239,7 +296,9 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
       L.push(`> findings in the unscanned pack may be present but not listed.`);
       L.push('');
     }
-    L.push(`**Total signals:** ${s.total + d.total} (${s.total} code + ${d.total} dependency)`);
+    L.push(
+      `**Total signals:** ${s.total + d.total} (${c.total} code + ${k.total} secret/config + ${d.total} dependency)`,
+    );
   } else if (!d.available) {
     // D025e: scan was attempted but couldn't run for any active pack.
     // Pre-D025e this case shared the "no language pack with a depVulns

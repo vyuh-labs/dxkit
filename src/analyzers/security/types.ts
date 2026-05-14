@@ -57,7 +57,26 @@ export interface SecurityReport {
   commitSha: string;
   branch: string;
   summary: {
+    /** Combined code+secret+config severity counts. Preserved for
+     *  backward-compat with detailed report + dashboard consumers
+     *  that already read this shape. */
     findings: { critical: number; high: number; medium: number; low: number; total: number };
+    /**
+     * C2.1 (2.4.7 Phase C2 — perception D086 closure): code-pattern
+     * findings only (semgrep + tls-bypass-registry), excluding
+     * secrets/config. Mirrors the field health-side scoring reads
+     * via `aggregate.codeBySeverity`. The vuln-scan renderer surfaces
+     * this as a "Code Findings (code-only)" section so the number
+     * matches health's `Xc Yh Zm Wl code findings` prose exactly.
+     */
+    codeOnly: { critical: number; high: number; medium: number; low: number; total: number };
+    /**
+     * C2.1 (2.4.7 Phase C2): secret + secret-adjacent findings
+     * (gitleaks + private-key files + .env-in-git), the
+     * `aggregate.secretsBySeverity` axis. Surfaced separately so
+     * "Code Findings" stays code-only.
+     */
+    secretsOnly: { critical: number; high: number; medium: number; low: number; total: number };
     dependencies: DepVulnSummary;
   };
   findings: SecurityFinding[];
