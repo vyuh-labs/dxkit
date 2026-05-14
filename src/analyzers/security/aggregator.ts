@@ -225,13 +225,13 @@ function canonicalRuleFor(tool: string, rule: string): string {
  * absorb that drift without collapsing genuinely-different findings
  * in the same file.
  *
- * Known edge case: fixed-boundary bucketing can miss adjacent
- * findings that straddle a multiple-of-3 line. E.g. lines 100 (bucket
- * 99) and 101 (bucket 99) collapse cleanly, but lines 101 (bucket 99)
- * and 102 (bucket 102) do not. D091's real-world case (lines 72 +
- * 74, both bucket 72) is caught. A sliding-window comparator would
- * close the boundary case at the cost of one extra dictionary lookup
- * per finding — punt-able to v4 if observed in the wild.
+ * Boundary edge case closed by C1.10: the natural fixed-boundary
+ * bucketing alone would miss adjacent findings straddling a
+ * multiple-of-3 (web-client surfaced DBConfigureForm.js:43 + :45 →
+ * buckets 42 + 45 → no collapse pre-C1.10). The grouping loop now
+ * does a neighbor-bucket lookup (naturalBucket ± 3) after the natural
+ * miss, restoring D091's intent across boundary-straddling pairs.
+ * Effective collapse window: ~3-5 lines depending on alignment.
  */
 function lineWindowFor(line: number): number {
   return Math.floor(line / 3) * 3;
@@ -346,8 +346,29 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
 
   for (const f of rawCodeFindings) {
     const canonicalRule = canonicalRuleFor(f.tool, f.rule);
-    const fingerprint = computeCodeFingerprint(canonicalRule, f.file, f.line);
-    const existing = groups.get(fingerprint);
+    const naturalFingerprint = computeCodeFingerprint(canonicalRule, f.file, f.line);
+
+    // C1.10: neighbor-bucket lookup. The 3-line fixed bucket misses
+    // adjacent findings that straddle a multiple-of-3 line (web-client
+    // DBConfigureForm.js:43 + :45 → buckets 42 + 45 → different keys
+    // → no collapse pre-C1.10). Look up the natural bucket first, then
+    // the adjacent buckets (naturalBucket ± 3 via `line ± 3`). Same
+    // canonical-rule + file + neighbor-bucket counts as a match; merges
+    // into that group. Effective dedup window grows from "0-2 lines
+    // within one bucket" to "3-5 lines across one bucket boundary."
+    let fingerprint = naturalFingerprint;
+    let existing = groups.get(fingerprint);
+    if (!existing) {
+      for (const offset of [-3, 3]) {
+        const neighborFingerprint = computeCodeFingerprint(canonicalRule, f.file, f.line + offset);
+        const candidate = groups.get(neighborFingerprint);
+        if (candidate) {
+          existing = candidate;
+          fingerprint = neighborFingerprint;
+          break;
+        }
+      }
+    }
     if (existing) {
       existing.severity = maxSeverity(existing.severity, f.severity);
       existing.producedBy.add(f.tool);

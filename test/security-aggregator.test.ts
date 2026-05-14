@@ -136,6 +136,42 @@ describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {
     expect(agg.dedupCollisions[0].collapsedFrom).toHaveLength(2);
   });
 
+  it('C1.10: collapses adjacent findings that straddle a multiple-of-3 line boundary (web-client D091-class regression)', () => {
+    // Web-client surfaced this in C1.7: DBConfigureForm.js:43 (semgrep
+    // MEDIUM) + :45 (registry HIGH), both canonical:tls-bypass, same
+    // file, 2 lines apart. Pre-C1.10 the natural buckets were 42 and
+    // 45 (different), no collapse fired. Post-C1.10 the neighbor-bucket
+    // lookup (naturalBucket ± 3) catches the cross-boundary pair.
+    const input = emptyInput();
+    input.codePatterns = {
+      toolUsed: 'semgrep',
+      findings: [
+        makeFinding({
+          severity: 'medium',
+          rule: 'bypass-tls-verification',
+          tool: 'semgrep',
+          file: 'src/components/setupscreen/DBConfigureForm.js',
+          line: 43,
+        }),
+      ],
+    };
+    input.tlsBypass = [
+      makeFinding({
+        severity: 'high',
+        rule: 'tls-validation-disabled',
+        tool: 'tls-bypass-registry',
+        file: 'src/components/setupscreen/DBConfigureForm.js',
+        line: 45,
+      }),
+    ];
+
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+    expect(agg.findingsByCategory.code[0].severity).toBe('high'); // max
+    expect(agg.findingsByCategory.code[0].producedBy).toEqual(['semgrep', 'tls-bypass-registry']);
+    expect(agg.dedupCollisions).toHaveLength(1);
+  });
+
   it('does NOT collapse genuinely-different findings in the same file', () => {
     // Two unrelated semgrep findings far apart in the same file should
     // stay as two findings — the line-window bucket is 3 lines wide,
