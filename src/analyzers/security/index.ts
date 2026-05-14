@@ -13,20 +13,15 @@ import {
   gatherTlsBypassFindings,
 } from './gather';
 import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
-import { SecurityReport, SecurityFinding, Severity } from './types';
-import { getLanguage } from '../../languages';
+import { SecurityReport } from './types';
+import { buildSecurityAggregate } from './aggregator';
+import { allTlsBypassPatterns, getLanguage } from '../../languages';
 import type { LanguageId } from '../../types';
 
 export type { SecurityReport, SecurityFinding } from './types';
 
 export interface AnalyzeSecurityOptions {
   verbose?: boolean;
-}
-
-function countBySeverity(findings: SecurityFinding[]): Record<Severity, number> {
-  const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const f of findings) counts[f.severity]++;
-  return counts;
 }
 
 /**
@@ -108,8 +103,61 @@ export async function analyzeSecurity(
   const tlsBypass = timed('tls-bypass', verbose, () => gatherTlsBypassFindings(repoPath));
   if (tlsBypass.length > 0) toolsUsed.push('tls-bypass-registry');
 
-  const allFindings = [...secrets.findings, ...files, ...code.findings, ...tlsBypass];
-  const counts = countBySeverity(allFindings);
+  // C1.2 (G_v4_8 / 2.4.7 Phase C): aggregate every gathered envelope
+  // into the canonical SecurityAggregate. Closes the D086/D087/D091
+  // class — `aggregate.codeBySeverity` is the ONE code-finding count
+  // surface (no consumer re-sums from arrays);
+  // `aggregate.dependencyAdvisoryUniqueCount` is the canonical
+  // user-facing dep-vuln total (matches BoM's existing
+  // fingerprint-unique semantics, ending the 70 vs 81 same-page drift);
+  // cross-tool TLS-bypass collapses to one CodeFinding via the
+  // canonical-rule + line-window dedup.
+  const aggregate = buildSecurityAggregate({
+    secrets,
+    fileFindings: files,
+    codePatterns: code,
+    tlsBypass,
+    tlsBypassPatternCount: allTlsBypassPatterns().length,
+    depVulns: {
+      findings: deps.findings,
+      tool: deps.tool,
+      available: deps.available,
+      unavailableReason: deps.unavailableReason,
+    },
+  });
+
+  // Combined code-side severity counts for the existing "Code Findings"
+  // table (which renders secrets+files+code+config under one heading).
+  // Derived from the dedup'd aggregate, NOT from raw envelope arrays —
+  // that's the D086/D091 closure. Sum of unique findings across the
+  // code/secret/config categories.
+  const codeFindings = [
+    ...aggregate.findingsByCategory.secret,
+    ...aggregate.findingsByCategory.code,
+    ...aggregate.findingsByCategory.config,
+  ];
+  const codeSummary = {
+    critical: aggregate.codeBySeverity.critical + aggregate.secretsBySeverity.critical,
+    high: aggregate.codeBySeverity.high + aggregate.secretsBySeverity.high,
+    medium: aggregate.codeBySeverity.medium + aggregate.secretsBySeverity.medium,
+    low: aggregate.codeBySeverity.low + aggregate.secretsBySeverity.low,
+    total: codeFindings.length,
+  };
+
+  // D087 closure: dependency totals now read the canonical
+  // unique-by-fingerprint count from the aggregate, matching BoM's
+  // semantics. critical/high/medium/low are derived from the unique
+  // set, so the bucket sum always equals the unique total — no more
+  // 70 vs 81 on the same page.
+  const depSummary = {
+    ...deps,
+    critical: aggregate.depBySeverity.critical,
+    high: aggregate.depBySeverity.high,
+    medium: aggregate.depBySeverity.medium,
+    low: aggregate.depBySeverity.low,
+    total: aggregate.dependencyAdvisoryUniqueCount,
+    findings: [...aggregate.findingsByCategory.dependency],
+  };
 
   return {
     repo: stack.projectName || path.basename(repoPath),
@@ -117,10 +165,10 @@ export async function analyzeSecurity(
     commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
     branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
     summary: {
-      findings: { ...counts, total: allFindings.length },
-      dependencies: deps,
+      findings: codeSummary,
+      dependencies: depSummary,
     },
-    findings: allFindings,
+    findings: codeFindings,
     toolsUsed,
     toolsUnavailable,
   };
