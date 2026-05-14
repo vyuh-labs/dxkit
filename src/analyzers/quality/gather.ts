@@ -16,6 +16,7 @@ import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { gatherClocMetrics } from '../tools/cloc';
 import { walkSourceFiles, countLineMatches } from '../tools/walk-source-files';
+import { gatherDebugStatements } from '../tools/debug-statements';
 import { detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
 import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
@@ -172,8 +173,9 @@ export function gatherHygieneTopOffenders(cwd: string): {
   topTodoFiles: FileOffender[];
 } {
   return {
-    // D074: print-family skipComments=true → same convention as health. slop-ok
-    topConsoleFiles: topOffenders(cwd, 'console\\.(log|error|warn)', true),
+    // D079 closure: shared print-family helper. Identical results to
+    // health's consoleLogCount top-N because they call the same function.
+    topConsoleFiles: gatherDebugStatements(cwd, { topN: 10 }).topOffenders,
     // TODO/FIXME/HACK are inherently in comments; skipComments would zero them.
     topTodoFiles: topOffenders(cwd, '(TODO|FIXME|HACK)', false),
   };
@@ -213,9 +215,10 @@ export function gatherHygieneMarkers(cwd: string): {
     todoCount: hygieneCount(cwd, 'TODO', false),
     fixmeCount: hygieneCount(cwd, 'FIXME', false),
     hackCount: hygieneCount(cwd, 'HACK', false),
-    // D079 closure: same implementation as health.consoleLogCount, so the
-    // two reports cannot drift. D074: skipComments=true matches health.
-    consoleLogCount: hygieneCount(cwd, 'console\\.(log|error|warn)', true),
+    // D079 closure: shared print-family helper aggregates TS/JS
+    // console.* + Py print + Go fmt.Print across language-scoped walks.
+    // Identical to health.consoleLogCount by construction.
+    consoleLogCount: gatherDebugStatements(cwd).count,
     staleFiles,
     mixedLanguages,
   };
