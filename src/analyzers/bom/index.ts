@@ -68,7 +68,6 @@ export async function analyzeBom(
   const bySeverity: Record<BomSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let vulnerablePackages = 0;
   let actionableVulns = 0;
-  let totalAdvisories = 0;
   let vulnOnlyPackages = 0;
   for (const e of entries) {
     if (e.maxSeverity) {
@@ -76,7 +75,6 @@ export async function analyzeBom(
       vulnerablePackages++;
       if (e.upgradeAdvice.startsWith('PROPOSAL:')) actionableVulns++;
     }
-    totalAdvisories += e.vulns.length;
     if (!e.joinedFromBoth) vulnOnlyPackages++;
   }
 
@@ -85,6 +83,14 @@ export async function analyzeBom(
   // reports surface only the fingerprints the caller actually sees —
   // diffing two filtered reports stays consistent.
   const fingerprints = collectFingerprints(entries.flatMap((e) => e.vulns));
+
+  // D076/D085 (2.4.7): `totalAdvisories` is unique-by-fingerprint, not
+  // sum-of-occurrences. Pre-fix the same advisory affecting N top-level
+  // packages was counted N times here (e.g. on platform: 81 occurrences
+  // / 70 unique), drifting from health's count which is per-finding.
+  // Using fingerprints aligns BoM + health + dashboard on the same
+  // "how many distinct CVEs" semantics most users intuit.
+  const totalAdvisories = fingerprints.length;
 
   return {
     repo: stack.projectName || path.basename(repoPath),
