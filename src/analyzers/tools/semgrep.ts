@@ -30,7 +30,10 @@ interface SemgrepRawFinding {
     message: string;
     severity: string;
     metadata?: {
-      cwe?: string[];
+      // semgrep rules emit `cwe` as either string OR string[] depending
+      // on how the rule's YAML metadata block is written. Both shapes
+      // appear in the public `p/security-audit` ruleset.
+      cwe?: string | string[];
       confidence?: string;
       impact?: string;
     };
@@ -56,6 +59,24 @@ export type CodePatternsGatherOutcome =
  * Priority: rule metadata `impact` (most meaningful — rule authors
  * tier by business impact) → fall back to semgrep's `severity`.
  */
+/**
+ * Normalize semgrep's `metadata.cwe` into a single CWE identifier.
+ *
+ * Why: semgrep rule authors write `cwe:` in YAML as either a scalar
+ * (`cwe: "CWE-295: Improper Certificate Validation"`) or a list
+ * (`cwe: ["CWE-295: ..."]`). Both shapes pass through semgrep's JSON
+ * output unchanged. Pre-fix this code did `metadata?.cwe?.[0]` which
+ * silently returned the first *character* of the scalar form (e.g.
+ * "C" for "CWE-295: ..."). D094 surfaced this on `bypass-tls-
+ * verification` rule output.
+ */
+export function extractCwe(cwe: string | string[] | undefined): string {
+  if (!cwe) return '';
+  const raw = Array.isArray(cwe) ? cwe[0] : cwe;
+  if (typeof raw !== 'string') return '';
+  return raw.split(':')[0].trim();
+}
+
 function mapSemgrepSeverity(sgSeverity: string, impact?: string): CodePatternFinding['severity'] {
   const imp = (impact || '').toUpperCase();
   if (imp === 'HIGH') return sgSeverity === 'ERROR' ? 'critical' : 'high';
@@ -141,7 +162,7 @@ export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
       severity: mapSemgrepSeverity(r.extra.severity, r.extra.metadata?.impact),
       rule: r.check_id.split('.').slice(-1)[0],
       title: r.extra.message.split('\n')[0].slice(0, 200),
-      cwe: r.extra.metadata?.cwe?.[0]?.split(':')[0] || '',
+      cwe: extractCwe(r.extra.metadata?.cwe),
       file: toProjectRelative(cwd, r.path),
       line: r.start.line,
     }));
