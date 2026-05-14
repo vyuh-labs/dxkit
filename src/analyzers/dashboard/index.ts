@@ -185,17 +185,45 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   const codeFindings: VulnFinding[] = Array.isArray(vulns.findings)
     ? (vulns.findings as VulnFinding[])
     : [];
-  const depSummary = (vulns.summary as { dependencies?: { findings?: VulnFinding[] } } | undefined)
-    ?.dependencies;
-  const depFindings: VulnFinding[] = Array.isArray(depSummary?.findings)
-    ? (depSummary?.findings as VulnFinding[])
+  type VulnSummaryShape = {
+    findings?: { critical?: number; high?: number; medium?: number; low?: number };
+    dependencies?: {
+      critical?: number;
+      high?: number;
+      medium?: number;
+      low?: number;
+      findings?: VulnFinding[];
+    };
+  };
+  const summary = vulns.summary as VulnSummaryShape | undefined;
+  const codeBucket = summary?.findings;
+  const depBucket = summary?.dependencies;
+  const depFindings: VulnFinding[] = Array.isArray(depBucket?.findings)
+    ? (depBucket?.findings as VulnFinding[])
     : [];
+  // `vulnFindings` is still the per-finding union: the dashboard needs
+  // it for the per-finding "Critical Issues at a Glance" filter +
+  // length count. Post-C1.2 both arrays are already dedup'd by the
+  // canonical aggregator, so the union is unique-by-construction.
   const vulnFindings: VulnFinding[] = [...codeFindings, ...depFindings];
-  const vulnBySeverity = { critical: 0, high: 0, medium: 0, low: 0 } as Record<string, number>;
-  for (const f of vulnFindings) {
-    const sev = f.severity ?? 'unknown';
-    vulnBySeverity[sev] = (vulnBySeverity[sev] ?? 0) + 1;
-  }
+
+  // G_v4_8 (2.4.7 Phase C1.5): severity buckets read directly from
+  // `vulns.summary.findings` + `vulns.summary.dependencies` — both
+  // populated upstream in C1.2 from `aggregate.codeBySeverity` /
+  // `aggregate.secretsBySeverity` + `aggregate.depBySeverity`.
+  //
+  // Pre-C1.5 dashboard had its own
+  // `for (const f of vulnFindings) vulnBySeverity[f.severity]++` loop
+  // that produced numerically-identical results today — but as a
+  // parallel aggregation path it was structurally at risk of drifting
+  // from health + vuln-scan when inclusion rules evolve. Reading the
+  // canonical buckets directly closes the architectural gap.
+  const vulnBySeverity = {
+    critical: (codeBucket?.critical ?? 0) + (depBucket?.critical ?? 0),
+    high: (codeBucket?.high ?? 0) + (depBucket?.high ?? 0),
+    medium: (codeBucket?.medium ?? 0) + (depBucket?.medium ?? 0),
+    low: (codeBucket?.low ?? 0) + (depBucket?.low ?? 0),
+  } as Record<string, number>;
 
   type Gap = { risk?: string; path?: string; file?: string; lines?: number; reason?: string };
   const gaps: Gap[] = Array.isArray(testGaps.gaps) ? (testGaps.gaps as Gap[]) : [];
