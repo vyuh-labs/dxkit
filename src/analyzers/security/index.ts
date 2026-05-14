@@ -328,6 +328,50 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
+  // C2.3 / D099: `.env` files tracked in git get a dedicated callout
+  // block with the specific remediation command. Pre-C2.3 these
+  // findings appeared in the per-category list with no actionable
+  // command, drowning in the noise. A leaked `.env` is high-leverage
+  // remediation: one `git rm --cached` per file + a history-rewrite
+  // caveat covers the surface.
+  const envFindings = report.findings.filter(
+    (f) => f.category === 'config' && f.rule === 'env-in-git',
+  );
+  if (envFindings.length > 0) {
+    L.push('## 🚨 `.env` files tracked in git');
+    L.push('');
+    L.push(
+      `**${envFindings.length} \`.env\` file${envFindings.length === 1 ? '' : 's'} committed to source control.** Even if the file has been deleted in HEAD, the secrets remain in git history and are presumed compromised — rotate ALL credentials in these files immediately.`,
+    );
+    L.push('');
+    L.push('Remove the file(s) from the working tree (history rewrite is separate):');
+    L.push('');
+    L.push('```bash');
+    for (const f of envFindings) {
+      L.push(`git rm --cached ${f.file}`);
+    }
+    L.push('echo ".env" >> .gitignore   # if not already gitignored');
+    L.push('git commit -m "remove .env files from tracking"');
+    L.push('```');
+    L.push('');
+    L.push('**To purge from history** (rewrites SHAs — coordinate with team before pushing):');
+    L.push('');
+    L.push('```bash');
+    L.push('# Option 1: git filter-repo (preferred — fast, safe)');
+    for (const f of envFindings) {
+      L.push(`git filter-repo --path ${f.file} --invert-paths`);
+    }
+    L.push('');
+    L.push('# Option 2: BFG Repo-Cleaner (alternative)');
+    L.push('# bfg --delete-files .env');
+    L.push('');
+    L.push('# After EITHER option, every collaborator must re-clone.');
+    L.push('```');
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
+
   // Findings grouped by category. Section numbers are assigned dynamically —
   // empty categories are skipped entirely, so the rendered document never
   // jumps from "## 1. ..." to "## 4. ..." when middle sections have no
