@@ -18,6 +18,7 @@ import * as path from 'path';
 import { detect } from '../../detect';
 import { collectFingerprints } from '../tools/fingerprint';
 import { run } from '../tools/runner';
+import { gatherDepVulns } from '../security/gather';
 import { discoverProjectRoots } from './discovery';
 import { buildByTopLevelDep, gatherBomEntries, mergeNestedBomEntries } from './gather';
 import { licenseClass, stalenessTier, type LicenseClass } from './pm-signals';
@@ -122,20 +123,32 @@ export async function analyzeBom(
  * merge. When only one root is found (single-project repos, the
  * common case), short-circuits to a normal gather with
  * `projectRoots: ["."]` — zero overhead beyond the directory walk.
+ *
+ * D107 closure (C1.8): dep-vulns are gathered ONCE at the repo root
+ * and shared across every per-sub-root entry-builder via the
+ * `depVulnsOverride` option. Pre-fix BoM called `gatherDepVulns`
+ * per-sub-root and the csharp pack's cwd-sensitive routing produced
+ * different totals at different cwds (dpl-studio: 0 advisories per
+ * sub-root via stale `dotnet list package` vs 2 advisories at
+ * repo-root via osv-scanner-nuget-direct fallback). License-side
+ * stays per-sub-root — license inventories are legitimately
+ * per-project.
  */
 async function gatherNested(
   repoPath: string,
 ): Promise<ReturnType<typeof gatherBomEntries> extends Promise<infer T> ? T : never> {
   const absRoots = discoverProjectRoots(repoPath);
+  // Single canonical dep-vulns gather at the repo root. Shared across
+  // every per-sub-root entry-builder so the dep-vuln set is identical
+  // regardless of which sub-root attribution the entry receives.
+  const depVulnsOverride = await gatherDepVulns(repoPath);
   if (absRoots.length <= 1) {
-    // No sub-roots discovered (or only cwd itself): fall through to
-    // the non-nested path so the output shape is identical.
-    return gatherBomEntries(repoPath);
+    return gatherBomEntries(repoPath, { depVulnsOverride });
   }
   const perRoot = await Promise.all(
     absRoots.map(async (absRoot) => ({
       relPath: path.relative(repoPath, absRoot) || '.',
-      result: await gatherBomEntries(absRoot),
+      result: await gatherBomEntries(absRoot, { depVulnsOverride }),
     })),
   );
   return mergeNestedBomEntries(perRoot);

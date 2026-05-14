@@ -7,6 +7,7 @@
 
 import { gatherLicensesResult } from '../licenses/gather';
 import { gatherDepVulns } from '../security/gather';
+import type { DepVulnSummary } from '../security/types';
 import type { DepVulnFinding, LicenseFinding } from '../../languages/capabilities/types';
 import type { BomEntry, BomSeverity, BomTopLevelRollup } from './types';
 
@@ -235,10 +236,30 @@ export function mergeNestedBomEntries(
   };
 }
 
-export async function gatherBomEntries(cwd: string): Promise<BomGatherResult> {
+/**
+ * Optional pre-gathered dep-vulns to share across per-sub-root entry
+ * gathers. Closes D107 (2.4.7 Phase C1.8): pre-fix BoM called
+ * `gatherDepVulns(absRoot)` per sub-root, and the csharp pack's
+ * gather is cwd-sensitive — at a sub-root with a stale
+ * `obj/project.assets.json` it returns 0 advisories via dotnet,
+ * while at repo-root with no `.csproj` it correctly falls back to
+ * `osv-scanner-nuget-direct` and surfaces them. Two paths, two
+ * different totals.
+ *
+ * Post-C1.8: BoM (the only nested caller) gathers depVulns ONCE at
+ * repo-root via `gatherNested`, then passes the result here so every
+ * sub-root sees the SAME canonical vuln set. License-side stays
+ * per-sub-root (legitimately per-project). The C1.9 / G_v4_9 work
+ * makes csharp's gather cwd-invariant so even single-root callers
+ * are safe.
+ */
+export async function gatherBomEntries(
+  cwd: string,
+  options: { depVulnsOverride?: DepVulnSummary } = {},
+): Promise<BomGatherResult> {
   const [licensesEnv, depVulns] = await Promise.all([
     gatherLicensesResult(cwd),
-    gatherDepVulns(cwd),
+    options.depVulnsOverride ? Promise.resolve(options.depVulnsOverride) : gatherDepVulns(cwd),
   ]);
 
   const licenseFindings = licensesEnv?.findings ?? [];
