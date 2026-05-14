@@ -19,6 +19,100 @@ pre-ship audits on platform and web-client surfaced 12 NEW defects
 (D074–D085), 9 of which were repeated instances of the same disease
 class fixed at different sites.
 
+### Phase C2 — Security UX rework (2026-05-14)
+
+Builds on Phase C1's typed canonical aggregator with the user-facing
+UX changes the 2026-05-14 critical-perspective audit demanded. C1
+closed the architectural drift class; C2 closes the labeling,
+scoring-credibility, and prioritization gaps that remained.
+
+- **C2.1 — Vuln-scan section split** (commit `e637911`). The pre-C2
+  executive summary had ONE "Code Findings" table that combined
+  codeBySeverity + secretsBySeverity under a label that meant
+  code-only to health-side prose. Readers (and AI agents) saw
+  apparent drift between health "10H code findings" and vuln-scan
+  "Code Findings: 16H." Both numbers were correct for their scopes,
+  but the labels obscured this. C2.1 splits the executive summary
+  into three labeled tables — **Code Findings** (code-pattern only,
+  matches health), **Secret & Config Findings** (gitleaks +
+  private-key + .env), **Dependency Vulnerabilities** (unchanged).
+  `SecurityReport.summary` grows `codeOnly` and `secretsOnly`
+  siblings of `findings`; renderer reads them by name.
+
+- **C2.2 / D098 — `SECRETS_PRESENT_CAP = 40`** (commit `243fa86`).
+  Pre-C2 baseline: web-client scored Security 60/100 "Good" despite
+  4 hardcoded API keys + 1 .env in git. Credentials in source-control
+  history are presumed compromised even after rotation, and a "Good"
+  score reads as deprioritizable. C2.2 caps the Security dimension at
+  ≤ 40 ("Fair" or worse) whenever `secretFindings > 0 ||
+  privateKeyFiles > 0 || envFilesInGit > 0`. Applied as a ceiling
+  AFTER all per-signal penalties and the dep-availability cap, so
+  it composes monotonically with everything else.
+  - Validated: web-client 60 → 40 "Fair" (✓ cap fires);
+    platform 45 → 40 "Fair" (✓); dpl-studio 90 → 90 (✓ cap
+    correctly does NOT fire — no committed credentials).
+
+- **C2.3 / D099 — `.env`-in-git callout block** (commit `7f43dfc`).
+  Pre-C2 a `.env` finding appeared as a plain HIGH entry in the
+  Configuration Issues section with no actionable command. C2.3
+  adds a dedicated `## 🚨 .env files tracked in git` block between
+  the executive summary and the per-category sections. Contents:
+  rotation caveat ("presumed compromised even after deletion"),
+  working-tree bash block (`git rm --cached <file>` per file +
+  `.gitignore` + commit), and history-rewrite block
+  (`git filter-repo` preferred + BFG alternative + "every
+  collaborator must re-clone" coordination caveat).
+
+- **C2.4 / D105 — Top 5 priority actions** (commit `6fe45fa`).
+  Pre-C2 reports listed every finding by severity within category;
+  no prioritization surface. A reader scanning the report had to
+  skim dozens of medium findings to spot the one KEV-listed dep
+  upgrade that actually mattered this week. C2.4 adds a
+  `## 🎯 Top 5 Priority Actions` markdown table at the top of the
+  findings sections. Priority order codifies the triage rubric:
+  KEV deps → hardcoded secrets → .env in git → private-key files →
+  non-KEV deps by risk-score tier → HIGH/CRITICAL code findings.
+  Capped at 5 — anything below the cap shows up in the per-category
+  sections below.
+
+- **D108 — Top 5 sparse-tier fallback** (commit `c09ba87`). C2.5
+  audit surfaced D108: dpl-studio's Top 5 had only 1 entry despite
+  2 unpatched dep vulns (MongoDB.Driver risk 19 + SharpCompress
+  risk 15). The original C2.4 dep filter required `riskScore >= 25`
+  which excluded the "watch" tier (10-25 per risk-score.ts), leaving
+  the table sparse. Fix: tier-iterate dep risk-score buckets
+  (`≥ 50 → 25-50 → 10-25 → ≥ 0`) and stop only when Top 5 is full.
+  Findings without scored risk surface in the lowest tier so
+  nothing is silently dropped.
+
+### Phase C2 — Verification audit (C2.5)
+
+Cross-report parity audit on three customer repos (`platform`,
+`dpl-studio`, `web-client`). All vuln-scan + health pairs verified:
+
+- **D086 / D087 / D091 closures from C1 remain intact** across
+  all 3 repos. Cross-report parity holds.
+- **D098 secrets-cap fires correctly**: web-client + platform both
+  drop to 40 "Fair"; dpl-studio (no secrets) stays at 90.
+- **D099 .env callout renders correctly on web-client** (the only
+  repo with a tracked .env).
+- **D105 Top 5 surfaces actionable rows on every repo**, post-D108
+  including the sparse-repo case.
+
+### D109 investigation — non-defect
+
+C2.5 also surfaced a candidate drift: platform vuln-scan code-only
+`10H 7M` vs health `10H 10M`. HIGH agreed; MEDIUM differed by 3.
+Investigation via an in-process probe (`tmp/d109-probe.js` runs
+both analyzers sequentially in ONE node process, sharing the
+dispatcher cache) showed identical aggregates: `{ high: 10,
+medium: 20 }` on both sides. **D109 is NOT a real defect** — the
+architecture is sound. The observed drift across separate
+processes was semgrep tool-runtime variance (MEDIUM count varied
+7 → 10 → 20 across runs while HIGH stayed stable at 10). Future
+docs follow-up: note semgrep's non-determinism as a known
+limitation.
+
 ### Phase C1 — Canonical security aggregator (2026-05-14)
 
 Three customer-facing aggregation-drift defects (D086, D087, D091)
