@@ -7,14 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.4.7] - 2026-05-13
+## [2.4.7] - 2026-05-14
 
-Audit-driven release. A critical post-shipment audit on a real-world
-customer codebase (dpl-studio, enterprise C# / 1500+ files / 68 sub-
-projects / 1.6M lines of cloc-counted JSON) surfaced a 17-defect
-cascade rooted in one bug. 2.4.7 closes the credibility-critical
-ones, the visible-UX defects, the cosmetic follow-ups, AND the
-long-deferred D021 (coverage workflow), all on the same branch.
+Two-phase release. **Phase A** (audit-driven hot-patches, originally
+shipped 2026-05-13) closed a 17-defect cascade surfaced by a critical
+post-shipment audit on dpl-studio (enterprise C# / 1500+ files / 68
+sub-projects / 1.6M lines of cloc-counted JSON), plus the long-deferred
+D021 (coverage workflow). **Phase B** (class-fix release, 2026-05-14)
+pivoted from patch shipping to architectural class-fix shipping after
+pre-ship audits on platform and web-client surfaced 12 NEW defects
+(D074–D085), 9 of which were repeated instances of the same disease
+class fixed at different sites.
+
+### Phase B — Class-fix release (2026-05-14)
+
+Two architectural deliverables backed by 4 consumer-site migrations
+and a permanent gate:
+
+- **G_v4_7 — `walkSourceFiles` + `countLineMatches`** (new canonical
+  helpers in `src/analyzers/tools/walk-source-files.ts`). Pure JS,
+  no shell. The web-client D082/D083 silent-zero cascade was caused
+  by `grep -rEf <pat> --include=*.js .` producing 67MB of stdout on
+  minified files, overflowing `run()`'s 64MB ceiling, and returning
+  empty. The walker prunes excluded files at the directory boundary,
+  so grep is never asked to walk `public/build/*.min.js` in the
+  first place. Bumping `maxBuffer` is a moving target — the right
+  answer is "don't pass excluded files to the scanner at all."
+
+- **Consumer migrations onto canonical helpers** (4 sites):
+  - `tools/generic.ts` (commits `3275e1e` + `226a56a`)
+  - `quality/gather.ts` (commit `82e0e75`)
+  - `tests/gather.ts` (commit `753a412`)
+  - `security/gather.ts` TLS-bypass walk (commit `099e844`)
+  Each migration is behavior-preserving by default (e.g. `includeTests: true`
+  preserves pre-migration semantics where the legacy grep matched in
+  test files too).
+
+- **`gatherDebugStatements` shared helper** (commit `e7a8821`).
+  Replaces the two divergent implementations in `health.consoleLogCount`
+  (sum of JS console + Python print + Go fmt.Print across language-
+  scoped walks) and `quality.consoleLogCount` (single console.* pattern
+  across all extensions). After: both reports route through one
+  function — they cannot drift.
+
+- **Architectural gate** (commit `32574e0`) in
+  `scripts/check-architecture.sh`. Blocks new
+  `grep -r{l,n,c,E,f}` calls in production code outside a 4-file
+  allowlist. After this release, the D082/D083 class of bug cannot
+  recur without explicitly bypassing the canonical helpers — which
+  the gate blocks.
+
+### Phase B — Defect closures (D074–D080, D082–D085)
+
+| ID | Severity | Closing commit(s) |
+| --- | --- | --- |
+| D074 — commented-out matches inflate counts | HIGH | `3275e1e` + `82e0e75` + `099e844` + `e7a8821` (`skipComments: true` on print-family / anyType / eval / TLS-bypass) |
+| D075 — sourceFiles cross-report drift | HIGH | `0e71683` + `3275e1e` + `753a412` + `e7a8821` (canonical walker + label alignment) |
+| D076 — dep-vuln count drift health vs BoM | HIGH | `06b0cec` (BoM `totalAdvisories` uses unique fingerprint count) |
+| D077 — dashboard tile drift | MED | closes with D075 |
+| D078 — BoM Risk `**0.0**` for missing CVSS | MED | `46b0d6e` (`computeRiskScore` returns `null` for `cvssScore=0`) |
+| D079 — duplicate grep-count implementations | MED | `82e0e75` + `e7a8821` (shared `gatherDebugStatements`) |
+| D080 — lint dispatcher last-wins | MED | `72cd102` (`gatherWithProvenance` exposes attempted+skipped sources; label reads `"ruff (not run: typescript)"`) |
+| D082 — web-client `consoleLogCount = 0` silent zero | CRITICAL | `0e71683` + `3275e1e` + `e7a8821` (walker prunes minified files at directory boundary) |
+| D083 — `run()` maxBuffer overflow on minified-JS | CRITICAL | `0e71683` + `3275e1e` + `099e844` + `32574e0` |
+| D084 — D082 cascade (anyType, eval) | HIGH | closes with D082/D083 |
+| D085 — web-client dep-count drift | HIGH | `06b0cec` |
+
+**Deferred to 2.4.8**:
+- D081 (`Dead Imports: 0` suspicious) — investigated; root cause is
+  graphify Python script's `dead = imports - calls - module_ids`
+  zeroing out module-style imports. Fix requires a new metric
+  (`unreachableImportCount`) + synthetic tests + threshold tuning.
+- **G_v4_8 full architectural enforcement** — typed gather-result
+  interfaces with explicit field-ownership claims. Narrow D076/D085
+  fix shipped (BoM uses fingerprint count); the typed-contract
+  prevention layer is preventive hardening, not on the convergence-
+  audit gate.
+
+### Phase B — Empirical validation
+
+Convergence audit on three customer repos:
+
+- **dpl-studio**: 1537 source files consistent across health,
+  test-gaps, maintainability dimension; `consoleLogCount=1`,
+  `tlsDisabledCount=1` stable.
+- **platform** (the audit's most-troubled repo): `sourceFiles`
+  converged 447/438/444 → **444 / 444 / 444**;
+  `consoleLogCount` cross-report converged 1578/1555 → **698 / 698**;
+  `tlsDisabledCount` 18 reported / 11 active → **11**; lint label
+  `"ruff"` → `"ruff (not run: typescript)"`.
+- **web-client**: `consoleLogCount` **0 → 1066** (D082/D083 closure;
+  catastrophic silent zero eliminated).
+
+### Phase A — Audit-driven hot-patches (2026-05-13)
+
+The earlier portion of the 2.4.7 release. Same content as below —
+preserved for traceability.
 
 The cascade taught us that test-green ≠ report-correct: all 1091
 tests passed before the audit. Reinforces
