@@ -327,6 +327,8 @@ describe('D023 parity: unified security scorer', () => {
       branch: 'main',
       summary: {
         findings: { critical: 4, high: 4, medium: 0, low: 0, total: 8 },
+        codeOnly: { critical: 4, high: 4, medium: 0, low: 0, total: 8 },
+        secretsOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
         dependencies: {
           critical: 1,
           high: 2,

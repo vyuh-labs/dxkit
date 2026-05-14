@@ -357,6 +357,8 @@ describe('security/actions', () => {
     const clean = securityReport({
       summary: {
         findings: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+        codeOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+        secretsOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
         dependencies: {
           critical: 0,
           high: 0,
