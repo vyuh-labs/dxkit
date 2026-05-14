@@ -182,6 +182,62 @@ if [ -n "$LP_INCLUDE_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# G_v4_7 (2.4.7 class-fix release): no recursive grep on the source tree.
+#
+# What this prevents:
+#   `grep -rEf <pat> --include=*.js .` style content scans that walk the
+#   whole tree producing stdout matched per content line. The web-client
+#   D082/D083 silent-zero cascade traced to this shape — minified files
+#   matched ~11,500 times × ~6KB content = 67MB stdout, overflowing
+#   run()'s 64MB ceiling, returning empty, consoleLogCount fell to 0.
+#
+# What this DOES NOT prevent:
+#   `find . -type f -name '*.cs'` — narrow file enumeration in language
+#   packs (rust/python/go/java/csharp/etc.) for pack-specific purposes
+#   (lint target lists, coverage path discovery). These don't suffer
+#   the maxBuffer issue and have legitimate narrow uses.
+#
+#   `fs.readdirSync` for non-source-enumeration purposes (template-file
+#   copying in generator.ts, project-structure detection in detect.ts,
+#   pack-specific dir scanning) — these aren't the bug class.
+#
+# Canonical replacement: walkSourceFiles + countLineMatches in
+# src/analyzers/tools/walk-source-files.ts — pure JS, no shell, files
+# pruned at directory boundary so excluded content never reaches the
+# scanner.
+G_V4_7_ALLOWLIST="src/analyzers/tools/walk-source-files.ts \
+                  src/analyzers/tools/grep-secrets.ts \
+                  src/analyzers/tools/semgrep.ts \
+                  src/analyzers/tools/gitleaks.ts"
+
+# Pattern: `grep -r{l,n,c,E,f}` shell call inside a run()/execSync()
+# wrapper. The recursive flag (`r`) combined with content matchers
+# (`E`/`f`) is the specific shape that caused D082/D083. Matches
+# canonical orderings: `-rnEf`, `-rcEf`, `-rlEf`, `-rEf`, `-rE`, `-rn`,
+# `-rl`, `-rc`, and `-r ... -E ... -f`. Pure file-listing greps like
+# `grep -l 'package.json' .` don't match because they don't carry both
+# `r` and a content-match flag.
+walker_re_grep="(run|execSync)\\(['\"\`].*grep -[a-zA-Z]*r[a-zA-Z]*[EFf]"
+
+ALLOW_FILTER=""
+for f in $G_V4_7_ALLOWLIST; do
+  ALLOW_FILTER="$ALLOW_FILTER -e ^${f}:"
+done
+
+G_V4_7_VIOLATIONS=$(grep -rnE "$walker_re_grep" src/ 2>/dev/null \
+  | grep -v "// walker-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER" ] && grep -v $ALLOW_FILTER || cat; })
+if [ -n "$G_V4_7_VIOLATIONS" ]; then
+  echo "❌ G_v4_7 violation: recursive grep content-scan outside the canonical helper:"
+  echo "$G_V4_7_VIOLATIONS"
+  echo "   → Route through walkSourceFiles + countLineMatches in src/analyzers/tools/walk-source-files.ts."
+  echo "   → Minified-content / large repos overflow run()'s maxBuffer (D082/D083);"
+  echo "     the canonical helper walks in-process so excluded content never hits a scanner."
+  echo "   → Annotate '// walker-ok' if your case genuinely needs grep (rare; review justification required)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
