@@ -5,11 +5,19 @@
  * 2. Run tools -> gather metrics (deterministic)
  * 3. Score metrics -> formulas (deterministic)
  * 4. Format report -> structured JSON
+ *
+ * Steps 1–2 are wrapped in an `AnalysisResult` and persisted via the
+ * cross-process cache (`src/analyzers/cache.ts`). Step 3 + 4 (scoring
+ * + formatting) run on every call but read from the cached result;
+ * two `vyuh-dxkit health` invocations on the same commit produce
+ * byte-identical reports without re-shelling out to any tool.
  */
 import * as path from 'path';
 import { detect } from '../detect';
 import { DetectedStack } from '../types';
 import { CapabilityReport, HealthMetrics, HealthReport } from './types';
+import type { AnalysisResult, AnalysisResultBody } from '../analysis-result';
+import { readOrBuildAnalysisResult } from './cache';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
@@ -35,7 +43,6 @@ import { scoreSecurityDimension } from './security/shallow';
 import { scoreMaintainabilityDimension } from './maintainability/shallow';
 import { scoreDxDimension } from './dx/shallow';
 import { computeOverall, ScoreInput } from './scoring';
-import { run } from './tools/runner';
 
 /** Default values for all HealthMetrics fields. */
 export function defaultMetrics(): HealthMetrics {
@@ -112,6 +119,33 @@ async function analyzeHealthInternal(
   repoPath: string,
   options: AnalyzeHealthOptions = {},
 ): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
+  const result = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, options),
+  });
+  const report = scoreAndFormatHealth(result);
+  return { report, metrics: result.metrics };
+}
+
+/**
+ * The gather pipeline — everything that produces an `AnalysisResultBody`
+ * for a given repo. Pure with respect to the working tree: same SHA +
+ * same `.dxkit-ignore` + same dxkit version means same output. Scoring
+ * and formatting are deliberately NOT part of this — they live in
+ * `scoreAndFormatHealth` so cache hits skip the tool gather entirely
+ * but still re-render the report (cheap, deterministic, decoupled from
+ * I/O).
+ *
+ * Called by the cache layer (`readOrBuildAnalysisResult`) on a miss.
+ * Exported so other analyzers can drop into the same pattern in
+ * subsequent migrations: each subcommand asks the cache for a
+ * `AnalysisResult`, builder is supplied as `gatherAnalysisResultBody`,
+ * and the subcommand renders its own report from the body.
+ */
+export async function gatherAnalysisResultBody(
+  repoPath: string,
+  options: AnalyzeHealthOptions = {},
+): Promise<AnalysisResultBody> {
   const verbose = !!options.verbose;
 
   // Step 1: Detect stack
@@ -123,7 +157,7 @@ async function analyzeHealthInternal(
 
   // `package.json` metrics: npm-script count + `engines.node` pin. These
   // don't fit any capability (Node-specific by nature) and used to live
-  // in the typescript pack's `gatherMetrics` body; extracted in C.5 into
+  // in the typescript pack's `gatherMetrics` body; extracted later into
   // a direct helper so they survive the per-pack channel deletion.
   const pkg = timed('package.json', verbose, () => gatherPackageJsonMetrics(repoPath));
   metrics.npmScriptsCount = pkg.npmScriptsCount;
@@ -163,10 +197,9 @@ async function analyzeHealthInternal(
     }
   }
 
-  // Phase 10e.C.1: capability envelopes alongside legacy metrics. Dispatched
-  // in parallel; providers the legacy path already ran are served from the
-  // dispatcher cache (free). Scorers read capability-owned fields from this
-  // bundle (C.2).
+  // Capability envelopes alongside legacy metrics. Dispatched in parallel;
+  // providers the legacy path already ran are served from the dispatcher
+  // cache (free). Scorers read capability-owned fields from this bundle.
   const capabilities = await timedAsync('capabilities', verbose, () =>
     gatherCapabilityReport(repoPath),
   );
@@ -174,13 +207,26 @@ async function analyzeHealthInternal(
   // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
   // clippy, cargo-audit, golangci-lint, govulncheck, dotnet-format,
   // dotnet-vulnerable) into `metrics.toolsUsed` from the LINT + DEP_VULNS
-  // envelopes. Pre-C.5 these came from each pack's `gatherMetrics`; now
-  // they come from the dispatcher's already-computed `tool` field.
+  // envelopes. Sourced from the dispatcher's already-computed `tool` field
+  // rather than each pack's gather body.
   for (const name of toolsFromCapabilities(capabilities)) {
     if (!metrics.toolsUsed.includes(name)) metrics.toolsUsed.push(name);
   }
 
-  // Step 3: Score
+  return { stack, capabilities, metrics };
+}
+
+/**
+ * Score the six dimensions and format the result into a `HealthReport`.
+ * Pure function over a cached `AnalysisResult` — no I/O, no tool
+ * shell-outs. Provenance fields (commitSha, branch, analyzedAt) come
+ * directly from the cached result, which means two `health` calls on
+ * the same commit produce reports with the SAME `analyzedAt`
+ * timestamp: it's "when this gather was built," not "when this read
+ * happened." That's the cross-process-consistency contract.
+ */
+export function scoreAndFormatHealth(result: AnalysisResult): HealthReport {
+  const { stack, capabilities, metrics } = result;
   const scoreInput: ScoreInput = { metrics, capabilities };
   const dimensions = {
     testing: scoreTestsDimension(scoreInput),
@@ -192,15 +238,11 @@ async function analyzeHealthInternal(
   };
   const { overallScore, grade } = computeOverall(dimensions);
 
-  // Step 4: Format report
-  const commitSha = run('git rev-parse --short HEAD 2>/dev/null', repoPath);
-  const branch = run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath);
-
-  const report: HealthReport = {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha,
-    branch,
+  return {
+    repo: stack.projectName || path.basename(result.cwd),
+    analyzedAt: result.builtAt,
+    commitSha: result.commitSha,
+    branch: result.branch,
     summary: { overallScore, grade },
     dimensions,
     languages: metrics.languages,
@@ -209,7 +251,6 @@ async function analyzeHealthInternal(
     toolsUnavailable: metrics.toolsUnavailable,
     capabilities,
   };
-  return { report, metrics };
 }
 
 /**

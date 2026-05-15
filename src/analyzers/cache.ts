@@ -266,19 +266,52 @@ function gitRevParse(cwd: string, ...args: string[]): string {
 
 function isWorkingTreeDirty(cwd: string): boolean {
   try {
-    const out = execSync('git status --porcelain', {
+    // `--untracked-files=all` expands every untracked file to its own
+    // line. The default behavior collapses an untracked directory to
+    // a single entry for its parent — which would hide a nested
+    // `.dxkit/` under a non-dxkit collapsed parent and leak it past
+    // the segment filter below. `=all` is also resilient to git's
+    // future grouping rules.
+    const out = execSync('git status --porcelain --untracked-files=all', {
       cwd,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
     });
-    return out.trim().length > 0;
+    // `.dxkit/` (analysis reports + this cache file + dashboard
+    // renders) and `.dxkit-ignore` (dxkit's own config file) are
+    // dxkit-owned paths. Untracked entries for either — at ANY depth
+    // in the tree — can't invalidate the cache the cache itself
+    // populates. Customer repos that haven't added `.dxkit/` to their
+    // `.gitignore` would otherwise always look dirty and the cache
+    // would never persist across processes. Nested cases matter too:
+    // a monorepo may have analysis state at `Code/Source/.dxkit/`
+    // alongside the root `.dxkit/`, and both should be filtered.
+    //
+    // Narrow exclusion — anything else under the tree (new source
+    // files, build artifacts, editor state) still flags dirty
+    // because it CAN change gather output. We match exact path
+    // segments to avoid masking unrelated names that merely contain
+    // the substring (e.g. a hypothetical `my.dxkit.json` file would
+    // not match the `.dxkit` segment check).
+    const lines = out.split('\n').filter((line) => {
+      if (!line.trim()) return false;
+      const m = /^\?\? (.+)$/.exec(line);
+      if (!m) return true;
+      const segments = stripTrailingSlash(m[1]).split('/');
+      return !segments.some((seg) => seg === '.dxkit' || seg === '.dxkit-ignore');
+    });
+    return lines.length > 0;
   } catch {
     // Not in a git repo (or git missing) — treat as dirty so we never
     // persist a result we can't invalidate by SHA. Same posture as the
     // dirty-tree path: in-memory cache still applies.
     return true;
   }
+}
+
+function stripTrailingSlash(p: string): string {
+  return p.endsWith('/') ? p.slice(0, -1) : p;
 }
 
 function readIgnoreFileMtime(cwd: string): number | null {

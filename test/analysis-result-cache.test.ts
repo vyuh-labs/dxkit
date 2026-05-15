@@ -21,11 +21,13 @@
  * "was this a hit or a miss?".
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
   readOrBuildAnalysisResult,
+  resolveProvenance,
   clearInMemoryCache,
   type ResolvedProvenance,
 } from '../src/analyzers/cache';
@@ -412,7 +414,6 @@ describe('readOrBuildAnalysisResult', () => {
       }),
     ).rejects.toThrow(/first attempt fails/);
 
-    // Second call should re-attempt rather than re-throwing the cached error.
     const result = await readOrBuildAnalysisResult({
       cwd: tmp,
       build,
@@ -420,5 +421,90 @@ describe('readOrBuildAnalysisResult', () => {
     });
     expect(attempts).toBe(2);
     expect(result.commitSha).toBe(provenance.commitSha);
+  });
+});
+
+describe('resolveProvenance (real git)', () => {
+  it('reports a clean tree as not dirty', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    const provenance = resolveProvenance(tmp);
+    expect(provenance.workingTreeDirty).toBe(false);
+    expect(provenance.commitSha.length).toBeGreaterThan(0);
+  });
+
+  it('ignores an untracked .dxkit/ directory when deciding dirty', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    // The cache writes here on every build; if its own writes flipped
+    // the tree to "dirty" the cache would never persist across
+    // processes on a customer repo that hasn't gitignored `.dxkit/`.
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'reports'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.dxkit', 'cache', 'analysis-result-abc.json'), '{}');
+    fs.writeFileSync(path.join(tmp, '.dxkit', 'reports', 'health.md'), '');
+
+    const provenance = resolveProvenance(tmp);
+    expect(provenance.workingTreeDirty).toBe(false);
+  });
+
+  it('ignores nested .dxkit/ directories at any depth', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    // Monorepo shape: analysis state can land at the root AND inside
+    // sub-projects (e.g. a `Code/Source/.dxkit/` alongside a root
+    // `.dxkit/`). Filter must catch the `.dxkit` segment at any depth,
+    // otherwise dxkit's own output flips the tree dirty.
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'Code', 'Source', '.dxkit', 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'Code', 'Source', 'Dev', 'Core', 'BinaryStore', '.dxkit'), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(tmp, 'Code', 'Source', '.dxkit-ignore'), 'vendor/\n');
+
+    const provenance = resolveProvenance(tmp);
+    expect(provenance.workingTreeDirty).toBe(false);
+  });
+
+  it('still reports dirty when a real source file is untracked', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    // The filter is narrow — only `.dxkit/` is excluded. A new source
+    // file outside `.dxkit/` is still relevant to gather output and
+    // must trip the dirty flag so we don't persist a stale cache.
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'cache'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.dxkit', 'cache', 'analysis-result-abc.json'), '{}');
+    fs.writeFileSync(path.join(tmp, 'new-source.ts'), '// new');
+
+    const provenance = resolveProvenance(tmp);
+    expect(provenance.workingTreeDirty).toBe(true);
+  });
+
+  it('reports dirty when a tracked file has uncommitted changes', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'modified');
+    const provenance = resolveProvenance(tmp);
+    expect(provenance.workingTreeDirty).toBe(true);
   });
 });
