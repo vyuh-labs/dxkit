@@ -1149,14 +1149,8 @@ function findCsharpLicenseInput(cwd: string): string | null {
   }
   const sln = entries.find((e) => e.isFile() && e.name.endsWith('.sln'));
   if (sln) return path.join(cwd, sln.name);
-  // Fall back to first .csproj reachable. Depth must match the
-  // pack's top-level `detect()` walk (depth 5 since the deep-nested
-  // .NET solution work) — enterprise layouts like
-  // `Code/Source/Dev/<Module>/<Module>.csproj` live at depth 5 from
-  // the repo root. A shallower limit makes the licenses gather
-  // silently return "no manifest" on repos that the pack itself
-  // confirms is C#.
-  return findMatchingRecursive(cwd, /\.csproj$/, 5);
+  // Fall back to first .csproj reachable within the standard depth.
+  return findMatchingRecursive(cwd, /\.csproj$/, 3);
 }
 
 /**
