@@ -41,12 +41,24 @@ describe('csharp.detect', () => {
     expect(csharp.detect(tmp)).toBe(true);
   });
 
-  // Boundary regression guard: a .csproj at depth 6 should NOT match, so
-  // a future tweak that quietly removes the depth cap is caught.
-  it('does NOT detect a .csproj nested at depth 6', () => {
+  // Recipe-hardened contract: manifest discovery is depth-unlimited
+  // via the canonical walker. Real customer monorepos (dpl-studio:
+  // .csproj files at depths 6–9) need this; the previous depth-5 cap
+  // misclassified them as non-.NET. The walker still honors
+  // `.gitignore` + bundled excludes (node_modules, bin, obj,
+  // packages, vendor), so this isn't a free pass — anything excluded
+  // still gets pruned at the directory boundary.
+  it('detects a .csproj nested arbitrarily deep (depth 6+)', () => {
     const deeper = path.join(tmp, 'a', 'b', 'c', 'd', 'e', 'f');
     fs.mkdirSync(deeper, { recursive: true });
     fs.writeFileSync(path.join(deeper, 'Project.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(true);
+  });
+
+  it('does NOT detect a .csproj inside an excluded directory (node_modules)', () => {
+    const inside = path.join(tmp, 'node_modules', 'some-pkg', 'fixture');
+    fs.mkdirSync(inside, { recursive: true });
+    fs.writeFileSync(path.join(inside, 'Bogus.csproj'), '');
     expect(csharp.detect(tmp)).toBe(false);
   });
 

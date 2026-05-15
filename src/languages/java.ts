@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -33,28 +34,10 @@ import type { LanguageSupport, LintSeverity } from './types';
  * a full filesystem scan (build/, target/, .gradle/, node_modules/
  * are pruned).
  */
-function hasJavaSourceWithinDepth(cwd: string, maxDepth = 5): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'build', '.gradle', 'target', 'out'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.java')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasJavaSource(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-5
+  // cap missed deep monorepos with multi-module Maven/Gradle layouts.
+  return walkPaths(cwd, { extensions: ['.java'] }).length > 0;
 }
 
 /**
@@ -78,7 +61,7 @@ function detectJava(cwd: string): boolean {
   // Standard Maven/Gradle Java layout — directory name is the signal.
   if (fs.existsSync(path.join(cwd, 'src', 'main', 'java'))) return true;
   // Otherwise require actual `.java` source presence.
-  return hasJavaSourceWithinDepth(cwd, 5);
+  return hasJavaSource(cwd);
 }
 
 // ─── Imports (regex extraction, no resolver) ───────────────────────────────
@@ -299,7 +282,7 @@ export function parsePmdOutput(raw: string): SeverityCounts {
  */
 function gatherJavaLintResult(cwd: string): LintGatherOutcome {
   // Activation gate — match detectJava (no pom.xml-alone trigger).
-  if (!fs.existsSync(path.join(cwd, 'src', 'main', 'java')) && !hasJavaSourceWithinDepth(cwd, 5)) {
+  if (!fs.existsSync(path.join(cwd, 'src', 'main', 'java')) && !hasJavaSource(cwd)) {
     return { kind: 'unavailable', reason: 'no java source' };
   }
   const pmd = findTool(TOOL_DEFS.pmd, cwd);

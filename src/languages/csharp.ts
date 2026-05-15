@@ -14,6 +14,7 @@ import { parseOsvScannerFindings } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -44,46 +45,29 @@ function dirHasMatching(dir: string, regex: RegExp): boolean {
   }
 }
 
-function findMatchingRecursive(cwd: string, regex: RegExp, maxDepth = 3): string | null {
-  function search(dir: string, depth: number): string | null {
-    if (depth > maxDepth) return null;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return null;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'bin', 'obj', 'TestResults', 'packages'].includes(e.name)
-      ) {
-        continue;
-      }
-      const full = path.join(dir, e.name);
-      if (e.isFile() && regex.test(e.name)) return full;
-      if (e.isDirectory()) {
-        const nested = search(full, depth + 1);
-        if (nested) return nested;
-      }
-    }
-    return null;
-  }
-  return search(cwd, 0);
-}
-
 function findCoberturaArtifact(cwd: string): string | null {
   // Common layouts:
   //   coverage/coverage.cobertura.xml        (explicit run)
   //   TestResults/<guid>/coverage.cobertura.xml  (default `dotnet test --collect`)
+  //
+  // The canonical walker rightly excludes `TestResults/` (a build-
+  // output subtree) from manifest/source discovery, but here we need
+  // to look INSIDE it. We run the walker scoped to the TestResults
+  // directory itself with `respectIgnore: false` so the bundled
+  // excludes don't fire — we're starting from inside the very subtree
+  // they were meant to prune. Depth-unlimited so future tooling that
+  // nests artifacts deeper than today's `TestResults/<guid>/` shape
+  // still finds them.
   const top = path.join(cwd, 'coverage', 'coverage.cobertura.xml');
   if (fs.existsSync(top)) return top;
   const testResults = path.join(cwd, 'TestResults');
-  if (fs.existsSync(testResults)) {
-    const nested = findMatchingRecursive(testResults, /coverage\.cobertura\.xml$/, 4);
-    if (nested) return nested;
-  }
-  return null;
+  if (!fs.existsSync(testResults)) return null;
+  const matches = walkPaths(testResults, {
+    extensions: ['.xml'],
+    respectIgnore: false,
+  }).filter((rel) => rel.endsWith('coverage.cobertura.xml'));
+  if (matches.length === 0) return null;
+  return path.join(testResults, matches[0]);
 }
 
 function round1(n: number): number {
@@ -417,41 +401,20 @@ export function buildCsharpTopLevelDepIndex(parsed: {
  *
  * Exported for test coverage.
  */
-export function findAllProjectAssetsJson(cwd: string, maxDepth = 4): string[] {
+export function findAllProjectAssetsJson(cwd: string): string[] {
+  // Project-anchored discovery: every `obj/project.assets.json` sits
+  // next to a `.csproj`. Find every `.csproj` via the canonical walker
+  // (depth-unlimited, exclusion-aware), then probe each project's
+  // `obj/project.assets.json` directly. This replaces a parallel
+  // depth-capped walker that missed deep monorepos (dpl-studio's
+  // .csproj files sit 6–9 levels under repo root) and naturally
+  // inherits the same `.gitignore` / `.dxkit-ignore` / standard
+  // exclusion rules every other dxkit walker honors.
   const out: string[] = [];
-  function search(dir: string, depth: number): void {
-    if (depth > maxDepth) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    // Direct-child shortcut: if this directory is `obj`, collect the
-    // file right here before recursing siblings. Skipping recursion
-    // into `obj/` keeps the walk bounded (obj/ contains no deeper
-    // projects of its own).
-    if (path.basename(dir) === 'obj') {
-      for (const e of entries) {
-        if (e.isFile() && e.name === 'project.assets.json') {
-          out.push(path.join(dir, e.name));
-        }
-      }
-      return;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'bin', 'TestResults', 'packages'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isDirectory()) {
-        search(path.join(dir, e.name), depth + 1);
-      }
-    }
+  for (const csproj of findAllCsprojFiles(cwd)) {
+    const assets = path.join(path.dirname(csproj), 'obj', 'project.assets.json');
+    if (fs.existsSync(assets)) out.push(assets);
   }
-  search(cwd, 0);
   return out;
 }
 
@@ -468,33 +431,8 @@ export function findAllProjectAssetsJson(cwd: string, maxDepth = 4): string[] {
  *
  * Exported for test coverage.
  */
-export function findAllCsprojFiles(cwd: string, maxDepth = 5): string[] {
-  const out: string[] = [];
-  function search(dir: string, depth: number): void {
-    if (depth > maxDepth) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'bin', 'obj', 'TestResults', 'packages'].includes(e.name)
-      ) {
-        continue;
-      }
-      const full = path.join(dir, e.name);
-      if (e.isFile() && /\.csproj$/i.test(e.name)) {
-        out.push(full);
-      } else if (e.isDirectory()) {
-        search(full, depth + 1);
-      }
-    }
-  }
-  search(cwd, 0);
-  return out;
+export function findAllCsprojFiles(cwd: string): string[] {
+  return walkPaths(cwd, { extensions: ['.csproj'] }).map((rel) => path.join(cwd, rel));
 }
 
 /**
@@ -895,7 +833,8 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
  */
 function hasCsharpProject(cwd: string): boolean {
   return (
-    dirHasMatching(cwd, /\.(sln|csproj)$/) || findMatchingRecursive(cwd, /\.csproj$/, 5) !== null
+    dirHasMatching(cwd, /\.(sln|csproj)$/) ||
+    walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0
   );
 }
 
@@ -1010,10 +949,10 @@ function runCsharpTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
         return path.relative(cwd, abs).split(path.sep).join('/');
       },
       preflight: (cwd) => {
-        const hasCsproj =
-          dirHasMatching(cwd, /\.csproj$/i) || !!findMatchingRecursive(cwd, /\.csproj$/i, 3);
-        const hasSln = dirHasMatching(cwd, /\.sln$/i);
-        if (!hasCsproj && !hasSln) {
+        const hasManifest =
+          dirHasMatching(cwd, /\.(sln|csproj)$/i) ||
+          walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0;
+        if (!hasManifest) {
           return 'no .csproj or .sln in this directory tree — not a .NET project';
         }
         return null;
@@ -1098,7 +1037,8 @@ const csharpImportsProvider: CapabilityProvider<ImportsResult> = {
  * `.csproj` referencing these returns null.
  */
 function gatherCsharpTestFrameworkResult(cwd: string): TestFrameworkResult | null {
-  const hasCsproj = fileExists(cwd, '*.csproj') || !!findMatchingRecursive(cwd, /\.csproj$/, 3);
+  const hasCsproj =
+    fileExists(cwd, '*.csproj') || walkPaths(cwd, { extensions: ['.csproj'] }).length > 0;
   if (!hasCsproj) return null;
 
   const csproj = run(
@@ -1140,17 +1080,21 @@ interface NugetLicenseEntry {
  * or null — callers skip cleanly on null.
  */
 function findCsharpLicenseInput(cwd: string): string | null {
-  // .sln in root first — one pass over the whole solution.
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(cwd, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  const sln = entries.find((e) => e.isFile() && e.name.endsWith('.sln'));
-  if (sln) return path.join(cwd, sln.name);
-  // Fall back to first .csproj reachable within the standard depth.
-  return findMatchingRecursive(cwd, /\.csproj$/, 3);
+  // Prefer a `.sln` (covers every csproj in the solution in one
+  // nuget-license pass) over a single `.csproj`. Within each kind,
+  // pick the shallowest match — closest to repo root is the most
+  // likely "primary" manifest. Depth-unlimited via the canonical
+  // walker, so deep monorepos (manifests 6–9 levels under repo root)
+  // discover them where prior hard depth caps silently missed.
+  const manifests = walkPaths(cwd, { extensions: ['.csproj', '.sln'] });
+  if (manifests.length === 0) return null;
+  manifests.sort((a, b) => {
+    const aIsSln = a.endsWith('.sln') ? 0 : 1;
+    const bIsSln = b.endsWith('.sln') ? 0 : 1;
+    if (aIsSln !== bIsSln) return aIsSln - bIsSln;
+    return a.split('/').length - b.split('/').length;
+  });
+  return path.join(cwd, manifests[0]);
 }
 
 /**
@@ -1410,7 +1354,8 @@ export const csharp: LanguageSupport = {
     // `Code/Source/Dev/Core/<Module>/<Module>.csproj` (D024 / dpl-studio).
     // Lower limits silently miss these from the repo root.
     return (
-      dirHasMatching(cwd, /\.(sln|csproj)$/) || findMatchingRecursive(cwd, /\.csproj$/, 5) !== null
+      dirHasMatching(cwd, /\.(sln|csproj)$/) ||
+      walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0
     );
   },
 

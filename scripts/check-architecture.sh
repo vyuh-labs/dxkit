@@ -378,6 +378,33 @@ if [ -n "$PATH_RENDER_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# G_v4_12: language packs must use the canonical depth-unlimited walker
+# (`walkPaths` from `src/analyzers/tools/walk-paths.ts`) for manifest
+# and source-file discovery. Hardcoded `maxDepth` parameters and direct
+# recursive `fs.readdirSync` walkers in `src/languages/*.ts` silently
+# missed real customer monorepos — dpl-studio's C# projects sit 6–9
+# levels under repo root, well past every previous per-pack cap
+# (python 2, csharp 3, kotlin 3, java 5, ruby 5). The canonical walker
+# closes the class by removing depth caps entirely; this gate stops
+# the pattern from re-appearing in any new pack.
+#
+# Annotate `// canonical-walker-ok` for justified exceptions (the
+# walker module itself, a probe that explicitly targets a build-output
+# subtree that would otherwise be excluded, etc.).
+DEPTH_VIOLATIONS=$(grep -rnE "maxDepth[[:space:]]*=[[:space:]]*[0-9]+|depth[[:space:]]*>[[:space:]]*[0-9]+" src/languages/ 2>/dev/null \
+  | grep -v "// canonical-walker-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$DEPTH_VIOLATIONS" ]; then
+  echo "❌ Depth-capped walker in language pack:"
+  echo "$DEPTH_VIOLATIONS"
+  echo "   → Use walkPaths from src/analyzers/tools/walk-paths.ts."
+  echo "     Depth-unlimited + exclusion-aware. Closes the class of"
+  echo "     'manifest deeper than my hardcoded cap' regressions."
+  echo "   → Annotate '// canonical-walker-ok' for justified exceptions"
+  echo "     (the walker module itself, build-artifact subtree probes)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

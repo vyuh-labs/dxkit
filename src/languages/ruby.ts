@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -30,29 +31,10 @@ import type { LanguageSupport, LintSeverity } from './types';
  * over-activates on mixed-stack repos and scaffolded-but-empty projects.
  * The pack only matters when there is actual Ruby source to analyze.
  */
-function hasRubySourceWithinDepth(cwd: string, maxDepth = 5): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (e.name.startsWith('.') || ['node_modules', 'vendor', 'tmp', 'log'].includes(e.name)) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.rb')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
-}
-
 function detectRuby(cwd: string): boolean {
-  return hasRubySourceWithinDepth(cwd, 5);
+  // Depth-unlimited via the canonical walker. The previous depth-5
+  // cap missed nested Ruby projects in monorepos and engines layouts.
+  return walkPaths(cwd, { extensions: ['.rb'] }).length > 0;
 }
 
 // ─── Imports (regex extraction, no resolver) ────────────────────────────────

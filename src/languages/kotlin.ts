@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
@@ -31,28 +32,11 @@ import type { LanguageSupport, LintSeverity } from './types';
  * (rare but possible for libraries vendored as plain `src/` trees) and
  * mixed JVM monorepos where Kotlin sits beside Java/Scala.
  */
-function hasKotlinSourceWithinDepth(cwd: string, maxDepth = 3): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'build', '.gradle', 'target'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && (e.name.endsWith('.kt') || e.name.endsWith('.kts'))) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasKotlinSource(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-3
+  // cap missed deep mixed-JVM monorepos. Honors `.gitignore` +
+  // bundled excludes (`build`, `.gradle`, `target`, …).
+  return walkPaths(cwd, { extensions: ['.kt', '.kts'] }).length > 0;
 }
 
 function detectKotlin(cwd: string): boolean {
@@ -62,7 +46,7 @@ function detectKotlin(cwd: string): boolean {
     fileExists(cwd, 'build.gradle') ||
     fileExists(cwd, 'settings.gradle') ||
     fileExists(cwd, 'gradlew') ||
-    hasKotlinSourceWithinDepth(cwd, 3)
+    hasKotlinSource(cwd)
   );
 }
 
@@ -159,7 +143,7 @@ export function parseDetektCheckstyleXml(raw: string): SeverityCounts {
  * a missing/unparseable XML is treated as `unavailable`.
  */
 function gatherKotlinLintResult(cwd: string): LintGatherOutcome {
-  if (!hasKotlinBuildManifest(cwd) && !hasKotlinSourceWithinDepth(cwd, 3)) {
+  if (!hasKotlinBuildManifest(cwd) && !hasKotlinSource(cwd)) {
     return { kind: 'unavailable', reason: 'no kotlin source' };
   }
   const detekt = findTool(TOOL_DEFS.detekt, cwd);

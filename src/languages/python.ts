@@ -5,6 +5,7 @@ import { type Coverage, type FileCoverage, round1, toRelative } from '../analyze
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -69,28 +70,12 @@ function toRel(abs: string, cwd: string): string {
   return path.relative(cwd, abs).split(path.sep).join('/');
 }
 
-function hasPyFileWithinDepth(cwd: string, maxDepth = 2): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'vendor', 'bin', 'obj', 'target'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.py')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasPyFile(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-2
+  // cap missed real Python monorepos (e.g. `services/<svc>/src/*.py`
+  // layouts) and was a per-pack instance of the same class of bug
+  // that the C# pack's depth-3/4/5 caps surfaced on dpl-studio.
+  return walkPaths(cwd, { extensions: ['.py'] }).length > 0;
 }
 
 /**
@@ -997,7 +982,7 @@ export const python: LanguageSupport = {
       fileExists(cwd, 'setup.py') ||
       fileExists(cwd, 'requirements.txt') ||
       fileExists(cwd, 'Pipfile') ||
-      hasPyFileWithinDepth(cwd, 2)
+      hasPyFile(cwd)
     );
   },
 
