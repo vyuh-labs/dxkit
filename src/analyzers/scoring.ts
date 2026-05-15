@@ -185,8 +185,22 @@ export function scoreQuality(input: ScoreInput): DimensionScore {
       typeErrors: m.typeErrors,
     },
     details:
-      `${lintErrors} lint errors, ${lintWarnings} warnings` +
-      (lintTool ? ` (${lintTool})` : '') +
+      // Split the lint label into its successful-run name plus a separate
+      // "Linter coverage gap" sentence when packs were attempted but
+      // returned null silently. The parenthetical "(ruff (not run: ts))"
+      // shape was easy to miss in the rendered prose.
+      (() => {
+        if (!lintTool) return `${lintErrors} lint errors, ${lintWarnings} warnings`;
+        const notRunMatch = /\(not run: ([^)]+)\)/.exec(lintTool);
+        if (!notRunMatch) {
+          return `${lintErrors} lint errors, ${lintWarnings} warnings (${lintTool})`;
+        }
+        const cleanTool = lintTool.replace(/\s*\(not run: [^)]+\)/, '').trim();
+        return (
+          `${lintErrors} lint errors, ${lintWarnings} warnings (${cleanTool})` +
+          `. ⚠ Linter coverage gap: ${notRunMatch[1]} not run`
+        );
+      })() +
       `. ${m.filesOver500Lines} files exceed 500 lines` +
       `. Largest file: ${m.largestFilePath} (${m.largestFileLines} lines)` +
       `. ${m.consoleLogCount} console/debug statements` +

@@ -184,9 +184,26 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
         : 'unavailable — install `cloc`'
     } |`,
   );
+  // Split the lint label into "Lint Errors" (counts + tool that ran) and
+  // "Lint Coverage" (which packs WERE attempted but didn't produce
+  // findings). Pre-split, multi-pack repos where one provider returned
+  // null silently rendered the parenthetical "(ruff (not run: typescript))"
+  // — accurate but easy for customers to miss. Promoting the not-run
+  // packs to their own visible row makes the coverage gap legible.
+  const notRunMatch = m.lintTool ? /\(not run: ([^)]+)\)/.exec(m.lintTool) : null;
+  const lintToolLabel = m.lintTool
+    ? notRunMatch
+      ? m.lintTool.replace(/\s*\(not run: [^)]+\)/, '').trim()
+      : m.lintTool
+    : null;
   L.push(
-    `| Lint Errors | ${m.lintErrors} errors, ${m.lintWarnings} warnings${m.lintTool ? ' (' + m.lintTool + ')' : ''} |`,
+    `| Lint Errors | ${m.lintErrors} errors, ${m.lintWarnings} warnings${lintToolLabel ? ' (' + lintToolLabel + ')' : ''} |`,
   );
+  if (notRunMatch) {
+    L.push(
+      `| ⚠ Lint coverage gap | not run on: ${notRunMatch[1]} — configure the linter (e.g. add \`eslint.config.js\`) to enable |`,
+    );
+  }
   L.push(`| TODO/FIXME/HACK | ${m.todoCount} / ${m.fixmeCount} / ${m.hackCount} |`);
   L.push(`| Console Statements | ${m.consoleLogCount} |`);
   L.push(
