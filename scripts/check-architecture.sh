@@ -329,6 +329,55 @@ if [ -n "$G_V4_10_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Path-render enforcement: renderer/analyzer code cannot emit absolute
+# filesystem paths in string literals.
+#
+# What this prevents:
+#   Customer-facing reports leaking the auditor's home directory or
+#   username via lines like `Densest file: /home/<auditor>/projects/...`.
+#   Runtime path normalization lives in src/analyzers/tools/paths.ts —
+#   each tool wrapper that consumes external-tool output normalizes via
+#   `toProjectRelative(cwd, file)` before the path enters the envelope.
+#
+# What this DOES NOT prevent:
+#   Runtime values bubbling through un-normalized (the gate is static).
+#   The defense in depth is the normalize-at-gather pattern + this gate
+#   for accidental literal slips.
+#
+# Allowlist:
+#   - tool-registry.ts: legitimate brew/system probe paths (e.g.
+#     `/home/linuxbrew/.linuxbrew/bin`) used to discover binaries. These
+#     never reach customer-facing output.
+PATH_RENDER_ALLOWLIST="src/analyzers/tools/tool-registry.ts"
+
+# Pattern: absolute-path literals shaped /home/<seg>/ or /Users/<seg>/
+# inside a string literal (single/double/backtick). Username-shaped
+# segment after the prefix prevents matching neutral references like
+# `/home/page` (a URL path) — only filesystem-shaped username paths
+# trigger.
+path_render_re="['\"\`](/home/|/Users/)[A-Za-z0-9_.-]+/"
+
+ALLOW_FILTER_PR=""
+for f in $PATH_RENDER_ALLOWLIST; do
+  ALLOW_FILTER_PR="$ALLOW_FILTER_PR -e ^${f}:"
+done
+
+PATH_RENDER_VIOLATIONS=$(grep -rnE "$path_render_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// path-render-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_PR" ] && grep -v $ALLOW_FILTER_PR || cat; })
+if [ -n "$PATH_RENDER_VIOLATIONS" ]; then
+  echo "❌ Path-render violation: absolute-path literal in analyzer code:"
+  echo "$PATH_RENDER_VIOLATIONS"
+  echo "   → Customer reports must never contain the auditor's home dir / username."
+  echo "   → Runtime path normalization lives in src/analyzers/tools/paths.ts"
+  echo "     (toProjectRelative). Each tool wrapper normalizes its output before"
+  echo "     the path enters the report envelope."
+  echo "   → Annotate '// path-render-ok' if your case is a justified exception"
+  echo "     (probe paths, error messages with hard-coded system locations, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
