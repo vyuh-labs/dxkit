@@ -15,12 +15,12 @@
  */
 
 import * as path from 'path';
-import { detect } from '../../detect';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { collectFingerprints } from '../tools/fingerprint';
-import { run } from '../tools/runner';
 import { gatherDepVulns } from '../security/gather';
 import { discoverProjectRoots } from './discovery';
-import { buildByTopLevelDep, gatherBomEntries, mergeNestedBomEntries } from './gather';
+import { buildByTopLevelDep, gatherBomEntries } from './gather';
 import { licenseClass, stalenessTier, type LicenseClass } from './pm-signals';
 import type { BomEntry, BomReport, BomSeverity } from './types';
 
@@ -38,23 +38,53 @@ export interface AnalyzeBomOptions {
    *  29 transitive rows themselves are hidden. Entries with
    *  `isTopLevel === false` are dropped; `undefined` passes through. */
   filter?: BomFilter;
-  /** When `true` (default), walk the repo and aggregate every sub-project
-   *  root with a language manifest. Closes D001a: `bom platform/` would
-   *  previously miss `platform/userserver/` entirely. Set `false` to
-   *  restore the pre-10h.5.0b root-only behavior (useful when the caller
-   *  has already narrowed to a single project and wants to avoid the
-   *  walk cost / cross-root merge). */
-  nested?: boolean;
 }
 
 export async function analyzeBom(
   repoPath: string,
   options: AnalyzeBomOptions = {},
 ): Promise<BomReport> {
-  const stack = detect(repoPath);
-  const nested = options.nested ?? true;
-  const gatherResult = nested ? await gatherNested(repoPath) : await gatherBomEntries(repoPath);
-  const { entries: rawEntries, toolsUsed, toolsUnavailable, projectRoots } = gatherResult;
+  const verbose = !!options.verbose;
+  // Single canonical license inventory shared with `health` and the
+  // `licenses` subcommand. Pulling from the cache means the package
+  // universe one consumer sees is the package universe every consumer
+  // sees — closes the cross-consumer drift class where each surface
+  // independently walked the tree (and disagreed at depth/exclusion
+  // boundaries).
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack, capabilities } = cacheResult;
+  const cachedLicenses = capabilities.licenses ?? null;
+
+  // Dep-vulns are gathered independently for the enriched per-finding
+  // metadata (EPSS / KEV / reachable / composite riskScore). The cache
+  // intentionally carries only the basic envelope so `health` doesn't
+  // pay for enrichment roundtrips it never surfaces; BoM (and the
+  // standalone vuln-scan) opt in. Severity buckets and unique-fingerprint
+  // counts already align across consumers via the cached
+  // `securityAggregate`.
+  const enrichedDepVulns = await gatherDepVulns(repoPath);
+
+  // Single repo-root gather. The license inventory is now a pre-built
+  // canonical envelope from the cache, so per-sub-root iteration would
+  // re-traverse the same package universe — the cache's licenses
+  // already represents the whole tree.
+  const gatherResult = await gatherBomEntries(repoPath, {
+    licensesOverride: cachedLicenses,
+    depVulnsOverride: enrichedDepVulns,
+  });
+  const { entries: rawEntries, toolsUsed, toolsUnavailable } = gatherResult;
+
+  // Informational project-roots listing. Customers who run BoM on a
+  // monorepo expect to see "we scanned across 12 sub-projects" in the
+  // summary even though the package universe now comes from one
+  // canonical gather. Computed here rather than at the gather layer
+  // because the gather is now strictly single-root.
+  const projectRoots = discoverProjectRoots(repoPath)
+    .map((p) => path.relative(repoPath, p) || '.')
+    .sort();
 
   // byTopLevelDep must be built from the full entry set so the rollup
   // continues to reflect the complete blast radius of upgrading each
@@ -94,10 +124,10 @@ export async function analyzeBom(
   const totalAdvisories = fingerprints.length;
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     schemaVersion: '1',
     summary: {
       totalPackages: entries.length,
@@ -116,42 +146,6 @@ export async function analyzeBom(
     toolsUsed,
     toolsUnavailable,
   };
-}
-
-/**
- * Run gatherBomEntries against every discovered project root and
- * merge. When only one root is found (single-project repos, the
- * common case), short-circuits to a normal gather with
- * `projectRoots: ["."]` — zero overhead beyond the directory walk.
- *
- * D107 closure (C1.8): dep-vulns are gathered ONCE at the repo root
- * and shared across every per-sub-root entry-builder via the
- * `depVulnsOverride` option. Pre-fix BoM called `gatherDepVulns`
- * per-sub-root and the csharp pack's cwd-sensitive routing produced
- * different totals at different cwds (dpl-studio: 0 advisories per
- * sub-root via stale `dotnet list package` vs 2 advisories at
- * repo-root via osv-scanner-nuget-direct fallback). License-side
- * stays per-sub-root — license inventories are legitimately
- * per-project.
- */
-async function gatherNested(
-  repoPath: string,
-): Promise<ReturnType<typeof gatherBomEntries> extends Promise<infer T> ? T : never> {
-  const absRoots = discoverProjectRoots(repoPath);
-  // Single canonical dep-vulns gather at the repo root. Shared across
-  // every per-sub-root entry-builder so the dep-vuln set is identical
-  // regardless of which sub-root attribution the entry receives.
-  const depVulnsOverride = await gatherDepVulns(repoPath);
-  if (absRoots.length <= 1) {
-    return gatherBomEntries(repoPath, { depVulnsOverride });
-  }
-  const perRoot = await Promise.all(
-    absRoots.map(async (absRoot) => ({
-      relPath: path.relative(repoPath, absRoot) || '.',
-      result: await gatherBomEntries(absRoot, { depVulnsOverride }),
-    })),
-  );
-  return mergeNestedBomEntries(perRoot);
 }
 
 const SEV_BADGE: Record<BomSeverity, string> = {

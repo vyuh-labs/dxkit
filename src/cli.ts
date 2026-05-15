@@ -68,8 +68,6 @@ function printUsage(): void {
     --since           Dev-report: start date (YYYY-MM-DD)
     --filter          Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
                       advisory rollup under byTopLevelDep still reflects transitives)
-    --no-nested       Bom: disable nested-project aggregation (default scans the repo
-                      for all sub-projects with manifests and merges their BOMs)
     --with-coverage   Health/test-gaps: materialize coverage artifacts via per-pack
                       runTests() before analysis (line-coverage truth vs filename match)
 
@@ -105,7 +103,6 @@ export async function run(argv: string[]): Promise<void> {
       output: { type: 'string', short: 'o' },
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
-      'no-nested': { type: 'boolean', default: false },
       all: { type: 'boolean', default: false },
       'reports-dir': { type: 'string' },
       'json-dir': { type: 'string' },
@@ -829,12 +826,10 @@ export async function run(argv: string[]): Promise<void> {
         process.exit(1);
       }
       const filter = rawFilter as 'all' | 'top-level' | undefined;
-      const nested = !values['no-nested'];
       const startTime = Date.now();
       const report = await analyzeBom(targetPath, {
         verbose: !!values.verbose,
         filter,
-        nested,
       });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
