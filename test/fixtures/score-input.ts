@@ -212,6 +212,7 @@ export function duplicationCapability(
     cloneCount: 0,
     duplicatedLines: 0,
     totalLines: 1000,
+    topClones: [],
     ...overrides,
   };
 }
