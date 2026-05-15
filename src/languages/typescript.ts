@@ -1004,6 +1004,22 @@ async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcom
     return { kind: 'no-manifest', reason: 'no package.json' };
   }
 
+  // Pre-flight check before the shell-out. license-checker-rseidelsohn
+  // walks `node_modules/` to harvest license metadata; on a project
+  // that has `package.json` but hasn't run `npm install` (e.g. test
+  // fixtures, freshly-cloned repos, CI nodes that skipped install) it
+  // can hang for the full timeout window waiting on a directory that
+  // never appears. Treating "no node_modules" as a separate
+  // unavailable state lets the cache build return fast and keeps the
+  // user-facing reason actionable ("run `npm install` first") instead
+  // of generic "no output."
+  if (!fileExists(cwd, 'node_modules')) {
+    return {
+      kind: 'unavailable',
+      reason: 'no node_modules directory; run `npm install` to populate dependencies first',
+    };
+  }
+
   const status = findTool(TOOL_DEFS['license-checker-rseidelsohn'], cwd);
   if (!status.available || !status.path) {
     return { kind: 'unavailable', reason: 'license-checker-rseidelsohn not installed' };
