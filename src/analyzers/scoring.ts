@@ -109,7 +109,18 @@ export function scoreTest(input: ScoreInput): DimensionScore {
         : `${m.testFiles} test files for ${m.sourceFiles} source files (ratio: ${(testRatio * 100).toFixed(1)}%). ` +
           `Tests ${m.testsPass === true ? 'pass' : m.testsPass === false ? 'fail' : 'not run'}. ` +
           (coveragePercent !== null ? `Coverage: ${coveragePercent}%. ` : 'No coverage data. ') +
-          (testFramework ? `Framework: ${testFramework}.` : '') +
+          // Always surface framework state explicitly. A silent omission
+          // when detection fails reads as "no framework needed" rather
+          // than "we couldn't infer it" — the latter is actionable
+          // (configure the test runner; report a detection gap).
+          `Framework: ${testFramework || 'not detected'}.` +
+          // When tests are detected but haven't executed AND no coverage
+          // artifact is on disk, the customer's next step is to run
+          // dxkit's coverage subcommand — surface that explicitly so
+          // "0% coverage" doesn't read as an indictment of the codebase.
+          (m.testsPass === null && coveragePercent === null
+            ? ' Run `vyuh-dxkit coverage` to materialize test execution + coverage data.'
+            : '') +
           (commentedCodeRatio !== null && commentedCodeRatio > 0.5
             ? ` Warning: ${(commentedCodeRatio * 100).toFixed(0)}% of source files appear to contain only comments.`
             : ''),
