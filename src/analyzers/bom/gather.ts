@@ -8,7 +8,11 @@
 import { gatherLicensesResult } from '../licenses/gather';
 import { gatherDepVulns } from '../security/gather';
 import type { DepVulnSummary } from '../security/types';
-import type { DepVulnFinding, LicenseFinding } from '../../languages/capabilities/types';
+import type {
+  DepVulnFinding,
+  LicenseFinding,
+  LicensesResult,
+} from '../../languages/capabilities/types';
 import type { BomEntry, BomSeverity, BomTopLevelRollup } from './types';
 
 const SEV_RANK: Record<BomSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -237,28 +241,41 @@ export function mergeNestedBomEntries(
 }
 
 /**
- * Optional pre-gathered dep-vulns to share across per-sub-root entry
- * gathers. Closes D107 (2.4.7 Phase C1.8): pre-fix BoM called
- * `gatherDepVulns(absRoot)` per sub-root, and the csharp pack's
- * gather is cwd-sensitive — at a sub-root with a stale
- * `obj/project.assets.json` it returns 0 advisories via dotnet,
- * while at repo-root with no `.csproj` it correctly falls back to
- * `osv-scanner-nuget-direct` and surfaces them. Two paths, two
- * different totals.
+ * Both pre-gathered envelopes are optional. The override pattern lets
+ * the analyzer layer hand BoM a canonical inventory + advisory set
+ * built once at repo-root, so the gather pipeline never re-walks the
+ * tree from a different cwd (the root cause of cross-consumer drift
+ * on the same logical metric — e.g. dpl-studio's licenses-vs-BoM
+ * package count diverging because two walks visited two different
+ * subsets of csproj files).
  *
- * Post-C1.8: BoM (the only nested caller) gathers depVulns ONCE at
- * repo-root via `gatherNested`, then passes the result here so every
- * sub-root sees the SAME canonical vuln set. License-side stays
- * per-sub-root (legitimately per-project). The C1.9 / G_v4_9 work
- * makes csharp's gather cwd-invariant so even single-root callers
- * are safe.
+ * `depVulnsOverride`: shared dep-vuln set across nested callers.
+ *   Pre-fix BoM called `gatherDepVulns(absRoot)` per sub-root, and
+ *   the csharp pack's gather was cwd-sensitive — at a sub-root with
+ *   a stale `obj/project.assets.json` it returned 0 advisories via
+ *   dotnet, while at repo-root with no `.csproj` it correctly fell
+ *   back to `osv-scanner-nuget-direct` and surfaced them. Override +
+ *   the pack-layer cwd-invariance work closed that gap.
+ *
+ * `licensesOverride`: pre-gathered canonical license inventory.
+ *   When set, the gather skips its own `gatherLicensesResult(cwd)`
+ *   call and uses the override directly. `null` (a deliberate
+ *   "license inventory exists but is empty / unavailable") is
+ *   distinguished from `undefined` ("gather it yourself") — the
+ *   canonical analyzer-layer caller always passes the cached
+ *   envelope shape verbatim.
  */
 export async function gatherBomEntries(
   cwd: string,
-  options: { depVulnsOverride?: DepVulnSummary } = {},
+  options: {
+    depVulnsOverride?: DepVulnSummary;
+    licensesOverride?: LicensesResult | null;
+  } = {},
 ): Promise<BomGatherResult> {
   const [licensesEnv, depVulns] = await Promise.all([
-    gatherLicensesResult(cwd),
+    options.licensesOverride !== undefined
+      ? Promise.resolve(options.licensesOverride)
+      : gatherLicensesResult(cwd),
     options.depVulnsOverride ? Promise.resolve(options.depVulnsOverride) : gatherDepVulns(cwd),
   ]);
 
