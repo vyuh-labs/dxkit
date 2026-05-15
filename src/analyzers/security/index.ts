@@ -2,20 +2,13 @@
  * Security analyzer — public API.
  */
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
-import { timed, timedAsync } from '../tools/timing';
-import {
-  gatherSecrets,
-  gatherFileFindings,
-  gatherCodePatterns,
-  gatherDepVulns,
-  gatherTlsBypassFindings,
-} from './gather';
+import { timedAsync } from '../tools/timing';
+import { gatherDepVulns } from './gather';
 import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
 import { SecurityReport } from './types';
-import { buildSecurityAggregate } from './aggregator';
-import { allTlsBypassPatterns, getLanguage } from '../../languages';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
+import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../types';
 
 export type { SecurityReport, SecurityFinding } from './types';
@@ -93,63 +86,50 @@ export async function analyzeSecurity(
   options: AnalyzeSecurityOptions = {},
 ): Promise<SecurityReport> {
   const verbose = !!options.verbose;
-  const stack = detect(repoPath);
+
+  // Code-side findings + the canonical SecurityAggregate come from the
+  // cross-process cache. Same gather that `health` reads — two
+  // consumers, ONE source of truth for "code findings by severity,"
+  // "secrets by severity," "tls-bypass dedup." Closes the cross-process
+  // drift class for code-side numbers by construction.
+  const result = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack, capabilities } = result;
+  const aggregate = capabilities.securityAggregate;
+  if (!aggregate) {
+    throw new Error('analyzeSecurity: cached AnalysisResult missing securityAggregate');
+  }
+
+  // Dependency CVEs need the full enrichment pass (EPSS / KEV /
+  // reachability / risk) that vuln-scan surfaces and `health` does
+  // not. Run it fresh against the same repo state the cache captured.
+  // Severity buckets + unique-fingerprint counts still come from the
+  // cached aggregate (severity is a raw advisory property; both basic
+  // and enriched paths produce the same buckets), so the two
+  // subcommands report identical totals.
+  const deps = await timedAsync('dep-audit (enriched)', verbose, () => gatherDepVulns(repoPath));
+
+  // toolsUsed/toolsUnavailable are derived from the cached aggregate's
+  // provenance (the canonical "what scanners ran" record), the
+  // enriched dep gather, and the cached file-walker capabilities
+  // (`find`, `git` are always-available builtins).
   const toolsUsed: string[] = ['find', 'git'];
   const toolsUnavailable: string[] = [];
-
-  // 1. Secrets (gitleaks) — dispatcher-driven via the SECRETS capability.
-  const secrets = await timedAsync('gitleaks', verbose, () => gatherSecrets(repoPath));
-  if (secrets.toolUsed) toolsUsed.push(secrets.toolUsed);
+  if (aggregate.provenance.secrets.tool) toolsUsed.push(aggregate.provenance.secrets.tool);
   else toolsUnavailable.push('gitleaks');
-
-  // 2. File findings (private keys, .env)
-  const files = timed('file-findings', verbose, () => gatherFileFindings(repoPath));
-
-  // 3. Code patterns (semgrep) — dispatcher-driven via CODE_PATTERNS.
-  const code = await timedAsync('semgrep', verbose, () => gatherCodePatterns(repoPath));
-  if (code.toolUsed) toolsUsed.push(code.toolUsed);
+  if (aggregate.provenance.codePatterns.tool)
+    toolsUsed.push(aggregate.provenance.codePatterns.tool);
   else toolsUnavailable.push('semgrep');
-
-  // 4. Dependency CVEs — capability dispatcher across every active language
-  //    pack. The envelope's tool field already joins multiple sources
-  //    ('pip-audit, npm-audit'); split it back out for toolsUsed.
-  const deps = await timedAsync('dep-audit', verbose, () => gatherDepVulns(repoPath));
   if (deps.tool) {
     for (const t of deps.tool.split(', ')) toolsUsed.push(t);
   } else {
     toolsUnavailable.push('dep-audit');
   }
-
-  // 5. TLS / certificate-validation bypass (D045 / D034) — per-pack
-  //    registry-driven patterns. Complements semgrep's `p/security-audit`
-  //    ruleset, which doesn't ship the per-language idioms each pack
-  //    declares (csharp `ServerCertificateValidationCallback`, go
-  //    `InsecureSkipVerify`, rust `danger_accept_invalid_certs`, etc.).
-  const tlsBypass = timed('tls-bypass', verbose, () => gatherTlsBypassFindings(repoPath));
-  if (tlsBypass.length > 0) toolsUsed.push('tls-bypass-registry');
-
-  // C1.2 (G_v4_8 / 2.4.7 Phase C): aggregate every gathered envelope
-  // into the canonical SecurityAggregate. Closes the D086/D087/D091
-  // class — `aggregate.codeBySeverity` is the ONE code-finding count
-  // surface (no consumer re-sums from arrays);
-  // `aggregate.dependencyAdvisoryUniqueCount` is the canonical
-  // user-facing dep-vuln total (matches BoM's existing
-  // fingerprint-unique semantics, ending the 70 vs 81 same-page drift);
-  // cross-tool TLS-bypass collapses to one CodeFinding via the
-  // canonical-rule + line-window dedup.
-  const aggregate = buildSecurityAggregate({
-    secrets,
-    fileFindings: files,
-    codePatterns: code,
-    tlsBypass,
-    tlsBypassPatternCount: allTlsBypassPatterns().length,
-    depVulns: {
-      findings: deps.findings,
-      tool: deps.tool,
-      available: deps.available,
-      unavailableReason: deps.unavailableReason,
-    },
-  });
+  if (aggregate.findingsByCategory.code.some((f) => f.tool === 'tls-bypass-registry')) {
+    toolsUsed.push('tls-bypass-registry');
+  }
 
   // Combined code-side severity counts for the existing "Code Findings"
   // table (which renders secrets+files+code+config under one heading).
@@ -205,10 +185,10 @@ export async function analyzeSecurity(
   };
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(result.cwd),
+    analyzedAt: result.builtAt,
+    commitSha: result.commitSha,
+    branch: result.branch,
     summary: {
       findings: codeSummary,
       codeOnly: codeOnlySummary,
