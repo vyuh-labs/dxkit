@@ -166,28 +166,42 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push('| Metric | Value |');
   L.push('|--------|-------|');
   L.push(`| Slop Score | **${report.slopScore}/100** |`);
-  if (m.duplication) {
-    L.push(
-      `| Duplication | ${m.duplication.percentage}% (${m.duplication.cloneCount} clones, ${m.duplication.duplicatedLines} lines) |`,
-    );
-  }
-  if (m.commentRatio !== null) {
-    L.push(`| Comment Ratio | ${(m.commentRatio * 100).toFixed(1)}% |`);
-  }
+  // Always render every row — silent omission on tool-unavailable reads
+  // as "this signal is fine" when reality is "we couldn't measure it."
+  // The unavailable-row text names the underlying tool so the customer
+  // knows exactly what to install to populate the metric.
+  L.push(
+    `| Duplication | ${
+      m.duplication
+        ? `${m.duplication.percentage}% (${m.duplication.cloneCount} clones, ${m.duplication.duplicatedLines} lines)`
+        : 'unavailable — install `jscpd`'
+    } |`,
+  );
+  L.push(
+    `| Comment Ratio | ${
+      m.commentRatio !== null
+        ? `${(m.commentRatio * 100).toFixed(1)}%`
+        : 'unavailable — install `cloc`'
+    } |`,
+  );
   L.push(
     `| Lint Errors | ${m.lintErrors} errors, ${m.lintWarnings} warnings${m.lintTool ? ' (' + m.lintTool + ')' : ''} |`,
   );
   L.push(`| TODO/FIXME/HACK | ${m.todoCount} / ${m.fixmeCount} / ${m.hackCount} |`);
   L.push(`| Console Statements | ${m.consoleLogCount} |`);
-  if (m.functionCount !== null) {
-    L.push(`| Functions | ${m.functionCount} total, max ${m.maxFunctionsInFile} in one file |`);
-  }
-  if (m.deadImportCount !== null) {
-    L.push(`| Dead Imports | ${m.deadImportCount} |`);
-  }
-  if (m.orphanModuleCount !== null) {
-    L.push(`| Orphan Modules | ${m.orphanModuleCount} |`);
-  }
+  L.push(
+    `| Functions | ${
+      m.functionCount !== null
+        ? `${m.functionCount} total, max ${m.maxFunctionsInFile} in one file`
+        : 'unavailable — install `graphify`'
+    } |`,
+  );
+  L.push(
+    `| Dead Imports | ${m.deadImportCount !== null ? m.deadImportCount : 'unavailable — install `graphify`'} |`,
+  );
+  L.push(
+    `| Orphan Modules | ${m.orphanModuleCount !== null ? m.orphanModuleCount : 'unavailable — install `graphify`'} |`,
+  );
   if (m.avgCohesion !== null) {
     L.push(`| Avg Cohesion | ${m.avgCohesion.toFixed(2)} |`);
   }
@@ -203,10 +217,13 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push('---');
   L.push('');
 
-  // Duplication details
+  // Duplication details — always render the section so the customer
+  // sees an explicit "unavailable" message rather than a missing H2
+  // (which reads as "no duplication" when the real state is "we
+  // couldn't measure").
+  L.push('## Duplication');
+  L.push('');
   if (m.duplication) {
-    L.push('## Duplication');
-    L.push('');
     L.push(
       `**${m.duplication.percentage}%** of code is duplicated across ${m.duplication.cloneCount} clones (${m.duplication.duplicatedLines} lines out of ${m.duplication.totalLines}).`,
     );
@@ -222,15 +239,21 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
     } else {
       L.push('> Duplication is within acceptable range.');
     }
-    L.push('');
-    L.push('---');
-    L.push('');
+  } else {
+    L.push(
+      '> ⚠ **Duplication unavailable.** The duplicate-code detector (`jscpd`) did not run on this repository — its output is needed to populate this section. Install jscpd (`npm i -g jscpd`) and re-run to enable.',
+    );
   }
+  L.push('');
+  L.push('---');
+  L.push('');
 
-  // Structural complexity
+  // Structural complexity — same always-render discipline as Duplication.
+  // Graphify produces functionCount / densest file / cohesion / orphan
+  // modules / dead imports; its absence is signaled by null fields.
+  L.push('## Structural Complexity');
+  L.push('');
   if (m.functionCount !== null) {
-    L.push('## Structural Complexity');
-    L.push('');
     L.push(
       `- **${m.functionCount}** functions across ${m.communityCount ?? '?'} architectural communities`,
     );
@@ -244,10 +267,14 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
     if (m.orphanModuleCount !== null && m.orphanModuleCount > 0) {
       L.push(`- **Orphan modules:** ${m.orphanModuleCount} (no inbound imports)`);
     }
-    L.push('');
-    L.push('---');
-    L.push('');
+  } else {
+    L.push(
+      '> ⚠ **Structural complexity unavailable.** The AST-graph builder (`graphify`) did not run on this repository — its output drives function counts, densest-file detection, architectural cohesion, dead imports, and orphan modules. Install graphify (`pip install graphifyy`) and re-run to enable.',
+    );
   }
+  L.push('');
+  L.push('---');
+  L.push('');
 
   // Hygiene
   L.push('## Code Hygiene');
@@ -256,9 +283,13 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push(`- **FIXME:** ${m.fixmeCount}`);
   L.push(`- **HACK:** ${m.hackCount}`);
   L.push(`- **Console statements:** ${m.consoleLogCount}`);
-  if (m.commentRatio !== null) {
-    L.push(`- **Comment ratio:** ${(m.commentRatio * 100).toFixed(1)}%`);
-  }
+  L.push(
+    `- **Comment ratio:** ${
+      m.commentRatio !== null
+        ? `${(m.commentRatio * 100).toFixed(1)}%`
+        : 'unavailable (`cloc` did not run)'
+    }`,
+  );
   if (m.staleFiles.length > 0) {
     L.push(`- **Stale files in git:** ${m.staleFiles.map((f) => '`' + f + '`').join(', ')}`);
   }
