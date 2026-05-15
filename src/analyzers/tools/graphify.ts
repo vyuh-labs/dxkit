@@ -21,6 +21,7 @@ import * as path from 'path';
 import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeFilter } from './exclusions';
+import { toProjectRelative } from './paths';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { StructuralResult } from '../../languages/capabilities/types';
 
@@ -279,13 +280,30 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   }
   if (data.error) return { kind: 'unavailable', reason: data.error };
 
-  const envelope: StructuralResult = {
+  return { kind: 'success', envelope: buildGraphifyEnvelope(data, cwd) };
+}
+
+/**
+ * Pure JSON-to-envelope reshape so the normalization contract is
+ * unit-testable without shelling out to Python.
+ *
+ * The Python helper emits `maxFunctionsFilePath` as an absolute path
+ * (`str(Path(...))` on a value derived from `target = sys.argv[1]`).
+ * Renderers downstream emit this field verbatim into customer-facing
+ * markdown, so it has to be project-relative before it leaves the
+ * gather layer — mirrors the gitleaks / semgrep / grep-secrets pattern
+ * where each tool wrapper owns its own path normalization.
+ */
+export function buildGraphifyEnvelope(data: GraphifyResult, cwd: string): StructuralResult {
+  return {
     schemaVersion: 1,
     tool: 'graphify',
     functionCount: data.functionCount,
     classCount: data.classCount,
     maxFunctionsInFile: data.maxFunctionsInFile,
-    maxFunctionsFilePath: data.maxFunctionsFilePath,
+    maxFunctionsFilePath: data.maxFunctionsFilePath
+      ? toProjectRelative(cwd, data.maxFunctionsFilePath)
+      : '',
     godNodeCount: data.godNodeCount,
     communityCount: data.communityCount,
     avgCohesion: data.avgCohesion,
@@ -293,7 +311,6 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
     deadImportCount: data.deadImportCount,
     commentedCodeRatio: data.commentedCodeRatio,
   };
-  return { kind: 'success', envelope };
 }
 
 /**
