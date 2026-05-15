@@ -118,6 +118,12 @@ export function stampFromFreeTextAdvice(findings: DepVulnFinding[]): number {
     if (!f.upgradeAdvice) continue;
     const m = f.upgradeAdvice.match(TRANSITIVE_ADVICE_RE);
     if (!m) continue;
+    // Defensive: skip the 0.0.0 sentinel that some upstream tools emit
+    // when no real transitive target exists. Producers should normally
+    // gate this at their own emission site (see the TS pack), but
+    // catching it here keeps the resolver honest if another producer
+    // adopts the same template without the guard.
+    if (m[2] === '0.0.0') continue;
     f.upgradePlan = {
       parent: m[1],
       parentVersion: m[2],

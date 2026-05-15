@@ -396,10 +396,19 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           if (directFix) {
             finding.fixedVersion = directFix.version;
             finding.breakingUpgrade = directFix.isSemVerMajor;
-          } else if (transitiveFix) {
+          } else if (transitiveFix && transitiveFix.version !== '0.0.0') {
             // Parent-upgrade remediation — surface directly in upgradeAdvice
             // rather than pretending the value is a direct fix. Bom render
             // picks this up as the Tier-1 resolution for the row.
+            //
+            // The 0.0.0 guard handles the npm-audit sentinel: when no
+            // real transitive upgrade target can be computed (the parent
+            // dep has no compatible patched version), npm-audit emits
+            // `{ version: "0.0.0", isSemVerMajor: true }` rather than
+            // omitting the field. Templating that into a recommendation
+            // ("Upgrade react-scripts to 0.0.0") reads as actionable
+            // guidance — the resolution column should fall through to
+            // the Tier-1 "No fix available" message instead.
             const majorNote = transitiveFix.isSemVerMajor ? ' [major]' : '';
             finding.upgradeAdvice =
               `Upgrade ${transitiveFix.name} to ${transitiveFix.version}${majorNote} ` +
