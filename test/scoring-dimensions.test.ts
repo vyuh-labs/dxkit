@@ -15,6 +15,7 @@ import {
   codePatternsCapabilityWithFindings,
   depVulnCapability,
   lintCapability,
+  qualityMeasuredCapabilities,
   secretsCapabilityWithCount,
   withInput,
 } from './fixtures/score-input';
@@ -75,11 +76,16 @@ describe('shallow dimension scorers', () => {
   });
 
   it('quality score drops with lint errors + large files', () => {
+    // Use a measured-capabilities baseline so the cap doesn't shadow
+    // the formula's penalty contribution we're testing.
+    const measuredBaseline = withInput({ capabilities: qualityMeasuredCapabilities() });
     const bad = withInput({
       metrics: { filesOver500Lines: 20, consoleLogCount: 200 },
-      capabilities: { lint: lintCapability(0, 100) },
+      capabilities: { ...qualityMeasuredCapabilities(), lint: lintCapability(0, 100) },
     });
-    expect(scoreQualityDimension(bad).score).toBeLessThan(scoreQualityDimension(baseInput).score);
+    expect(scoreQualityDimension(bad).score).toBeLessThan(
+      scoreQualityDimension(measuredBaseline).score,
+    );
   });
 
   it('maintainability score drops with huge god files', () => {

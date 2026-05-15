@@ -198,6 +198,37 @@ export function structuralCapability(
   };
 }
 
+/** Minimal "jscpd ran cleanly with zero clones" envelope — populates
+ *  the DUPLICATION capability so the scorer's honesty cap (which fires
+ *  when no tool-derived signal is measured) doesn't engage in tests
+ *  that pin a specific score from the penalty formula. */
+export function duplicationCapability(
+  overrides: Partial<{ percentage: number; cloneCount: number; duplicatedLines: number }> = {},
+): import('../../src/languages/capabilities/types').DuplicationResult {
+  return {
+    schemaVersion: 1,
+    tool: 'jscpd',
+    percentage: 0,
+    cloneCount: 0,
+    duplicatedLines: 0,
+    totalLines: 1000,
+    ...overrides,
+  };
+}
+
+/** Bundle of capability envelopes that signal "every tool-derived
+ *  Quality signal was measured" (lint, duplication, structural). Tests
+ *  that pin a specific Quality score from the penalty formula spread
+ *  this into `withInput({ capabilities: ... })` so the honesty cap
+ *  doesn't kick in and override the formula. */
+export function qualityMeasuredCapabilities() {
+  return {
+    lint: lintCapability(0, 0),
+    duplication: duplicationCapability(),
+    structural: structuralCapability(),
+  };
+}
+
 export interface ScoreInputOverrides {
   metrics?: Partial<HealthMetrics>;
   capabilities?: Partial<CapabilityReport>;

@@ -168,6 +168,23 @@ export function scoreQuality(input: ScoreInput): DimensionScore {
   if (maxFunctionsInFile !== null && maxFunctionsInFile > 50) score -= 10;
   if (deadImportCount !== null && deadImportCount > 20) score -= 5;
 
+  // Honesty cap. When tool-derived Quality signals didn't run on this
+  // repo, the score cannot honestly reflect quality — a repo with no
+  // jscpd/graphify/lint output may be genuinely clean or may hide every
+  // problem behind unmeasured signals, and there's no way to tell.
+  // Mirrors the testing-dim coverage-null cap (35) and the security-dim
+  // depVulnsAvailable cap (65).
+  const qualityUnmeasured = [
+    c.lint === undefined, // no lint capability produced data
+    c.duplication === undefined, // jscpd unavailable
+    c.structural === undefined, // graphify unavailable
+  ].filter(Boolean).length;
+  if (qualityUnmeasured === 3) {
+    score = Math.min(score, 35); // mostly blind — C grade
+  } else if (qualityUnmeasured >= 1) {
+    score = Math.min(score, 75); // partially blind — high-B ceiling
+  }
+
   score = clamp(score);
   // Schema v11: `metrics` surfaces only the non-capability signals.
   // Lint counts + tool live in `report.capabilities.lint`; god-file +
