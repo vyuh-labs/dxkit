@@ -2,11 +2,25 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Default suite = unit tests + fast integration tests. Integration tests
-    // share analyzer output via beforeAll so the whole suite runs in ~20s.
-    // `npm run test:integration` still available to run integration only.
+    // Default suite = unit tests only. The slow integration test lives
+    // under `test/integration/` and runs via `npm run test:integration`
+    // (its own config). Excluded here so the local push gate, which
+    // runs the default suite under coverage instrumentation, stays
+    // well under 5 minutes — integration's full-pipeline shell-outs
+    // (license-checker, semgrep, jscpd, graphify, gitleaks) compound
+    // with v8 coverage's per-import overhead and historically pushed
+    // the gate past vitest's internal worker-IPC timeouts. CI runs
+    // the integration suite as a separate step (`.github/workflows/
+    // ci.yml`) so PRs still validate it.
     include: ['test/**/*.test.ts'],
-    exclude: ['node_modules/**', 'dist/**', 'templates/**', 'src-templates/**', 'test/fixtures/**'],
+    exclude: [
+      'node_modules/**',
+      'dist/**',
+      'templates/**',
+      'src-templates/**',
+      'test/fixtures/**',
+      'test/integration/**',
+    ],
     // 180s default: cross-ecosystem.test.ts shells out to pip-audit /
     // govulncheck / cargo-audit / dotnet, which hit the npm / pypi /
     // crates.io / nuget registries. 60s was tight on cold-cache /

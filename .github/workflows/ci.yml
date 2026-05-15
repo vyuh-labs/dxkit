@@ -120,5 +120,13 @@ jobs:
       - name: Coverage threshold
         run: bash scripts/check-coverage.sh
 
+      - name: Integration tests
+        # `test/integration/` is excluded from the default unit suite so
+        # the local push gate stays under 5 minutes. CI still validates
+        # the full-pipeline regression here. No coverage instrumentation
+        # — these tests exist for behavioral assertions across the
+        # analyzer entry points, not coverage delta.
+        run: npm run test:integration
+
       - name: Verify pack
         run: npm pack --dry-run
