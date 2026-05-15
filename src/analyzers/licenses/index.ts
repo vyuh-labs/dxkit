@@ -13,9 +13,8 @@
  */
 
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
-import { gatherLicensesWithAvailability } from './gather';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import type { LicensesReport } from './types';
 
 export type { LicensesReport } from './types';
@@ -26,10 +25,24 @@ export interface AnalyzeLicensesOptions {
 
 export async function analyzeLicenses(
   repoPath: string,
-  _options: AnalyzeLicensesOptions = {},
+  options: AnalyzeLicensesOptions = {},
 ): Promise<LicensesReport> {
-  const stack = detect(repoPath);
-  const { envelope, available, unavailableReason } = await gatherLicensesWithAvailability(repoPath);
+  const verbose = !!options.verbose;
+  // Single canonical license inventory shared with `health` and (later)
+  // BoM. Reading from the cache instead of re-dispatching the LICENSES
+  // capability means the package list one consumer sees is the package
+  // list every consumer sees — the same per-pack walker output, the
+  // same degraded-fallback flagging, the same availability state.
+  const result = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack, capabilities } = result;
+  const envelope = capabilities.licenses;
+  const availability = capabilities.licensesAvailability ?? {
+    available: true,
+    unavailableReason: '',
+  };
 
   const findings = envelope?.findings ?? [];
   const byLicense: Record<string, number> = {};
@@ -40,17 +53,17 @@ export async function analyzeLicenses(
   }
 
   const toolsUsed = envelope ? envelope.tool.split(', ').filter((t) => t.length > 0) : [];
-  // D031-2: degraded-inventory detection. When a pack falls back to
-  // direct manifest parsing (e.g., csharp's `csharp-package-reference-
+  // Degraded-inventory detection. When a pack falls back to direct
+  // manifest parsing (e.g., csharp's `csharp-package-reference-
   // degraded`), the envelope IS populated with real packages but the
   // canonical license tool wasn't actually consulted. The standalone
   // vuln-scan-style ⚠ banner should fire here too so the customer
   // understands "0 known licenses" doesn't mean "no licenses to know."
   const isDegraded = toolsUsed.some((t) => t.endsWith('-degraded'));
-  const effectiveAvailable = available && !isDegraded;
+  const effectiveAvailable = availability.available && !isDegraded;
   const effectiveReason = isDegraded
     ? `canonical license-inventory tool unavailable; showing degraded fallback from manifest parsing (license types all 'UNKNOWN' until the proper tool is installed)`
-    : unavailableReason;
+    : availability.unavailableReason;
   // toolsUnavailable surfaces the generic label so consumers don't
   // have to map pack→tool. Distinct list when the gather genuinely
   // produced nothing vs degraded-with-real-data: both cases warrant
@@ -58,10 +71,10 @@ export async function analyzeLicenses(
   const toolsUnavailable: string[] = effectiveAvailable ? [] : ['license-inventory'];
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(result.cwd),
+    analyzedAt: result.builtAt,
+    commitSha: result.commitSha,
+    branch: result.branch,
     schemaVersion: '1',
     summary: {
       totalPackages: findings.length,

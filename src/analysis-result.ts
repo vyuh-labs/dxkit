@@ -49,7 +49,7 @@ import type { CapabilityReport, HealthMetrics } from './analyzers/types';
  * incompatible. The cache module treats any mismatch as a hard miss
  * and rebuilds from scratch.
  */
-export const ANALYSIS_RESULT_SCHEMA_VERSION = 1 as const;
+export const ANALYSIS_RESULT_SCHEMA_VERSION = 2 as const;
 export type AnalysisResultSchemaVersion = typeof ANALYSIS_RESULT_SCHEMA_VERSION;
 
 /**

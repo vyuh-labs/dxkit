@@ -36,6 +36,7 @@ import {
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
 import { buildSecurityAggregateForHealth, gatherDepVulnsWithAvailability } from './security/gather';
+import { gatherLicensesWithAvailability } from './licenses/gather';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
@@ -318,6 +319,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     codePatterns,
     duplication,
     structural,
+    licensesWithAvail,
   ] = await Promise.all([
     gatherDepVulnsWithAvailability(cwd),
     defaultDispatcher.gather(cwd, LINT, providersFor(LINT, cwd)),
@@ -328,6 +330,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
     defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
     defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
+    gatherLicensesWithAvailability(cwd),
   ]);
   const report: CapabilityReport = {};
   if (depVulnsWithAvail.envelope) report.depVulns = depVulnsWithAvail.envelope;
@@ -346,6 +349,14 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   if (codePatterns) report.codePatterns = codePatterns;
   if (duplication) report.duplication = duplication;
   if (structural) report.structural = structural;
+  if (licensesWithAvail.envelope) report.licenses = licensesWithAvail.envelope;
+  // Always plumb availability — even when envelope is null, the bool
+  // disambiguates "no active pack with a licenses provider" (vacuous
+  // success) from "active pack returned unavailable" (banner fires).
+  report.licensesAvailability = {
+    available: licensesWithAvail.available,
+    unavailableReason: licensesWithAvail.unavailableReason,
+  };
 
   // G_v4_8 (C1.3): build the canonical aggregate from everything we
   // just gathered, plus the two security finders not represented in

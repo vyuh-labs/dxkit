@@ -13,6 +13,7 @@ import type {
   DepVulnResult,
   DuplicationResult,
   ImportsResult,
+  LicensesResult,
   LintResult,
   SecretsResult,
   StructuralResult,
@@ -126,6 +127,29 @@ export interface CapabilityReport {
   codePatterns?: CodePatternsResult;
   duplication?: DuplicationResult;
   structural?: StructuralResult;
+  /**
+   * Per-pack license inventory, aggregated across active language
+   * packs. Populated alongside `licensesAvailability` so consumers
+   * can distinguish "0 packages, scan ran cleanly" from "0 packages,
+   * scanner not installed." The licenses subcommand and the BoM
+   * report both read from this single envelope — same canonical
+   * source, so cross-report drift on the package list becomes
+   * structurally impossible.
+   */
+  licenses?: LicensesResult;
+
+  /**
+   * Availability metadata for the licenses aggregation. Sibling of
+   * `licenses` to match the depVulns shape. `available === false`
+   * only when at least one active pack with a licenses provider
+   * returned an `'unavailable'` outcome. `'no-manifest'` outcomes do
+   * NOT degrade availability — that's a clean "nothing to license"
+   * state on polyglot repos where one pack activates but has nothing
+   * to scan. `unavailableReason` carries the pack name + reason of
+   * the first unavailable outcome for the markdown notice. Empty
+   * string when available.
+   */
+  licensesAvailability?: { available: boolean; unavailableReason: string };
   /**
    * D025b (2.4.7): availability metadata for the depVulns aggregation.
    * Sibling field rather than nested into `depVulns` so the envelope
