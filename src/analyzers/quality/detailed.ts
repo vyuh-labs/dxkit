@@ -7,7 +7,8 @@
 import { QualityReport, QualityMetrics } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSlopActions } from './actions';
-import { computeSlopScore } from './index';
+import { qualityMetricsToScoreInput } from './index';
+import { scoreQualityFromInput } from './scoring';
 
 export interface QualityDetailedReport extends QualityReport {
   /** Schema version for agent consumers. Bump on breaking shape changes. */
@@ -17,9 +18,9 @@ export interface QualityDetailedReport extends QualityReport {
 }
 
 export function buildQualityDetailed(report: QualityReport): QualityDetailedReport {
-  const actions = rank(buildSlopActions(report.metrics), report.metrics, (m) => ({
-    score: computeSlopScore(m),
-  }));
+  const actions = rank(buildSlopActions(report.metrics), report.metrics, (m) =>
+    scoreQualityFromInput(qualityMetricsToScoreInput(m)),
+  );
   return {
     ...report,
     schemaVersion: '11',

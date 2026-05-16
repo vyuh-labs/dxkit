@@ -2,8 +2,8 @@
  * Quality analyzer — public API.
  */
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { timed, timedAsync } from '../tools/timing';
 import {
   gatherDuplication,
@@ -13,6 +13,7 @@ import {
   gatherHygieneTopOffenders,
   gatherLintMetrics,
 } from './gather';
+import { scoreQualityFromInput, type QualityScoreInput } from './scoring';
 import { QualityReport, QualityMetrics } from './types';
 
 export type { QualityReport, QualityMetrics } from './types';
@@ -23,51 +24,48 @@ export interface AnalyzeQualityOptions {
   detailed?: boolean;
 }
 
-/** Compute slop score (0-100, higher = cleaner). */
-export function computeSlopScore(m: QualityMetrics): number {
-  let score = 100;
+/**
+ * Adapter from the standalone Quality report's `QualityMetrics` into
+ * the canonical `QualityScoreInput` partition. `m.sourceFiles` carries
+ * the canonical repo source-file count from the cached health metrics
+ * — the same denominator the health-side Code Quality dimension uses
+ * — so both surfaces' density penalties land on identical values.
+ */
+export function qualityMetricsToScoreInput(m: QualityMetrics): QualityScoreInput {
+  return {
+    sourceFiles: m.sourceFiles,
 
-  // Duplication
-  if (m.duplication) {
-    if (m.duplication.percentage > 15) score -= 20;
-    else if (m.duplication.percentage > 5) score -= 10;
-  }
+    lintErrors: m.lintErrors,
+    lintAvailable: m.lintTool !== null,
 
-  // Comment ratio (from cloc)
-  if (m.commentRatio !== null) {
-    if (m.commentRatio > 0.5) score -= 15;
-    else if (m.commentRatio > 0.4) score -= 10;
-  }
+    consoleLogCount: m.consoleLogCount,
+    todoCount: m.todoCount,
+    fixmeCount: m.fixmeCount,
+    hackCount: m.hackCount,
+    staleFiles: m.staleFiles.length,
+    mixedLanguages: m.mixedLanguages,
 
-  // TODO/FIXME/HACK density
-  const hygieneTotal = m.todoCount + m.fixmeCount + m.hackCount;
-  if (hygieneTotal > 50) score -= 10;
-  else if (hygieneTotal > 20) score -= 5;
+    // The standalone Quality gather doesn't currently emit file-size
+    // counts — those are health-side HealthMetrics fields. Carried as
+    // zero so the standalone formula treats them as no-signal. Plumb
+    // through QualityMetrics if we want them surfaced here.
+    filesOver500Lines: 0,
+    largestFileLines: 0,
 
-  // God files (function density)
-  if (m.maxFunctionsInFile !== null && m.maxFunctionsInFile > 50) score -= 10;
+    // Same — type signals are health-side HealthMetrics fields.
+    anyTypeCount: 0,
+    typeErrors: null,
 
-  // Dead code
-  if (m.deadImportCount !== null && m.deadImportCount > 20) score -= 10;
-  if (m.orphanModuleCount !== null && m.orphanModuleCount > 30) score -= 5;
+    duplicationPercentage: m.duplication?.percentage ?? null,
+    duplicationAvailable: m.duplication !== null,
 
-  // Console.log density
-  if (m.consoleLogCount > 500) score -= 15;
-  else if (m.consoleLogCount > 100) score -= 10;
-  else if (m.consoleLogCount > 20) score -= 5;
+    maxFunctionsInFile: m.maxFunctionsInFile,
+    deadImportCount: m.deadImportCount,
+    orphanModuleCount: m.orphanModuleCount,
+    structuralAvailable: m.maxFunctionsInFile !== null,
 
-  // Lint errors
-  if (m.lintErrors > 50) score -= 10;
-  else if (m.lintErrors > 10) score -= 5;
-
-  // Stale files committed to git
-  if (m.staleFiles.length > 3) score -= 5;
-  else if (m.staleFiles.length > 0) score -= 2;
-
-  // Mixed JS/TS in source directories
-  if (m.mixedLanguages) score -= 5;
-
-  return Math.max(0, Math.min(100, score));
+    commentRatio: m.commentRatio,
+  };
 }
 
 export async function analyzeQuality(
@@ -75,9 +73,21 @@ export async function analyzeQuality(
   options: AnalyzeQualityOptions = {},
 ): Promise<QualityReport> {
   const verbose = !!options.verbose;
-  const stack = detect(repoPath);
   const toolsUsed: string[] = ['grep', 'find'];
   const toolsUnavailable: string[] = [];
+
+  // Single canonical analysis envelope shared with `health` and the
+  // other migrated consumers. Pulling provenance + sourceFiles count
+  // from the cache means the density denominator the standalone Quality
+  // score uses is the SAME denominator the health-side Code Quality
+  // dimension uses — so the two surfaces converge on the same number.
+  // Closes the dual-Quality-formula drift class structurally.
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack } = cacheResult;
+  const sourceFiles = cacheResult.metrics.sourceFiles;
 
   // 1. Duplication (jscpd) — dispatcher-driven via DUPLICATION capability.
   const dup = await timedAsync('jscpd', verbose, () => gatherDuplication(repoPath));
@@ -107,6 +117,7 @@ export async function analyzeQuality(
   if (lint.tool) toolsUsed.push(lint.tool);
 
   const metrics: QualityMetrics = {
+    sourceFiles,
     lintErrors: lint.errors,
     lintWarnings: lint.warnings,
     lintTool: lint.tool,
@@ -130,13 +141,13 @@ export async function analyzeQuality(
     topTodoFiles: topOffenders.topTodoFiles,
   };
 
-  metrics.slopScore = computeSlopScore(metrics);
+  metrics.slopScore = scoreQualityFromInput(qualityMetricsToScoreInput(metrics)).score;
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     metrics,
     slopScore: metrics.slopScore,
     toolsUsed,

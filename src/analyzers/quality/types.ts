@@ -34,6 +34,13 @@ export interface DuplicationStats {
 }
 
 export interface QualityMetrics {
+  // Source-file count from the canonical health gather, used as the
+  // density denominator for lint / console / any-type / typeError
+  // penalties. Pulled from the AnalysisResult cache so the standalone
+  // Quality score and the health-side Code Quality dimension share
+  // the same denominator and converge on the same number.
+  sourceFiles: number;
+
   // Lint
   lintErrors: number;
   lintWarnings: number;
