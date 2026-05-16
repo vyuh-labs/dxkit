@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatQualityReport } from '../src/analyzers/quality';
-import { scoreQuality } from '../src/analyzers/scoring';
+import { scoreQualityDimension } from '../src/analyzers/quality/shallow';
 import { withInput, lintCapability } from './fixtures/score-input';
 import type { QualityReport } from '../src/analyzers/quality/types';
 
@@ -72,7 +72,7 @@ describe('Code Quality dimension prose — Lint coverage gap', () => {
         lint: lintCapability(0, 0, 1, 0, 'ruff (not run: typescript)'),
       },
     });
-    const r = scoreQuality(input);
+    const r = scoreQualityDimension(input);
     expect(r.details).toMatch(/0 lint errors, 1 warnings \(ruff\)/);
     expect(r.details).toMatch(/Linter coverage gap: typescript not run/);
     expect(r.details).not.toContain('(ruff (not run: typescript))');
@@ -85,7 +85,7 @@ describe('Code Quality dimension prose — Lint coverage gap', () => {
         lint: lintCapability(0, 0, 1, 0, 'ruff'),
       },
     });
-    const r = scoreQuality(input);
+    const r = scoreQualityDimension(input);
     expect(r.details).not.toContain('coverage gap');
   });
 });

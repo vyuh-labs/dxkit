@@ -127,105 +127,11 @@ export function scoreTest(input: ScoreInput): DimensionScore {
   };
 }
 
-/** Code Quality: 0-100 */
-export function scoreQuality(input: ScoreInput): DimensionScore {
-  const m = input.metrics;
-  const c = input.capabilities;
-  const sourceCount = Math.max(m.sourceFiles, 1);
-
-  const lintErrors = (c.lint?.counts.critical ?? 0) + (c.lint?.counts.high ?? 0);
-  const lintWarnings = (c.lint?.counts.medium ?? 0) + (c.lint?.counts.low ?? 0);
-  const lintTool = c.lint?.tool ?? null;
-  const maxFunctionsInFile = c.structural?.maxFunctionsInFile ?? null;
-  const deadImportCount = c.structural?.deadImportCount ?? null;
-
-  let score = 100;
-
-  if (lintErrors > 0) {
-    const errorRatio = lintErrors / sourceCount;
-    score -= Math.min(errorRatio * 100, 40);
-  }
-
-  if (m.filesOver500Lines > 5) score -= 10;
-  if (m.filesOver500Lines > 20) score -= 10;
-  if (m.largestFileLines > 5000) score -= 10;
-  if (m.largestFileLines > 10000) score -= 10;
-
-  const consoleDensity = m.consoleLogCount / sourceCount;
-  if (consoleDensity > 3) score -= 15;
-  else if (consoleDensity > 1) score -= 10;
-  else if (consoleDensity > 0.3) score -= 5;
-
-  const anyDensity = m.anyTypeCount / sourceCount;
-  if (anyDensity > 10) score -= 15;
-  else if (anyDensity > 5) score -= 10;
-  else if (anyDensity > 1) score -= 5;
-
-  if (m.typeErrors !== null && m.typeErrors > 0) {
-    score -= Math.min((m.typeErrors / sourceCount) * 50, 15);
-  }
-
-  if (maxFunctionsInFile !== null && maxFunctionsInFile > 50) score -= 10;
-  if (deadImportCount !== null && deadImportCount > 20) score -= 5;
-
-  // Honesty cap. When tool-derived Quality signals didn't run on this
-  // repo, the score cannot honestly reflect quality — a repo with no
-  // jscpd/graphify/lint output may be genuinely clean or may hide every
-  // problem behind unmeasured signals, and there's no way to tell.
-  // Mirrors the testing-dim coverage-null cap (35) and the security-dim
-  // depVulnsAvailable cap (65).
-  const qualityUnmeasured = [
-    c.lint === undefined, // no lint capability produced data
-    c.duplication === undefined, // jscpd unavailable
-    c.structural === undefined, // graphify unavailable
-  ].filter(Boolean).length;
-  if (qualityUnmeasured === 3) {
-    score = Math.min(score, 35); // mostly blind — C grade
-  } else if (qualityUnmeasured >= 1) {
-    score = Math.min(score, 75); // partially blind — high-B ceiling
-  }
-
-  score = clamp(score);
-  // Schema v11: `metrics` surfaces only the non-capability signals.
-  // Lint counts + tool live in `report.capabilities.lint`; god-file +
-  // dead-import stats live in `report.capabilities.structural`.
-  return {
-    score,
-    maxScore: 100,
-    status: status(score),
-    metrics: {
-      filesOver500Lines: m.filesOver500Lines,
-      largestFileLines: m.largestFileLines,
-      largestFilePath: m.largestFilePath,
-      consoleLogCount: m.consoleLogCount,
-      anyTypeCount: m.anyTypeCount,
-      typeErrors: m.typeErrors,
-    },
-    details:
-      // Split the lint label into its successful-run name plus a separate
-      // "Linter coverage gap" sentence when packs were attempted but
-      // returned null silently. The parenthetical "(ruff (not run: ts))"
-      // shape was easy to miss in the rendered prose.
-      (() => {
-        if (!lintTool) return `${lintErrors} lint errors, ${lintWarnings} warnings`;
-        const notRunMatch = /\(not run: ([^)]+)\)/.exec(lintTool);
-        if (!notRunMatch) {
-          return `${lintErrors} lint errors, ${lintWarnings} warnings (${lintTool})`;
-        }
-        const cleanTool = lintTool.replace(/\s*\(not run: [^)]+\)/, '').trim();
-        return (
-          `${lintErrors} lint errors, ${lintWarnings} warnings (${cleanTool})` +
-          `. ⚠ Linter coverage gap: ${notRunMatch[1]} not run`
-        );
-      })() +
-      `. ${m.filesOver500Lines} files exceed 500 lines` +
-      `. Largest file: ${m.largestFilePath} (${m.largestFileLines} lines)` +
-      `. ${m.consoleLogCount} console/debug statements` +
-      (m.anyTypeCount > 0 ? `. ${m.anyTypeCount} loose type annotations` : '') +
-      (maxFunctionsInFile !== null ? `. Densest file: ${maxFunctionsInFile} functions` : '') +
-      '.',
-  };
-}
+// The Code Quality dimension scorer used to live here; as of 2.4.7
+// the canonical formula is owned by `quality/scoring.ts` and consumed
+// by both the health audit (via `quality/shallow.ts`) and the
+// standalone quality report. Keeping the pre-2.4.7 duplicate would
+// re-introduce the cross-consumer drift the unification closed.
 
 /** Documentation: 0-100 */
 export function scoreDocumentation(input: ScoreInput): DimensionScore {

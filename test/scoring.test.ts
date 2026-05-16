@@ -1,20 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   scoreTest,
-  scoreQuality,
   scoreDocumentation,
   scoreMaintainability,
   scoreDeveloperExperience,
   computeOverall,
 } from '../src/analyzers/scoring';
 import { DimensionScore } from '../src/analyzers/types';
-import {
-  coverageCapability,
-  lintCapability,
-  structuralCapability,
-  withInput,
-  qualityMeasuredCapabilities,
-} from './fixtures/score-input';
+import { coverageCapability, structuralCapability, withInput } from './fixtures/score-input';
 
 describe('scoreTest', () => {
   it('returns 0 when no test files exist', () => {
@@ -103,119 +96,11 @@ describe('scoreTest', () => {
   });
 });
 
-describe('scoreQuality', () => {
-  it('starts at 100 with no issues', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: qualityMeasuredCapabilities(),
-      }),
-    );
-    expect(s.score).toBe(100);
-  });
-
-  it('deducts for lint errors proportional to density', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: { ...qualityMeasuredCapabilities(), lint: lintCapability(0, 50) },
-      }),
-    );
-    // critical+high = 50; ratio 0.5 * 100 = 50, capped at 40 → 100 - 40 = 60
-    expect(s.score).toBe(60);
-  });
-
-  it('deducts tiered penalty for large files', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100, filesOver500Lines: 25, largestFileLines: 12000 },
-        capabilities: qualityMeasuredCapabilities(),
-      }),
-    );
-    // -10 (>5) -10 (>20) -10 (>5000) -10 (>10000) = -40
-    expect(s.score).toBe(60);
-  });
-
-  it('deducts for console density tiers', () => {
-    const caps = qualityMeasuredCapabilities();
-    const low = scoreQuality(
-      withInput({ metrics: { sourceFiles: 100, consoleLogCount: 40 }, capabilities: caps }),
-    );
-    expect(low.score).toBe(95); // density 0.4 → -5
-    const mid = scoreQuality(
-      withInput({ metrics: { sourceFiles: 100, consoleLogCount: 150 }, capabilities: caps }),
-    );
-    expect(mid.score).toBe(90); // density 1.5 → -10
-    const high = scoreQuality(
-      withInput({ metrics: { sourceFiles: 100, consoleLogCount: 500 }, capabilities: caps }),
-    );
-    expect(high.score).toBe(85); // density 5 → -15
-  });
-
-  it('deducts for any-type density', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100, anyTypeCount: 1100 },
-        capabilities: qualityMeasuredCapabilities(),
-      }),
-    );
-    // density 11 → -15
-    expect(s.score).toBe(85);
-  });
-
-  it('deducts for god files via AST', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: {
-          ...qualityMeasuredCapabilities(),
-          structural: structuralCapability({ maxFunctionsInFile: 75 }),
-        },
-      }),
-    );
-    expect(s.score).toBe(90);
-  });
-
-  it('caps the score at 35 when every tool-derived signal is unmeasured', () => {
-    // No lint, no duplication, no structural capability — formula
-    // would compute 100 (no penalties), but the honesty floor caps
-    // the dimension at 35 because a "perfect" score would misrepresent
-    // the missing measurement.
-    const s = scoreQuality(withInput({ metrics: { sourceFiles: 100 } }));
-    expect(s.score).toBe(35);
-  });
-
-  it('caps the score at 75 when exactly one tool-derived signal is unmeasured', () => {
-    const caps = qualityMeasuredCapabilities();
-    delete (caps as Record<string, unknown>).duplication;
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: caps as ReturnType<typeof qualityMeasuredCapabilities>,
-      }),
-    );
-    expect(s.score).toBe(75);
-  });
-
-  it('clamps to 0 when many large penalties stack', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: {
-          sourceFiles: 100,
-          filesOver500Lines: 50,
-          largestFileLines: 20000,
-          consoleLogCount: 10000,
-          anyTypeCount: 10000,
-        },
-        capabilities: {
-          lint: lintCapability(0, 999),
-          structural: structuralCapability({ maxFunctionsInFile: 200, deadImportCount: 100 }),
-        },
-      }),
-    );
-    expect(s.score).toBe(0);
-  });
-});
+// scoreQuality tests live in test/quality-scoring.test.ts — that file
+// covers the canonical scoreQualityFromInput formula directly. Health-
+// side adapter behavior (toQualityScoreInput → scoreQualityFromInput
+// → DimensionScore) is exercised end-to-end by the renderer-honesty
+// contract test + the integration audits.
 
 describe('scoreDocumentation', () => {
   it('returns 0 with no docs at all', () => {
