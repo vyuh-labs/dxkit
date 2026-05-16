@@ -18,7 +18,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { run } from './runner';
+import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeFilter } from './exclusions';
 import { toProjectRelative } from './paths';
@@ -207,15 +207,15 @@ const graphifyOutcomeCache = new Map<string, StructuralGatherOutcome>();
  * memoized per-cwd outcome so graphify shells out at most once per
  * analyzer run.
  */
-export function gatherGraphifyResult(cwd: string): StructuralGatherOutcome {
+export async function gatherGraphifyResult(cwd: string): Promise<StructuralGatherOutcome> {
   const cached = graphifyOutcomeCache.get(cwd);
   if (cached) return cached;
-  const outcome = computeGraphifyOutcome(cwd);
+  const outcome = await computeGraphifyOutcome(cwd);
   graphifyOutcomeCache.set(cwd, outcome);
   return outcome;
 }
 
-function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
+async function computeGraphifyOutcome(cwd: string): Promise<StructuralGatherOutcome> {
   const pythonCmd = findPython(cwd);
   if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
 
@@ -225,32 +225,37 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   // don't litter /tmp across runs.
   const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-graphify-'));
   const scriptPath = path.join(scriptDir, 'run.py');
-  const stderrPath = path.join(scriptDir, 'stderr.log');
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
-  // D046 (2.4.7): redirect stderr to a tempfile (not /dev/null) so we
-  // can surface failure reasons. Pre-D046 dpl-studio reported
-  // "graphify (failed to run)" with no diagnostic — turned out to be
-  // a tree-sitter parse error on enterprise WCF code that was silent
-  // because stderr was discarded. Reading stderr on failure tells the
-  // customer (and us) *why* it failed.
-  const output = run(
-    `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>'${stderrPath}'`,
-    cwd,
-    300000, // 5 min — bumped from 120000 in 2.4.7 (was timing out on multi-thousand-file frontend repos during real-user UX session 2026-05-07)
-  );
-  let stderrCapture = '';
-  try {
-    stderrCapture = fs.readFileSync(stderrPath, 'utf-8').trim();
-  } catch {
-    /* ignore */
-  }
+  // Spawn-with-process-group so the Python interpreter + any
+  // tree-sitter worker subprocesses it starts are all killed
+  // atomically on timeout. Pre-fix execSync sent SIGTERM only to
+  // the immediate Python child; tree-sitter workers spawned by
+  // the script could be orphaned mid-write, which on a large
+  // codebase (thousands of .cs files) sometimes left the run
+  // looking "no stderr captured" because the process group went
+  // away before flushing to the stderr tempfile.
+  //
+  // runDetached captures stderr natively so the tempfile redirect
+  // pattern is no longer needed — same effect, fewer moving parts.
+  const outcome = await runDetached(pythonCmd, [scriptPath, cwd], {
+    cwd: scriptDir,
+    timeoutMs: 300000, // 5 min — bumped from 120000 in 2.4.7 for multi-thousand-file frontend repos
+  });
   try {
     fs.rmSync(scriptDir, { recursive: true, force: true });
   } catch {
     /* ignore */
   }
+  const output = outcome.stdout;
+  const stderrCapture = outcome.stderr.trim();
 
   if (!output) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
     // Surface the first meaningful stderr line so the customer can
     // see what broke (tree-sitter parse error, Python ImportError,
     // OOM kill, etc.). Truncate aggressively — toolsUnavailable[]
@@ -261,7 +266,9 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
       ?.trim();
     const reason = firstStderrLine
       ? `failed: ${firstStderrLine.length > 200 ? firstStderrLine.slice(0, 197) + '...' : firstStderrLine}`
-      : 'failed to run (no stderr captured)';
+      : outcome.code !== 0 && outcome.code !== null
+        ? `failed with exit code ${outcome.code} (no stderr captured — likely killed by the OS, e.g. OOM)`
+        : 'failed to run (no stderr captured)';
     return { kind: 'unavailable', reason };
   }
 
@@ -321,7 +328,7 @@ export function buildGraphifyEnvelope(data: GraphifyResult, cwd: string): Struct
 export const graphifyProvider: CapabilityProvider<StructuralResult> = {
   source: 'graphify',
   async gather(cwd) {
-    const outcome = gatherGraphifyResult(cwd);
+    const outcome = await gatherGraphifyResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };

@@ -175,7 +175,9 @@ export async function gatherAnalysisResultBody(
   // counts, graphify AST stats. Reshaped from the dispatcher's cached
   // envelopes (`tools/parallel.ts`), so each tool shells out at most once
   // per analyzer run.
-  const layer2 = timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose));
+  const layer2 = await timedAsync('layer2 (parallel)', verbose, () =>
+    gatherLayer2Parallel(repoPath, verbose),
+  );
   mergeLayer2(metrics, layer2);
 
   // Hygiene + comment-ratio metrics shared with the standalone Quality

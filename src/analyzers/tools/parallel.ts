@@ -25,7 +25,10 @@ import { gatherClocMetrics } from './cloc';
 import { gatherGitleaksResult } from './gitleaks';
 import { gatherGraphifyResult } from './graphify';
 
-export function gatherLayer2Parallel(cwd: string, _verbose = false): Partial<HealthMetrics> {
+export async function gatherLayer2Parallel(
+  cwd: string,
+  _verbose = false,
+): Promise<Partial<HealthMetrics>> {
   const clocPartial = gatherClocMetrics(cwd);
 
   const toolsUsed: string[] = [...(clocPartial.toolsUsed ?? [])];
@@ -43,7 +46,7 @@ export function gatherLayer2Parallel(cwd: string, _verbose = false): Partial<Hea
     );
   }
 
-  const graphify = gatherGraphifyResult(cwd);
+  const graphify = await gatherGraphifyResult(cwd);
   if (graphify.kind === 'success') {
     toolsUsed.push('graphify');
   } else {

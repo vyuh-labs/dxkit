@@ -19,7 +19,7 @@ import * as path from 'path';
 import { LANGUAGES, allAutogenSourcePatterns } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DuplicationClone, DuplicationResult } from '../../languages/capabilities/types';
-import { run } from './runner';
+import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
 interface JscpdRawDuplicate {
@@ -97,8 +97,16 @@ function topClonesFrom(duplicates: JscpdRawDuplicate[], limit = 15): Duplication
 /**
  * Single source of truth for the jscpd invocation. Consumed by
  * `jscpdProvider` (capability dispatcher).
+ *
+ * Failure-mode honesty: when jscpd doesn't produce a parseable
+ * report, the returned `reason` distinguishes timeout, non-zero
+ * exit (with first stderr line), or the rare true "no output"
+ * case. Same shape as the semgrep gather — switched from execSync
+ * to spawn-with-process-group so jscpd's worker pool (it splits
+ * the scan across multiple Node workers internally) isn't killed
+ * mid-run when execSync's wall-clock timer fires.
  */
-export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
+export async function gatherJscpdResult(cwd: string): Promise<DuplicationGatherOutcome> {
   const status = findTool(TOOL_DEFS.jscpd, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
@@ -120,12 +128,13 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
   const autogenIgnore = allAutogenSourcePatterns()
     .map((p) => `**/${p}`)
     .join(',');
-  const ignoreFlag = autogenIgnore.length > 0 ? `--ignore '${autogenIgnore}'` : '';
-  run(
-    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' ${ignoreFlag} --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
-    cwd,
-    600000, // 10 min — bumped from 300000 in 2.4.7 (was timing out on 1700+-dep frontend repos during real-user UX session 2026-05-07)
-  );
+  const args = ['--reporters', 'json', '--output', reportDir, '--gitignore', '--pattern', pattern];
+  if (autogenIgnore.length > 0) {
+    args.push('--ignore', autogenIgnore);
+  }
+  args.push('--min-lines', '5', '--min-tokens', '50', cwd);
+
+  const outcome = await runDetached(status.path, args, { cwd, timeoutMs: 600000 });
 
   // Read the report file directly. Pre-D-fix this used
   // `run('cat <path>')` which routed through execSync with the default
@@ -141,9 +150,32 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
   } catch {
     reportRaw = '';
   }
-  run(`rm -rf '${reportDir}'`, cwd);
+  try {
+    fs.rmSync(reportDir, { recursive: true, force: true });
+  } catch {
+    /* dir already gone or never written — fine */
+  }
 
-  if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };
+  if (!reportRaw) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 600s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
+    const stderrFirstLine = outcome.stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (outcome.code !== 0 && outcome.code !== null) {
+      const ctx = stderrFirstLine ? ` (stderr: ${stderrFirstLine})` : '';
+      return { kind: 'unavailable', reason: `exit code ${outcome.code}${ctx}` };
+    }
+    if (stderrFirstLine) {
+      return { kind: 'unavailable', reason: `no output (stderr: ${stderrFirstLine})` };
+    }
+    return { kind: 'unavailable', reason: 'no output' };
+  }
 
   let data: JscpdReport;
   try {
@@ -175,7 +207,7 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
 export const jscpdProvider: CapabilityProvider<DuplicationResult> = {
   source: 'jscpd',
   async gather(cwd) {
-    const outcome = gatherJscpdResult(cwd);
+    const outcome = await gatherJscpdResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
