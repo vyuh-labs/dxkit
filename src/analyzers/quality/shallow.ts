@@ -104,8 +104,17 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
   const scoreInput = toQualityScoreInput(input);
   const { score } = scoreQualityFromInput(scoreInput);
 
-  const lintTool = c.lint?.tool ?? null;
+  const lintToolFromCache = c.lint?.tool ?? null;
   const lintWarnings = (c.lint?.counts.medium ?? 0) + (c.lint?.counts.low ?? 0);
+  // When the cache says lint was attempted but every provider
+  // returned null, surface the honesty notice in the prose so the
+  // health-dim row reads consistently with the standalone Quality
+  // table. Same shape both consumers see.
+  const lintTool =
+    lintToolFromCache ??
+    (c.lintAvailability && !c.lintAvailability.available
+      ? `not run — ${c.lintAvailability.unavailableReason}`
+      : null);
 
   return {
     score,

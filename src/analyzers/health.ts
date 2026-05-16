@@ -384,6 +384,19 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
         }
       : lintOutcome.envelope;
   if (lint) report.lint = lint;
+  // Lint availability so consumers can distinguish "no active
+  // lint-capable pack" (vacuous clean, available=true, no envelope)
+  // from "every active provider returned null" (available=false —
+  // actionable "try installing dependencies"). Same shape as
+  // licensesAvailability + depVulnsAvailability.
+  if (lintOutcome.attempted.length > 0 && lintOutcome.succeeded.length === 0) {
+    report.lintAvailability = {
+      available: false,
+      unavailableReason: `${lintOutcome.attempted.join(', ')} provider${lintOutcome.attempted.length === 1 ? '' : 's'} returned no data (try installing project dependencies)`,
+    };
+  } else {
+    report.lintAvailability = { available: true, unavailableReason: '' };
+  }
   if (coverage) report.coverage = coverage;
   if (imports) report.imports = imports;
   if (testFramework) report.testFramework = testFramework;

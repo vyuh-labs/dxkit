@@ -163,6 +163,18 @@ export interface CapabilityReport {
    * string when available.
    */
   licensesAvailability?: { available: boolean; unavailableReason: string };
+
+  /**
+   * Availability metadata for the LINT dispatch. Sibling of
+   * `lint` so both consumers (health-side scoreQualityDimension +
+   * standalone analyzeQuality) can distinguish "no active pack
+   * declared a lint capability" (available: true, no envelope —
+   * vacuous "clean") from "active packs attempted lint but every
+   * provider returned null" (available: false, no envelope —
+   * actionable "not run, install deps"). Populated from
+   * `gatherWithProvenance.skipped` in the cache builder.
+   */
+  lintAvailability?: { available: boolean; unavailableReason: string };
   /**
    * D025b (2.4.7): availability metadata for the depVulns aggregation.
    * Sibling field rather than nested into `depVulns` so the envelope

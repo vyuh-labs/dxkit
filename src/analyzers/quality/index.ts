@@ -116,11 +116,28 @@ export async function analyzeQuality(
   // skipped-pack provenance into envelope.tool, so the standalone
   // Quality report renders the SAME label health does — closes the
   // cross-process drift class for lint.
+  //
+  // When the cache has NO lint envelope but the active language packs
+  // declare a lint capability (i.e. eslint/ruff was expected to run
+  // but every provider returned null), surface an explicit notice.
+  // Otherwise the renderer's "0 errors, 0 warnings" reads as "clean"
+  // when reality is "lint didn't run." Same honesty pattern the
+  // licenses degraded-banner uses.
   const lintCounts = cacheResult.capabilities.lint?.counts;
   const lintErrors = (lintCounts?.critical ?? 0) + (lintCounts?.high ?? 0);
   const lintWarnings = (lintCounts?.medium ?? 0) + (lintCounts?.low ?? 0);
-  const lintTool = cacheResult.capabilities.lint?.tool ?? null;
-  if (lintTool) toolsUsed.push(lintTool);
+  const lintFromCache: string | null = cacheResult.capabilities.lint?.tool ?? null;
+  const lintAvail = cacheResult.capabilities.lintAvailability;
+  // When the cache says lint was attempted but every provider
+  // returned null, surface the honesty notice in lintTool so the
+  // renderer's "0 errors, 0 warnings" cell reads with explanation
+  // instead of looking like a clean result. The actually-ran tool
+  // name (or null) flows into toolsUsed separately so the footer
+  // stays accurate.
+  const lintTool: string | null =
+    lintFromCache ??
+    (lintAvail && !lintAvail.available ? `not run — ${lintAvail.unavailableReason}` : null);
+  if (lintFromCache) toolsUsed.push(lintFromCache);
   if (cm.commentRatio !== null) toolsUsed.push('cloc');
 
   const metrics: QualityMetrics = {
