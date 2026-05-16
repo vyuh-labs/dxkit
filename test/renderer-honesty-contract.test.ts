@@ -40,6 +40,11 @@ function unavailableQuality(): QualityReport {
     toolsUsed: ['grep', 'find'],
     toolsUnavailable: ['jscpd', 'graphify', 'cloc'],
     metrics: {
+      sourceFiles: 0,
+      filesOver500Lines: 0,
+      largestFileLines: 0,
+      anyTypeCount: 0,
+      typeErrors: null,
       lintErrors: 0,
       lintWarnings: 0,
       lintTool: null,

@@ -12,6 +12,11 @@ function baseReport(): QualityReport {
     toolsUsed: ['grep', 'find'],
     toolsUnavailable: [],
     metrics: {
+      sourceFiles: 100,
+      filesOver500Lines: 0,
+      largestFileLines: 0,
+      anyTypeCount: 0,
+      typeErrors: null,
       lintErrors: 0,
       lintWarnings: 0,
       lintTool: null,

@@ -14,6 +14,11 @@ function reportWithLintTool(tool: string | null, errors = 0, warnings = 1): Qual
     toolsUsed: ['grep', 'find'],
     toolsUnavailable: [],
     metrics: {
+      sourceFiles: 100,
+      filesOver500Lines: 0,
+      largestFileLines: 0,
+      anyTypeCount: 0,
+      typeErrors: null,
       lintErrors: errors,
       lintWarnings: warnings,
       lintTool: tool,
