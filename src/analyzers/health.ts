@@ -241,7 +241,37 @@ export async function gatherAnalysisResultBody(
     if (!metrics.toolsUsed.includes(name)) metrics.toolsUsed.push(name);
   }
 
+  // Push attempted-but-failed capabilities into metrics.toolsUnavailable
+  // so consumers reading the report see the failure honestly rather
+  // than as silent absence. Reads from the *Availability sibling
+  // fields populated above. The reason text is consumer-renderable;
+  // keep it concise (~one short sentence).
+  pushUnavailable(metrics, capabilities.codePatternsAvailability, 'semgrep');
+  pushUnavailable(metrics, capabilities.duplicationAvailability, 'jscpd');
+  pushUnavailable(metrics, capabilities.structuralAvailability, 'graphify');
+  pushUnavailable(metrics, capabilities.lintAvailability, 'lint');
+
   return { stack, capabilities, metrics };
+}
+
+/**
+ * Append a `<toolName> (<reason>)` entry to `metrics.toolsUnavailable`
+ * when an availability sibling reports the capability was attempted
+ * but failed. No-ops when the capability is fully clean (available:
+ * true) or when the sibling is absent. Deduplicates against any
+ * entry already pushed by Layer 2's parallel.ts (which renders
+ * gitleaks / graphify failures into the same field).
+ */
+function pushUnavailable(
+  metrics: HealthMetrics,
+  avail: { available: boolean; unavailableReason: string } | undefined,
+  toolName: string,
+): void {
+  if (!avail || avail.available) return;
+  const entry = avail.unavailableReason ? `${toolName} (${avail.unavailableReason})` : toolName;
+  if (!metrics.toolsUnavailable.some((e) => e === entry || e.startsWith(`${toolName} (`))) {
+    metrics.toolsUnavailable.push(entry);
+  }
 }
 
 /**
@@ -343,9 +373,9 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     imports,
     testFramework,
     secrets,
-    codePatterns,
-    duplication,
-    structural,
+    codePatternsOutcome,
+    duplicationOutcome,
+    structuralOutcome,
     licensesWithAvail,
   ] = await Promise.all([
     gatherDepVulnsWithAvailability(cwd),
@@ -360,11 +390,21 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
     defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
     defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS, cwd)),
-    defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
-    defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
-    defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
+    // gatherWithProvenance so the cache builder can plumb per-capability
+    // availability metadata for tools that may legitimately gather
+    // attempted-but-failed (semgrep / jscpd / graphify under resource
+    // contention; tool not installed; etc.). Without this the cache's
+    // metrics.toolsUnavailable can't distinguish "tool didn't try" from
+    // "tool tried and failed silently" — the same dishonest-rendering
+    // class as the lint case the LINT switch above closes.
+    defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
+    defaultDispatcher.gatherWithProvenance(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
+    defaultDispatcher.gatherWithProvenance(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
     gatherLicensesWithAvailability(cwd),
   ]);
+  const codePatterns = codePatternsOutcome.envelope;
+  const duplication = duplicationOutcome.envelope;
+  const structural = structuralOutcome.envelope;
   const report: CapabilityReport = {};
   if (depVulnsWithAvail.envelope) report.depVulns = depVulnsWithAvail.envelope;
   // Always plumb availability — even when envelope is null, the bool
@@ -404,8 +444,15 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   if (testFramework) report.testFramework = testFramework;
   if (secrets) report.secrets = secrets;
   if (codePatterns) report.codePatterns = codePatterns;
+  // Same shape as lintAvailability — distinguishes "no rulesets
+  // active" (vacuous clean) from "semgrep/jscpd/graphify was
+  // attempted but every provider returned null" (actionable —
+  // the customer's report shouldn't silently miss the tool).
+  report.codePatternsAvailability = availabilityFromOutcome(codePatternsOutcome, 'semgrep');
   if (duplication) report.duplication = duplication;
+  report.duplicationAvailability = availabilityFromOutcome(duplicationOutcome, 'jscpd');
   if (structural) report.structural = structural;
+  report.structuralAvailability = availabilityFromOutcome(structuralOutcome, 'graphify');
   if (licensesWithAvail.envelope) report.licenses = licensesWithAvail.envelope;
   // Always plumb availability — even when envelope is null, the bool
   // disambiguates "no active pack with a licenses provider" (vacuous
@@ -431,6 +478,30 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     depVulnsWithAvail.unavailableReason,
   );
   return report;
+}
+
+/**
+ * Derive `<cap>Availability` metadata from a gatherWithProvenance
+ * outcome. Mirrors the depVulnsAvailability / licensesAvailability
+ * pattern: `available === false` only when at least one provider was
+ * attempted AND none succeeded (i.e. tried + failed silently).
+ * Empty `attempted` list reports available: true (vacuous — nothing
+ * to try, nothing to fail).
+ */
+function availabilityFromOutcome(
+  outcome: { attempted: string[]; succeeded: string[]; skipped: string[] },
+  toolLabel: string,
+): { available: boolean; unavailableReason: string } {
+  if (outcome.attempted.length === 0) {
+    return { available: true, unavailableReason: '' };
+  }
+  if (outcome.succeeded.length > 0) {
+    return { available: true, unavailableReason: '' };
+  }
+  return {
+    available: false,
+    unavailableReason: `${toolLabel} attempted but produced no output (likely killed by resource limits — try running dxkit on this repo alone)`,
+  };
 }
 
 /**

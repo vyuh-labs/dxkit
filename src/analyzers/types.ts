@@ -175,6 +175,19 @@ export interface CapabilityReport {
    * `gatherWithProvenance.skipped` in the cache builder.
    */
   lintAvailability?: { available: boolean; unavailableReason: string };
+
+  /** Availability for CODE_PATTERNS (semgrep). Same shape as
+   *  lintAvailability — distinguishes "no rulesets active"
+   *  (vacuous) from "semgrep was attempted but every provider
+   *  returned null" (actionable; tool may have OOM'd or timed
+   *  out under parallel load). */
+  codePatternsAvailability?: { available: boolean; unavailableReason: string };
+
+  /** Availability for DUPLICATION (jscpd). Same shape. */
+  duplicationAvailability?: { available: boolean; unavailableReason: string };
+
+  /** Availability for STRUCTURAL (graphify). Same shape. */
+  structuralAvailability?: { available: boolean; unavailableReason: string };
   /**
    * D025b (2.4.7): availability metadata for the depVulns aggregation.
    * Sibling field rather than nested into `depVulns` so the envelope
