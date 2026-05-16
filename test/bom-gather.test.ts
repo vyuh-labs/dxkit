@@ -4,7 +4,6 @@ import {
   compareSemver,
   deriveTier1Resolution,
   maxSemver,
-  mergeNestedBomEntries,
 } from '../src/analyzers/bom/gather';
 import type { DepVulnFinding } from '../src/languages/capabilities/types';
 import type { BomEntry } from '../src/analyzers/bom/types';
@@ -171,8 +170,39 @@ describe('analyzeBom filter', () => {
   // Pure-ish integration test: mock gatherBomEntries to return a
   // hand-crafted set, then verify filter='top-level' drops the
   // expected rows while the byTopLevelDep rollup stays complete.
+  // The cache layer + dep-vuln gather are also mocked so the test
+  // runs in milliseconds against a non-existent repo path.
   it('keeps isTopLevel=true and undefined, drops isTopLevel=false', async () => {
     vi.resetModules();
+    vi.doMock('../src/analyzers/cache', () => ({
+      readOrBuildAnalysisResult: vi.fn(async () => ({
+        cwd: '/tmp/fake-repo',
+        builtAt: '2026-05-15T00:00:00.000Z',
+        commitSha: 'abc123',
+        branch: 'test',
+        dxkitVersion: '0.0.0-test',
+        schemaVersion: 2,
+        ignoreFileMtime: null,
+        workingTreeDirty: false,
+        stack: { projectName: 'fake', languages: {} },
+        capabilities: { licenses: null },
+        metrics: {},
+      })),
+    }));
+    vi.doMock('../src/analyzers/security/gather', async () => {
+      const actual = await vi.importActual<typeof import('../src/analyzers/security/gather')>(
+        '../src/analyzers/security/gather',
+      );
+      return {
+        ...actual,
+        gatherDepVulns: vi.fn(async () => ({
+          counts: { critical: 0, high: 0, medium: 0, low: 0 },
+          enrichment: null,
+          findings: [],
+          tool: '',
+        })),
+      };
+    });
     vi.doMock('../src/analyzers/bom/gather', async () => {
       const actual = await vi.importActual<typeof import('../src/analyzers/bom/gather')>(
         '../src/analyzers/bom/gather',
@@ -205,7 +235,6 @@ describe('analyzeBom filter', () => {
           ],
           toolsUsed: ['test'],
           toolsUnavailable: [],
-          projectRoots: ['.'],
         })),
       };
     });
@@ -228,6 +257,8 @@ describe('analyzeBom filter', () => {
     // transitive rows themselves are hidden by the filter.
     expect(reportTop.summary.byTopLevelDep['react'].advisoryCount).toBe(2);
     expect(reportTop.summary.byTopLevelDep['react'].packages).toEqual(['lodash', 'minimatch']);
+    vi.doUnmock('../src/analyzers/cache');
+    vi.doUnmock('../src/analyzers/security/gather');
     vi.doUnmock('../src/analyzers/bom/gather');
   });
 });
@@ -248,91 +279,3 @@ function mkEntry(
     isTopLevel,
   };
 }
-
-describe('mergeNestedBomEntries', () => {
-  function result(entries: BomEntry[], roots: string[] = ['.']) {
-    return { entries, toolsUsed: ['test'], toolsUnavailable: [], projectRoots: roots };
-  }
-
-  it('passes through a single root unchanged except for sources', () => {
-    const m = mergeNestedBomEntries([{ relPath: '.', result: result([mkEntry('react', true)]) }]);
-    expect(m.entries).toHaveLength(1);
-    expect(m.entries[0].sources).toEqual(['.']);
-    expect(m.projectRoots).toEqual(['.']);
-  });
-
-  it('dedupes same (package, version) across roots and unions sources', () => {
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([mkEntry('lodash', false)]) },
-      { relPath: 'userserver', result: result([mkEntry('lodash', false)]) },
-    ]);
-    expect(m.entries).toHaveLength(1);
-    expect(m.entries[0].sources).toEqual(['.', 'userserver']);
-    expect(m.projectRoots).toEqual(['.', 'userserver']);
-  });
-
-  it('OR-merges isTopLevel — any-true wins', () => {
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([mkEntry('axios', false)]) },
-      { relPath: 'userserver', result: result([mkEntry('axios', true)]) },
-    ]);
-    expect(m.entries[0].isTopLevel).toBe(true);
-  });
-
-  it('leaves isTopLevel undefined if no root determined it', () => {
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([mkEntry('mystery', undefined)]) },
-      { relPath: 'userserver', result: result([mkEntry('mystery', undefined)]) },
-    ]);
-    expect(m.entries[0].isTopLevel).toBeUndefined();
-  });
-
-  it('keeps separate rows for different versions of the same package', () => {
-    const e1 = mkEntry('react', false);
-    e1.version = '17.0.2';
-    const e2 = mkEntry('react', true);
-    e2.version = '18.2.0';
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([e1]) },
-      { relPath: 'userserver', result: result([e2]) },
-    ]);
-    expect(m.entries).toHaveLength(2);
-    expect(m.entries.map((e) => e.version).sort()).toEqual(['17.0.2', '18.2.0']);
-  });
-
-  it('unions vulns with dedup on (id, package, installedVersion)', () => {
-    const v1: DepVulnFinding = {
-      id: 'CVE-1',
-      package: 'tar',
-      installedVersion: '6.0.0',
-      tool: 'npm-audit',
-      severity: 'high',
-    };
-    const v2: DepVulnFinding = { ...v1 };
-    const v3: DepVulnFinding = {
-      id: 'CVE-2',
-      package: 'tar',
-      installedVersion: '6.0.0',
-      tool: 'npm-audit',
-      severity: 'critical',
-    };
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([mkEntry('tar', false, [v1])]) },
-      { relPath: 'userserver', result: result([mkEntry('tar', false, [v2, v3])]) },
-    ]);
-    expect(m.entries).toHaveLength(1);
-    expect(m.entries[0].vulns.map((v) => v.id).sort()).toEqual(['CVE-1', 'CVE-2']);
-    // CVE-2 is critical → merged maxSeverity must be critical
-    expect(m.entries[0].maxSeverity).toBe('critical');
-  });
-
-  it('upgrades licenseType from UNKNOWN when a later root has real data', () => {
-    const unknownEntry: BomEntry = { ...mkEntry('pkg', false), licenseType: 'UNKNOWN' };
-    const knownEntry: BomEntry = { ...mkEntry('pkg', false), licenseType: 'MIT' };
-    const m = mergeNestedBomEntries([
-      { relPath: '.', result: result([unknownEntry]) },
-      { relPath: 'userserver', result: result([knownEntry]) },
-    ]);
-    expect(m.entries[0].licenseType).toBe('MIT');
-  });
-});

@@ -55,15 +55,11 @@ export interface BomEntry {
    *  don't accidentally filter the whole report down to zero. */
   isTopLevel?: boolean;
 
-  /** Cwd-relative paths of the sub-project roots this package was
-   *  found in (e.g. `["."]`, `["userserver"]`, or
-   *  `[".", "userserver", "tools"]`). Populated only when
-   *  `analyzeBom({ nested: true })` discovers more than one root.
-   *  When a package appears under multiple roots (common for shared
-   *  transitives like `lodash`), the sources list unions the
-   *  sub-paths so the reader can see the full blast radius of an
-   *  upgrade. Unset when nested scan was disabled or only one root
-   *  existed. */
+  /** Reserved for per-row sub-root attribution. Currently unset under
+   *  the canonical-cache gather path (one inventory at the repo
+   *  root); future widening of the cached `LicenseFinding` to carry
+   *  manifest-path provenance would let analyzeBom reconstruct
+   *  per-package source attribution from the cached envelope. */
   sources?: string[];
 }
 
@@ -126,10 +122,12 @@ export interface BomReport {
      *  row count otherwise, so the header can show "120 of 1371
      *  (filter=top-level)." */
     unfilteredTotalPackages: number;
-    /** Cwd-relative paths of every project root the nested scan
-     *  discovered (e.g. `["."]` or `[".", "userserver"]`). Sorted,
-     *  distinct. When nested scan is disabled or only one root was
-     *  found, this is `["."]` so consumers can treat it uniformly. */
+    /** Cwd-relative paths of every project root discovered under the
+     *  scan target (e.g. `["."]` or `[".", "userserver"]`). Sorted,
+     *  distinct. Always at least `["."]` so consumers can treat it
+     *  uniformly. Informational only — the package universe comes
+     *  from the canonical cached license inventory regardless of how
+     *  many roots are listed here. */
     projectRoots: string[];
     /** Sorted, deduplicated list of every advisory `fingerprint`
      *  covered by this report. Each fingerprint is a stable hash of
