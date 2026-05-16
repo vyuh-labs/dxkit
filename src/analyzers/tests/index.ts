@@ -225,7 +225,19 @@ export function formatTestGapsReport(report: TestGapsReport, elapsed: string): s
   L.push('');
   L.push('| Metric | Value |');
   L.push('|--------|-------|');
-  L.push(`| Test files found | ${s.testFiles} |`);
+  // Surface the active vs schema-only split on the headline row.
+  // platform repos sometimes register a `*.spec.ts` that's a
+  // dependency-injection schema only — counted as "found" but
+  // exercises no assertion. Reader scanning "Test files found: 1"
+  // would otherwise miss that 0 of them are real tests.
+  const schemaOnlyCount = s.testFiles - s.activeTestFiles - s.commentedOutFiles;
+  const breakdown: string[] = [];
+  if (s.activeTestFiles > 0) breakdown.push(`${s.activeTestFiles} active`);
+  if (s.commentedOutFiles > 0) breakdown.push(`${s.commentedOutFiles} commented-out`);
+  if (schemaOnlyCount > 0) breakdown.push(`${schemaOnlyCount} schema-only`);
+  const testFilesCell =
+    breakdown.length > 0 ? `${s.testFiles} (${breakdown.join(', ')})` : `${s.testFiles}`;
+  L.push(`| Test files found | ${testFilesCell} |`);
   L.push(`| Active test files | ${s.activeTestFiles} |`);
   L.push(`| Commented-out test files | ${s.commentedOutFiles} |`);
   L.push(

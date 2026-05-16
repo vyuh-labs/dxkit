@@ -140,15 +140,18 @@ export function scoreSecurityDimension(input: ScoreInput): DimensionScore {
     score,
     maxScore: 100,
     status: status(score),
-    // Schema v11: `metrics` surfaces only the non-capability signals.
-    // Secret findings live in `report.capabilities.secrets`; dep-vuln
-    // counts + audit-tool name live in `report.capabilities.depVulns`;
-    // code-pattern findings live in `report.capabilities.codePatterns`.
+    // Schema v11: `metrics` surfaces only the non-capability signals
+    // that aren't already rolled into the prose's code-findings
+    // total. `evalCount` and `tlsDisabledCount` ARE counted in
+    // `codeBySeverity` (via the canonical SecurityAggregate), so
+    // surfacing them as separate metric rows reads as "26 + 11"
+    // when reality is "26 already includes those 11." Drop them
+    // from the rendered metric table; they remain available on
+    // the raw HealthMetrics for programmatic consumers that need
+    // the breakdown.
     metrics: {
       privateKeyFiles: m.privateKeyFiles,
-      evalCount: m.evalCount,
       envFilesInGit: m.envFilesInGit,
-      tlsDisabledCount: m.tlsDisabledCount,
     },
     details:
       `${secretFindings} hardcoded secret patterns found` +

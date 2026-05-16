@@ -206,12 +206,35 @@ function detectDockerComposeContent(cwd: string): string {
 }
 
 function detectProjectName(cwd: string): string {
+  const cwdBasename = path.basename(cwd);
+
+  // Prefer cwd basename when it's strictly more descriptive than the
+  // manifest-declared name. Triggers when the manifest name is a
+  // substring of the cwd basename AND the cwd is longer — e.g.
+  // package.json `name: "client"` in a directory called `web-client`.
+  // The customer running `dxkit X /path/to/web-client` expects
+  // "web-client" in the report header, not "client".
+  function preferCwdWhenMoreDescriptive(manifestName: string): string {
+    if (
+      cwdBasename.length > manifestName.length &&
+      cwdBasename.toLowerCase().includes(manifestName.toLowerCase())
+    ) {
+      return cwdBasename;
+    }
+    return manifestName;
+  }
+
   // Try package.json name
   const pkg = readFileOr(cwd, 'package.json', '{}');
   try {
     const parsed = JSON.parse(pkg);
-    if (parsed.name && !parsed.name.startsWith('@')) return parsed.name;
-    if (parsed.name) return parsed.name.split('/').pop() || path.basename(cwd);
+    if (parsed.name && !parsed.name.startsWith('@')) {
+      return preferCwdWhenMoreDescriptive(parsed.name);
+    }
+    if (parsed.name) {
+      const unscoped = parsed.name.split('/').pop() || cwdBasename;
+      return preferCwdWhenMoreDescriptive(unscoped);
+    }
   } catch {
     /* ignore */
   }
@@ -219,15 +242,15 @@ function detectProjectName(cwd: string): string {
   // Try go.mod module name
   const goMod = readFileOr(cwd, 'go.mod', '');
   const goMatch = goMod.match(/^module\s+\S+\/(\S+)/m);
-  if (goMatch) return goMatch[1];
+  if (goMatch) return preferCwdWhenMoreDescriptive(goMatch[1]);
 
   // Try pyproject.toml name
   const pyproject = readFileOr(cwd, 'pyproject.toml', '');
   const pyMatch = pyproject.match(/name\s*=\s*"([^"]+)"/);
-  if (pyMatch) return pyMatch[1];
+  if (pyMatch) return preferCwdWhenMoreDescriptive(pyMatch[1]);
 
   // Fallback to directory name
-  return path.basename(cwd);
+  return cwdBasename;
 }
 
 function detectProjectDescription(cwd: string): string {

@@ -98,4 +98,13 @@ export interface QualityReport {
   slopScore: number;
   toolsUsed: string[];
   toolsUnavailable: string[];
+  /**
+   * Pack ids of every active language pack at scan time (derived from
+   * the cached DetectedStack). The renderer reads this to decide
+   * whether structural-graph signals like `orphanModuleCount` need an
+   * informational qualifier — graphify can't follow C# `using`
+   * directives across assemblies, so on csharp-dominant repos every
+   * .cs file looks orphaned and the raw count misleads.
+   */
+  activeLanguages?: string[];
 }

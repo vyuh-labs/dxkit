@@ -163,6 +163,10 @@ export async function analyzeQuality(
 
   metrics.slopScore = scoreQualityFromInput(qualityMetricsToScoreInput(metrics)).score;
 
+  const activeLanguages = Object.entries(stack.languages)
+    .filter(([, active]) => active)
+    .map(([id]) => id);
+
   return {
     repo: stack.projectName || path.basename(cacheResult.cwd),
     analyzedAt: cacheResult.builtAt,
@@ -172,6 +176,7 @@ export async function analyzeQuality(
     slopScore: metrics.slopScore,
     toolsUsed,
     toolsUnavailable,
+    activeLanguages,
   };
 }
 
@@ -313,7 +318,16 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
       L.push(`- **Dead imports:** ${m.deadImportCount}`);
     }
     if (m.orphanModuleCount !== null && m.orphanModuleCount > 0) {
-      L.push(`- **Orphan modules:** ${m.orphanModuleCount} (no inbound imports)`);
+      // C# uses namespace-based name resolution; graphify follows
+      // file-based imports only, so every .cs file reads as orphaned
+      // to it (the using-directive graph isn't traversed). Label the
+      // count as informational on csharp-active repos so the reader
+      // doesn't take 58K orphan modules as an actionable defect.
+      const csharpActive = report.activeLanguages?.includes('csharp');
+      const qualifier = csharpActive
+        ? " (informational — graphify can't follow C# `using` directives across assemblies)"
+        : ' (no inbound imports)';
+      L.push(`- **Orphan modules:** ${m.orphanModuleCount}${qualifier}`);
     }
   } else {
     L.push(

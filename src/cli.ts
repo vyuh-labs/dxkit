@@ -1323,9 +1323,15 @@ function formatMarkdownReport(
   // Footer
   lines.push('---');
   lines.push('');
-  if (report.languages.length > 0) {
+  // Drop languages that round to 0% — a single .py file alongside a
+  // 300K-LOC C# codebase shouldn't surface as "Python (0%)" in the
+  // header. Filter at the renderer rather than the detector so the
+  // raw HealthReport.languages still carries everything for
+  // programmatic consumers.
+  const visibleLanguages = report.languages.filter((l) => l.percentage >= 1);
+  if (visibleLanguages.length > 0) {
     lines.push(
-      '**Languages:** ' + report.languages.map((l) => `${l.name} (${l.percentage}%)`).join(', '),
+      '**Languages:** ' + visibleLanguages.map((l) => `${l.name} (${l.percentage}%)`).join(', '),
     );
     lines.push('');
   }
