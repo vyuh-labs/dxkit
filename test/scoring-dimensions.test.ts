@@ -175,61 +175,40 @@ describe('scoreSecurityFromInput', () => {
     ).toBe(30);
   });
 
-  it('tiers code-finding penalties by severity (capped at 75 for HIGH+)', () => {
-    // Any open HIGH or CRITICAL code finding caps the dimension at
-    // CODE_FINDING_HIGH_PLUS_OPEN_CAP (75). The raw-penalty tiers
-    // still apply when the penalty drives the score below the cap.
-
-    // critical: raw 85 / 80 / 75 → all capped at 75 (the cap binds
-    // at the lighter tiers).
+  it('tiers code-finding penalties by severity', () => {
+    // critical
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 1, high: 0, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(75);
+    ).toBe(85);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 6, high: 0, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(75);
+    ).toBe(80);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 11, high: 0, medium: 0, low: 0 } }),
       ).score,
     ).toBe(75);
-    // high: raw 95 / 90 → both capped at 75.
+    // high
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 1, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(75);
+    ).toBe(95);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 6, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(75);
-    // medium > 10: raw 95, cap does NOT apply (no HIGH or CRITICAL
-    // finding open). The cap is severity-gated, not finding-count.
+    ).toBe(90);
+    // medium > 10
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 0, medium: 11, low: 0 } }),
       ).score,
     ).toBe(95);
-  });
-
-  it('HIGH/CRITICAL code-finding cap is a ceiling, not a floor', () => {
-    // When the raw penalty stack drives the score below 75, the
-    // cap doesn't lift it back up. A repo with 11 critical code
-    // findings (-25) AND 10 dep-high (-10) AND a critical dep (-15)
-    // starts at 100 - 50 = 50, well below the cap. Final = 50.
-    expect(
-      scoreSecurityFromInput(
-        emptyScoreInput({
-          codeFindings: { critical: 11, high: 0, medium: 0, low: 0 },
-          depVulns: { critical: 1, high: 10, medium: 0, low: 0 },
-        }),
-      ).score,
-    ).toBe(50);
   });
 
   it('deducts for dep vulns by severity', () => {
@@ -319,25 +298,23 @@ describe('scoreSecurityFromInput', () => {
     expect(s.score).toBe(35);
   });
 
-  it('dep-vulns-unavailable cap composes monotonically with other caps', () => {
-    // 100 - 15 (1 critical code finding) = raw 85. Then:
-    //   • HIGH/CRITICAL code-finding cap brings it to 75.
-    //   • dep-unavailable cap then brings it to 65 (more aggressive).
-    // Without dep-unavailable: stops at 75 (the HIGH-cap).
-    const cappedByBoth = scoreSecurityFromInput(
+  it('cap applies to a score that would otherwise be between cap and 100', () => {
+    // 100 - 15 (1 critical code finding) = 85. With depVulnsAvailable=false,
+    // capped to 65. Without it, would stay at 85.
+    const capped = scoreSecurityFromInput(
       emptyScoreInput({
         depVulnsAvailable: false,
         codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
       }),
     );
-    expect(cappedByBoth.score).toBe(65);
-    const cappedByHighOnly = scoreSecurityFromInput(
+    expect(capped.score).toBe(65);
+    const uncapped = scoreSecurityFromInput(
       emptyScoreInput({
         depVulnsAvailable: true,
         codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
       }),
     );
-    expect(cappedByHighOnly.score).toBe(75);
+    expect(uncapped.score).toBe(85);
   });
 });
 
@@ -521,17 +498,15 @@ describe('D023 parity: unified security scorer', () => {
 
   it('health-side falls back to grep-based metrics when codePatterns is absent', () => {
     // Without semgrep, the health-side should still penalize eval/TLS
-    // through the m.evalCount + m.tlsDisabledCount grep counts so the
-    // semgrep-less environment doesn't surface as fully clean.
+    // through the m.evalCount + m.tlsDisabledCount grep counts so we
+    // don't regress pre-2.4.7 coverage for semgrep-less environments.
     const r = scoreSecurityDimension(
       withInput({
         metrics: { evalCount: 1, tlsDisabledCount: 1 },
       }),
     );
-    // 2 high-severity code findings raw-penalize -5 (high > 0), then
-    // the HIGH/CRITICAL open-finding cap brings the dimension to 75
-    // — even one HIGH code finding caps "Excellent."
-    expect(r.score).toBe(75);
+    // 2 high-severity code findings → -5 (high > 0).
+    expect(r.score).toBe(95);
   });
 });
 

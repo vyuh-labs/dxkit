@@ -126,30 +126,6 @@ export const DEP_VULNS_UNAVAILABLE_CAP = 65;
 export const SECRETS_PRESENT_CAP = 40;
 
 /**
- * Score ceiling applied when any HIGH or CRITICAL code finding is
- * open. Without it, a repo with one outstanding HIGH code finding
- * (e.g. a TLS-validation-disabled call site) scored in the high
- * 80s / low 90s — numerically correct given the penalty schedule
- * but the "Excellent" label read as "you're done" while a real
- * HIGH was still open and concrete. Customer trusts the headline
- * and ships.
- *
- * Rationale for 75: matches the status-threshold for "Good"
- * (60-79). A repo with an outstanding HIGH (or worse) code
- * finding cannot honestly claim "Excellent" (>= 80) — the
- * finding is concrete, file-and-line-specific, and unfixed.
- * 75 lets the dimension still read as "Good" (the finding is
- * fixable + scoped), but no longer as "Excellent."
- *
- * Compare DEP_VULNS_UNAVAILABLE_CAP = 65 (uncertain) and
- * SECRETS_PRESENT_CAP = 40 (definite trust failure). This cap
- * sits between them: definite but bounded — a code finding is
- * concrete (definite) but less existential than a leaked
- * credential.
- */
-export const CODE_FINDING_HIGH_PLUS_OPEN_CAP = 75;
-
-/**
  * Compute the 0-100 security score from the canonical input shape.
  * Same formula, same inputs, same output — applied by both the health
  * dimension rollup and the standalone vuln scan.
@@ -202,19 +178,8 @@ export function scoreSecurityFromInput(input: SecurityScoreInput): { score: numb
   if (!input.depVulnsAvailable && final > DEP_VULNS_UNAVAILABLE_CAP) {
     final = DEP_VULNS_UNAVAILABLE_CAP;
   }
-  // Outstanding HIGH/CRITICAL code finding cap. A concrete,
-  // file-and-line-specific code-pattern finding above HIGH
-  // severity cannot honestly leave the dimension reading as
-  // "Excellent" (>= 80). Applied before the secrets cap so the
-  // latter (stronger) ceiling still wins when both apply.
-  if (
-    (input.codeFindings.high > 0 || input.codeFindings.critical > 0) &&
-    final > CODE_FINDING_HIGH_PLUS_OPEN_CAP
-  ) {
-    final = CODE_FINDING_HIGH_PLUS_OPEN_CAP;
-  }
-  // Secrets-in-source cap. Any committed credential (hardcoded
-  // secret, private key on disk, or .env in git) is a
+  // C2.2 / D098: secrets-in-source cap. Any committed credential
+  // (hardcoded secret, private key on disk, or .env in git) is a
   // foundational trust failure that bounds the dimension at ≤ 40
   // ("Fair" or worse) regardless of how clean other signals are.
   // Applied last so it's a ceiling that composes with everything
