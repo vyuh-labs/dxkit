@@ -9,28 +9,112 @@ import { ContributorStats, HotFile, CommitQuality, WeeklyVelocity } from './type
 
 // ─── Contributors ───────────────────────────────────────────────────────────
 
+/**
+ * True when an author looks like an automation account rather than a
+ * human contributor. Common bot patterns: GitHub App naming
+ * convention (`[bot]` suffix), known service accounts, and CI-only
+ * placeholders (`root`, `unknown`). Bot rows still appear in the
+ * leaderboard but get tagged so they don't crowd out human signal.
+ */
+function isBotAuthor(name: string, email: string): boolean {
+  if (/\[bot\]/.test(name)) return true;
+  if (/^(dependabot|renovate|github-actions|snyk-bot|deepsource-io)$/i.test(name)) return true;
+  if (/^(dependabot|renovate|github-actions|noreply)@/.test(email)) return true;
+  if (name === 'root' || name === 'unknown') return true;
+  return false;
+}
+
+/**
+ * Normalize an email for clustering. GitHub's privacy-relay emails
+ * (`123456+username@users.noreply.github.com`) sometimes get used
+ * alongside the real address; drop the leading `<digits>+` so both
+ * collapse to the same cluster key. Lowercase the whole thing so
+ * casing differences don't split a cluster.
+ */
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().replace(/^\d+\+/, '');
+}
+
 export function gatherContributors(cwd: string, since: string): ContributorStats[] {
-  // Get commit count per author
+  // Pull name + email together so we can cluster aliases that share a
+  // mailbox (e.g. someone committing as "Jane D" from a laptop and
+  // "Jane-Doe-Corp" from a corp VPN under the same address). git
+  // shortlog -sne emits `  <count>\t<name> <<email>>`.
   const shortlog = run(
-    `git shortlog -sn --no-merges --since='${since}' HEAD 2>/dev/null`,
+    `git shortlog -sne --no-merges --since='${since}' HEAD 2>/dev/null`,
     cwd,
     30000,
   );
   if (!shortlog) return [];
 
-  const contributors = new Map<string, ContributorStats>();
-
+  interface RawAuthor {
+    name: string;
+    email: string;
+    commits: number;
+  }
+  const rawAuthors: RawAuthor[] = [];
   for (const line of shortlog.split('\n').filter((l) => l.trim())) {
-    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    const match = line.trim().match(/^(\d+)\s+(.+?)\s+<([^>]+)>$/);
     if (match) {
-      contributors.set(match[2], {
-        name: match[2],
-        commits: parseInt(match[1]),
+      rawAuthors.push({ commits: parseInt(match[1]), name: match[2], email: match[3] });
+    }
+  }
+
+  // Cluster by normalized email. Within each cluster the canonical
+  // display name is the one with the most non-merge commits (ties
+  // break alphabetically for stability). Aliases that contributed
+  // under the same address collapse into one row.
+  interface Cluster {
+    canonicalName: string;
+    canonicalEmail: string;
+    aliases: Map<string, number>;
+    commits: number;
+    linesAdded: number;
+    linesRemoved: number;
+    mergeCommits: number;
+    isBot: boolean;
+  }
+  const clusters = new Map<string, Cluster>();
+  for (const a of rawAuthors) {
+    const key = normalizeEmail(a.email);
+    const existing = clusters.get(key);
+    if (!existing) {
+      clusters.set(key, {
+        canonicalName: a.name,
+        canonicalEmail: a.email,
+        aliases: new Map([[a.name, a.commits]]),
+        commits: a.commits,
         linesAdded: 0,
         linesRemoved: 0,
-        netChange: 0,
         mergeCommits: 0,
+        isBot: isBotAuthor(a.name, a.email),
       });
+    } else {
+      existing.aliases.set(a.name, (existing.aliases.get(a.name) ?? 0) + a.commits);
+      existing.commits += a.commits;
+      // Re-derive canonical: alias with the highest non-merge commit
+      // count wins (tie-break alphabetical). Stays deterministic
+      // across runs since shortlog is sorted.
+      let bestName = existing.canonicalName;
+      let bestCount = existing.aliases.get(bestName) ?? 0;
+      for (const [name, count] of existing.aliases) {
+        if (count > bestCount || (count === bestCount && name < bestName)) {
+          bestName = name;
+          bestCount = count;
+        }
+      }
+      existing.canonicalName = bestName;
+      existing.isBot = existing.isBot || isBotAuthor(a.name, a.email);
+    }
+  }
+
+  // Build a name→cluster index so the numstat / merge-log passes
+  // (which still produce per-name lines) route into the right
+  // cluster.
+  const clusterByName = new Map<string, Cluster>();
+  for (const cluster of clusters.values()) {
+    for (const alias of cluster.aliases.keys()) {
+      clusterByName.set(alias, cluster);
     }
   }
 
@@ -49,50 +133,78 @@ export function gatherContributors(cwd: string, since: string): ContributorStats
       } else {
         const m = line.match(/^(\d+)\s+(\d+)\s+/);
         if (m && currentAuthor) {
-          const stats = contributors.get(currentAuthor);
-          if (stats) {
-            stats.linesAdded += parseInt(m[1]);
-            stats.linesRemoved += parseInt(m[2]);
+          const cluster = clusterByName.get(currentAuthor);
+          if (cluster) {
+            cluster.linesAdded += parseInt(m[1]);
+            cluster.linesRemoved += parseInt(m[2]);
           }
         }
       }
     }
   }
 
-  // Get merge commit count per author
+  // Get merge commit count per author. Merge-only contributors (no
+  // non-merge commits) won't appear in shortlog so they need their
+  // own cluster. Use name+email from %aE so the cluster key matches.
   const mergeLog = run(
-    `git log --format='%aN' --merges --since='${since}' HEAD 2>/dev/null`,
+    `git log --format='%aN<<<%aE' --merges --since='${since}' HEAD 2>/dev/null`,
     cwd,
     30000,
   );
   if (mergeLog) {
-    for (const name of mergeLog.split('\n').filter((l) => l.trim())) {
-      const stats = contributors.get(name);
-      if (stats) {
-        stats.mergeCommits++;
+    for (const entry of mergeLog.split('\n').filter((l) => l.trim())) {
+      const [name, email] = entry.split('<<<');
+      if (!name || !email) continue;
+      const key = normalizeEmail(email);
+      const existing = clusters.get(key);
+      if (existing) {
+        existing.mergeCommits++;
+        if (!existing.aliases.has(name)) {
+          existing.aliases.set(name, 0);
+          clusterByName.set(name, existing);
+        }
       } else {
-        // Merge-only contributor
-        contributors.set(name, {
-          name,
+        const cluster: Cluster = {
+          canonicalName: name,
+          canonicalEmail: email,
+          aliases: new Map([[name, 0]]),
           commits: 0,
           linesAdded: 0,
           linesRemoved: 0,
-          netChange: 0,
           mergeCommits: 1,
-        });
+          isBot: isBotAuthor(name, email),
+        };
+        clusters.set(key, cluster);
+        clusterByName.set(name, cluster);
       }
     }
   }
 
-  // Compute net change
-  for (const stats of contributors.values()) {
-    stats.netChange = stats.linesAdded - stats.linesRemoved;
+  // Project each cluster to the public ContributorStats shape.
+  // Aliases other than the canonical name surface as a parenthetical
+  // so the reader can see who got merged.
+  const out: ContributorStats[] = [];
+  for (const cluster of clusters.values()) {
+    const otherAliases = [...cluster.aliases.keys()]
+      .filter((n) => n !== cluster.canonicalName)
+      .sort();
+    const displayName =
+      otherAliases.length > 0
+        ? `${cluster.canonicalName} (aka ${otherAliases.join(', ')})`
+        : cluster.canonicalName;
+    const labelled = cluster.isBot ? `${displayName} [automated]` : displayName;
+    out.push({
+      name: labelled,
+      commits: cluster.commits,
+      linesAdded: cluster.linesAdded,
+      linesRemoved: cluster.linesRemoved,
+      netChange: cluster.linesAdded - cluster.linesRemoved,
+      mergeCommits: cluster.mergeCommits,
+    });
   }
 
   // Sort by total commits (non-merge + merge) descending
-  return Array.from(contributors.values()).sort(
-    (a, b) => b.commits + b.mergeCommits - (a.commits + a.mergeCommits),
-  );
+  return out.sort((a, b) => b.commits + b.mergeCommits - (a.commits + a.mergeCommits));
 }
 
 // ─── Commit quality ─────────────────────────────────────────────────────────
