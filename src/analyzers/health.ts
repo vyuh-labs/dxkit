@@ -490,7 +490,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
  */
 function availabilityFromOutcome(
   outcome: { attempted: string[]; succeeded: string[]; skipped: string[] },
-  toolLabel: string,
+  _toolLabel: string,
 ): { available: boolean; unavailableReason: string } {
   if (outcome.attempted.length === 0) {
     return { available: true, unavailableReason: '' };
@@ -498,9 +498,13 @@ function availabilityFromOutcome(
   if (outcome.succeeded.length > 0) {
     return { available: true, unavailableReason: '' };
   }
+  // The reason intentionally omits the tool name — pushUnavailable
+  // prepends it as `<tool> (<reason>)`, so duplicating the name here
+  // would render as `jscpd (jscpd attempted ...)`.
   return {
     available: false,
-    unavailableReason: `${toolLabel} attempted but produced no output (likely killed by resource limits — try running dxkit on this repo alone)`,
+    unavailableReason:
+      'attempted but produced no output (likely killed by resource limits — try running dxkit on this repo alone)',
   };
 }
 
