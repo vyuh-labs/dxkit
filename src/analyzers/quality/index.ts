@@ -8,7 +8,6 @@ import { timed, timedAsync } from '../tools/timing';
 import {
   gatherDuplication,
   gatherStructuralMetrics,
-  gatherCommentRatio,
   gatherHygieneMarkers,
   gatherHygieneTopOffenders,
   gatherLintMetrics,
@@ -45,16 +44,11 @@ export function qualityMetricsToScoreInput(m: QualityMetrics): QualityScoreInput
     staleFiles: m.staleFiles.length,
     mixedLanguages: m.mixedLanguages,
 
-    // The standalone Quality gather doesn't currently emit file-size
-    // counts — those are health-side HealthMetrics fields. Carried as
-    // zero so the standalone formula treats them as no-signal. Plumb
-    // through QualityMetrics if we want them surfaced here.
-    filesOver500Lines: 0,
-    largestFileLines: 0,
+    filesOver500Lines: m.filesOver500Lines,
+    largestFileLines: m.largestFileLines,
 
-    // Same — type signals are health-side HealthMetrics fields.
-    anyTypeCount: 0,
-    typeErrors: null,
+    anyTypeCount: m.anyTypeCount,
+    typeErrors: m.typeErrors,
 
     duplicationPercentage: m.duplication?.percentage ?? null,
     duplicationAvailable: m.duplication !== null,
@@ -87,7 +81,8 @@ export async function analyzeQuality(
     build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
   });
   const { stack } = cacheResult;
-  const sourceFiles = cacheResult.metrics.sourceFiles;
+  const cm = cacheResult.metrics;
+  const sourceFiles = cm.sourceFiles;
 
   // 1. Duplication (jscpd) — dispatcher-driven via DUPLICATION capability.
   const dup = await timedAsync('jscpd', verbose, () => gatherDuplication(repoPath));
@@ -99,25 +94,43 @@ export async function analyzeQuality(
   if (structure.toolUsed) toolsUsed.push(structure.toolUsed);
   else toolsUnavailable.push('graphify');
 
-  // 3. Comment ratio (cloc)
-  const comments = timed('cloc', verbose, () => gatherCommentRatio(repoPath));
-  if (comments.toolUsed) toolsUsed.push(comments.toolUsed);
-  else toolsUnavailable.push('cloc');
+  // Hygiene markers + comment ratio + counts come from the cached
+  // HealthMetrics — the cache builder runs those gathers once per
+  // (cwd, SHA) so the values match the health-side Code Quality
+  // dimension exactly. The local gather is still called here, but
+  // ONLY for the staleFiles file list (rendered into the standalone
+  // Quality markdown). The score uses the cached count; the
+  // markdown uses this list. They come from the same git ls-files
+  // probe so they're consistent by construction.
+  const hygiene = timed('hygiene (grep, list-only)', verbose, () => gatherHygieneMarkers(repoPath));
 
-  // 4. Hygiene markers (grep)
-  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
-
-  // 4b. Top hygiene offenders — only when --detailed (extra grep pass)
+  // Top hygiene offenders — only when --detailed (extra grep pass).
+  // Lives standalone-side because the offender lists aren't part of
+  // the cached envelope yet; cheap grep on hit, only run on demand.
   const topOffenders = options.detailed
     ? timed('hygiene top offenders', verbose, () => gatherHygieneTopOffenders(repoPath))
     : { topConsoleFiles: undefined, topTodoFiles: undefined };
 
-  // 5. Lint (eslint/ruff)
+  // Lint (eslint/ruff). The cache's `capabilities.lint` carries the
+  // same envelope shape and is populated on cache hit, but the
+  // standalone Quality report needs the rendered tool label
+  // including `(not run: <packs>)` provenance — which lives in the
+  // gather's outcome accumulator, not the dispatcher envelope. Keep
+  // the standalone gather call until that label gets surfaced
+  // through the cached envelope too.
   const lint = await timedAsync('lint', verbose, () => gatherLintMetrics(repoPath));
   if (lint.tool) toolsUsed.push(lint.tool);
+  if (cm.commentRatio !== null) toolsUsed.push('cloc');
 
   const metrics: QualityMetrics = {
     sourceFiles,
+    // File-size + type signals from the cached health metrics so the
+    // standalone slop score sees the same penalties the health-side
+    // dimension sees.
+    filesOver500Lines: cm.filesOver500Lines,
+    largestFileLines: cm.largestFileLines,
+    anyTypeCount: cm.anyTypeCount,
+    typeErrors: cm.typeErrors,
     lintErrors: lint.errors,
     lintWarnings: lint.warnings,
     lintTool: lint.tool,
@@ -129,13 +142,19 @@ export async function analyzeQuality(
     functionCount: structure.functionCount,
     deadImportCount: structure.deadImportCount,
     orphanModuleCount: structure.orphanModuleCount,
-    todoCount: hygiene.todoCount,
-    fixmeCount: hygiene.fixmeCount,
-    hackCount: hygiene.hackCount,
-    consoleLogCount: hygiene.consoleLogCount,
-    commentRatio: comments.ratio,
+    // Hygiene + mixed + comment ratio + console-density signals
+    // sourced from the canonical health metrics so both surfaces
+    // score from identical inputs. staleFiles list comes from the
+    // local gather (markdown render needs the file names); its
+    // length matches cm.staleFiles by construction since both
+    // gathers run the same git ls-files probe.
+    todoCount: cm.todoCount,
+    fixmeCount: cm.fixmeCount,
+    hackCount: cm.hackCount,
     staleFiles: hygiene.staleFiles,
-    mixedLanguages: hygiene.mixedLanguages,
+    mixedLanguages: cm.mixedLanguages,
+    consoleLogCount: cm.consoleLogCount,
+    commentRatio: cm.commentRatio,
     slopScore: 0, // computed below
     topConsoleFiles: topOffenders.topConsoleFiles,
     topTodoFiles: topOffenders.topTodoFiles,

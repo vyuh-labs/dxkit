@@ -69,6 +69,19 @@ export interface HealthMetrics {
   envFilesInGit: number;
   tlsDisabledCount: number;
 
+  // Hygiene + comment metrics shared with the standalone Quality
+  // report. Live in HealthMetrics so the canonical Quality scorer
+  // reads the SAME values from both consumer paths — closes the
+  // dual-Quality-formula drift class structurally. Populated by the
+  // cache builder in gatherAnalysisResultBody; standalone analyzeQuality
+  // reads them off the cached AnalysisResult instead of re-gathering.
+  todoCount: number;
+  fixmeCount: number;
+  hackCount: number;
+  staleFiles: number;
+  mixedLanguages: boolean;
+  commentRatio: number | null;
+
   controllers: number;
   models: number;
   directories: number;

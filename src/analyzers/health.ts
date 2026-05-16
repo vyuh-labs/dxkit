@@ -22,6 +22,7 @@ import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { gatherPackageJsonMetrics } from './tools/package-json';
+import { gatherHygieneMarkers, gatherCommentRatio } from './quality/gather';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
 import {
@@ -73,6 +74,12 @@ export function defaultMetrics(): HealthMetrics {
     privateKeyFiles: 0,
     envFilesInGit: 0,
     tlsDisabledCount: 0,
+    todoCount: 0,
+    fixmeCount: 0,
+    hackCount: 0,
+    staleFiles: 0,
+    mixedLanguages: false,
+    commentRatio: null,
     controllers: 0,
     models: 0,
     directories: 0,
@@ -170,6 +177,24 @@ export async function gatherAnalysisResultBody(
   // per analyzer run.
   const layer2 = timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose));
   mergeLayer2(metrics, layer2);
+
+  // Hygiene + comment-ratio metrics shared with the standalone Quality
+  // report. Live in HealthMetrics so the canonical Quality scorer
+  // sees the same values from both consumer paths — closes the
+  // dual-Quality-formula drift class structurally. The standalone
+  // analyzeQuality reads these straight off the cached AnalysisResult.
+  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
+  metrics.todoCount = hygiene.todoCount;
+  metrics.fixmeCount = hygiene.fixmeCount;
+  metrics.hackCount = hygiene.hackCount;
+  // hygiene.consoleLogCount is intentionally NOT mirrored — Layer 2
+  // already populates metrics.consoleLogCount via the shared
+  // gatherDebugStatements helper, and both paths converge on the
+  // same number by construction.
+  metrics.staleFiles = hygiene.staleFiles.length;
+  metrics.mixedLanguages = hygiene.mixedLanguages;
+  const comments = timed('cloc (comment ratio)', verbose, () => gatherCommentRatio(repoPath));
+  metrics.commentRatio = comments.ratio;
 
   // Surface the coverage tool name in `toolsUsed` even though its data
   // lives under `capabilities.coverage`. `loadCoverage` and the COVERAGE

@@ -34,22 +34,16 @@ function status(score: number): DimensionScore['status'] {
  *   - Lint counts ← `capabilities.lint.counts`
  *     (critical + high → errors). Availability is "did any pack
  *     produce a `LintResult`" — i.e. `c.lint !== undefined`.
- *   - File-size + grep-derived hygiene + filesystem-walked
- *     metrics ← `metrics.*`.
+ *   - Hygiene markers + stale files + mixed-language flag +
+ *     comment ratio ← `metrics.*`. Plumbed into HealthMetrics by
+ *     the cache builder so both consumer paths land on the same
+ *     values (the standalone Quality report reads them off the
+ *     same cached envelope).
+ *   - File-size + filesystem-walked + density-source metrics
+ *     ← `metrics.*`.
  *   - Duplication, structural ← `capabilities.{duplication,
  *     structural}`. Availability is "did the capability dispatch
  *     return an envelope" — same shape as lint.
- *   - Comment ratio is filesystem-derived via cloc and not
- *     currently surfaced through ScoreInput on the health path.
- *     Carried as `null` here so the unified formula treats it as
- *     "no signal" — health-side never had a comment-ratio penalty
- *     in the legacy formula either. If health later wants to
- *     surface this signal, plumb it through HealthMetrics.
- *   - Hygiene markers (TODO / FIXME / HACK / staleFiles /
- *     mixedLanguages) are populated by the standalone Quality
- *     report's own gather; the health path doesn't emit these
- *     today. Carried as zero / false so the unified formula
- *     treats them as "no signal."
  */
 export function toQualityScoreInput(input: ScoreInput): QualityScoreInput {
   const m = input.metrics;
@@ -64,11 +58,11 @@ export function toQualityScoreInput(input: ScoreInput): QualityScoreInput {
     lintAvailable: c.lint !== undefined,
 
     consoleLogCount: m.consoleLogCount,
-    todoCount: 0,
-    fixmeCount: 0,
-    hackCount: 0,
-    staleFiles: 0,
-    mixedLanguages: false,
+    todoCount: m.todoCount,
+    fixmeCount: m.fixmeCount,
+    hackCount: m.hackCount,
+    staleFiles: m.staleFiles,
+    mixedLanguages: m.mixedLanguages,
 
     filesOver500Lines: m.filesOver500Lines,
     largestFileLines: m.largestFileLines,
@@ -84,7 +78,7 @@ export function toQualityScoreInput(input: ScoreInput): QualityScoreInput {
     orphanModuleCount: c.structural?.orphanModuleCount ?? null,
     structuralAvailable: c.structural !== undefined,
 
-    commentRatio: null,
+    commentRatio: m.commentRatio,
   };
 }
 

@@ -41,6 +41,16 @@ export interface QualityMetrics {
   // the same denominator and converge on the same number.
   sourceFiles: number;
 
+  // File-size + type signals carried over from the canonical health
+  // metrics so the standalone slop score sees the same penalties
+  // the health-side dimension sees. Without these the two surfaces
+  // would diverge by ~50 points on a typical TS monorepo (file-size
+  // penalty + any-type-density penalty are big drivers).
+  filesOver500Lines: number;
+  largestFileLines: number;
+  anyTypeCount: number;
+  typeErrors: number | null;
+
   // Lint
   lintErrors: number;
   lintWarnings: number;
