@@ -336,7 +336,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   // the availability metadata.
   const [
     depVulnsWithAvail,
-    lint,
+    lintOutcome,
     coverage,
     imports,
     testFramework,
@@ -347,7 +347,13 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     licensesWithAvail,
   ] = await Promise.all([
     gatherDepVulnsWithAvailability(cwd),
-    defaultDispatcher.gather(cwd, LINT, providersFor(LINT, cwd)),
+    // gatherWithProvenance (not gather) so the cached LintResult.tool
+    // can carry the "(not run: <packs>)" suffix when one of the
+    // active packs returned null silently. Standalone analyzeQuality
+    // reads the augmented label off the cached envelope — closes the
+    // cross-process drift class where two surfaces could disagree on
+    // whether a linter ran on a given pack.
+    defaultDispatcher.gatherWithProvenance(cwd, LINT, providersFor(LINT, cwd)),
     defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
     defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
@@ -366,6 +372,17 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     available: depVulnsWithAvail.available,
     unavailableReason: depVulnsWithAvail.unavailableReason,
   };
+  // Augment the lint envelope's tool label with skipped-pack
+  // provenance before caching, so consumers see the same label
+  // analyzeQuality's old standalone gather produced. Reconstructed
+  // (not mutated) because envelope.tool is readonly.
+  const lint =
+    lintOutcome.envelope && lintOutcome.skipped.length > 0
+      ? {
+          ...lintOutcome.envelope,
+          tool: `${lintOutcome.envelope.tool} (not run: ${lintOutcome.skipped.join(', ')})`,
+        }
+      : lintOutcome.envelope;
   if (lint) report.lint = lint;
   if (coverage) report.coverage = coverage;
   if (imports) report.imports = imports;

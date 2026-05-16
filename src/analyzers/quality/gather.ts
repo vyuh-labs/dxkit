@@ -17,12 +17,9 @@ import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { gatherClocMetrics } from '../tools/cloc';
 import { walkSourceFiles, countLineMatches } from '../tools/walk-source-files';
 import { gatherDebugStatements } from '../tools/debug-statements';
-import { detectActiveLanguages } from '../../languages';
 import { defaultDispatcher } from '../dispatcher';
-import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
+import { DUPLICATION, STRUCTURAL } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
-import type { CapabilityProvider } from '../../languages/capabilities/provider';
-import type { LintResult } from '../../languages/capabilities/types';
 import { DuplicationStats, FileOffender } from './types';
 
 // ─── dispatcher-driven duplication gather ───────────────────────────────────
@@ -224,46 +221,8 @@ export function gatherHygieneMarkers(cwd: string): {
   };
 }
 
-// ─── lint errors (via capability dispatcher) ─────────────────────────────────
-
-/**
- * Aggregates lint tier counts across every active language pack via the
- * capability dispatcher. Mixed-stack repos sum contributions (Python +
- * Node reports combined eslint + ruff counts).
- *
- * Collapse: critical + high → errors, medium + low → warnings, matching
- * the `lintErrors`/`lintWarnings` contract in the quality report shape.
- *
- * D080 (2.4.7): when a multi-pack repo has providers that return null
- * silently (e.g. eslint config present but binary missing because
- * `npm install` wasn't run), the rendered tool label surfaces that
- * fact via `(not run: <sources>)` rather than silently dropping the
- * provider. Pre-fix on platform (97% TS / 1% Python): label said just
- * "ruff" — implying only Python was linted; reality was that eslint
- * was attempted but its provider returned null.
- */
-export async function gatherLintMetrics(cwd: string): Promise<{
-  errors: number;
-  warnings: number;
-  tool: string | null;
-}> {
-  const providers: CapabilityProvider<LintResult>[] = [];
-  for (const lang of detectActiveLanguages(cwd)) {
-    if (lang.capabilities?.lint) providers.push(lang.capabilities.lint);
-  }
-  if (providers.length === 0) return { errors: 0, warnings: 0, tool: null };
-
-  const outcome = await defaultDispatcher.gatherWithProvenance(cwd, LINT, providers);
-  if (!outcome.envelope) return { errors: 0, warnings: 0, tool: null };
-
-  const c = outcome.envelope.counts;
-  let tool = outcome.envelope.tool;
-  if (outcome.skipped.length > 0) {
-    tool = `${tool} (not run: ${outcome.skipped.join(', ')})`;
-  }
-  return {
-    errors: c.critical + c.high,
-    warnings: c.medium + c.low,
-    tool,
-  };
-}
+// Lint counts + the augmented "(not run: <packs>)" tool label come
+// from the cached `cache.capabilities.lint` envelope. The cache
+// builder calls `defaultDispatcher.gatherWithProvenance` for LINT
+// and bakes the skipped-pack provenance into `envelope.tool`, so
+// every consumer sees the same label.

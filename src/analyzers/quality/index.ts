@@ -10,7 +10,6 @@ import {
   gatherStructuralMetrics,
   gatherHygieneMarkers,
   gatherHygieneTopOffenders,
-  gatherLintMetrics,
 } from './gather';
 import { scoreQualityFromInput, type QualityScoreInput } from './scoring';
 import { QualityReport, QualityMetrics } from './types';
@@ -111,15 +110,17 @@ export async function analyzeQuality(
     ? timed('hygiene top offenders', verbose, () => gatherHygieneTopOffenders(repoPath))
     : { topConsoleFiles: undefined, topTodoFiles: undefined };
 
-  // Lint (eslint/ruff). The cache's `capabilities.lint` carries the
-  // same envelope shape and is populated on cache hit, but the
-  // standalone Quality report needs the rendered tool label
-  // including `(not run: <packs>)` provenance — which lives in the
-  // gather's outcome accumulator, not the dispatcher envelope. Keep
-  // the standalone gather call until that label gets surfaced
-  // through the cached envelope too.
-  const lint = await timedAsync('lint', verbose, () => gatherLintMetrics(repoPath));
-  if (lint.tool) toolsUsed.push(lint.tool);
+  // Lint (eslint/ruff). Reads counts + the augmented "(not run: <packs>)"
+  // tool label off the canonical cached envelope. The cache builder
+  // already calls gatherWithProvenance for LINT and bakes the
+  // skipped-pack provenance into envelope.tool, so the standalone
+  // Quality report renders the SAME label health does — closes the
+  // cross-process drift class for lint.
+  const lintCounts = cacheResult.capabilities.lint?.counts;
+  const lintErrors = (lintCounts?.critical ?? 0) + (lintCounts?.high ?? 0);
+  const lintWarnings = (lintCounts?.medium ?? 0) + (lintCounts?.low ?? 0);
+  const lintTool = cacheResult.capabilities.lint?.tool ?? null;
+  if (lintTool) toolsUsed.push(lintTool);
   if (cm.commentRatio !== null) toolsUsed.push('cloc');
 
   const metrics: QualityMetrics = {
@@ -131,9 +132,9 @@ export async function analyzeQuality(
     largestFileLines: cm.largestFileLines,
     anyTypeCount: cm.anyTypeCount,
     typeErrors: cm.typeErrors,
-    lintErrors: lint.errors,
-    lintWarnings: lint.warnings,
-    lintTool: lint.tool,
+    lintErrors,
+    lintWarnings,
+    lintTool,
     duplication: dup.stats,
     maxFunctionsInFile: structure.maxFunctionsInFile,
     maxFunctionsFilePath: structure.maxFunctionsFilePath,
