@@ -673,7 +673,9 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit dev-report');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeDevActivity(targetPath, sinceFlag, { verbose: !!values.verbose });
+      const report = await analyzeDevActivity(targetPath, sinceFlag, {
+        verbose: !!values.verbose,
+      });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {

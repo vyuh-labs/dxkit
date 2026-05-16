@@ -108,7 +108,7 @@ beforeAll(async () => {
   testGapsReport = await analyzeTestGaps(tmp);
   securityReport = await analyzeSecurity(tmp);
   qualityReport = await analyzeQuality(tmp);
-  devReport = analyzeDevActivity(tmp);
+  devReport = await analyzeDevActivity(tmp);
 }, 120000);
 
 afterAll(() => {

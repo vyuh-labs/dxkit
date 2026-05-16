@@ -2,8 +2,8 @@
  * Test gap analyzer — public API.
  */
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { timed, timedAsync } from '../tools/timing';
 import { loadCoverage } from '../tools/coverage';
 import { buildReachable } from './import-graph';
@@ -41,7 +41,17 @@ export async function analyzeTestGaps(
   options: AnalyzeTestGapsOptions = {},
 ): Promise<TestGapsReport> {
   const verbose = !!options.verbose;
-  const stack = detect(repoPath);
+  // Single canonical analysis envelope shared across consumers.
+  // analyzeTestGaps reads provenance + stack from the cache so two
+  // subcommands on the same SHA stamp identical timestamps and
+  // surface the same project name / branch. Per-file source/test
+  // gather + import-graph reachability still run locally (those
+  // signals aren't part of the cached envelope today).
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack } = cacheResult;
   const toolsUsed: string[] = ['find', 'grep', 'git'];
   const toolsUnavailable: string[] = [];
 
@@ -119,10 +129,10 @@ export async function analyzeTestGaps(
   }
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     summary: {
       testFiles: testFiles.length,
       activeTestFiles: activeTests.length,
