@@ -18,7 +18,7 @@ import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { CodePatternFinding, CodePatternsResult } from '../../languages/capabilities/types';
 import { getSemgrepExcludeFlags } from './exclusions';
 import { toProjectRelative } from './paths';
-import { run } from './runner';
+import { runDetached } from './runner';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
@@ -106,37 +106,81 @@ function collectRulesets(cwd: string): string[] {
 /**
  * Single source of truth for the semgrep invocation. Consumed by
  * `semgrepProvider` (capability dispatcher).
+ *
+ * Failure-mode honesty: when semgrep doesn't produce a parseable
+ * report, the returned `reason` distinguishes between:
+ *   - timeout (we hit our wall-clock budget — the customer probably
+ *     wants to install nothing and instead either prune the scan
+ *     scope via `.dxkit-ignore` or bump the timeout)
+ *   - non-zero exit with a captured stderr first line (semgrep
+ *     itself complained — surface its complaint)
+ *   - the historical fallback "no output" (rare now; means stderr
+ *     was empty AND exit was zero AND the report file was missing)
+ *
+ * Pre-fix every failure collapsed to "no output," masking
+ * resource-contention deaths (parallel jscpd + graphify + semgrep
+ * on a 700-file repo OOM-killing the youngest), timeouts, and
+ * config-parse errors with the same useless string. Switched to
+ * runDetached so we capture stderr + exit code + timeout signal
+ * separately, and so the wall-clock-deadline kill cleans up
+ * grandchildren (semgrep's internal worker pool).
  */
-export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
+export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGatherOutcome> {
   const status = findTool(TOOL_DEFS.semgrep, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
   const rulesets = collectRulesets(cwd);
   if (rulesets.length === 0) return { kind: 'unavailable', reason: 'no rulesets' };
 
-  const configs = rulesets.map((r) => `--config ${r}`).join(' ');
-  const excludes = getSemgrepExcludeFlags(cwd);
   const reportPath = `/tmp/dxkit-semgrep-${Date.now()}.json`;
+  const args = ['scan'];
+  for (const r of rulesets) args.push('--config', r);
+  args.push('--json', '--quiet', '--output', reportPath);
+  // getSemgrepExcludeFlags returns a single space-separated string
+  // shaped for execSync (`--exclude foo --exclude bar`). Split it
+  // into the array form runDetached expects.
+  const excludeFlagString = getSemgrepExcludeFlags(cwd);
+  if (excludeFlagString) {
+    for (const tok of excludeFlagString.split(/\s+/).filter((t) => t.length > 0)) {
+      args.push(tok);
+    }
+  }
+  args.push(cwd);
 
-  run(
-    `${status.path} scan ${configs} --json --quiet --output '${reportPath}' ${excludes} '${cwd}' 2>/dev/null`,
-    cwd,
-    300000,
-  );
-  // Read the report file directly. Pre-fix this used `run('cat
-  // <path>')` which routed through execSync's 1MB default maxBuffer —
-  // semgrep reports on enterprise codebases with many lint hits or
-  // many active rulesets can easily exceed that and silently return
-  // empty (same bug class as jscpd.ts + gitleaks.ts pre-fix).
+  const outcome = await runDetached(status.path, args, { cwd, timeoutMs: 300000 });
   let raw: string;
   try {
     raw = fs.readFileSync(reportPath, 'utf-8');
   } catch {
     raw = '';
   }
-  run(`rm -f '${reportPath}'`, cwd);
+  // Cleanup: best-effort; failure here is non-fatal.
+  try {
+    fs.unlinkSync(reportPath);
+  } catch {
+    /* file already gone or never written — fine */
+  }
 
-  if (!raw) return { kind: 'unavailable', reason: 'no output' };
+  if (!raw) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
+    const stderrFirstLine = outcome.stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (outcome.code !== 0 && outcome.code !== null) {
+      const ctx = stderrFirstLine ? ` (stderr: ${stderrFirstLine})` : '';
+      return { kind: 'unavailable', reason: `exit code ${outcome.code}${ctx}` };
+    }
+    if (stderrFirstLine) {
+      return { kind: 'unavailable', reason: `no output (stderr: ${stderrFirstLine})` };
+    }
+    return { kind: 'unavailable', reason: 'no output' };
+  }
 
   let data: SemgrepReport;
   try {
@@ -193,7 +237,7 @@ export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
 export const semgrepProvider: CapabilityProvider<CodePatternsResult> = {
   source: 'semgrep',
   async gather(cwd) {
-    const outcome = gatherSemgrepResult(cwd);
+    const outcome = await gatherSemgrepResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
 };
