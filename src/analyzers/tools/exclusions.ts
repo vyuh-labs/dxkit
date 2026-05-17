@@ -250,12 +250,23 @@ export function getSemgrepExcludeFlags(cwd: string): string {
 export function getPythonExcludeFilter(cwd: string): {
   dirsSet: string;
   pathsList: string;
+  fileGlobsList: string;
 } {
-  const { dirs, sourcePaths } = loadExclusions(cwd);
+  const { dirs, sourcePaths, filePatterns } = loadExclusions(cwd);
   // `set([...])` rather than `{...}` because `{}` is an empty dict in Python.
   const dirsSet = `set([${dirs.map((d) => `'${d}'`).join(', ')}])`;
   const pathsList = '[' + sourcePaths.map((p) => `'${p}'`).join(', ') + ']';
-  return { dirsSet, pathsList };
+  // File-glob patterns (`*.min.js`, `*.bundle.js`, `*.chunk.js`,
+  // `*.generated.ts`, `*.d.ts`). Pre-extension only `dirs` + `sourcePaths`
+  // were passed; the graphify walker enumerated every `*.min.js`
+  // matching basename and graphify's AST extractor analyzed them.
+  // Web-client's densest-file metric ranked
+  // `public/3DFileViewer/assets/index-j54KQSsm.js` (a webpack-hash
+  // bundle) as 4,606 "functions" — the kind of metric that makes the
+  // "split your densest file" recommendation read as a bug to anyone
+  // who knows what the file is.
+  const fileGlobsList = '[' + filePatterns.map((p) => `'${p}'`).join(', ') + ']';
+  return { dirsSet, pathsList, fileGlobsList };
 }
 
 function escapeRegex(s: string): string {

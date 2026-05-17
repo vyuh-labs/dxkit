@@ -41,7 +41,7 @@ interface GraphifyResult {
 
 /** Build the graphify Python script with cwd-specific exclusions baked in. */
 function buildGraphifyScript(cwd: string): string {
-  const { dirsSet, pathsList } = getPythonExcludeFilter(cwd);
+  const { dirsSet, pathsList, fileGlobsList } = getPythonExcludeFilter(cwd);
   return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
 import json, sys, os, tempfile
 from pathlib import Path
@@ -61,17 +61,51 @@ except ImportError:
 
 target = Path(sys.argv[1])
 
-# D055 (2.4.7): two-axis exclusion. EXCLUDE_DIRS is basename-only (any
-# path segment matching skips the file). EXCLUDE_PATHS holds multi-
-# segment relative paths from .dxkit-ignore (e.g. 'Dev/Addons/DPLAddon/SAPB1')
-# and matches via substring on the file's relpath, so the subtree is
-# pruned without basename flattening.
+# Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
+# segment matching skips the file). EXCLUDE_PATHS holds multi-segment
+# relative paths from .dxkit-ignore (e.g. 'Dev/Addons/DPLAddon/SAPB1')
+# and matches via substring on the file's relpath. EXCLUDE_FILE_GLOBS
+# carries basename-glob patterns from bundled defaults + .gitignore
+# ('*.min.js', '*.bundle.js', '*.chunk.js', '*.generated.ts', '*.d.ts')
+# so graphify's enumeration matches what dxkit's canonical walker
+# already excludes everywhere else.
+import fnmatch
 EXCLUDE_DIRS = ${dirsSet}
 EXCLUDE_PATHS = ${pathsList}
+EXCLUDE_FILE_GLOBS = ${fileGlobsList}
+
+# Bytes-per-line floor above which a file is almost certainly minified
+# / bundled output. Mirrors the heuristic in
+# src/analyzers/tools/minified-detection.ts so graphify's enumeration
+# applies the same filter dxkit's source-file walker does. Web-client's
+# webpack-hash bundle index-j54KQSsm.js carried ~4,606 detected
+# "functions" before this guard — pre-fix the densest-file metric
+# pointed at minified output instead of human-authored code.
+_MINIFIED_BYTES_PER_LINE = 500
+_MINIFIED_SAMPLE_BYTES = 4096
+_MINIFIABLE_EXTS = {'.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.sass', '.less'}
+
+def _is_likely_minified(f):
+    if f.suffix.lower() not in _MINIFIABLE_EXTS:
+        return False
+    try:
+        with open(f, 'rb') as fh:
+            buf = fh.read(_MINIFIED_SAMPLE_BYTES)
+        if not buf:
+            return False
+        newlines = buf.count(b'\\n')
+        lines_in_sample = max(1, newlines)
+        return (len(buf) / lines_in_sample) >= _MINIFIED_BYTES_PER_LINE
+    except OSError:
+        return False
 
 def _is_excluded(f):
     if any(seg in EXCLUDE_DIRS for seg in f.parts):
         return True
+    name = f.name
+    for glob in EXCLUDE_FILE_GLOBS:
+        if fnmatch.fnmatchcase(name, glob):
+            return True
     if EXCLUDE_PATHS:
         try:
             rel = str(f.relative_to(target)).replace(os.sep, '/')
@@ -80,6 +114,8 @@ def _is_excluded(f):
         for p in EXCLUDE_PATHS:
             if rel == p or rel.startswith(p + '/') or ('/' + p + '/') in ('/' + rel + '/'):
                 return True
+    if _is_likely_minified(f):
+        return True
     return False
 
 all_files = collect_files(target)
