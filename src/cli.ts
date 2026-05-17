@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig } from './prompts';
@@ -1294,6 +1295,27 @@ function formatMarkdownReport(
       lines.push(`| ${i + 1} | \`${f.path}\` | ${f.lines.toLocaleString()} |`);
     });
     lines.push('');
+
+    // Advisory: when largest-files contain paths matching a known
+    // vendored-code convention not already in the customer's
+    // exclusion chain, surface a single tip pointing at the
+    // `.dxkit-ignore` escape hatch. Bundled defaults already cover
+    // `vendor/`, `third_party/`, `playground/`, `lexical-playground/`,
+    // etc.; the remaining cases (most commonly `/libs/`) live in
+    // customer-specific paths that can't be defaulted-away without
+    // false-positives on first-party monorepo layouts.
+    const suspects = suspectVendoredEntries(report.largestFiles);
+    if (suspects.length > 0) {
+      lines.push(
+        `> **Tip — possibly vendored:** ${suspects
+          .map((s) => `\`${s.path}\``)
+          .join(
+            ', ',
+          )} match path conventions for external / vendored code. If these aren't authored by your team, add them (or their parent directory) to \`.dxkit-ignore\` to keep largest-files, Maintainability scoring, and the densest-file metric focused on first-party code.`,
+      );
+      lines.push('');
+    }
+
     lines.push('---');
     lines.push('');
   }
