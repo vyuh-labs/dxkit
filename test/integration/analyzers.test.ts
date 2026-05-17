@@ -131,7 +131,7 @@ describe('analyzeHealth', () => {
     for (const dim of Object.values(healthReport.dimensions)) {
       expect(dim.score).toBeGreaterThanOrEqual(0);
       expect(dim.score).toBeLessThanOrEqual(100);
-      expect(dim.status).toBeTruthy();
+      expect(dim.rating).toBeTruthy();
     }
 
     expect(healthReport.toolsUsed.length).toBeGreaterThan(0);
