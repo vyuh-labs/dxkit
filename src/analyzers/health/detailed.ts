@@ -7,7 +7,8 @@
  */
 import { HealthReport, HealthMetrics } from '../types';
 import { buildHealthPlans, DimensionPlan } from './actions';
-import { computeOverall, ScoreInput } from '../scoring';
+import { computeOverall } from '../scoring';
+import { ScoreInput } from '../types';
 
 export interface HealthDetailedReport extends HealthReport {
   schemaVersion: string;

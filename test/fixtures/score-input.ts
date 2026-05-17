@@ -10,7 +10,7 @@
  * empty defaults in every spec.
  */
 import { CapabilityReport, HealthMetrics } from '../../src/analyzers/types';
-import { ScoreInput } from '../../src/analyzers/scoring';
+import { ScoreInput } from '../../src/analyzers/types';
 import type {
   CodePatternFinding,
   CodePatternsResult,

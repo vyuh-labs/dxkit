@@ -32,12 +32,12 @@ import type {
   TestFrameworkResult,
 } from '../../languages/capabilities/types';
 import {
-  ScoreInput,
   scoreTest,
   scoreDocumentation,
   scoreMaintainability,
   scoreDeveloperExperience,
 } from '../scoring';
+import { ScoreInput } from '../types';
 // Security + Quality scorers live with their analyzers post-
 // canonical-formula unification.
 import { scoreSecurityFromScoreInput } from '../security/shallow';

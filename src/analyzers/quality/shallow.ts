@@ -15,17 +15,9 @@
  * The canonical formula now lives in `quality/scoring.ts`; both
  * surfaces compute the same number from the same partitioned inputs.
  */
-import { DimensionScore } from '../types';
-import { ScoreInput } from '../scoring';
+import { ratingFromScore } from '../../scoring';
+import { DimensionScore, ScoreInput } from '../types';
 import { scoreQualityFromInput, type QualityScoreInput } from './scoring';
-
-function status(score: number): DimensionScore['status'] {
-  if (score >= 80) return 'excellent';
-  if (score >= 60) return 'good';
-  if (score >= 40) return 'fair';
-  if (score >= 20) return 'poor';
-  return 'critical';
-}
 
 /**
  * Build the canonical `QualityScoreInput` from the health-side
@@ -119,7 +111,7 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     // Schema v11: `metrics` surfaces only the non-capability signals.
     // Lint counts + tool live in `report.capabilities.lint`; god-file +
     // dead-import stats live in `report.capabilities.structural`.

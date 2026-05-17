@@ -29,7 +29,7 @@ describe('shallow dimension scorers', () => {
     const r = scoreDocsDimension(baseInput);
     expect(r).toHaveProperty('score');
     expect(r).toHaveProperty('maxScore', 100);
-    expect(r).toHaveProperty('status');
+    expect(r).toHaveProperty('rating');
     expect(typeof r.score).toBe('number');
   });
 

@@ -12,25 +12,12 @@
  * here mirrors only the metrics-owned slice — consumers read the
  * capability envelopes directly from `report.capabilities.*`.
  */
-import { CapabilityReport, DimensionScore, HealthMetrics } from './types';
+import { ratingFromScore } from '../scoring';
+import { CapabilityReport, DimensionScore, ScoreInput } from './types';
 
-/**
- * Bundle of every signal a dimension scorer can read. Passed through the
- * shallow wrappers and `health/actions.ts` unchanged. Patches clone both
- * halves as needed.
- */
-export interface ScoreInput {
-  metrics: HealthMetrics;
-  capabilities: CapabilityReport;
-}
-
-function status(score: number): DimensionScore['status'] {
-  if (score >= 80) return 'excellent';
-  if (score >= 60) return 'good';
-  if (score >= 40) return 'fair';
-  if (score >= 20) return 'poor';
-  return 'critical';
-}
+// `ScoreInput` was previously declared here; canonical home moved to
+// `./types` so it survives the eventual deletion of this file as
+// dimension scorers migrate to declarative specs in `src/scoring/`.
 
 function clamp(value: number, min = 0, max = 100): number {
   return Math.round(Math.max(min, Math.min(max, value)));
@@ -95,7 +82,7 @@ export function scoreTest(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     metrics: {
       sourceFiles: m.sourceFiles,
       testFiles: m.testFiles,
@@ -160,7 +147,7 @@ export function scoreDocumentation(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     metrics: {
       readmeExists: m.readmeExists,
       readmeLines: m.readmeLines,
@@ -233,7 +220,7 @@ export function scoreMaintainability(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     // Schema v11: `metrics` surfaces only the non-capability signals.
     // AST-derived stats (god-node / community / cohesion / orphan module
     // counts) live in `report.capabilities.structural`.
@@ -281,7 +268,7 @@ export function scoreDeveloperExperience(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     metrics: {
       ciConfigCount: m.ciConfigCount,
       dockerConfigCount: m.dockerConfigCount,

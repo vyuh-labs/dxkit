@@ -316,7 +316,7 @@ export async function run(argv: string[]): Promise<void> {
           const bar =
             '█'.repeat(Math.round(dim.score / 5)) + '░'.repeat(20 - Math.round(dim.score / 5));
           console.log(
-            `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.status}`,
+            `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.rating}`,
           );
         }
         console.log('');
@@ -1248,9 +1248,7 @@ function formatMarkdownReport(
 
   for (const [key, dim] of Object.entries(report.dimensions)) {
     const name = dimNames[key] || key;
-    lines.push(
-      `| ${name} | ${dim.score}/100 | ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)} |`,
-    );
+    lines.push(`| ${name} | ${dim.score}/100 | ${dim.rating} |`);
   }
 
   lines.push('');
@@ -1260,9 +1258,7 @@ function formatMarkdownReport(
   // Dimension details
   for (const [key, dim] of Object.entries(report.dimensions)) {
     const name = dimNames[key] || key;
-    lines.push(
-      `## ${name} (${dim.score}/100) -- ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)}`,
-    );
+    lines.push(`## ${name} (${dim.score}/100) -- ${dim.rating}`);
     lines.push('');
     lines.push(dim.details);
     lines.push('');

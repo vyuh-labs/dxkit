@@ -13,17 +13,9 @@
  * both the health audit and the standalone vuln scan compute the
  * same number from the same partitioned inputs.
  */
-import { DimensionScore } from '../types';
-import { ScoreInput } from '../scoring';
+import { ratingFromScore } from '../../scoring';
+import { DimensionScore, ScoreInput } from '../types';
 import { SecurityScoreInput, scoreSecurityFromInput } from './scoring';
-
-function status(score: number): DimensionScore['status'] {
-  if (score >= 80) return 'excellent';
-  if (score >= 60) return 'good';
-  if (score >= 40) return 'fair';
-  if (score >= 20) return 'poor';
-  return 'critical';
-}
 
 /**
  * Build the canonical `SecurityScoreInput` from the health-side
@@ -139,7 +131,7 @@ export function scoreSecurityDimension(input: ScoreInput): DimensionScore {
   return {
     score,
     maxScore: 100,
-    status: status(score),
+    rating: ratingFromScore(score),
     // Schema v11: `metrics` surfaces only the non-capability signals
     // that aren't already rolled into the prose's code-findings
     // total. `evalCount` and `tlsDisabledCount` ARE counted in

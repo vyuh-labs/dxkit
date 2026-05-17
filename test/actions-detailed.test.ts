@@ -48,7 +48,7 @@ import { SecurityReport } from '../src/analyzers/security/types';
 import { QualityReport, QualityMetrics } from '../src/analyzers/quality/types';
 import { TestGapsReport } from '../src/analyzers/tests/types';
 import { CapabilityReport, HealthReport, HealthMetrics } from '../src/analyzers/types';
-import { ScoreInput } from '../src/analyzers/scoring';
+import { ScoreInput } from '../src/analyzers/types';
 import { DevReport } from '../src/analyzers/developer/types';
 import {
   depVulnCapability,
@@ -268,7 +268,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
   const dim = (score: number) => ({
     score,
     maxScore: 100,
-    status: 'good' as const,
+    rating: 'B' as const,
     metrics: {},
     details: '',
   });

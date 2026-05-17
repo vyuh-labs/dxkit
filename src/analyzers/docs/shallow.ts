@@ -4,8 +4,8 @@
  * Phase 3: delegates to scoring.ts (identical behavior).
  * Future: may expand to include docstring coverage via graphify AST.
  */
-import { DimensionScore } from '../types';
-import { ScoreInput, scoreDocumentation } from '../scoring';
+import { DimensionScore, ScoreInput } from '../types';
+import { scoreDocumentation } from '../scoring';
 
 export function scoreDocsDimension(input: ScoreInput): DimensionScore {
   return scoreDocumentation(input);

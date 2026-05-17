@@ -19,6 +19,7 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../languages/capabilities/types';
+import type { Rating } from '../scoring';
 import type { SecurityAggregate } from './security/aggregator';
 
 /**
@@ -108,13 +109,39 @@ export interface HealthMetrics {
   }> | null;
 }
 
-/** Score for a single dimension (0-100). */
+/**
+ * Score for a single dimension (0-100).
+ *
+ * `rating` is the industry-anchored letter grade derived from `score`
+ * via uniform thresholds in `src/scoring/thresholds.ts` (A ≥ 80,
+ * B ≥ 60, C ≥ 40, D ≥ 20, E < 20). Same boundaries dxkit has always
+ * used; the letter replaces the previous descriptive enum so the
+ * customer surface is one concept (a letter) rather than three
+ * (number + descriptive status + letter elsewhere).
+ */
 export interface DimensionScore {
   score: number;
   maxScore: number;
-  status: 'critical' | 'poor' | 'fair' | 'good' | 'excellent';
+  rating: Rating;
   metrics: Record<string, number | string | boolean | null>;
   details: string;
+}
+
+/**
+ * Bundle of every signal a dimension scorer can read. Health-side
+ * adapters (`src/analyzers/<dim>/shallow.ts`) build a `ScoreInput`
+ * from gathered data and convert to a per-dimension spec input before
+ * calling `evaluateSpec`.
+ *
+ * Lives here in `types.ts` because `ScoreInput` is the health-side
+ * aggregator — it composes `HealthMetrics` (filesystem-derived) +
+ * `CapabilityReport` (tool-derived) into one bundle the dimension
+ * adapters consume. Not a scoring-system concept; the scoring system
+ * receives per-dimension spec inputs (e.g. `SecurityScoreInput`).
+ */
+export interface ScoreInput {
+  metrics: HealthMetrics;
+  capabilities: CapabilityReport;
 }
 
 /**

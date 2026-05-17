@@ -13,7 +13,7 @@ describe('scoreTest', () => {
   it('returns 0 when no test files exist', () => {
     const s = scoreTest(withInput({ metrics: { sourceFiles: 50, testFiles: 0 } }));
     expect(s.score).toBe(0);
-    expect(s.status).toBe('critical');
+    expect(s.rating).toBe('E');
   });
 
   it('scales with test ratio, capped at 60 before bonuses', () => {
@@ -106,7 +106,7 @@ describe('scoreDocumentation', () => {
   it('returns 0 with no docs at all', () => {
     const s = scoreDocumentation(withInput({ metrics: { sourceFiles: 100 } }));
     expect(s.score).toBe(0);
-    expect(s.status).toBe('critical');
+    expect(s.rating).toBe('E');
   });
 
   it('awards README tiers', () => {
@@ -261,7 +261,7 @@ describe('scoreDeveloperExperience', () => {
 describe('computeOverall', () => {
   /** Build a dimension with only `score` set; rest is stubbed. */
   function dim(score: number): DimensionScore {
-    return { score, maxScore: 100, status: 'critical', metrics: {}, details: '' };
+    return { score, maxScore: 100, rating: 'E', metrics: {}, details: '' };
   }
 
   it('applies weights: 25/20/10/20/10/15', () => {
@@ -334,14 +334,14 @@ describe('computeOverall', () => {
   });
 });
 
-describe('status bucketing', () => {
-  it('maps score ranges to labels', () => {
+describe('rating bucketing', () => {
+  it('maps score ranges to A/B/C/D/E letters', () => {
     expect(
-      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 15 } })).status,
-    ).toBe('critical'); // 5
+      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 15 } })).rating,
+    ).toBe('E'); // 5
     expect(
-      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 60 } })).status,
-    ).toBe('poor'); // 20
+      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 60 } })).rating,
+    ).toBe('D'); // 20
     expect(
       scoreDocumentation(
         withInput({
@@ -352,8 +352,8 @@ describe('status bucketing', () => {
             docCommentFiles: 60,
           },
         }),
-      ).status,
-    ).toBe('fair');
+      ).rating,
+    ).toBe('C');
     expect(
       scoreDocumentation(
         withInput({
@@ -365,8 +365,8 @@ describe('status bucketing', () => {
             apiDocsExist: true,
           },
         }),
-      ).status,
-    ).toBe('good');
+      ).rating,
+    ).toBe('B');
     expect(
       scoreDocumentation(
         withInput({
@@ -379,7 +379,7 @@ describe('status bucketing', () => {
             architectureDocsExist: true,
           },
         }),
-      ).status,
-    ).toBe('excellent');
+      ).rating,
+    ).toBe('A');
   });
 });
