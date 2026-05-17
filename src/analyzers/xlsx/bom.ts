@@ -44,6 +44,7 @@ import {
   type StalenessTier,
 } from '../bom/pm-signals';
 import { BOM_COLUMNS } from './licenses';
+import { splitToolsUnavailable } from '../tools/tools-unavailable-prose';
 
 /** Excel's hard per-cell character limit. */
 const EXCEL_CELL_MAX = 32767;
@@ -262,7 +263,13 @@ function writeExecutiveSummary(wb: ExcelJS.Workbook, report: BomReport): void {
   // Tools + provenance
   ws.addRow(['Tools used', report.toolsUsed.join(', ') || '(none)']);
   if (report.toolsUnavailable.length > 0) {
-    ws.addRow(['Tools unavailable', report.toolsUnavailable.join(', ')]);
+    const { notInstalled, failedAtRuntime } = splitToolsUnavailable(report.toolsUnavailable);
+    if (notInstalled.length > 0) {
+      ws.addRow(['Tools not installed', notInstalled.join(', ')]);
+    }
+    if (failedAtRuntime.length > 0) {
+      ws.addRow(['Tools that failed at runtime', failedAtRuntime.join(', ')]);
+    }
   }
   ws.addRow(['Schema version', report.schemaVersion]);
 

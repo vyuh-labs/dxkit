@@ -6,6 +6,7 @@ import { SecurityReport, SecurityFinding, Severity } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
 import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../../scoring';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
@@ -189,9 +190,7 @@ export function formatSecurityDetailedMarkdown(
   }
 
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

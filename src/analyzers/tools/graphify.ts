@@ -361,11 +361,22 @@ export function buildGraphifyEnvelope(data: GraphifyResult, cwd: string): Struct
  * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.structural`
  * so the dispatcher picks it up via `providersFor(STRUCTURAL)`.
  */
-export const graphifyProvider: CapabilityProvider<StructuralResult> = {
+// Exposes the underlying outcome via `gatherOutcome` so the dispatcher
+// captures graphify's actual failure reason (Python missing / graphify
+// package missing / timeout / parse error / empty result) into
+// `DispatchOutcome.skipReasons`. Without it, every failure mode
+// collapses to the same generic prose at the renderer layer, hiding
+// install-vs-runtime distinctions the user would act on differently.
+export const graphifyProvider: CapabilityProvider<StructuralResult> & {
+  gatherOutcome(cwd: string): Promise<StructuralGatherOutcome>;
+} = {
   source: 'graphify',
   async gather(cwd) {
     const outcome = await gatherGraphifyResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherGraphifyResult(cwd);
   },
 };
 

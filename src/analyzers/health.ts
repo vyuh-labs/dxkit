@@ -520,7 +520,12 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
  * to try, nothing to fail).
  */
 function availabilityFromOutcome(
-  outcome: { attempted: string[]; succeeded: string[]; skipped: string[] },
+  outcome: {
+    attempted: string[];
+    succeeded: string[];
+    skipped: string[];
+    skipReasons?: Record<string, string>;
+  },
   _toolLabel: string,
 ): { available: boolean; unavailableReason: string } {
   if (outcome.attempted.length === 0) {
@@ -529,9 +534,24 @@ function availabilityFromOutcome(
   if (outcome.succeeded.length > 0) {
     return { available: true, unavailableReason: '' };
   }
+  // Prefer the per-source reason from the dispatcher's skipReasons map
+  // when present — that channel carries the tool's actual failure mode
+  // (`not installed` / `timed out at 600s` / `exit code 137 (stderr: ...)`
+  // / `no output` / `parse error`). Falls back to the generic prose for
+  // legacy providers without a `gatherOutcome` method, which collapse
+  // every failure to "null returned from gather()" with no reason text.
+  //
   // The reason intentionally omits the tool name — pushUnavailable
   // prepends it as `<tool> (<reason>)`, so duplicating the name here
   // would render as `jscpd (jscpd attempted ...)`.
+  const skipReasons = outcome.skipReasons ?? {};
+  const firstSkipWithReason = outcome.skipped.find((s) => skipReasons[s]);
+  if (firstSkipWithReason) {
+    return {
+      available: false,
+      unavailableReason: skipReasons[firstSkipWithReason],
+    };
+  }
   return {
     available: false,
     unavailableReason:

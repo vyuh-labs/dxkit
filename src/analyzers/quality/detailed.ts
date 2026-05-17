@@ -9,6 +9,7 @@ import { RankedAction, rank } from '../remediation';
 import { buildSlopActions } from './actions';
 import { qualityMetricsToScoreInput } from './index';
 import { QUALITY_SCORING_SPEC, evaluateSpec } from '../../scoring';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface QualityDetailedReport extends QualityReport {
   /** Schema version for agent consumers. Bump on breaking shape changes. */
@@ -135,9 +136,7 @@ export function formatQualityDetailedMarkdown(
   L.push('---');
   L.push('');
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

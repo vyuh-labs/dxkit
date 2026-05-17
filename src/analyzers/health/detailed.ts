@@ -9,6 +9,7 @@ import { HealthReport, HealthMetrics } from '../types';
 import { buildHealthPlans, DimensionPlan } from './actions';
 import { computeOverall, type Rating } from '../../scoring';
 import { ScoreInput } from '../types';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface HealthDetailedReport extends HealthReport {
   schemaVersion: string;
@@ -186,9 +187,7 @@ export function formatHealthDetailedMarkdown(
   }
 
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

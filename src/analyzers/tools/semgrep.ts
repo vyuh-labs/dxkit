@@ -234,10 +234,20 @@ export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGath
  * Capability-shaped provider. Registered in
  * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.codePatterns`.
  */
-export const semgrepProvider: CapabilityProvider<CodePatternsResult> = {
+// Exposes the underlying outcome via `gatherOutcome` so the dispatcher
+// captures semgrep's actual failure reason (timeout / exit code /
+// stderr first line) into `DispatchOutcome.skipReasons`. Without it,
+// every failure modes collapses to the same generic "attempted but
+// produced no output" prose at the renderer layer.
+export const semgrepProvider: CapabilityProvider<CodePatternsResult> & {
+  gatherOutcome(cwd: string): Promise<CodePatternsGatherOutcome>;
+} = {
   source: 'semgrep',
   async gather(cwd) {
     const outcome = await gatherSemgrepResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherSemgrepResult(cwd);
   },
 };
