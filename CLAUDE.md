@@ -111,6 +111,63 @@ Adding a new language pack is a one-command scaffold + filling in TODOs:
 `npm run new-lang <id> "<displayName>"`. See `CONTRIBUTING.md` "Adding a
 new language" for the full walkthrough.
 
+### 7. Dimension scoring lives in declarative specs under `src/scoring/`
+
+Every dimension's score (Security, Code Quality, Tests, Documentation,
+Maintainability, Developer Experience) is produced by a declarative
+`DimensionScoringSpec<T>` consumed by the shared pure-function
+evaluator in `src/scoring/evaluator.ts`. The spec engine produces a
+`ScoreResult` with structured deductions, the binding cap, and
+top-actions sorted by potential uplift — uniform output shape that
+renderers and agents consume directly.
+
+- **Defined** in `src/scoring/dimensions/<id>.ts` (one file per
+  dimension; mirror of CLAUDE.md Rule 6 applied to scoring)
+- **Registered** in `src/scoring/index.ts:SCORING_SPECS`
+- **Evaluated** via `evaluateSpec(SPEC, input)` — never a one-off
+  score-arithmetic function
+- **Anchored** to a Layer-1 methodology citation in
+  `src/scoring/STANDARDS.md`. The `methodology` field on each spec
+  is a token referencing that doc
+
+Status thresholds (A≥80, B≥60, C≥40, D≥20, E<20) and cap-tier
+ceilings (trust-broken=40, unmeasured=35, uncertainty=65,
+partial-uncertainty=75, fixable-finding=79) live in
+`src/scoring/thresholds.ts`. Every consumer routes through
+`ratingFromScore` / `RATING_THRESHOLDS` / `CAP_TIERS` — never
+hardcoded.
+
+**Bad**: `if (score >= 80) return 'excellent'`, `function status(s) { ... }`,
+inline penalty stacks in analyzer subdirs, `score -= 15` outside
+specs, `src/analyzers/quality/scoring.ts` (or any
+`src/analyzers/**/scoring.ts`).
+
+**Good**: `rating = ratingFromScore(score)`, declarative
+`PenaltyRule` + `CapRule` arrays consumed by `evaluateSpec`,
+adapters in `src/analyzers/<dim>/shallow.ts` that build the
+per-dimension input and dispatch through the spec.
+
+#### Scoring-discipline enforcement
+
+Three rules in `scripts/check-architecture.sh` (pre-commit + CI):
+
+1. No `src/analyzers/**/scoring.ts` files (dimension scoring lives
+   in `src/scoring/dimensions/<id>.ts`).
+2. No hardcoded rating-band threshold integers (`>= 80` etc.) in
+   scoring-related code outside `thresholds.ts`.
+3. No hardcoded cap-ceiling values (40 / 35 / 65 / 75 / 79) used as
+   `score = N` or `final = N` outside the scoring module.
+
+Annotate `// scoring-spec-ok` on the violating line for justified
+exceptions (CVSS risk-tier bands, coverage thresholds that
+deliberately differ from rating thresholds, etc.).
+
+The `test/scoring-playbook.test.ts` synthetic-dimension test
+exercises the registry + evaluator + format helpers end-to-end with
+an injected spec. Catches "the architecture stopped being
+spec-driven" empirically — analogous to `test/recipe-playbook.test.ts`
+for language packs.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

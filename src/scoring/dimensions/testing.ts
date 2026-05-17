@@ -86,13 +86,13 @@ export const TESTING_SCORING_SPEC: DimensionScoringSpec<TestingScoreInput> = {
     {
       id: 'coverage-adequate',
       describe: (i) => `line coverage ${i.coveragePercent}% (≥ 60% threshold met)`,
-      applies: (i) => i.testFiles > 0 && i.coveragePercent !== null && i.coveragePercent >= 60,
+      applies: (i) => i.testFiles > 0 && i.coveragePercent !== null && i.coveragePercent >= 60, // scoring-spec-ok: industry coverage threshold, not a rating boundary
       delta: () => 10,
     },
     {
       id: 'coverage-excellent',
       describe: (i) => `line coverage ${i.coveragePercent}% (≥ 80% threshold met)`,
-      applies: (i) => i.testFiles > 0 && i.coveragePercent !== null && i.coveragePercent >= 80,
+      applies: (i) => i.testFiles > 0 && i.coveragePercent !== null && i.coveragePercent >= 80, // scoring-spec-ok: industry coverage threshold, not a rating boundary
       delta: () => 5,
     },
     {

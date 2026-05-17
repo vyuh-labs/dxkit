@@ -405,6 +405,70 @@ if [ -n "$DEPTH_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Scoring discipline: dimension scoring lives in `src/scoring/` —
+# never under `src/analyzers/`. Closes the class of "scoring formulas
+# drift across consumers" by giving every dimension exactly one home
+# (a declarative spec consumed by the shared evaluator).
+#
+# Three rules, each annotated with `// scoring-spec-ok` for justified
+# exceptions:
+#
+# 1. No `src/analyzers/**/scoring.ts` paths. Each dimension's spec
+#    lives at `src/scoring/dimensions/<id>.ts`. Adapter code that
+#    builds the per-dimension input shape stays in the analyzer
+#    subdir (e.g. `src/analyzers/security/shallow.ts`) — but the
+#    file name `scoring.ts` is reserved for the canonical location.
+SCORING_FILE_VIOLATIONS=$(find src/analyzers -name 'scoring.ts' 2>/dev/null \
+  | grep -v "src/analyzers/tests/scoring.ts")
+# Allowlist: src/analyzers/tests/scoring.ts is an internal score helper
+# for ranking test-gap remediation actions in detailed reports. It is
+# NOT dimension scoring (no DimensionScore output, no spec engine
+# consumption); the file name predates this gate and the function is
+# scoped to the test-gaps analyzer's action plan.
+if [ -n "$SCORING_FILE_VIOLATIONS" ]; then
+  echo "❌ Scoring file outside the canonical home:"
+  echo "$SCORING_FILE_VIOLATIONS"
+  echo "   → Dimension scoring lives in src/scoring/dimensions/<id>.ts."
+  echo "     The analyzer subdir holds gather + adapter + renderer code"
+  echo "     only — never the scoring formula itself."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 2. No hardcoded rating-band thresholds (>= 80, >= 60, >= 40, >= 20)
+#    in scoring-related code outside `src/scoring/thresholds.ts`.
+#    All consumers route through `ratingFromScore` / `RATING_THRESHOLDS`
+#    so the band boundaries have one source of truth.
+RATING_VIOLATIONS=$(grep -rnE ">=[[:space:]]*(80|60|40|20)[^0-9]" src/ 2>/dev/null \
+  | grep -E "(score|rating|grade|dimension)" \
+  | grep -v "src/scoring/thresholds.ts" \
+  | grep -v "// scoring-spec-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$RATING_VIOLATIONS" ]; then
+  echo "❌ Hardcoded rating-band threshold in scoring context:"
+  echo "$RATING_VIOLATIONS"
+  echo "   → Use ratingFromScore() / RATING_THRESHOLDS from src/scoring."
+  echo "   → Annotate '// scoring-spec-ok' for justified exceptions"
+  echo "     (renderer bucketing on unrelated 0-100 values, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 3. No hardcoded cap-tier ceiling values (40, 35, 65, 75, 79) used
+#    in subtractive/clamp contexts outside spec files. Spec files
+#    declare tier names; the values come from CAP_TIERS.
+CAP_VIOLATIONS=$(grep -rnE "(final|score)[[:space:]]*=[[:space:]]*(35|40|65|75|79)\b" src/ 2>/dev/null \
+  | grep -v "src/scoring/" \
+  | grep -v "// scoring-spec-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$CAP_VIOLATIONS" ]; then
+  echo "❌ Hardcoded cap ceiling outside scoring module:"
+  echo "$CAP_VIOLATIONS"
+  echo "   → Use CAP_TIERS[tier] from src/scoring. Each tier name says"
+  echo "     what the cap means (trust-broken / uncertainty /"
+  echo "     fixable-finding / etc.)."
+  echo "   → Annotate '// scoring-spec-ok' for legitimate exceptions."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

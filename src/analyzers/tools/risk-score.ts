@@ -85,7 +85,7 @@ export type RiskTier = 'critical' | 'high' | 'moderate' | 'low' | 'none';
 export function riskTier(score: number | null): RiskTier {
   if (score === null) return 'none';
   if (score >= 70) return 'critical';
-  if (score >= 40) return 'high';
+  if (score >= 40) return 'high'; // scoring-spec-ok: CVSS risk-tier band, not a dimension-rating threshold
   if (score >= 15) return 'moderate';
   return 'low';
 }
