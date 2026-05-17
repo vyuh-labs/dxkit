@@ -176,20 +176,57 @@ export async function runDetached(
   opts: { cwd: string; timeoutMs: number },
 ): Promise<DetachedRunOutcome> {
   return new Promise((resolve) => {
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    // Single-resolve guard. The Promise resolves on exit / error /
+    // safety-deadline; whichever fires first wins and the rest are
+    // no-ops. Pre-fix the Promise relied solely on `exit` / `error`
+    // events — under resource pressure (web-client convergence audit:
+    // jscpd + semgrep + graphify all concurrently spawning
+    // grandchildren) one of those events occasionally never fired,
+    // and the Promise stayed pending forever. Node's event loop then
+    // emptied (no more pending operations), beforeExit fired with
+    // code=0, and the parent observed a silent rc=0 with no work
+    // completed — D134. The settle() wrapper ensures the Promise
+    // ALWAYS resolves and the dispatcher above can never hang.
+    const settle = (outcome: DetachedRunOutcome): void => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       detached: true, // new process group → enables -pid kill below
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '';
-    let stderr = '';
+
+    // Register error listener BEFORE any other setup so we never miss
+    // a synchronous spawn-time emission ('error' fires on ENOENT,
+    // EAGAIN under fd/proc exhaustion, EACCES). EventEmitter throws
+    // an unhandled-exception if 'error' fires with no listener — the
+    // pre-fix late registration could miss the emission window under
+    // pressure.
+    child.once('error', () => {
+      // spawn-time errors (e.g. ENOENT, EAGAIN). Treat as
+      // exit-with-no-output; the caller's parser sees an empty stdout
+      // and returns its empty result. Matches `run()`'s
+      // graceful-degradation convention.
+      clearTimeout(timer);
+      clearTimeout(safetyTimer);
+      settle({ stdout, stderr, code: null, timedOut: false });
+    });
+
     child.stdout?.on('data', (d: Buffer) => {
       stdout += d.toString('utf8');
     });
     child.stderr?.on('data', (d: Buffer) => {
       stderr += d.toString('utf8');
     });
-    let timedOut = false;
+
     const timer = setTimeout(() => {
       timedOut = true;
       try {
@@ -207,16 +244,37 @@ export async function runDetached(
         /* process group already gone — fine */
       }
     }, opts.timeoutMs);
-    child.on('exit', (code) => {
+
+    // Safety deadline: even if every event source fails (a kernel
+    // bug, a libuv corner case, an exotic WSL2 scheduling state),
+    // resolve the Promise after timeoutMs + 30s grace. The dispatcher
+    // up the stack uses Promise.allSettled which collapses any
+    // outcome cleanly, so an extra resolve is harmless; what we
+    // never want is an unbounded pending Promise. Pre-fix this was
+    // the silent-failure shape D134: the orchestrator's spawnSync
+    // health child observed rc=0 with no report written because the
+    // capabilities Promise.all hung on a runDetached that never
+    // settled — Node exited cleanly when the event loop emptied.
+    const safetyTimer = setTimeout(() => {
+      try {
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGKILL');
+        }
+      } catch {
+        /* process group already gone */
+      }
+      settle({
+        stdout,
+        stderr,
+        code: null,
+        timedOut: true,
+      });
+    }, opts.timeoutMs + 30_000);
+
+    child.once('exit', (code) => {
       clearTimeout(timer);
-      resolve({ stdout, stderr, code, timedOut });
-    });
-    child.on('error', () => {
-      // spawn-time errors (e.g. ENOENT). Treat as exit-with-no-output;
-      // the caller's parser sees an empty stdout and returns its empty
-      // result. Matches `run()`'s graceful-degradation convention.
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code: null, timedOut: false });
+      clearTimeout(safetyTimer);
+      settle({ stdout, stderr, code, timedOut });
     });
   });
 }
