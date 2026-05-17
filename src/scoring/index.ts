@@ -13,6 +13,8 @@ export type { PenaltyRule, CapRule, DimensionScoringSpec } from './spec';
 
 export { RATING_THRESHOLDS, CAP_TIERS, ratingFromScore } from './thresholds';
 export { evaluateSpec } from './evaluator';
+export { formatTopActionLine, formatTopActionsBlock } from './format';
+export type { ScoreResultLike } from './format';
 
 import type { DimensionScoringSpec } from './spec';
 import { SECURITY_SCORING_SPEC } from './dimensions/security';

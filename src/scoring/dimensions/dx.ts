@@ -1,29 +1,29 @@
 /**
  * Developer Experience dimension — declarative scoring spec.
  *
- * Methodology: additive checklist over operational-readiness signals
- * — CI configuration, container build, pre-commit hooks, Makefile or
- * task-runner equivalent, .env.example, automation entry-points
- * (npm scripts), CONTRIBUTING guide, substantial README, CHANGELOG.
+ * Methodology: subtractive checklist over operational-readiness
+ * signals — CI configuration, container build, pre-commit hooks,
+ * Makefile or task-runner equivalent, .env.example, automation
+ * entry-points (npm scripts), CONTRIBUTING guide, substantial
+ * README, CHANGELOG. Baseline 100; each missing or substandard
+ * artifact deducts points sized by its importance to onboarding
+ * speed and contributor friction.
  *
- * Shape mirrors OpenSSF Scorecard's weighted-checks model: each
- * artifact / signal contributes a fixed point value sized by its
- * importance to onboarding speed and contributor friction. dxkit's
+ * Shape mirrors OpenSSF Scorecard's weighted-checks model. dxkit's
  * specific point allocations are documented in
  * `src/scoring/STANDARDS.md` Layer 3 (no single Layer-1 standard
  * prescribes DevEx checklists; these values are dxkit's own choice
- * weighted to favor CI + .env.example + Docker + automation scripts
+ * weighted to favor CI + Docker + .env.example + automation scripts
  * — the artifacts most directly tied to repository onboarding).
  *
- * No caps in this spec. The additive baseline (0) means a repo
- * without any operational scaffolding lands at 0 by construction;
- * the formula's natural ceiling enforces the rating contract
- * without an external cap.
+ * The "subtractive over checklist" framing (rather than the
+ * additive-from-zero shape used pre-2.4.7) means
+ * `ScoreResult.deductions` reads as missing items the customer can
+ * fix — uniform actionable semantics across all six dimensions.
+ * Numeric scores are unchanged from the pre-inversion additive form.
  *
- * Caveat for additive specs: ScoreResult.deductions records rules
- * that fired (positive deltas — bonuses earned). Actionable
- * next-moves are rules that did NOT fire — the renderer migration
- * (sub-commit 9) computes this inverse for additive specs uniformly.
+ * No caps in this spec. The baseline + penalty distribution enforce
+ * the rating contract by construction.
  */
 
 import type { DimensionScoringSpec } from '../spec';
@@ -45,71 +45,82 @@ export interface DxScoreInput {
   npmScriptsCount: number;
   /** CONTRIBUTING.md present. */
   contributingExists: boolean;
-  /** Line count of the discovered README. Adds a small bonus when
-   *  the README is substantial enough to onboard a new contributor. */
+  /** Line count of the discovered README. Adds a small penalty when
+   *  the README is too thin to onboard a new contributor. */
   readmeLines: number;
   /** CHANGELOG.md present. */
   changelogExists: boolean;
 }
 
+/** Automation-scripts penalty: tiered shortfall from the recommended 8+. */
+function automationPenalty(i: DxScoreInput): number {
+  if (i.npmScriptsCount >= 8) return 0;
+  if (i.npmScriptsCount >= 4) return -5;
+  if (i.npmScriptsCount >= 1) return -10;
+  return -15;
+}
+
 export const DX_SCORING_SPEC: DimensionScoringSpec<DxScoreInput> = {
   dimension: 'dx',
   methodology: 'openssf-scorecard-shape',
-  baseline: 0,
+  baseline: 100,
   penalties: [
     {
-      id: 'ci-configured',
-      describe: (i) => `${i.ciConfigCount} CI workflow file(s) configured`,
-      applies: (i) => i.ciConfigCount > 0,
-      delta: () => 20,
+      id: 'ci-missing',
+      describe: () => `no CI workflow files configured`,
+      applies: (i) => i.ciConfigCount === 0,
+      delta: () => -20,
     },
     {
-      id: 'docker-configured',
-      describe: () => `container build configured (Dockerfile / compose)`,
-      applies: (i) => i.dockerConfigCount > 0,
-      delta: () => 15,
+      id: 'docker-missing',
+      describe: () => `no container build configured (Dockerfile / compose)`,
+      applies: (i) => i.dockerConfigCount === 0,
+      delta: () => -15,
     },
     {
-      id: 'precommit-hooks',
-      describe: () => `pre-commit hooks configured`,
-      applies: (i) => i.precommitConfigCount > 0,
-      delta: () => 10,
+      id: 'precommit-hooks-missing',
+      describe: () => `no pre-commit hooks configured`,
+      applies: (i) => i.precommitConfigCount === 0,
+      delta: () => -10,
     },
     {
-      id: 'makefile-present',
-      describe: () => `Makefile present (task-runner entry-point)`,
-      applies: (i) => i.makefileExists,
-      delta: () => 10,
+      id: 'makefile-missing',
+      describe: () => `no Makefile (task-runner entry-point)`,
+      applies: (i) => !i.makefileExists,
+      delta: () => -10,
     },
     {
-      id: 'env-example-present',
-      describe: () => `.env.example present (env-var onboarding hint)`,
-      applies: (i) => i.envExampleExists,
-      delta: () => 10,
+      id: 'env-example-missing',
+      describe: () => `.env.example missing (env-var onboarding hint)`,
+      applies: (i) => !i.envExampleExists,
+      delta: () => -10,
     },
     {
-      id: 'automation-scripts',
-      describe: (i) => `${i.npmScriptsCount} npm-script entry-point(s)`,
-      applies: (i) => i.npmScriptsCount >= 1,
-      delta: (i) => (i.npmScriptsCount >= 8 ? 15 : i.npmScriptsCount >= 4 ? 10 : 5),
+      id: 'automation-scripts-short',
+      describe: (i) =>
+        i.npmScriptsCount === 0
+          ? `no npm-script entry-points (recommended ≥ 8)`
+          : `${i.npmScriptsCount} npm-script entry-point(s); recommended ≥ 8`,
+      applies: (i) => automationPenalty(i) < 0,
+      delta: automationPenalty,
     },
     {
-      id: 'contributing-guide',
-      describe: () => `CONTRIBUTING.md present`,
-      applies: (i) => i.contributingExists,
-      delta: () => 10,
+      id: 'contributing-missing',
+      describe: () => `CONTRIBUTING.md missing`,
+      applies: (i) => !i.contributingExists,
+      delta: () => -10,
     },
     {
-      id: 'readme-substantial-for-onboarding',
-      describe: (i) => `README is substantial (${i.readmeLines} lines, > 50)`,
-      applies: (i) => i.readmeLines > 50,
-      delta: () => 5,
+      id: 'readme-thin-for-onboarding',
+      describe: (i) => `README is thin (${i.readmeLines} lines; recommended > 50 for onboarding)`,
+      applies: (i) => i.readmeLines <= 50,
+      delta: () => -5,
     },
     {
-      id: 'changelog-present',
-      describe: () => `CHANGELOG.md present`,
-      applies: (i) => i.changelogExists,
-      delta: () => 5,
+      id: 'changelog-missing',
+      describe: () => `CHANGELOG.md missing`,
+      applies: (i) => !i.changelogExists,
+      delta: () => -5,
     },
   ],
   caps: [],

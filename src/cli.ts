@@ -8,6 +8,7 @@ import { runDoctor } from './doctor';
 import { VERSION } from './constants';
 import * as logger from './logger';
 import { GenerationMode } from './types';
+import { formatTopActionLine, formatTopActionsBlock } from './scoring';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -318,6 +319,10 @@ export async function run(argv: string[]): Promise<void> {
           console.log(
             `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.rating}`,
           );
+          const topAction = formatTopActionLine(dim);
+          if (topAction) {
+            logger.dim(`  ${' '.repeat(22)} → ${topAction}`);
+          }
         }
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
@@ -1262,6 +1267,8 @@ function formatMarkdownReport(
     lines.push('');
     lines.push(dim.details);
     lines.push('');
+    const topActions = formatTopActionsBlock(dim);
+    for (const line of topActions) lines.push(line);
     lines.push('| Metric | Value |');
     lines.push('|---|---|');
     for (const [mk, mv] of Object.entries(dim.metrics)) {
