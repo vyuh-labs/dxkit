@@ -49,7 +49,41 @@ const SUSPECT_VENDORED_TOKENS = [
   '/third_party/',
   '/third-party/',
   '/vendored/',
+  // Map-rendering libraries (mapbox-gl, leaflet, cesium) commonly
+  // shipped as pre-built JS bundles into public/. Customer-authored
+  // map UI lives in src/; vendored copies land under public/map/.
+  '/mapbox-gl/',
+  '/leaflet/',
+  '/cesium/',
+  '/map/js/',
+  '/map/lib/',
+  // SAP Business One / ByDesign SDK proxy classes. Reverse-engineered
+  // from the ERP data model — property-bag DTOs with hundreds of
+  // classes and zero method bodies, indistinguishable from human
+  // code by extension alone. Project-team doesn't author them.
+  '/sapb1/',
+  '/sapbyd/',
+  '/odata/',
+  // WCF "Connected Services" + gRPC + protobuf generated proxy code.
+  // Tooling regenerates these wholesale; they should not surface in
+  // largest-files or densest-file rankings.
+  '/connectedservices/',
+  '/connectedservice/',
+  '/grpcgenerated/',
+  '/protogenerated/',
 ];
+
+// The token list above is a tactical interim — every entry was
+// added in response to a specific customer audit, and the pattern
+// of "find a new vendored convention, hardcode another token" doesn't
+// converge. Pre-3.0.0 plan: replace this whole module with an
+// agent / skill that runs at `vyuh-dxkit init` / `update` time,
+// analyzes the customer's repo via graphify (looking for files with
+// proxy-shape signatures — high class:method ratio, no autogen
+// header, anomalous file size), and proposes `.dxkit-ignore`
+// entries. Scoped in the next graphify session per user direction
+// 2026-05-17 — see `tmp/next-session-graphify-deep-dive.md` and
+// `tmp/graphify-capabilities-expansion.md`.
 
 /**
  * Check if a relative POSIX path contains a suspect-vendored token.

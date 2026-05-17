@@ -31,6 +31,24 @@ describe('looksVendored', () => {
     expect(looksVendored('dist/bundled/main.js')).toBe(true);
   });
 
+  it('flags map-library vendored bundles (mapbox-gl, leaflet, cesium)', () => {
+    expect(looksVendored('public/map/js/mapbox-gl.js')).toBe(true);
+    expect(looksVendored('vendor/leaflet/leaflet.min.js')).toBe(true);
+    expect(looksVendored('lib/cesium/Cesium.js')).toBe(true);
+  });
+
+  it('flags SAP B1 / OData proxy classes (dpl-studio case)', () => {
+    expect(looksVendored('Code/Source/Dev/Addons/DPLAddon/SAPB1/Admission/AADM.cs')).toBe(true);
+    expect(looksVendored('Code/Source/Dev/Addons/DPLAddon/SAPByD/Services/Sales.cs')).toBe(true);
+    expect(looksVendored('Code/Source/Generated/OData/Customer.cs')).toBe(true);
+  });
+
+  it('flags connected-services / proto-generated conventions', () => {
+    expect(looksVendored('Code/Source/ConnectedServices/SAP/Reference.cs')).toBe(true);
+    expect(looksVendored('src/grpcGenerated/UserService.ts')).toBe(true);
+    expect(looksVendored('src/protoGenerated/messages.go')).toBe(true);
+  });
+
   it('does not false-positive on filenames containing vendored tokens', () => {
     // Files NAMED like vendored conventions but living in normal source
     // directories should NOT trigger the advisory.
