@@ -641,7 +641,7 @@ function renderHtml(a: RenderArgs): string {
             ? `
         <div class="hero">
           <div>
-            <div class="hero-score">${a.healthScore}<span style="color:var(--text-muted);font-size:36px">/100</span><span class="grade">Grade ${escapeHtml(a.healthGrade ?? '')}</span></div>
+            <div class="hero-score">${a.healthScore}<span style="color:var(--text-muted);font-size:36px">/100</span><span class="grade">Rating ${escapeHtml(a.healthGrade ?? '')}</span></div>
           </div>
           <div class="hero-meta">
             <h2>Overall Codebase Health</h2>

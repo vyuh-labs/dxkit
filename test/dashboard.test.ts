@@ -104,7 +104,7 @@ describe('analyzeDashboard', () => {
     expect(result.criticalIssueCount).toBeGreaterThan(0);
     // Hero score is rendered in the HTML.
     expect(result.html).toContain('73');
-    expect(result.html).toContain('Grade B');
+    expect(result.html).toContain('Rating B');
     // Dimension breakdown shows each dimension name.
     expect(result.html).toContain('Testing');
     expect(result.html).toContain('Security');

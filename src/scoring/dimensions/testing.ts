@@ -58,11 +58,23 @@ export interface TestingScoreInput {
 export const TESTING_SCORING_SPEC: DimensionScoringSpec<TestingScoreInput> = {
   dimension: 'testing',
   methodology: 'industry-coverage-thresholds',
-  // Additive baseline: every signal contributes positive points. A
-  // repo with zero test files lands at 0 because every gated rule
-  // skips.
+  // Additive baseline: every positive-delta signal contributes
+  // points; the zero-tests deduction surfaces the most-actionable
+  // customer case (no tests at all) with a real Top Action.
   baseline: 0,
   penalties: [
+    {
+      id: 'no-tests-found',
+      describe: (i) =>
+        `no test files found across ${i.sourceFiles} source files (start with the highest-risk untested files — see test-gaps)`,
+      applies: (i) => i.testFiles === 0,
+      // -60 mirrors the max bonus the test-ratio rule could grant at
+      // a healthy ratio. The score floors at 0 (E) either way, but
+      // surfacing the deduction makes the dimension actionable: the
+      // renderer shows "+60 — would lift rating E → C" and the
+      // severe-debt disclosure fires.
+      delta: () => -60,
+    },
     {
       id: 'test-ratio',
       describe: (i) =>

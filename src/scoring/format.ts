@@ -50,7 +50,9 @@ export function formatTopActionsBlock(score: ScoreResultLike, limit = 5): string
   // and the raw penalty went past it, say so. Distinguishes
   // "barely bad" from "catastrophic" in the report itself.
   if (score.score === 0 && typeof score.rawScore === 'number' && score.rawScore < 0) {
-    lines.push(`> **Severe:** raw penalty ${score.rawScore} (deductions exceed the floor).`);
+    lines.push(
+      `> **Severe:** raw penalty ${Math.round(score.rawScore)} (deductions exceed the floor).`,
+    );
     lines.push('');
   }
 
