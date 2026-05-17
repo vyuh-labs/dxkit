@@ -31,10 +31,10 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../../languages/capabilities/types';
-import { scoreDeveloperExperience } from '../scoring';
 import { scoreTestFromScoreInput } from '../tests/shallow';
 import { scoreDocsFromScoreInput } from '../docs/shallow';
 import { scoreMaintainabilityFromScoreInput } from '../maintainability/shallow';
+import { scoreDxFromScoreInput } from '../dx/shallow';
 import { ScoreInput } from '../types';
 // Security + Quality scorers live with their analyzers post-
 // canonical-formula unification.
@@ -420,7 +420,7 @@ export function buildHealthPlans(input: ScoreInput): DimensionPlan[] {
       scorer: scoreMaintainabilityFromScoreInput,
       build: maintainabilityActions,
     },
-    { name: 'Developer Experience', scorer: scoreDeveloperExperience, build: dxActions },
+    { name: 'Developer Experience', scorer: scoreDxFromScoreInput, build: dxActions },
   ];
   return dims.map((d) => {
     const baseline = d.scorer(input).score;

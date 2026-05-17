@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { scoreDeveloperExperience, computeOverall } from '../src/analyzers/scoring';
+import { computeOverall } from '../src/analyzers/scoring';
 import { scoreTestsDimension as scoreTest } from '../src/analyzers/tests/shallow';
 import { scoreDocsDimension as scoreDocumentation } from '../src/analyzers/docs/shallow';
 import { scoreMaintainabilityDimension as scoreMaintainability } from '../src/analyzers/maintainability/shallow';
+import { scoreDxDimension as scoreDeveloperExperience } from '../src/analyzers/dx/shallow';
 import { DimensionScore } from '../src/analyzers/types';
 import { coverageCapability, structuralCapability, withInput } from './fixtures/score-input';
 
