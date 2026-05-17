@@ -1149,6 +1149,47 @@ export const typescript: LanguageSupport = {
     return `npm install ${name}@${version}`;
   },
 
+  // Path conventions span both backend Node frameworks (Express,
+  // Loopback, NestJS, Fastify — controllers/services/repositories)
+  // and the React / Next.js frontend world (components/pages/hooks).
+  // Both are declared as `primaryComponentPaths` so a polyglot Node
+  // backend + React frontend monorepo doesn't have to pick. The
+  // `routePaths` subset narrows to HTTP-handler conventions so the
+  // "Add API documentation" action stays silent on pure-React apps.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/handlers/',
+      '/services/',
+      '/repositories/',
+      '/interceptors/',
+      '/middleware/',
+      '/components/',
+      '/pages/',
+      '/hooks/',
+      '/screens/',
+    ],
+    routePaths: ['/controllers/', '/handlers/', '/routes/', '/pages/api/', '/app/api/'],
+    modelPaths: ['/models/', '/entities/', '/schemas/', '/dto/', '/dtos/'],
+    vocabulary: {
+      components: 'controllers/components',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/handlers/', '/services/'],
+      medium: [
+        '/interceptors/',
+        '/middleware/',
+        '/repositories/',
+        '/components/',
+        '/pages/',
+        '/hooks/',
+        '/screens/',
+      ],
+    },
+  },
+
   clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
 
   detect(cwd) {

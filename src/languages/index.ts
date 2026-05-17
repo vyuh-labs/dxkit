@@ -1,5 +1,5 @@
 import type { DetectedStack } from '../types';
-import type { LanguageId, LanguageSupport } from './types';
+import type { ArchitecturalShape, LanguageId, LanguageSupport } from './types';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -9,7 +9,13 @@ import { kotlin } from './kotlin';
 import { java } from './java';
 import { ruby } from './ruby';
 
-export type { LanguageId, LanguageSupport, LintSeverity, ProjectYamlContext } from './types';
+export type {
+  ArchitecturalShape,
+  LanguageId,
+  LanguageSupport,
+  LintSeverity,
+  ProjectYamlContext,
+} from './types';
 
 export const LANGUAGES: readonly LanguageSupport[] = [
   python,
@@ -139,6 +145,124 @@ export function allTlsBypassPatterns(): string[] {
  */
 export function allClocLanguageNames(): string[] {
   return [...new Set(LANGUAGES.flatMap((l) => l.clocLanguageNames ?? []))];
+}
+
+/**
+ * Union of every active pack's `architecturalShape.primaryComponentPaths`,
+ * deduplicated. Consumed by `gatherGenericMetrics` to count the
+ * primary-component file metric (`HealthMetrics.controllers`) and by
+ * the test-gap classifier in `analyzers/tests/gather.ts` to populate
+ * the MEDIUM bucket by default.
+ *
+ * Pre-extension, generic.ts hardcoded `controllers/`, `handlers/`,
+ * `views/` and gather.ts hardcoded the same set inline — a pure
+ * React frontend or .NET WinForms desktop app matched zero paths
+ * and reported empty MEDIUM/HIGH test-gap buckets. Pack-driven
+ * union grows automatically as new packs land.
+ *
+ * Scope is active-only: matching `<dxkit health>` analyzes the
+ * project the user is in, not every pack that exists. This keeps
+ * Python pack's `views/` from incorrectly matching a Java repo's
+ * Spring MVC views layer (cross-pack false positives).
+ */
+export function allPrimaryComponentPaths(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(
+      activeLanguagesFromFlags(flags).flatMap(
+        (l) => l.architecturalShape?.primaryComponentPaths ?? [],
+      ),
+    ),
+  ];
+}
+
+/**
+ * Union of every active pack's `architecturalShape.routePaths`,
+ * deduplicated. Consumed by `gatherGenericMetrics` to populate
+ * `HealthMetrics.routeHandlerFiles` — the count gating the "Add API
+ * documentation" health action. A WinForms desktop app (.NET pack
+ * active but no `Controllers/` directory) reports zero here even when
+ * `primaryComponentPaths` matches Forms/ViewModels, so the action
+ * stays correctly silenced.
+ */
+export function allRoutePaths(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(
+      activeLanguagesFromFlags(flags).flatMap((l) => l.architecturalShape?.routePaths ?? []),
+    ),
+  ];
+}
+
+/**
+ * Union of every active pack's `architecturalShape.modelPaths`,
+ * deduplicated. Consumed by `gatherGenericMetrics` to populate
+ * `HealthMetrics.models` (the "data model files" count surfaced in
+ * Maintainability prose).
+ */
+export function allModelPaths(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(
+      activeLanguagesFromFlags(flags).flatMap((l) => l.architecturalShape?.modelPaths ?? []),
+    ),
+  ];
+}
+
+/**
+ * Per-bucket union of active packs' test-gap path patterns. Empty
+ * arrays for any bucket no pack declares. Consumed by
+ * `analyzers/tests/gather.ts:classifyRisk` to tier source files into
+ * the CRITICAL / HIGH / MEDIUM / LOW buckets.
+ *
+ * The `medium` bucket defaults to a pack's `primaryComponentPaths`
+ * when its `testGapPriority.medium` is omitted — the common case
+ * being "any primary component without a matching test is MEDIUM
+ * risk at minimum."
+ */
+export function allTestGapPriorityPaths(flags: DetectedStack['languages']): {
+  critical: string[];
+  high: string[];
+  medium: string[];
+} {
+  const active = activeLanguagesFromFlags(flags);
+  const critical = new Set<string>();
+  const high = new Set<string>();
+  const medium = new Set<string>();
+  for (const pack of active) {
+    const shape = pack.architecturalShape;
+    if (!shape) continue;
+    for (const p of shape.testGapPriority?.critical ?? []) critical.add(p);
+    for (const p of shape.testGapPriority?.high ?? []) high.add(p);
+    if (shape.testGapPriority?.medium && shape.testGapPriority.medium.length > 0) {
+      for (const p of shape.testGapPriority.medium) medium.add(p);
+    } else {
+      // Default: primary components fall into MEDIUM when no explicit
+      // bucket is declared. Lets packs declare just primaryComponentPaths
+      // and get a sensible test-gap tiering for free.
+      for (const p of shape.primaryComponentPaths ?? []) medium.add(p);
+    }
+  }
+  return { critical: [...critical], high: [...high], medium: [...medium] };
+}
+
+/**
+ * Pick the dominant vocabulary for prose rendering. First active pack
+ * in registry order that declares `architecturalShape.vocabulary`
+ * wins. Returns null when no active pack provides one — callers fall
+ * back to generic words ("components", "models", "routes").
+ *
+ * Deterministic by design: same stack → same vocabulary. A future
+ * refinement may switch to "pack with most source files" once
+ * per-pack source counts are plumbed end-to-end; for the common
+ * single-dominant-pack case (Python+small-TS-build-tooling, .NET-only,
+ * pure-React) registry order suffices.
+ */
+export function dominantVocabulary(
+  flags: DetectedStack['languages'],
+): NonNullable<ArchitecturalShape['vocabulary']> | null {
+  for (const pack of activeLanguagesFromFlags(flags)) {
+    const v = pack.architecturalShape?.vocabulary;
+    if (v && (v.components || v.models || v.routes)) return v;
+  }
+  return null;
 }
 
 /**

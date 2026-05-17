@@ -35,6 +35,85 @@ export interface LanguagePackCapabilities {
 }
 
 /**
+ * Architectural-shape contract a language pack may expose. Captures the
+ * path conventions and vocabulary a stack uses for its primary
+ * architecture so the analyzer + renderer layer can stop hardcoding
+ * backend-centric assumptions ("controllers/", "models/").
+ *
+ * Every field is optional. A pack with no architectural conventions
+ * (rust, today) omits the whole field; a pack with vocabulary but no
+ * test-gap taxonomy can declare just `vocabulary`.
+ */
+export interface ArchitecturalShape {
+  /**
+   * Path patterns identifying "primary architecture" files for this
+   * stack — the surfaces a developer would test first. Backend packs
+   * declare controllers/handlers/services. Frontend packs declare
+   * components/pages/hooks. Desktop packs declare Forms/ViewModels.
+   *
+   * Patterns are case-insensitive substrings of the source file's
+   * relative POSIX path. Slashes are significant (`"/controllers/"`
+   * won't match a filename like `controller-host.ts` that lives
+   * outside a controllers directory).
+   *
+   * Feeds the `controllers` metric counter (despite the name — the
+   * field is a generic "primary component" count post-extension),
+   * the Maintainability prose, and the test-gap MEDIUM bucket
+   * default.
+   */
+  primaryComponentPaths?: string[];
+
+  /**
+   * Path patterns specifically for HTTP route handlers / API endpoints.
+   * Gates the "Add API documentation" health action: desktop apps with
+   * no HTTP surface (matched count = 0) don't get told to document an
+   * API they don't expose.
+   *
+   * Subset of `primaryComponentPaths` for typical backend packs (a
+   * `controllers/` directory hosts route handlers). Frontend packs
+   * omit it (React `components/` are not HTTP endpoints). Server-side
+   * rendering packs (Next.js' `pages/api/`) declare both.
+   */
+  routePaths?: string[];
+
+  /**
+   * Path patterns for data-model files (ORM entities, DTOs, schemas).
+   * Powers the Maintainability prose "N <vocabulary.models>" count.
+   */
+  modelPaths?: string[];
+
+  /**
+   * Display words for prose rendering. The dominant active pack
+   * contributes vocabulary (first-active-in-registry-order is the
+   * tiebreaker today; packs without `vocabulary` fall through to the
+   * next active pack). Consumers fall back to the generic words
+   * (`"components"`, `"models"`, `"routes"`) when no active pack
+   * supplies a label.
+   */
+  vocabulary?: {
+    components?: string;
+    models?: string;
+    routes?: string;
+  };
+
+  /**
+   * Per-bucket path patterns for the test-gap risk taxonomy. The
+   * canonical security regexes (`/auth/`, `/jwt/`, `/security/`, ...)
+   * still apply pack-agnostically to the CRITICAL bucket; packs may
+   * extend it with stack-specific surfaces (csharp's `Auth*Form.cs`).
+   *
+   * `medium` defaults to `primaryComponentPaths` when omitted — the
+   * common case is "any primary component without a matching test
+   * is at least MEDIUM risk."
+   */
+  testGapPriority?: {
+    critical?: string[];
+    high?: string[];
+    medium?: string[];
+  };
+}
+
+/**
  * Everything dxkit needs to know about a language lives in one implementation
  * of this interface. See `src/languages/index.ts` for the registry.
  *
@@ -148,6 +227,39 @@ export interface LanguageSupport {
    * Optional — packs without a depVulns capability omit it.
    */
   upgradeCommand?(name: string, version: string): string | null;
+
+  /**
+   * Per-stack architectural vocabulary + path conventions. Drives the
+   * test-gap risk taxonomy, the Maintainability prose ("controllers"
+   * vs "components" vs "Forms"), and the gate on the "Add API
+   * documentation" recommendation.
+   *
+   * Pre-extension these path patterns + words lived inline in
+   * `src/analyzers/tests/gather.ts` and `src/analyzers/tools/generic.ts`
+   * as hardcoded backend-centric paths (`controllers/`, `handlers/`,
+   * `views/`, `models/`). A pure React frontend (`src/components/`,
+   * `src/pages/`) matched none of them and reported 0/0/0 across
+   * CRITICAL/HIGH/MEDIUM test-gap buckets; a .NET WinForms desktop
+   * app (`Forms/`, `Services/`) likewise reported zero primary-
+   * architecture files and its Maintainability prose still read
+   * "0 controllers/handlers, 0 models" — accurate but unhelpful.
+   *
+   * Each pack now declares its own conventions. The cross-cutting
+   * gather + render code unions/picks across active packs via the
+   * helpers in `src/languages/index.ts` (`allPrimaryComponentPaths`,
+   * `allRoutePaths`, `allModelPaths`, `allTestGapPriorityPaths`,
+   * `dominantVocabulary`).
+   *
+   * All path patterns are case-insensitive substrings of the source
+   * file's relative POSIX path (e.g. `"/controllers/"`, `"/Forms/"`).
+   * Slashes are significant — they keep `services` from matching a
+   * filename like `service-host.ts` outside a services directory.
+   *
+   * Optional — packs without canonical architectural conventions omit
+   * it (today: rust, where `main.rs` / `lib.rs` are the entire
+   * convention and no controllers/components vocabulary maps).
+   */
+  architecturalShape?: ArchitecturalShape;
 
   /**
    * D073 (2.4.7): language names cloc emits in its `--json` output
