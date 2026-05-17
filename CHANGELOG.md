@@ -9,6 +9,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.4.7] - 2026-05-14
 
+### Phase C7 — Actionable scoring foundation (2026-05-17)
+
+Reframes dxkit's six-dimension scoring from descriptive ("Code
+Quality: 75/100, Good") to actionable ("Code Quality: 75/100, B —
+top action: fix 11 lint errors for +10, would lift rating to A").
+The numeric scores stay on the same 0-100 scale; every dimension
+now also produces structured provenance that tells the customer
+what to fix and how much the score would lift.
+
+dxkit's scoring is now **deterministic** (same repo + same dxkit
+version → identical score, every machine), **anchored** (cites
+underlying open standards: ISO/IEC 25010, ISO/IEC 5055, SQALE
+method, CVSS v4, CWE, OWASP, OpenSSF Scorecard), and **actionable**
+(every score paired with structured `deductions`, `capsApplied`,
+`topActions`).
+
+See [`docs/SCORING.md`](docs/SCORING.md) for the full methodology
+and [`docs/MIGRATING-TO-2.4.7-SCORING.md`](docs/MIGRATING-TO-2.4.7-SCORING.md)
+for JSON-consumer migration.
+
+#### Architecture
+
+- **Single home for dimension scoring** at `src/scoring/`,
+  mirroring the per-language pattern from CLAUDE.md Rule 6. Each
+  of the six dimensions (Security, Code Quality, Tests,
+  Documentation, Maintainability, Developer Experience) declares
+  a `DimensionScoringSpec<T>` artifact under
+  `src/scoring/dimensions/<id>.ts` consumed by a shared
+  pure-function evaluator. Adding a new dimension is a recipe
+  documented in CONTRIBUTING.md.
+- **Cap-tier taxonomy** named by severity: `trust-broken` (40,
+  catastrophic), `unmeasured` (35, no signal), `uncertainty` (65,
+  key tool missing), `partial-uncertainty` (75, partial gap),
+  `fixable-finding` (79, concrete bounded finding open). Caps
+  enforce the Label Contract: "A" means "no known blockers."
+- **Zero scoring code remains in `src/analyzers/`**. Files deleted
+  in full: `src/analyzers/scoring.ts`, `src/analyzers/security/scoring.ts`,
+  `src/analyzers/quality/scoring.ts`. CLAUDE.md gains Rule 7
+  documenting the new architecture; three new arch-gate rules in
+  `scripts/check-architecture.sh` prevent regression.
+- **Scoring playbook test** (`test/scoring-playbook.test.ts`)
+  injects a synthetic 7th-dimension spec to confirm the registry
+  + evaluator + format helpers stay spec-driven.
+
+#### Customer-visible score changes
+
+- **D131 closure — Security HIGH+ open caps at 79 (B)**. Pre-2.4.7
+  a single open HIGH-severity code finding (e.g. a TLS-validation
+  bypass) left the Security dimension at 95/100 ("Excellent") —
+  the headline contradicted the unfixed finding. Now repos with at
+  least one open HIGH or CRITICAL code finding cap at 79 (B grade)
+  with the cap explicit in the rendered report:
+  `Rating cap: 1 open HIGH+ code finding — bounded at 79/100`.
+  Repos with zero open HIGH+ are unaffected.
+- **D129 closure — severe-debt disclosure**. Pre-2.4.7, "Code
+  Quality 0/100" rendered identically whether the penalty stack
+  totalled -5 (barely below the floor) or -85 (catastrophic). The
+  Top Actions block now surfaces the rawPenalty when the score
+  floors at 0: `Severe: raw penalty -85 (deductions exceed the
+  floor).`
+- **Maintainability — SQALE baseline shift**. Methodology
+  migrated to ISO/IEC 25010 + SQALE-inspired step thresholds.
+  Baseline shifts from 70 to 100 (matches every other subtractive
+  dimension); the small-codebase bonus is removed as overfit.
+  Clean repos see Maintainability scores rise by ~30 points.
+  Documented behavior change.
+- **Testing — cap-then-penalty ordering**. When `commentedCodeRatio
+  > 0.5` AND coverage data missing, the final score is now 35 (cap
+  binds as the ceiling). Pre-2.4.7 it was 20 (cap then sub-cap
+  subtraction). The new semantic is cleaner — caps are ceilings,
+  not floors-and-then-keep-subtracting. Affects a narrow edge case.
+- **No-tests-found surfaces as a Top Action**. Repos with zero
+  test files now show a dedicated deduction +60 with severe-debt
+  disclosure, pointing at test-gaps for the ranked critical files.
+  Pre-2.4.7 these repos had a 0/E Tests score with no actionable
+  signal in the dimension's Top Actions block.
+- **`DimensionScore.status` → `rating`**. The descriptive enum
+  (`'excellent' | 'good' | 'fair' | 'poor' | 'critical'`) is
+  replaced by a uniform letter rating (`'A' | 'B' | 'C' | 'D' |
+  'E'`). The overall summary's `grade` field renames to `rating`
+  with the same `F` → `E` enum unification.
+- **Documentation + Developer Experience specs inverted from
+  additive to subtractive**. Numeric scores preserved by
+  construction; the `deductions[]` list now reads as
+  actions-to-take ("README missing") rather than bonuses already
+  earned ("README present").
+
+#### Renderer + JSON
+
+- CLI grid prints a top-action continuation under each dimension
+  line: `→ 11 lint errors +10 (B → A)`.
+- Health detailed markdown gains a `Top actions (sorted by score
+  uplift)` block per dimension with rating-transition annotations.
+- Dashboard hero now reads `Rating D` instead of `Grade D`.
+- Health-detailed JSON schema bumps `11` → `12` for the new
+  provenance fields on `DimensionScore` (`rawScore`,
+  `rawPenalty`, `methodology`, `deductions`, `capsApplied`,
+  `topActions`). All optional — pre-2.4.7 consumers continue to
+  work.
+
 Two-phase release. **Phase A** (audit-driven hot-patches, originally
 shipped 2026-05-13) closed a 17-defect cascade surfaced by a critical
 post-shipment audit on dpl-studio (enterprise C# / 1500+ files / 68
