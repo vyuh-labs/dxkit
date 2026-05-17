@@ -7,7 +7,297 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.4.7] - 2026-05-14
+## [2.4.7] - 2026-05-17
+
+### Summary
+
+2.4.7 is the largest release since the language-pack architecture
+landed. It bundles three distinct architectural deliverables
+(actionable scoring foundation, per-stack architectural shape,
+canonical security aggregator), customer-visible UX rework
+(security top-5 actions, .env-in-git callout, lint-skip prose
+honesty, tools-unavailable renderer split), one ship-blocker
+root-cause fix (silent health failure under concurrent subprocess
+load), and the project's OSS hygiene baseline. 17 defect IDs
+closed in this version. Scoring methodology now anchored to
+ISO/IEC 25010, ISO/IEC 5055, SQALE, CVSS v4, CWE, OWASP, and
+OpenSSF Scorecard. Tests: 1241 / 0 (up from 1175 at the 2.4.6
+baseline). No runtime regressions across the cross-ecosystem
+matrix.
+
+Customer-visible numeric impact: scores on some repos will shift
+between 2.4.6 and 2.4.7 because the underlying methodology
+changed (see the "Actionable scoring foundation" section below
+and its "Customer-visible score changes" subsection), not because
+of bugs. Migration notes at
+[`docs/MIGRATING-TO-2.4.7-SCORING.md`](docs/MIGRATING-TO-2.4.7-SCORING.md).
+
+### Phase C11 — OSS hygiene baseline (2026-05-17)
+
+Adds the standard set of OSS community files so the project
+satisfies the OpenSSF Scorecard `Security-Policy`,
+`Code-of-Conduct`, and `Contributors` checks and gives external
+contributors a clear on-ramp.
+
+- `SECURITY.md` — supported-versions table, response SLAs, explicit
+  scope, and a pointer to GitHub's [private vulnerability
+  reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new)
+  (no public email; routes directly to maintainers).
+- `CODE_OF_CONDUCT.md` — adopts the [Contributor Covenant
+  2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)
+  by canonical URL reference. Reports route through the same
+  private channel as security disclosures.
+- `.github/PULL_REQUEST_TEMPLATE.md` — summary + motivation +
+  verification checklist + an architectural-rules pointer section
+  nudging contributors at the relevant CLAUDE.md rules before
+  touching scoring / language packs / exclusions / tool invocation.
+- `.github/ISSUE_TEMPLATE/bug.yml` — issue form: repro steps,
+  versions (dxkit + Node), OS, repo stack, logs. Confirmations
+  block routes security reports to private disclosure.
+- `.github/ISSUE_TEMPLATE/feature.yml` — issue form: problem
+  framing, proposal, alternatives considered, scope dropdown.
+- `.github/ISSUE_TEMPLATE/question.yml` — light triage form that
+  redirects bug / feature / security reports to the right channel
+  and surfaces existing docs (README, SCORING.md, CLAUDE.md).
+- `docs/ARCHITECTURE.md` — short tour of the analyzer data flow,
+  the three core patterns (language packs, scoring specs,
+  centralized exclusions + tool registry), the `runDetached`
+  subprocess discipline, the `AnalysisResult` cache, and the
+  release flow. Entry-point doc; defers to CLAUDE.md as the
+  authoritative rule set.
+
+No runtime code changes. Commits: `93a1790`.
+
+### Phase C10.25 — Audit-residue closures + silent-failure root-cause (2026-05-17)
+
+The earlier phases of 2.4.7 brought enough new code into the
+analyzer that a pre-ship convergence audit on the three external
+customer repos surfaced one HIGH-severity defect — the report
+orchestrator's health step intermittently exiting `rc=0` with no
+`health-audit-*.md` written on the heaviest polyglot repo — plus a
+batch of MEDIUM residue items. This phase closes all of them.
+Pairs with the per-stack architectural-shape work below to leave
+2.4.7 with zero outstanding ship blockers.
+
+#### Silent health-failure root-cause (D134)
+
+The report orchestrator's health step on a heavy polyglot repo
+(13k+ graphify function nodes, ~700 source files, large
+`node_modules`) intermittently exited `rc=0` with no
+`health-audit-*.md` written. The dashboard then read "no health
+data" while the orchestrator itself printed `✓ Health`.
+Investigation via a `spawnSync` reproducer plus targeted
+diagnostic instrumentation captured the failure shape:
+
+```
+[beforeExit] code=0 reachedWrite=false writeComplete=false
+[exit]       code=0 reachedWrite=false writeComplete=false
+```
+
+No `uncaughtException`, no `unhandledRejection` — classic
+abandoned-Promise. Under concurrent subprocess load (semgrep +
+jscpd + graphify all spawning grandchildren), one `runDetached`
+invocation's `exit` and `error` events both failed to fire. The
+Promise stayed permanently pending, the capabilities `Promise.all`
+hung, `analyzeHealthInternal`'s `await` never returned, Node's
+event loop emptied and the process exited cleanly with the main
+task still suspended.
+
+Fix in `src/analyzers/tools/runner.ts` (commit `55ce0d6`):
+
+- **Single-resolve `settle()` guard** — `exit` / `error` /
+  safety-deadline, first wins; subsequent events are no-ops.
+- **Error listener registered BEFORE other setup** to close the
+  spawn-time-emission race window.
+- **Safety deadline at `timeoutMs + 30_000`** — the Promise
+  mathematically must settle within that window even if every
+  event source fails.
+
+Verification on the failure repo:
+
+- Pre-fix: 795-800 s, `rc=0`, **no** health markdown on disk.
+- Post-fix: 662.8 s, `rc=0`, full health markdown on disk.
+
+Defense-in-depth (commit `5b6e360`): the `report` orchestrator
+now asserts each step wrote its expected markdown post-step. A
+future regression that re-introduces the hang surfaces a per-step
+`✗` instead of a silent `✓`.
+
+#### jscpd OOM class-fix — centralized exclusions plumbed into `--ignore` (D139)
+
+jscpd was invoked with `--gitignore` + the autogen-pattern list but
+NOT dxkit's bundled `default-exclusions.gitignore` / `.dxkit-ignore`
+union — the same exclusion set every in-process walker (cloc, grep,
+semgrep, graphify's Python filter) honors. Repos committing vendored
+bundles outside `.gitignore` (e.g. minified library copies under a
+`public/` tree) led jscpd to descend in, tokenize multi-thousand-line
+minified bundles, exhaust heap, and OOM-kill before flushing its
+JSON report. The quality report would then read
+"Duplication unavailable" on the densest repos — exactly the repos
+where the metric mattered most.
+
+Fix (commit `2afc097`):
+
+- New `getJscpdIgnorePatterns(cwd)` helper in
+  `src/analyzers/tools/exclusions.ts` returns the centralized
+  exclusion set as `**/<pattern>`-style globs.
+- `gatherJscpdResult` unions it with the autogen patterns and
+  passes the union to jscpd's `--ignore`.
+- `jscpdProvider` gains a `gatherOutcome` method so the
+  dispatcher captures jscpd's actual failure reason
+  ("not installed" / "timed out at 600s" / "exit code N
+  (stderr: ...)" / "no output" / "parse error") instead of
+  dropping it at the gather / `null` boundary.
+
+CLAUDE.md Rule 4 ("Exclusions come from `exclusions.ts`") was
+honored at the in-process walker layer but not at the
+subprocess-tool argument-builder layer. This closes that drift
+for jscpd and lays the pattern for any future subprocess tool
+that walks the repo.
+
+Verification on the worst-case repo:
+
+- **Standalone smoke**: 569 s OOM → 17 s success, **7.26 %**
+  duplication, 444 clones, 7 423 duplicated lines.
+- **End-to-end via `vyuh-dxkit quality`**: capabilities-gather
+  770 s → 272 s (jscpd no longer the long pole; eslint also
+  surfaces its real findings as a side-effect, contributing
+  10 496 errors + 2 787 warnings that were previously masked).
+
+#### Tools-unavailable renderer prose-honesty (D138)
+
+The dispatcher's `skipReasons` channel already carried the real
+per-source failure reason for every attempted-but-failed tool, but
+`availabilityFromOutcome` in `src/analyzers/health.ts` collapsed
+every case to a generic "attempted but produced no output (likely
+killed by resource limits — try running dxkit on this repo alone)"
+prose. The renderer then printed `**Tools unavailable:** jscpd
+(...)` — a reader reasonably concluded the binary needed
+installing, when in fact the binary was fine and the run had
+OOM'd at runtime. Same misleading-label class as D113 / D128
+(lint-skip prose) and D135 (cache-level availability envelope) —
+this fix extends the honesty pattern one layer up to the renderer
+header label.
+
+Fix (commit `425d0ef`):
+
+- `semgrepProvider` + `graphifyProvider` gain `gatherOutcome`
+  (jscpdProvider's method came with the companion D139 commit).
+  The dispatcher now captures the real per-source reason into
+  `DispatchOutcome.skipReasons`.
+- `availabilityFromOutcome` prefers `skipReasons[<source>]` when
+  present; falls back to the generic prose for legacy providers
+  without `gatherOutcome`.
+- New `splitToolsUnavailable` / `renderToolsUnavailableLines`
+  helpers in `src/analyzers/tools/tools-unavailable-prose.ts`
+  route entries into two honest categories:
+  - `**Tools not installed:**` — action: install
+  - `**Tools that failed at runtime:**` — action: investigate
+- 9 markdown renderer call-sites (`cli.ts`, tests / security /
+  quality / health / bom analyzer surfaces, each with their
+  `index.ts` and `detailed.ts` formatter pair) + the xlsx BoM
+  (two worksheet rows) all share the canonical helper.
+
+#### Other audit-residue closures
+
+| ID(s)                | Description                                                                                                                                                                                                             | Closing commit |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| D124 / D100 / D118   | Vendored-source exclusion class-fix — top-largest-file metric on all 3 customer repos now first-party (or correctly flagged by the per-file advisor). Generic `largest_files` walk routes through canonical exclusions. | `72ec70a`      |
+| D113 / D128          | Per-pack lint-skip reasons plumbed end-to-end. Tools row reads `ruff (not run: typescript — config error)` instead of dropping the skip silently.                                                                       | `b878553`      |
+| D118-residue         | Graphify enumeration honors file-glob + content-minified exclusions. Webpack-hash bundles no longer rank as the densest file on customer reports (web-client: 4 606 fn artifact → 228 fn real first-party densest).     | `0da08bd`      |
+| D135 / D136 (interim) | Vendored-advisor token list extended for SAP B1 OData proxy classes, map-library, proto-gen conventions. Customers with heavy-autogen .NET ERP integrations now see actionable `.dxkit-ignore` guidance.                | `d9f0c31`      |
+
+Tests at this phase close: 1241 / 0 (+15 new unit tests for
+`getJscpdIgnorePatterns`, `splitToolsUnavailable`,
+`renderToolsUnavailableLines`). Architecture gate clean.
+
+### Phase C8 — Per-stack architectural shape (2026-05-17)
+
+Before this phase, the analyzers carried hardcoded Node-backend-
+centric path patterns (`'/controllers/'`, `'/services/'`,
+`'/models/'`) and a closed `SourceFile.type` union (`'controller'
+| 'service' | 'model' | ...`). A pure React frontend or a .NET
+WinForms desktop app matched none of the defaults and reported
+`0/0/0` across test-gap CRITICAL / HIGH / MEDIUM buckets — the
+kind of metric that reads as a bug to a frontend or desktop
+developer scanning the report.
+
+This phase replaces the hardcoded vocabulary with a per-pack
+`architecturalShape` capability on `LanguageSupport`. Each pack
+declares its own primary-component paths, route-handler paths,
+data-model paths, prose vocabulary, and per-bucket test-gap
+priority taxonomy. Cross-cutting analyzer code unions across
+active packs at runtime — so a polyglot repo's metrics correctly
+span TypeScript's `/controllers/` + `/components/` alongside
+C#'s `Forms/`, and adding a new language pack auto-extends every
+consumer.
+
+#### What landed
+
+- New `architecturalShape?: ArchitecturalShape` field on
+  `LanguageSupport` (commit `9a6c48d`).
+- 7 packs contribute concrete shapes (commit `c313744`). E.g.
+  the csharp pack declares `Forms/`, `ViewModels/`, `Services/`;
+  the typescript pack declares `/controllers/`, `/services/`,
+  `/models/`, `/components/`, `/hooks/`; the python pack
+  declares `/views/`, `/viewsets/`, `/models/`, `/serializers/`.
+  Two packs (rust, go) intentionally omit `architecturalShape`
+  — they don't have a canonical convention strong enough to
+  declare without overfitting.
+- Five consumer migrations onto the new helpers (commit
+  `6ab2712`): `analyzers/tools/generic.ts` (largest-file +
+  source-walk classification), `analyzers/maintainability/shallow.ts`
+  (vocabulary prose), `analyzers/security/actions.ts`
+  (route-handler attribution), `analyzers/tests/index.ts`
+  (test-gap priority taxonomy), `analyzers/health.ts`
+  (route-handler files count).
+- Cross-cutting registry helpers in `src/languages/index.ts`:
+  `allPrimaryComponentPaths(flags)`, `allRoutePaths(flags)`,
+  `allModelPaths(flags)`, `allTestGapPriorityPaths(flags)`,
+  `dominantVocabulary(flags)` — every consumer reads from the
+  active-pack union.
+- `dominantVocabulary` weighted by cloc line count (commit
+  `7147f3f`) so a polyglot repo's vocabulary prose matches the
+  dominant stack. A 106k-line-TS / 1.2k-line-Python monorepo
+  correctly renders as "controllers + components", not
+  "views + viewsets".
+- Two new arch-gate rules (commit `c4f9c20`) in
+  `scripts/check-architecture.sh`:
+  - No quoted path-style framework literals (`'/controllers/'`,
+    `'/services/'`, etc.) inside `src/analyzers/` — they belong
+    in `LanguageSupport.architecturalShape`.
+  - No bare singular role-name string literals (`'controller'`,
+    `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+    `'viewmodel'`, `'viewset'`, `'router'`) — the pre-extension
+    closed enum is replaced by free string labels derived from
+    `patternToLabel(matched architectural-shape pattern)`.
+- Synthetic 6th-pack injection assertion in
+  `test/recipe-playbook.test.ts` — confirms an
+  `architecturalShape` contribution from a brand-new pack flows
+  through test-gap taxonomy and Maintainability prose without
+  cross-cutting edits.
+- CLAUDE.md gains Rule 8 documenting the new architecture.
+
+#### Customer-visible effects (verified post-fix)
+
+- **platform** (TS / Node backend): test-gap MEDIUM 207;
+  Maintainability prose reads "controllers / components"
+  (typescript wins cloc weight on a 106k-line monorepo).
+- **web-client** (React frontend): test-gap MEDIUM 499 → 379
+  (-120) because the vendored-exclusion class-fix in the
+  audit-residue phase above also excludes lexical-playground
+  subtrees from primary-component matching. Honest count.
+- **dpl-studio** (.NET WinForms): Maintainability vocabulary
+  reads "Forms / Services"; test-gap classification correctly
+  picks up the WinForms project structure.
+
+#### Defects closed
+
+| ID   | Description                                                                                | Closing commit(s)    |
+| ---- | ------------------------------------------------------------------------------------------ | -------------------- |
+| D119 | Test-gap priority taxonomy backend-centric (HIGH; misleading on non-Node-backend stacks)   | this phase, above    |
+| D101 | React / csharp Maintainability vocabulary                                                  | this phase, above    |
+| D065 | API-docs gate on `routeHandlerFiles`                                                       | this phase, above    |
 
 ### Phase C7 — Actionable scoring foundation (2026-05-17)
 
