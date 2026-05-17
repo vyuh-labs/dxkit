@@ -31,8 +31,9 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../../languages/capabilities/types';
-import { scoreDocumentation, scoreMaintainability, scoreDeveloperExperience } from '../scoring';
+import { scoreMaintainability, scoreDeveloperExperience } from '../scoring';
 import { scoreTestFromScoreInput } from '../tests/shallow';
+import { scoreDocsFromScoreInput } from '../docs/shallow';
 import { ScoreInput } from '../types';
 // Security + Quality scorers live with their analyzers post-
 // canonical-formula unification.
@@ -411,7 +412,7 @@ export function buildHealthPlans(input: ScoreInput): DimensionPlan[] {
   }> = [
     { name: 'Testing', scorer: scoreTestFromScoreInput, build: testingActions },
     { name: 'Quality', scorer: scoreQualityFromScoreInput, build: qualityActions },
-    { name: 'Documentation', scorer: scoreDocumentation, build: docsActions },
+    { name: 'Documentation', scorer: scoreDocsFromScoreInput, build: docsActions },
     { name: 'Security', scorer: scoreSecurityFromScoreInput, build: securityActions },
     { name: 'Maintainability', scorer: scoreMaintainability, build: maintainabilityActions },
     { name: 'Developer Experience', scorer: scoreDeveloperExperience, build: dxActions },

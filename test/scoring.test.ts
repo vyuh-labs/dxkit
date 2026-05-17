@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
-  scoreDocumentation,
   scoreMaintainability,
   scoreDeveloperExperience,
   computeOverall,
 } from '../src/analyzers/scoring';
 import { scoreTestsDimension as scoreTest } from '../src/analyzers/tests/shallow';
+import { scoreDocsDimension as scoreDocumentation } from '../src/analyzers/docs/shallow';
 import { DimensionScore } from '../src/analyzers/types';
 import { coverageCapability, structuralCapability, withInput } from './fixtures/score-input';
 

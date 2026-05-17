@@ -33,59 +33,16 @@ function clamp(value: number, min = 0, max = 100): number {
 // declarative spec, consumed by both the health audit (via
 // `quality/shallow.ts`) and the standalone quality report.
 
-/** Documentation: 0-100 */
-export function scoreDocumentation(input: ScoreInput): DimensionScore {
-  const m = input.metrics;
-  const sourceCount = Math.max(m.sourceFiles, 1);
-  let score = 0;
+// The Documentation dimension scorer used to live here; the canonical
+// formula is now owned by `src/scoring/dimensions/documentation.ts` as
+// a declarative spec. The adapter at `src/analyzers/docs/shallow.ts`
+// builds the per-dimension input and dispatches through `evaluateSpec`.
 
-  if (m.readmeExists) {
-    if (m.readmeLines > 100) score += 25;
-    else if (m.readmeLines > 50) score += 20;
-    else if (m.readmeLines > 20) score += 15;
-    else score += 5;
-  }
-
-  const docRatio = m.docCommentFiles / sourceCount;
-  if (docRatio > 0.5) score += 25;
-  else if (docRatio > 0.2) score += 15;
-  else if (docRatio > 0.05) score += 5;
-
-  if (m.apiDocsExist) score += 20;
-  if (m.architectureDocsExist) score += 15;
-  if (m.contributingExists) score += 10;
-  if (m.changelogExists) score += 5;
-
-  score = clamp(score);
-  return {
-    score,
-    maxScore: 100,
-    rating: ratingFromScore(score),
-    metrics: {
-      readmeExists: m.readmeExists,
-      readmeLines: m.readmeLines,
-      docCommentFiles: m.docCommentFiles,
-      docRatio: Math.round(docRatio * 100) / 100,
-      apiDocsExist: m.apiDocsExist,
-      architectureDocsExist: m.architectureDocsExist,
-      contributingExists: m.contributingExists,
-      changelogExists: m.changelogExists,
-    },
-    details:
-      `README: ${m.readmeExists ? `${m.readmeLines} lines` : 'missing'}` +
-      `. ${m.docCommentFiles}/${m.sourceFiles} files have doc comments (${(docRatio * 100).toFixed(1)}%)` +
-      `. API docs: ${m.apiDocsExist ? 'yes' : 'no'}` +
-      `. Architecture docs: ${m.architectureDocsExist ? 'yes' : 'no'}` +
-      `. Contributing: ${m.contributingExists ? 'yes' : 'no'}` +
-      '.',
-  };
-}
-
-// The Security dimension scorer used to live here; as of 2.4.7 the
-// canonical formula is owned by `security/scoring.ts` and consumed by
-// both health-side (`security/shallow.ts:scoreSecurityDimension`) and
-// the standalone vuln scan (`security/detailed.ts`). See D023 closure
-// notes in `security/scoring.ts` for the unification rationale.
+// The Security dimension scorer used to live here; the canonical
+// formula is now owned by `src/scoring/dimensions/security.ts` as a
+// declarative spec, consumed by both health-side
+// (`security/shallow.ts:scoreSecurityDimension`) and the standalone
+// vuln scan (`security/detailed.ts`).
 
 /** Maintainability: 0-100 */
 export function scoreMaintainability(input: ScoreInput): DimensionScore {
