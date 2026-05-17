@@ -83,6 +83,7 @@ export function defaultMetrics(): HealthMetrics {
     commentRatio: null,
     controllers: 0,
     models: 0,
+    routeHandlerFiles: 0,
     directories: 0,
     languages: [],
     nodeEngineVersion: null,
@@ -160,8 +161,12 @@ export async function gatherAnalysisResultBody(
   // Step 1: Detect stack
   const stack = timed('detect', verbose, () => detect(repoPath));
 
-  // Step 2: Gather metrics -- generic first, then language-specific, then optional
-  const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
+  // Step 2: Gather metrics -- generic first, then language-specific, then optional.
+  // Active-pack flags from `stack` drive the architecturalShape-aware
+  // path counters (primary components, route handlers, data models).
+  const generic = timed('generic (Layer 0)', verbose, () =>
+    gatherGenericMetrics(repoPath, stack.languages),
+  );
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
   // `package.json` metrics: npm-script count + `engines.node` pin. These
@@ -286,7 +291,7 @@ function pushUnavailable(
  */
 export function scoreAndFormatHealth(result: AnalysisResult): HealthReport {
   const { stack, capabilities, metrics } = result;
-  const scoreInput: ScoreInput = { metrics, capabilities };
+  const scoreInput: ScoreInput = { metrics, capabilities, languageFlags: stack.languages };
   const dimensions = {
     testing: scoreTestsDimension(scoreInput),
     quality: scoreQualityDimension(scoreInput),

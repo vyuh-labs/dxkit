@@ -7,6 +7,22 @@ import {
   gatherSourceFiles,
   matchTestsToSource,
 } from '../src/analyzers/tests/gather';
+import type { DetectedStack } from '../src/types';
+
+// Fixtures here exercise the typescript-pack path conventions
+// (controllers/, src/...). Thread the typescript flag through
+// gatherSourceFiles so the post-extension classifier consults
+// the typescript pack's architecturalShape contributions.
+const TS_FLAGS = {
+  typescript: true,
+  python: false,
+  go: false,
+  rust: false,
+  csharp: false,
+  kotlin: false,
+  java: false,
+  ruby: false,
+} as DetectedStack['languages'];
 
 let tmp: string;
 
@@ -98,12 +114,14 @@ describe('gatherSourceFiles', () => {
     expect(files[0].path).toBe('src/app.ts');
   });
 
-  it('classifies controllers as controller type', () => {
+  it('classifies controllers using the active pack vocabulary', () => {
     writeFile('src/controllers/user.ts', 'export class UserController {}\n'.repeat(5));
-    const files = gatherSourceFiles(tmp);
+    const files = gatherSourceFiles(tmp, TS_FLAGS);
     const ctrl = files.find((f) => f.path.includes('controllers'));
     expect(ctrl).toBeDefined();
-    expect(ctrl!.type).toBe('controller');
+    // typescript pack's primaryComponentPaths contributes `/controllers/`;
+    // patternToLabel strips it to `"controllers"`.
+    expect(ctrl!.type).toBe('controllers');
   });
 
   it('classifies auth-related files as critical risk', () => {

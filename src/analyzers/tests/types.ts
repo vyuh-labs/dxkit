@@ -13,7 +13,18 @@ export interface TestFile {
 export interface SourceFile {
   path: string;
   lines: number;
-  type: 'controller' | 'service' | 'interceptor' | 'model' | 'repository' | 'other';
+  /**
+   * Architectural-role label drawn from the path segment that matched
+   * an active language pack's `architecturalShape` contribution. Pre-
+   * extension this was a closed union with backend-shaped values
+   * (`'controller' | 'service' | 'interceptor' | 'model' |
+   * 'repository' | 'other'`). Post-extension the values come from
+   * the matched path pattern (e.g. `'Forms'` for a csharp WinForms
+   * file, `'components'` for a React component), so the field is a
+   * free string with `'other'` as the fallback when no pack pattern
+   * matches.
+   */
+  type: string;
   risk: RiskTier;
   hasMatchingTest: boolean;
 }

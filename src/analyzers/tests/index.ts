@@ -56,7 +56,9 @@ export async function analyzeTestGaps(
   const toolsUnavailable: string[] = [];
 
   const testFiles = timed('test-files', verbose, () => gatherTestFiles(repoPath));
-  const sourceFiles = timed('source-files', verbose, () => gatherSourceFiles(repoPath));
+  const sourceFiles = timed('source-files', verbose, () =>
+    gatherSourceFiles(repoPath, stack.languages),
+  );
   timed('match', verbose, () => matchTestsToSource(testFiles, sourceFiles));
 
   // Signal precedence for test coverage (strongest wins for files it covers):
@@ -268,12 +270,16 @@ export function formatTestGapsReport(report: TestGapsReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // Gaps by risk tier
+  // Gaps by risk tier. Titles are stack-agnostic so the prose stays
+  // accurate whether the active stack is backend (controllers/services
+  // are the primary surface), frontend (components/pages), or desktop
+  // (Forms/ViewModels). Per-file role detail lives in the Type column,
+  // populated from each active pack's architectural-shape vocabulary.
   const tiers: Array<{ risk: SourceFile['risk']; title: string }> = [
-    { risk: 'critical', title: 'CRITICAL (Security/auth risk)' },
-    { risk: 'high', title: 'HIGH (Business logic/large files)' },
-    { risk: 'medium', title: 'MEDIUM (Standard controllers/services)' },
-    { risk: 'low', title: 'LOW (Models/utilities)' },
+    { risk: 'critical', title: 'CRITICAL (security/auth surfaces)' },
+    { risk: 'high', title: 'HIGH (large primary components)' },
+    { risk: 'medium', title: 'MEDIUM (primary components)' },
+    { risk: 'low', title: 'LOW (supporting code)' },
   ];
 
   L.push('## Critical Gaps');

@@ -5,11 +5,18 @@
  * This is Layer 0: always available.
  */
 import { HealthMetrics } from '../types';
+import type { DetectedStack } from '../../types';
 import { run, countLines, fileExists } from './runner';
 import { getFindExcludeFlags } from './exclusions';
 import { walkSourceFiles, countLineMatches } from './walk-source-files';
 import { gatherDebugStatements } from './debug-statements';
-import { allDocCommentPatterns, allSourceExtensions, allTlsBypassPatterns } from '../../languages';
+import {
+  allDocCommentPatterns,
+  allModelPaths,
+  allPrimaryComponentPaths,
+  allRoutePaths,
+  allTlsBypassPatterns,
+} from '../../languages';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -61,8 +68,19 @@ function lineCount(content: string): number {
   return count;
 }
 
-/** Gather metrics using only built-in Unix tools + the canonical walker. */
-export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
+/**
+ * Gather metrics using only built-in Unix tools + the canonical walker.
+ *
+ * `languageFlags` drives the architecturalShape-aware path counters
+ * (primary components, route handlers, data models). When omitted
+ * (legacy callers, tests) the path counters degrade to zero rather
+ * than silently using a hardcoded backend-centric default — every
+ * shipped caller in the codebase threads the active stack through.
+ */
+export function gatherGenericMetrics(
+  cwd: string,
+  languageFlags?: DetectedStack['languages'],
+): Partial<HealthMetrics> {
   const EXCLUDE = getFindExcludeFlags(cwd);
   // D026 (2.4.7): repo-level artifacts probed from git toplevel; code-
   // level metrics (source-file counts, hygiene grep, semgrep) stay
@@ -186,21 +204,41 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
       ? countLineMatches(cwd, sourceList, tlsBypassPatterns, { skipComments: true }).lines
       : 0;
 
-  // ─── Maintainability (path-pattern counts retained on find) ───────────────
-  // controllers / models / directories don't fit the walker's
-  // "source-file enumeration" abstraction — they're path-pattern
-  // counts. Keep on find.
-  const controllers = countLines(
-    `find . \\( -path "*/controllers/*" -name "*.ts" -o -path "*/handlers/*" -name "*.go" -o -path "*/views/*" -name "*.py" \\) ${EXCLUDE} 2>/dev/null`,
-    cwd,
-  );
-  const sourceExtsClause = `\\( ${allSourceExtensions()
-    .map((e) => `-name "*${e}"`)
-    .join(' -o ')} \\)`;
-  const models = countLines(
-    `find . -path "*/models/*" -type f ${sourceExtsClause} ${EXCLUDE} 2>/dev/null`,
-    cwd,
-  );
+  // ─── Maintainability (per-pack architectural counts) ───────────────────────
+  // Primary-component, route-handler, and data-model counts derive
+  // from the active language packs' `architecturalShape`. Pre-extension
+  // these were three hardcoded find commands keyed on backend-centric
+  // paths (`controllers/`, `handlers/`, `views/`, `models/`), so a pure
+  // React frontend or a .NET WinForms desktop app reported zero in all
+  // three counters regardless of how much primary architecture sat on
+  // disk. The walker visit already enumerated every source file; here
+  // we filter `sourceList` (pre-walked + autogen-excluded + exclusion-
+  // honoured) by case-insensitive substring match against the unioned
+  // pack contributions.
+  const flags = languageFlags ?? ({} as DetectedStack['languages']);
+  const primaryPaths = allPrimaryComponentPaths(flags).map((p) => p.toLowerCase());
+  const routePaths = allRoutePaths(flags).map((p) => p.toLowerCase());
+  const modelPaths = allModelPaths(flags).map((p) => p.toLowerCase());
+  const matchesAny = (p: string, needles: string[]): boolean => {
+    if (needles.length === 0) return false;
+    const lower = p.toLowerCase();
+    for (const n of needles) {
+      if (lower.includes(n)) return true;
+    }
+    return false;
+  };
+  let controllers = 0;
+  let routeHandlerFiles = 0;
+  let models = 0;
+  for (const rel of sourceList) {
+    // Match against the path with a leading slash so substring patterns
+    // like "/controllers/" anchor on a directory boundary, never on a
+    // filename like "controllers-helper.ts" floating outside such a dir.
+    const anchored = '/' + rel;
+    if (matchesAny(anchored, primaryPaths)) controllers++;
+    if (matchesAny(anchored, routePaths)) routeHandlerFiles++;
+    if (matchesAny(anchored, modelPaths)) models++;
+  }
   const directories = countLines(`find . -type d ${EXCLUDE} 2>/dev/null`, cwd);
 
   // ─── Developer Experience (repo-root scoped) ──────────────────────────────
@@ -257,6 +295,7 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
     tlsDisabledCount,
     controllers,
     models,
+    routeHandlerFiles,
     directories,
     ciConfigCount,
     dockerConfigCount,

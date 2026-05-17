@@ -14,6 +14,7 @@ import {
   evaluateSpec,
   ratingFromScore,
 } from '../../scoring';
+import { dominantVocabulary } from '../../languages';
 import { DimensionScore, ScoreInput } from '../types';
 
 export function toMaintainabilityScoreInput(input: ScoreInput): MaintainabilityScoreInput {
@@ -48,6 +49,16 @@ export function scoreMaintainabilityDimension(input: ScoreInput): DimensionScore
   const communityCount = c.structural?.communityCount ?? null;
   const avgCohesion = c.structural?.avgCohesion ?? null;
 
+  // Pick prose vocabulary from the dominant active pack. A C#/WinForms
+  // project reads as "Forms/Services"; a Spring Boot project as
+  // "controllers/services"; a pure React app as "controllers/components"
+  // (typescript pack's declared label). When no active pack provides
+  // vocabulary the generic words apply — the legacy "controllers,
+  // models" prose stays for unknown-stack repos.
+  const vocab = dominantVocabulary(input.languageFlags ?? ({} as never));
+  const componentsLabel = vocab?.components ?? 'components';
+  const modelsLabel = vocab?.models ?? 'models';
+
   return {
     score,
     maxScore: 100,
@@ -69,7 +80,7 @@ export function scoreMaintainabilityDimension(input: ScoreInput): DimensionScore
     },
     details:
       `${m.sourceFiles} source files across ${m.directories} directories` +
-      `. ${m.controllers} controllers/handlers, ${m.models} models` +
+      `. ${m.controllers} ${componentsLabel}, ${m.models} ${modelsLabel}` +
       `. Largest file: ${m.largestFileLines} lines` +
       `. ${m.filesOver500Lines} files over 500 lines` +
       (m.nodeEngineVersion ? `. Node engine: ${m.nodeEngineVersion}` : '') +

@@ -9,6 +9,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { walkSourceFiles } from '../tools/walk-source-files';
+import { allModelPaths, allPrimaryComponentPaths, allTestGapPriorityPaths } from '../../languages';
+import type { DetectedStack } from '../../types';
 import { TestFile, SourceFile, RiskTier } from './types';
 
 // G_v4_7 (2.4.7): both gatherTestFiles and gatherSourceFiles route
@@ -126,7 +128,22 @@ function detectTestFramework(fullPath: string): string | null {
 
 // ─── Source file discovery + risk classification ────────────────────────────
 
-export function gatherSourceFiles(cwd: string): SourceFile[] {
+/**
+ * Convert an architectural-shape path pattern to a column-friendly
+ * role label. `/Controllers/` → `"Controllers"`; `/app/controllers/`
+ * → `"controllers"`; `/handlers/` → `"handlers"`. The last non-empty
+ * path segment carries the role name across every shipped pack
+ * contribution.
+ */
+function patternToLabel(pat: string): string {
+  const parts = pat.split('/').filter((s) => s.length > 0);
+  return parts[parts.length - 1] ?? pat;
+}
+
+export function gatherSourceFiles(
+  cwd: string,
+  languageFlags?: DetectedStack['languages'],
+): SourceFile[] {
   // Walker default opts apply all the filters the pre-migration
   // inline code did (and more):
   //   - exclusions via .gitignore + .dxkit-ignore + bundled defaults
@@ -140,6 +157,10 @@ export function gatherSourceFiles(cwd: string): SourceFile[] {
   // — none are source extensions, so the walker's extension filter
   // already drops them.
   const sources = walkSourceFiles(cwd);
+  const flags = languageFlags ?? ({} as DetectedStack['languages']);
+  const primaryPaths = allPrimaryComponentPaths(flags);
+  const modelPaths = allModelPaths(flags);
+  const taxonomy = allTestGapPriorityPaths(flags);
 
   const files: SourceFile[] = [];
   for (const p of sources) {
@@ -151,8 +172,8 @@ export function gatherSourceFiles(cwd: string): SourceFile[] {
     } catch {
       continue;
     }
-    const type = classifyFileType(p);
-    const risk = classifyRisk(p, type, lines);
+    const type = classifyFileType(p, primaryPaths, modelPaths);
+    const risk = classifyRisk(p, lines, taxonomy);
     files.push({
       path: p,
       lines,
@@ -164,13 +185,28 @@ export function gatherSourceFiles(cwd: string): SourceFile[] {
   return files;
 }
 
-function classifyFileType(filePath: string): SourceFile['type'] {
-  const lower = filePath.toLowerCase();
-  if (lower.includes('/controllers/') || lower.includes('/handlers/')) return 'controller';
-  if (lower.includes('/services/')) return 'service';
-  if (lower.includes('/interceptors/') || lower.includes('/middleware/')) return 'interceptor';
-  if (lower.includes('/models/')) return 'model';
-  if (lower.includes('/repositories/')) return 'repository';
+/**
+ * Tag a source file with a role label drawn from the first
+ * architectural-shape pattern it matches. The matching uses a
+ * leading-slash-anchored substring check so `"/controllers/"`
+ * matches a directory boundary rather than any file whose name
+ * happens to contain the word.
+ *
+ * Pre-extension this function held a hardcoded enum of backend
+ * roles (`'controller' | 'service' | 'interceptor' | 'model' |
+ * 'repository'`); a React component or .NET Form fell through to
+ * `'other'` and lost its architectural context in the markdown
+ * report. The label now comes from the matched pack pattern,
+ * preserving stack-specific vocabulary in the rendered output.
+ */
+function classifyFileType(filePath: string, primaryPaths: string[], modelPaths: string[]): string {
+  const anchored = ('/' + filePath).toLowerCase();
+  for (const p of primaryPaths) {
+    if (anchored.includes(p.toLowerCase())) return patternToLabel(p);
+  }
+  for (const p of modelPaths) {
+    if (anchored.includes(p.toLowerCase())) return patternToLabel(p);
+  }
   return 'other';
 }
 
@@ -182,8 +218,13 @@ function classifyFileType(filePath: string): SourceFile['type'] {
  */
 const META_TOOL_PATH_PREFIXES = [/^src\/analyzers\//, /^tmp\//, /^scripts\//];
 
-function classifyRisk(filePath: string, type: SourceFile['type'], lines: number): RiskTier {
+function classifyRisk(
+  filePath: string,
+  lines: number,
+  taxonomy: { critical: string[]; high: string[]; medium: string[] },
+): RiskTier {
   const lower = filePath.toLowerCase();
+  const anchored = '/' + lower;
 
   // Meta-tool exception: security analyzer code matches CRITICAL_PATTERNS by
   // name alone (e.g. src/analyzers/security/gather.ts), but it's tooling, not
@@ -192,16 +233,25 @@ function classifyRisk(filePath: string, type: SourceFile['type'], lines: number)
   // don't accidentally downgrade real app code in an `analyzers` module.
   const isMetaTool = META_TOOL_PATH_PREFIXES.some((p) => p.test(filePath));
 
-  // Security-critical files are always CRITICAL regardless of size
+  // CRITICAL — pack-agnostic security regexes (auth/jwt/crypto/...) and
+  // any pack-specific critical path the active stack declared.
   if (!isMetaTool && CRITICAL_PATTERNS.some((p) => p.test(lower))) return 'critical';
+  if (!isMetaTool && taxonomy.critical.some((p) => anchored.includes(p.toLowerCase()))) {
+    return 'critical';
+  }
 
-  // Large controllers/services are HIGH
-  if ((type === 'controller' || type === 'service') && lines > 500) return 'high';
+  // HIGH — large files sitting in a pack's high-priority path (typical
+  // backend rule: large controllers/services). A small file in the same
+  // directory falls through to MEDIUM, preserving the pre-extension
+  // semantic that risk scales with file size for high-impact surfaces.
+  const matchesHigh = taxonomy.high.some((p) => anchored.includes(p.toLowerCase()));
+  if (matchesHigh && lines > 500) return 'high';
+  if (matchesHigh) return 'medium';
 
-  // Normal controllers/services/interceptors are MEDIUM
-  if (type === 'controller' || type === 'service' || type === 'interceptor') return 'medium';
+  // MEDIUM — pack's medium-priority path (defaults to primaryComponentPaths
+  // when the pack omits `testGapPriority.medium`).
+  if (taxonomy.medium.some((p) => anchored.includes(p.toLowerCase()))) return 'medium';
 
-  // Everything else is LOW
   return 'low';
 }
 

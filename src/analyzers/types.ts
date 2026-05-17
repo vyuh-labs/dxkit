@@ -83,8 +83,31 @@ export interface HealthMetrics {
   mixedLanguages: boolean;
   commentRatio: number | null;
 
+  /**
+   * Count of source files matching any active language pack's
+   * `architecturalShape.primaryComponentPaths`. The name preserves
+   * the original "controllers" identifier for schema continuity, but
+   * the semantics are broader than HTTP controllers: a React project
+   * counts components/pages here; a WinForms project counts Forms
+   * and ViewModels; a Spring Boot project counts controllers and
+   * services. The label rendered in prose comes from
+   * `dominantVocabulary(stack.languages)`.
+   */
   controllers: number;
+  /**
+   * Count of source files matching any active language pack's
+   * `architecturalShape.modelPaths` (ORM entities, DTOs, schemas).
+   * Same schema-continuity note as `controllers`.
+   */
   models: number;
+  /**
+   * Count of source files matching any active language pack's
+   * `architecturalShape.routePaths` — the narrower subset of HTTP
+   * route handlers / API endpoints. Gates the "Add API documentation"
+   * health action: zero on pure-frontend / desktop apps, so the
+   * action stays correctly silenced there.
+   */
+  routeHandlerFiles: number;
   directories: number;
   languages: Array<{ name: string; files: number; lines: number; percentage: number }>;
   nodeEngineVersion: string | null;
@@ -157,6 +180,15 @@ export interface DimensionScore {
 export interface ScoreInput {
   metrics: HealthMetrics;
   capabilities: CapabilityReport;
+  /**
+   * Active language flags from the detected stack. Dimension scorers
+   * use this to pick per-stack vocabulary for prose (Maintainability)
+   * and to gate "Add API documentation" recommendations on real
+   * route-handler presence. Optional so legacy fixtures + tests that
+   * don't construct a stack still typecheck; consumers fall back to
+   * generic words / no per-stack behavior when absent.
+   */
+  languageFlags?: import('../types').DetectedStack['languages'];
 }
 
 /**
