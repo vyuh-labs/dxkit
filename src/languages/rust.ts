@@ -848,6 +848,26 @@ export const rust: LanguageSupport = {
     return `cargo update -p ${name} --precise ${version}`;
   },
 
+  // Rust's build layout (`src/bin/`, `src/lib.rs`, `src/main.rs`)
+  // is too generic to call "primary architecture" — every Rust
+  // project has it. axum/actix/rocket web frameworks organize HTTP
+  // surface under `handlers/`, `routes/`, `api/`; CLI tools and
+  // standalone binaries don't, and degrade cleanly to "no primary
+  // architecture detected."
+  architecturalShape: {
+    primaryComponentPaths: ['/handlers/', '/routes/', '/api/', '/services/'],
+    routePaths: ['/handlers/', '/routes/', '/api/'],
+    modelPaths: ['/models/'],
+    vocabulary: {
+      components: 'handlers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/handlers/', '/routes/', '/services/'],
+    },
+  },
+
   clocLanguageNames: ['Rust'],
 
   detect(cwd) {

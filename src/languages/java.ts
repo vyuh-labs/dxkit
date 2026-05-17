@@ -441,6 +441,34 @@ export const java: LanguageSupport = {
     return `# Edit pom.xml: bump ${name} <version>${version}</version>, then \`mvn install\``;
   },
 
+  // Spring MVC / Spring Boot, JEE, Dropwizard, Micronaut, and the
+  // classic Maven project layout (`src/main/java/<...>/controllers/`,
+  // `src/main/java/<...>/services/`) converge on the same vocabulary —
+  // controllers / services / repositories for backend, dao/daos for
+  // legacy persistence layers, resources for JAX-RS REST endpoints.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/services/',
+      '/repositories/',
+      '/handlers/',
+      '/dao/',
+      '/daos/',
+      '/resources/',
+    ],
+    routePaths: ['/controllers/', '/endpoints/', '/resources/', '/handlers/'],
+    modelPaths: ['/models/', '/entities/', '/dto/', '/dtos/', '/domain/'],
+    vocabulary: {
+      components: 'controllers/services',
+      models: 'entities',
+      routes: 'endpoints',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/services/', '/handlers/', '/resources/'],
+      medium: ['/repositories/', '/dao/', '/daos/'],
+    },
+  },
+
   clocLanguageNames: ['Java'],
 
   detect: detectJava,

@@ -689,6 +689,35 @@ export const ruby: LanguageSupport = {
     return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;
   },
 
+  // Rails (`app/controllers/`, `app/services/`, `app/models/`,
+  // `app/views/`) is the dominant Ruby application shape. Sinatra
+  // and Hanami sometimes diverge but typically also adopt the Rails
+  // app/<role> convention. Paths are anchored at `/app/<role>/` to
+  // avoid matching a top-level `models/` directory in a non-Rails
+  // gem.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/app/controllers/',
+      '/app/services/',
+      '/app/jobs/',
+      '/app/helpers/',
+      '/app/views/',
+      '/app/channels/',
+      '/app/workers/',
+    ],
+    routePaths: ['/app/controllers/', '/app/channels/'],
+    modelPaths: ['/app/models/', '/app/serializers/'],
+    vocabulary: {
+      components: 'controllers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/app/controllers/', '/app/services/', '/app/jobs/', '/app/workers/'],
+      medium: ['/app/helpers/', '/app/views/', '/app/channels/', '/app/serializers/'],
+    },
+  },
+
   clocLanguageNames: ['Ruby'],
 
   detect: detectRuby,

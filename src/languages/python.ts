@@ -974,6 +974,35 @@ export const python: LanguageSupport = {
     return `pip install '${name}==${version}'`;
   },
 
+  // Django (views/viewsets/serializers), Flask/FastAPI (routers, api
+  // endpoints), Celery (tasks) — declarations cover the dominant
+  // server-side Python patterns. Plain library / data-science code
+  // (where `services/` is rare) simply doesn't match anything and
+  // the analyzer degrades to "no primary architecture detected" —
+  // exactly the pre-extension behavior.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/views/',
+      '/viewsets/',
+      '/handlers/',
+      '/services/',
+      '/api/',
+      '/routers/',
+      '/tasks/',
+    ],
+    routePaths: ['/views/', '/viewsets/', '/routers/', '/api/', '/urls.py'],
+    modelPaths: ['/models/', '/schemas/', '/serializers/'],
+    vocabulary: {
+      components: 'views/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/views/', '/services/', '/handlers/', '/tasks/'],
+      medium: ['/viewsets/', '/routers/', '/api/', '/serializers/'],
+    },
+  },
+
   clocLanguageNames: ['Python'],
 
   detect(cwd) {

@@ -903,6 +903,26 @@ export const go: LanguageSupport = {
     return `go get ${name}@v${version}`;
   },
 
+  // Go's stdlib layout (`cmd/`, `internal/`, `pkg/`) is too broad to
+  // call "primary architecture" — those directories typically contain
+  // every Go file in the repo. Narrow declarations target the
+  // handler/service/controller paths that gin/echo/chi/fiber web apps
+  // and standard library `net/http` servers organize their HTTP
+  // surface under.
+  architecturalShape: {
+    primaryComponentPaths: ['/handlers/', '/services/', '/controllers/', '/jobs/'],
+    routePaths: ['/handlers/', '/controllers/', '/routes/'],
+    modelPaths: ['/models/', '/entities/'],
+    vocabulary: {
+      components: 'handlers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/handlers/', '/services/', '/controllers/', '/jobs/'],
+    },
+  },
+
   clocLanguageNames: ['Go'],
 
   detect(cwd) {

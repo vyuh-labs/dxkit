@@ -456,6 +456,38 @@ export const kotlin: LanguageSupport = {
     return `# Edit build.gradle(.kts): bump ${name} to ${version}, then \`./gradlew build\``;
   },
 
+  // Kotlin spans Spring Boot / Ktor server-side (controllers,
+  // services, repositories) and Android client (activities,
+  // fragments, viewmodels, screens). Both are first-class — an
+  // Android app's primary surface IS its Activity / Fragment /
+  // ViewModel layer, regardless of whether HTTP route handlers exist
+  // anywhere in the codebase. routePaths narrows so the "Add API
+  // documentation" action stays silent on a pure-Android project.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/services/',
+      '/repositories/',
+      '/handlers/',
+      '/activities/',
+      '/fragments/',
+      '/viewmodels/',
+      '/screens/',
+      '/usecases/',
+    ],
+    routePaths: ['/controllers/', '/handlers/', '/routes/'],
+    modelPaths: ['/models/', '/entities/', '/dto/', '/dtos/', '/data/'],
+    vocabulary: {
+      components: 'controllers/activities',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/services/', '/handlers/', '/usecases/'],
+      medium: ['/repositories/', '/activities/', '/fragments/', '/viewmodels/', '/screens/'],
+    },
+  },
+
   clocLanguageNames: ['Kotlin'],
 
   detect: detectKotlin,

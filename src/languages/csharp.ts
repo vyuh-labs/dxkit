@@ -1347,6 +1347,38 @@ export const csharp: LanguageSupport = {
     return `dotnet add package ${name} --version ${version}`;
   },
 
+  // .NET spans two very different application shapes: ASP.NET MVC /
+  // Web API (controllers, endpoints) and WinForms / WPF desktop
+  // (Forms, ViewModels, UserControls). Both are first-class
+  // contributors here — a WinForms enterprise app's primary
+  // architecture IS its Forms + Services layer, not a notional
+  // controllers/ directory that doesn't exist on disk. The narrower
+  // routePaths subset stays silent on desktop-only repos so the
+  // "Add API documentation" recommendation doesn't fire there.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/Controllers/',
+      '/Services/',
+      '/Forms/',
+      '/ViewModels/',
+      '/Pages/',
+      '/Views/',
+      '/UserControls/',
+      '/Handlers/',
+    ],
+    routePaths: ['/Controllers/', '/Endpoints/'],
+    modelPaths: ['/Models/', '/Entities/', '/DTOs/', '/DataTransferObjects/', '/Domain/'],
+    vocabulary: {
+      components: 'Forms/Services',
+      models: 'models',
+      routes: 'endpoints',
+    },
+    testGapPriority: {
+      high: ['/Controllers/', '/Services/', '/Handlers/'],
+      medium: ['/Forms/', '/ViewModels/', '/Pages/', '/Views/', '/UserControls/'],
+    },
+  },
+
   clocLanguageNames: ['C#'],
 
   detect(cwd) {
