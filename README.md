@@ -299,6 +299,32 @@ Mirrors pre-push but also runs the slop check against the PR base branch, so `--
 
 ---
 
+## Scoring
+
+dxkit produces a 0-100 score + A/B/C/D/E letter rating for six
+dimensions of every codebase. Three properties define the scoring
+model:
+
+- **Deterministic** — pure-function evaluator over a declarative spec
+  per dimension. Same `git rev-parse HEAD` + same dxkit version
+  produces the identical score on every run, every machine. This is
+  the moat against LLM-driven review products, where outputs drift
+  run-to-run.
+- **Anchored** — methodology cites underlying open international
+  standards (ISO/IEC 25010, ISO/IEC 5055, SQALE method, CVSS v4,
+  CWE, OWASP, OpenSSF Scorecard) rather than invented thresholds.
+- **Actionable** — every score is paired with structured provenance
+  so the report says what to fix and how much the score would lift.
+  Customer-facing markdown surfaces a "Top actions" block per
+  dimension; agents consume the same structured `ScoreResult` JSON
+  directly.
+
+The customer-facing methodology document — including the per-
+dimension penalty/cap breakdown and citations — lives at
+**[`docs/SCORING.md`](docs/SCORING.md)**.
+
+---
+
 ## Quality Gates for Agent-Written Code
 
 dxkit's guiding principle: **deterministic guardrails that catch bad output regardless of who wrote it.** Scaffolded hooks + CI give every repo:

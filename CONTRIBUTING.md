@@ -299,6 +299,141 @@ The scaffolder gives you a stub. The substantive work is:
 Plan ~1 day of work for a desktop-style pack (Python/Go-shaped),
 ~1.5 days for mobile (Gradle/Xcode bootstrapping is more involved).
 
+### Adding a new dimension scoring spec
+
+dxkit's six dimension scores (Security, Code Quality, Tests,
+Documentation, Maintainability, Developer Experience) are produced
+by declarative `DimensionScoringSpec<T>` artifacts under
+`src/scoring/dimensions/<id>.ts`, consumed by the shared evaluator
+in `src/scoring/evaluator.ts`. Adding a 7th dimension follows the
+same recipe used by language packs (see [Rule 7 in
+CLAUDE.md](CLAUDE.md#7-dimension-scoring-lives-in-declarative-specs-under-srcscoring)).
+
+#### What the spec declares
+
+```typescript
+import type { DimensionScoringSpec } from '../spec';
+
+export interface NewDimScoreInput {
+  /* whatever the dimension reads from gathered data */
+}
+
+export const NEW_DIM_SCORING_SPEC: DimensionScoringSpec<NewDimScoreInput> = {
+  dimension: 'new-dim',
+  methodology: 'iso-iec-25010-quality-characteristic-name',
+  baseline: 100, // subtractive (recommended) — additive (0) also supported
+  penalties: [
+    {
+      id: 'unique-penalty-id',
+      describe: (i) => `human-readable reason citing input data`,
+      applies: (i) => /* predicate */,
+      delta: (i) => /* negative delta for subtractive, positive for additive */,
+    },
+    // ... one rule per violation class
+  ],
+  caps: [
+    {
+      id: 'unique-cap-id',
+      tier: 'fixable-finding', // see CAP_TIERS taxonomy
+      describe: (i) => `condition reason`,
+      applies: (i) => /* predicate */,
+    },
+  ],
+};
+```
+
+#### Recipe (5 steps)
+
+1. **Create the spec file** at `src/scoring/dimensions/<id>.ts`.
+   Cite the methodology source in the file's JSDoc + the
+   `methodology` field. Add the citation to
+   `src/scoring/STANDARDS.md` (Layer 1 if it's an open standard;
+   Layer 3 with rationale if dxkit-specific).
+
+2. **Register the spec** in `src/scoring/index.ts:SCORING_SPECS`.
+   Export the spec + input type from the barrel.
+
+3. **Build the adapter** at `src/analyzers/<dim>/shallow.ts`:
+
+   ```typescript
+   export function toNewDimScoreInput(input: ScoreInput): NewDimScoreInput {
+     // map ScoreInput → NewDimScoreInput
+   }
+
+   export function scoreNewDimFromScoreInput(input: ScoreInput): { score: number } {
+     return evaluateSpec(NEW_DIM_SCORING_SPEC, toNewDimScoreInput(input));
+   }
+
+   export function scoreNewDimDimension(input: ScoreInput): DimensionScore {
+     const result = evaluateSpec(NEW_DIM_SCORING_SPEC, toNewDimScoreInput(input));
+     return {
+       score: result.score,
+       maxScore: 100,
+       rating: ratingFromScore(result.score),
+       rawScore: result.rawScore,
+       rawPenalty: result.rawPenalty,
+       methodology: result.methodology,
+       deductions: result.deductions,
+       capsApplied: result.capsApplied,
+       topActions: result.topActions,
+       metrics: {
+         /* dimension-specific renderer values */
+       },
+       details: `human-readable summary string`,
+     };
+   }
+   ```
+
+4. **Wire the dimension into the health rollup**:
+   - `src/analyzers/health.ts` calls `scoreNewDimDimension(input)`
+   - `src/analyzers/health/actions.ts:buildHealthPlans` adds an
+     entry with `scoreNewDimFromScoreInput` for action ranking
+   - `src/scoring/overall.ts:DIMENSION_WEIGHTS` + `DIMENSION_LABEL`
+     get an entry; weights across all dimensions must sum to 1.0
+
+5. **Tests**:
+   - Spec-level: a unit test in `test/<dim>-scoring.test.ts`
+     covering the penalty curves and cap predicates against
+     synthetic `NewDimScoreInput` shapes
+   - Registry-level: `test/scoring-playbook.test.ts` automatically
+     picks up new specs through the `SCORING_SPECS` iteration —
+     no edit needed there
+
+#### Spec enforcement (runs pre-commit + CI)
+
+`scripts/check-architecture.sh` bans the regression patterns:
+
+- New `src/analyzers/**/scoring.ts` files (dimension scoring code
+  lives in `src/scoring/dimensions/`, not analyzer subdirs)
+- Hardcoded rating-band thresholds (`>= 80` etc.) in scoring-related
+  code outside `src/scoring/thresholds.ts`
+- Hardcoded cap-ceiling values (`35`/`40`/`65`/`75`/`79`) used as
+  `score = N` / `final = N` outside the scoring module
+
+Annotate `// scoring-spec-ok` on the violating line for justified
+exceptions (CVSS risk-tier bands, coverage thresholds that
+deliberately differ from rating thresholds, etc.).
+
+#### What "actionable" requires
+
+Renderers (`src/scoring/format.ts`, `src/cli.ts` health-markdown
+section) read the structured `ScoreResult` fields directly:
+
+- `deductions[]` — items the customer can fix; rendered as the
+  per-dimension "Top actions" block
+- `capsApplied[]` — binding cap with its uplift; rendered as a
+  callout above the action list
+- `rawScore` / `rawPenalty` — "severe debt" disclosure when the
+  score floors at 0
+
+If your spec is subtractive (baseline 100, deductions for missing
+or problematic signals), the `deductions[]` list reads as
+actions-to-take naturally. Additive specs (baseline 0, bonuses for
+present signals) are supported but rarely the right choice — the
+inverse "things to add" interpretation requires the renderer to
+walk the spec rules separately. dxkit's six dimensions all use
+subtractive specs as of 2.4.7.
+
 ### Enriching dependency-vulnerability severity
 
 Scanners that don't publish per-finding severity tiers (pip-audit,

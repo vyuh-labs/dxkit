@@ -39,6 +39,16 @@ Once dxkit + its tools are installed, here's the command surface:
 - [Language packs](configuration/language-packs.md) — how dxkit detects
   your stack and which tools it activates per language
 
+## Scoring methodology
+
+dxkit's 0-100 dimension scores and A/B/C/D/E letter ratings follow
+an open, deterministic, anchored methodology — every threshold and
+penalty has a citation back to an underlying international standard.
+
+**[Scoring methodology](SCORING.md)** — full per-dimension breakdown,
+cap-tier taxonomy, citations (ISO/IEC 25010, ISO/IEC 5055, SQALE,
+CVSS v4, CWE, OpenSSF Scorecard), and reproducibility guide.
+
 ## Reading the output
 
 Most commands produce two artifacts in `.dxkit/reports/`:
