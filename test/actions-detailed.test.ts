@@ -180,6 +180,7 @@ function testGapsReport(overrides: Partial<TestGapsReport> = {}): TestGapsReport
 function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
   return {
     sourceFiles: 50,
+    routeHandlerFiles: 0,
     testFiles: 5,
     totalLines: 5000,
     testsPass: null,

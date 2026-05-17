@@ -27,6 +27,7 @@ import type {
 export function baseMetrics(): HealthMetrics {
   return {
     sourceFiles: 100,
+    routeHandlerFiles: 0,
     testFiles: 0,
     totalLines: 0,
     largestFiles: [],
