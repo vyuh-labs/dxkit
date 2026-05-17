@@ -7,7 +7,7 @@
  */
 import { HealthReport, HealthMetrics } from '../types';
 import { buildHealthPlans, DimensionPlan } from './actions';
-import { computeOverall } from '../scoring';
+import { computeOverall, type Rating } from '../../scoring';
 import { ScoreInput } from '../types';
 
 export interface HealthDetailedReport extends HealthReport {
@@ -15,7 +15,7 @@ export interface HealthDetailedReport extends HealthReport {
   plans: DimensionPlan[];
   /** Projected overall if every ranked action is applied. */
   projectedOverallScore: number;
-  projectedGrade: 'A' | 'B' | 'C' | 'D' | 'F';
+  projectedGrade: Rating;
   /** Relative paths to the dimension-specific detailed reports, if generated. */
   crossRefs: {
     vulnerabilities: string;
@@ -58,7 +58,7 @@ export function buildHealthDetailed(
     const k = DIM_TO_KEY[p.dimension];
     if (k) projectedDims[k].score = p.ideal;
   }
-  const { overallScore: projected, grade: projectedGrade } = computeOverall(projectedDims);
+  const { overallScore: projected, rating: projectedGrade } = computeOverall(projectedDims);
 
   // Date prefix used for cross-refs so they match the sibling detailed filenames.
   const date = report.analyzedAt.slice(0, 10);
@@ -93,7 +93,7 @@ export function formatHealthDetailedMarkdown(
   L.push(`**Schema version:** ${detailed.schemaVersion}`);
   L.push('');
   L.push(
-    `## Overall Health: ${detailed.summary.overallScore}/100 (Grade ${detailed.summary.grade}) → projected ${detailed.projectedOverallScore}/100 (Grade ${detailed.projectedGrade}) if every action is taken`,
+    `## Overall Health: ${detailed.summary.overallScore}/100 (${detailed.summary.rating}) → projected ${detailed.projectedOverallScore}/100 (${detailed.projectedGrade}) if every action is taken`,
   );
   L.push('');
   L.push('---');

@@ -277,7 +277,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
     analyzedAt: '2026-04-16T00:00:00Z',
     commitSha: 'abc123',
     branch: 'main',
-    summary: { overallScore: 70, grade: 'B' as const },
+    summary: { overallScore: 70, rating: 'B' as const },
     dimensions: {
       testing: dim(60),
       quality: dim(70),

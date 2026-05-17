@@ -301,7 +301,7 @@ export async function run(argv: string[]): Promise<void> {
         // Console output
         console.log('');
         console.log(
-          `  ${logger.bold('Overall:')} ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+          `  ${logger.bold('Overall:')} ${report.summary.overallScore}/100 (Rating: ${report.summary.rating})`,
         );
         console.log('');
         const dims = report.dimensions;
@@ -1236,7 +1236,7 @@ function formatMarkdownReport(
   lines.push('---');
   lines.push('');
   lines.push(
-    `## Overall Health Score: ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+    `## Overall Health Score: ${report.summary.overallScore}/100 (Rating: ${report.summary.rating})`,
   );
   lines.push('');
   lines.push('| Dimension | Score | Status |');

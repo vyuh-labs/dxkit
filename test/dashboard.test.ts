@@ -74,7 +74,7 @@ describe('analyzeDashboard', () => {
     write(
       'health-audit-2026-05-11-detailed.json',
       JSON.stringify({
-        summary: { overallScore: 73, grade: 'B' },
+        summary: { overallScore: 73, rating: 'B' },
         dimensions: {
           testing: { score: 60 },
           quality: { score: 80 },

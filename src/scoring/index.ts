@@ -15,6 +15,8 @@ export { RATING_THRESHOLDS, CAP_TIERS, ratingFromScore } from './thresholds';
 export { evaluateSpec } from './evaluator';
 export { formatTopActionLine, formatTopActionsBlock } from './format';
 export type { ScoreResultLike } from './format';
+export { computeOverall, DIMENSION_WEIGHTS, DIMENSION_LABEL } from './overall';
+export type { DimensionId, CrossDimensionAction, OverallResult } from './overall';
 
 import type { DimensionScoringSpec } from './spec';
 import { SECURITY_SCORING_SPEC } from './dimensions/security';

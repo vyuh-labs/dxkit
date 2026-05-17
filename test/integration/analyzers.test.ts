@@ -119,7 +119,7 @@ describe('analyzeHealth', () => {
   it('produces a complete health report', () => {
     expect(healthReport.summary.overallScore).toBeGreaterThan(0);
     expect(healthReport.summary.overallScore).toBeLessThanOrEqual(100);
-    expect(healthReport.summary.grade).toMatch(/^[A-F]$/);
+    expect(healthReport.summary.rating).toMatch(/^[A-E]$/);
 
     expect(healthReport.dimensions.testing).toBeDefined();
     expect(healthReport.dimensions.quality).toBeDefined();

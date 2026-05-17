@@ -147,10 +147,10 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   const licenses = (jsonData.licenses as Record<string, unknown> | undefined) ?? {};
 
   const healthSummary =
-    (health.summary as { overallScore?: number; grade?: string } | undefined) ?? {};
+    (health.summary as { overallScore?: number; rating?: string } | undefined) ?? {};
   const healthScore =
     typeof healthSummary.overallScore === 'number' ? healthSummary.overallScore : null;
-  const healthGrade = typeof healthSummary.grade === 'string' ? healthSummary.grade : null;
+  const healthGrade = typeof healthSummary.rating === 'string' ? healthSummary.rating : null;
   const dims =
     (health.dimensions as Record<string, { score?: number } | undefined> | undefined) ?? {};
 

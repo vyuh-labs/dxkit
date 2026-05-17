@@ -271,7 +271,15 @@ export interface HealthReport {
   branch: string;
   summary: {
     overallScore: number;
-    grade: 'A' | 'B' | 'C' | 'D' | 'F';
+    /**
+     * Letter rating derived from `overallScore` via the uniform
+     * thresholds in `src/scoring/thresholds.ts`. Matches each
+     * dimension's `DimensionScore.rating` semantics: A ≥ 80, B ≥ 60,
+     * C ≥ 40, D ≥ 20, E < 20. (Pre-2.4.7 this field was named
+     * `grade` and used 'F' for failing; unified to 'E' for one
+     * consistent letter taxonomy across dimensions + overall.)
+     */
+    rating: Rating;
   };
   dimensions: {
     testing: DimensionScore;

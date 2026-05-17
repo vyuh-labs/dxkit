@@ -44,7 +44,7 @@ import { scoreDocsDimension } from './docs/shallow';
 import { scoreSecurityDimension } from './security/shallow';
 import { scoreMaintainabilityDimension } from './maintainability/shallow';
 import { scoreDxDimension } from './dx/shallow';
-import { computeOverall } from './scoring';
+import { computeOverall } from '../scoring';
 import { ScoreInput } from './types';
 
 /** Default values for all HealthMetrics fields. */
@@ -295,14 +295,14 @@ export function scoreAndFormatHealth(result: AnalysisResult): HealthReport {
     maintainability: scoreMaintainabilityDimension(scoreInput),
     developerExperience: scoreDxDimension(scoreInput),
   };
-  const { overallScore, grade } = computeOverall(dimensions);
+  const { overallScore, rating } = computeOverall(dimensions);
 
   return {
     repo: stack.projectName || path.basename(result.cwd),
     analyzedAt: result.builtAt,
     commitSha: result.commitSha,
     branch: result.branch,
-    summary: { overallScore, grade },
+    summary: { overallScore, rating },
     dimensions,
     languages: metrics.languages,
     largestFiles: metrics.largestFiles,

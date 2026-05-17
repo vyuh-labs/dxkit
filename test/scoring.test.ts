@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeOverall } from '../src/analyzers/scoring';
+import { computeOverall } from '../src/scoring';
 import { scoreTestsDimension as scoreTest } from '../src/analyzers/tests/shallow';
 import { scoreDocsDimension as scoreDocumentation } from '../src/analyzers/docs/shallow';
 import { scoreMaintainabilityDimension as scoreMaintainability } from '../src/analyzers/maintainability/shallow';
@@ -281,7 +281,7 @@ describe('computeOverall', () => {
     expect(result.overallScore).toBe(60);
   });
 
-  it('grade A at >=80', () => {
+  it('rating A at >=80', () => {
     expect(
       computeOverall({
         testing: dim(100),
@@ -290,7 +290,7 @@ describe('computeOverall', () => {
         security: dim(100),
         maintainability: dim(100),
         developerExperience: dim(100),
-      }).grade,
+      }).rating,
     ).toBe('A');
     expect(
       computeOverall({
@@ -300,11 +300,11 @@ describe('computeOverall', () => {
         security: dim(80),
         maintainability: dim(80),
         developerExperience: dim(80),
-      }).grade,
+      }).rating,
     ).toBe('A');
   });
 
-  it('grade thresholds B/C/D/F', () => {
+  it('rating thresholds B/C/D/E', () => {
     const g = (s: number) =>
       computeOverall({
         testing: dim(s),
@@ -313,15 +313,15 @@ describe('computeOverall', () => {
         security: dim(s),
         maintainability: dim(s),
         developerExperience: dim(s),
-      }).grade;
+      }).rating;
     expect(g(79)).toBe('B');
     expect(g(60)).toBe('B');
     expect(g(59)).toBe('C');
     expect(g(40)).toBe('C');
     expect(g(39)).toBe('D');
     expect(g(20)).toBe('D');
-    expect(g(19)).toBe('F');
-    expect(g(0)).toBe('F');
+    expect(g(19)).toBe('E');
+    expect(g(0)).toBe('E');
   });
 
   it('weights sum to 1.0 (round-trip with uniform scores)', () => {
