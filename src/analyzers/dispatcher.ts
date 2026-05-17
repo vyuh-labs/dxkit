@@ -42,6 +42,17 @@ export interface DispatchOutcome<T extends CapabilityEnvelope> {
   succeeded: string[];
   /** Sources that returned null (tool absent, no config, etc.). */
   skipped: string[];
+  /**
+   * Per-source reasons for skipping, when the provider exposes a
+   * `gatherOutcome` method (the same channel `DepVulnsProvider`,
+   * `LicensesProvider`, and `LintProvider` use to surface
+   * unavailability reasons). Empty record when no provider supplied
+   * a reason — legacy `gather()`-only providers don't propagate
+   * "why" through this boundary, so their skip entries land in
+   * `skipped` without an entry here. Consumers should treat absent
+   * keys as "reason unknown" and render accordingly.
+   */
+  skipReasons: Record<string, string>;
 }
 
 export class CapabilityDispatcher {
@@ -94,13 +105,43 @@ export class CapabilityDispatcher {
     providers: ReadonlyArray<CapabilityProvider<T>>,
   ): Promise<DispatchOutcome<T>> {
     if (providers.length === 0) {
-      return { envelope: null, attempted: [], succeeded: [], skipped: [] };
+      return {
+        envelope: null,
+        attempted: [],
+        succeeded: [],
+        skipped: [],
+        skipReasons: {},
+      };
     }
 
     const attempted = providers.map((p) => p.source);
-    const settled = await Promise.allSettled(providers.map((p) => p.gather(cwd)));
+    // Each provider's gather pathway: prefer the discriminant-returning
+    // `gatherOutcome` (Lint / DepVulns / Licenses providers) when it
+    // exists, since it carries the "unavailable reason" the user-
+    // facing report wants. Fall back to plain `gather()` for legacy
+    // providers — the only loss is per-pack reason text; success/skip
+    // attribution still works.
+    const settled = await Promise.allSettled(
+      providers.map((p) => {
+        const candidate = p as CapabilityProvider<T> & {
+          gatherOutcome?(
+            cwd: string,
+          ): Promise<{ kind: 'success'; envelope: T } | { kind: string; reason?: string }>;
+        };
+        if (typeof candidate.gatherOutcome === 'function') {
+          return candidate.gatherOutcome(cwd).then((o) => {
+            if (o.kind === 'success') {
+              return { value: (o as { envelope: T }).envelope, reason: null };
+            }
+            return { value: null as T | null, reason: (o as { reason?: string }).reason ?? null };
+          });
+        }
+        return p.gather(cwd).then((v) => ({ value: v, reason: null }));
+      }),
+    );
     const succeeded: string[] = [];
     const skipped: string[] = [];
+    const skipReasons: Record<string, string> = {};
     const successful: T[] = [];
     for (let i = 0; i < settled.length; i++) {
       const r = settled[i];
@@ -110,15 +151,17 @@ export class CapabilityDispatcher {
         skipped.push(source);
         continue;
       }
-      if (r.value !== null) {
-        successful.push(r.value);
+      const { value, reason } = r.value;
+      if (value !== null) {
+        successful.push(value);
         succeeded.push(source);
       } else {
         skipped.push(source);
+        if (reason !== null) skipReasons[source] = reason;
       }
     }
     const envelope = successful.length === 0 ? null : cap.aggregate(successful);
-    return { envelope, attempted, succeeded, skipped };
+    return { envelope, attempted, succeeded, skipped, skipReasons };
   }
 }
 

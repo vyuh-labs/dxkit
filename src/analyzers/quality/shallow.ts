@@ -146,9 +146,23 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
           return `${scoreInput.lintErrors} lint errors, ${lintWarnings} warnings (${lintTool})`;
         }
         const cleanTool = lintTool.replace(/\s*\(not run: [^)]+\)/, '').trim();
+        // Per-pack annotation shape: `typescript — reason` (em-dash
+        // separator added by `health.ts` when `gatherOutcome` supplied a
+        // reason). Re-render in grammatical form: "typescript not run
+        // (reason)" instead of awkward "typescript — reason not run".
+        const annotated = notRunMatch[1]
+          .split(',')
+          .map((entry) => {
+            const trimmed = entry.trim();
+            const reasonMatch = /^(.+?)\s+—\s+(.+)$/.exec(trimmed);
+            return reasonMatch
+              ? `${reasonMatch[1]} not run (${reasonMatch[2]})`
+              : `${trimmed} not run`;
+          })
+          .join('; ');
         return (
           `${scoreInput.lintErrors} lint errors, ${lintWarnings} warnings (${cleanTool})` +
-          `. ⚠ Linter coverage gap: ${notRunMatch[1]} not run`
+          `. ⚠ Linter coverage gap: ${annotated}`
         );
       })() +
       `. ${m.filesOver500Lines} files exceed 500 lines` +

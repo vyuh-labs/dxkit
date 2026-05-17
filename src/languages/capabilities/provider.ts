@@ -14,6 +14,8 @@ import type {
   DepVulnResult,
   LicensesGatherOutcome,
   LicensesResult,
+  LintGatherOutcome,
+  LintResult,
 } from './types';
 
 /**
@@ -114,4 +116,35 @@ export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
  */
 export interface LicensesProvider extends CapabilityProvider<LicensesResult> {
   gatherOutcome(cwd: string): Promise<LicensesGatherOutcome>;
+}
+
+/**
+ * Specialized provider for lint gathering. Extends
+ * `CapabilityProvider<LintResult>` with an optional `gatherOutcome`
+ * exposing the underlying `LintGatherOutcome` discriminant
+ * (success / unavailable). The dispatcher collapses non-success to
+ * `null` for legacy consumers, but availability-aware reporting
+ * (Quality dimension's "Linter coverage gap" callout, the
+ * `tools used` row, the standalone Quality report) needs the
+ * per-pack reason so the customer can act on it ("TypeScript lint
+ * skipped: no eslint config found" beats "TypeScript lint skipped:
+ * <silence>").
+ *
+ * The reason carried in `LintGatherOutcome.unavailable.reason` is
+ * already produced inside every pack's `gather<Lang>LintResult`
+ * helper today — `gatherOutcome` just exposes it through the
+ * provider boundary so the dispatcher can capture it alongside the
+ * pack id.
+ *
+ * Optional rather than required: legacy lint providers (packs that
+ * haven't been refactored to expose outcomes) continue to work; the
+ * dispatcher falls back to the existing `null`-collapse channel and
+ * surfaces the pack id only.
+ *
+ * Both methods delegate to the same underlying pack helper —
+ * implementations should NOT duplicate work; call the helper once,
+ * unwrap for `gather()`, return the full outcome for `gatherOutcome()`.
+ */
+export interface LintProvider extends CapabilityProvider<LintResult> {
+  gatherOutcome?(cwd: string): Promise<LintGatherOutcome>;
 }

@@ -424,13 +424,28 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   // provenance before caching, so consumers see the same label
   // analyzeQuality's old standalone gather produced. Reconstructed
   // (not mutated) because envelope.tool is readonly.
-  const lint =
-    lintOutcome.envelope && lintOutcome.skipped.length > 0
-      ? {
-          ...lintOutcome.envelope,
-          tool: `${lintOutcome.envelope.tool} (not run: ${lintOutcome.skipped.join(', ')})`,
-        }
-      : lintOutcome.envelope;
+  //
+  // When `skipReasons` carries a per-pack reason (the typescript +
+  // python lint providers expose `gatherOutcome` for exactly this),
+  // the label includes it so customers can act on the disclosure
+  // instead of being told "typescript lint not run" with no
+  // explanation. Example post-fix label on a platform-style polyglot:
+  //   `ruff (not run: typescript — no eslint config found)`
+  const lint = (() => {
+    if (!lintOutcome.envelope || lintOutcome.skipped.length === 0) {
+      return lintOutcome.envelope;
+    }
+    const annotated = lintOutcome.skipped
+      .map((src) => {
+        const reason = lintOutcome.skipReasons[src];
+        return reason ? `${src} — ${reason}` : src;
+      })
+      .join(', ');
+    return {
+      ...lintOutcome.envelope,
+      tool: `${lintOutcome.envelope.tool} (not run: ${annotated})`,
+    };
+  })();
   if (lint) report.lint = lint;
   // Lint availability so consumers can distinguish "no active
   // lint-capable pack" (vacuous clean, available=true, no envelope)
@@ -438,9 +453,19 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   // actionable "try installing dependencies"). Same shape as
   // licensesAvailability + depVulnsAvailability.
   if (lintOutcome.attempted.length > 0 && lintOutcome.succeeded.length === 0) {
+    // Every attempted provider returned null — surface the per-pack
+    // reasons (when available via `gatherOutcome`) so the customer
+    // sees what to fix, not just which packs gave up.
+    const annotated = lintOutcome.attempted
+      .map((src) => {
+        const reason = lintOutcome.skipReasons[src];
+        return reason ? `${src} — ${reason}` : src;
+      })
+      .join('; ');
+    const pluralS = lintOutcome.attempted.length === 1 ? '' : 's';
     report.lintAvailability = {
       available: false,
-      unavailableReason: `${lintOutcome.attempted.join(', ')} provider${lintOutcome.attempted.length === 1 ? '' : 's'} returned no data (try installing project dependencies)`,
+      unavailableReason: `provider${pluralS} returned no data: ${annotated}`,
     };
   } else {
     report.lintAvailability = { available: true, unavailableReason: '' };

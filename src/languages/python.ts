@@ -13,6 +13,7 @@ import type {
   CapabilityProvider,
   DepVulnsProvider,
   LicensesProvider,
+  LintProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -563,11 +564,14 @@ function gatherPyLintResult(cwd: string): LintGatherOutcome {
   }
 }
 
-const pyLintProvider: CapabilityProvider<LintResult> = {
+const pyLintProvider: LintProvider = {
   source: 'python',
   async gather(cwd) {
     const outcome = gatherPyLintResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherPyLintResult(cwd);
   },
 };
 

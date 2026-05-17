@@ -3,13 +3,9 @@ import type {
   CapabilityProvider,
   DepVulnsProvider,
   LicensesProvider,
+  LintProvider,
 } from './capabilities/provider';
-import type {
-  CoverageResult,
-  ImportsResult,
-  LintResult,
-  TestFrameworkResult,
-} from './capabilities/types';
+import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -27,7 +23,7 @@ export type LintSeverity = 'critical' | 'high' | 'medium' | 'low';
  */
 export interface LanguagePackCapabilities {
   depVulns?: DepVulnsProvider;
-  lint?: CapabilityProvider<LintResult>;
+  lint?: LintProvider;
   coverage?: CapabilityProvider<CoverageResult>;
   testFramework?: CapabilityProvider<TestFrameworkResult>;
   imports?: CapabilityProvider<ImportsResult>;

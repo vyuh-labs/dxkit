@@ -18,6 +18,7 @@ import type {
   CapabilityProvider,
   DepVulnsProvider,
   LicensesProvider,
+  LintProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
@@ -607,11 +608,14 @@ function gatherTsLintResult(cwd: string): LintGatherOutcome {
   return { kind: 'unavailable', reason: 'config error' };
 }
 
-const tsLintProvider: CapabilityProvider<LintResult> = {
+const tsLintProvider: LintProvider = {
   source: 'typescript',
   async gather(cwd) {
     const outcome = gatherTsLintResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherTsLintResult(cwd);
   },
 };
 
