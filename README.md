@@ -32,7 +32,7 @@ npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks
 
 The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
 
-> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. the 2.4.5 osv-scanner-fix data-mutation fix), run:
+> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. 2.4.7's silent-health-failure fix on heavy polyglot repos, or the jscpd-OOM fix on repos with committed-vendored bundles), run:
 >
 > ```bash
 > npm install -g @vyuhlabs/dxkit@latest
@@ -400,24 +400,46 @@ Both loops use the session framework — checkpoints, skill evolution, progress 
 
 ## Reports
 
-All analyzer commands save timestamped reports to `.dxkit/reports/`:
+All analyzer commands save timestamped reports to `.dxkit/reports/`.
+Every command writes a summary markdown, a detailed markdown, and a
+canonical detailed JSON. `bom` adds an XLSX; `licenses` adds an XLSX
+when `--xlsx` is set. `dashboard` (or `report`) writes the single-file
+HTML view that stitches everything together.
 
 ```
 .dxkit/reports/
-  health-audit-<date>.md
-  health-audit-<date>-detailed.md           # with --detailed
-  health-audit-<date>-detailed.json         # agent-consumable
+  health-audit-<date>.md                    # 6-dimension summary
+  health-audit-<date>-detailed.md           # with per-dim plans + evidence
+  health-audit-<date>-detailed.json         # agent-consumable schema
+
   vulnerability-scan-<date>.md
+  vulnerability-scan-<date>-detailed.{md,json}
+
   test-gaps-<date>.md
+  test-gaps-<date>-detailed.{md,json}
+
   quality-review-<date>.md
+  quality-review-<date>-detailed.{md,json}
+
   developer-report-<date>.md
+  developer-report-<date>-detailed.{md,json}
+
+  bom-<date>.md                             # Bill of Materials summary
+  bom-<date>-detailed.{md,json}             # full per-package rows
+  bom-<date>.xlsx                           # 15-col XLSX (with --xlsx)
+
+  licenses-<date>.md                        # license inventory
+  licenses-<date>-detailed.{md,json}
+  licenses-<date>.xlsx                      # with --xlsx
+
+  dashboard.html                            # single-file HTML view
 ```
 
 Export options:
 
-- **HTML dashboard**: `/dashboard` (Claude Code slash command) — dark-themed sidebar navigation
-- **PDF**: `/export-pdf all` — converts all reports to PDF
-- **Structured JSON**: `--detailed` on any command emits a canonical JSON schema
+- **HTML dashboard**: `vyuh-dxkit dashboard` or the `/dashboard` slash command — dark-themed sidebar navigation, reads every `*-detailed.json` under `.dxkit/reports/`
+- **PDF**: `/export-pdf all` — converts every report to PDF
+- **Structured JSON**: every command writes a `-detailed.json` unconditionally as of 2.4.7, so agents and dashboards always have the structured schema available
 
 ---
 
@@ -490,6 +512,38 @@ vyuh-dxkit --version
 5. **Report** — markdown for humans, JSON for agents
 
 No LLM in the analysis path. Scores are reproducible: same repo state → same report.
+
+---
+
+## Community + Contributing
+
+- **[`CHANGELOG.md`](CHANGELOG.md)** — release notes by version,
+  including methodology shifts that may change scores between
+  releases (e.g. the 2.4.7 scoring foundation).
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — local setup, the
+  pre-commit hook stack, test conventions, and the "Adding a new
+  language" walkthrough.
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — a short tour
+  of the analyzer data flow, the three core patterns (language
+  packs, scoring specs, centralized exclusions + tool registry),
+  the subprocess discipline, and the `AnalysisResult` cache.
+- **[`CLAUDE.md`](CLAUDE.md)** — the authoritative architectural
+  rule set with pre-commit + CI enforcement. Required reading
+  before opening a PR that touches scoring, packs, exclusions, or
+  tool invocation.
+- **[`docs/SCORING.md`](docs/SCORING.md)** — full scoring
+  methodology: dimensions, weights, thresholds, caps, and the
+  Layer-1 standards each spec anchors to.
+- **[`SECURITY.md`](SECURITY.md)** — security policy, supported
+  versions, response SLAs, and the [private vulnerability
+  reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new)
+  channel.
+- **[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)** — Contributor
+  Covenant 2.1.
+
+Bug reports, feature requests, and questions: file an
+[issue](https://github.com/vyuh-labs/dxkit/issues/new/choose) using
+one of the templates.
 
 ---
 
