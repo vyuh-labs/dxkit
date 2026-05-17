@@ -6,7 +6,10 @@ import { scoreDxDimension } from '../src/analyzers/dx/shallow';
 import { scoreSecurityDimension } from '../src/analyzers/security/shallow';
 import { scoreQualityDimension } from '../src/analyzers/quality/shallow';
 import { scoreTestsDimension } from '../src/analyzers/tests/shallow';
-import { SecurityScoreInput, scoreSecurityFromInput } from '../src/analyzers/security/scoring';
+import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../src/scoring';
+
+const scoreSecurityFromInput = (input: SecurityScoreInput) =>
+  evaluateSpec(SECURITY_SCORING_SPEC, input);
 import { scoreTestGapsCounts } from '../src/analyzers/tests/scoring';
 import { buildSecurityDetailed } from '../src/analyzers/security/detailed';
 import type { SecurityReport } from '../src/analyzers/security/types';
@@ -175,35 +178,41 @@ describe('scoreSecurityFromInput', () => {
     ).toBe(30);
   });
 
-  it('tiers code-finding penalties by severity', () => {
-    // critical
+  it('tiers code-finding penalties by severity (capped at fixable-finding for HIGH+ open)', () => {
+    // Any open HIGH or CRITICAL code finding caps the dimension at
+    // CAP_TIERS['fixable-finding'] (79). The raw-penalty tiers still
+    // apply when the penalty drives the score below the cap.
+
+    // critical: raw 85 / 80 → both capped at 79; raw 75 stays at 75
+    // (below the cap, so the cap doesn't bind).
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 1, high: 0, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(85);
+    ).toBe(79);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 6, high: 0, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(80);
+    ).toBe(79);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 11, high: 0, medium: 0, low: 0 } }),
       ).score,
     ).toBe(75);
-    // high
+    // high: raw 95 / 90 → both capped at 79.
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 1, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(95);
+    ).toBe(79);
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 6, medium: 0, low: 0 } }),
       ).score,
-    ).toBe(90);
-    // medium > 10
+    ).toBe(79);
+    // medium > 10: raw 95, cap does NOT apply (no HIGH/CRITICAL open).
+    // The cap is severity-gated, not count-gated.
     expect(
       scoreSecurityFromInput(
         emptyScoreInput({ codeFindings: { critical: 0, high: 0, medium: 11, low: 0 } }),
@@ -298,23 +307,27 @@ describe('scoreSecurityFromInput', () => {
     expect(s.score).toBe(35);
   });
 
-  it('cap applies to a score that would otherwise be between cap and 100', () => {
-    // 100 - 15 (1 critical code finding) = 85. With depVulnsAvailable=false,
-    // capped to 65. Without it, would stay at 85.
-    const capped = scoreSecurityFromInput(
+  it('multiple caps compose monotonically (most-aggressive wins)', () => {
+    // 100 - 15 (1 critical code finding) = raw 85. Then:
+    //   • dep-vulns-unavailable cap brings it to 65 (uncertainty tier).
+    //   • fixable-finding cap (79) would also apply but is less
+    //     aggressive than 65, so the dep-unavailable cap dominates.
+    const cappedByBoth = scoreSecurityFromInput(
       emptyScoreInput({
         depVulnsAvailable: false,
         codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
       }),
     );
-    expect(capped.score).toBe(65);
-    const uncapped = scoreSecurityFromInput(
+    expect(cappedByBoth.score).toBe(65);
+    // Without dep-unavailable: fixable-finding cap (79) binds, since
+    // raw 85 > 79.
+    const cappedByHighOnly = scoreSecurityFromInput(
       emptyScoreInput({
         depVulnsAvailable: true,
         codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
       }),
     );
-    expect(uncapped.score).toBe(85);
+    expect(cappedByHighOnly.score).toBe(79);
   });
 });
 
@@ -498,15 +511,17 @@ describe('D023 parity: unified security scorer', () => {
 
   it('health-side falls back to grep-based metrics when codePatterns is absent', () => {
     // Without semgrep, the health-side should still penalize eval/TLS
-    // through the m.evalCount + m.tlsDisabledCount grep counts so we
-    // don't regress pre-2.4.7 coverage for semgrep-less environments.
+    // through the m.evalCount + m.tlsDisabledCount grep counts so the
+    // semgrep-less environment doesn't surface as fully clean.
     const r = scoreSecurityDimension(
       withInput({
         metrics: { evalCount: 1, tlsDisabledCount: 1 },
       }),
     );
-    // 2 high-severity code findings → -5 (high > 0).
-    expect(r.score).toBe(95);
+    // 2 high-severity code findings raw-penalize -5 (high > 0), then
+    // the fixable-finding cap brings the dimension to 79 — even one
+    // open HIGH code finding caps the rating at B.
+    expect(r.score).toBe(79);
   });
 });
 

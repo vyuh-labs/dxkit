@@ -19,7 +19,7 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../languages/capabilities/types';
-import type { Rating } from '../scoring';
+import type { CapApplied, Deduction, Rating, TopAction } from '../scoring';
 import type { SecurityAggregate } from './security/aggregator';
 
 /**
@@ -118,6 +118,15 @@ export interface HealthMetrics {
  * used; the letter replaces the previous descriptive enum so the
  * customer surface is one concept (a letter) rather than three
  * (number + descriptive status + letter elsewhere).
+ *
+ * Provenance fields (`rawScore`, `rawPenalty`, `methodology`,
+ * `deductions`, `capsApplied`, `topActions`) are populated by
+ * dimension adapters that have migrated to declarative spec
+ * evaluation in `src/scoring/`. Renderers that consume these
+ * structures should treat them as optional and degrade gracefully
+ * when absent — the migration lands one dimension at a time. After
+ * all six dimensions migrate, the optional markers are tightened in
+ * `scripts/check-architecture.sh`.
  */
 export interface DimensionScore {
   score: number;
@@ -125,6 +134,12 @@ export interface DimensionScore {
   rating: Rating;
   metrics: Record<string, number | string | boolean | null>;
   details: string;
+  rawScore?: number;
+  rawPenalty?: number;
+  methodology?: string;
+  deductions?: readonly Deduction[];
+  capsApplied?: readonly CapApplied[];
+  topActions?: readonly TopAction[];
 }
 
 /**

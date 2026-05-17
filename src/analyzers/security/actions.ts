@@ -8,7 +8,7 @@
 import { Evidence } from '../evidence';
 import { RemediationAction } from '../remediation';
 import { SecurityReport, SecurityFinding, Severity } from './types';
-import { SecurityScoreInput } from './scoring';
+import { SecurityScoreInput } from '../../scoring';
 
 /**
  * Project a SecurityReport into the canonical scoring input shape.

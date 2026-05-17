@@ -4,7 +4,7 @@
 import * as path from 'path';
 import { timedAsync } from '../tools/timing';
 import { gatherDepVulns } from './gather';
-import { DEP_VULNS_UNAVAILABLE_CAP } from './scoring';
+import { CAP_TIERS } from '../../scoring';
 import { SecurityReport } from './types';
 import { readOrBuildAnalysisResult } from '../cache';
 import { gatherAnalysisResultBody } from '../health';
@@ -314,9 +314,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     L.push(`> The dep-audit tool didn't run on this repo, so the count below`);
     L.push(`> is not "0 vulnerabilities found" — it's "0 vulnerabilities`);
     L.push(`> reported because the scan didn't complete." The Security`);
-    L.push(
-      `> dimension score is capped at ${DEP_VULNS_UNAVAILABLE_CAP}/100 until the underlying tool`,
-    );
+    L.push(`> dimension score is capped at ${CAP_TIERS.uncertainty}/100 until the underlying tool`);
     L.push(`> becomes available or a fallback path produces real data.`);
     L.push('');
     L.push(`**Total signals:** ${s.total} (code only — dep-audit incomplete)`);

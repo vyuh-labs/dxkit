@@ -13,9 +13,13 @@
  * both the health audit and the standalone vuln scan compute the
  * same number from the same partitioned inputs.
  */
-import { ratingFromScore } from '../../scoring';
+import {
+  SECURITY_SCORING_SPEC,
+  type SecurityScoreInput,
+  evaluateSpec,
+  ratingFromScore,
+} from '../../scoring';
 import { DimensionScore, ScoreInput } from '../types';
-import { SecurityScoreInput, scoreSecurityFromInput } from './scoring';
 
 /**
  * Build the canonical `SecurityScoreInput` from the health-side
@@ -109,7 +113,7 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
  * `SecurityScoreInput` shape into the health-side action code.
  */
 export function scoreSecurityFromScoreInput(input: ScoreInput): { score: number } {
-  return scoreSecurityFromInput(toSecurityScoreInput(input));
+  return evaluateSpec(SECURITY_SCORING_SPEC, toSecurityScoreInput(input));
 }
 
 /**
@@ -121,7 +125,7 @@ export function scoreSecurityDimension(input: ScoreInput): DimensionScore {
   const m = input.metrics;
   const c = input.capabilities;
   const scoreInput = toSecurityScoreInput(input);
-  const { score } = scoreSecurityFromInput(scoreInput);
+  const result = evaluateSpec(SECURITY_SCORING_SPEC, scoreInput);
 
   const secretFindings = scoreInput.secretFindings;
   const cf = scoreInput.codeFindings;
@@ -129,9 +133,15 @@ export function scoreSecurityDimension(input: ScoreInput): DimensionScore {
   const dv = scoreInput.depVulns;
 
   return {
-    score,
+    score: result.score,
     maxScore: 100,
-    rating: ratingFromScore(score),
+    rating: ratingFromScore(result.score),
+    rawScore: result.rawScore,
+    rawPenalty: result.rawPenalty,
+    methodology: result.methodology,
+    deductions: result.deductions,
+    capsApplied: result.capsApplied,
+    topActions: result.topActions,
     // Schema v11: `metrics` surfaces only the non-capability signals
     // that aren't already rolled into the prose's code-findings
     // total. `evalCount` and `tlsDisabledCount` ARE counted in

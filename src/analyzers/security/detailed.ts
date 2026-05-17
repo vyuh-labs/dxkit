@@ -5,7 +5,7 @@ import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
-import { SecurityScoreInput, scoreSecurityFromInput } from './scoring';
+import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../../scoring';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
@@ -15,14 +15,14 @@ export interface SecurityDetailedReport extends SecurityReport {
 
 export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedReport {
   const input = countsFromReport(report);
-  const actions = rank(buildSecurityActions(report), input, scoreSecurityFromInput);
+  const scoreFromInput = (i: SecurityScoreInput) => evaluateSpec(SECURITY_SCORING_SPEC, i);
+  const actions = rank(buildSecurityActions(report), input, scoreFromInput);
   return {
     ...report,
-    // v13 (D023 unification): securityScore now uses the canonical
-    // unified formula in `security/scoring.ts`, identical to the
-    // health audit's Security dimension score.
+    // v13 carries the unified scorer output; same path the health
+    // audit's Security dimension uses, identical scores.
     schemaVersion: '13',
-    securityScore: scoreSecurityFromInput(input).score,
+    securityScore: scoreFromInput(input).score,
     actions,
   };
 }

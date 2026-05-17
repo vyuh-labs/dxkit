@@ -15,12 +15,17 @@ export { RATING_THRESHOLDS, CAP_TIERS, ratingFromScore } from './thresholds';
 export { evaluateSpec } from './evaluator';
 
 import type { DimensionScoringSpec } from './spec';
+import { SECURITY_SCORING_SPEC } from './dimensions/security';
+
+export { SECURITY_SCORING_SPEC } from './dimensions/security';
+export type { SecurityScoreInput } from './dimensions/security';
 
 /**
- * Central index of all dimension scoring specs. Populated as each
- * dimension's spec lands. Empty in the foundation commit; consumers
- * iterating over this registry (e.g. recipe-playbook test, future
- * cross-dimension renderers) will pick up new specs automatically as
- * they're registered.
+ * Central index of all dimension scoring specs. Each per-dimension
+ * spec lands as it migrates from the legacy scorer; consumers
+ * iterating over this registry (recipe-playbook test, future
+ * cross-dimension renderers) pick up new specs automatically.
  */
-export const SCORING_SPECS: readonly DimensionScoringSpec<unknown>[] = [];
+export const SCORING_SPECS: readonly DimensionScoringSpec<unknown>[] = [
+  SECURITY_SCORING_SPEC as DimensionScoringSpec<unknown>,
+];
