@@ -519,6 +519,58 @@ describe('recipe playbook — synthetic pack', () => {
     expect(vocab!.routes).toBe('playbook-routes');
   });
 
+  it('dominantVocabulary weights by cloc lines when supplied (C8 follow-up)', () => {
+    // typescript + playbook both active. Without cloc data,
+    // typescript wins by registry order. WITH cloc data showing
+    // playbook has 10× the lines, playbook wins instead.
+    // Reproduces the polyglot scenario where a stray .py in a C#
+    // repo activates python via registry order and steals the
+    // vocabulary slot — fixed by weighting on real source-line counts.
+    const flagsBothActive = {
+      typescript: true,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    // Without cloc data: registry order wins → typescript first.
+    const unweighted = dominantVocabulary(flagsBothActive);
+    expect(unweighted).toBeDefined();
+    expect(unweighted!.components).toBe('controllers/components');
+
+    // WITH cloc data showing playbook dominates by line count, the
+    // synthetic pack wins. clocLanguageNames on the synthetic pack
+    // is undefined (mock doesn't declare any), so by name-match it
+    // contributes 0 lines. We declare playbook's cloc name to
+    // exercise the weighting end-to-end.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPlaybookPack as any).clocLanguageNames = ['Playbook'];
+    const weighted = dominantVocabulary(flagsBothActive, [
+      { name: 'TypeScript', lines: 100 },
+      { name: 'Playbook', lines: 1000 },
+    ]);
+    expect(weighted).toBeDefined();
+    expect(weighted!.components).toBe('playbook-planes');
+
+    // Inverse: when typescript dominates, typescript wins.
+    const weightedReverse = dominantVocabulary(flagsBothActive, [
+      { name: 'TypeScript', lines: 5000 },
+      { name: 'Playbook', lines: 50 },
+    ]);
+    expect(weightedReverse!.components).toBe('controllers/components');
+
+    // Cleanup: remove the clocLanguageNames addition so the rest
+    // of the synthetic pack stays as originally declared.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (mockPlaybookPack as any).clocLanguageNames;
+  });
+
   it('dominantVocabulary returns null when no active pack declares vocabulary (C8)', () => {
     const flagsEmpty = {
       typescript: false,

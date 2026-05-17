@@ -49,13 +49,15 @@ export function scoreMaintainabilityDimension(input: ScoreInput): DimensionScore
   const communityCount = c.structural?.communityCount ?? null;
   const avgCohesion = c.structural?.avgCohesion ?? null;
 
-  // Pick prose vocabulary from the dominant active pack. A C#/WinForms
+  // Pick prose vocabulary from the dominant active pack — weighted
+  // by cloc source-line counts so the pack the code is *written* in
+  // wins, not just the first registered active pack. A C# WinForms
   // project reads as "Forms/Services"; a Spring Boot project as
   // "controllers/services"; a pure React app as "controllers/components"
-  // (typescript pack's declared label). When no active pack provides
+  // (typescript pack's declared label). When no active pack supplies
   // vocabulary the generic words apply — the legacy "controllers,
   // models" prose stays for unknown-stack repos.
-  const vocab = dominantVocabulary(input.languageFlags ?? ({} as never));
+  const vocab = dominantVocabulary(input.languageFlags ?? ({} as never), m.languages);
   const componentsLabel = vocab?.components ?? 'components';
   const modelsLabel = vocab?.models ?? 'models';
 

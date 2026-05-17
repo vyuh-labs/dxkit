@@ -244,25 +244,56 @@ export function allTestGapPriorityPaths(flags: DetectedStack['languages']): {
 }
 
 /**
- * Pick the dominant vocabulary for prose rendering. First active pack
- * in registry order that declares `architecturalShape.vocabulary`
- * wins. Returns null when no active pack provides one — callers fall
- * back to generic words ("components", "models", "routes").
+ * Pick the dominant vocabulary for prose rendering. When cloc data is
+ * available, the pack with the most source lines wins — the
+ * source-files-weighted heuristic plan v4 anchored to. When cloc
+ * data isn't available, falls back to registry order. Returns null
+ * when no active pack provides a vocabulary — callers fall through
+ * to generic words ("components", "models", "routes").
  *
- * Deterministic by design: same stack → same vocabulary. A future
- * refinement may switch to "pack with most source files" once
- * per-pack source counts are plumbed end-to-end; for the common
- * single-dominant-pack case (Python+small-TS-build-tooling, .NET-only,
- * pure-React) registry order suffices.
+ * The cloc weight closes a polyglot-detection edge case: a
+ * 3,000-file C# repo with one stray build-output `.py` file would
+ * activate both csharp and python packs, and registry-order picked
+ * python's vocabulary (first declared) despite csharp dominating by
+ * 4 orders of magnitude. Source-line weighting picks the pack the
+ * code is actually written in.
  */
 export function dominantVocabulary(
   flags: DetectedStack['languages'],
+  clocLanguages?: ReadonlyArray<{ name: string; lines: number }>,
 ): NonNullable<ArchitecturalShape['vocabulary']> | null {
-  for (const pack of activeLanguagesFromFlags(flags)) {
+  const active = activeLanguagesFromFlags(flags);
+  const ranked =
+    clocLanguages && clocLanguages.length > 0
+      ? [...active].sort(
+          (a, b) => countPackLines(b, clocLanguages) - countPackLines(a, clocLanguages),
+        )
+      : active;
+  for (const pack of ranked) {
     const v = pack.architecturalShape?.vocabulary;
     if (v && (v.components || v.models || v.routes)) return v;
   }
   return null;
+}
+
+/**
+ * Sum cloc-reported line counts for every language name this pack
+ * claims to own. Returns 0 when the pack declares no cloc names or
+ * none of them appear in the cloc summary — that pack contributes
+ * no signal to the weighting and falls behind packs that did
+ * produce real source lines.
+ */
+function countPackLines(
+  pack: LanguageSupport,
+  clocLanguages: ReadonlyArray<{ name: string; lines: number }>,
+): number {
+  const names = pack.clocLanguageNames ?? [];
+  if (names.length === 0) return 0;
+  let total = 0;
+  for (const entry of clocLanguages) {
+    if (names.includes(entry.name)) total += entry.lines;
+  }
+  return total;
 }
 
 /**

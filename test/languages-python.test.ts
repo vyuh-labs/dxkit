@@ -35,10 +35,27 @@ describe('python.detect', () => {
     expect(python.detect(tmp)).toBe(true);
   });
 
-  it('detects via .py file within depth 2', () => {
+  it('detects via .py file count above threshold (no manifest)', () => {
+    // python.detect falls through to hasPyFile() when no manifest is
+    // present. The threshold is >=3 .py files — one stray .py is
+    // ambient noise (build-output artifacts on polyglot repos), not
+    // signal that the project is Python. Three suggests an actual
+    // Python source tree even without a pyproject.toml/setup.py/...
     fs.mkdirSync(path.join(tmp, 'src'));
     fs.writeFileSync(path.join(tmp, 'src', 'app.py'), '');
+    fs.writeFileSync(path.join(tmp, 'src', 'helpers.py'), '');
+    fs.writeFileSync(path.join(tmp, 'src', 'models.py'), '');
     expect(python.detect(tmp)).toBe(true);
+  });
+
+  it('does NOT detect on a single stray .py file (polyglot guard)', () => {
+    // One .py in a non-Python project (typical pattern: a stray
+    // build-output artifact in a C#/Java/etc. repo) must not activate
+    // the python pack. Otherwise dominantVocabulary may pick python's
+    // words for prose on a stack written in a different language.
+    fs.mkdirSync(path.join(tmp, 'StagingArea'));
+    fs.writeFileSync(path.join(tmp, 'StagingArea', 'stray.py'), '');
+    expect(python.detect(tmp)).toBe(false);
   });
 
   it('returns false for empty directory', () => {

@@ -73,9 +73,24 @@ function toRel(abs: string, cwd: string): string {
 function hasPyFile(cwd: string): boolean {
   // Depth-unlimited via the canonical walker. The previous depth-2
   // cap missed real Python monorepos (e.g. `services/<svc>/src/*.py`
-  // layouts) and was a per-pack instance of the same class of bug
-  // that the C# pack's depth-3/4/5 caps surfaced on dpl-studio.
-  return walkPaths(cwd, { extensions: ['.py'] }).length > 0;
+  // layouts).
+  //
+  // Requires >=3 `.py` files when no Python manifest is present.
+  // The earlier "any .py file anywhere" threshold over-activated on
+  // polyglot repos where a single build-output artifact (e.g. a
+  // WinForms desktop app shipping one staging `.py` under
+  // `StagingArea/Debug/net9.0-windows/`) would otherwise flip the
+  // python pack on. With the pack active, `dominantVocabulary`
+  // would then pick its Django/Flask-shaped words over the actual
+  // dominant language pack's vocabulary — surfaces as wrong-stack
+  // prose ("0 views/services, 0 models" on a 2,995-file C# repo).
+  //
+  // Real Python codebases without a manifest (small scripts, ad-hoc
+  // analysis dirs, learning projects) still activate above the
+  // threshold — the bar moved from "any" to "non-trivial," not to
+  // "requires manifest." Manifest-bearing repos always activate
+  // regardless of file count via the caller's `fileExists` checks.
+  return walkPaths(cwd, { extensions: ['.py'] }).length >= 3;
 }
 
 /**
