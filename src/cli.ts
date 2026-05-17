@@ -1081,14 +1081,26 @@ export async function run(argv: string[]): Promise<void> {
         label: string;
         cmd: string;
         extraFlags?: string[];
+        /**
+         * Basename prefix of the markdown report each step writes
+         * to `.dxkit/reports/`. Post-step the orchestrator verifies
+         * the file actually exists — a step that exits rc=0 without
+         * writing its report is a silent failure (the dashboard
+         * downstream falls back to "no <X> data" and the customer
+         * never learns their report is missing). Asserting at the
+         * orchestrator surface converts the silent failure into a
+         * loud one with the exit-code path the final summary
+         * already handles.
+         */
+        reportPrefix: string;
       }> = [
-        { label: 'Health', cmd: 'health' },
-        { label: 'Vulnerabilities', cmd: 'vulnerabilities' },
-        { label: 'Test gaps', cmd: 'test-gaps' },
-        { label: 'Code quality', cmd: 'quality' },
-        { label: 'Developer report', cmd: 'dev-report' },
-        { label: 'BoM', cmd: 'bom' },
-        { label: 'Licenses', cmd: 'licenses' },
+        { label: 'Health', cmd: 'health', reportPrefix: 'health-audit' },
+        { label: 'Vulnerabilities', cmd: 'vulnerabilities', reportPrefix: 'vulnerability-scan' },
+        { label: 'Test gaps', cmd: 'test-gaps', reportPrefix: 'test-gaps' },
+        { label: 'Code quality', cmd: 'quality', reportPrefix: 'quality-review' },
+        { label: 'Developer report', cmd: 'dev-report', reportPrefix: 'developer-report' },
+        { label: 'BoM', cmd: 'bom', reportPrefix: 'bom' },
+        { label: 'Licenses', cmd: 'licenses', reportPrefix: 'licenses' },
       ];
 
       // Forward common analyzer flags to each child so the orchestrator
@@ -1126,6 +1138,8 @@ export async function run(argv: string[]): Promise<void> {
         console.log(''); // slop-ok
       }
 
+      const reportDir = path.join(targetPath, '.dxkit', 'reports');
+      const dateStr = new Date().toISOString().slice(0, 10);
       for (const step of analyzerSteps) {
         logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] ${step.label}...`);
         const t0 = Date.now();
@@ -1134,7 +1148,27 @@ export async function run(argv: string[]): Promise<void> {
           [process.argv[1], step.cmd, targetPath, ...passthroughFlags, ...(step.extraFlags ?? [])],
           { stdio: 'inherit' },
         ).status;
-        stepDurations.push({ label: step.label, ms: Date.now() - t0, rc: rc ?? -1 });
+        let effectiveRc = rc ?? -1;
+        // Post-step assertion: the child returned rc=0 BUT did the
+        // expected markdown actually land on disk? On heavy polyglot
+        // repos (web-client; 13K+ graphify nodes, jscpd timeout
+        // exhaustion) the health child was observed to silently exit
+        // 0 without writing its markdown — the dashboard then renders
+        // "no <X> data" and the customer never learns their report
+        // is missing. The orchestrator owns the "did the report
+        // actually ship" assertion; analyzer subcommands keep their
+        // own write logic unchanged.
+        if (effectiveRc === 0) {
+          const expectedReport = path.join(reportDir, `${step.reportPrefix}-${dateStr}.md`);
+          if (!fs.existsSync(expectedReport)) {
+            logger.warn(
+              `${step.label} returned exit 0 but did NOT write ${path.relative(targetPath, expectedReport)}. ` +
+                `Treating as failure so the final summary surfaces it.`,
+            );
+            effectiveRc = -1;
+          }
+        }
+        stepDurations.push({ label: step.label, ms: Date.now() - t0, rc: effectiveRc });
         console.log(''); // slop-ok
       }
 
