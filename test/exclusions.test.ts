@@ -8,6 +8,7 @@ import {
   clearExclusionsCache,
   getFindExcludeFlags,
   getGrepExcludeDirFlags,
+  getJscpdIgnorePatterns,
 } from '../src/analyzers/tools/exclusions';
 
 let tmp: string;
@@ -96,5 +97,38 @@ describe('getGrepExcludeDirFlags', () => {
     const flags = getGrepExcludeDirFlags(tmp);
     expect(flags).toContain('--exclude-dir');
     expect(flags).toContain('node_modules');
+  });
+});
+
+describe('getJscpdIgnorePatterns', () => {
+  it('emits dir basenames as `**/<dir>/**`', () => {
+    const patterns = getJscpdIgnorePatterns(tmp);
+    expect(patterns).toContain('**/node_modules/**');
+    expect(patterns).toContain('**/dist/**');
+  });
+
+  it('emits multi-segment sourcePaths as `**/<path>/**`', () => {
+    fs.writeFileSync(path.join(tmp, '.dxkit-ignore'), 'Code/Source/Dev/Addons/DPLAddon/SAPB1/\n');
+    clearExclusionsCache();
+    const patterns = getJscpdIgnorePatterns(tmp);
+    expect(patterns).toContain('**/Code/Source/Dev/Addons/DPLAddon/SAPB1/**');
+  });
+
+  it('emits file-globs as `**/<glob>`', () => {
+    const patterns = getJscpdIgnorePatterns(tmp);
+    expect(patterns).toContain('**/*.min.js');
+  });
+
+  it('trims trailing slashes from multi-segment paths to avoid `**//**`', () => {
+    fs.writeFileSync(path.join(tmp, '.dxkit-ignore'), 'public/vendored/\n');
+    clearExclusionsCache();
+    const patterns = getJscpdIgnorePatterns(tmp);
+    expect(patterns).toContain('**/public/vendored/**');
+    expect(patterns).not.toContain('**/public/vendored//**');
+  });
+
+  it('returns patterns suitable for jscpd --ignore (no empty strings)', () => {
+    const patterns = getJscpdIgnorePatterns(tmp);
+    expect(patterns.every((p) => p.length > 0)).toBe(true);
   });
 });

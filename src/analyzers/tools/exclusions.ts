@@ -234,6 +234,44 @@ export function getSemgrepExcludeFlags(cwd: string): string {
   return `${dirFlags} ${fileFlags}`;
 }
 
+// Build jscpd `--ignore` glob patterns from the centralized exclusion set.
+//
+// jscpd's `--ignore` accepts a comma-separated glob list. Each pattern is
+// prefixed with the recursive-globstar segment so it matches at any
+// directory depth — the same convention `gatherJscpdResult` already uses
+// for autogen patterns.
+//
+// Mapping:
+//   - dirs (basenames)         → recursive-glob/<name>/recursive-glob
+//   - sourcePaths (multi-seg)  → recursive-glob/<path>/recursive-glob
+//   - filePatterns (globs)     → recursive-glob/<glob>
+//
+// Plumbs the same exclusion set the in-process walkers honor (grep, cloc,
+// semgrep, graphify's Python filter) into jscpd's subprocess argument
+// builder. Without this, jscpd only saw the autogen patterns + `--gitignore`,
+// which left it descending into committed-vendored trees that aren't in the
+// project's `.gitignore` — token tables exhaust heap on minified bundles,
+// jscpd gets OOM-killed before flushing its JSON report, and the report
+// reads "Duplication unavailable" on the very repos that need it most.
+//
+// Returns an array so callers can union with tool-specific extras (e.g.
+// `allAutogenSourcePatterns()` in jscpd's wrapper) before joining.
+export function getJscpdIgnorePatterns(cwd: string): string[] {
+  const { dirs, sourcePaths, filePatterns } = loadExclusions(cwd);
+  const out: string[] = [];
+  for (const d of dirs) {
+    out.push(`**/${d}/**`);
+  }
+  for (const p of sourcePaths) {
+    const trimmed = p.replace(/\/+$/, '');
+    if (trimmed) out.push(`**/${trimmed}/**`);
+  }
+  for (const f of filePatterns) {
+    out.push(`**/${f}`);
+  }
+  return out;
+}
+
 /**
  * Python literals for the graphify walker — emits both a basename set
  * (`EXCLUDE_DIRS`) and a multi-segment path list (`EXCLUDE_PATHS`) so
