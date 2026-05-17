@@ -1,0 +1,109 @@
+name: Bug report
+description: Report unexpected behavior in @vyuhlabs/dxkit
+title: '[bug] <short description>'
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! A few quick things before you submit:
+
+        - Please check the [open issues](https://github.com/vyuh-labs/dxkit/issues) to see if this has already been reported.
+        - If this looks like a **security vulnerability**, please report it via [private vulnerability reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new) instead.
+        - The more reproducible your report is, the faster we can fix it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of what went wrong.
+      placeholder: 'When I run `vyuh-dxkit health`, the report shows ... but I expected ...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: |
+        How can we reproduce this? Ideally a minimal repo or command
+        sequence. If you can't share the repo, describe its stack
+        (languages, frameworks, size).
+      placeholder: |
+        1. `git clone <repo>` (or describe a similar repo)
+        2. `cd <repo> && npx @vyuhlabs/dxkit tools install --yes`
+        3. `npx @vyuhlabs/dxkit health --detailed`
+        4. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: input
+    id: dxkit-version
+    attributes:
+      label: dxkit version
+      description: Run `npx @vyuhlabs/dxkit --version` (or check `package.json`).
+      placeholder: '2.4.7'
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Run `node --version`.
+      placeholder: 'v20.11.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows (native)
+        - Windows (WSL2)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: stack
+    attributes:
+      label: Repo stack (if relevant)
+      description: |
+        Which languages, frameworks, and tools is the analyzed repo
+        using? E.g. "TypeScript + React, no backend, ~500 source
+        files, eslint configured."
+      placeholder: 'TypeScript + Express, ~1200 source files'
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / report output
+      description: |
+        Paste the relevant output from your terminal. If it's long,
+        use a [GitHub gist](https://gist.github.com/) and link to it.
+        Run with `--verbose` if possible.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched [open issues](https://github.com/vyuh-labs/dxkit/issues) for duplicates.
+          required: true
+        - label: I have included enough information to reproduce this bug.
+          required: true
+        - label: This is not a security vulnerability. (If it is, I will use [private vulnerability reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new) instead.)
+          required: true

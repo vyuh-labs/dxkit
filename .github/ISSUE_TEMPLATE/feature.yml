@@ -1,0 +1,81 @@
+name: Feature request
+description: Suggest a new capability or improvement for @vyuhlabs/dxkit
+title: '[feature] <short description>'
+labels: ['enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Before you submit:
+
+        - Please check the [open issues](https://github.com/vyuh-labs/dxkit/issues) to see if this has already been proposed.
+        - If you're proposing a new language pack, please mention which language and what its primary tools / linters / coverage formats look like — that lets us scope the work accurately.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the situation that prompted this request. What were
+        you trying to do? What got in the way?
+      placeholder: |
+        I want to ... but dxkit currently ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        How would you like dxkit to behave? CLI surface, report
+        section, scoring impact — as concrete as you can.
+      placeholder: |
+        Add a `--format=sarif` flag to `vyuh-dxkit vulnerabilities`
+        that emits findings as SARIF for upload to GitHub Code Scanning.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        What workarounds have you tried? What other approaches did
+        you consider, and why doesn't one of them work?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which area does this touch?
+      options:
+        - CLI command (new subcommand or new flag)
+        - Language pack (new language or pack capability)
+        - Scoring (dimension, threshold, or cap change)
+        - Report rendering (markdown / dashboard / xlsx output)
+        - Tool integration (new external tool or upstream version)
+        - AI / agent integration
+        - Documentation
+        - CI / release / supply-chain
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: |
+        Anything else that helps — link to upstream tool docs,
+        screenshots of comparable features in other projects, prior
+        discussion threads.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched [open issues](https://github.com/vyuh-labs/dxkit/issues) for duplicates.
+          required: true
+        - label: I have read [CLAUDE.md](https://github.com/vyuh-labs/dxkit/blob/main/CLAUDE.md) and my request does not conflict with its architectural rules (or I am explicitly proposing a rule change).
+          required: false
