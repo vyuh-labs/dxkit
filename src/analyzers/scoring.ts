@@ -13,7 +13,7 @@
  * capability envelopes directly from `report.capabilities.*`.
  */
 import { ratingFromScore } from '../scoring';
-import { CapabilityReport, DimensionScore, ScoreInput } from './types';
+import { DimensionScore, ScoreInput } from './types';
 
 // `ScoreInput` was previously declared here; canonical home moved to
 // `./types` so it survives the eventual deletion of this file as
@@ -23,102 +23,15 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.round(Math.max(min, Math.min(max, value)));
 }
 
-/**
- * Round a capability's coverage percent to match the legacy integer contract.
- * CoverageResult carries one decimal place; scoring thresholds and the
- * `Coverage: XX%` detail string both expect an integer.
- */
-function coveragePercentFrom(c: CapabilityReport): number | null {
-  const raw = c.coverage?.coverage.linePercent;
-  return raw === undefined ? null : Math.round(raw);
-}
+// The Testing dimension scorer used to live here; the canonical formula
+// is now owned by `src/scoring/dimensions/testing.ts` as a declarative
+// spec. The adapter at `src/analyzers/tests/shallow.ts` builds the
+// per-dimension input and dispatches through `evaluateSpec`.
 
-/** Testing: 0-100 */
-export function scoreTest(input: ScoreInput): DimensionScore {
-  const m = input.metrics;
-  const c = input.capabilities;
-  const sourceCount = Math.max(m.sourceFiles, 1);
-  const testRatio = m.testFiles / sourceCount;
-
-  const coveragePercent = coveragePercentFrom(c);
-  const testFramework = c.testFramework?.name ?? null;
-  const commentedCodeRatio = c.structural?.commentedCodeRatio ?? null;
-
-  let score: number;
-  if (m.testFiles === 0) {
-    score = 0;
-  } else {
-    score = Math.min(testRatio * 200, 60);
-    if (m.coverageConfigExists) score += 10;
-    if (m.testsPass === true) score += 15;
-    if (coveragePercent !== null && coveragePercent >= 60) score += 10;
-    if (coveragePercent !== null && coveragePercent >= 80) score += 5;
-  }
-  // 2.4.7 honesty cap (real-user UX session 2026-05-07): without real
-  // coverage data, the testing dimension cannot honestly score above
-  // C-grade. Industry consensus (CodeClimate, SonarQube, Codecov): a
-  // project that doesn't measure coverage is failing the most basic
-  // testing-discipline check, regardless of how many test files exist
-  // or whether the test runner reports green. File-presence + green-
-  // exit-code without coverage = unmeasured. Cap at 35/100 (C grade).
-  //
-  // This replaces a previous testRatio<0.05 hardcoded cap that was
-  // overfitted to platform's LoopBack scaffolds; the coverage-data
-  // gate is the correct signal because it generalizes — any real
-  // testing investment includes coverage measurement.
-  if (coveragePercent === null && score > 35) {
-    score = 35;
-  }
-
-  if (commentedCodeRatio !== null && commentedCodeRatio > 0.5) {
-    score -= 15;
-  }
-
-  score = clamp(score);
-  // Schema v11: `metrics` surfaces only the non-capability signals
-  // (filesystem counts, derived ratios). Capability-owned values live in
-  // `report.capabilities.coverage` / `testFramework` / `structural` so
-  // downstream consumers read them from one place.
-  return {
-    score,
-    maxScore: 100,
-    rating: ratingFromScore(score),
-    metrics: {
-      sourceFiles: m.sourceFiles,
-      testFiles: m.testFiles,
-      testRatio: Math.round(testRatio * 100) / 100,
-      testsPass: m.testsPass,
-      coverageConfigExists: m.coverageConfigExists,
-    },
-    details:
-      m.testFiles === 0
-        ? `No test files found across ${m.sourceFiles} source files. 0% test coverage.`
-        : `${m.testFiles} test files for ${m.sourceFiles} source files (ratio: ${(testRatio * 100).toFixed(1)}%). ` +
-          `Tests ${m.testsPass === true ? 'pass' : m.testsPass === false ? 'fail' : 'not run'}. ` +
-          (coveragePercent !== null ? `Coverage: ${coveragePercent}%. ` : 'No coverage data. ') +
-          // Always surface framework state explicitly. A silent omission
-          // when detection fails reads as "no framework needed" rather
-          // than "we couldn't infer it" — the latter is actionable
-          // (configure the test runner; report a detection gap).
-          `Framework: ${testFramework || 'not detected'}.` +
-          // When tests are detected but haven't executed AND no coverage
-          // artifact is on disk, the customer's next step is to run
-          // dxkit's coverage subcommand — surface that explicitly so
-          // "0% coverage" doesn't read as an indictment of the codebase.
-          (m.testsPass === null && coveragePercent === null
-            ? ' Run `vyuh-dxkit coverage` to materialize test execution + coverage data.'
-            : '') +
-          (commentedCodeRatio !== null && commentedCodeRatio > 0.5
-            ? ` Warning: ${(commentedCodeRatio * 100).toFixed(0)}% of source files appear to contain only comments.`
-            : ''),
-  };
-}
-
-// The Code Quality dimension scorer used to live here; as of 2.4.7
-// the canonical formula is owned by `quality/scoring.ts` and consumed
-// by both the health audit (via `quality/shallow.ts`) and the
-// standalone quality report. Keeping the pre-2.4.7 duplicate would
-// re-introduce the cross-consumer drift the unification closed.
+// The Code Quality dimension scorer used to live here; the canonical
+// formula is now owned by `src/scoring/dimensions/quality.ts` as a
+// declarative spec, consumed by both the health audit (via
+// `quality/shallow.ts`) and the standalone quality report.
 
 /** Documentation: 0-100 */
 export function scoreDocumentation(input: ScoreInput): DimensionScore {
