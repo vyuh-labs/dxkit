@@ -1,13 +1,11 @@
 import type { LanguageId, ResolvedConfig } from '../types';
-import type { CapabilityProvider } from './capabilities/provider';
 import type {
-  CoverageResult,
-  DepVulnResult,
-  ImportsResult,
-  LicensesResult,
-  LintResult,
-  TestFrameworkResult,
-} from './capabilities/types';
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+  LintProvider,
+} from './capabilities/provider';
+import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -24,12 +22,91 @@ export type LintSeverity = 'critical' | 'high' | 'medium' | 'low';
  * pack can ship incrementally as underlying tool support lands.
  */
 export interface LanguagePackCapabilities {
-  depVulns?: CapabilityProvider<DepVulnResult>;
-  lint?: CapabilityProvider<LintResult>;
+  depVulns?: DepVulnsProvider;
+  lint?: LintProvider;
   coverage?: CapabilityProvider<CoverageResult>;
   testFramework?: CapabilityProvider<TestFrameworkResult>;
   imports?: CapabilityProvider<ImportsResult>;
-  licenses?: CapabilityProvider<LicensesResult>;
+  licenses?: LicensesProvider;
+}
+
+/**
+ * Architectural-shape contract a language pack may expose. Captures the
+ * path conventions and vocabulary a stack uses for its primary
+ * architecture so the analyzer + renderer layer can stop hardcoding
+ * backend-centric assumptions ("controllers/", "models/").
+ *
+ * Every field is optional. A pack with no architectural conventions
+ * (rust, today) omits the whole field; a pack with vocabulary but no
+ * test-gap taxonomy can declare just `vocabulary`.
+ */
+export interface ArchitecturalShape {
+  /**
+   * Path patterns identifying "primary architecture" files for this
+   * stack — the surfaces a developer would test first. Backend packs
+   * declare controllers/handlers/services. Frontend packs declare
+   * components/pages/hooks. Desktop packs declare Forms/ViewModels.
+   *
+   * Patterns are case-insensitive substrings of the source file's
+   * relative POSIX path. Slashes are significant (`"/controllers/"`
+   * won't match a filename like `controller-host.ts` that lives
+   * outside a controllers directory).
+   *
+   * Feeds the `controllers` metric counter (despite the name — the
+   * field is a generic "primary component" count post-extension),
+   * the Maintainability prose, and the test-gap MEDIUM bucket
+   * default.
+   */
+  primaryComponentPaths?: string[];
+
+  /**
+   * Path patterns specifically for HTTP route handlers / API endpoints.
+   * Gates the "Add API documentation" health action: desktop apps with
+   * no HTTP surface (matched count = 0) don't get told to document an
+   * API they don't expose.
+   *
+   * Subset of `primaryComponentPaths` for typical backend packs (a
+   * `controllers/` directory hosts route handlers). Frontend packs
+   * omit it (React `components/` are not HTTP endpoints). Server-side
+   * rendering packs (Next.js' `pages/api/`) declare both.
+   */
+  routePaths?: string[];
+
+  /**
+   * Path patterns for data-model files (ORM entities, DTOs, schemas).
+   * Powers the Maintainability prose "N <vocabulary.models>" count.
+   */
+  modelPaths?: string[];
+
+  /**
+   * Display words for prose rendering. The dominant active pack
+   * contributes vocabulary (first-active-in-registry-order is the
+   * tiebreaker today; packs without `vocabulary` fall through to the
+   * next active pack). Consumers fall back to the generic words
+   * (`"components"`, `"models"`, `"routes"`) when no active pack
+   * supplies a label.
+   */
+  vocabulary?: {
+    components?: string;
+    models?: string;
+    routes?: string;
+  };
+
+  /**
+   * Per-bucket path patterns for the test-gap risk taxonomy. The
+   * canonical security regexes (`/auth/`, `/jwt/`, `/security/`, ...)
+   * still apply pack-agnostically to the CRITICAL bucket; packs may
+   * extend it with stack-specific surfaces (csharp's `Auth*Form.cs`).
+   *
+   * `medium` defaults to `primaryComponentPaths` when omitted — the
+   * common case is "any primary component without a matching test
+   * is at least MEDIUM risk."
+   */
+  testGapPriority?: {
+    critical?: string[];
+    high?: string[];
+    medium?: string[];
+  };
 }
 
 /**
@@ -46,6 +123,161 @@ export interface LanguageSupport {
   sourceExtensions: string[];
   testFilePatterns: string[];
   extraExcludes?: string[];
+
+  /**
+   * D028 (2.4.7): basename glob patterns identifying auto-generated
+   * source files that should be EXCLUDED from per-file metrics
+   * (source-file counts, files-over-500-lines, largest-file probes,
+   * quality/maintainability scoring inputs). Common examples:
+   *
+   *   csharp: `['*.designer.cs', '*.g.cs', '*.g.i.cs', '*.generated.cs',
+   *            '*.AssemblyInfo.cs', '*.AssemblyAttributes.cs']`
+   *   go:     `['*.pb.go', '*_string.go']`        (protobuf, stringer)
+   *   java:   `['*Generated.java']`               (Lombok, etc.)
+   *
+   * dpl-studio is the motivating case: Visual Studio's WinForms
+   * designer generates `*.designer.cs` files that are typically large
+   * (>500 lines), repetitive, and not authored — pre-D028 these
+   * inflated Code Quality + Maintainability dimensions for any .NET
+   * UI codebase. Each pack declares its own patterns so adding a new
+   * pack (or extending an existing pack's patterns) auto-flows
+   * through the cross-cutting `gatherGenericMetrics` filter.
+   *
+   * Optional — packs without canonical autogen conventions omit it.
+   */
+  autogeneratedSourcePatterns?: string[];
+
+  /**
+   * D027 (2.4.7): grep -E regex strings identifying lines that
+   * contain a documentation comment in this language. The union of
+   * every active pack's patterns drives `docCommentFiles` in
+   * `gatherGenericMetrics` (the Documentation score input). Pre-D027
+   * the regex was JS-shaped and the grep --include list was hardcoded
+   * to TS / Python / Go extensions, so any csharp / kotlin / java /
+   * rust / ruby project reported zero doc-comment files. dpl-studio
+   * (3,234 .cs files with XML-doc triple-slash) is the motivating
+   * case: Documentation score was pinned at 0/100.
+   *
+   * POSIX-compatible: prefer `[[:space:]]` over `\s`; escape regex
+   * metacharacters for grep -E. Each entry is a standalone regex; the
+   * registry unions them via a `\n`-separated pattern file (so embedded
+   * single/double quotes in patterns don't break the shell).
+   *
+   * See each pack's `docCommentPatterns` declaration for the
+   * canonical shape (csharp XML-doc, JSDoc/TSDoc, Python docstrings,
+   * godoc, rustdoc, KDoc, Javadoc, YARD-style).
+   *
+   * Optional — packs without canonical doc-comment conventions omit it.
+   */
+  docCommentPatterns?: string[];
+
+  /**
+   * D034 (2.4.7): grep -E regex strings identifying TLS / certificate-
+   * validation bypass idioms specific to this language's HTTP / network
+   * stacks. The union of every pack's patterns drives `tlsDisabledCount`
+   * in `gatherGenericMetrics` — surfaced through the Security score as
+   * a `high`-severity code finding.
+   *
+   * Pre-D034 the regex only matched Node-shaped idioms
+   * (`NODE_TLS_REJECT_UNAUTHORIZED`, `rejectUnauthorized: false`,
+   * `VERIFY_SSL`) on `*.ts / *.js / *.py` includes. csharp's
+   * `ServerCertificateValidationCallback`, go's `InsecureSkipVerify`,
+   * rust's `danger_accept_invalid_certs`, java's `TrustAllX509TrustManager`,
+   * ruby's `OpenSSL::SSL::VERIFY_NONE`, etc. were never detected. Each
+   * pack now declares its own ecosystem-specific idioms.
+   *
+   * Same POSIX-grep rules as `docCommentPatterns`. Same union-via-
+   * pattern-file mechanism in `generic.ts` (avoids shell escaping for
+   * patterns containing `::`, quotes, etc.). False positives across
+   * languages are negligible — `InsecureSkipVerify` doesn't appear in
+   * `.py` files, etc.
+   *
+   * Optional — packs without canonical TLS-bypass idioms omit it.
+   */
+  tlsBypassPatterns?: string[];
+
+  /**
+   * G_v4_4 (2.4.7): build the per-ecosystem package upgrade command
+   * surfaced under "Remediation Commands" in the standalone vuln scan.
+   * Each pack owns its own template (`dotnet add package`, `npm install`,
+   * `pip install`, `cargo update`, `go get`, edit-pom-and-rebuild for
+   * gradle/maven, edit-Gemfile-and-bundle for ruby).
+   *
+   * Pre-G_v4_4 the dispatch lived in `buildUpgradeCommand`
+   * (security/index.ts) as a hardcoded switch on the `tool` field —
+   * which violates CLAUDE.md rule 6 (no language-specific branching in
+   * non-pack code) and broke when generic tool names (`osv-scanner`,
+   * via `osv-scanner-deps.ts`) didn't match the pack-aliased switch
+   * keys (`osv-scanner-nuget-direct`). Findings then shipped as bare
+   * comments instead of actionable commands. D062 is the dpl-studio
+   * manifestation.
+   *
+   * Contract: receives the vulnerable package name and the patched
+   * version (caller short-circuits on missing fixedVersion). Returns
+   * a single line of shell to run, OR a `#`-prefixed prose hint when
+   * the ecosystem requires a manifest edit (gradle/maven/gemfile).
+   * Returning `null` is reserved for "this pack genuinely cannot
+   * remediate" — caller falls back to generic prose. Implementations
+   * should be pure (no side effects, no cwd lookups).
+   *
+   * Optional — packs without a depVulns capability omit it.
+   */
+  upgradeCommand?(name: string, version: string): string | null;
+
+  /**
+   * Per-stack architectural vocabulary + path conventions. Drives the
+   * test-gap risk taxonomy, the Maintainability prose ("controllers"
+   * vs "components" vs "Forms"), and the gate on the "Add API
+   * documentation" recommendation.
+   *
+   * Pre-extension these path patterns + words lived inline in
+   * `src/analyzers/tests/gather.ts` and `src/analyzers/tools/generic.ts`
+   * as hardcoded backend-centric paths (`controllers/`, `handlers/`,
+   * `views/`, `models/`). A pure React frontend (`src/components/`,
+   * `src/pages/`) matched none of them and reported 0/0/0 across
+   * CRITICAL/HIGH/MEDIUM test-gap buckets; a .NET WinForms desktop
+   * app (`Forms/`, `Services/`) likewise reported zero primary-
+   * architecture files and its Maintainability prose still read
+   * "0 controllers/handlers, 0 models" — accurate but unhelpful.
+   *
+   * Each pack now declares its own conventions. The cross-cutting
+   * gather + render code unions/picks across active packs via the
+   * helpers in `src/languages/index.ts` (`allPrimaryComponentPaths`,
+   * `allRoutePaths`, `allModelPaths`, `allTestGapPriorityPaths`,
+   * `dominantVocabulary`).
+   *
+   * All path patterns are case-insensitive substrings of the source
+   * file's relative POSIX path (e.g. `"/controllers/"`, `"/Forms/"`).
+   * Slashes are significant — they keep `services` from matching a
+   * filename like `service-host.ts` outside a services directory.
+   *
+   * Optional — packs without canonical architectural conventions omit
+   * it (today: rust, where `main.rs` / `lib.rs` are the entire
+   * convention and no controllers/components vocabulary maps).
+   */
+  architecturalShape?: ArchitecturalShape;
+
+  /**
+   * D073 (2.4.7): language names cloc emits in its `--json` output
+   * for this pack. cloc's per-language keys are NOT 1:1 with file
+   * extensions — `.ts` and `.tsx` both report as `"TypeScript"`,
+   * `.kt` and `.kts` both as `"Kotlin"`, etc. The full canonical list
+   * lives at https://github.com/AlDanial/cloc; each pack declares the
+   * names relevant to its own ecosystem.
+   *
+   * `gatherClocMetrics` filters its language summary + `totalLines`
+   * aggregation to the union of every active pack's declarations.
+   * Pre-D073 the cloc result included markup/data formats (JSON, XML,
+   * CSV, YAML) in the `totalLines` denominator, deflating the quality
+   * report's "Comment Ratio" (1.6M JSON lines on dpl-studio dragged
+   * the C# comment ratio from ~25% down to 4.3%). Filter lets cloc
+   * stay the authoritative line counter for actual source code while
+   * data files stop polluting source metrics.
+   *
+   * Optional — packs without a meaningful cloc representation omit it
+   * (rare; every shipped pack today has at least one cloc name).
+   */
+  clocLanguageNames?: string[];
 
   detect(cwd: string): boolean;
 

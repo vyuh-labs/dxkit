@@ -31,9 +31,48 @@ describe('csharp.detect', () => {
     expect(csharp.detect(tmp)).toBe(true);
   });
 
+  // D024: enterprise .NET layouts (e.g. dpl-studio) nest .csproj 5 levels
+  // below the repo root. The depth bump 3→5 in detect() lifts the cutoff
+  // to cover these without descending into deeply-nested package dirs.
+  it('detects via .csproj nested at depth 5 (D024)', () => {
+    const deep = path.join(tmp, 'Code', 'Source', 'Dev', 'Core', 'Module');
+    fs.mkdirSync(deep, { recursive: true });
+    fs.writeFileSync(path.join(deep, 'Module.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(true);
+  });
+
+  // Recipe-hardened contract: manifest discovery is depth-unlimited
+  // via the canonical walker. Real customer monorepos (dpl-studio:
+  // .csproj files at depths 6–9) need this; the previous depth-5 cap
+  // misclassified them as non-.NET. The walker still honors
+  // `.gitignore` + bundled excludes (node_modules, bin, obj,
+  // packages, vendor), so this isn't a free pass — anything excluded
+  // still gets pruned at the directory boundary.
+  it('detects a .csproj nested arbitrarily deep (depth 6+)', () => {
+    const deeper = path.join(tmp, 'a', 'b', 'c', 'd', 'e', 'f');
+    fs.mkdirSync(deeper, { recursive: true });
+    fs.writeFileSync(path.join(deeper, 'Project.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(true);
+  });
+
+  it('does NOT detect a .csproj inside an excluded directory (node_modules)', () => {
+    const inside = path.join(tmp, 'node_modules', 'some-pkg', 'fixture');
+    fs.mkdirSync(inside, { recursive: true });
+    fs.writeFileSync(path.join(inside, 'Bogus.csproj'), '');
+    expect(csharp.detect(tmp)).toBe(false);
+  });
+
   it('returns false for unrelated directory', () => {
     fs.writeFileSync(path.join(tmp, 'README.md'), '');
     expect(csharp.detect(tmp)).toBe(false);
+  });
+
+  // D024: also verify the committed fixture (mirrors dpl-studio shape)
+  // is detectable from its root. Catches drift between the fixture's
+  // depth and the detect() cutoff.
+  it('detects the committed csharp-nested benchmark fixture (D024)', () => {
+    const fixture = path.resolve(__dirname, 'fixtures/benchmarks/csharp-nested');
+    expect(csharp.detect(fixture)).toBe(true);
   });
 });
 
@@ -132,8 +171,10 @@ describe('csharp registration', () => {
     expect(csharp.displayName).toBe('C#');
   });
 
-  it('declares dotnet-format + nuget-license tools', () => {
-    expect(csharp.tools).toEqual(['dotnet-format', 'nuget-license']);
+  it('declares dotnet-format + nuget-license + osv-scanner tools', () => {
+    // D025f (2.4.7) added osv-scanner as the direct-PackageReference
+    // fallback when `dotnet list package` can't produce output (D036).
+    expect(csharp.tools).toEqual(['dotnet-format', 'nuget-license', 'osv-scanner']);
   });
 
   it('declares empty semgrep rulesets (p/csharp is sparse)', () => {

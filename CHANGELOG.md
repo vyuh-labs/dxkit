@@ -7,6 +7,891 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.7] - 2026-05-17
+
+### Summary
+
+2.4.7 is the largest release since the language-pack architecture
+landed. It bundles three distinct architectural deliverables
+(actionable scoring foundation, per-stack architectural shape,
+canonical security aggregator), customer-visible UX rework
+(security top-5 actions, .env-in-git callout, lint-skip prose
+honesty, tools-unavailable renderer split), one ship-blocker
+root-cause fix (silent health failure under concurrent subprocess
+load), and the project's OSS hygiene baseline. 17 defect IDs
+closed in this version. Scoring methodology now anchored to
+ISO/IEC 25010, ISO/IEC 5055, SQALE, CVSS v4, CWE, OWASP, and
+OpenSSF Scorecard. Tests: 1241 / 0 (up from 1175 at the 2.4.6
+baseline). No runtime regressions across the cross-ecosystem
+matrix.
+
+Customer-visible numeric impact: scores on some repos will shift
+between 2.4.6 and 2.4.7 because the underlying methodology
+changed (see the "Actionable scoring foundation" section below
+and its "Customer-visible score changes" subsection), not because
+of bugs. Migration notes at
+[`docs/MIGRATING-TO-2.4.7-SCORING.md`](docs/MIGRATING-TO-2.4.7-SCORING.md).
+
+### Phase C11 — OSS hygiene baseline (2026-05-17)
+
+Adds the standard set of OSS community files so the project
+satisfies the OpenSSF Scorecard `Security-Policy`,
+`Code-of-Conduct`, and `Contributors` checks and gives external
+contributors a clear on-ramp.
+
+- `SECURITY.md` — supported-versions table, response SLAs, explicit
+  scope, and a pointer to GitHub's [private vulnerability
+  reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new)
+  (no public email; routes directly to maintainers).
+- `CODE_OF_CONDUCT.md` — adopts the [Contributor Covenant
+  2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)
+  by canonical URL reference. Reports route through the same
+  private channel as security disclosures.
+- `.github/PULL_REQUEST_TEMPLATE.md` — summary + motivation +
+  verification checklist + an architectural-rules pointer section
+  nudging contributors at the relevant CLAUDE.md rules before
+  touching scoring / language packs / exclusions / tool invocation.
+- `.github/ISSUE_TEMPLATE/bug.yml` — issue form: repro steps,
+  versions (dxkit + Node), OS, repo stack, logs. Confirmations
+  block routes security reports to private disclosure.
+- `.github/ISSUE_TEMPLATE/feature.yml` — issue form: problem
+  framing, proposal, alternatives considered, scope dropdown.
+- `.github/ISSUE_TEMPLATE/question.yml` — light triage form that
+  redirects bug / feature / security reports to the right channel
+  and surfaces existing docs (README, SCORING.md, CLAUDE.md).
+- `docs/ARCHITECTURE.md` — short tour of the analyzer data flow,
+  the three core patterns (language packs, scoring specs,
+  centralized exclusions + tool registry), the `runDetached`
+  subprocess discipline, the `AnalysisResult` cache, and the
+  release flow. Entry-point doc; defers to CLAUDE.md as the
+  authoritative rule set.
+
+No runtime code changes. Commits: `93a1790`.
+
+### Phase C10.25 — Audit-residue closures + silent-failure root-cause (2026-05-17)
+
+The earlier phases of 2.4.7 brought enough new code into the
+analyzer that a pre-ship convergence audit on the three external
+customer repos surfaced one HIGH-severity defect — the report
+orchestrator's health step intermittently exiting `rc=0` with no
+`health-audit-*.md` written on the heaviest polyglot repo — plus a
+batch of MEDIUM residue items. This phase closes all of them.
+Pairs with the per-stack architectural-shape work below to leave
+2.4.7 with zero outstanding ship blockers.
+
+#### Silent health-failure root-cause (D134)
+
+The report orchestrator's health step on a heavy polyglot repo
+(13k+ graphify function nodes, ~700 source files, large
+`node_modules`) intermittently exited `rc=0` with no
+`health-audit-*.md` written. The dashboard then read "no health
+data" while the orchestrator itself printed `✓ Health`.
+Investigation via a `spawnSync` reproducer plus targeted
+diagnostic instrumentation captured the failure shape:
+
+```
+[beforeExit] code=0 reachedWrite=false writeComplete=false
+[exit]       code=0 reachedWrite=false writeComplete=false
+```
+
+No `uncaughtException`, no `unhandledRejection` — classic
+abandoned-Promise. Under concurrent subprocess load (semgrep +
+jscpd + graphify all spawning grandchildren), one `runDetached`
+invocation's `exit` and `error` events both failed to fire. The
+Promise stayed permanently pending, the capabilities `Promise.all`
+hung, `analyzeHealthInternal`'s `await` never returned, Node's
+event loop emptied and the process exited cleanly with the main
+task still suspended.
+
+Fix in `src/analyzers/tools/runner.ts` (commit `55ce0d6`):
+
+- **Single-resolve `settle()` guard** — `exit` / `error` /
+  safety-deadline, first wins; subsequent events are no-ops.
+- **Error listener registered BEFORE other setup** to close the
+  spawn-time-emission race window.
+- **Safety deadline at `timeoutMs + 30_000`** — the Promise
+  mathematically must settle within that window even if every
+  event source fails.
+
+Verification on the failure repo:
+
+- Pre-fix: 795-800 s, `rc=0`, **no** health markdown on disk.
+- Post-fix: 662.8 s, `rc=0`, full health markdown on disk.
+
+Defense-in-depth (commit `5b6e360`): the `report` orchestrator
+now asserts each step wrote its expected markdown post-step. A
+future regression that re-introduces the hang surfaces a per-step
+`✗` instead of a silent `✓`.
+
+#### jscpd OOM class-fix — centralized exclusions plumbed into `--ignore` (D139)
+
+jscpd was invoked with `--gitignore` + the autogen-pattern list but
+NOT dxkit's bundled `default-exclusions.gitignore` / `.dxkit-ignore`
+union — the same exclusion set every in-process walker (cloc, grep,
+semgrep, graphify's Python filter) honors. Repos committing vendored
+bundles outside `.gitignore` (e.g. minified library copies under a
+`public/` tree) led jscpd to descend in, tokenize multi-thousand-line
+minified bundles, exhaust heap, and OOM-kill before flushing its
+JSON report. The quality report would then read
+"Duplication unavailable" on the densest repos — exactly the repos
+where the metric mattered most.
+
+Fix (commit `2afc097`):
+
+- New `getJscpdIgnorePatterns(cwd)` helper in
+  `src/analyzers/tools/exclusions.ts` returns the centralized
+  exclusion set as `**/<pattern>`-style globs.
+- `gatherJscpdResult` unions it with the autogen patterns and
+  passes the union to jscpd's `--ignore`.
+- `jscpdProvider` gains a `gatherOutcome` method so the
+  dispatcher captures jscpd's actual failure reason
+  ("not installed" / "timed out at 600s" / "exit code N
+  (stderr: ...)" / "no output" / "parse error") instead of
+  dropping it at the gather / `null` boundary.
+
+CLAUDE.md Rule 4 ("Exclusions come from `exclusions.ts`") was
+honored at the in-process walker layer but not at the
+subprocess-tool argument-builder layer. This closes that drift
+for jscpd and lays the pattern for any future subprocess tool
+that walks the repo.
+
+Verification on the worst-case repo:
+
+- **Standalone smoke**: 569 s OOM → 17 s success, **7.26 %**
+  duplication, 444 clones, 7 423 duplicated lines.
+- **End-to-end via `vyuh-dxkit quality`**: capabilities-gather
+  770 s → 272 s (jscpd no longer the long pole; eslint also
+  surfaces its real findings as a side-effect, contributing
+  10 496 errors + 2 787 warnings that were previously masked).
+
+#### Tools-unavailable renderer prose-honesty (D138)
+
+The dispatcher's `skipReasons` channel already carried the real
+per-source failure reason for every attempted-but-failed tool, but
+`availabilityFromOutcome` in `src/analyzers/health.ts` collapsed
+every case to a generic "attempted but produced no output (likely
+killed by resource limits — try running dxkit on this repo alone)"
+prose. The renderer then printed `**Tools unavailable:** jscpd
+(...)` — a reader reasonably concluded the binary needed
+installing, when in fact the binary was fine and the run had
+OOM'd at runtime. Same misleading-label class as D113 / D128
+(lint-skip prose) and D135 (cache-level availability envelope) —
+this fix extends the honesty pattern one layer up to the renderer
+header label.
+
+Fix (commit `425d0ef`):
+
+- `semgrepProvider` + `graphifyProvider` gain `gatherOutcome`
+  (jscpdProvider's method came with the companion D139 commit).
+  The dispatcher now captures the real per-source reason into
+  `DispatchOutcome.skipReasons`.
+- `availabilityFromOutcome` prefers `skipReasons[<source>]` when
+  present; falls back to the generic prose for legacy providers
+  without `gatherOutcome`.
+- New `splitToolsUnavailable` / `renderToolsUnavailableLines`
+  helpers in `src/analyzers/tools/tools-unavailable-prose.ts`
+  route entries into two honest categories:
+  - `**Tools not installed:**` — action: install
+  - `**Tools that failed at runtime:**` — action: investigate
+- 9 markdown renderer call-sites (`cli.ts`, tests / security /
+  quality / health / bom analyzer surfaces, each with their
+  `index.ts` and `detailed.ts` formatter pair) + the xlsx BoM
+  (two worksheet rows) all share the canonical helper.
+
+#### Other audit-residue closures
+
+| ID(s)                | Description                                                                                                                                                                                                             | Closing commit |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| D124 / D100 / D118   | Vendored-source exclusion class-fix — top-largest-file metric on all 3 customer repos now first-party (or correctly flagged by the per-file advisor). Generic `largest_files` walk routes through canonical exclusions. | `72ec70a`      |
+| D113 / D128          | Per-pack lint-skip reasons plumbed end-to-end. Tools row reads `ruff (not run: typescript — config error)` instead of dropping the skip silently.                                                                       | `b878553`      |
+| D118-residue         | Graphify enumeration honors file-glob + content-minified exclusions. Webpack-hash bundles no longer rank as the densest file on customer reports (web-client: 4 606 fn artifact → 228 fn real first-party densest).     | `0da08bd`      |
+| D135 / D136 (interim) | Vendored-advisor token list extended for SAP B1 OData proxy classes, map-library, proto-gen conventions. Customers with heavy-autogen .NET ERP integrations now see actionable `.dxkit-ignore` guidance.                | `d9f0c31`      |
+
+Tests at this phase close: 1241 / 0 (+15 new unit tests for
+`getJscpdIgnorePatterns`, `splitToolsUnavailable`,
+`renderToolsUnavailableLines`). Architecture gate clean.
+
+### Phase C8 — Per-stack architectural shape (2026-05-17)
+
+Before this phase, the analyzers carried hardcoded Node-backend-
+centric path patterns (`'/controllers/'`, `'/services/'`,
+`'/models/'`) and a closed `SourceFile.type` union (`'controller'
+| 'service' | 'model' | ...`). A pure React frontend or a .NET
+WinForms desktop app matched none of the defaults and reported
+`0/0/0` across test-gap CRITICAL / HIGH / MEDIUM buckets — the
+kind of metric that reads as a bug to a frontend or desktop
+developer scanning the report.
+
+This phase replaces the hardcoded vocabulary with a per-pack
+`architecturalShape` capability on `LanguageSupport`. Each pack
+declares its own primary-component paths, route-handler paths,
+data-model paths, prose vocabulary, and per-bucket test-gap
+priority taxonomy. Cross-cutting analyzer code unions across
+active packs at runtime — so a polyglot repo's metrics correctly
+span TypeScript's `/controllers/` + `/components/` alongside
+C#'s `Forms/`, and adding a new language pack auto-extends every
+consumer.
+
+#### What landed
+
+- New `architecturalShape?: ArchitecturalShape` field on
+  `LanguageSupport` (commit `9a6c48d`).
+- 7 packs contribute concrete shapes (commit `c313744`). E.g.
+  the csharp pack declares `Forms/`, `ViewModels/`, `Services/`;
+  the typescript pack declares `/controllers/`, `/services/`,
+  `/models/`, `/components/`, `/hooks/`; the python pack
+  declares `/views/`, `/viewsets/`, `/models/`, `/serializers/`.
+  Two packs (rust, go) intentionally omit `architecturalShape`
+  — they don't have a canonical convention strong enough to
+  declare without overfitting.
+- Five consumer migrations onto the new helpers (commit
+  `6ab2712`): `analyzers/tools/generic.ts` (largest-file +
+  source-walk classification), `analyzers/maintainability/shallow.ts`
+  (vocabulary prose), `analyzers/security/actions.ts`
+  (route-handler attribution), `analyzers/tests/index.ts`
+  (test-gap priority taxonomy), `analyzers/health.ts`
+  (route-handler files count).
+- Cross-cutting registry helpers in `src/languages/index.ts`:
+  `allPrimaryComponentPaths(flags)`, `allRoutePaths(flags)`,
+  `allModelPaths(flags)`, `allTestGapPriorityPaths(flags)`,
+  `dominantVocabulary(flags)` — every consumer reads from the
+  active-pack union.
+- `dominantVocabulary` weighted by cloc line count (commit
+  `7147f3f`) so a polyglot repo's vocabulary prose matches the
+  dominant stack. A 106k-line-TS / 1.2k-line-Python monorepo
+  correctly renders as "controllers + components", not
+  "views + viewsets".
+- Two new arch-gate rules (commit `c4f9c20`) in
+  `scripts/check-architecture.sh`:
+  - No quoted path-style framework literals (`'/controllers/'`,
+    `'/services/'`, etc.) inside `src/analyzers/` — they belong
+    in `LanguageSupport.architecturalShape`.
+  - No bare singular role-name string literals (`'controller'`,
+    `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+    `'viewmodel'`, `'viewset'`, `'router'`) — the pre-extension
+    closed enum is replaced by free string labels derived from
+    `patternToLabel(matched architectural-shape pattern)`.
+- Synthetic 6th-pack injection assertion in
+  `test/recipe-playbook.test.ts` — confirms an
+  `architecturalShape` contribution from a brand-new pack flows
+  through test-gap taxonomy and Maintainability prose without
+  cross-cutting edits.
+- CLAUDE.md gains Rule 8 documenting the new architecture.
+
+#### Customer-visible effects (verified post-fix)
+
+- **platform** (TS / Node backend): test-gap MEDIUM 207;
+  Maintainability prose reads "controllers / components"
+  (typescript wins cloc weight on a 106k-line monorepo).
+- **web-client** (React frontend): test-gap MEDIUM 499 → 379
+  (-120) because the vendored-exclusion class-fix in the
+  audit-residue phase above also excludes lexical-playground
+  subtrees from primary-component matching. Honest count.
+- **dpl-studio** (.NET WinForms): Maintainability vocabulary
+  reads "Forms / Services"; test-gap classification correctly
+  picks up the WinForms project structure.
+
+#### Defects closed
+
+| ID   | Description                                                                                | Closing commit(s)    |
+| ---- | ------------------------------------------------------------------------------------------ | -------------------- |
+| D119 | Test-gap priority taxonomy backend-centric (HIGH; misleading on non-Node-backend stacks)   | this phase, above    |
+| D101 | React / csharp Maintainability vocabulary                                                  | this phase, above    |
+| D065 | API-docs gate on `routeHandlerFiles`                                                       | this phase, above    |
+
+### Phase C7 — Actionable scoring foundation (2026-05-17)
+
+Reframes dxkit's six-dimension scoring from descriptive ("Code
+Quality: 75/100, Good") to actionable ("Code Quality: 75/100, B —
+top action: fix 11 lint errors for +10, would lift rating to A").
+The numeric scores stay on the same 0-100 scale; every dimension
+now also produces structured provenance that tells the customer
+what to fix and how much the score would lift.
+
+dxkit's scoring is now **deterministic** (same repo + same dxkit
+version → identical score, every machine), **anchored** (cites
+underlying open standards: ISO/IEC 25010, ISO/IEC 5055, SQALE
+method, CVSS v4, CWE, OWASP, OpenSSF Scorecard), and **actionable**
+(every score paired with structured `deductions`, `capsApplied`,
+`topActions`).
+
+See [`docs/SCORING.md`](docs/SCORING.md) for the full methodology
+and [`docs/MIGRATING-TO-2.4.7-SCORING.md`](docs/MIGRATING-TO-2.4.7-SCORING.md)
+for JSON-consumer migration.
+
+#### Architecture
+
+- **Single home for dimension scoring** at `src/scoring/`,
+  mirroring the per-language pattern from CLAUDE.md Rule 6. Each
+  of the six dimensions (Security, Code Quality, Tests,
+  Documentation, Maintainability, Developer Experience) declares
+  a `DimensionScoringSpec<T>` artifact under
+  `src/scoring/dimensions/<id>.ts` consumed by a shared
+  pure-function evaluator. Adding a new dimension is a recipe
+  documented in CONTRIBUTING.md.
+- **Cap-tier taxonomy** named by severity: `trust-broken` (40,
+  catastrophic), `unmeasured` (35, no signal), `uncertainty` (65,
+  key tool missing), `partial-uncertainty` (75, partial gap),
+  `fixable-finding` (79, concrete bounded finding open). Caps
+  enforce the Label Contract: "A" means "no known blockers."
+- **Zero scoring code remains in `src/analyzers/`**. Files deleted
+  in full: `src/analyzers/scoring.ts`, `src/analyzers/security/scoring.ts`,
+  `src/analyzers/quality/scoring.ts`. CLAUDE.md gains Rule 7
+  documenting the new architecture; three new arch-gate rules in
+  `scripts/check-architecture.sh` prevent regression.
+- **Scoring playbook test** (`test/scoring-playbook.test.ts`)
+  injects a synthetic 7th-dimension spec to confirm the registry
+  + evaluator + format helpers stay spec-driven.
+
+#### Customer-visible score changes
+
+- **D131 closure — Security HIGH+ open caps at 79 (B)**. Pre-2.4.7
+  a single open HIGH-severity code finding (e.g. a TLS-validation
+  bypass) left the Security dimension at 95/100 ("Excellent") —
+  the headline contradicted the unfixed finding. Now repos with at
+  least one open HIGH or CRITICAL code finding cap at 79 (B grade)
+  with the cap explicit in the rendered report:
+  `Rating cap: 1 open HIGH+ code finding — bounded at 79/100`.
+  Repos with zero open HIGH+ are unaffected.
+- **D129 closure — severe-debt disclosure**. Pre-2.4.7, "Code
+  Quality 0/100" rendered identically whether the penalty stack
+  totalled -5 (barely below the floor) or -85 (catastrophic). The
+  Top Actions block now surfaces the rawPenalty when the score
+  floors at 0: `Severe: raw penalty -85 (deductions exceed the
+  floor).`
+- **Maintainability — SQALE baseline shift**. Methodology
+  migrated to ISO/IEC 25010 + SQALE-inspired step thresholds.
+  Baseline shifts from 70 to 100 (matches every other subtractive
+  dimension); the small-codebase bonus is removed as overfit.
+  Clean repos see Maintainability scores rise by ~30 points.
+  Documented behavior change.
+- **Testing — cap-then-penalty ordering**. When `commentedCodeRatio
+  > 0.5` AND coverage data missing, the final score is now 35 (cap
+  binds as the ceiling). Pre-2.4.7 it was 20 (cap then sub-cap
+  subtraction). The new semantic is cleaner — caps are ceilings,
+  not floors-and-then-keep-subtracting. Affects a narrow edge case.
+- **No-tests-found surfaces as a Top Action**. Repos with zero
+  test files now show a dedicated deduction +60 with severe-debt
+  disclosure, pointing at test-gaps for the ranked critical files.
+  Pre-2.4.7 these repos had a 0/E Tests score with no actionable
+  signal in the dimension's Top Actions block.
+- **`DimensionScore.status` → `rating`**. The descriptive enum
+  (`'excellent' | 'good' | 'fair' | 'poor' | 'critical'`) is
+  replaced by a uniform letter rating (`'A' | 'B' | 'C' | 'D' |
+  'E'`). The overall summary's `grade` field renames to `rating`
+  with the same `F` → `E` enum unification.
+- **Documentation + Developer Experience specs inverted from
+  additive to subtractive**. Numeric scores preserved by
+  construction; the `deductions[]` list now reads as
+  actions-to-take ("README missing") rather than bonuses already
+  earned ("README present").
+
+#### Renderer + JSON
+
+- CLI grid prints a top-action continuation under each dimension
+  line: `→ 11 lint errors +10 (B → A)`.
+- Health detailed markdown gains a `Top actions (sorted by score
+  uplift)` block per dimension with rating-transition annotations.
+- Dashboard hero now reads `Rating D` instead of `Grade D`.
+- Health-detailed JSON schema bumps `11` → `12` for the new
+  provenance fields on `DimensionScore` (`rawScore`,
+  `rawPenalty`, `methodology`, `deductions`, `capsApplied`,
+  `topActions`). All optional — pre-2.4.7 consumers continue to
+  work.
+
+Two-phase release. **Phase A** (audit-driven hot-patches, originally
+shipped 2026-05-13) closed a 17-defect cascade surfaced by a critical
+post-shipment audit on dpl-studio (enterprise C# / 1500+ files / 68
+sub-projects / 1.6M lines of cloc-counted JSON), plus the long-deferred
+D021 (coverage workflow). **Phase B** (class-fix release, 2026-05-14)
+pivoted from patch shipping to architectural class-fix shipping after
+pre-ship audits on platform and web-client surfaced 12 NEW defects
+(D074–D085), 9 of which were repeated instances of the same disease
+class fixed at different sites.
+
+### Phase C2 — Security UX rework (2026-05-14)
+
+Builds on Phase C1's typed canonical aggregator with the user-facing
+UX changes the 2026-05-14 critical-perspective audit demanded. C1
+closed the architectural drift class; C2 closes the labeling,
+scoring-credibility, and prioritization gaps that remained.
+
+- **C2.1 — Vuln-scan section split** (commit `e637911`). The pre-C2
+  executive summary had ONE "Code Findings" table that combined
+  codeBySeverity + secretsBySeverity under a label that meant
+  code-only to health-side prose. Readers (and AI agents) saw
+  apparent drift between health "10H code findings" and vuln-scan
+  "Code Findings: 16H." Both numbers were correct for their scopes,
+  but the labels obscured this. C2.1 splits the executive summary
+  into three labeled tables — **Code Findings** (code-pattern only,
+  matches health), **Secret & Config Findings** (gitleaks +
+  private-key + .env), **Dependency Vulnerabilities** (unchanged).
+  `SecurityReport.summary` grows `codeOnly` and `secretsOnly`
+  siblings of `findings`; renderer reads them by name.
+
+- **C2.2 / D098 — `SECRETS_PRESENT_CAP = 40`** (commit `243fa86`).
+  Pre-C2 baseline: web-client scored Security 60/100 "Good" despite
+  4 hardcoded API keys + 1 .env in git. Credentials in source-control
+  history are presumed compromised even after rotation, and a "Good"
+  score reads as deprioritizable. C2.2 caps the Security dimension at
+  ≤ 40 ("Fair" or worse) whenever `secretFindings > 0 ||
+  privateKeyFiles > 0 || envFilesInGit > 0`. Applied as a ceiling
+  AFTER all per-signal penalties and the dep-availability cap, so
+  it composes monotonically with everything else.
+  - Validated: web-client 60 → 40 "Fair" (✓ cap fires);
+    platform 45 → 40 "Fair" (✓); dpl-studio 90 → 90 (✓ cap
+    correctly does NOT fire — no committed credentials).
+
+- **C2.3 / D099 — `.env`-in-git callout block** (commit `7f43dfc`).
+  Pre-C2 a `.env` finding appeared as a plain HIGH entry in the
+  Configuration Issues section with no actionable command. C2.3
+  adds a dedicated `## 🚨 .env files tracked in git` block between
+  the executive summary and the per-category sections. Contents:
+  rotation caveat ("presumed compromised even after deletion"),
+  working-tree bash block (`git rm --cached <file>` per file +
+  `.gitignore` + commit), and history-rewrite block
+  (`git filter-repo` preferred + BFG alternative + "every
+  collaborator must re-clone" coordination caveat).
+
+- **C2.4 / D105 — Top 5 priority actions** (commit `6fe45fa`).
+  Pre-C2 reports listed every finding by severity within category;
+  no prioritization surface. A reader scanning the report had to
+  skim dozens of medium findings to spot the one KEV-listed dep
+  upgrade that actually mattered this week. C2.4 adds a
+  `## 🎯 Top 5 Priority Actions` markdown table at the top of the
+  findings sections. Priority order codifies the triage rubric:
+  KEV deps → hardcoded secrets → .env in git → private-key files →
+  non-KEV deps by risk-score tier → HIGH/CRITICAL code findings.
+  Capped at 5 — anything below the cap shows up in the per-category
+  sections below.
+
+- **D108 — Top 5 sparse-tier fallback** (commit `c09ba87`). C2.5
+  audit surfaced D108: dpl-studio's Top 5 had only 1 entry despite
+  2 unpatched dep vulns (MongoDB.Driver risk 19 + SharpCompress
+  risk 15). The original C2.4 dep filter required `riskScore >= 25`
+  which excluded the "watch" tier (10-25 per risk-score.ts), leaving
+  the table sparse. Fix: tier-iterate dep risk-score buckets
+  (`≥ 50 → 25-50 → 10-25 → ≥ 0`) and stop only when Top 5 is full.
+  Findings without scored risk surface in the lowest tier so
+  nothing is silently dropped.
+
+### Phase C2 — Verification audit (C2.5)
+
+Cross-report parity audit on three customer repos (`platform`,
+`dpl-studio`, `web-client`). All vuln-scan + health pairs verified:
+
+- **D086 / D087 / D091 closures from C1 remain intact** across
+  all 3 repos. Cross-report parity holds.
+- **D098 secrets-cap fires correctly**: web-client + platform both
+  drop to 40 "Fair"; dpl-studio (no secrets) stays at 90.
+- **D099 .env callout renders correctly on web-client** (the only
+  repo with a tracked .env).
+- **D105 Top 5 surfaces actionable rows on every repo**, post-D108
+  including the sparse-repo case.
+
+### D109 investigation — non-defect
+
+C2.5 also surfaced a candidate drift: platform vuln-scan code-only
+`10H 7M` vs health `10H 10M`. HIGH agreed; MEDIUM differed by 3.
+Investigation via an in-process probe (`tmp/d109-probe.js` runs
+both analyzers sequentially in ONE node process, sharing the
+dispatcher cache) showed identical aggregates: `{ high: 10,
+medium: 20 }` on both sides. **D109 is NOT a real defect** — the
+architecture is sound. The observed drift across separate
+processes was semgrep tool-runtime variance (MEDIUM count varied
+7 → 10 → 20 across runs while HIGH stayed stable at 10). Future
+docs follow-up: note semgrep's non-determinism as a known
+limitation.
+
+### Phase C1 — Canonical security aggregator (2026-05-14)
+
+Three customer-facing aggregation-drift defects (D086, D087, D091)
+shared one root: **multiple consumers re-counting severity from raw
+envelope arrays with different inclusion rules**. Phase B closed
+this class at the GATHER layer (canonical `walkSourceFiles`); Phase
+C1 closes it at the AGGREGATION layer with the same class-fix
+discipline plus two newly-surfaced defects (D107 BoM vs vuln-scan
+disagreement, D091-boundary neighbor-bucket miss) caught during the
+pre-release audit and fixed before ship.
+
+- **Canonical `SecurityAggregate`** (commit `a3942f4`). New
+  `src/analyzers/security/aggregator.ts` exporting
+  `buildSecurityAggregate(envelopes) → SecurityAggregate`. The typed
+  contract carries three separately-named severity buckets
+  (`codeBySeverity`, `depBySeverity`, `secretsBySeverity`), two
+  distinct dep-count fields (`dependencyAdvisoryUniqueCount`
+  canonical user-facing + `dependencyFindingsRawCount` for audit),
+  fingerprint-stamped `CodeFinding[]` per category, dedup audit
+  trail, and per-source provenance. Renderers cannot accidentally
+  sum cross-axis or pick the wrong number — both defects become
+  impossible by the typed shape.
+
+- **Six consumers migrated** onto the aggregate (4 user-facing + 2
+  internal):
+  - `security/index.ts` standalone vuln-scan (commit `f3bd69f`, D087
+    closure — Subtotal now matches "N advisories" by reading
+    `dependencyAdvisoryUniqueCount` by name)
+  - `security/shallow.ts` health-side scorer (commit `c73c7ca`, D086
+    closure — code-finding prose reads `codeBySeverity` from the same
+    field vuln-scan reads)
+  - `dashboard/index.ts` (commit `9fb0220` — reads severity buckets
+    from `vulns.summary.findings + dependencies` instead of re-summing
+    finding arrays)
+  - BoM (commit `4ae69ed` C1.8, D107 closure — see below)
+  - C# pack (commit `14b02a7` C1.9, G_v4_9 — see below)
+  - Action planner + legacy fallback (`actions.ts`, `shallow.ts`)
+    annotated `// aggregator-ok` for the two legitimate exceptions
+    (rebuilding `SecurityScoreInput` from a `SecurityReport`; legacy
+    ScoreInput fixtures predating the aggregator field).
+
+- **D107 — BoM vs vuln-scan disagreement (NEW, surfaced in C1.7
+  audit)** (commit `4ae69ed`). dpl-studio: vuln-scan reported 2 dep
+  advisories (MongoDB.Driver HIGH + SharpCompress MEDIUM via
+  osv-scanner-nuget-direct) while BoM reported 0. Root cause: BoM
+  walks per-sub-root project directories and called `gatherDepVulns`
+  at each sub-root, hitting the csharp pack's cwd-sensitive routing
+  (at sub-root with stale `obj/project.assets.json`, dotnet returned
+  0; at repo-root with no `.csproj`, the fallback fired). Fix: BoM
+  now gathers dep-vulns ONCE at the repo root and passes the result
+  to every per-sub-root entry builder via a new `depVulnsOverride`
+  option. License-side stays per-sub-root (legitimately
+  per-project). Post-fix: dpl-studio BoM 2 ≡ vuln-scan 2.
+
+- **G_v4_9 — csharp pack cwd-invariant** (commit `14b02a7`). The
+  pack-contract defect underneath D107: `gatherCsharpDepVulnsResult`
+  produced different fingerprint sets depending on where `cwd`
+  pointed within the repo. Fix: always run BOTH `dotnet list package
+  --vulnerable` (when applicable) AND
+  `osv-scanner-nuget-direct` (the direct PackageReference parse)
+  in parallel, merge findings by `(package, installedVersion, id)`
+  fingerprint at the pack layer. Envelope counts recomputed from the
+  merged set; `tool` field joins what ran. Result: same fingerprint
+  set regardless of cwd. Any future multi-cwd caller now inherits
+  consistency.
+
+- **D091 boundary case (NEW, surfaced in C1.7 audit)** (commit
+  `c7b72e2`). Web-client `DBConfigureForm.js:43` (semgrep MEDIUM
+  `bypass-tls-verification`) and `:45` (registry HIGH
+  `tls-validation-disabled`) — same root, 2 lines apart, same
+  canonical rule — failed to collapse because the
+  `Math.floor(line/3)*3` bucketing put them in different buckets
+  (42 and 45, straddling a multiple-of-3). Documented as a known
+  edge case in the C1.1 commit; biting in production was the trigger
+  to fix it. Fix: after the natural-bucket lookup misses, check
+  neighbor buckets at `(canonicalRule, file, line ± 3)`. Two
+  MEDIUMs absorbed into HIGHs on web-client, reducing apparent
+  code-finding count from 13 → 11 in the right direction.
+
+- **G_v4_8 architectural gate** (commit `6e89131`) in
+  `scripts/check-architecture.sh`. Blocks the smoking-gun pattern
+  (`[<var>.severity]++` accumulator bump, or
+  `function countBySeverity(`) outside the canonical aggregator.
+  Static lookup maps (`SEV_RANK`, `SEV_LABEL`) and type-decl fields
+  inside interfaces don't match — only the actual aggregation shape.
+  BoM's per-package `[e.maxSeverity]++` naturally falls outside the
+  pattern (different attribute name) so BoM's legitimate per-package
+  aggregation is unaffected.
+
+- **Recipe codification (G_v4_8 + G_v4_9 in
+  `tmp/recipe-v4-working-doc.md`)**. Two recipe-playbook
+  synthetic-pack assertions in `test/recipe-playbook.test.ts`
+  (synthetic depVuln finding flows into `depBySeverity` +
+  `dependencyAdvisoryUniqueCount`; cross-tool TLS-bypass collapses
+  regardless of pack identity). Future language packs feeding
+  security data through standard capability descriptors
+  automatically inherit drift prevention.
+
+### Phase C1 — Defect closures
+
+| ID | Status | Closing commit(s) |
+| --- | --- | --- |
+| D086 | CLOSED (architectural) | `a3942f4` + `c73c7ca` — both surfaces read `aggregate.codeBySeverity` |
+| D087 | CLOSED | `a3942f4` + `f3bd69f` — `dependencyAdvisoryUniqueCount` field forces the canonical count |
+| D091 | CLOSED | `a3942f4` (canonical-rule registry + line-window) + `c7b72e2` (neighbor-bucket lookup for boundary case) |
+| D107 | CLOSED (NEW, two layers) | `4ae69ed` (BoM single-source) + `14b02a7` (G_v4_9 csharp cwd-invariant) |
+
+### Phase C1 — Empirical validation
+
+Cross-report parity audit on three customer repos (all numbers
+post-Phase-C1):
+
+- **platform** (1500+ TS/Node files, 2 project roots):
+  - vuln-scan Subtotal **81** ≡ "**81** advisories" ≡ "Showing 50 of
+    **81**" ≡ BoM `totalAdvisories` **81** ✓
+  - 5 cross-tool TLS-bypass collisions deduped (MEDIUM bucket
+    14 → 9)
+- **dpl-studio** (C#, 3 nested project roots):
+  - vuln-scan **2** ≡ BoM **2** ≡ health **2** (dep) ✓
+  - health code findings **1** ≡ vuln-scan code findings **1** ✓
+- **web-client** (JS-heavy, large repo with degraded license info):
+  - dep advisories **31** ≡ **31** ≡ **31** ✓
+  - D091-boundary case on `DBConfigureForm.js:43+:45` collapses (the
+    C1.10 fix)
+  - 2 MEDIUMs absorbed into HIGHs via neighbor-bucket lookup
+
+Tests: **1178 passed / 8 skipped** (1175 pre-Phase-C + 1 + 2 + 1 new
+unit/synthetic-pack assertions). Architecture gate clean. No
+regressions across the cross-ecosystem matrix.
+
+Open and deferred to Phase C2-C8 (still inside 2.4.7 per the
+2026-05-14 reprioritization):
+
+- C2: Security UX rework — split vuln-scan "Code Findings" section
+  into code-only + secret/config (closes the perception-level D086
+  drift even though architectural drift is gone), security rubric
+  weights secrets/.env heavily (D098), Top 5 actions in short
+  reports (D105), .env-in-git callout (D099)
+- C3: D094 CWE truncation (`**CWE:** C` still on 2 platform
+  semgrep findings), D090 Remediation Commands split
+- C4: D100 vendor-path exclusions
+- C5: D093 word-boundary truncation, D096 densest-file
+  clarification
+- C6: D106 agent rewrites
+- C7: Final pre-release validation
+- C8: PR → main → tag v2.4.7 → SLSA publish
+
+### Phase B — Class-fix release (2026-05-14)
+
+Two architectural deliverables backed by 4 consumer-site migrations
+and a permanent gate:
+
+- **G_v4_7 — `walkSourceFiles` + `countLineMatches`** (new canonical
+  helpers in `src/analyzers/tools/walk-source-files.ts`). Pure JS,
+  no shell. The web-client D082/D083 silent-zero cascade was caused
+  by `grep -rEf <pat> --include=*.js .` producing 67MB of stdout on
+  minified files, overflowing `run()`'s 64MB ceiling, and returning
+  empty. The walker prunes excluded files at the directory boundary,
+  so grep is never asked to walk `public/build/*.min.js` in the
+  first place. Bumping `maxBuffer` is a moving target — the right
+  answer is "don't pass excluded files to the scanner at all."
+
+- **Consumer migrations onto canonical helpers** (4 sites):
+  - `tools/generic.ts` (commits `3275e1e` + `226a56a`)
+  - `quality/gather.ts` (commit `82e0e75`)
+  - `tests/gather.ts` (commit `753a412`)
+  - `security/gather.ts` TLS-bypass walk (commit `099e844`)
+  Each migration is behavior-preserving by default (e.g. `includeTests: true`
+  preserves pre-migration semantics where the legacy grep matched in
+  test files too).
+
+- **`gatherDebugStatements` shared helper** (commit `e7a8821`).
+  Replaces the two divergent implementations in `health.consoleLogCount`
+  (sum of JS console + Python print + Go fmt.Print across language-
+  scoped walks) and `quality.consoleLogCount` (single console.* pattern
+  across all extensions). After: both reports route through one
+  function — they cannot drift.
+
+- **Architectural gate** (commit `32574e0`) in
+  `scripts/check-architecture.sh`. Blocks new
+  `grep -r{l,n,c,E,f}` calls in production code outside a 4-file
+  allowlist. After this release, the D082/D083 class of bug cannot
+  recur without explicitly bypassing the canonical helpers — which
+  the gate blocks.
+
+### Phase B — Defect closures (D074–D080, D082–D085)
+
+| ID | Severity | Closing commit(s) |
+| --- | --- | --- |
+| D074 — commented-out matches inflate counts | HIGH | `3275e1e` + `82e0e75` + `099e844` + `e7a8821` (`skipComments: true` on print-family / anyType / eval / TLS-bypass) |
+| D075 — sourceFiles cross-report drift | HIGH | `0e71683` + `3275e1e` + `753a412` + `e7a8821` (canonical walker + label alignment) |
+| D076 — dep-vuln count drift health vs BoM | HIGH | `06b0cec` (BoM `totalAdvisories` uses unique fingerprint count) |
+| D077 — dashboard tile drift | MED | closes with D075 |
+| D078 — BoM Risk `**0.0**` for missing CVSS | MED | `46b0d6e` (`computeRiskScore` returns `null` for `cvssScore=0`) |
+| D079 — duplicate grep-count implementations | MED | `82e0e75` + `e7a8821` (shared `gatherDebugStatements`) |
+| D080 — lint dispatcher last-wins | MED | `72cd102` (`gatherWithProvenance` exposes attempted+skipped sources; label reads `"ruff (not run: typescript)"`) |
+| D082 — web-client `consoleLogCount = 0` silent zero | CRITICAL | `0e71683` + `3275e1e` + `e7a8821` (walker prunes minified files at directory boundary) |
+| D083 — `run()` maxBuffer overflow on minified-JS | CRITICAL | `0e71683` + `3275e1e` + `099e844` + `32574e0` |
+| D084 — D082 cascade (anyType, eval) | HIGH | closes with D082/D083 |
+| D085 — web-client dep-count drift | HIGH | `06b0cec` |
+
+**Deferred to 2.4.8**:
+- D081 (`Dead Imports: 0` suspicious) — investigated; root cause is
+  graphify Python script's `dead = imports - calls - module_ids`
+  zeroing out module-style imports. Fix requires a new metric
+  (`unreachableImportCount`) + synthetic tests + threshold tuning.
+- **G_v4_8 full architectural enforcement** — typed gather-result
+  interfaces with explicit field-ownership claims. Narrow D076/D085
+  fix shipped (BoM uses fingerprint count); the typed-contract
+  prevention layer is preventive hardening, not on the convergence-
+  audit gate.
+
+### Phase B — Empirical validation
+
+Convergence audit on three customer repos:
+
+- **dpl-studio**: 1537 source files consistent across health,
+  test-gaps, maintainability dimension; `consoleLogCount=1`,
+  `tlsDisabledCount=1` stable.
+- **platform** (the audit's most-troubled repo): `sourceFiles`
+  converged 447/438/444 → **444 / 444 / 444**;
+  `consoleLogCount` cross-report converged 1578/1555 → **698 / 698**;
+  `tlsDisabledCount` 18 reported / 11 active → **11**; lint label
+  `"ruff"` → `"ruff (not run: typescript)"`.
+- **web-client**: `consoleLogCount` **0 → 1066** (D082/D083 closure;
+  catastrophic silent zero eliminated).
+
+### Phase A — Audit-driven hot-patches (2026-05-13)
+
+The earlier portion of the 2.4.7 release. Same content as below —
+preserved for traceability.
+
+The cascade taught us that test-green ≠ report-correct: all 1091
+tests passed before the audit. Reinforces
+`feedback_critical_audit_before_shipping.md` — pre-delivery audit on
+real customer reports is the gold standard, not the unit-test suite.
+
+### Added — D021 close (coverage workflow)
+
+Four pieces shipped together:
+
+- **`coverageFidelity` tier** classifies the `coverageSource` field
+  into three trust levels:
+  - `line-coverage` — real artifact (istanbul / coverage-py / jacoco /
+    simplecov / lcov / cobertura / go). The percent is line-coverage
+    truth.
+  - `import-graph` — derived from test-file import edges (up to N
+    hops). Informed heuristic.
+  - `filename-match` — share of source files with a name-matched
+    test. Pure heuristic.
+  Test-gap reports lead with a ⚠️ / ℹ️ banner when fidelity isn't
+  `line-coverage`, so a 0% from a heuristic can't be confused with a
+  0% from a real coverage run.
+- **`--with-coverage` flag** on `health` and `test-gaps`. Materializes
+  the coverage artifact via per-pack `runTests()` BEFORE analysis, so
+  `loadCoverage()` finds it and the report reads line-coverage truth.
+  Shares the same runner the `coverage` command uses.
+- **`vyuh-dxkit report` orchestrator**. Single command that runs
+  every analyzer + dashboard in dependency order. `--with-coverage`
+  runs the coverage step ONCE upfront rather than per-command, so
+  `health` and `test-gaps` share the artifact without re-running the
+  test suite per analyzer.
+- **Cross-ecosystem matrix coverage row × 8 packs** in
+  `test/integration/cross-ecosystem.test.ts` + per-pack contract
+  conformance assertions in `test/languages-contract.test.ts`. Locks
+  in the round-trip from "test runner" to "coverageFidelity:
+  line-coverage" across python / typescript / go / rust / csharp /
+  kotlin / java / ruby.
+
+### Added — language pack contracts
+
+- **`LanguageSupport.upgradeCommand?(name, version)`** (G_v4_4) —
+  each pack ships its own per-ecosystem package upgrade template
+  (`dotnet add package`, `npm install`, `pip install`, `cargo update`,
+  `go get`, edit-pom for Maven, edit-Gemfile for Bundler). Replaces
+  the hardcoded switch on `tool` in `buildUpgradeCommand`
+  (security/index.ts). Dispatch now routes through
+  `getLanguage(packId).upgradeCommand()` — no language branching in
+  non-pack code (CLAUDE.md rule 6).
+- **`DepVulnFinding.packId`** stamped at every producer site
+  (npm-audit / pip-audit / govulncheck / cargo-audit /
+  dotnet-vulnerable / osv-scanner-deps via new `packId` parameter on
+  `parseOsvScannerFindings` and `gatherOsvScannerDepVulnsResult`). The
+  vuln-scan "Remediation Commands" block now ships actual runnable
+  commands instead of bare `#` prose for every ecosystem.
+- **`LanguageSupport.clocLanguageNames?`** (D073) — each pack
+  declares the names cloc emits in its `--json` output. cloc's
+  per-language summary + `totalLines` aggregation now filter to the
+  active-pack set, so markup/data formats (JSON / XML / CSV /
+  Markdown) stop deflating quality metrics. On dpl-studio: Comment
+  Ratio 4.3% → 27.9% (a 1.6M JSON denominator vs C#'s 568K).
+
+### Fixed — Tier 1 (credibility critical)
+
+The post-shipment audit's master bug + its direct cascade:
+
+- **D055** — `.dxkit-ignore` multi-segment paths flatten to basenames
+  in cloc / graphify / grep. `Dev/Addons/DPLAddon/SAPB1/` silently
+  became `{Dev, Addons, DPLAddon, SAPB1}` — cloc then excluded every
+  directory named `Dev` in the tree, killing 90% of source visibility.
+  Fix: `getClocExcludeFlags` emits `--exclude-dir` (basenames) PLUS
+  `--fullpath --not-match-d` (Perl regex on full path).
+  `getPythonExcludeFilter` emits both a basename set AND a multi-
+  segment path list for graphify's walker. Grep callers post-filter
+  via `isExcludedPath()`.
+- **D056** — Registry-driven greps (docCommentFiles, tlsBypassFindings)
+  now post-filter through `isExcludedPath()`. Pre-fix the shell pipe
+  only filtered hardcoded `node_modules` + `dist` — every other
+  exclusion was silently ignored.
+- **D057** — Cloc no longer writes `sourceFiles`. Generic.ts owns
+  the source-file count; cloc owns line counts + language breakdown.
+  Pre-fix `mergeLayer2` blindly overwrote generic's find-based 1537
+  with cloc's broken 141. Class-fix (merger field-ownership claims,
+  G_v4_8) deferred to 2.4.8.
+- **D072** — Registry-greps now apply the SAME autogen filters
+  (`autogeneratedSourcePatterns` basename glob + `isAutogeneratedByHeader`
+  content marker) that `gatherGenericMetrics` uses for `sourceFiles`.
+  Pre-D072 docCommentFiles counted designer.cs / .g.cs files in the
+  numerator but not in `sourceFiles`'s denominator, producing 104%
+  docRatio on dpl-studio even after D055.
+- **D062** closure via **G_v4_4** above.
+
+### Fixed — Tier 2 (visible UX bugs)
+
+- **D060** — Weekly velocity fills empty weeks with 0-row entries
+  between first and last week with commits. Pre-fix `W08 2, W09 1,
+  W10 7, W14 1, W16 6, ...` had silent gaps that implied "data
+  missing" when reality was zero commits.
+- **D061** — Hot Files filters auto-generated files via the existing
+  `autogeneratedSourcePatterns` registry. Pre-fix dpl-studio's hot
+  list included `*.Designer.cs` files (WinForms designer regeneration
+  noise).
+- **D063** — BoM Risk column rendered to one decimal (`18.5`,
+  `14.8`) in both Triage and Vulnerable Packages tables. Pre-fix
+  `toFixed(0)` rounded 14.8 → 15, making it look like SharpCompress
+  should appear in the ≥15 triage when it was actually 14.8 (below
+  threshold).
+- **D064** — BoM Reach column three-state: `✓` / `✗` / blank. Pre-
+  fix blank silently merged "checked and not reachable" with "no
+  data."
+- **D032** — Two-part dashboard-input fix. `analyzeHealthWithMetrics`
+  runs unconditionally (was gated on `--detailed`); every report
+  command writes BOTH `-detailed.json` AND `-detailed.md`
+  unconditionally. `--detailed` flag now only controls the
+  success-log console output. Pre-fix a default `dxkit health . &&
+  dxkit dashboard .` workflow showed stale tile numbers + stale tab
+  content from whatever the last `--detailed` run had left behind.
+
+### Fixed — Tier 3 (cosmetic)
+
+- **D065** — Health "Add API documentation" recommendation no longer
+  fires when `controllers === 0`. Pre-fix it triggered for any 100+
+  source file repo, including desktop apps with no HTTP surface.
+- **D068** — Dashboard "Critical Issues at a Glance" discloses
+  "(showing N of M)" when the per-surface caps (3 vulns + 3 gaps +
+  2 bom-triage) drop items. Pre-fix a customer with 20 CRITICAL
+  untested files saw 3 and could reasonably infer "only 3 critical
+  things in the repo."
+- **D070** — BoM main report collapses the project-roots paragraph
+  to a 5-root preview + count; the full list moves to the detailed
+  report under a dedicated `## Project Roots (N)` section, one root
+  per line for grep / sort.
+
+### Recipe v4 status
+
+- **G_v4_4** (per-pack `upgradeCommand`) — **delivered** (promoted
+  from 2.4.8 because D062 fix was otherwise a switch-statement patch).
+- Still queued for 2.4.8: G_v4_5 (per-pack
+  `autogeneratedHeaderPatterns`), G_v4_6 (unified TLS bypass count +
+  findings), G_v4_7 (`walkSourceFiles` unified helper, class-fix for
+  D072), G_v4_8 (merger field-ownership claims, class-fix for D057),
+  G_v4_inherited_G2opt2 / _G3 / _G7.
+
+### Architecture — class lessons from the cascade
+
+Two layering insights from D057 and D072, both with concrete class-
+fix candidates queued for 2.4.8:
+
+- **Layer ownership** — when two gather functions write the same
+  field (e.g. generic.ts and cloc.ts both writing `sourceFiles`),
+  the merger should reject overlap rather than last-write-wins.
+  Tracked as G_v4_8.
+- **Source-file definition uniformity** — every metric claiming
+  "files matching X among source files" must share the predicate
+  `sourceFiles` uses (exclusions + autogen-basename + autogen-header).
+  Tracked as G_v4_7 (`walkSourceFiles` shared helper). Until it
+  lands, every grep caller funnels through
+  `isCountedSourceFile(cwd, relPath)` in `tools/generic.ts`.
+
 ## [2.4.6] - 2026-05-07
 
 ### Added — Ruby language pack (Phase 10k.2)

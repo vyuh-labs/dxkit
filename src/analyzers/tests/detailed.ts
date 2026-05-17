@@ -5,6 +5,7 @@ import { TestGapsReport, SourceFile, RiskTier } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildTestGapsActions, countsFromReport } from './actions';
 import { TestGapsCounts, scoreTestGapsCounts } from './scoring';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface TestGapsDetailedReport extends TestGapsReport {
   schemaVersion: string;
@@ -126,9 +127,7 @@ export function formatTestGapsDetailedMarkdown(
   L.push('');
 
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

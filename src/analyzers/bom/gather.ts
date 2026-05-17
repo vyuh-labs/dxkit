@@ -7,7 +7,12 @@
 
 import { gatherLicensesResult } from '../licenses/gather';
 import { gatherDepVulns } from '../security/gather';
-import type { DepVulnFinding, LicenseFinding } from '../../languages/capabilities/types';
+import type { DepVulnSummary } from '../security/types';
+import type {
+  DepVulnFinding,
+  LicenseFinding,
+  LicensesResult,
+} from '../../languages/capabilities/types';
 import type { BomEntry, BomSeverity, BomTopLevelRollup } from './types';
 
 const SEV_RANK: Record<BomSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -139,106 +144,45 @@ export interface BomGatherResult {
   entries: BomEntry[];
   toolsUsed: string[];
   toolsUnavailable: string[];
-  /** Cwd-relative project-root paths the gather walked. Length 1 for
-   *  single-root scans ("." ); length >1 for nested aggregation. */
-  projectRoots: string[];
 }
 
 /**
- * Merge per-root gather results into one deduplicated set.
+ * Both pre-gathered envelopes are optional. The override pattern lets
+ * the analyzer layer hand BoM a canonical inventory + advisory set
+ * built once at repo-root, so the gather pipeline never re-walks the
+ * tree from a different cwd (the root cause of cross-consumer drift
+ * on the same logical metric — e.g. dpl-studio's licenses-vs-BoM
+ * package count diverging because two walks visited two different
+ * subsets of csproj files).
  *
- * Dedupe key is `(package, version)` — the same logical package at
- * the same version installed under two roots is the same artifact,
- * so reporting two rows would be noise. When the same key appears
- * under multiple roots:
+ * `depVulnsOverride`: shared dep-vuln set across nested callers.
+ *   Pre-fix BoM called `gatherDepVulns(absRoot)` per sub-root, and
+ *   the csharp pack's gather was cwd-sensitive — at a sub-root with
+ *   a stale `obj/project.assets.json` it returned 0 advisories via
+ *   dotnet, while at repo-root with no `.csproj` it correctly fell
+ *   back to `osv-scanner-nuget-direct` and surfaced them. Override +
+ *   the pack-layer cwd-invariance work closed that gap.
  *
- *   - `sources` unions the sub-paths
- *   - `isTopLevel` OR-merges — if any root treats the package as
- *     top-level, the merged entry is top-level (upgrade decisions
- *     surface under Top-Level Dep Groups)
- *   - `vulns` unions with dedup on `(id, package, installedVersion)`
- *     — the same advisory reported from two roots collapses into
- *     one finding but its `topLevelDep` list unions
- *   - license metadata (licenseType, sourceUrl, etc.) prefers the
- *     first root with non-UNKNOWN data, falling back to whatever
- *     the first-seen entry carried
- *
- * Pure function; unit-testable without filesystem.
+ * `licensesOverride`: pre-gathered canonical license inventory.
+ *   When set, the gather skips its own `gatherLicensesResult(cwd)`
+ *   call and uses the override directly. `null` (a deliberate
+ *   "license inventory exists but is empty / unavailable") is
+ *   distinguished from `undefined` ("gather it yourself") — the
+ *   canonical analyzer-layer caller always passes the cached
+ *   envelope shape verbatim.
  */
-export function mergeNestedBomEntries(
-  perRoot: ReadonlyArray<{ relPath: string; result: BomGatherResult }>,
-): BomGatherResult {
-  const byKey = new Map<string, BomEntry>();
-  const toolsUsed = new Set<string>();
-  const toolsUnavailable = new Set<string>();
-  const projectRoots = new Set<string>();
-
-  for (const { relPath, result } of perRoot) {
-    for (const t of result.toolsUsed) toolsUsed.add(t);
-    for (const t of result.toolsUnavailable) toolsUnavailable.add(t);
-    projectRoots.add(relPath);
-
-    for (const e of result.entries) {
-      const key = `${e.package}@${e.version}`;
-      const existing = byKey.get(key);
-      if (!existing) {
-        byKey.set(key, { ...e, sources: [relPath] });
-        continue;
-      }
-      // Union sources
-      existing.sources = [...new Set([...(existing.sources ?? []), relPath])].sort();
-      // OR-merge isTopLevel (any-root-top-level wins; undefined is
-      // ignored so a degraded pack doesn't mask a definitive true).
-      if (e.isTopLevel === true) existing.isTopLevel = true;
-      // Prefer non-UNKNOWN license metadata from later roots when the
-      // existing entry came up empty.
-      if (existing.licenseType === 'UNKNOWN' && e.licenseType !== 'UNKNOWN') {
-        existing.licenseType = e.licenseType;
-        existing.licenseText ??= e.licenseText;
-        existing.sourceUrl ??= e.sourceUrl;
-        existing.description ??= e.description;
-        existing.supplier ??= e.supplier;
-        existing.releaseDate ??= e.releaseDate;
-      }
-      // Vuln union with dedup on (id, package, installedVersion).
-      if (e.vulns.length > 0) {
-        const seen = new Set(
-          existing.vulns.map((v) => `${v.id}\0${v.package}\0${v.installedVersion ?? ''}`),
-        );
-        for (const v of e.vulns) {
-          const vkey = `${v.id}\0${v.package}\0${v.installedVersion ?? ''}`;
-          if (seen.has(vkey)) continue;
-          seen.add(vkey);
-          existing.vulns.push(v);
-        }
-        // Re-derive maxSeverity + upgradeAdvice after vuln merge.
-        existing.maxSeverity = maxSeverityOf(existing.vulns);
-        const tieredAdvice = existing.vulns
-          .map((v) => v.upgradeAdvice)
-          .find((a) => a && a.length > 0);
-        existing.upgradeAdvice = tieredAdvice ?? deriveTier1Resolution(existing.vulns);
-      }
-      // joinedFromBoth: once both sides of the join have been seen
-      // anywhere, keep it. Only flips true, never back to false.
-      if (e.joinedFromBoth) existing.joinedFromBoth = true;
-    }
-  }
-
-  const entries = [...byKey.values()].sort(
-    (a, b) => a.package.localeCompare(b.package) || compareSemver(a.version, b.version),
-  );
-  return {
-    entries,
-    toolsUsed: [...toolsUsed],
-    toolsUnavailable: [...toolsUnavailable],
-    projectRoots: [...projectRoots].sort(),
-  };
-}
-
-export async function gatherBomEntries(cwd: string): Promise<BomGatherResult> {
+export async function gatherBomEntries(
+  cwd: string,
+  options: {
+    depVulnsOverride?: DepVulnSummary;
+    licensesOverride?: LicensesResult | null;
+  } = {},
+): Promise<BomGatherResult> {
   const [licensesEnv, depVulns] = await Promise.all([
-    gatherLicensesResult(cwd),
-    gatherDepVulns(cwd),
+    options.licensesOverride !== undefined
+      ? Promise.resolve(options.licensesOverride)
+      : gatherLicensesResult(cwd),
+    options.depVulnsOverride ? Promise.resolve(options.depVulnsOverride) : gatherDepVulns(cwd),
   ]);
 
   const licenseFindings = licensesEnv?.findings ?? [];
@@ -315,7 +259,6 @@ export async function gatherBomEntries(cwd: string): Promise<BomGatherResult> {
     entries,
     toolsUsed: [...toolsUsed],
     toolsUnavailable: [],
-    projectRoots: ['.'],
   };
 }
 

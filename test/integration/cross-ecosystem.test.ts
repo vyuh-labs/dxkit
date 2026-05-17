@@ -742,3 +742,51 @@ describe('matrix — test-gaps (Phase 10i.0.4)', () => {
     });
   }
 });
+
+/**
+ * D021 sub-piece 4 (2.4.7) — coverage capability across every language pack.
+ *
+ * Asserts each pack's `LanguageSupport.capabilities.coverage` exposes
+ * a `runTests()` callable. `vyuh-dxkit coverage` /
+ * `vyuh-dxkit health --with-coverage` / `vyuh-dxkit report` rely on
+ * every active pack having this method so the orchestrator can
+ * materialize artifacts uniformly; a pack without `runTests` shows up
+ * as `'skipped — no runTests() implementation yet'` in the runner row.
+ * Post-2.4.7 every shipped pack closes the round-trip from "test
+ * runner" to "coverageFidelity: line-coverage".
+ *
+ * No `--with-coverage` end-to-end run here — that would need each
+ * fixture to ship a working test runner (pytest/vitest/go test/etc.)
+ * with actual test files. The benchmark fixtures intentionally stay
+ * minimal (source-only) because the matrix's job is contract
+ * conformance, not test-runner setup. Real-run coverage exercise lives
+ * in the per-pack unit tests (`test/languages-*-coverage*.test.ts`)
+ * and in the `coverageFidelity` matrix downstream of dpl-studio
+ * customer audits.
+ */
+describe('matrix — coverage (D021 sub-piece 4)', () => {
+  for (const lang of BENCHMARK_LANGUAGES) {
+    it(`${lang.name}: coverage capability declares runTests()`, async () => {
+      const { getLanguage } = await import('../../src/languages');
+      const idMap: Record<string, string> = {
+        Python: 'python',
+        Go: 'go',
+        Rust: 'rust',
+        'C# (single)': 'csharp',
+        'C# (multi)': 'csharp',
+        Kotlin: 'kotlin',
+        Java: 'java',
+        Ruby: 'ruby',
+      };
+      const id = idMap[lang.name];
+      expect(id, `${lang.name}: missing id mapping in matrix coverage row`).toBeDefined();
+      const pack = getLanguage(id as Parameters<typeof getLanguage>[0]);
+      expect(pack, `${lang.name}: pack not found in registry`).toBeDefined();
+      const runTests = pack!.capabilities?.coverage?.runTests;
+      expect(
+        typeof runTests,
+        `${lang.name}: coverage.runTests() missing — orchestrator would render this pack as "skipped"`,
+      ).toBe('function');
+    });
+  }
+});

@@ -12,17 +12,14 @@
  *   eslint    → lint errors/warnings (when available)
  *   grep      → hygiene markers (TODO, FIXME, HACK, console.log)
  */
-import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
-import { getGrepExcludeDirFlags, isExcludedPath } from '../tools/exclusions';
 import { gatherClocMetrics } from '../tools/cloc';
-import { detectActiveLanguages } from '../../languages';
+import { walkSourceFiles, countLineMatches } from '../tools/walk-source-files';
+import { gatherDebugStatements } from '../tools/debug-statements';
 import { defaultDispatcher } from '../dispatcher';
-import { DUPLICATION, LINT, STRUCTURAL } from '../../languages/capabilities/descriptors';
+import { DUPLICATION, STRUCTURAL } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
-import type { CapabilityProvider } from '../../languages/capabilities/provider';
-import type { LintResult } from '../../languages/capabilities/types';
 import { DuplicationStats, FileOffender } from './types';
 
 // ─── dispatcher-driven duplication gather ───────────────────────────────────
@@ -54,41 +51,40 @@ export async function gatherDuplication(cwd: string): Promise<{
   };
 }
 
-// ─── grep: per-file hygiene offender counts ─────────────────────────────────
+// ─── canonical hygiene counters (G_v4_7 / D079 / D074) ──────────────────────
 
 /**
- * Count matches per file and return the top N offenders.
- * Uses `grep -rc` which emits `file:count` per matched file.
+ * Routes every quality-side hygiene count through `walkSourceFiles` +
+ * `countLineMatches`. Replaces the legacy `grep -rcEf` shell pipeline
+ * + `grepPerFile` + `grepCountSimple` duplicates.
+ *
+ * D079 closure: identical line-counter implementation to `generic.ts`,
+ * so health and quality reports cannot drift on the same metric.
+ *
+ * D074 closure for the JS print-family count only: commented-out
+ * matches do NOT count toward that metric on either report.
+ * TODO/FIXME/HACK counters explicitly KEEP comments (they ARE
+ * comments by definition; skipping them would zero those counters
+ * out).
+ *
+ * `includeTests: true` preserves pre-migration semantics — the legacy
+ * grep pipeline matched in test files too.
  */
-function grepPerFile(cwd: string, pattern: string, limit = 10): FileOffender[] {
-  const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
-  fs.writeFileSync(patternFile, pattern);
-  const excludeDirs = getGrepExcludeDirFlags(cwd);
-  const raw = run(
-    `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
-    cwd,
-    60000,
-  );
-  try {
-    fs.unlinkSync(patternFile);
-  } catch {
-    /* ignore */
-  }
-  if (!raw) return [];
-  const offenders: FileOffender[] = [];
-  for (const line of raw.split('\n')) {
-    const idx = line.lastIndexOf(':');
-    if (idx < 0) continue;
-    const file = line.slice(0, idx);
-    const count = parseInt(line.slice(idx + 1), 10);
-    if (!count || !file) continue;
-    // grep's --exclude-dir is basename-only; use centralized predicate to
-    // drop multi-segment path exclusions (public/assets) + file patterns.
-    if (isExcludedPath(cwd, file.replace(/^\.\//, ''))) continue;
-    offenders.push({ file, count });
-  }
-  offenders.sort((a, b) => b.count - a.count);
-  return offenders.slice(0, limit);
+function hygieneFiles(cwd: string): string[] {
+  return walkSourceFiles(cwd, { includeTests: true });
+}
+
+function topOffenders(
+  cwd: string,
+  pattern: string,
+  skipComments: boolean,
+  limit = 10,
+): FileOffender[] {
+  const result = countLineMatches(cwd, hygieneFiles(cwd), [pattern], {
+    perFileTopN: limit,
+    skipComments,
+  });
+  return result.perFile.map((p) => ({ file: p.file, count: p.count }));
 }
 
 // ─── dispatcher-driven structural gather ────────────────────────────────────
@@ -168,15 +164,22 @@ export function gatherCommentRatio(cwd: string): {
 
 // ─── grep: hygiene markers ──────────────────────────────────────────────────
 
-/** Collect per-file top offenders for detailed reports. Slow — only call when needed. */
+/** Collect per-file top offenders for detailed reports. */
 export function gatherHygieneTopOffenders(cwd: string): {
   topConsoleFiles: FileOffender[];
   topTodoFiles: FileOffender[];
 } {
   return {
-    topConsoleFiles: grepPerFile(cwd, 'console\\.(log|error|warn)'),
-    topTodoFiles: grepPerFile(cwd, '(TODO|FIXME|HACK)'),
+    // D079 closure: shared print-family helper. Identical results to
+    // health's consoleLogCount top-N because they call the same function.
+    topConsoleFiles: gatherDebugStatements(cwd, { topN: 10 }).topOffenders,
+    // TODO/FIXME/HACK are inherently in comments; skipComments would zero them.
+    topTodoFiles: topOffenders(cwd, '(TODO|FIXME|HACK)', false),
   };
+}
+
+function hygieneCount(cwd: string, pattern: string, skipComments: boolean): number {
+  return countLineMatches(cwd, hygieneFiles(cwd), [pattern], { skipComments }).lines;
 }
 
 export function gatherHygieneMarkers(cwd: string): {
@@ -187,39 +190,6 @@ export function gatherHygieneMarkers(cwd: string): {
   staleFiles: string[];
   mixedLanguages: boolean;
 } {
-  // Sum match counts across source files, excluding vendored paths.
-  // grep --exclude-dir handles basename dirs (node_modules etc.) at traversal.
-  // Path-based exclusions (public/assets, static/js) are post-filtered because
-  // grep's --exclude-dir only matches basenames, not paths.
-  function grepCountSimple(pattern: string): number {
-    const patternFile = `/tmp/dxkit-qgrep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
-    fs.writeFileSync(patternFile, pattern);
-    const excludeDirs = getGrepExcludeDirFlags(cwd);
-    const result = run(
-      `grep -rcEf '${patternFile}' ${excludeDirs} --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.py' --include='*.go' . 2>/dev/null`,
-      cwd,
-      60000,
-    );
-    try {
-      fs.unlinkSync(patternFile);
-    } catch {
-      /* ignore */
-    }
-    if (!result) return 0;
-    let total = 0;
-    for (const line of result.split('\n')) {
-      const idx = line.lastIndexOf(':');
-      if (idx < 0) continue;
-      const file = line.slice(0, idx);
-      const count = parseInt(line.slice(idx + 1), 10);
-      if (!count || !file) continue;
-      // Centralized filter — same predicate used by security/quality/tests.
-      if (isExcludedPath(cwd, file.replace(/^\.\//, ''))) continue;
-      total += count;
-    }
-    return total;
-  }
-
   // Stale files: vim swap, backup, temp files tracked in git
   const staleRaw = run(
     `git ls-files '*.swp' '*.swo' '*.bak' '*.orig' '*.tmp' '*.log' '*.pyc' 2>/dev/null`,
@@ -239,43 +209,20 @@ export function gatherHygieneMarkers(cwd: string): {
   const mixedLanguages = !!(jsInSrc && tsInSrc);
 
   return {
-    todoCount: grepCountSimple('TODO'),
-    fixmeCount: grepCountSimple('FIXME'),
-    hackCount: grepCountSimple('HACK'),
-    consoleLogCount: grepCountSimple('console\\.(log|error|warn)'),
+    todoCount: hygieneCount(cwd, 'TODO', false),
+    fixmeCount: hygieneCount(cwd, 'FIXME', false),
+    hackCount: hygieneCount(cwd, 'HACK', false),
+    // D079 closure: shared print-family helper aggregates TS/JS
+    // console.* + Py print + Go fmt.Print across language-scoped walks.
+    // Identical to health.consoleLogCount by construction.
+    consoleLogCount: gatherDebugStatements(cwd).count,
     staleFiles,
     mixedLanguages,
   };
 }
 
-// ─── lint errors (via capability dispatcher) ─────────────────────────────────
-
-/**
- * Aggregates lint tier counts across every active language pack via the
- * capability dispatcher. Mixed-stack repos sum contributions (Python +
- * Node reports combined eslint + ruff counts).
- *
- * Collapse: critical + high → errors, medium + low → warnings, matching
- * the `lintErrors`/`lintWarnings` contract in the quality report shape.
- */
-export async function gatherLintMetrics(cwd: string): Promise<{
-  errors: number;
-  warnings: number;
-  tool: string | null;
-}> {
-  const providers: CapabilityProvider<LintResult>[] = [];
-  for (const lang of detectActiveLanguages(cwd)) {
-    if (lang.capabilities?.lint) providers.push(lang.capabilities.lint);
-  }
-  if (providers.length === 0) return { errors: 0, warnings: 0, tool: null };
-
-  const envelope = await defaultDispatcher.gather(cwd, LINT, providers);
-  if (!envelope) return { errors: 0, warnings: 0, tool: null };
-
-  const c = envelope.counts;
-  return {
-    errors: c.critical + c.high,
-    warnings: c.medium + c.low,
-    tool: envelope.tool,
-  };
-}
+// Lint counts + the augmented "(not run: <packs>)" tool label come
+// from the cached `cache.capabilities.lint` envelope. The cache
+// builder calls `defaultDispatcher.gatherWithProvenance` for LINT
+// and bakes the skipped-pack provenance into `envelope.tool`, so
+// every consumer sees the same label.

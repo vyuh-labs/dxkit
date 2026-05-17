@@ -31,15 +31,15 @@ import type {
   StructuralResult,
   TestFrameworkResult,
 } from '../../languages/capabilities/types';
-import {
-  ScoreInput,
-  scoreTest,
-  scoreQuality,
-  scoreDocumentation,
-  scoreSecurity,
-  scoreMaintainability,
-  scoreDeveloperExperience,
-} from '../scoring';
+import { scoreTestFromScoreInput } from '../tests/shallow';
+import { scoreDocsFromScoreInput } from '../docs/shallow';
+import { scoreMaintainabilityFromScoreInput } from '../maintainability/shallow';
+import { scoreDxFromScoreInput } from '../dx/shallow';
+import { ScoreInput } from '../types';
+// Security + Quality scorers live with their analyzers post-
+// canonical-formula unification.
+import { scoreSecurityFromScoreInput } from '../security/shallow';
+import { scoreQualityFromScoreInput } from '../quality/shallow';
 
 type HealthAction = RemediationAction<ScoreInput>;
 
@@ -238,11 +238,18 @@ function docsActions(input: ScoreInput): HealthAction[] {
       patch: (cur) => withMetrics(cur, { architectureDocsExist: true }),
     });
   }
-  if (!m.apiDocsExist && (m.controllers > 0 || m.sourceFiles > 100)) {
+  // Only recommend API docs when there's an actual HTTP route surface
+  // to document. The gate is `routeHandlerFiles` — the count of files
+  // matching any active pack's `architecturalShape.routePaths` (the
+  // narrower HTTP-handler subset). A desktop app or pure-frontend
+  // project has zero route handlers even when its primary-component
+  // count is large (Forms, components, screens), so this action
+  // stays correctly silenced for non-API codebases.
+  if (!m.apiDocsExist && m.routeHandlerFiles > 0) {
     actions.push({
       id: 'health.docs.add-api-docs',
       title: 'Add API documentation',
-      rationale: 'With controllers/routes present, API surface should be documented.',
+      rationale: 'With HTTP route handlers present, API surface should be documented.',
       evidence: [],
       patch: (cur) => withMetrics(cur, { apiDocsExist: true }),
     });
@@ -403,12 +410,16 @@ export function buildHealthPlans(input: ScoreInput): DimensionPlan[] {
     scorer: (i: ScoreInput) => { score: number };
     build: (i: ScoreInput) => HealthAction[];
   }> = [
-    { name: 'Testing', scorer: scoreTest, build: testingActions },
-    { name: 'Quality', scorer: scoreQuality, build: qualityActions },
-    { name: 'Documentation', scorer: scoreDocumentation, build: docsActions },
-    { name: 'Security', scorer: scoreSecurity, build: securityActions },
-    { name: 'Maintainability', scorer: scoreMaintainability, build: maintainabilityActions },
-    { name: 'Developer Experience', scorer: scoreDeveloperExperience, build: dxActions },
+    { name: 'Testing', scorer: scoreTestFromScoreInput, build: testingActions },
+    { name: 'Quality', scorer: scoreQualityFromScoreInput, build: qualityActions },
+    { name: 'Documentation', scorer: scoreDocsFromScoreInput, build: docsActions },
+    { name: 'Security', scorer: scoreSecurityFromScoreInput, build: securityActions },
+    {
+      name: 'Maintainability',
+      scorer: scoreMaintainabilityFromScoreInput,
+      build: maintainabilityActions,
+    },
+    { name: 'Developer Experience', scorer: scoreDxFromScoreInput, build: dxActions },
   ];
   return dims.map((d) => {
     const baseline = d.scorer(input).score;

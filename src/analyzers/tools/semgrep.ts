@@ -12,12 +12,13 @@
  * provider picks them up via `detectActiveLanguages(cwd)`.
  */
 
+import * as fs from 'fs';
 import { detectActiveLanguages } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { CodePatternFinding, CodePatternsResult } from '../../languages/capabilities/types';
 import { getSemgrepExcludeFlags } from './exclusions';
 import { toProjectRelative } from './paths';
-import { run } from './runner';
+import { runDetached } from './runner';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
@@ -29,7 +30,10 @@ interface SemgrepRawFinding {
     message: string;
     severity: string;
     metadata?: {
-      cwe?: string[];
+      // semgrep rules emit `cwe` as either string OR string[] depending
+      // on how the rule's YAML metadata block is written. Both shapes
+      // appear in the public `p/security-audit` ruleset.
+      cwe?: string | string[];
       confidence?: string;
       impact?: string;
     };
@@ -55,6 +59,24 @@ export type CodePatternsGatherOutcome =
  * Priority: rule metadata `impact` (most meaningful — rule authors
  * tier by business impact) → fall back to semgrep's `severity`.
  */
+/**
+ * Normalize semgrep's `metadata.cwe` into a single CWE identifier.
+ *
+ * Why: semgrep rule authors write `cwe:` in YAML as either a scalar
+ * (`cwe: "CWE-295: Improper Certificate Validation"`) or a list
+ * (`cwe: ["CWE-295: ..."]`). Both shapes pass through semgrep's JSON
+ * output unchanged. Pre-fix this code did `metadata?.cwe?.[0]` which
+ * silently returned the first *character* of the scalar form (e.g.
+ * "C" for "CWE-295: ..."). D094 surfaced this on `bypass-tls-
+ * verification` rule output.
+ */
+export function extractCwe(cwe: string | string[] | undefined): string {
+  if (!cwe) return '';
+  const raw = Array.isArray(cwe) ? cwe[0] : cwe;
+  if (typeof raw !== 'string') return '';
+  return raw.split(':')[0].trim();
+}
+
 function mapSemgrepSeverity(sgSeverity: string, impact?: string): CodePatternFinding['severity'] {
   const imp = (impact || '').toUpperCase();
   if (imp === 'HIGH') return sgSeverity === 'ERROR' ? 'critical' : 'high';
@@ -84,27 +106,81 @@ function collectRulesets(cwd: string): string[] {
 /**
  * Single source of truth for the semgrep invocation. Consumed by
  * `semgrepProvider` (capability dispatcher).
+ *
+ * Failure-mode honesty: when semgrep doesn't produce a parseable
+ * report, the returned `reason` distinguishes between:
+ *   - timeout (we hit our wall-clock budget — the customer probably
+ *     wants to install nothing and instead either prune the scan
+ *     scope via `.dxkit-ignore` or bump the timeout)
+ *   - non-zero exit with a captured stderr first line (semgrep
+ *     itself complained — surface its complaint)
+ *   - the historical fallback "no output" (rare now; means stderr
+ *     was empty AND exit was zero AND the report file was missing)
+ *
+ * Pre-fix every failure collapsed to "no output," masking
+ * resource-contention deaths (parallel jscpd + graphify + semgrep
+ * on a 700-file repo OOM-killing the youngest), timeouts, and
+ * config-parse errors with the same useless string. Switched to
+ * runDetached so we capture stderr + exit code + timeout signal
+ * separately, and so the wall-clock-deadline kill cleans up
+ * grandchildren (semgrep's internal worker pool).
  */
-export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
+export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGatherOutcome> {
   const status = findTool(TOOL_DEFS.semgrep, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
   const rulesets = collectRulesets(cwd);
   if (rulesets.length === 0) return { kind: 'unavailable', reason: 'no rulesets' };
 
-  const configs = rulesets.map((r) => `--config ${r}`).join(' ');
-  const excludes = getSemgrepExcludeFlags(cwd);
   const reportPath = `/tmp/dxkit-semgrep-${Date.now()}.json`;
+  const args = ['scan'];
+  for (const r of rulesets) args.push('--config', r);
+  args.push('--json', '--quiet', '--output', reportPath);
+  // getSemgrepExcludeFlags returns a single space-separated string
+  // shaped for execSync (`--exclude foo --exclude bar`). Split it
+  // into the array form runDetached expects.
+  const excludeFlagString = getSemgrepExcludeFlags(cwd);
+  if (excludeFlagString) {
+    for (const tok of excludeFlagString.split(/\s+/).filter((t) => t.length > 0)) {
+      args.push(tok);
+    }
+  }
+  args.push(cwd);
 
-  run(
-    `${status.path} scan ${configs} --json --quiet --output '${reportPath}' ${excludes} '${cwd}' 2>/dev/null`,
-    cwd,
-    300000,
-  );
-  const raw = run(`cat '${reportPath}' 2>/dev/null`, cwd);
-  run(`rm -f '${reportPath}'`, cwd);
+  const outcome = await runDetached(status.path, args, { cwd, timeoutMs: 300000 });
+  let raw: string;
+  try {
+    raw = fs.readFileSync(reportPath, 'utf-8');
+  } catch {
+    raw = '';
+  }
+  // Cleanup: best-effort; failure here is non-fatal.
+  try {
+    fs.unlinkSync(reportPath);
+  } catch {
+    /* file already gone or never written — fine */
+  }
 
-  if (!raw) return { kind: 'unavailable', reason: 'no output' };
+  if (!raw) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
+    const stderrFirstLine = outcome.stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (outcome.code !== 0 && outcome.code !== null) {
+      const ctx = stderrFirstLine ? ` (stderr: ${stderrFirstLine})` : '';
+      return { kind: 'unavailable', reason: `exit code ${outcome.code}${ctx}` };
+    }
+    if (stderrFirstLine) {
+      return { kind: 'unavailable', reason: `no output (stderr: ${stderrFirstLine})` };
+    }
+    return { kind: 'unavailable', reason: 'no output' };
+  }
 
   let data: SemgrepReport;
   try {
@@ -130,7 +206,7 @@ export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
       severity: mapSemgrepSeverity(r.extra.severity, r.extra.metadata?.impact),
       rule: r.check_id.split('.').slice(-1)[0],
       title: r.extra.message.split('\n')[0].slice(0, 200),
-      cwe: r.extra.metadata?.cwe?.[0]?.split(':')[0] || '',
+      cwe: extractCwe(r.extra.metadata?.cwe),
       file: toProjectRelative(cwd, r.path),
       line: r.start.line,
     }));
@@ -158,10 +234,20 @@ export function gatherSemgrepResult(cwd: string): CodePatternsGatherOutcome {
  * Capability-shaped provider. Registered in
  * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.codePatterns`.
  */
-export const semgrepProvider: CapabilityProvider<CodePatternsResult> = {
+// Exposes the underlying outcome via `gatherOutcome` so the dispatcher
+// captures semgrep's actual failure reason (timeout / exit code /
+// stderr first line) into `DispatchOutcome.skipReasons`. Without it,
+// every failure modes collapses to the same generic "attempted but
+// produced no output" prose at the renderer layer.
+export const semgrepProvider: CapabilityProvider<CodePatternsResult> & {
+  gatherOutcome(cwd: string): Promise<CodePatternsGatherOutcome>;
+} = {
   source: 'semgrep',
   async gather(cwd) {
-    const outcome = gatherSemgrepResult(cwd);
+    const outcome = await gatherSemgrepResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherSemgrepResult(cwd);
   },
 };

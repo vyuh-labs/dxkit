@@ -30,6 +30,16 @@ obj/
 .tox/
 coverage/
 
+# ─── dxkit's own outputs ─────────────────────────────────────────────────
+# Without this, dxkit re-scans the markdown reports + dashboard.html it
+# just produced and finds things like the AKIA placeholder strings inside
+# gitleaks descriptions ("Detected a Generic API Key like AKIA…") —
+# self-referential noise. Caught during 2026-05-07 customer-demo
+# evaluation: platform's vulnerability scan re-flagged
+# `.dxkit/reports/dashboard.html:289` because the dashboard embeds the
+# scan output as JSON.
+.dxkit/
+
 # ─── Python environments & bytecode ───────────────────────────────────────
 __pycache__/
 .venv/
@@ -46,6 +56,24 @@ scaffolds/
 public/assets/
 static/js/
 public/static/
+
+# ─── Vendored / third-party source conventions ───────────────────────────
+# These directory names are reserved by convention for code copied in from
+# external sources, not authored by the project team. Excluding them keeps
+# per-file metrics (largestFiles, filesOver500Lines, densest-file, top-hot-
+# files) honest — a customer's "Largest file: 16K lines" should not point
+# at a vendored emoji list or sample-code playground.
+#
+# `libs/` is deliberately NOT included as a default: a non-trivial share of
+# real codebases (Lerna monorepos, Nx workspaces, npm workspaces) host
+# first-party packages under `libs/`. Customers with vendored `libs/` should
+# add it to `.dxkit-ignore` — the render-time advisory in `analyzers/health/`
+# surfaces a tip when largest-files contain paths matching a suspect token.
+third_party/
+third-party/
+vendored/
+playground/
+lexical-playground/
 
 # ─── Minified / generated files ───────────────────────────────────────────
 *.min.js

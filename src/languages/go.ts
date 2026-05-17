@@ -11,8 +11,14 @@ import {
   type OsvVuln,
 } from '../analyzers/tools/osv';
 import { fileExists, parseJsonStream, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -20,6 +26,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -288,10 +295,12 @@ function loadGoTopLevelDepIndex(cwd: string): Map<string, string[]> {
  */
 async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const vuln = findTool(TOOL_DEFS.govulncheck, cwd);
-  if (!vuln.available || !vuln.path) return { kind: 'tool-missing' };
+  if (!vuln.available || !vuln.path) {
+    return { kind: 'unavailable', reason: 'govulncheck not installed' };
+  }
 
   const raw = run(`${vuln.path} -json ./... 2>/dev/null`, cwd, 120000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'govulncheck produced no output' };
 
   try {
     // govulncheck -json emits a stream of *pretty-printed* JSON objects
@@ -374,6 +383,7 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
         package: pkgName,
         installedVersion: trace0.version,
         tool: 'govulncheck',
+        packId: 'go',
         severity: severityById.get(grouped.osv) ?? 'high',
         reachable: true,
       };
@@ -428,16 +438,19 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `govulncheck parse error: ${(err as Error).message}` };
   }
 }
 
-const goDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const goDepVulnsProvider: DepVulnsProvider = {
   source: 'go',
   async gather(cwd) {
     const outcome = await gatherGoDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherGoDepVulnsResult(cwd);
   },
 };
 
@@ -569,10 +582,43 @@ function gatherGoCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Run `go test -coverprofile=coverage.out ./...` from cwd (D021).
+ *
+ * Universal Go convention — works on any Go module. The output file
+ * `coverage.out` is the canonical artifact that `gatherGoCoverageResult`
+ * already reads on the next dispatcher pass.
+ *
+ * Preflight: detect a `go.mod` or any `.go` source. If neither exists,
+ * return `unavailable` rather than waste the spawn cost (Go's own
+ * "no Go files" error is fine but unhelpful framing for the user).
+ */
+function runGoTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'go',
+      cmd: 'go test -coverprofile=coverage.out ./...',
+      cwd,
+      artifact: 'coverage.out',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'go.mod')) {
+          return 'no go.mod in this directory — not a Go module';
+        }
+        // `go` itself missing surfaces via the spawn ENOENT path; no
+        // need to pre-check.
+        return null;
+      },
+    }),
+  );
+}
+
 const goCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'go',
   async gather(cwd) {
     return gatherGoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runGoTestsWithCoverage(cwd);
   },
 };
 
@@ -761,14 +807,18 @@ function goVersionForPackage(pkgPath: string, modules: Map<string, string>): str
  * without go-licenses installed, without go.mod, or when the tool
  * fails (commonly because `go mod download` hasn't been run).
  */
-function gatherGoLicensesResult(cwd: string): LicensesResult | null {
-  if (!fileExists(cwd, 'go.mod')) return null;
+function gatherGoLicensesResult(cwd: string): LicensesGatherOutcome {
+  if (!fileExists(cwd, 'go.mod')) {
+    return { kind: 'no-manifest', reason: 'no go.mod' };
+  }
 
   const status = findTool(TOOL_DEFS['go-licenses'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'go-licenses not installed' };
+  }
 
   const csvRaw = run(`${status.path} report . 2>/dev/null`, cwd, 180000);
-  if (!csvRaw) return null;
+  if (!csvRaw) return { kind: 'unavailable', reason: 'go-licenses produced no output' };
 
   const listRaw = run('go list -m -json all 2>/dev/null', cwd, 60000);
   const versions = new Map<string, string>();
@@ -809,16 +859,21 @@ function gatherGoLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'go-licenses',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const goLicensesProvider: CapabilityProvider<LicensesResult> = {
+const goLicensesProvider: LicensesProvider = {
   source: 'go',
   async gather(cwd) {
+    const outcome = gatherGoLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherGoLicensesResult(cwd);
   },
 };
@@ -829,6 +884,46 @@ export const go: LanguageSupport = {
   sourceExtensions: ['.go'],
   testFilePatterns: ['*_test.go'],
   extraExcludes: ['vendor'],
+
+  // D027 (2.4.7): godoc convention is a comment starting with the
+  // exported symbol's name in sentence case (e.g. "// HandlerFunc
+  // serves..."). Approximate with "// " followed by capital letter
+  // at line start; matches the dominant godoc pattern across
+  // standard library + idiomatic projects.
+  docCommentPatterns: ['^// [A-Z]'],
+
+  // D034 (2.4.7): `tls.Config{InsecureSkipVerify: true}` is the
+  // canonical Go pattern for disabling cert verification — applied
+  // to `http.Transport.TLSClientConfig`, gRPC `credentials.NewTLS`,
+  // and similar. Pre-D034 it never matched (Go wasn't in the include
+  // list at all).
+  tlsBypassPatterns: ['InsecureSkipVerify[[:space:]]*:[[:space:]]*true'],
+
+  upgradeCommand(name, version) {
+    return `go get ${name}@v${version}`;
+  },
+
+  // Go's stdlib layout (`cmd/`, `internal/`, `pkg/`) is too broad to
+  // call "primary architecture" — those directories typically contain
+  // every Go file in the repo. Narrow declarations target the
+  // handler/service/controller paths that gin/echo/chi/fiber web apps
+  // and standard library `net/http` servers organize their HTTP
+  // surface under.
+  architecturalShape: {
+    primaryComponentPaths: ['/handlers/', '/services/', '/controllers/', '/jobs/'],
+    routePaths: ['/handlers/', '/controllers/', '/routes/'],
+    modelPaths: ['/models/', '/entities/'],
+    vocabulary: {
+      components: 'handlers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/handlers/', '/services/', '/controllers/', '/jobs/'],
+    },
+  },
+
+  clocLanguageNames: ['Go'],
 
   detect(cwd) {
     return fileExists(cwd, 'go.mod');

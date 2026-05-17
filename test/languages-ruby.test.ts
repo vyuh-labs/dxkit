@@ -24,6 +24,7 @@ import * as path from 'path';
 import {
   ruby,
   extractRubyImportsRaw,
+  gatherSimpleCovOutcome,
   mapRubocopSeverity,
   parseRubocopOutput,
   parseSimpleCovResultset,
@@ -375,15 +376,89 @@ describe('gatherSimpleCovCoverageResult — file probe', () => {
     }
   });
 
-  it('returns null when no SimpleCov artifact exists (HTML-only state included)', async () => {
-    // HTML-only is currently indistinguishable from "tool didn't run" —
-    // tracked as Recipe v4 candidate (extend coverage outcome enum).
+  it('returns null when no SimpleCov artifact exists (capability provider contract)', async () => {
+    // The dispatcher contract is `CoverageResult | null`. The provider
+    // collapses both the html-only and the unavailable states to null;
+    // `gatherSimpleCovOutcome` is the right surface for the richer
+    // distinction (exercised in the next describe block).
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-html-'));
     try {
       fs.mkdirSync(path.join(dir, 'coverage'));
       fs.writeFileSync(path.join(dir, 'coverage', 'index.html'), '<html>fake</html>');
       const result = await ruby.capabilities!.coverage!.gather(dir);
       expect(result).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('gatherSimpleCovOutcome — discriminated outcome (Recipe v4 G_v4_3)', () => {
+  it('returns `unavailable` when neither JSON nor HTML exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-out-none-'));
+    try {
+      const outcome = gatherSimpleCovOutcome(dir);
+      expect(outcome.kind).toBe('unavailable');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns `unavailable` even when coverage/ exists but is empty', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-out-empty-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      const outcome = gatherSimpleCovOutcome(dir);
+      expect(outcome.kind).toBe('unavailable');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns `html-only` with a hint when SimpleCov produced HTML only', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-out-html-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      fs.writeFileSync(path.join(dir, 'coverage', 'index.html'), '<html>real</html>');
+      const outcome = gatherSimpleCovOutcome(dir);
+      expect(outcome.kind).toBe('html-only');
+      if (outcome.kind === 'html-only') {
+        expect(outcome.hint).toContain('simplecov-json');
+        expect(outcome.hint).toContain('.resultset.json');
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns `success` with a parsed envelope when .resultset.json is parseable', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-out-success-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      const raw = readFixture('coverage-output.json').replace(/<HARVEST_ROOT>/g, dir);
+      fs.writeFileSync(path.join(dir, 'coverage', '.resultset.json'), raw);
+      const outcome = gatherSimpleCovOutcome(dir);
+      expect(outcome.kind).toBe('success');
+      if (outcome.kind === 'success') {
+        expect(outcome.envelope.coverage.linePercent).toBe(70.0);
+        expect(outcome.envelope.coverage.source).toBe('simplecov');
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns `html-only` (not `unavailable`) when JSON is corrupt but HTML exists', () => {
+    // Subtle but important: a corrupt JSON shouldn't masquerade as
+    // "tool didn't run" — the user clearly ran SimpleCov (HTML is the
+    // tell). Surfacing `html-only` keeps the hint actionable.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-cov-out-corrupt-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'coverage'));
+      fs.writeFileSync(path.join(dir, 'coverage', '.resultset.json'), 'not valid json {{{');
+      fs.writeFileSync(path.join(dir, 'coverage', 'index.html'), '<html>real</html>');
+      const outcome = gatherSimpleCovOutcome(dir);
+      expect(outcome.kind).toBe('html-only');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

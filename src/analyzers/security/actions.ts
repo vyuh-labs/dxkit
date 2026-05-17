@@ -1,41 +1,66 @@
 /**
  * Security remediation actions.
  *
- * Actions group findings by rule/category and describe the fix as a pure
- * SecurityCounts patch so rank() can simulate score deltas.
+ * Actions group findings by rule and describe the fix as a pure
+ * `SecurityScoreInput` patch so `rank()` can simulate score deltas
+ * against the canonical unified scorer.
  */
 import { Evidence } from '../evidence';
 import { RemediationAction } from '../remediation';
 import { SecurityReport, SecurityFinding, Severity } from './types';
-import { SecurityCounts } from './scoring';
+import { SecurityScoreInput } from '../../scoring';
 
-/** Project a SecurityReport into the counts shape used for scoring. */
-export function countsFromReport(report: SecurityReport): SecurityCounts {
-  const s = report.summary.findings;
+/**
+ * Project a SecurityReport into the canonical scoring input shape.
+ *
+ * Partitions findings by rule + category so each one contributes to
+ * exactly one field — no double-counting. Rule strings are stable
+ * contracts owned by the gather code (`gather.ts`); changes there
+ * must keep these names in sync.
+ */
+export function countsFromReport(report: SecurityReport): SecurityScoreInput {
+  let secretFindings = 0;
+  let privateKeyFiles = 0;
+  let envFilesInGit = 0;
+  const codeFindings = { critical: 0, high: 0, medium: 0, low: 0 };
+
+  for (const f of report.findings) {
+    if (f.rule === 'private-key-file') {
+      privateKeyFiles++;
+    } else if (f.rule === 'env-in-git') {
+      envFilesInGit++;
+    } else if (f.category === 'secret') {
+      secretFindings++;
+    } else if (f.category === 'code') {
+      codeFindings[f.severity]++; // aggregator-ok: rebuilding SecurityScoreInput partitions from SecurityReport (rehydration), not user-facing aggregation
+    }
+    // Other categories are intentionally ignored by the scorer; the
+    // partition above covers every category the gather code emits today
+    // ('secret', 'code', 'config' — config is private-key-file/env-in-git
+    // which are named above). Adding a new category requires a scoring
+    // decision; silently bucketing into "other" would be the wrong default.
+  }
+
   const d = report.summary.dependencies;
   return {
-    critical: s.critical,
-    high: s.high,
-    medium: s.medium,
-    low: s.low,
-    depCritical: d.critical,
-    depHigh: d.high,
-    depMedium: d.medium,
-    depLow: d.low,
+    secretFindings,
+    privateKeyFiles,
+    envFilesInGit,
+    codeFindings,
+    depVulns: {
+      critical: d.critical,
+      high: d.high,
+      medium: d.medium,
+      low: d.low,
+    },
+    // D025b/D025d: read directly from DepVulnSummary.available. Both
+    // health side (via toSecurityScoreInput) and standalone side
+    // (countsFromReport here) now plumb the same boolean into the
+    // unified scorer — drift parity closes automatically. Default
+    // `true` for fixtures that pre-date the field (legacy report JSONs
+    // saved before 2.4.7).
+    depVulnsAvailable: d.available ?? true,
   };
-}
-
-/** Deduct N findings of the given severity from counts, clamped to 0. */
-function deductSeverity(
-  counts: SecurityCounts,
-  severity: Severity,
-  n: number,
-  depsOnly = false,
-): SecurityCounts {
-  const key = depsOnly
-    ? (('dep' + severity[0].toUpperCase() + severity.slice(1)) as keyof SecurityCounts)
-    : (severity as keyof SecurityCounts);
-  return { ...counts, [key]: Math.max(0, counts[key] - n) };
 }
 
 /** Convert a finding into generic evidence. */
@@ -64,33 +89,61 @@ function groupByRule(findings: SecurityFinding[]): Map<string, SecurityFinding[]
   return groups;
 }
 
-export function buildSecurityActions(report: SecurityReport): RemediationAction<SecurityCounts>[] {
-  const actions: RemediationAction<SecurityCounts>[] = [];
+/**
+ * Build a patch that reduces the appropriate `SecurityScoreInput` field
+ * for a group of findings sharing one rule. The unified scorer fields
+ * map back to the gather-code categories:
+ *   - rule === 'private-key-file'   → privateKeyFiles
+ *   - rule === 'env-in-git'         → envFilesInGit
+ *   - category === 'secret'         → secretFindings
+ *   - category === 'code'           → codeFindings[severity]
+ */
+function patchForRuleGroup(
+  rule: string,
+  findings: SecurityFinding[],
+): (cur: SecurityScoreInput) => SecurityScoreInput {
+  if (rule === 'private-key-file') {
+    return (cur) => ({ ...cur, privateKeyFiles: 0 });
+  }
+  if (rule === 'env-in-git') {
+    return (cur) => ({ ...cur, envFilesInGit: 0 });
+  }
+
+  const category = findings[0]?.category;
+  if (category === 'secret') {
+    const n = findings.length;
+    return (cur) => ({ ...cur, secretFindings: Math.max(0, cur.secretFindings - n) });
+  }
+
+  // Code findings: partition the group by severity, deduct each bucket.
+  const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings) bySeverity[f.severity]++; // aggregator-ok: partition-for-deduction in remediation action planner, not user-facing aggregation
+  return (cur) => ({
+    ...cur,
+    codeFindings: {
+      critical: Math.max(0, cur.codeFindings.critical - bySeverity.critical),
+      high: Math.max(0, cur.codeFindings.high - bySeverity.high),
+      medium: Math.max(0, cur.codeFindings.medium - bySeverity.medium),
+      low: Math.max(0, cur.codeFindings.low - bySeverity.low),
+    },
+  });
+}
+
+export function buildSecurityActions(
+  report: SecurityReport,
+): RemediationAction<SecurityScoreInput>[] {
+  const actions: RemediationAction<SecurityScoreInput>[] = [];
   const groups = groupByRule(report.findings);
 
   // One action per rule group — fix ALL findings matching that rule.
   for (const [rule, findings] of groups) {
     const topSeverity = findings[0].severity;
-    const counts = {
-      critical: findings.filter((f) => f.severity === 'critical').length,
-      high: findings.filter((f) => f.severity === 'high').length,
-      medium: findings.filter((f) => f.severity === 'medium').length,
-      low: findings.filter((f) => f.severity === 'low').length,
-    };
-
     actions.push({
       id: `security.fix-${rule}`,
       title: `Fix ${findings.length} ${rule} finding${findings.length === 1 ? '' : 's'} (${topSeverity.toUpperCase()})`,
       rationale: `Rule ${rule} (${findings[0].tool}). ${findings[0].cwe || 'No CWE tag'}.`,
       evidence: findings.slice(0, 50).map(findingToEvidence),
-      patch: (c) => {
-        let next = c;
-        next = deductSeverity(next, 'critical', counts.critical);
-        next = deductSeverity(next, 'high', counts.high);
-        next = deductSeverity(next, 'medium', counts.medium);
-        next = deductSeverity(next, 'low', counts.low);
-        return next;
-      },
+      patch: patchForRuleGroup(rule, findings),
     });
   }
 
@@ -109,12 +162,9 @@ export function buildSecurityActions(report: SecurityReport): RemediationAction<
           message: `${d.total} vulnerable dependencies`,
         },
       ],
-      patch: (c) => ({
-        ...c,
-        depCritical: 0,
-        depHigh: 0,
-        depMedium: 0,
-        depLow: 0,
+      patch: (cur) => ({
+        ...cur,
+        depVulns: { critical: 0, high: 0, medium: 0, low: 0 },
       }),
     });
   }

@@ -21,6 +21,23 @@ export interface OsvVuln {
   database_specific?: { severity?: string };
   affected?: Array<{
     severity?: Array<{ type: string; score: string }>;
+    /**
+     * D042 (2.4.7): OSV records expose patch-version info via
+     * `affected[].ranges[].events[]`. Each range describes one
+     * affected version interval with bounding events:
+     *   `{"introduced": "0.0.0"}` (or `"introduced": "X.Y.Z"`)
+     *   `{"fixed": "X.Y.Z"}`            ← patch-available signal
+     *   `{"limit": "X.Y.Z"}`            ← exclusion upper bound
+     *
+     * We extract the first non-empty `fixed` event as the
+     * `fixedVersion` recommendation for the customer's upgrade
+     * path. Pre-D042 this field was unread; both csharp/kotlin/
+     * java/ruby's osv-scanner findings rendered `Fix: —`.
+     */
+    ranges?: Array<{
+      type?: string;
+      events?: Array<{ introduced?: string; fixed?: string; limit?: string }>;
+    }>;
   }>;
   // Standard OSV fields used by per-finding renderers (bom xlsx col 12).
   // Not consulted by classifyOsvSeverity — purely informational.
@@ -28,6 +45,31 @@ export interface OsvVuln {
   summary?: string;
   details?: string;
   references?: Array<{ type?: string; url: string }>;
+}
+
+/**
+ * Extract the patch-available version from an OSV record (D042). Walks
+ * `affected[].ranges[].events[]` in document order and returns the
+ * first non-empty `fixed` event. Multiple `fixed` events can exist
+ * when the advisory covers multiple version branches (e.g., a
+ * vulnerability backported across 1.x and 2.x lines); the first one
+ * is conventionally the lowest patch version — which is the right
+ * "minimum upgrade to clear this advisory" answer for most customers.
+ *
+ * Returns `undefined` when no `fixed` event exists (advisory exists
+ * but no patch has been released yet — customer should consider
+ * mitigations rather than waiting). Returns `undefined` for the
+ * pathological case of empty `affected` / `ranges` / `events` arrays.
+ */
+export function extractOsvFixVersion(vuln: OsvVuln): string | undefined {
+  for (const affected of vuln.affected ?? []) {
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event.fixed && event.fixed.length > 0) return event.fixed;
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Enriched OSV detail returned by lookups. cvssScore is the max CVSS base

@@ -156,6 +156,403 @@ if [ -n "$LP_GLOB_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# LP-A5: No hardcoded multi-language `--include='*.<ext>'` grep flags.
+# D030 (2.4.7) discovered the quality hygiene grep had carried a
+# hardcoded `*.ts/*.tsx/*.js/*.jsx/*.py/*.go` list since Phase 6
+# (2026-04-13). The list pre-dated the language-pack registry; 5
+# subsequent pack additions (rust, csharp, kotlin, java, ruby) never
+# updated it, so dpl-studio reported 0 TODOs on 3,234 `.cs` files —
+# the hygiene grep silently skipped every C# source.
+#
+# Cross-cutting `grep --include='*.<ext>'` lists MUST derive from
+# `allSourceExtensions()` (see src/analyzers/quality/gather.ts:
+# hygieneIncludeFlags for the pattern). Same constraint as LP-A4:
+# extension list is hardcoded in this regex (not derived) because
+# pack sourceExtensions can be const references (typescript's
+# `TS_JS_EXT`) that bash can't resolve without evaluating TS.
+# Defense fires on 2+ `--include` flags on the same line targeting
+# known language extensions — partial drift still triggers.
+LP_INCLUDE_VIOLATIONS=$(grep -rnE "\-\-include=['\"]\*\.(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)['\"].*\-\-include=['\"]\*\.(py|ts|tsx|js|jsx|mjs|cjs|go|rs|cs|kt|kts|java|rb)['\"]" src/ 2>/dev/null \
+  | grep -v "// lp-recipe-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$LP_INCLUDE_VIOLATIONS" ]; then
+  echo "❌ LP recipe violation: hardcoded multi-language --include='*.<ext>' grep flags:"
+  echo "$LP_INCLUDE_VIOLATIONS"
+  echo "   → Derive from allSourceExtensions() in src/languages/index.ts. See src/analyzers/quality/gather.ts:hygieneIncludeFlags for the pattern."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# G_v4_7 (2.4.7 class-fix release): no recursive grep on the source tree.
+#
+# What this prevents:
+#   `grep -rEf <pat> --include=*.js .` style content scans that walk the
+#   whole tree producing stdout matched per content line. The web-client
+#   D082/D083 silent-zero cascade traced to this shape — minified files
+#   matched ~11,500 times × ~6KB content = 67MB stdout, overflowing
+#   run()'s 64MB ceiling, returning empty, consoleLogCount fell to 0.
+#
+# What this DOES NOT prevent:
+#   `find . -type f -name '*.cs'` — narrow file enumeration in language
+#   packs (rust/python/go/java/csharp/etc.) for pack-specific purposes
+#   (lint target lists, coverage path discovery). These don't suffer
+#   the maxBuffer issue and have legitimate narrow uses.
+#
+#   `fs.readdirSync` for non-source-enumeration purposes (template-file
+#   copying in generator.ts, project-structure detection in detect.ts,
+#   pack-specific dir scanning) — these aren't the bug class.
+#
+# Canonical replacement: walkSourceFiles + countLineMatches in
+# src/analyzers/tools/walk-source-files.ts — pure JS, no shell, files
+# pruned at directory boundary so excluded content never reaches the
+# scanner.
+G_V4_7_ALLOWLIST="src/analyzers/tools/walk-source-files.ts \
+                  src/analyzers/tools/grep-secrets.ts \
+                  src/analyzers/tools/semgrep.ts \
+                  src/analyzers/tools/gitleaks.ts"
+
+# Pattern: `grep -r{l,n,c,E,f}` shell call inside a run()/execSync()
+# wrapper. The recursive flag (`r`) combined with content matchers
+# (`E`/`f`) is the specific shape that caused D082/D083. Matches
+# canonical orderings: `-rnEf`, `-rcEf`, `-rlEf`, `-rEf`, `-rE`, `-rn`,
+# `-rl`, `-rc`, and `-r ... -E ... -f`. Pure file-listing greps like
+# `grep -l 'package.json' .` don't match because they don't carry both
+# `r` and a content-match flag.
+walker_re_grep="(run|execSync)\\(['\"\`].*grep -[a-zA-Z]*r[a-zA-Z]*[EFf]"
+
+ALLOW_FILTER=""
+for f in $G_V4_7_ALLOWLIST; do
+  ALLOW_FILTER="$ALLOW_FILTER -e ^${f}:"
+done
+
+G_V4_7_VIOLATIONS=$(grep -rnE "$walker_re_grep" src/ 2>/dev/null \
+  | grep -v "// walker-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER" ] && grep -v $ALLOW_FILTER || cat; })
+if [ -n "$G_V4_7_VIOLATIONS" ]; then
+  echo "❌ G_v4_7 violation: recursive grep content-scan outside the canonical helper:"
+  echo "$G_V4_7_VIOLATIONS"
+  echo "   → Route through walkSourceFiles + countLineMatches in src/analyzers/tools/walk-source-files.ts."
+  echo "   → Minified-content / large repos overflow run()'s maxBuffer (D082/D083);"
+  echo "     the canonical helper walks in-process so excluded content never hits a scanner."
+  echo "   → Annotate '// walker-ok' if your case genuinely needs grep (rare; review justification required)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# G_v4_8 (2.4.7 Phase C): security finding aggregation lives in ONE place.
+#
+# What this prevents:
+#   Re-introducing per-consumer countBySeverity / manual finding-array
+#   re-summing outside the canonical aggregator. D086/D087/D091 traced
+#   to multiple consumers (security/index.ts, security/shallow.ts,
+#   dashboard/index.ts) counting the same signal with different rules,
+#   producing drift between health.md, vulnerability-scan.md, and
+#   bom.md on the same repo.
+#
+# Canonical replacement: buildSecurityAggregate() in
+#   src/analyzers/security/aggregator.ts — produces SecurityAggregate
+#   once per run; every renderer reads `aggregate.codeBySeverity` /
+#   `aggregate.depBySeverity` / `aggregate.secretsBySeverity` by name.
+#
+# Allowlist rationale:
+#   - aggregator.ts itself: this IS the canonical site.
+G_V4_8_ALLOWLIST="src/analyzers/security/aggregator.ts"
+
+# Pattern: the SMOKING-GUN shape that caused D086 / D087 / D091. A
+# severity-keyed accumulator bump (`bucket[f.severity]++`) — i.e.
+# "iterate findings and tally by severity locally." Variants we catch:
+#   counts[f.severity]++
+#   bySeverity[f.severity]++
+#   vulnBySeverity[f.severity]++
+# We do NOT match static lookup maps (`SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, ... }`)
+# or type declarations (`bySeverity: Record<BomSeverity, number>` inside
+# an interface) — neither is the disease class.
+# BoM's per-package loop uses `[e.maxSeverity]++` (different attribute
+# name) so the gate naturally excludes BoM's legitimate per-package
+# aggregation without an allowlist.
+g_v4_8_re='\[[a-zA-Z_][a-zA-Z0-9_]*\.severity\][[:space:]]*\+\+|function[[:space:]]+countBySeverity\('
+
+ALLOW_FILTER_8=""
+for f in $G_V4_8_ALLOWLIST; do
+  ALLOW_FILTER_8="$ALLOW_FILTER_8 -e ^${f}:"
+done
+
+G_V4_8_VIOLATIONS=$(grep -rnE "$g_v4_8_re" src/ 2>/dev/null \
+  | grep -v "// aggregator-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_8" ] && grep -v $ALLOW_FILTER_8 || cat; })
+if [ -n "$G_V4_8_VIOLATIONS" ]; then
+  echo "❌ G_v4_8 violation: security severity-aggregation outside the canonical aggregator:"
+  echo "$G_V4_8_VIOLATIONS"
+  echo "   → Read from SecurityAggregate built by buildSecurityAggregate()."
+  echo "   → See src/analyzers/security/aggregator.ts."
+  echo "   → Annotate '// aggregator-ok' if your case is a genuinely distinct"
+  echo "     metric (e.g. per-package severity in BoM); review justification required."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# G_v4_10 (2.4.7 Phase C3): dep-action phrasing lives in ONE place.
+#
+# What this prevents:
+#   Re-introducing the `${fixedVersion ?? '(no patch)'}` literal in
+#   action titles, bash-comment headers, or any other rendered surface.
+#   D111 traced to that pattern producing the grammatically broken
+#   "Upgrade `SharpCompress` to (no patch)" on dpl-studio Top 5 when
+#   D108 sparse-tier floated a mitigation-only finding into the table.
+#
+# Canonical replacement: formatDepActionTitle(pkg, fixedVersion) in
+#   src/analyzers/security/index.ts — branches the phrasing so
+#   "upgrade" semantics never get glued onto "no patch" findings.
+#
+# Allowlist rationale:
+#   - index.ts itself: this IS the canonical site, plus the legitimate
+#     H3 heading "Mitigation required — no patch available" lives here.
+G_V4_10_ALLOWLIST="src/analyzers/security/index.ts"
+
+# Pattern: any literal `'(no patch)'` or `"(no patch)"` string.
+g_v4_10_re="'\(no patch\)'|\"\(no patch\)\""
+
+ALLOW_FILTER_10=""
+for f in $G_V4_10_ALLOWLIST; do
+  ALLOW_FILTER_10="$ALLOW_FILTER_10 -e ^${f}:"
+done
+
+G_V4_10_VIOLATIONS=$(grep -rnE "$g_v4_10_re" src/ 2>/dev/null \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_10" ] && grep -v $ALLOW_FILTER_10 || cat; })
+if [ -n "$G_V4_10_VIOLATIONS" ]; then
+  echo "❌ G_v4_10 violation: '(no patch)' literal outside the canonical dep-action helper:"
+  echo "$G_V4_10_VIOLATIONS"
+  echo "   → Route through formatDepActionTitle(pkg, fixedVersion) in"
+  echo "     src/analyzers/security/index.ts. The helper branches phrasing on"
+  echo "     whether a fix exists — never glue 'upgrade' semantics onto a"
+  echo "     mitigation-only finding (D111)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Path-render enforcement: renderer/analyzer code cannot emit absolute
+# filesystem paths in string literals.
+#
+# What this prevents:
+#   Customer-facing reports leaking the auditor's home directory or
+#   username via lines like `Densest file: /home/<auditor>/projects/...`.
+#   Runtime path normalization lives in src/analyzers/tools/paths.ts —
+#   each tool wrapper that consumes external-tool output normalizes via
+#   `toProjectRelative(cwd, file)` before the path enters the envelope.
+#
+# What this DOES NOT prevent:
+#   Runtime values bubbling through un-normalized (the gate is static).
+#   The defense in depth is the normalize-at-gather pattern + this gate
+#   for accidental literal slips.
+#
+# Allowlist:
+#   - tool-registry.ts: legitimate brew/system probe paths (e.g.
+#     `/home/linuxbrew/.linuxbrew/bin`) used to discover binaries. These
+#     never reach customer-facing output.
+PATH_RENDER_ALLOWLIST="src/analyzers/tools/tool-registry.ts"
+
+# Pattern: absolute-path literals shaped /home/<seg>/ or /Users/<seg>/
+# inside a string literal (single/double/backtick). Username-shaped
+# segment after the prefix prevents matching neutral references like
+# `/home/page` (a URL path) — only filesystem-shaped username paths
+# trigger.
+path_render_re="['\"\`](/home/|/Users/)[A-Za-z0-9_.-]+/"
+
+ALLOW_FILTER_PR=""
+for f in $PATH_RENDER_ALLOWLIST; do
+  ALLOW_FILTER_PR="$ALLOW_FILTER_PR -e ^${f}:"
+done
+
+PATH_RENDER_VIOLATIONS=$(grep -rnE "$path_render_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// path-render-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_PR" ] && grep -v $ALLOW_FILTER_PR || cat; })
+if [ -n "$PATH_RENDER_VIOLATIONS" ]; then
+  echo "❌ Path-render violation: absolute-path literal in analyzer code:"
+  echo "$PATH_RENDER_VIOLATIONS"
+  echo "   → Customer reports must never contain the auditor's home dir / username."
+  echo "   → Runtime path normalization lives in src/analyzers/tools/paths.ts"
+  echo "     (toProjectRelative). Each tool wrapper normalizes its output before"
+  echo "     the path enters the report envelope."
+  echo "   → Annotate '// path-render-ok' if your case is a justified exception"
+  echo "     (probe paths, error messages with hard-coded system locations, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# G_v4_12: language packs must use the canonical depth-unlimited walker
+# (`walkPaths` from `src/analyzers/tools/walk-paths.ts`) for manifest
+# and source-file discovery. Hardcoded `maxDepth` parameters and direct
+# recursive `fs.readdirSync` walkers in `src/languages/*.ts` silently
+# missed real customer monorepos — dpl-studio's C# projects sit 6–9
+# levels under repo root, well past every previous per-pack cap
+# (python 2, csharp 3, kotlin 3, java 5, ruby 5). The canonical walker
+# closes the class by removing depth caps entirely; this gate stops
+# the pattern from re-appearing in any new pack.
+#
+# Annotate `// canonical-walker-ok` for justified exceptions (the
+# walker module itself, a probe that explicitly targets a build-output
+# subtree that would otherwise be excluded, etc.).
+DEPTH_VIOLATIONS=$(grep -rnE "maxDepth[[:space:]]*=[[:space:]]*[0-9]+|depth[[:space:]]*>[[:space:]]*[0-9]+" src/languages/ 2>/dev/null \
+  | grep -v "// canonical-walker-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$DEPTH_VIOLATIONS" ]; then
+  echo "❌ Depth-capped walker in language pack:"
+  echo "$DEPTH_VIOLATIONS"
+  echo "   → Use walkPaths from src/analyzers/tools/walk-paths.ts."
+  echo "     Depth-unlimited + exclusion-aware. Closes the class of"
+  echo "     'manifest deeper than my hardcoded cap' regressions."
+  echo "   → Annotate '// canonical-walker-ok' for justified exceptions"
+  echo "     (the walker module itself, build-artifact subtree probes)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Scoring discipline: dimension scoring lives in `src/scoring/` —
+# never under `src/analyzers/`. Closes the class of "scoring formulas
+# drift across consumers" by giving every dimension exactly one home
+# (a declarative spec consumed by the shared evaluator).
+#
+# Three rules, each annotated with `// scoring-spec-ok` for justified
+# exceptions:
+#
+# 1. No `src/analyzers/**/scoring.ts` paths. Each dimension's spec
+#    lives at `src/scoring/dimensions/<id>.ts`. Adapter code that
+#    builds the per-dimension input shape stays in the analyzer
+#    subdir (e.g. `src/analyzers/security/shallow.ts`) — but the
+#    file name `scoring.ts` is reserved for the canonical location.
+SCORING_FILE_VIOLATIONS=$(find src/analyzers -name 'scoring.ts' 2>/dev/null \
+  | grep -v "src/analyzers/tests/scoring.ts")
+# Allowlist: src/analyzers/tests/scoring.ts is an internal score helper
+# for ranking test-gap remediation actions in detailed reports. It is
+# NOT dimension scoring (no DimensionScore output, no spec engine
+# consumption); the file name predates this gate and the function is
+# scoped to the test-gaps analyzer's action plan.
+if [ -n "$SCORING_FILE_VIOLATIONS" ]; then
+  echo "❌ Scoring file outside the canonical home:"
+  echo "$SCORING_FILE_VIOLATIONS"
+  echo "   → Dimension scoring lives in src/scoring/dimensions/<id>.ts."
+  echo "     The analyzer subdir holds gather + adapter + renderer code"
+  echo "     only — never the scoring formula itself."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 2. No hardcoded rating-band thresholds (>= 80, >= 60, >= 40, >= 20)
+#    in scoring-related code outside `src/scoring/thresholds.ts`.
+#    All consumers route through `ratingFromScore` / `RATING_THRESHOLDS`
+#    so the band boundaries have one source of truth.
+RATING_VIOLATIONS=$(grep -rnE ">=[[:space:]]*(80|60|40|20)[^0-9]" src/ 2>/dev/null \
+  | grep -E "(score|rating|grade|dimension)" \
+  | grep -v "src/scoring/thresholds.ts" \
+  | grep -v "// scoring-spec-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$RATING_VIOLATIONS" ]; then
+  echo "❌ Hardcoded rating-band threshold in scoring context:"
+  echo "$RATING_VIOLATIONS"
+  echo "   → Use ratingFromScore() / RATING_THRESHOLDS from src/scoring."
+  echo "   → Annotate '// scoring-spec-ok' for justified exceptions"
+  echo "     (renderer bucketing on unrelated 0-100 values, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 3. No hardcoded cap-tier ceiling values (40, 35, 65, 75, 79) used
+#    in subtractive/clamp contexts outside spec files. Spec files
+#    declare tier names; the values come from CAP_TIERS.
+CAP_VIOLATIONS=$(grep -rnE "(final|score)[[:space:]]*=[[:space:]]*(35|40|65|75|79)\b" src/ 2>/dev/null \
+  | grep -v "src/scoring/" \
+  | grep -v "// scoring-spec-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$CAP_VIOLATIONS" ]; then
+  echo "❌ Hardcoded cap ceiling outside scoring module:"
+  echo "$CAP_VIOLATIONS"
+  echo "   → Use CAP_TIERS[tier] from src/scoring. Each tier name says"
+  echo "     what the cap means (trust-broken / uncertainty /"
+  echo "     fixable-finding / etc.)."
+  echo "   → Annotate '// scoring-spec-ok' for legitimate exceptions."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Architectural-shape discipline: framework path patterns + role
+# vocabulary live in `src/languages/*.ts:architecturalShape` — never
+# inline in `src/analyzers/`.
+#
+# What this prevents:
+#   Re-introducing the pre-extension class of "hardcoded
+#   backend-centric paths in cross-cutting consumers": `*/controllers/*`
+#   in find commands, `if (lower.includes('/services/'))` in classifier
+#   code, `'controller' | 'service' | ...` enum types, "controllers /
+#   handlers, models" prose in renderers. The class caused web-client
+#   and dpl-studio to report empty test-gap CRITICAL/HIGH/MEDIUM
+#   buckets pre-extension because the patterns matched neither React
+#   components/pages nor .NET Forms/Services.
+#
+# Canonical replacement: each language pack declares its own
+#   `architecturalShape` in `src/languages/<id>.ts`. Cross-cutting
+#   consumers union contributions via `allPrimaryComponentPaths`,
+#   `allRoutePaths`, `allModelPaths`, `allTestGapPriorityPaths`,
+#   `dominantVocabulary` from `src/languages/index.ts`.
+#
+# Rule 1: no quoted path-style framework literals (`'/controllers/'`,
+#   `"/services/"`, `'\/Forms\/'`) in `src/analyzers/`. The leading
+#   AND trailing slash ensures we catch path patterns (where the
+#   meaning is "files under this directory") rather than property
+#   names or unrelated tokens.
+#
+# Allowlist:
+#   - `src/analyzers/maintainability/shallow.ts`: holds the generic
+#     vocabulary fallbacks (`'components'`, `'models'`) consumed when
+#     no active pack supplies `dominantVocabulary`. These are
+#     deliberately stack-agnostic words at the renderer surface, not
+#     hardcoded framework paths.
+#
+#   Annotate `// arch-shape-ok` for justified exceptions (e.g. a
+#   legitimate runtime probe path that's not pack-relevant).
+ARCH_SHAPE_ALLOWLIST="src/analyzers/maintainability/shallow.ts"
+
+arch_shape_path_re="['\"\`]\\/(controllers?|handlers?|services?|repositories?|interceptors?|middleware|models?|entities|forms?|viewmodels?|pages|views|components|hooks|screens|usecases|routers|viewsets|daos?|resources|endpoints|usercontrols|workers|jobs|helpers|channels|serializers|schemas|dtos?|domain|api)\\/"
+arch_shape_word_re="['\"\`](controller|service|interceptor|repository|handler|viewmodel|viewset|router)['\"\`]"
+
+ALLOW_FILTER_AS=""
+for f in $ARCH_SHAPE_ALLOWLIST; do
+  ALLOW_FILTER_AS="$ALLOW_FILTER_AS -e ^${f}:"
+done
+
+ARCH_SHAPE_PATH_VIOLATIONS=$(grep -rnEi "$arch_shape_path_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// arch-shape-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_AS" ] && grep -v $ALLOW_FILTER_AS || cat; })
+if [ -n "$ARCH_SHAPE_PATH_VIOLATIONS" ]; then
+  echo "❌ Architectural-shape violation: hardcoded framework path literal in analyzer code:"
+  echo "$ARCH_SHAPE_PATH_VIOLATIONS"
+  echo "   → Path patterns like '/controllers/', '/components/', '/Forms/' belong in"
+  echo "     src/languages/<id>.ts under architecturalShape.primaryComponentPaths /"
+  echo "     routePaths / modelPaths / testGapPriority. Consumers union active-pack"
+  echo "     contributions via the helpers in src/languages/index.ts."
+  echo "   → Annotate '// arch-shape-ok' if your case is a genuine exception (runtime"
+  echo "     probe path that doesn't represent stack vocabulary, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 2: no quoted singular role-name literals (`'controller'`,
+#   `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+#   `'viewmodel'`, `'viewset'`, `'router'`) in `src/analyzers/`.
+#   These were the pre-extension `SourceFile.type` enum values; the
+#   post-extension type is a free string drawn from
+#   `patternToLabel(matchedPattern)`. Excludes generic words
+#   (`'model'`, `'component'`, `'form'`, `'view'`, `'page'`) that
+#   commonly appear in non-architectural contexts (data models in
+#   ML code, view rendering libraries, page-object test patterns).
+ARCH_SHAPE_WORD_VIOLATIONS=$(grep -rnE "$arch_shape_word_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// arch-shape-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_AS" ] && grep -v $ALLOW_FILTER_AS || cat; })
+if [ -n "$ARCH_SHAPE_WORD_VIOLATIONS" ]; then
+  echo "❌ Architectural-shape violation: hardcoded role-name string literal in analyzer code:"
+  echo "$ARCH_SHAPE_WORD_VIOLATIONS"
+  echo "   → Role-name labels come from patternToLabel(matched architecturalShape pattern)."
+  echo "     The pre-extension closed enum ('controller' | 'service' | ...) was replaced"
+  echo "     by a free string label drawn from the matched pack pattern's last segment."
+  echo "   → Annotate '// arch-shape-ok' for non-architectural uses (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig } from './prompts';
@@ -8,8 +9,22 @@ import { runDoctor } from './doctor';
 import { VERSION } from './constants';
 import * as logger from './logger';
 import { GenerationMode } from './types';
+import { formatTopActionLine, formatTopActionsBlock } from './scoring';
+import { renderToolsUnavailableLines } from './analyzers/tools/tools-unavailable-prose';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// process.stdout.write returns false when the OS pipe buffer is full
+// (typically 64KB on Linux). Without awaiting 'drain', the process exits
+// and the tail of large payloads is silently lost on POSIX — manifests as
+// 0-byte files when piping `--json` output through `cat > file` or similar.
+// Tracked as D017.
+async function emitJson(payload: unknown): Promise<void> {
+  const data = JSON.stringify(payload, null, 2) + '\n';
+  if (!process.stdout.write(data)) {
+    await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+  }
+}
 
 function printUsage(): void {
   console.log(`
@@ -26,6 +41,9 @@ function printUsage(): void {
     vyuh-dxkit dev-report [path] Developer activity analysis
     vyuh-dxkit licenses [path]   Dependency license inventory
     vyuh-dxkit bom [path]        Bill of Materials (licenses + vulnerabilities joined)
+    vyuh-dxkit coverage [path]   Run per-pack test-with-coverage (side-effecting; materializes the coverage artifact health/test-gaps read)
+    vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
+    vyuh-dxkit report [path]     Run every analyzer + dashboard in one shot (full audit)
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -45,16 +63,16 @@ function printUsage(): void {
     --rescan     Re-run codebase analysis
 
   ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses, bom):')}
-    --json       Print report as JSON to stdout
-    --verbose    Print per-tool timing to stderr
-    --no-save    Skip writing the markdown report file
-    --detailed   Also write <name>-detailed.md + .json with evidence + ranked actions
-    --xlsx       Licenses/bom: also write 15-col BOM XLSX
-    --since      Dev-report: start date (YYYY-MM-DD)
-    --filter     Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
-                 advisory rollup under byTopLevelDep still reflects transitives)
-    --no-nested  Bom: disable nested-project aggregation (default scans the repo
-                 for all sub-projects with manifests and merges their BOMs)
+    --json            Print report as JSON to stdout
+    --verbose         Print per-tool timing to stderr
+    --no-save         Skip writing the markdown report file
+    --detailed        Also write <name>-detailed.md + .json with evidence + ranked actions
+    --xlsx            Licenses/bom: also write 15-col BOM XLSX
+    --since           Dev-report: start date (YYYY-MM-DD)
+    --filter          Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
+                      advisory rollup under byTopLevelDep still reflects transitives)
+    --with-coverage   Health/test-gaps: materialize coverage artifacts via per-pack
+                      runTests() before analysis (line-coverage truth vs filename match)
 
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
@@ -88,8 +106,14 @@ export async function run(argv: string[]): Promise<void> {
       output: { type: 'string', short: 'o' },
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
-      'no-nested': { type: 'boolean', default: false },
       all: { type: 'boolean', default: false },
+      'reports-dir': { type: 'string' },
+      'json-dir': { type: 'string' },
+      'project-name': { type: 'string' },
+      lang: { type: 'string' },
+      timeout: { type: 'string' },
+      'no-fail-fast': { type: 'boolean', default: false },
+      'with-coverage': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -225,28 +249,61 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'health': {
       const targetPath = resolveRepoPath(positionals[1]);
-      const { analyzeHealth, analyzeHealthWithMetrics } = await import('./analyzers/health');
+      const { analyzeHealthWithMetrics } = await import('./analyzers/health');
       logger.header('vyuh-dxkit health');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
+
+      // D021 (2.4.7): --with-coverage materializes the coverage artifact
+      // BEFORE the analyzer runs, so the report reads line-coverage
+      // truth (`coverageFidelity: 'line-coverage'`) instead of falling
+      // back to the filename-match heuristic. Shares the same per-pack
+      // runner the `coverage` command uses; honors --lang to limit
+      // scope on polyglot repos.
+      if (values['with-coverage']) {
+        const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
+        const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+        logger.info('Running test-with-coverage across active packs...');
+        const { rows } = await runCoverageAcrossPacks(targetPath, {
+          langFilter,
+          failFast: !values['no-fail-fast'],
+          onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+        });
+        const successes = rows.filter((r) => r.status === 'success').length;
+        if (successes > 0) {
+          logger.success(`${successes}/${rows.length} packs produced coverage artifacts`);
+        } else {
+          logger.warn(
+            `0/${rows.length} packs produced coverage artifacts — falling back to heuristic`,
+          );
+        }
+        console.log(''); // slop-ok
+      }
+
       // Detailed mode needs HealthMetrics for remediation planning; pull both.
-      const healthResult = values.detailed
-        ? await analyzeHealthWithMetrics(targetPath, { verbose: !!values.verbose })
-        : {
-            report: await analyzeHealth(targetPath, { verbose: !!values.verbose }),
-            metrics: null,
-          };
+      // D032 (2.4.7): always gather the underlying metrics so the
+      // `-detailed.json` write below has the data it needs. Pre-fix
+      // the metrics-bearing path was gated on `--detailed`, so the
+      // dashboard's input JSON was only produced when the user opted
+      // into detailed reporting — making the dashboard headline numbers
+      // silently stale or zero on a default `dxkit health . && dxkit
+      // dashboard .` workflow. Both internal entry points share
+      // `analyzeHealthInternal`, so the only cost is keeping a metrics
+      // reference live (no extra compute).
+      const healthResult = await analyzeHealthWithMetrics(targetPath, {
+        verbose: !!values.verbose,
+      });
       const report = healthResult.report;
       const healthMetrics = healthResult.metrics;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         // Console output
         console.log('');
         console.log(
-          `  ${logger.bold('Overall:')} ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+          `  ${logger.bold('Overall:')} ${report.summary.overallScore}/100 (Rating: ${report.summary.rating})`,
         );
         console.log('');
         const dims = report.dimensions;
@@ -262,8 +319,12 @@ export async function run(argv: string[]): Promise<void> {
           const bar =
             '█'.repeat(Math.round(dim.score / 5)) + '░'.repeat(20 - Math.round(dim.score / 5));
           console.log(
-            `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.status}`,
+            `  ${name.padEnd(22)} ${bar} ${dim.score.toString().padStart(3)}/100  ${dim.rating}`,
           );
+          const topAction = formatTopActionLine(dim);
+          if (topAction) {
+            logger.dim(`  ${' '.repeat(22)} → ${topAction}`);
+          }
         }
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
@@ -271,31 +332,45 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        // Save markdown report (unless --no-save)
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `health-audit-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json so consumers don't need separate
+      // `--detailed` and `--detailed --json` invocations (closes D018).
+      // `logger.success` routes to stderr in --json mode, so it's safe to
+      // call unconditionally.
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `health-audit-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed && healthMetrics) {
-            const { buildHealthDetailed, formatHealthDetailedMarkdown } =
-              await import('./analyzers/health/detailed');
-            const detailed = buildHealthDetailed(report, healthMetrics);
-            const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        // D032 (2.4.7): always write BOTH `-detailed.json` AND
+        // `-detailed.md` so `vyuh-dxkit dashboard` finds fresh inputs
+        // on every run. The dashboard reads JSON for tile metrics and
+        // embeds the markdown for tab content (Language Breakdown +
+        // Plans live only in the detailed.md). Pre-fix gating these
+        // on `--detailed` meant a default `health → dashboard` workflow
+        // showed stale tile values + stale tab content from whichever
+        // run last passed `--detailed`. The `--detailed` flag now only
+        // controls the console success-log lines.
+        const { buildHealthDetailed, formatHealthDetailedMarkdown } =
+          await import('./analyzers/health/detailed');
+        const detailed = buildHealthDetailed(report, healthMetrics);
+        const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
+        const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
+        fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+        fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
+        if (values.detailed) {
+          logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
+          logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
+      }
 
-        // Hint about missing tools (exclude project-side config errors)
+      if (!values.json) {
+        // Hint about missing tools (exclude project-side config errors).
         const PROJECT_ISSUES = ['config error', 'legacy .eslintrc', 'no eslint config'];
         const trulyMissing = report.toolsUnavailable.filter(
           (t) => !PROJECT_ISSUES.some((p) => t.includes(p)),
@@ -361,7 +436,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary.findings;
         const d = report.summary.dependencies;
@@ -380,30 +455,42 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
-              await import('./analyzers/security/detailed');
-            const detailed = buildSecurityDetailed(report);
-            const detailedMdPath = path.join(reportDir, `vulnerability-scan-${date}-detailed.md`);
-            const detailedJsonPath = path.join(
-              reportDir,
-              `vulnerability-scan-${date}-detailed.json`,
-            );
-            fs.writeFileSync(detailedMdPath, formatSecurityDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
+          await import('./analyzers/security/detailed');
+        const securityDetailed = buildSecurityDetailed(report);
+        const securityDetailedJsonPath = path.join(
+          reportDir,
+          `vulnerability-scan-${date}-detailed.json`,
+        );
+        const securityDetailedMdPath = path.join(
+          reportDir,
+          `vulnerability-scan-${date}-detailed.md`,
+        );
+        fs.writeFileSync(securityDetailedJsonPath, JSON.stringify(securityDetailed, null, 2));
+        fs.writeFileSync(
+          securityDetailedMdPath,
+          formatSecurityDetailedMarkdown(securityDetailed, elapsed),
+        );
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, securityDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, securityDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -415,11 +502,36 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit test-gaps');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
+
+      // D021 (2.4.7): --with-coverage materializes the coverage artifact
+      // before analysis so the test-gaps report reads line-coverage
+      // truth instead of falling back to filename-match. Same runner
+      // health --with-coverage uses.
+      if (values['with-coverage']) {
+        const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
+        const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+        logger.info('Running test-with-coverage across active packs...');
+        const { rows } = await runCoverageAcrossPacks(targetPath, {
+          langFilter,
+          failFast: !values['no-fail-fast'],
+          onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+        });
+        const successes = rows.filter((r) => r.status === 'success').length;
+        if (successes > 0) {
+          logger.success(`${successes}/${rows.length} packs produced coverage artifacts`);
+        } else {
+          logger.warn(
+            `0/${rows.length} packs produced coverage artifacts — falling back to heuristic`,
+          );
+        }
+        console.log(''); // slop-ok
+      }
+
       const report = await analyzeTestGaps(targetPath, { verbose: !!values.verbose });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary;
         console.log('');
@@ -436,27 +548,36 @@ export async function run(argv: string[]): Promise<void> {
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
-              await import('./analyzers/tests/detailed');
-            const detailed = buildTestGapsDetailed(report);
-            const detailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatTestGapsDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
+          await import('./analyzers/tests/detailed');
+        const testGapsDetailed = buildTestGapsDetailed(report);
+        const testGapsDetailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
+        const testGapsDetailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
+        fs.writeFileSync(testGapsDetailedJsonPath, JSON.stringify(testGapsDetailed, null, 2));
+        fs.writeFileSync(
+          testGapsDetailedMdPath,
+          formatTestGapsDetailedMarkdown(testGapsDetailed, elapsed),
+        );
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, testGapsDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, testGapsDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -475,7 +596,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const m = report.metrics;
         const slopLabel =
@@ -514,27 +635,39 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim('Unavailable: ' + report.toolsUnavailable.join(', '));
         }
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `quality-review-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `quality-review-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildQualityDetailed, formatQualityDetailedMarkdown } =
-              await import('./analyzers/quality/detailed');
-            const detailed = buildQualityDetailed(report);
-            const detailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `quality-review-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatQualityDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildQualityDetailed, formatQualityDetailedMarkdown } =
+          await import('./analyzers/quality/detailed');
+        const qualityDetailed = buildQualityDetailed(report);
+        const qualityDetailedJsonPath = path.join(
+          reportDir,
+          `quality-review-${date}-detailed.json`,
+        );
+        const qualityDetailedMdPath = path.join(reportDir, `quality-review-${date}-detailed.md`);
+        fs.writeFileSync(qualityDetailedJsonPath, JSON.stringify(qualityDetailed, null, 2));
+        fs.writeFileSync(
+          qualityDetailedMdPath,
+          formatQualityDetailedMarkdown(qualityDetailed, elapsed),
+        );
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, qualityDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, qualityDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -547,11 +680,13 @@ export async function run(argv: string[]): Promise<void> {
       logger.header('vyuh-dxkit dev-report');
       logger.info(`Analyzing ${targetPath}...`);
       const startTime = Date.now();
-      const report = analyzeDevActivity(targetPath, sinceFlag, { verbose: !!values.verbose });
+      const report = await analyzeDevActivity(targetPath, sinceFlag, {
+        verbose: !!values.verbose,
+      });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2));
+        await emitJson(report);
       } else {
         const s = report.summary;
         console.log('');
@@ -574,32 +709,37 @@ export async function run(argv: string[]): Promise<void> {
         console.log('');
         logger.dim('Tools: ' + report.toolsUsed.join(', '));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `developer-report-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
-          console.log('');
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `developer-report-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed) {
-            const { buildDevDetailed, formatDevDetailedMarkdown } =
-              await import('./analyzers/developer/detailed');
-            const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
-            const sinceDate =
-              sinceFlag ||
-              new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-            const vague = gatherVagueCommitExamples(targetPath, sinceDate);
-            const detailed = buildDevDetailed(report, vague);
-            const detailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
-            const detailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
-            fs.writeFileSync(detailedMdPath, formatDevDetailedMarkdown(detailed, elapsed));
-            fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-            logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
-            logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
-          }
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildDevDetailed, formatDevDetailedMarkdown } =
+          await import('./analyzers/developer/detailed');
+        const { gatherVagueCommitExamples } = await import('./analyzers/developer/gather');
+        const sinceDate =
+          sinceFlag || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const vague = gatherVagueCommitExamples(targetPath, sinceDate);
+        const devDetailed = buildDevDetailed(report, vague);
+        const devDetailedJsonPath = path.join(reportDir, `developer-report-${date}-detailed.json`);
+        const devDetailedMdPath = path.join(reportDir, `developer-report-${date}-detailed.md`);
+        fs.writeFileSync(devDetailedJsonPath, JSON.stringify(devDetailed, null, 2));
+        fs.writeFileSync(devDetailedMdPath, formatDevDetailedMarkdown(devDetailed, elapsed));
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, devDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, devDetailedJsonPath)}`,
+          );
         }
       }
       break;
@@ -615,7 +755,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2)); // slop-ok
+        await emitJson(report); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
@@ -638,44 +778,47 @@ export async function run(argv: string[]): Promise<void> {
         console.log(''); // slop-ok
         logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `licenses-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
-          console.log(''); // slop-ok
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `licenses-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed || values.xlsx) {
-            const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
-              await import('./analyzers/licenses/detailed');
-            const detailed = buildLicensesDetailed(report);
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildLicensesDetailed, formatLicensesDetailedMarkdown } =
+          await import('./analyzers/licenses/detailed');
+        const licensesDetailed = buildLicensesDetailed(report);
+        const licensesDetailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
+        const licensesDetailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
+        fs.writeFileSync(licensesDetailedJsonPath, JSON.stringify(licensesDetailed, null, 2));
+        fs.writeFileSync(
+          licensesDetailedMdPath,
+          formatLicensesDetailedMarkdown(licensesDetailed, elapsed),
+        );
 
-            if (values.detailed) {
-              const detailedMdPath = path.join(reportDir, `licenses-${date}-detailed.md`);
-              const detailedJsonPath = path.join(reportDir, `licenses-${date}-detailed.json`);
-              fs.writeFileSync(detailedMdPath, formatLicensesDetailedMarkdown(detailed, elapsed));
-              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-              logger.success(
-                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
-              );
-              logger.success(
-                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
-              );
-            }
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, licensesDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, licensesDetailedJsonPath)}`,
+          );
+        }
 
-            if (values.xlsx) {
-              const { toLicensesXlsx } = await import('./analyzers/xlsx');
-              const xlsxPath = values.output
-                ? path.resolve(values.output as string)
-                : path.join(reportDir, `licenses-${date}.xlsx`);
-              const buf = await toLicensesXlsx(detailed);
-              fs.writeFileSync(xlsxPath, buf);
-              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-            }
-          }
+        if (values.xlsx) {
+          const { toLicensesXlsx } = await import('./analyzers/xlsx');
+          const xlsxPath = values.output
+            ? path.resolve(values.output as string)
+            : path.join(reportDir, `licenses-${date}.xlsx`);
+          const buf = await toLicensesXlsx(licensesDetailed);
+          fs.writeFileSync(xlsxPath, buf);
+          logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
         }
       }
       break;
@@ -692,17 +835,15 @@ export async function run(argv: string[]): Promise<void> {
         process.exit(1);
       }
       const filter = rawFilter as 'all' | 'top-level' | undefined;
-      const nested = !values['no-nested'];
       const startTime = Date.now();
       const report = await analyzeBom(targetPath, {
         verbose: !!values.verbose,
         filter,
-        nested,
       });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        console.log(JSON.stringify(report, null, 2)); // slop-ok
+        await emitJson(report); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
@@ -743,45 +884,326 @@ export async function run(argv: string[]): Promise<void> {
         console.log(''); // slop-ok
         logger.dim('Tools: ' + (report.toolsUsed.join(', ') || '(none)'));
         logger.dim(`Completed in ${elapsed}s`);
+      }
 
-        if (!values['no-save']) {
-          const reportDir = path.join(targetPath, '.dxkit', 'reports');
-          const date = new Date().toISOString().slice(0, 10);
-          const reportPath = path.join(reportDir, `bom-${date}.md`);
-          fs.mkdirSync(reportDir, { recursive: true });
-          fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
-          console.log(''); // slop-ok
-          logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
+      // Disk side: orthogonal to --json (closes D018).
+      if (!values['no-save']) {
+        const reportDir = path.join(targetPath, '.dxkit', 'reports');
+        const date = new Date().toISOString().slice(0, 10);
+        const reportPath = path.join(reportDir, `bom-${date}.md`);
+        fs.mkdirSync(reportDir, { recursive: true });
+        fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
+        if (!values.json) console.log(''); // slop-ok
+        logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
-          if (values.detailed || values.xlsx) {
-            const { buildBomDetailed, formatBomDetailedMarkdown } =
-              await import('./analyzers/bom/detailed');
-            const detailed = buildBomDetailed(report);
+        // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
+        const { buildBomDetailed, formatBomDetailedMarkdown } =
+          await import('./analyzers/bom/detailed');
+        const bomDetailed = buildBomDetailed(report);
+        const bomDetailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
+        const bomDetailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
+        fs.writeFileSync(bomDetailedJsonPath, JSON.stringify(bomDetailed, null, 2));
+        fs.writeFileSync(bomDetailedMdPath, formatBomDetailedMarkdown(bomDetailed, elapsed));
 
-            if (values.detailed) {
-              const detailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
-              const detailedJsonPath = path.join(reportDir, `bom-${date}-detailed.json`);
-              fs.writeFileSync(detailedMdPath, formatBomDetailedMarkdown(detailed, elapsed));
-              fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
-              logger.success(
-                `Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`,
-              );
-              logger.success(
-                `Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`,
-              );
-            }
+        if (values.detailed) {
+          logger.success(
+            `Detailed report saved to ${path.relative(targetPath, bomDetailedMdPath)}`,
+          );
+          logger.success(
+            `Detailed JSON saved to ${path.relative(targetPath, bomDetailedJsonPath)}`,
+          );
+        }
 
-            if (values.xlsx) {
-              const { toBomXlsx } = await import('./analyzers/xlsx');
-              const xlsxPath = values.output
-                ? path.resolve(values.output as string)
-                : path.join(reportDir, `bom-${date}.xlsx`);
-              const buf = await toBomXlsx(report);
-              fs.writeFileSync(xlsxPath, buf);
-              logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
-            }
+        if (values.xlsx) {
+          const { toBomXlsx } = await import('./analyzers/xlsx');
+          const xlsxPath = values.output
+            ? path.resolve(values.output as string)
+            : path.join(reportDir, `bom-${date}.xlsx`);
+          const buf = await toBomXlsx(report);
+          fs.writeFileSync(xlsxPath, buf);
+          logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
+        }
+      }
+      break;
+    }
+
+    case 'dashboard': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { analyzeDashboard } = await import('./analyzers/dashboard');
+      logger.header('vyuh-dxkit dashboard');
+
+      const reportsDir = values['reports-dir']
+        ? path.resolve(values['reports-dir'] as string)
+        : path.join(targetPath, '.dxkit', 'reports');
+      const jsonDir = values['json-dir'] ? path.resolve(values['json-dir'] as string) : undefined;
+      const projectName = (values['project-name'] as string | undefined) ?? undefined;
+      const outputPath = values.output
+        ? path.resolve(values.output as string)
+        : path.join(reportsDir, 'dashboard.html');
+
+      let result;
+      try {
+        result = analyzeDashboard(targetPath, { reportsDir, jsonDir, projectName });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.fail(msg);
+        process.exit(1);
+      }
+
+      if (result.reportCount === 0) {
+        logger.fail(
+          `No report markdowns found in ${path.relative(targetPath, reportsDir) || reportsDir}.\n` +
+            `Run 'vyuh-dxkit health .' (or any other report command) first to populate the directory.`,
+        );
+        process.exit(1);
+      }
+
+      if (values['no-save']) {
+        // Drain-aware HTML emission to stdout. Mirrors emitJson() for
+        // payloads that can exceed the 64KB pipe buffer (a dashboard
+        // with all reports embedded routinely runs 300-500KB).
+        if (!process.stdout.write(result.html)) {
+          await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+        }
+      } else {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, result.html);
+        logger.success(
+          `Dashboard written to ${path.relative(targetPath, outputPath) || outputPath}`,
+        );
+        logger.dim(
+          `${result.reportCount} reports · ${result.summary.healthScore !== null ? `health ${result.summary.healthScore}/100` : 'no health data'} · ` +
+            `${result.summary.vulnCount} vulns · ${result.summary.gapCount} test gaps · ` +
+            `${result.summary.advisoryCount} BoM advisories · ${result.criticalIssueCount} critical-issue tiles`,
+        );
+      }
+      break;
+    }
+
+    case 'coverage': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { runCoverageAcrossPacks } = await import('./analyzers/coverage-runner');
+      const { detectActiveLanguages } = await import('./languages');
+      logger.header('vyuh-dxkit coverage');
+
+      const active = detectActiveLanguages(targetPath);
+      const langFilter = (values as Record<string, unknown>).lang as string | undefined;
+      const failFast = !values['no-fail-fast'];
+
+      const candidates = active.filter((p) => !langFilter || p.id === langFilter);
+      if (candidates.length === 0) {
+        logger.fail(
+          langFilter
+            ? `No active language pack matches --lang ${langFilter}. Active packs: ${active.map((p) => p.id).join(', ') || '(none)'}`
+            : `No active language packs detected in ${targetPath}. Nothing to run.`,
+        );
+        process.exit(2);
+      }
+
+      logger.info(`Stack: ${candidates.map((p) => p.id).join(', ')}`);
+      console.log(''); // slop-ok
+
+      const { rows } = await runCoverageAcrossPacks(targetPath, {
+        langFilter,
+        failFast,
+        onPackStart: (id) => process.stderr.write(`  → ${id}: running tests with coverage...\n`),
+      });
+
+      // Render summary table via the same drain-aware stdout primitive
+      // emitJson uses — wide table rows would otherwise trip the
+      // no-bare-console-statements slop gate.
+      const writeRow = (s: string): void => {
+        process.stdout.write(s + '\n');
+      };
+      writeRow('');
+      writeRow(
+        `  ${logger.bold('Pack'.padEnd(12))}  ${logger.bold('Status'.padEnd(12))}  ${logger.bold('Duration'.padEnd(10))}  ${logger.bold('Artifact')}`,
+      );
+      writeRow(`  ${'─'.repeat(12)}  ${'─'.repeat(12)}  ${'─'.repeat(10)}  ${'─'.repeat(40)}`);
+      for (const r of rows) {
+        const icon =
+          r.status === 'success'
+            ? '\x1b[32m✓\x1b[0m'
+            : r.status === 'unavailable' || r.status === 'skipped'
+              ? '\x1b[2m·\x1b[0m'
+              : '\x1b[31m✗\x1b[0m';
+        const duration =
+          r.durationMs > 0 ? `${(r.durationMs / 1000).toFixed(1)}s`.padStart(10) : '—'.padStart(10);
+        const right = r.artifact ?? r.reason ?? '';
+        writeRow(`  ${icon} ${r.pack.padEnd(10)}  ${r.status.padEnd(12)}  ${duration}  ${right}`);
+      }
+
+      const successes = rows.filter((r) => r.status === 'success').length;
+      const failures = rows.filter((r) => r.status === 'failed').length;
+      const unavailable = rows.filter(
+        (r) => r.status === 'unavailable' || r.status === 'skipped',
+      ).length;
+
+      console.log(''); // slop-ok
+      if (failures > 0) {
+        logger.fail(`${successes}/${rows.length} packs produced coverage. ${failures} failed.`);
+        process.exit(1);
+      } else if (successes === 0) {
+        logger.fail(
+          `0/${rows.length} packs produced coverage (${unavailable} unavailable / skipped).`,
+        );
+        process.exit(2);
+      } else {
+        logger.success(
+          `${successes}/${rows.length} packs produced coverage. ` +
+            `Run \`vyuh-dxkit health\` or \`vyuh-dxkit test-gaps\` to consume.`,
+        );
+      }
+      break;
+    }
+
+    case 'report': {
+      // D021 (2.4.7 sub-piece 3): single orchestrator that runs every
+      // analyzer in sequence and produces a fully-populated dashboard.
+      // Child-process model rather than direct function calls: each
+      // analyzer command already owns its file-write flow (D032 made
+      // the detailed JSON + MD unconditional), so spawning preserves
+      // every side effect without duplicating code. The ~7 extra Node
+      // startups add ~10-15s on top of 5-10 minutes of real analysis —
+      // acceptable for a "press one button, get a complete audit"
+      // command. Direct function refactoring is recipe-v4 candidate
+      // territory (would touch every analyzer's CLI wiring).
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { spawnSync } = await import('child_process');
+      logger.header('vyuh-dxkit report');
+      logger.info(`Generating full audit for ${targetPath}...`);
+      console.log(''); // slop-ok
+
+      // Which analyzers run, in dependency order. `health` runs first
+      // so its detailed JSON exists when later commands or the
+      // dashboard look for it; `dashboard` runs last so every report
+      // it embeds is fresh.
+      const analyzerSteps: Array<{
+        label: string;
+        cmd: string;
+        extraFlags?: string[];
+        /**
+         * Basename prefix of the markdown report each step writes
+         * to `.dxkit/reports/`. Post-step the orchestrator verifies
+         * the file actually exists — a step that exits rc=0 without
+         * writing its report is a silent failure (the dashboard
+         * downstream falls back to "no <X> data" and the customer
+         * never learns their report is missing). Asserting at the
+         * orchestrator surface converts the silent failure into a
+         * loud one with the exit-code path the final summary
+         * already handles.
+         */
+        reportPrefix: string;
+      }> = [
+        { label: 'Health', cmd: 'health', reportPrefix: 'health-audit' },
+        { label: 'Vulnerabilities', cmd: 'vulnerabilities', reportPrefix: 'vulnerability-scan' },
+        { label: 'Test gaps', cmd: 'test-gaps', reportPrefix: 'test-gaps' },
+        { label: 'Code quality', cmd: 'quality', reportPrefix: 'quality-review' },
+        { label: 'Developer report', cmd: 'dev-report', reportPrefix: 'developer-report' },
+        { label: 'BoM', cmd: 'bom', reportPrefix: 'bom' },
+        { label: 'Licenses', cmd: 'licenses', reportPrefix: 'licenses' },
+      ];
+
+      // Forward common analyzer flags to each child so the orchestrator
+      // honors the same options the user would pass to a single command.
+      const passthroughFlags: string[] = [];
+      if (values.detailed) passthroughFlags.push('--detailed');
+      if (values.xlsx) passthroughFlags.push('--xlsx');
+      if (values.verbose) passthroughFlags.push('--verbose');
+      if (values.since) passthroughFlags.push('--since', values.since as string);
+      if (values.filter) passthroughFlags.push('--filter', values.filter as string);
+      if (values['no-nested']) passthroughFlags.push('--no-nested');
+
+      // --with-coverage handled ONCE upfront via `vyuh-dxkit coverage`;
+      // health + test-gaps then read the materialized artifact via
+      // `loadCoverage()` without re-running the test suite per command.
+      // Pre-fix `report --with-coverage` (had it existed) would have
+      // double-run tests for health and again for test-gaps.
+      const runStartedAt = Date.now();
+      const stepDurations: Array<{ label: string; ms: number; rc: number }> = [];
+
+      if (values['with-coverage']) {
+        logger.info('[setup] Materializing coverage artifacts (one run, shared)...');
+        const t0 = Date.now();
+        const rc = spawnSync(
+          process.execPath,
+          [
+            process.argv[1],
+            'coverage',
+            targetPath,
+            ...(values['no-fail-fast'] ? ['--no-fail-fast'] : []),
+          ],
+          { stdio: 'inherit' },
+        ).status;
+        stepDurations.push({ label: 'Coverage', ms: Date.now() - t0, rc: rc ?? -1 });
+        console.log(''); // slop-ok
+      }
+
+      const reportDir = path.join(targetPath, '.dxkit', 'reports');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      for (const step of analyzerSteps) {
+        logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] ${step.label}...`);
+        const t0 = Date.now();
+        const rc = spawnSync(
+          process.execPath,
+          [process.argv[1], step.cmd, targetPath, ...passthroughFlags, ...(step.extraFlags ?? [])],
+          { stdio: 'inherit' },
+        ).status;
+        let effectiveRc = rc ?? -1;
+        // Post-step assertion: the child returned rc=0 BUT did the
+        // expected markdown actually land on disk? On heavy polyglot
+        // repos (web-client; 13K+ graphify nodes, jscpd timeout
+        // exhaustion) the health child was observed to silently exit
+        // 0 without writing its markdown — the dashboard then renders
+        // "no <X> data" and the customer never learns their report
+        // is missing. The orchestrator owns the "did the report
+        // actually ship" assertion; analyzer subcommands keep their
+        // own write logic unchanged.
+        if (effectiveRc === 0) {
+          const expectedReport = path.join(reportDir, `${step.reportPrefix}-${dateStr}.md`);
+          if (!fs.existsSync(expectedReport)) {
+            logger.warn(
+              `${step.label} returned exit 0 but did NOT write ${path.relative(targetPath, expectedReport)}. ` +
+                `Treating as failure so the final summary surfaces it.`,
+            );
+            effectiveRc = -1;
           }
         }
+        stepDurations.push({ label: step.label, ms: Date.now() - t0, rc: effectiveRc });
+        console.log(''); // slop-ok
+      }
+
+      logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] Dashboard...`);
+      const dashT0 = Date.now();
+      const dashRc = spawnSync(process.execPath, [process.argv[1], 'dashboard', targetPath], {
+        stdio: 'inherit',
+      }).status;
+      stepDurations.push({ label: 'Dashboard', ms: Date.now() - dashT0, rc: dashRc ?? -1 });
+
+      // Final summary. Always emit it so the user sees the dashboard
+      // location without scrolling through per-step output.
+      const totalElapsed = ((Date.now() - runStartedAt) / 1000).toFixed(1);
+      const failed = stepDurations.filter((s) => s.rc !== 0);
+      console.log(''); // slop-ok
+      logger.dim('─'.repeat(60));
+      for (const s of stepDurations) {
+        const status = s.rc === 0 ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
+        const duration = `${(s.ms / 1000).toFixed(1)}s`.padStart(8);
+        process.stdout.write(`  ${status} ${s.label.padEnd(20)} ${duration}\n`);
+      }
+      logger.dim('─'.repeat(60));
+      console.log(''); // slop-ok
+      if (failed.length === 0) {
+        logger.success(
+          `All ${stepDurations.length} steps completed in ${totalElapsed}s. ` +
+            `Open .dxkit/reports/dashboard.html for the full picture.`,
+        );
+      } else {
+        logger.warn(
+          `${stepDurations.length - failed.length}/${stepDurations.length} steps completed (${failed.length} failed: ${failed.map((s) => s.label).join(', ')}). ` +
+            `Partial dashboard at .dxkit/reports/dashboard.html.`,
+        );
+        process.exit(1);
       }
       break;
     }
@@ -850,7 +1272,7 @@ function formatMarkdownReport(
   lines.push('---');
   lines.push('');
   lines.push(
-    `## Overall Health Score: ${report.summary.overallScore}/100 (Grade: ${report.summary.grade})`,
+    `## Overall Health Score: ${report.summary.overallScore}/100 (Rating: ${report.summary.rating})`,
   );
   lines.push('');
   lines.push('| Dimension | Score | Status |');
@@ -867,9 +1289,7 @@ function formatMarkdownReport(
 
   for (const [key, dim] of Object.entries(report.dimensions)) {
     const name = dimNames[key] || key;
-    lines.push(
-      `| ${name} | ${dim.score}/100 | ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)} |`,
-    );
+    lines.push(`| ${name} | ${dim.score}/100 | ${dim.rating} |`);
   }
 
   lines.push('');
@@ -879,12 +1299,12 @@ function formatMarkdownReport(
   // Dimension details
   for (const [key, dim] of Object.entries(report.dimensions)) {
     const name = dimNames[key] || key;
-    lines.push(
-      `## ${name} (${dim.score}/100) -- ${dim.status.charAt(0).toUpperCase() + dim.status.slice(1)}`,
-    );
+    lines.push(`## ${name} (${dim.score}/100) -- ${dim.rating}`);
     lines.push('');
     lines.push(dim.details);
     lines.push('');
+    const topActions = formatTopActionsBlock(dim);
+    for (const line of topActions) lines.push(line);
     lines.push('| Metric | Value |');
     lines.push('|---|---|');
     for (const [mk, mv] of Object.entries(dim.metrics)) {
@@ -893,6 +1313,44 @@ function formatMarkdownReport(
       }
     }
     lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  // 2.4.7: top-N largest files. Surfaces the file-size distribution
+  // beyond the single "largest" callout in the Code Quality /
+  // Maintainability dimensions. Skipped when the array is empty
+  // (no source files counted or autogen excluded everything).
+  if (report.largestFiles && report.largestFiles.length > 0) {
+    lines.push('## Top Files by Size');
+    lines.push('');
+    lines.push('| Rank | File | Lines |');
+    lines.push('|-----:|------|------:|');
+    report.largestFiles.forEach((f, i) => {
+      lines.push(`| ${i + 1} | \`${f.path}\` | ${f.lines.toLocaleString()} |`);
+    });
+    lines.push('');
+
+    // Advisory: when largest-files contain paths matching a known
+    // vendored-code convention not already in the customer's
+    // exclusion chain, surface a single tip pointing at the
+    // `.dxkit-ignore` escape hatch. Bundled defaults already cover
+    // `vendor/`, `third_party/`, `playground/`, `lexical-playground/`,
+    // etc.; the remaining cases (most commonly `/libs/`) live in
+    // customer-specific paths that can't be defaulted-away without
+    // false-positives on first-party monorepo layouts.
+    const suspects = suspectVendoredEntries(report.largestFiles);
+    if (suspects.length > 0) {
+      lines.push(
+        `> **Tip — possibly vendored:** ${suspects
+          .map((s) => `\`${s.path}\``)
+          .join(
+            ', ',
+          )} match path conventions for external / vendored code. If these aren't authored by your team, add them (or their parent directory) to \`.dxkit-ignore\` to keep largest-files, Maintainability scoring, and the densest-file metric focused on first-party code.`,
+      );
+      lines.push('');
+    }
+
     lines.push('---');
     lines.push('');
   }
@@ -925,16 +1383,20 @@ function formatMarkdownReport(
   // Footer
   lines.push('---');
   lines.push('');
-  if (report.languages.length > 0) {
+  // Drop languages that round to 0% — a single .py file alongside a
+  // 300K-LOC C# codebase shouldn't surface as "Python (0%)" in the
+  // header. Filter at the renderer rather than the detector so the
+  // raw HealthReport.languages still carries everything for
+  // programmatic consumers.
+  const visibleLanguages = report.languages.filter((l) => l.percentage >= 1);
+  if (visibleLanguages.length > 0) {
     lines.push(
-      '**Languages:** ' + report.languages.map((l) => `${l.name} (${l.percentage}%)`).join(', '),
+      '**Languages:** ' + visibleLanguages.map((l) => `${l.name} (${l.percentage}%)`).join(', '),
     );
     lines.push('');
   }
   lines.push(`**Tools used:** ${report.toolsUsed.join(', ')}`);
-  if (report.toolsUnavailable.length > 0) {
-    lines.push(`**Tools unavailable:** ${report.toolsUnavailable.join(', ')}`);
-  }
+  lines.push(...renderToolsUnavailableLines(report.toolsUnavailable));
   lines.push(`**Analysis time:** ${elapsed}s`);
   lines.push('');
   lines.push('*Generated by [VyuhLabs DXKit](https://www.npmjs.com/package/@vyuhlabs/dxkit)*');

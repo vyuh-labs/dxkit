@@ -14,10 +14,13 @@
  * change rather than a cross-cutting edit here.
  */
 
-import { LANGUAGES } from '../../languages';
+import * as fs from 'fs';
+import * as path from 'path';
+import { LANGUAGES, allAutogenSourcePatterns } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DuplicationClone, DuplicationResult } from '../../languages/capabilities/types';
-import { run } from './runner';
+import { getJscpdIgnorePatterns } from './exclusions';
+import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 
 interface JscpdRawDuplicate {
@@ -95,23 +98,94 @@ function topClonesFrom(duplicates: JscpdRawDuplicate[], limit = 15): Duplication
 /**
  * Single source of truth for the jscpd invocation. Consumed by
  * `jscpdProvider` (capability dispatcher).
+ *
+ * Failure-mode honesty: when jscpd doesn't produce a parseable
+ * report, the returned `reason` distinguishes timeout, non-zero
+ * exit (with first stderr line), or the rare true "no output"
+ * case. Same shape as the semgrep gather — switched from execSync
+ * to spawn-with-process-group so jscpd's worker pool (it splits
+ * the scan across multiple Node workers internally) isn't killed
+ * mid-run when execSync's wall-clock timer fires.
  */
-export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
+export async function gatherJscpdResult(cwd: string): Promise<DuplicationGatherOutcome> {
   const status = findTool(TOOL_DEFS.jscpd, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
   const reportDir = `/tmp/dxkit-jscpd-${Date.now()}`;
   const pattern = buildJscpdPattern();
-  run(
-    `${status.path} --reporters json --output '${reportDir}' --gitignore --pattern '${pattern}' --min-lines 5 --min-tokens 50 '${cwd}' > /dev/null 2>&1`,
-    cwd,
-    300000,
-  );
+  // jscpd's `--ignore` receives the union of:
+  //
+  //   1. dxkit's centralized exclusion set (`getJscpdIgnorePatterns`) —
+  //      the same dirs / sourcePaths / filePatterns the in-process
+  //      walkers (cloc, grep, semgrep, graphify's Python filter)
+  //      honor. Without this, committed-vendored trees that aren't
+  //      listed in the project's `.gitignore` (the `--gitignore` flag's
+  //      only input) — minified bundles, hash-versioned webpack
+  //      chunks, vendored library copies under `public/` — would
+  //      force jscpd to tokenize them, exhaust heap, and OOM-kill
+  //      before flushing its JSON report. The report would then read
+  //      "Duplication unavailable" on the densest repos.
+  //
+  //   2. Pack-declared autogen patterns (`*.Designer.cs`, WCF
+  //      `Reference.cs`, MSBuild `*.AssemblyInfo.cs`, etc.) so
+  //      duplication detection skips the same files generic.ts +
+  //      test-gaps' source walk already skip. Autogen scaffolding
+  //      duplicates verbatim by its nature; including it inflates
+  //      the duplication percentage and points "extract this" advice
+  //      at code the developer never authored.
+  //
+  // Patterns get a `**/` prefix so they match at any directory depth.
+  const exclusionIgnore = getJscpdIgnorePatterns(cwd);
+  const autogenIgnore = allAutogenSourcePatterns().map((p) => `**/${p}`);
+  const ignorePatterns = [...exclusionIgnore, ...autogenIgnore];
+  const args = ['--reporters', 'json', '--output', reportDir, '--gitignore', '--pattern', pattern];
+  if (ignorePatterns.length > 0) {
+    args.push('--ignore', ignorePatterns.join(','));
+  }
+  args.push('--min-lines', '5', '--min-tokens', '50', cwd);
 
-  const reportRaw = run(`cat '${reportDir}/jscpd-report.json' 2>/dev/null`, cwd);
-  run(`rm -rf '${reportDir}'`, cwd);
+  const outcome = await runDetached(status.path, args, { cwd, timeoutMs: 600000 });
 
-  if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };
+  // Read the report file directly. Pre-D-fix this used
+  // `run('cat <path>')` which routed through execSync with the default
+  // 1MB maxBuffer — jscpd reports on enterprise codebases routinely
+  // exceed that (dpl-studio's was 25MB / 395k lines), causing execSync
+  // to truncate the output to empty and the gather to misreport
+  // jscpd as "unavailable" even after a fully-successful run.
+  // Direct file read sidesteps the buffer entirely.
+  const reportPath = path.join(reportDir, 'jscpd-report.json');
+  let reportRaw: string;
+  try {
+    reportRaw = fs.readFileSync(reportPath, 'utf-8');
+  } catch {
+    reportRaw = '';
+  }
+  try {
+    fs.rmSync(reportDir, { recursive: true, force: true });
+  } catch {
+    /* dir already gone or never written — fine */
+  }
+
+  if (!reportRaw) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 600s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
+    const stderrFirstLine = outcome.stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (outcome.code !== 0 && outcome.code !== null) {
+      const ctx = stderrFirstLine ? ` (stderr: ${stderrFirstLine})` : '';
+      return { kind: 'unavailable', reason: `exit code ${outcome.code}${ctx}` };
+    }
+    if (stderrFirstLine) {
+      return { kind: 'unavailable', reason: `no output (stderr: ${stderrFirstLine})` };
+    }
+    return { kind: 'unavailable', reason: 'no output' };
+  }
 
   let data: JscpdReport;
   try {
@@ -140,10 +214,24 @@ export function gatherJscpdResult(cwd: string): DuplicationGatherOutcome {
  * Capability-shaped provider. Registered in
  * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.duplication`.
  */
-export const jscpdProvider: CapabilityProvider<DuplicationResult> = {
+// Implements the optional `gatherOutcome` channel the dispatcher reads
+// to populate `DispatchOutcome.skipReasons`. Without it, a failed jscpd
+// run collapses to `null` at the gather boundary and the actual failure
+// reason ("not installed" / "timed out at 600s" / "exit code 137" /
+// "no output" / "parse error") is dropped — `availabilityFromOutcome`
+// in health.ts then synthesizes generic prose that conflates
+// install-missing with attempted-but-failed. Exposing the real outcome
+// here lets the report show why jscpd didn't contribute, in jscpd's
+// own words.
+export const jscpdProvider: CapabilityProvider<DuplicationResult> & {
+  gatherOutcome(cwd: string): Promise<DuplicationGatherOutcome>;
+} = {
   source: 'jscpd',
   async gather(cwd) {
-    const outcome = gatherJscpdResult(cwd);
+    const outcome = await gatherJscpdResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherJscpdResult(cwd);
   },
 };

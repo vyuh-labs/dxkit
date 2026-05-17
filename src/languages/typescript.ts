@@ -12,8 +12,15 @@ import {
   gatherOsvScannerFixPlans,
 } from '../analyzers/tools/osv-scanner-fix';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+  LintProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -21,6 +28,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -314,9 +322,11 @@ function loadTsTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * (Vulnerability Issues) is per-advisory.
  */
 async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!fileExists(cwd, 'package.json')) return { kind: 'tool-missing' };
+  if (!fileExists(cwd, 'package.json')) {
+    return { kind: 'no-manifest', reason: 'no package.json' };
+  }
   const auditRaw = run('npm audit --json 2>&1', cwd, 60000);
-  if (!auditRaw) return { kind: 'no-output' };
+  if (!auditRaw) return { kind: 'unavailable', reason: 'npm audit produced no output' };
   try {
     const auditData = JSON.parse(auditRaw) as AuditV1 & AuditV2;
     let critical = 0;
@@ -380,16 +390,26 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
             package: advisoryPkg,
             installedVersion: installedVersion(advisoryPkg),
             tool: 'npm-audit',
+            packId: 'typescript',
             severity: normalizeNpmSeverity(v.severity),
           };
           if (typeof v.cvss?.score === 'number') finding.cvssScore = v.cvss.score;
           if (directFix) {
             finding.fixedVersion = directFix.version;
             finding.breakingUpgrade = directFix.isSemVerMajor;
-          } else if (transitiveFix) {
+          } else if (transitiveFix && transitiveFix.version !== '0.0.0') {
             // Parent-upgrade remediation — surface directly in upgradeAdvice
             // rather than pretending the value is a direct fix. Bom render
             // picks this up as the Tier-1 resolution for the row.
+            //
+            // The 0.0.0 guard handles the npm-audit sentinel: when no
+            // real transitive upgrade target can be computed (the parent
+            // dep has no compatible patched version), npm-audit emits
+            // `{ version: "0.0.0", isSemVerMajor: true }` rather than
+            // omitting the field. Templating that into a recommendation
+            // ("Upgrade react-scripts to 0.0.0") reads as actionable
+            // guidance — the resolution column should fall through to
+            // the Tier-1 "No fix available" message instead.
             const majorNote = transitiveFix.isSemVerMajor ? ' [major]' : '';
             finding.upgradeAdvice =
               `Upgrade ${transitiveFix.name} to ${transitiveFix.version}${majorNote} ` +
@@ -441,16 +461,19 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `npm audit parse error: ${(err as Error).message}` };
   }
 }
 
-const tsDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const tsDepVulnsProvider: DepVulnsProvider = {
   source: 'typescript',
   async gather(cwd) {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherTsDepVulnsResult(cwd);
   },
 };
 
@@ -585,11 +608,14 @@ function gatherTsLintResult(cwd: string): LintGatherOutcome {
   return { kind: 'unavailable', reason: 'config error' };
 }
 
-const tsLintProvider: CapabilityProvider<LintResult> = {
+const tsLintProvider: LintProvider = {
   source: 'typescript',
   async gather(cwd) {
     const outcome = gatherTsLintResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherTsLintResult(cwd);
   },
 };
 
@@ -698,10 +724,103 @@ function gatherTsCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Resolve the command this repo uses to run tests with coverage (D021).
+ *
+ * Three-tier fallback, cheapest + most-respectful-of-project-config
+ * first:
+ *
+ *   1. **Project-declared script** — if `package.json#scripts` defines
+ *      a `test:coverage` (preferred) or `coverage` entry, use that.
+ *      Honors whatever the project has chosen — pre/post hooks,
+ *      monorepo workspace setup, custom flags. This is the right
+ *      answer for any non-trivial codebase.
+ *
+ *   2. **Vitest in deps** — if `vitest` is installed, run
+ *      `npx vitest run --coverage`. The `--coverage` flag triggers the
+ *      configured coverage provider (typically `@vitest/coverage-v8`,
+ *      which we surface as a project-local tool requirement). `run`
+ *      mode is essential — without it vitest enters watch mode.
+ *
+ *   3. **Jest in deps** — if `jest` is installed, run
+ *      `npx jest --coverage`. Istanbul-compatible output to
+ *      `coverage/coverage-final.json` matches what `gatherTsCoverageResult`
+ *      already reads.
+ *
+ * Returns null if none of the above can resolve (e.g. mocha-only
+ * repos), letting the preflight surface an actionable hint instead of
+ * the spawn flailing.
+ */
+function resolveTsCoverageCmd(cwd: string): string | null {
+  const pkgPath = path.join(cwd, 'package.json');
+  try {
+    const raw = fs.readFileSync(pkgPath, 'utf-8');
+    const pkg = JSON.parse(raw) as {
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    const scripts = pkg.scripts ?? {};
+    if (typeof scripts['test:coverage'] === 'string') return 'npm run test:coverage';
+    if (typeof scripts.coverage === 'string') return 'npm run coverage';
+    const allDeps: Record<string, string> = {
+      ...(pkg.dependencies ?? {}),
+      ...(pkg.devDependencies ?? {}),
+    };
+    if ('vitest' in allDeps) return 'npx vitest run --coverage';
+    if ('jest' in allDeps) return 'npx jest --coverage';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run the project's TS/JS test runner with coverage (D021).
+ *
+ * Preflight: require `package.json`. Without it this isn't a Node
+ * project. Additionally, `resolveTsCoverageCmd` must return non-null —
+ * otherwise we have no canonical command (mocha-only / ava / tap
+ * projects fall through; users with those runners can add a
+ * `test:coverage` script to opt in to tier 1).
+ *
+ * Artifact: `coverage/coverage-summary.json` is the canonical Istanbul
+ * summary that `gatherTsCoverageResult` reads first. Tier-1 scripts
+ * may emit elsewhere, but Istanbul's default conventions put the
+ * artifact here for both vitest-v8 and jest.
+ */
+function runTsTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'typescript',
+      cmd: resolveTsCoverageCmd(cwd) ?? 'npx vitest run --coverage',
+      cwd,
+      artifact: (cwd) => {
+        for (const c of ['coverage/coverage-summary.json', 'coverage/coverage-final.json']) {
+          if (fileExists(cwd, c)) return c;
+        }
+        return null;
+      },
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'package.json')) {
+          return 'no package.json in this directory — not a Node project';
+        }
+        if (resolveTsCoverageCmd(cwd) === null) {
+          return 'no test:coverage script and no vitest/jest in deps — add a `test:coverage` npm script or install vitest/jest';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'typescript',
   async gather(cwd) {
     return gatherTsCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runTsTestsWithCoverage(cwd);
   },
 };
 
@@ -884,20 +1003,43 @@ function splitTsLicenseCheckerKey(key: string): { package: string; version: stri
  * `licenseFile` path on disk — the customer's existing workflow does
  * the same thing (see `license-generation.sh` in vyuhlabs-platform).
  */
-async function gatherTsLicensesResult(cwd: string): Promise<LicensesResult | null> {
-  if (!fileExists(cwd, 'package.json')) return null;
+async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcome> {
+  if (!fileExists(cwd, 'package.json')) {
+    return { kind: 'no-manifest', reason: 'no package.json' };
+  }
+
+  // Pre-flight check before the shell-out. license-checker-rseidelsohn
+  // walks `node_modules/` to harvest license metadata; on a project
+  // that has `package.json` but hasn't run `npm install` (e.g. test
+  // fixtures, freshly-cloned repos, CI nodes that skipped install) it
+  // can hang for the full timeout window waiting on a directory that
+  // never appears. Treating "no node_modules" as a separate
+  // unavailable state lets the cache build return fast and keeps the
+  // user-facing reason actionable ("run `npm install` first") instead
+  // of generic "no output."
+  if (!fileExists(cwd, 'node_modules')) {
+    return {
+      kind: 'unavailable',
+      reason: 'no node_modules directory; run `npm install` to populate dependencies first',
+    };
+  }
 
   const status = findTool(TOOL_DEFS['license-checker-rseidelsohn'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'license-checker-rseidelsohn not installed' };
+  }
 
   const raw = run(`${status.path} --json --excludePrivatePackages 2>/dev/null`, cwd, 120000);
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'license-checker produced no output' };
 
   let data: Record<string, LicenseCheckerEntry>;
   try {
     data = JSON.parse(raw) as Record<string, LicenseCheckerEntry>;
-  } catch {
-    return null;
+  } catch (err) {
+    return {
+      kind: 'unavailable',
+      reason: `license-checker parse error: ${(err as Error).message}`,
+    };
   }
 
   // Load the top-level index once and project it down to `isTopLevel`
@@ -957,16 +1099,21 @@ async function gatherTsLicensesResult(cwd: string): Promise<LicensesResult | nul
     if (iso) f.releaseDate = iso;
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'license-checker-rseidelsohn',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const tsLicensesProvider: CapabilityProvider<LicensesResult> = {
+const tsLicensesProvider: LicensesProvider = {
   source: 'typescript',
   async gather(cwd) {
+    const outcome = await gatherTsLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherTsLicensesResult(cwd);
   },
 };
@@ -990,6 +1137,64 @@ export const typescript: LanguageSupport = {
     '*.spec.cjs',
   ],
   extraExcludes: ['node_modules', 'dist', '.next', '.turbo', 'coverage', '.cache'],
+
+  // D027 (2.4.7): JSDoc / TSDoc block comments are the conventional
+  // documentation marker. Per-pack pattern replaces the pre-D027
+  // hardcoded JS-shaped regex in generic.ts.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): Node / browser TLS-bypass idioms. The env-var
+  // `NODE_TLS_REJECT_UNAUTHORIZED=0` disables verification process-
+  // wide; `rejectUnauthorized: false` is the per-request opt-out on
+  // `https.Agent` / `tls.connect` / `node-fetch` agents.
+  tlsBypassPatterns: ['NODE_TLS_REJECT_UNAUTHORIZED.*0', 'rejectUnauthorized.*false'],
+
+  upgradeCommand(name, version) {
+    return `npm install ${name}@${version}`;
+  },
+
+  // Path conventions span both backend Node frameworks (Express,
+  // Loopback, NestJS, Fastify — controllers/services/repositories)
+  // and the React / Next.js frontend world (components/pages/hooks).
+  // Both are declared as `primaryComponentPaths` so a polyglot Node
+  // backend + React frontend monorepo doesn't have to pick. The
+  // `routePaths` subset narrows to HTTP-handler conventions so the
+  // "Add API documentation" action stays silent on pure-React apps.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/handlers/',
+      '/services/',
+      '/repositories/',
+      '/interceptors/',
+      '/middleware/',
+      '/components/',
+      '/pages/',
+      '/hooks/',
+      '/screens/',
+    ],
+    routePaths: ['/controllers/', '/handlers/', '/routes/', '/pages/api/', '/app/api/'],
+    modelPaths: ['/models/', '/entities/', '/schemas/', '/dto/', '/dtos/'],
+    vocabulary: {
+      components: 'controllers/components',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/handlers/', '/services/'],
+      medium: [
+        '/interceptors/',
+        '/middleware/',
+        '/repositories/',
+        '/components/',
+        '/pages/',
+        '/hooks/',
+        '/screens/',
+      ],
+    },
+  },
+
+  clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
 
   detect(cwd) {
     return fileExists(cwd, 'package.json');

@@ -2,18 +2,18 @@
  * Quality analyzer — public API.
  */
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { timed, timedAsync } from '../tools/timing';
 import {
   gatherDuplication,
   gatherStructuralMetrics,
-  gatherCommentRatio,
   gatherHygieneMarkers,
   gatherHygieneTopOffenders,
-  gatherLintMetrics,
 } from './gather';
+import { QUALITY_SCORING_SPEC, type QualityScoreInput, evaluateSpec } from '../../scoring';
 import { QualityReport, QualityMetrics } from './types';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export type { QualityReport, QualityMetrics } from './types';
 
@@ -23,51 +23,43 @@ export interface AnalyzeQualityOptions {
   detailed?: boolean;
 }
 
-/** Compute slop score (0-100, higher = cleaner). */
-export function computeSlopScore(m: QualityMetrics): number {
-  let score = 100;
+/**
+ * Adapter from the standalone Quality report's `QualityMetrics` into
+ * the canonical `QualityScoreInput` partition. `m.sourceFiles` carries
+ * the canonical repo source-file count from the cached health metrics
+ * — the same denominator the health-side Code Quality dimension uses
+ * — so both surfaces' density penalties land on identical values.
+ */
+export function qualityMetricsToScoreInput(m: QualityMetrics): QualityScoreInput {
+  return {
+    sourceFiles: m.sourceFiles,
 
-  // Duplication
-  if (m.duplication) {
-    if (m.duplication.percentage > 15) score -= 20;
-    else if (m.duplication.percentage > 5) score -= 10;
-  }
+    lintErrors: m.lintErrors,
+    lintAvailable: m.lintTool !== null,
 
-  // Comment ratio (from cloc)
-  if (m.commentRatio !== null) {
-    if (m.commentRatio > 0.5) score -= 15;
-    else if (m.commentRatio > 0.4) score -= 10;
-  }
+    consoleLogCount: m.consoleLogCount,
+    todoCount: m.todoCount,
+    fixmeCount: m.fixmeCount,
+    hackCount: m.hackCount,
+    staleFiles: m.staleFiles.length,
+    mixedLanguages: m.mixedLanguages,
 
-  // TODO/FIXME/HACK density
-  const hygieneTotal = m.todoCount + m.fixmeCount + m.hackCount;
-  if (hygieneTotal > 50) score -= 10;
-  else if (hygieneTotal > 20) score -= 5;
+    filesOver500Lines: m.filesOver500Lines,
+    largestFileLines: m.largestFileLines,
 
-  // God files (function density)
-  if (m.maxFunctionsInFile !== null && m.maxFunctionsInFile > 50) score -= 10;
+    anyTypeCount: m.anyTypeCount,
+    typeErrors: m.typeErrors,
 
-  // Dead code
-  if (m.deadImportCount !== null && m.deadImportCount > 20) score -= 10;
-  if (m.orphanModuleCount !== null && m.orphanModuleCount > 30) score -= 5;
+    duplicationPercentage: m.duplication?.percentage ?? null,
+    duplicationAvailable: m.duplication !== null,
 
-  // Console.log density
-  if (m.consoleLogCount > 500) score -= 15;
-  else if (m.consoleLogCount > 100) score -= 10;
-  else if (m.consoleLogCount > 20) score -= 5;
+    maxFunctionsInFile: m.maxFunctionsInFile,
+    deadImportCount: m.deadImportCount,
+    orphanModuleCount: m.orphanModuleCount,
+    structuralAvailable: m.maxFunctionsInFile !== null,
 
-  // Lint errors
-  if (m.lintErrors > 50) score -= 10;
-  else if (m.lintErrors > 10) score -= 5;
-
-  // Stale files committed to git
-  if (m.staleFiles.length > 3) score -= 5;
-  else if (m.staleFiles.length > 0) score -= 2;
-
-  // Mixed JS/TS in source directories
-  if (m.mixedLanguages) score -= 5;
-
-  return Math.max(0, Math.min(100, score));
+    commentRatio: m.commentRatio,
+  };
 }
 
 export async function analyzeQuality(
@@ -75,9 +67,22 @@ export async function analyzeQuality(
   options: AnalyzeQualityOptions = {},
 ): Promise<QualityReport> {
   const verbose = !!options.verbose;
-  const stack = detect(repoPath);
   const toolsUsed: string[] = ['grep', 'find'];
   const toolsUnavailable: string[] = [];
+
+  // Single canonical analysis envelope shared with `health` and the
+  // other migrated consumers. Pulling provenance + sourceFiles count
+  // from the cache means the density denominator the standalone Quality
+  // score uses is the SAME denominator the health-side Code Quality
+  // dimension uses — so the two surfaces converge on the same number.
+  // Closes the dual-Quality-formula drift class structurally.
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack } = cacheResult;
+  const cm = cacheResult.metrics;
+  const sourceFiles = cm.sourceFiles;
 
   // 1. Duplication (jscpd) — dispatcher-driven via DUPLICATION capability.
   const dup = await timedAsync('jscpd', verbose, () => gatherDuplication(repoPath));
@@ -89,27 +94,65 @@ export async function analyzeQuality(
   if (structure.toolUsed) toolsUsed.push(structure.toolUsed);
   else toolsUnavailable.push('graphify');
 
-  // 3. Comment ratio (cloc)
-  const comments = timed('cloc', verbose, () => gatherCommentRatio(repoPath));
-  if (comments.toolUsed) toolsUsed.push(comments.toolUsed);
-  else toolsUnavailable.push('cloc');
+  // Hygiene markers + comment ratio + counts come from the cached
+  // HealthMetrics — the cache builder runs those gathers once per
+  // (cwd, SHA) so the values match the health-side Code Quality
+  // dimension exactly. The local gather is still called here, but
+  // ONLY for the staleFiles file list (rendered into the standalone
+  // Quality markdown). The score uses the cached count; the
+  // markdown uses this list. They come from the same git ls-files
+  // probe so they're consistent by construction.
+  const hygiene = timed('hygiene (grep, list-only)', verbose, () => gatherHygieneMarkers(repoPath));
 
-  // 4. Hygiene markers (grep)
-  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
-
-  // 4b. Top hygiene offenders — only when --detailed (extra grep pass)
+  // Top hygiene offenders — only when --detailed (extra grep pass).
+  // Lives standalone-side because the offender lists aren't part of
+  // the cached envelope yet; cheap grep on hit, only run on demand.
   const topOffenders = options.detailed
     ? timed('hygiene top offenders', verbose, () => gatherHygieneTopOffenders(repoPath))
     : { topConsoleFiles: undefined, topTodoFiles: undefined };
 
-  // 5. Lint (eslint/ruff)
-  const lint = await timedAsync('lint', verbose, () => gatherLintMetrics(repoPath));
-  if (lint.tool) toolsUsed.push(lint.tool);
+  // Lint (eslint/ruff). Reads counts + the augmented "(not run: <packs>)"
+  // tool label off the canonical cached envelope. The cache builder
+  // already calls gatherWithProvenance for LINT and bakes the
+  // skipped-pack provenance into envelope.tool, so the standalone
+  // Quality report renders the SAME label health does — closes the
+  // cross-process drift class for lint.
+  //
+  // When the cache has NO lint envelope but the active language packs
+  // declare a lint capability (i.e. eslint/ruff was expected to run
+  // but every provider returned null), surface an explicit notice.
+  // Otherwise the renderer's "0 errors, 0 warnings" reads as "clean"
+  // when reality is "lint didn't run." Same honesty pattern the
+  // licenses degraded-banner uses.
+  const lintCounts = cacheResult.capabilities.lint?.counts;
+  const lintErrors = (lintCounts?.critical ?? 0) + (lintCounts?.high ?? 0);
+  const lintWarnings = (lintCounts?.medium ?? 0) + (lintCounts?.low ?? 0);
+  const lintFromCache: string | null = cacheResult.capabilities.lint?.tool ?? null;
+  const lintAvail = cacheResult.capabilities.lintAvailability;
+  // When the cache says lint was attempted but every provider
+  // returned null, surface the honesty notice in lintTool so the
+  // renderer's "0 errors, 0 warnings" cell reads with explanation
+  // instead of looking like a clean result. The actually-ran tool
+  // name (or null) flows into toolsUsed separately so the footer
+  // stays accurate.
+  const lintTool: string | null =
+    lintFromCache ??
+    (lintAvail && !lintAvail.available ? `not run — ${lintAvail.unavailableReason}` : null);
+  if (lintFromCache) toolsUsed.push(lintFromCache);
+  if (cm.commentRatio !== null) toolsUsed.push('cloc');
 
   const metrics: QualityMetrics = {
-    lintErrors: lint.errors,
-    lintWarnings: lint.warnings,
-    lintTool: lint.tool,
+    sourceFiles,
+    // File-size + type signals from the cached health metrics so the
+    // standalone slop score sees the same penalties the health-side
+    // dimension sees.
+    filesOver500Lines: cm.filesOver500Lines,
+    largestFileLines: cm.largestFileLines,
+    anyTypeCount: cm.anyTypeCount,
+    typeErrors: cm.typeErrors,
+    lintErrors,
+    lintWarnings,
+    lintTool,
     duplication: dup.stats,
     maxFunctionsInFile: structure.maxFunctionsInFile,
     maxFunctionsFilePath: structure.maxFunctionsFilePath,
@@ -118,29 +161,40 @@ export async function analyzeQuality(
     functionCount: structure.functionCount,
     deadImportCount: structure.deadImportCount,
     orphanModuleCount: structure.orphanModuleCount,
-    todoCount: hygiene.todoCount,
-    fixmeCount: hygiene.fixmeCount,
-    hackCount: hygiene.hackCount,
-    consoleLogCount: hygiene.consoleLogCount,
-    commentRatio: comments.ratio,
+    // Hygiene + mixed + comment ratio + console-density signals
+    // sourced from the canonical health metrics so both surfaces
+    // score from identical inputs. staleFiles list comes from the
+    // local gather (markdown render needs the file names); its
+    // length matches cm.staleFiles by construction since both
+    // gathers run the same git ls-files probe.
+    todoCount: cm.todoCount,
+    fixmeCount: cm.fixmeCount,
+    hackCount: cm.hackCount,
     staleFiles: hygiene.staleFiles,
-    mixedLanguages: hygiene.mixedLanguages,
+    mixedLanguages: cm.mixedLanguages,
+    consoleLogCount: cm.consoleLogCount,
+    commentRatio: cm.commentRatio,
     slopScore: 0, // computed below
     topConsoleFiles: topOffenders.topConsoleFiles,
     topTodoFiles: topOffenders.topTodoFiles,
   };
 
-  metrics.slopScore = computeSlopScore(metrics);
+  metrics.slopScore = evaluateSpec(QUALITY_SCORING_SPEC, qualityMetricsToScoreInput(metrics)).score;
+
+  const activeLanguages = Object.entries(stack.languages)
+    .filter(([, active]) => active)
+    .map(([id]) => id);
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     metrics,
     slopScore: metrics.slopScore,
     toolsUsed,
     toolsUnavailable,
+    activeLanguages,
   };
 }
 
@@ -166,28 +220,59 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push('| Metric | Value |');
   L.push('|--------|-------|');
   L.push(`| Slop Score | **${report.slopScore}/100** |`);
-  if (m.duplication) {
+  // Always render every row — silent omission on tool-unavailable reads
+  // as "this signal is fine" when reality is "we couldn't measure it."
+  // The unavailable-row text names the underlying tool so the customer
+  // knows exactly what to install to populate the metric.
+  L.push(
+    `| Duplication | ${
+      m.duplication
+        ? `${m.duplication.percentage}% (${m.duplication.cloneCount} clones, ${m.duplication.duplicatedLines} lines)`
+        : 'unavailable — install `jscpd`'
+    } |`,
+  );
+  L.push(
+    `| Comment Ratio | ${
+      m.commentRatio !== null
+        ? `${(m.commentRatio * 100).toFixed(1)}%`
+        : 'unavailable — install `cloc`'
+    } |`,
+  );
+  // Split the lint label into "Lint Errors" (counts + tool that ran) and
+  // "Lint Coverage" (which packs WERE attempted but didn't produce
+  // findings). Pre-split, multi-pack repos where one provider returned
+  // null silently rendered the parenthetical "(ruff (not run: typescript))"
+  // — accurate but easy for customers to miss. Promoting the not-run
+  // packs to their own visible row makes the coverage gap legible.
+  const notRunMatch = m.lintTool ? /\(not run: ([^)]+)\)/.exec(m.lintTool) : null;
+  const lintToolLabel = m.lintTool
+    ? notRunMatch
+      ? m.lintTool.replace(/\s*\(not run: [^)]+\)/, '').trim()
+      : m.lintTool
+    : null;
+  L.push(
+    `| Lint Errors | ${m.lintErrors} errors, ${m.lintWarnings} warnings${lintToolLabel ? ' (' + lintToolLabel + ')' : ''} |`,
+  );
+  if (notRunMatch) {
     L.push(
-      `| Duplication | ${m.duplication.percentage}% (${m.duplication.cloneCount} clones, ${m.duplication.duplicatedLines} lines) |`,
+      `| ⚠ Lint coverage gap | not run on: ${notRunMatch[1]} — configure the linter (e.g. add \`eslint.config.js\`) to enable |`,
     );
   }
-  if (m.commentRatio !== null) {
-    L.push(`| Comment Ratio | ${(m.commentRatio * 100).toFixed(1)}% |`);
-  }
-  L.push(
-    `| Lint Errors | ${m.lintErrors} errors, ${m.lintWarnings} warnings${m.lintTool ? ' (' + m.lintTool + ')' : ''} |`,
-  );
   L.push(`| TODO/FIXME/HACK | ${m.todoCount} / ${m.fixmeCount} / ${m.hackCount} |`);
   L.push(`| Console Statements | ${m.consoleLogCount} |`);
-  if (m.functionCount !== null) {
-    L.push(`| Functions | ${m.functionCount} total, max ${m.maxFunctionsInFile} in one file |`);
-  }
-  if (m.deadImportCount !== null) {
-    L.push(`| Dead Imports | ${m.deadImportCount} |`);
-  }
-  if (m.orphanModuleCount !== null) {
-    L.push(`| Orphan Modules | ${m.orphanModuleCount} |`);
-  }
+  L.push(
+    `| Functions | ${
+      m.functionCount !== null
+        ? `${m.functionCount} total, max ${m.maxFunctionsInFile} in one file`
+        : 'unavailable — install `graphify`'
+    } |`,
+  );
+  L.push(
+    `| Dead Imports | ${m.deadImportCount !== null ? m.deadImportCount : 'unavailable — install `graphify`'} |`,
+  );
+  L.push(
+    `| Orphan Modules | ${m.orphanModuleCount !== null ? m.orphanModuleCount : 'unavailable — install `graphify`'} |`,
+  );
   if (m.avgCohesion !== null) {
     L.push(`| Avg Cohesion | ${m.avgCohesion.toFixed(2)} |`);
   }
@@ -203,10 +288,13 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push('---');
   L.push('');
 
-  // Duplication details
+  // Duplication details — always render the section so the customer
+  // sees an explicit "unavailable" message rather than a missing H2
+  // (which reads as "no duplication" when the real state is "we
+  // couldn't measure").
+  L.push('## Duplication');
+  L.push('');
   if (m.duplication) {
-    L.push('## Duplication');
-    L.push('');
     L.push(
       `**${m.duplication.percentage}%** of code is duplicated across ${m.duplication.cloneCount} clones (${m.duplication.duplicatedLines} lines out of ${m.duplication.totalLines}).`,
     );
@@ -222,15 +310,21 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
     } else {
       L.push('> Duplication is within acceptable range.');
     }
-    L.push('');
-    L.push('---');
-    L.push('');
+  } else {
+    L.push(
+      '> ⚠ **Duplication unavailable.** The duplicate-code detector (`jscpd`) did not run on this repository — its output is needed to populate this section. Install jscpd (`npm i -g jscpd`) and re-run to enable.',
+    );
   }
+  L.push('');
+  L.push('---');
+  L.push('');
 
-  // Structural complexity
+  // Structural complexity — same always-render discipline as Duplication.
+  // Graphify produces functionCount / densest file / cohesion / orphan
+  // modules / dead imports; its absence is signaled by null fields.
+  L.push('## Structural Complexity');
+  L.push('');
   if (m.functionCount !== null) {
-    L.push('## Structural Complexity');
-    L.push('');
     L.push(
       `- **${m.functionCount}** functions across ${m.communityCount ?? '?'} architectural communities`,
     );
@@ -242,12 +336,25 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
       L.push(`- **Dead imports:** ${m.deadImportCount}`);
     }
     if (m.orphanModuleCount !== null && m.orphanModuleCount > 0) {
-      L.push(`- **Orphan modules:** ${m.orphanModuleCount} (no inbound imports)`);
+      // C# uses namespace-based name resolution; graphify follows
+      // file-based imports only, so every .cs file reads as orphaned
+      // to it (the using-directive graph isn't traversed). Label the
+      // count as informational on csharp-active repos so the reader
+      // doesn't take 58K orphan modules as an actionable defect.
+      const csharpActive = report.activeLanguages?.includes('csharp');
+      const qualifier = csharpActive
+        ? " (informational — graphify can't follow C# `using` directives across assemblies)"
+        : ' (no inbound imports)';
+      L.push(`- **Orphan modules:** ${m.orphanModuleCount}${qualifier}`);
     }
-    L.push('');
-    L.push('---');
-    L.push('');
+  } else {
+    L.push(
+      '> ⚠ **Structural complexity unavailable.** The AST-graph builder (`graphify`) did not run on this repository — its output drives function counts, densest-file detection, architectural cohesion, dead imports, and orphan modules. Install graphify (`pip install graphifyy`) and re-run to enable.',
+    );
   }
+  L.push('');
+  L.push('---');
+  L.push('');
 
   // Hygiene
   L.push('## Code Hygiene');
@@ -256,9 +363,13 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
   L.push(`- **FIXME:** ${m.fixmeCount}`);
   L.push(`- **HACK:** ${m.hackCount}`);
   L.push(`- **Console statements:** ${m.consoleLogCount}`);
-  if (m.commentRatio !== null) {
-    L.push(`- **Comment ratio:** ${(m.commentRatio * 100).toFixed(1)}%`);
-  }
+  L.push(
+    `- **Comment ratio:** ${
+      m.commentRatio !== null
+        ? `${(m.commentRatio * 100).toFixed(1)}%`
+        : 'unavailable (`cloc` did not run)'
+    }`,
+  );
   if (m.staleFiles.length > 0) {
     L.push(`- **Stale files in git:** ${m.staleFiles.map((f) => '`' + f + '`').join(', ')}`);
   }
@@ -273,9 +384,7 @@ export function formatQualityReport(report: QualityReport, elapsed: string): str
 
   // Footer
   L.push(`**Tools used:** ${report.toolsUsed.join(', ')}`);
-  if (report.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${report.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(report.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push('*Generated by [VyuhLabs DXKit](https://www.npmjs.com/package/@vyuhlabs/dxkit)*');

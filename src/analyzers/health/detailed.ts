@@ -7,14 +7,16 @@
  */
 import { HealthReport, HealthMetrics } from '../types';
 import { buildHealthPlans, DimensionPlan } from './actions';
-import { computeOverall, ScoreInput } from '../scoring';
+import { computeOverall, type Rating } from '../../scoring';
+import { ScoreInput } from '../types';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface HealthDetailedReport extends HealthReport {
   schemaVersion: string;
   plans: DimensionPlan[];
   /** Projected overall if every ranked action is applied. */
   projectedOverallScore: number;
-  projectedGrade: 'A' | 'B' | 'C' | 'D' | 'F';
+  projectedGrade: Rating;
   /** Relative paths to the dimension-specific detailed reports, if generated. */
   crossRefs: {
     vulnerabilities: string;
@@ -57,7 +59,7 @@ export function buildHealthDetailed(
     const k = DIM_TO_KEY[p.dimension];
     if (k) projectedDims[k].score = p.ideal;
   }
-  const { overallScore: projected, grade: projectedGrade } = computeOverall(projectedDims);
+  const { overallScore: projected, rating: projectedGrade } = computeOverall(projectedDims);
 
   // Date prefix used for cross-refs so they match the sibling detailed filenames.
   const date = report.analyzedAt.slice(0, 10);
@@ -70,7 +72,12 @@ export function buildHealthDetailed(
 
   return {
     ...report,
-    schemaVersion: '11',
+    // 2.4.7: bumped 11 → 12 for the actionable-scoring fields surfaced
+    // per dimension (rawScore, rawPenalty, methodology, deductions,
+    // capsApplied, topActions) plus the summary.grade → summary.rating
+    // rename + F→E letter unification. See docs/MIGRATING-TO-2.4.7-
+    // SCORING.md for the downstream-consumer migration guide.
+    schemaVersion: '12',
     plans,
     projectedOverallScore: projected,
     projectedGrade,
@@ -92,7 +99,7 @@ export function formatHealthDetailedMarkdown(
   L.push(`**Schema version:** ${detailed.schemaVersion}`);
   L.push('');
   L.push(
-    `## Overall Health: ${detailed.summary.overallScore}/100 (Grade ${detailed.summary.grade}) → projected ${detailed.projectedOverallScore}/100 (Grade ${detailed.projectedGrade}) if every action is taken`,
+    `## Overall Health: ${detailed.summary.overallScore}/100 (${detailed.summary.rating}) → projected ${detailed.projectedOverallScore}/100 (${detailed.projectedGrade}) if every action is taken`,
   );
   L.push('');
   L.push('---');
@@ -180,9 +187,7 @@ export function formatHealthDetailedMarkdown(
   }
 
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

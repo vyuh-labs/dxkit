@@ -4,13 +4,18 @@ import * as path from 'path';
 
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
-  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,
@@ -27,28 +32,11 @@ import type { LanguageSupport, LintSeverity } from './types';
  * (rare but possible for libraries vendored as plain `src/` trees) and
  * mixed JVM monorepos where Kotlin sits beside Java/Scala.
  */
-function hasKotlinSourceWithinDepth(cwd: string, maxDepth = 3): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'build', '.gradle', 'target'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && (e.name.endsWith('.kt') || e.name.endsWith('.kts'))) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasKotlinSource(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-3
+  // cap missed deep mixed-JVM monorepos. Honors `.gitignore` +
+  // bundled excludes (`build`, `.gradle`, `target`, …).
+  return walkPaths(cwd, { extensions: ['.kt', '.kts'] }).length > 0;
 }
 
 function detectKotlin(cwd: string): boolean {
@@ -58,7 +46,7 @@ function detectKotlin(cwd: string): boolean {
     fileExists(cwd, 'build.gradle') ||
     fileExists(cwd, 'settings.gradle') ||
     fileExists(cwd, 'gradlew') ||
-    hasKotlinSourceWithinDepth(cwd, 3)
+    hasKotlinSource(cwd)
   );
 }
 
@@ -155,7 +143,7 @@ export function parseDetektCheckstyleXml(raw: string): SeverityCounts {
  * a missing/unparseable XML is treated as `unavailable`.
  */
 function gatherKotlinLintResult(cwd: string): LintGatherOutcome {
-  if (!hasKotlinBuildManifest(cwd) && !hasKotlinSourceWithinDepth(cwd, 3)) {
+  if (!hasKotlinBuildManifest(cwd) && !hasKotlinSource(cwd)) {
     return { kind: 'unavailable', reason: 'no kotlin source' };
   }
   const detekt = findTool(TOOL_DEFS.detekt, cwd);
@@ -201,10 +189,85 @@ const kotlinLintProvider: CapabilityProvider<LintResult> = {
 // — language-agnostic SSOT (CLAUDE.md rule #2). The kotlin pack just
 // declares its provider and delegates. Java pack does the same.
 
+/**
+ * Locate the JaCoCo XML report after a test run (D021). Gradle's
+ * default emits to `build/reports/jacoco/test/jacocoTestReport.xml`,
+ * Maven's to `target/site/jacoco/jacoco.xml`. The function-form
+ * `artifact` param lets us check both; whichever path the build tool
+ * wrote to is the one `gatherJaCoCoCoverageResult` will pick up on
+ * the next dispatcher pass (it already knows both candidate paths).
+ */
+function findJacocoXmlArtifact(cwd: string): string | null {
+  const candidates = [
+    'build/reports/jacoco/test/jacocoTestReport.xml',
+    'target/site/jacoco/jacoco.xml',
+    'target/site/jacoco-aggregate/jacoco.xml',
+  ];
+  for (const c of candidates) {
+    if (fileExists(cwd, c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Run the JVM build tool's "test + JaCoCo report" cycle from cwd (D021).
+ *
+ * Picks the command by build manifest, preferring Gradle when both are
+ * present (modern Kotlin projects are Gradle-first; the Maven path is
+ * here for fixture parity with the java pack and for the rare Kotlin-
+ * on-Maven layouts seen in older codebases):
+ *
+ *   - `gradlew` or `build.gradle{,.kts}` → `./gradlew jacocoTestReport`
+ *   - `pom.xml`                          → `mvn test jacoco:report`
+ *
+ * Preflight: require at least one of the above. Without a build
+ * manifest, there's no canonical command to run.
+ *
+ * The JaCoCo plugin must be wired into the build (`apply plugin: 'jacoco'`
+ * for Gradle, the `jacoco-maven-plugin` in `pom.xml` for Maven). When
+ * it isn't, the command succeeds but no XML is produced — that surfaces
+ * as `failed` with the helper's "tests succeeded but no coverage
+ * artifact was produced" framing, which is the right hint.
+ */
+function runKotlinTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'kotlin',
+      cmd: (() => {
+        if (
+          fileExists(cwd, 'gradlew') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'build.gradle')
+        ) {
+          const gradle = fileExists(cwd, 'gradlew') ? './gradlew' : 'gradle';
+          return `${gradle} jacocoTestReport`;
+        }
+        return 'mvn test jacoco:report';
+      })(),
+      cwd,
+      artifact: (cwd) => findJacocoXmlArtifact(cwd),
+      preflight: (cwd) => {
+        const hasGradle =
+          fileExists(cwd, 'build.gradle') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'gradlew');
+        const hasMaven = fileExists(cwd, 'pom.xml');
+        if (!hasGradle && !hasMaven) {
+          return 'no Gradle/Maven build manifest — cannot run JaCoCo coverage';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const kotlinCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'kotlin',
   async gather(cwd) {
     return gatherJaCoCoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runKotlinTestsWithCoverage(cwd);
   },
 };
 
@@ -218,7 +281,7 @@ const kotlinCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 const KOTLIN_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
 
-const kotlinDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const kotlinDepVulnsProvider: DepVulnsProvider = {
   source: 'kotlin',
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
@@ -228,6 +291,9 @@ const kotlinDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
       KOTLIN_DEP_MANIFESTS,
     );
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'kotlin', 'Maven', KOTLIN_DEP_MANIFESTS);
   },
 };
 
@@ -367,6 +433,62 @@ export const kotlin: LanguageSupport = {
   // `.gradle` = Gradle daemon/cache state,
   // `out` = IntelliJ IDE build output.
   extraExcludes: ['build', '.gradle', 'out'],
+
+  // D027 (2.4.7): KDoc uses the JSDoc-style `/**` block opener.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): JVM TLS-bypass idioms. Shared with the java pack
+  // since Kotlin uses the same SSL APIs. Tokens are class/method
+  // names that exist solely for permissive/insecure variants:
+  //   - TrustAllX509TrustManager / NaiveTrustManager — custom
+  //     "trust everything" implementations
+  //   - NoopHostnameVerifier — Apache HttpClient's no-op verifier
+  //   - ALLOW_ALL_HOSTNAME_VERIFIER — legacy SSLConnectionSocketFactory
+  //     constant for accepting any hostname
+  tlsBypassPatterns: [
+    'TrustAllX509TrustManager',
+    'NaiveTrustManager',
+    'NoopHostnameVerifier',
+    'ALLOW_ALL_HOSTNAME_VERIFIER',
+  ],
+
+  upgradeCommand(name, version) {
+    return `# Edit build.gradle(.kts): bump ${name} to ${version}, then \`./gradlew build\``;
+  },
+
+  // Kotlin spans Spring Boot / Ktor server-side (controllers,
+  // services, repositories) and Android client (activities,
+  // fragments, viewmodels, screens). Both are first-class — an
+  // Android app's primary surface IS its Activity / Fragment /
+  // ViewModel layer, regardless of whether HTTP route handlers exist
+  // anywhere in the codebase. routePaths narrows so the "Add API
+  // documentation" action stays silent on a pure-Android project.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/services/',
+      '/repositories/',
+      '/handlers/',
+      '/activities/',
+      '/fragments/',
+      '/viewmodels/',
+      '/screens/',
+      '/usecases/',
+    ],
+    routePaths: ['/controllers/', '/handlers/', '/routes/'],
+    modelPaths: ['/models/', '/entities/', '/dto/', '/dtos/', '/data/'],
+    vocabulary: {
+      components: 'controllers/activities',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/services/', '/handlers/', '/usecases/'],
+      medium: ['/repositories/', '/activities/', '/fragments/', '/viewmodels/', '/screens/'],
+    },
+  },
+
+  clocLanguageNames: ['Kotlin'],
 
   detect: detectKotlin,
 

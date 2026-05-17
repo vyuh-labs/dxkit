@@ -2,14 +2,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
-  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,
@@ -26,29 +31,10 @@ import type { LanguageSupport, LintSeverity } from './types';
  * over-activates on mixed-stack repos and scaffolded-but-empty projects.
  * The pack only matters when there is actual Ruby source to analyze.
  */
-function hasRubySourceWithinDepth(cwd: string, maxDepth = 5): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (e.name.startsWith('.') || ['node_modules', 'vendor', 'tmp', 'log'].includes(e.name)) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.rb')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
-}
-
 function detectRuby(cwd: string): boolean {
-  return hasRubySourceWithinDepth(cwd, 5);
+  // Depth-unlimited via the canonical walker. The previous depth-5
+  // cap missed nested Ruby projects in monorepos and engines layouts.
+  return walkPaths(cwd, { extensions: ['.rb'] }).length > 0;
 }
 
 // ─── Imports (regex extraction, no resolver) ────────────────────────────────
@@ -458,12 +444,6 @@ export function parseSimpleCovResultset(
  * `coverage/coverage.json` (less common). We probe the canonical
  * path first — it ships with vanilla SimpleCov and is the most
  * likely to exist.
- *
- * HTML-only fallback (no JSON, only `coverage/index.html`) is currently
- * not parseable — the analyzer reports "no coverage" in that state,
- * which is indistinguishable from "tool didn't run." Tracked as a
- * Recipe v4 candidate (extend the coverage outcome enum to distinguish
- * 'output-format-incompatible' from 'unavailable').
  */
 function findSimpleCovResultset(cwd: string): string | null {
   const candidates = ['coverage/.resultset.json', 'coverage/coverage.json'];
@@ -474,27 +454,168 @@ function findSimpleCovResultset(cwd: string): string | null {
 }
 
 /**
+ * Discriminated outcome of a SimpleCov coverage probe (Recipe v4 G_v4_3).
+ *
+ * Pre-G_v4_3, `gatherSimpleCovCoverageResult` returned `CoverageResult |
+ * null` and the `null` branch silently merged two genuinely different
+ * states: "SimpleCov never ran" and "SimpleCov ran but only produced
+ * HTML output." The second is a legitimate user state (vanilla
+ * SimpleCov ships HTML by default; JSON requires either the binary-
+ * intermediate `.resultset.json` — produced by default but undocumented
+ * as stable — or the third-party `simplecov-json` gem). Users in that
+ * state need actionable guidance, not a silent "no coverage data."
+ *
+ * The capability dispatcher contract (`CoverageResult | null`) is
+ * unchanged — the adapter still returns null for both unavailable and
+ * html-only states so existing consumers keep working. Consumers that
+ * want the richer signal (coverage CLI under D021, dashboard renderer)
+ * call `gatherSimpleCovOutcome` directly.
+ */
+export type SimpleCovOutcome =
+  | { kind: 'unavailable' }
+  | { kind: 'html-only'; hint: string }
+  | { kind: 'success'; envelope: CoverageResult };
+
+/**
+ * Probe SimpleCov state and produce the discriminated outcome. Three
+ * paths, all distinguishable downstream:
+ *   1. `success`     — parseable JSON found at `.resultset.json` or
+ *                      `coverage.json`; envelope ready to ship.
+ *   2. `html-only`   — `coverage/index.html` exists but no JSON;
+ *                      SimpleCov ran, but in a format we can't parse.
+ *                      Includes a hint string for the user.
+ *   3. `unavailable` — neither JSON nor HTML; tool didn't run.
+ */
+export function gatherSimpleCovOutcome(cwd: string): SimpleCovOutcome {
+  const reportRel = findSimpleCovResultset(cwd);
+  if (reportRel) {
+    try {
+      const raw = fs.readFileSync(path.join(cwd, reportRel), 'utf-8');
+      const coverage = parseSimpleCovResultset(raw, reportRel, cwd);
+      if (coverage) {
+        return {
+          kind: 'success',
+          envelope: { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage },
+        };
+      }
+    } catch {
+      // Fall through to the html-only / unavailable check — a corrupt
+      // JSON shouldn't masquerade as "tool didn't run" when the user
+      // clearly did run SimpleCov (HTML is the tell).
+    }
+  }
+  if (fileExists(cwd, 'coverage/index.html')) {
+    return {
+      kind: 'html-only',
+      hint:
+        'SimpleCov produced HTML output only. ' +
+        'Install the simplecov-json gem to emit `coverage/coverage.json`, ' +
+        'or keep the default formatter (which produces the binary intermediate ' +
+        '`coverage/.resultset.json` that dxkit also reads).',
+    };
+  }
+  return { kind: 'unavailable' };
+}
+
+/**
  * Single source of truth for the ruby pack's coverage gathering.
  * Consumed by `rubyCoverageProvider` (capability dispatcher).
+ *
+ * Thin adapter over `gatherSimpleCovOutcome`: collapses the three-way
+ * outcome to the dispatcher's binary `CoverageResult | null` contract.
+ * Callers that need the html-only signal should use
+ * `gatherSimpleCovOutcome` directly.
  */
 function gatherSimpleCovCoverageResult(cwd: string): CoverageResult | null {
-  const reportRel = findSimpleCovResultset(cwd);
-  if (!reportRel) return null;
-  let raw: string;
-  try {
-    raw = fs.readFileSync(path.join(cwd, reportRel), 'utf-8');
-  } catch {
-    return null;
+  const outcome = gatherSimpleCovOutcome(cwd);
+  return outcome.kind === 'success' ? outcome.envelope : null;
+}
+
+/**
+ * Check that SimpleCov is required + started in the project's
+ * `spec_helper.rb` or `rails_helper.rb`. Without this, `bundle exec
+ * rspec` runs cleanly but writes no `.resultset.json` — the user
+ * spends 30+ seconds running tests then sees "tests ran but no
+ * coverage artifact was produced." Better to short-circuit upfront
+ * with the actionable hint.
+ *
+ * Looks for the canonical setup form: `require 'simplecov'` followed
+ * eventually by `SimpleCov.start`. Tolerates double quotes and any
+ * whitespace. spec_helper / rails_helper are the conventional
+ * locations; we check both because Rails projects use the latter.
+ */
+function simplecovIsRequired(cwd: string): boolean {
+  const candidates = ['spec/spec_helper.rb', 'spec/rails_helper.rb', 'test/test_helper.rb'];
+  for (const c of candidates) {
+    const abs = path.join(cwd, c);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue;
+    }
+    const hasRequire = /\brequire\s+['"]simplecov['"]/.test(raw);
+    const hasStart = /\bSimpleCov\.start\b/.test(raw);
+    if (hasRequire && hasStart) return true;
   }
-  const coverage = parseSimpleCovResultset(raw, reportRel, cwd);
-  if (!coverage) return null;
-  return { schemaVersion: 1, tool: `coverage:${coverage.source}`, coverage };
+  return false;
+}
+
+/**
+ * Run `bundle exec rspec` from cwd (D021).
+ *
+ * SimpleCov is the canonical Ruby coverage tool. It's required from
+ * `spec_helper.rb` (not invoked separately) and writes its resultset
+ * during the rspec run itself — `bundle exec rspec` is therefore the
+ * coverage command, no extra flags needed.
+ *
+ * Preflight (in order, cheapest first):
+ *   1. `Gemfile` must exist — without one, bundler can't resolve the
+ *      gem set and rspec won't be invokable.
+ *   2. `simplecov` gem must be installed (registry-tracked via
+ *      `TOOL_DEFS.simplecov`, library-only gem detected via
+ *      `gemPackage`).
+ *   3. `simplecov` must be `require`d AND `SimpleCov.start` called in
+ *      `spec_helper.rb` / `rails_helper.rb` / `test_helper.rb`. SimpleCov
+ *      is opt-in per-project; merely installing the gem doesn't
+ *      instrument the test run. This check matches the G_v4_3
+ *      gatherSimpleCovOutcome shape (html-only outcome surfaces
+ *      separately on the read side).
+ *
+ * If all three pass, rspec is invoked via bundler so it resolves to
+ * the project's pinned version + plugins. Artifact is the canonical
+ * `coverage/.resultset.json` that `gatherSimpleCovOutcome` reads.
+ */
+function runRubyTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'ruby',
+      cmd: 'bundle exec rspec',
+      cwd,
+      artifact: 'coverage/.resultset.json',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'Gemfile')) {
+          return 'no Gemfile in this directory — not a Ruby/bundler project';
+        }
+        if (!findTool(TOOL_DEFS.simplecov, cwd).available) {
+          return 'simplecov gem not installed — run `vyuh-dxkit tools install`';
+        }
+        if (!simplecovIsRequired(cwd)) {
+          return "simplecov not required/started in spec_helper.rb — add `require 'simplecov'` + `SimpleCov.start` at the top";
+        }
+        return null;
+      },
+    }),
+  );
 }
 
 const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'ruby',
   async gather(cwd) {
     return gatherSimpleCovCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runRubyTestsWithCoverage(cwd);
   },
 };
 
@@ -516,7 +637,7 @@ const rubyCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 const RUBY_DEP_MANIFESTS = ['Gemfile.lock'];
 
-const rubyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const rubyDepVulnsProvider: DepVulnsProvider = {
   source: 'ruby',
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
@@ -526,6 +647,9 @@ const rubyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
       RUBY_DEP_MANIFESTS,
     );
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'ruby', 'RubyGems', RUBY_DEP_MANIFESTS);
   },
 };
 
@@ -546,6 +670,55 @@ export const ruby: LanguageSupport = {
   ],
 
   extraExcludes: ['vendor/bundle', '.bundle', 'coverage', 'tmp', 'log'],
+
+  // D027 (2.4.7): YARD documentation convention uses `##` block
+  // comments (distinguished from regular `#` line comments). Plain
+  // `#` would over-match every commented-out line; `##` is the
+  // documented-block marker.
+  docCommentPatterns: ['^[[:space:]]*##'],
+
+  // D034 (2.4.7): OpenSSL TLS-bypass idioms for Ruby's stdlib
+  // `net/http` and `httpclient` gems. `VERIFY_NONE` is the constant
+  // ruby code sets on `http.verify_mode` to disable cert checks.
+  tlsBypassPatterns: [
+    'OpenSSL::SSL::VERIFY_NONE',
+    'verify_mode[[:space:]]*=[[:space:]]*.*VERIFY_NONE',
+  ],
+
+  upgradeCommand(name, version) {
+    return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;
+  },
+
+  // Rails (`app/controllers/`, `app/services/`, `app/models/`,
+  // `app/views/`) is the dominant Ruby application shape. Sinatra
+  // and Hanami sometimes diverge but typically also adopt the Rails
+  // app/<role> convention. Paths are anchored at `/app/<role>/` to
+  // avoid matching a top-level `models/` directory in a non-Rails
+  // gem.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/app/controllers/',
+      '/app/services/',
+      '/app/jobs/',
+      '/app/helpers/',
+      '/app/views/',
+      '/app/channels/',
+      '/app/workers/',
+    ],
+    routePaths: ['/app/controllers/', '/app/channels/'],
+    modelPaths: ['/app/models/', '/app/serializers/'],
+    vocabulary: {
+      components: 'controllers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/app/controllers/', '/app/services/', '/app/jobs/', '/app/workers/'],
+      medium: ['/app/helpers/', '/app/views/', '/app/channels/', '/app/serializers/'],
+    },
+  },
+
+  clocLanguageNames: ['Ruby'],
 
   detect: detectRuby,
 

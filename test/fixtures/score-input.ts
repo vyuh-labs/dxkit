@@ -10,8 +10,10 @@
  * empty defaults in every spec.
  */
 import { CapabilityReport, HealthMetrics } from '../../src/analyzers/types';
-import { ScoreInput } from '../../src/analyzers/scoring';
+import { ScoreInput } from '../../src/analyzers/types';
 import type {
+  CodePatternFinding,
+  CodePatternsResult,
   CoverageResult,
   DepVulnResult,
   LintResult,
@@ -25,8 +27,10 @@ import type {
 export function baseMetrics(): HealthMetrics {
   return {
     sourceFiles: 100,
+    routeHandlerFiles: 0,
     testFiles: 0,
     totalLines: 0,
+    largestFiles: [],
     testsPass: null,
     testsPassing: 0,
     testsFailing: 0,
@@ -48,6 +52,12 @@ export function baseMetrics(): HealthMetrics {
     privateKeyFiles: 0,
     envFilesInGit: 0,
     tlsDisabledCount: 0,
+    todoCount: 0,
+    fixmeCount: 0,
+    hackCount: 0,
+    staleFiles: 0,
+    mixedLanguages: false,
+    commentRatio: null,
     controllers: 0,
     models: 0,
     directories: 0,
@@ -134,6 +144,39 @@ export function secretsCapabilityWithCount(count: number, tool = 'gitleaks'): Se
 }
 
 /**
+ * codePatterns capability with a given per-severity finding count.
+ * Used by security-scoring tests to drive the unified scorer's
+ * `codeFindings` bucket without standing up a real semgrep envelope.
+ */
+export function codePatternsCapabilityWithFindings(
+  counts: Partial<{ critical: number; high: number; medium: number; low: number }> = {},
+  tool = 'semgrep',
+): CodePatternsResult {
+  const severities: Array<'critical' | 'high' | 'medium' | 'low'> = [
+    'critical',
+    'high',
+    'medium',
+    'low',
+  ];
+  const findings: CodePatternFinding[] = [];
+  let i = 0;
+  for (const sev of severities) {
+    for (let k = 0; k < (counts[sev] ?? 0); k++) {
+      findings.push({
+        file: `src/code-${i}.ts`,
+        line: 1,
+        rule: `pattern-${sev}-${k}`,
+        severity: sev,
+        title: `Code pattern ${sev}`,
+        cwe: '',
+      });
+      i++;
+    }
+  }
+  return { schemaVersion: 1, tool, findings, suppressedCount: 0 };
+}
+
+/**
  * Defaults are "neutral" — chosen so that a structural envelope with only
  * one field overridden does not incidentally trigger any OTHER field's
  * penalty. In particular `avgCohesion: 1.0` keeps the cohesion penalty off
@@ -159,6 +202,38 @@ export function structuralCapability(
     deadImportCount: 0,
     commentedCodeRatio: 0,
     ...overrides,
+  };
+}
+
+/** Minimal "jscpd ran cleanly with zero clones" envelope — populates
+ *  the DUPLICATION capability so the scorer's honesty cap (which fires
+ *  when no tool-derived signal is measured) doesn't engage in tests
+ *  that pin a specific score from the penalty formula. */
+export function duplicationCapability(
+  overrides: Partial<{ percentage: number; cloneCount: number; duplicatedLines: number }> = {},
+): import('../../src/languages/capabilities/types').DuplicationResult {
+  return {
+    schemaVersion: 1,
+    tool: 'jscpd',
+    percentage: 0,
+    cloneCount: 0,
+    duplicatedLines: 0,
+    totalLines: 1000,
+    topClones: [],
+    ...overrides,
+  };
+}
+
+/** Bundle of capability envelopes that signal "every tool-derived
+ *  Quality signal was measured" (lint, duplication, structural). Tests
+ *  that pin a specific Quality score from the penalty formula spread
+ *  this into `withInput({ capabilities: ... })` so the honesty cap
+ *  doesn't kick in and override the formula. */
+export function qualityMeasuredCapabilities() {
+  return {
+    lint: lintCapability(0, 0),
+    duplication: duplicationCapability(),
+    structural: structuralCapability(),
   };
 }
 

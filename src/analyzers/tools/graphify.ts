@@ -18,9 +18,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { run } from './runner';
+import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
-import { getPythonExcludeSet } from './exclusions';
+import { getPythonExcludeFilter } from './exclusions';
+import { toProjectRelative } from './paths';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { StructuralResult } from '../../languages/capabilities/types';
 
@@ -40,6 +41,7 @@ interface GraphifyResult {
 
 /** Build the graphify Python script with cwd-specific exclusions baked in. */
 function buildGraphifyScript(cwd: string): string {
+  const { dirsSet, pathsList, fileGlobsList } = getPythonExcludeFilter(cwd);
   return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
 import json, sys, os, tempfile
 from pathlib import Path
@@ -59,10 +61,65 @@ except ImportError:
 
 target = Path(sys.argv[1])
 
-# collect_files doesn't exclude node_modules etc, so filter manually
-EXCLUDE_DIRS = ${getPythonExcludeSet(cwd)}
+# Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
+# segment matching skips the file). EXCLUDE_PATHS holds multi-segment
+# relative paths from .dxkit-ignore (e.g. 'Dev/Addons/DPLAddon/SAPB1')
+# and matches via substring on the file's relpath. EXCLUDE_FILE_GLOBS
+# carries basename-glob patterns from bundled defaults + .gitignore
+# ('*.min.js', '*.bundle.js', '*.chunk.js', '*.generated.ts', '*.d.ts')
+# so graphify's enumeration matches what dxkit's canonical walker
+# already excludes everywhere else.
+import fnmatch
+EXCLUDE_DIRS = ${dirsSet}
+EXCLUDE_PATHS = ${pathsList}
+EXCLUDE_FILE_GLOBS = ${fileGlobsList}
+
+# Bytes-per-line floor above which a file is almost certainly minified
+# / bundled output. Mirrors the heuristic in
+# src/analyzers/tools/minified-detection.ts so graphify's enumeration
+# applies the same filter dxkit's source-file walker does. Web-client's
+# webpack-hash bundle index-j54KQSsm.js carried ~4,606 detected
+# "functions" before this guard — pre-fix the densest-file metric
+# pointed at minified output instead of human-authored code.
+_MINIFIED_BYTES_PER_LINE = 500
+_MINIFIED_SAMPLE_BYTES = 4096
+_MINIFIABLE_EXTS = {'.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.sass', '.less'}
+
+def _is_likely_minified(f):
+    if f.suffix.lower() not in _MINIFIABLE_EXTS:
+        return False
+    try:
+        with open(f, 'rb') as fh:
+            buf = fh.read(_MINIFIED_SAMPLE_BYTES)
+        if not buf:
+            return False
+        newlines = buf.count(b'\\n')
+        lines_in_sample = max(1, newlines)
+        return (len(buf) / lines_in_sample) >= _MINIFIED_BYTES_PER_LINE
+    except OSError:
+        return False
+
+def _is_excluded(f):
+    if any(seg in EXCLUDE_DIRS for seg in f.parts):
+        return True
+    name = f.name
+    for glob in EXCLUDE_FILE_GLOBS:
+        if fnmatch.fnmatchcase(name, glob):
+            return True
+    if EXCLUDE_PATHS:
+        try:
+            rel = str(f.relative_to(target)).replace(os.sep, '/')
+        except ValueError:
+            rel = str(f).replace(os.sep, '/')
+        for p in EXCLUDE_PATHS:
+            if rel == p or rel.startswith(p + '/') or ('/' + p + '/') in ('/' + rel + '/'):
+                return True
+    if _is_likely_minified(f):
+        return True
+    return False
+
 all_files = collect_files(target)
-files = [f for f in all_files if not any(ex in f.parts for ex in EXCLUDE_DIRS)]
+files = [f for f in all_files if not _is_excluded(f)]
 if not files:
     print(json.dumps({"error": "no files found"}))
     sys.exit(0)
@@ -186,15 +243,15 @@ const graphifyOutcomeCache = new Map<string, StructuralGatherOutcome>();
  * memoized per-cwd outcome so graphify shells out at most once per
  * analyzer run.
  */
-export function gatherGraphifyResult(cwd: string): StructuralGatherOutcome {
+export async function gatherGraphifyResult(cwd: string): Promise<StructuralGatherOutcome> {
   const cached = graphifyOutcomeCache.get(cwd);
   if (cached) return cached;
-  const outcome = computeGraphifyOutcome(cwd);
+  const outcome = await computeGraphifyOutcome(cwd);
   graphifyOutcomeCache.set(cwd, outcome);
   return outcome;
 }
 
-function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
+async function computeGraphifyOutcome(cwd: string): Promise<StructuralGatherOutcome> {
   const pythonCmd = findPython(cwd);
   if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
 
@@ -205,20 +262,51 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-graphify-'));
   const scriptPath = path.join(scriptDir, 'run.py');
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
-  // Redirect stderr to suppress progress output, run from the tempdir
-  // so the script doesn't drop cache files inside the analyzed repo.
-  const output = run(
-    `cd '${scriptDir}' && ${pythonCmd} '${scriptPath}' '${cwd}' 2>/dev/null`,
-    cwd,
-    120000,
-  );
+  // Spawn-with-process-group so the Python interpreter + any
+  // tree-sitter worker subprocesses it starts are all killed
+  // atomically on timeout. Pre-fix execSync sent SIGTERM only to
+  // the immediate Python child; tree-sitter workers spawned by
+  // the script could be orphaned mid-write, which on a large
+  // codebase (thousands of .cs files) sometimes left the run
+  // looking "no stderr captured" because the process group went
+  // away before flushing to the stderr tempfile.
+  //
+  // runDetached captures stderr natively so the tempfile redirect
+  // pattern is no longer needed — same effect, fewer moving parts.
+  const outcome = await runDetached(pythonCmd, [scriptPath, cwd], {
+    cwd: scriptDir,
+    timeoutMs: 300000, // 5 min — bumped from 120000 in 2.4.7 for multi-thousand-file frontend repos
+  });
   try {
     fs.rmSync(scriptDir, { recursive: true, force: true });
   } catch {
     /* ignore */
   }
+  const output = outcome.stdout;
+  const stderrCapture = outcome.stderr.trim();
 
-  if (!output) return { kind: 'unavailable', reason: 'failed to run' };
+  if (!output) {
+    if (outcome.timedOut) {
+      return {
+        kind: 'unavailable',
+        reason: 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)',
+      };
+    }
+    // Surface the first meaningful stderr line so the customer can
+    // see what broke (tree-sitter parse error, Python ImportError,
+    // OOM kill, etc.). Truncate aggressively — toolsUnavailable[]
+    // entries shouldn't carry multi-line tracebacks.
+    const firstStderrLine = stderrCapture
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      ?.trim();
+    const reason = firstStderrLine
+      ? `failed: ${firstStderrLine.length > 200 ? firstStderrLine.slice(0, 197) + '...' : firstStderrLine}`
+      : outcome.code !== 0 && outcome.code !== null
+        ? `failed with exit code ${outcome.code} (no stderr captured — likely killed by the OS, e.g. OOM)`
+        : 'failed to run (no stderr captured)';
+    return { kind: 'unavailable', reason };
+  }
 
   // Graphify prints progress to stdout before the JSON — extract only the JSON line.
   const jsonLine = output
@@ -235,13 +323,30 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
   }
   if (data.error) return { kind: 'unavailable', reason: data.error };
 
-  const envelope: StructuralResult = {
+  return { kind: 'success', envelope: buildGraphifyEnvelope(data, cwd) };
+}
+
+/**
+ * Pure JSON-to-envelope reshape so the normalization contract is
+ * unit-testable without shelling out to Python.
+ *
+ * The Python helper emits `maxFunctionsFilePath` as an absolute path
+ * (`str(Path(...))` on a value derived from `target = sys.argv[1]`).
+ * Renderers downstream emit this field verbatim into customer-facing
+ * markdown, so it has to be project-relative before it leaves the
+ * gather layer — mirrors the gitleaks / semgrep / grep-secrets pattern
+ * where each tool wrapper owns its own path normalization.
+ */
+export function buildGraphifyEnvelope(data: GraphifyResult, cwd: string): StructuralResult {
+  return {
     schemaVersion: 1,
     tool: 'graphify',
     functionCount: data.functionCount,
     classCount: data.classCount,
     maxFunctionsInFile: data.maxFunctionsInFile,
-    maxFunctionsFilePath: data.maxFunctionsFilePath,
+    maxFunctionsFilePath: data.maxFunctionsFilePath
+      ? toProjectRelative(cwd, data.maxFunctionsFilePath)
+      : '',
     godNodeCount: data.godNodeCount,
     communityCount: data.communityCount,
     avgCohesion: data.avgCohesion,
@@ -249,7 +354,6 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
     deadImportCount: data.deadImportCount,
     commentedCodeRatio: data.commentedCodeRatio,
   };
-  return { kind: 'success', envelope };
 }
 
 /**
@@ -257,11 +361,22 @@ function computeGraphifyOutcome(cwd: string): StructuralGatherOutcome {
  * `src/languages/capabilities/global.ts:GLOBAL_CAPABILITIES.structural`
  * so the dispatcher picks it up via `providersFor(STRUCTURAL)`.
  */
-export const graphifyProvider: CapabilityProvider<StructuralResult> = {
+// Exposes the underlying outcome via `gatherOutcome` so the dispatcher
+// captures graphify's actual failure reason (Python missing / graphify
+// package missing / timeout / parse error / empty result) into
+// `DispatchOutcome.skipReasons`. Without it, every failure mode
+// collapses to the same generic prose at the renderer layer, hiding
+// install-vs-runtime distinctions the user would act on differently.
+export const graphifyProvider: CapabilityProvider<StructuralResult> & {
+  gatherOutcome(cwd: string): Promise<StructuralGatherOutcome>;
+} = {
   source: 'graphify',
   async gather(cwd) {
-    const outcome = gatherGraphifyResult(cwd);
+    const outcome = await gatherGraphifyResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherGraphifyResult(cwd);
   },
 };
 

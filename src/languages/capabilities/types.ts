@@ -20,6 +20,7 @@
  */
 
 import type { Coverage } from '../../analyzers/tools/coverage';
+import type { LanguageId } from '../../types';
 
 /** Four-tier severity counts, the project-wide convention. */
 export interface SeverityCounts {
@@ -108,6 +109,15 @@ export interface DepVulnFinding {
   // Producer — denormalized from envelope.tool so per-finding attribution
   // survives merges across multiple providers (e.g. snyk + npm-audit).
   tool: string;
+
+  // G_v4_4 (2.4.7): the language pack that produced this finding. Drives
+  // remediation-command dispatch in `buildUpgradeCommand` (security/index.ts)
+  // so the per-ecosystem upgrade syntax (`dotnet add package`, `npm install`,
+  // `cargo update`, `go get`, ...) routes through `LanguageSupport.upgradeCommand`
+  // instead of a hardcoded switch on `tool`. Pre-G_v4_4 the switch silently
+  // produced bare prose comments when the tool name was generic (`osv-scanner`),
+  // because the switch only knew the pack-specific aliases.
+  packId?: LanguageId;
 
   // Severity — ordinal bucket (always) + numeric CVSS base score (when
   // the producing tool reports it).
@@ -366,15 +376,35 @@ export interface StructuralResult extends CapabilityEnvelope {
  * Internal outcome shape used by language packs' `gatherDepVulnsResult`
  * helpers. The pack's `capabilities.depVulns` provider unwraps the
  * envelope (returning null for every non-success kind) so the dispatcher
- * surface stays `T | null`; keeping the richer outcome here lets the
- * pack's own code distinguish e.g. "tool missing" from "tool ran but
- * produced no output" if a future caller needs that detail.
+ * surface stays `T | null`; keeping the richer outcome here lets
+ * availability-aware analyzers (health-audit security scorer, standalone
+ * vulnerability scan) distinguish "tool absent / scan didn't run" from
+ * "scan ran cleanly, no findings."
+ *
+ * D025a (2.4.7): the pre-2.4.7 enum had four variants (`success`,
+ * `tool-missing`, `no-output`, `parse-error`) that lumped together two
+ * semantically distinct cases:
+ *
+ *   1. **The dep-vuln scan was infrastructurally unavailable** — tool
+ *      not installed, tool produced no output, output unparseable. From
+ *      the user's perspective: "dxkit couldn't tell me if my deps are
+ *      safe." This is the F4 baseline customer-credibility case
+ *      (Security 100/100 on an unscannable repo). Maps to `unavailable`.
+ *
+ *   2. **There's nothing in this stack to scan** — no `.csproj` in a
+ *      csharp pack run, no `Cargo.lock` in a rust pack run, no
+ *      `requirements.txt` in a python pack run. Legitimate state for
+ *      polyglot repos where one pack activates but contributes no
+ *      manifests. Maps to `no-manifest`.
+ *
+ * The split lets downstream scorers cap on (1) without penalizing (2).
+ * Pre-2.4.7 they both collapsed to `tool-missing` and the security
+ * scorer had no way to differentiate.
  */
 export type DepVulnGatherOutcome =
   | { kind: 'success'; envelope: DepVulnResult }
-  | { kind: 'tool-missing' }
-  | { kind: 'parse-error' }
-  | { kind: 'no-output' };
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'no-manifest'; reason: string };
 
 /**
  * Internal outcome shape for the lint capability. Simpler than depVulns:
@@ -385,3 +415,36 @@ export type DepVulnGatherOutcome =
 export type LintGatherOutcome =
   | { kind: 'success'; envelope: LintResult }
   | { kind: 'unavailable'; reason: string };
+
+/**
+ * Internal outcome shape for the licenses capability. D031 (2.4.7):
+ * mirrors `DepVulnGatherOutcome`'s three-state discriminant so the
+ * licenses report can differentiate three distinct customer-facing
+ * states:
+ *
+ *   - **success**: the canonical license extraction tool ran
+ *     cleanly (e.g. `nuget-license` for csharp, `pip-licenses` for
+ *     python, `cargo-license` for rust, etc.). Envelope carries the
+ *     per-package license inventory.
+ *
+ *   - **unavailable**: tool isn't installed OR the gather failed
+ *     mid-run. F12 in dpl-studio's baseline was exactly this:
+ *     `nuget-license` absent → pre-D031 the licenses report rendered
+ *     "0 packages" with no caveat, indistinguishable from a repo
+ *     that legitimately has no third-party deps.
+ *
+ *   - **no-manifest**: pack is active but the repo has no dep
+ *     manifest in scope (no `.csproj` for csharp, no `package.json`
+ *     for ts, no `Cargo.toml` for rust, no `requirements.txt`/
+ *     `pyproject.toml` for python). Legitimate "nothing to license."
+ *
+ * The provider's `gather()` method continues to collapse non-success
+ * to null for dispatcher consumers; availability-aware analyzers
+ * (the licenses report + standalone scan) read the discriminant via
+ * `LicensesProvider.gatherOutcome` directly. Same architectural
+ * shape D025b established for DepVulnsProvider.
+ */
+export type LicensesGatherOutcome =
+  | { kind: 'success'; envelope: LicensesResult }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'no-manifest'; reason: string };

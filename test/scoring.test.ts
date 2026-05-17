@@ -1,28 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import {
-  scoreTest,
-  scoreQuality,
-  scoreDocumentation,
-  scoreSecurity,
-  scoreMaintainability,
-  scoreDeveloperExperience,
-  computeOverall,
-} from '../src/analyzers/scoring';
+import { computeOverall } from '../src/scoring';
+import { scoreTestsDimension as scoreTest } from '../src/analyzers/tests/shallow';
+import { scoreDocsDimension as scoreDocumentation } from '../src/analyzers/docs/shallow';
+import { scoreMaintainabilityDimension as scoreMaintainability } from '../src/analyzers/maintainability/shallow';
+import { scoreDxDimension as scoreDeveloperExperience } from '../src/analyzers/dx/shallow';
 import { DimensionScore } from '../src/analyzers/types';
-import {
-  coverageCapability,
-  depVulnCapability,
-  lintCapability,
-  secretsCapabilityWithCount,
-  structuralCapability,
-  withInput,
-} from './fixtures/score-input';
+import { coverageCapability, structuralCapability, withInput } from './fixtures/score-input';
 
 describe('scoreTest', () => {
   it('returns 0 when no test files exist', () => {
     const s = scoreTest(withInput({ metrics: { sourceFiles: 50, testFiles: 0 } }));
     expect(s.score).toBe(0);
-    expect(s.status).toBe('critical');
+    expect(s.rating).toBe('E');
   });
 
   it('scales with test ratio, capped at 60 before bonuses', () => {
@@ -32,8 +21,15 @@ describe('scoreTest', () => {
   });
 
   it('caps base score at 60 for high ratios', () => {
-    const s = scoreTest(withInput({ metrics: { sourceFiles: 100, testFiles: 80 } }));
-    // ratio 0.8 * 200 = 160 → capped at 60
+    // Coverage data present so the 2.4.7 honesty cap (afc9577) doesn't
+    // kick in — the test isolates the ratio*200 → 60 cap.
+    const s = scoreTest(
+      withInput({
+        metrics: { sourceFiles: 100, testFiles: 80 },
+        capabilities: { coverage: coverageCapability(40) },
+      }),
+    );
+    // ratio 0.8 * 200 = 160 → capped at 60; coverage 40 < 60 → no bonus.
     expect(s.score).toBe(60);
   });
 
@@ -98,83 +94,17 @@ describe('scoreTest', () => {
   });
 });
 
-describe('scoreQuality', () => {
-  it('starts at 100 with no issues', () => {
-    const s = scoreQuality(withInput({ metrics: { sourceFiles: 100 } }));
-    expect(s.score).toBe(100);
-  });
-
-  it('deducts for lint errors proportional to density', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: { lint: lintCapability(0, 50) },
-      }),
-    );
-    // critical+high = 50; ratio 0.5 * 100 = 50, capped at 40 → 100 - 40 = 60
-    expect(s.score).toBe(60);
-  });
-
-  it('deducts tiered penalty for large files', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100, filesOver500Lines: 25, largestFileLines: 12000 },
-      }),
-    );
-    // -10 (>5) -10 (>20) -10 (>5000) -10 (>10000) = -40
-    expect(s.score).toBe(60);
-  });
-
-  it('deducts for console density tiers', () => {
-    const low = scoreQuality(withInput({ metrics: { sourceFiles: 100, consoleLogCount: 40 } }));
-    expect(low.score).toBe(95); // density 0.4 → -5
-    const mid = scoreQuality(withInput({ metrics: { sourceFiles: 100, consoleLogCount: 150 } }));
-    expect(mid.score).toBe(90); // density 1.5 → -10
-    const high = scoreQuality(withInput({ metrics: { sourceFiles: 100, consoleLogCount: 500 } }));
-    expect(high.score).toBe(85); // density 5 → -15
-  });
-
-  it('deducts for any-type density', () => {
-    const s = scoreQuality(withInput({ metrics: { sourceFiles: 100, anyTypeCount: 1100 } }));
-    // density 11 → -15
-    expect(s.score).toBe(85);
-  });
-
-  it('deducts for god files via AST', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: { sourceFiles: 100 },
-        capabilities: { structural: structuralCapability({ maxFunctionsInFile: 75 }) },
-      }),
-    );
-    expect(s.score).toBe(90);
-  });
-
-  it('clamps to 0 when many large penalties stack', () => {
-    const s = scoreQuality(
-      withInput({
-        metrics: {
-          sourceFiles: 100,
-          filesOver500Lines: 50,
-          largestFileLines: 20000,
-          consoleLogCount: 10000,
-          anyTypeCount: 10000,
-        },
-        capabilities: {
-          lint: lintCapability(0, 999),
-          structural: structuralCapability({ maxFunctionsInFile: 200, deadImportCount: 100 }),
-        },
-      }),
-    );
-    expect(s.score).toBe(0);
-  });
-});
+// scoreQuality tests live in test/quality-scoring.test.ts — that file
+// covers the canonical scoreQualityFromInput formula directly. Health-
+// side adapter behavior (toQualityScoreInput → scoreQualityFromInput
+// → DimensionScore) is exercised end-to-end by the renderer-honesty
+// contract test + the integration audits.
 
 describe('scoreDocumentation', () => {
   it('returns 0 with no docs at all', () => {
     const s = scoreDocumentation(withInput({ metrics: { sourceFiles: 100 } }));
     expect(s.score).toBe(0);
-    expect(s.status).toBe('critical');
+    expect(s.rating).toBe('E');
   });
 
   it('awards README tiers', () => {
@@ -231,107 +161,60 @@ describe('scoreDocumentation', () => {
   });
 });
 
-describe('scoreSecurity', () => {
-  it('starts at 100 with no issues', () => {
-    expect(scoreSecurity(withInput()).score).toBe(100);
-  });
-
-  it('deducts tiered for secrets', () => {
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(1) } })).score,
-    ).toBe(85);
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(6) } })).score,
-    ).toBe(80);
-    expect(
-      scoreSecurity(withInput({ capabilities: { secrets: secretsCapabilityWithCount(11) } })).score,
-    ).toBe(75);
-  });
-
-  it('deducts 20 for any private keys', () => {
-    expect(scoreSecurity(withInput({ metrics: { privateKeyFiles: 1 } })).score).toBe(80);
-    expect(scoreSecurity(withInput({ metrics: { privateKeyFiles: 5 } })).score).toBe(80);
-  });
-
-  it('deducts tiered for eval usage', () => {
-    expect(scoreSecurity(withInput({ metrics: { evalCount: 1 } })).score).toBe(95);
-    expect(scoreSecurity(withInput({ metrics: { evalCount: 5 } })).score).toBe(90);
-  });
-
-  it('deducts for dependency vulns tiered', () => {
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(1, 0) } })).score,
-    ).toBe(85);
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(0, 3) } })).score,
-    ).toBe(95);
-    expect(
-      scoreSecurity(withInput({ capabilities: { depVulns: depVulnCapability(0, 10) } })).score,
-    ).toBe(90);
-  });
-
-  it('stacks penalties, clamps to 0', () => {
-    const s = scoreSecurity(
-      withInput({
-        metrics: {
-          privateKeyFiles: 5,
-          evalCount: 10,
-          envFilesInGit: 1,
-          tlsDisabledCount: 1,
-        },
-        capabilities: {
-          secrets: secretsCapabilityWithCount(20),
-          depVulns: depVulnCapability(5, 20),
-        },
-      }),
-    );
-    expect(s.score).toBe(0);
-  });
-});
+// scoreSecurity tests moved to test/scoring-dimensions.test.ts as part of
+// the D023 unification — the canonical security scorer now lives in
+// `src/analyzers/security/scoring.ts` and is exercised through both
+// `scoreSecurityDimension` (health-side) and `scoreSecurityFromInput`
+// (standalone), with a parity test asserting they agree.
 
 describe('scoreMaintainability', () => {
-  it('baseline starts at 70', () => {
-    // 100 source files → no small-codebase bonus
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 100 } })).score).toBe(70);
+  // 2.4.7: scorer migrated to declarative spec at
+  // src/scoring/dimensions/maintainability.ts. Baseline now 100 (was 70);
+  // small-codebase bonus removed as overfit. Scores rise for clean repos
+  // and the SQALE-inspired step penalties land violations in B/C/D bands
+  // proportional to severity.
+
+  it('clean repo with no violations scores 100', () => {
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 100 } })).score).toBe(100);
   });
 
-  it('gives small-codebase bonuses', () => {
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 40 } })).score).toBe(80);
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 10 } })).score).toBe(85);
+  it('small codebases are not specially bonused (overfit removed in 2.4.7)', () => {
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 40 } })).score).toBe(100);
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 10 } })).score).toBe(100);
   });
 
   it('deducts for god files tiered', () => {
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 1500 } }))
         .score,
-    ).toBe(65);
+    ).toBe(95);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 3000 } }))
         .score,
-    ).toBe(60);
+    ).toBe(90);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 7000 } }))
         .score,
-    ).toBe(55);
+    ).toBe(85);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 15000 } }))
         .score,
-    ).toBe(45);
+    ).toBe(75);
   });
 
   it('deducts for outdated node engine', () => {
     const old = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=14.0.0' } }),
     );
-    expect(old.score).toBe(60);
+    expect(old.score).toBe(90);
     const midOld = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=16.0.0' } }),
     );
-    expect(midOld.score).toBe(65);
+    expect(midOld.score).toBe(95);
     const modern = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=20.0.0' } }),
     );
-    expect(modern.score).toBe(70);
+    expect(modern.score).toBe(100);
   });
 
   it('deducts for AST god-node ratio', () => {
@@ -341,8 +224,8 @@ describe('scoreMaintainability', () => {
         capabilities: { structural: structuralCapability({ godNodeCount: 15 }) },
       }),
     );
-    // ratio 0.15 → -10
-    expect(s.score).toBe(60);
+    // ratio 0.15 → -10 from baseline 100
+    expect(s.score).toBe(90);
   });
 });
 
@@ -381,7 +264,7 @@ describe('scoreDeveloperExperience', () => {
 describe('computeOverall', () => {
   /** Build a dimension with only `score` set; rest is stubbed. */
   function dim(score: number): DimensionScore {
-    return { score, maxScore: 100, status: 'critical', metrics: {}, details: '' };
+    return { score, maxScore: 100, rating: 'E', metrics: {}, details: '' };
   }
 
   it('applies weights: 25/20/10/20/10/15', () => {
@@ -398,7 +281,7 @@ describe('computeOverall', () => {
     expect(result.overallScore).toBe(60);
   });
 
-  it('grade A at >=80', () => {
+  it('rating A at >=80', () => {
     expect(
       computeOverall({
         testing: dim(100),
@@ -407,7 +290,7 @@ describe('computeOverall', () => {
         security: dim(100),
         maintainability: dim(100),
         developerExperience: dim(100),
-      }).grade,
+      }).rating,
     ).toBe('A');
     expect(
       computeOverall({
@@ -417,11 +300,11 @@ describe('computeOverall', () => {
         security: dim(80),
         maintainability: dim(80),
         developerExperience: dim(80),
-      }).grade,
+      }).rating,
     ).toBe('A');
   });
 
-  it('grade thresholds B/C/D/F', () => {
+  it('rating thresholds B/C/D/E', () => {
     const g = (s: number) =>
       computeOverall({
         testing: dim(s),
@@ -430,15 +313,15 @@ describe('computeOverall', () => {
         security: dim(s),
         maintainability: dim(s),
         developerExperience: dim(s),
-      }).grade;
+      }).rating;
     expect(g(79)).toBe('B');
     expect(g(60)).toBe('B');
     expect(g(59)).toBe('C');
     expect(g(40)).toBe('C');
     expect(g(39)).toBe('D');
     expect(g(20)).toBe('D');
-    expect(g(19)).toBe('F');
-    expect(g(0)).toBe('F');
+    expect(g(19)).toBe('E');
+    expect(g(0)).toBe('E');
   });
 
   it('weights sum to 1.0 (round-trip with uniform scores)', () => {
@@ -454,14 +337,14 @@ describe('computeOverall', () => {
   });
 });
 
-describe('status bucketing', () => {
-  it('maps score ranges to labels', () => {
+describe('rating bucketing', () => {
+  it('maps score ranges to A/B/C/D/E letters', () => {
     expect(
-      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 15 } })).status,
-    ).toBe('critical'); // 5
+      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 15 } })).rating,
+    ).toBe('E'); // 5
     expect(
-      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 60 } })).status,
-    ).toBe('poor'); // 20
+      scoreDocumentation(withInput({ metrics: { readmeExists: true, readmeLines: 60 } })).rating,
+    ).toBe('D'); // 20
     expect(
       scoreDocumentation(
         withInput({
@@ -472,8 +355,8 @@ describe('status bucketing', () => {
             docCommentFiles: 60,
           },
         }),
-      ).status,
-    ).toBe('fair');
+      ).rating,
+    ).toBe('C');
     expect(
       scoreDocumentation(
         withInput({
@@ -485,8 +368,8 @@ describe('status bucketing', () => {
             apiDocsExist: true,
           },
         }),
-      ).status,
-    ).toBe('good');
+      ).rating,
+    ).toBe('B');
     expect(
       scoreDocumentation(
         withInput({
@@ -499,7 +382,7 @@ describe('status bucketing', () => {
             architectureDocsExist: true,
           },
         }),
-      ).status,
-    ).toBe('excellent');
+      ).rating,
+    ).toBe('A');
   });
 });

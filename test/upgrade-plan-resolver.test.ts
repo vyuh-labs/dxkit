@@ -207,6 +207,19 @@ describe('stampFromFreeTextAdvice', () => {
     expect(stamped).toBe(0);
     expect(findings.every((f) => !f.upgradePlan)).toBe(true);
   });
+
+  it('skips the 0.0.0 sentinel that some upstream tools emit when no real target exists', () => {
+    const findings: DepVulnFinding[] = [
+      mkFinding({
+        id: 'CVE-sentinel',
+        package: 'leaf',
+        upgradeAdvice: 'Upgrade react-scripts to 0.0.0 [major] (transitive fix)',
+      }),
+    ];
+    const stamped = stampFromFreeTextAdvice(findings);
+    expect(stamped).toBe(0);
+    expect(findings[0].upgradePlan).toBeUndefined();
+  });
 });
 
 describe('resolveTransitiveUpgradePlans', () => {

@@ -1,0 +1,43 @@
+name: Question / Discussion
+description: Ask how something works or discuss a design choice
+title: '[question] <short description>'
+labels: ['question', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Welcome! A few quick pointers before you ask:
+
+        - **Setup / installation problems** → please file a [bug report](https://github.com/vyuh-labs/dxkit/issues/new?template=bug.yml) instead.
+        - **Feature ideas** → please file a [feature request](https://github.com/vyuh-labs/dxkit/issues/new?template=feature.yml) instead.
+        - **Security concerns** → please use [private vulnerability reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new) instead.
+        - For broader discussion, you may also start a thread in [Discussions](https://github.com/vyuh-labs/dxkit/discussions) (if enabled for this repo).
+
+        Check the [README](https://github.com/vyuh-labs/dxkit#readme), [SCORING.md](https://github.com/vyuh-labs/dxkit/blob/main/docs/SCORING.md), and [CLAUDE.md](https://github.com/vyuh-labs/dxkit/blob/main/CLAUDE.md) first — many questions are answered there.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What would you like to understand?
+      placeholder: |
+        How does dxkit decide which files count as "vendored" for
+        the largest-files metric?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: |
+        What are you trying to accomplish? Knowing the underlying
+        goal helps us give a more useful answer than a literal one.
+
+  - type: textarea
+    id: already-tried
+    attributes:
+      label: What have you already checked?
+      description: |
+        Docs, source files, prior issues, related projects — anything
+        that almost answered your question but didn't quite.

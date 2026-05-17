@@ -2,14 +2,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
-  DepVulnResult,
   ImportsResult,
   LintGatherOutcome,
   LintResult,
@@ -29,28 +34,10 @@ import type { LanguageSupport, LintSeverity } from './types';
  * a full filesystem scan (build/, target/, .gradle/, node_modules/
  * are pruned).
  */
-function hasJavaSourceWithinDepth(cwd: string, maxDepth = 5): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'build', '.gradle', 'target', 'out'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.java')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasJavaSource(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-5
+  // cap missed deep monorepos with multi-module Maven/Gradle layouts.
+  return walkPaths(cwd, { extensions: ['.java'] }).length > 0;
 }
 
 /**
@@ -74,7 +61,7 @@ function detectJava(cwd: string): boolean {
   // Standard Maven/Gradle Java layout — directory name is the signal.
   if (fs.existsSync(path.join(cwd, 'src', 'main', 'java'))) return true;
   // Otherwise require actual `.java` source presence.
-  return hasJavaSourceWithinDepth(cwd, 5);
+  return hasJavaSource(cwd);
 }
 
 // ─── Imports (regex extraction, no resolver) ───────────────────────────────
@@ -295,7 +282,7 @@ export function parsePmdOutput(raw: string): SeverityCounts {
  */
 function gatherJavaLintResult(cwd: string): LintGatherOutcome {
   // Activation gate — match detectJava (no pom.xml-alone trigger).
-  if (!fs.existsSync(path.join(cwd, 'src', 'main', 'java')) && !hasJavaSourceWithinDepth(cwd, 5)) {
+  if (!fs.existsSync(path.join(cwd, 'src', 'main', 'java')) && !hasJavaSource(cwd)) {
     return { kind: 'unavailable', reason: 'no java source' };
   }
   const pmd = findTool(TOOL_DEFS.pmd, cwd);
@@ -327,10 +314,73 @@ const javaLintProvider: CapabilityProvider<LintResult> = {
 // share the same candidate list because they're mutually exclusive on
 // any given project root.
 
+/**
+ * Locate the JaCoCo XML report after a test run (D021). Same shape as
+ * the kotlin pack's helper — Java codebases lean Maven-first, Kotlin
+ * codebases Gradle-first, but the candidate paths are the same.
+ */
+function findJacocoXmlArtifact(cwd: string): string | null {
+  const candidates = [
+    'target/site/jacoco/jacoco.xml',
+    'target/site/jacoco-aggregate/jacoco.xml',
+    'build/reports/jacoco/test/jacocoTestReport.xml',
+  ];
+  for (const c of candidates) {
+    if (fileExists(cwd, c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Run the JVM build tool's "test + JaCoCo report" cycle from cwd (D021).
+ *
+ * Picks the command by build manifest, preferring Maven when both are
+ * present (Java codebases lean Maven-first; the Gradle path is here for
+ * the increasingly common Java-on-Gradle projects):
+ *
+ *   - `pom.xml`                          → `mvn test jacoco:report`
+ *   - `gradlew` or `build.gradle{,.kts}` → `./gradlew jacocoTestReport`
+ *
+ * Preflight + artifact discovery identical to the kotlin pack's shape.
+ * The JaCoCo plugin must be wired into the build for the XML to be
+ * emitted; without it the command succeeds but no artifact is produced
+ * and the helper classifies as `failed`.
+ */
+function runJavaTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'java',
+      cmd: (() => {
+        if (fileExists(cwd, 'pom.xml')) {
+          return 'mvn test jacoco:report';
+        }
+        const gradle = fileExists(cwd, 'gradlew') ? './gradlew' : 'gradle';
+        return `${gradle} jacocoTestReport`;
+      })(),
+      cwd,
+      artifact: (cwd) => findJacocoXmlArtifact(cwd),
+      preflight: (cwd) => {
+        const hasGradle =
+          fileExists(cwd, 'build.gradle') ||
+          fileExists(cwd, 'build.gradle.kts') ||
+          fileExists(cwd, 'gradlew');
+        const hasMaven = fileExists(cwd, 'pom.xml');
+        if (!hasGradle && !hasMaven) {
+          return 'no Gradle/Maven build manifest — cannot run JaCoCo coverage';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'java',
   async gather(cwd) {
     return gatherJaCoCoCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runJavaTestsWithCoverage(cwd);
   },
 };
 
@@ -346,11 +396,14 @@ const javaCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 const JAVA_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-metadata.xml'];
 
-const javaDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const javaDepVulnsProvider: DepVulnsProvider = {
   source: 'java',
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
   },
 };
 
@@ -369,6 +422,54 @@ export const java: LanguageSupport = {
   // Build artifact dirs across Maven (target), Gradle (build, .gradle,
   // out). Universal exclusions live in src/analyzers/tools/exclusions.ts.
   extraExcludes: ['target', 'build', '.gradle', 'out'],
+
+  // D027 (2.4.7): Javadoc uses the `/**` block opener.
+  docCommentPatterns: ['/\\*\\*'],
+
+  // D034 (2.4.7): JVM TLS-bypass idioms (same set as the kotlin pack
+  // — both share the underlying javax.net.ssl APIs). The tokens are
+  // class/method names that exist solely for permissive variants;
+  // false-positive rate is negligible.
+  tlsBypassPatterns: [
+    'TrustAllX509TrustManager',
+    'NaiveTrustManager',
+    'NoopHostnameVerifier',
+    'ALLOW_ALL_HOSTNAME_VERIFIER',
+  ],
+
+  upgradeCommand(name, version) {
+    return `# Edit pom.xml: bump ${name} <version>${version}</version>, then \`mvn install\``;
+  },
+
+  // Spring MVC / Spring Boot, JEE, Dropwizard, Micronaut, and the
+  // classic Maven project layout (`src/main/java/<...>/controllers/`,
+  // `src/main/java/<...>/services/`) converge on the same vocabulary —
+  // controllers / services / repositories for backend, dao/daos for
+  // legacy persistence layers, resources for JAX-RS REST endpoints.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/controllers/',
+      '/services/',
+      '/repositories/',
+      '/handlers/',
+      '/dao/',
+      '/daos/',
+      '/resources/',
+    ],
+    routePaths: ['/controllers/', '/endpoints/', '/resources/', '/handlers/'],
+    modelPaths: ['/models/', '/entities/', '/dto/', '/dtos/', '/domain/'],
+    vocabulary: {
+      components: 'controllers/services',
+      models: 'entities',
+      routes: 'endpoints',
+    },
+    testGapPriority: {
+      high: ['/controllers/', '/services/', '/handlers/', '/resources/'],
+      medium: ['/repositories/', '/dao/', '/daos/'],
+    },
+  },
+
+  clocLanguageNames: ['Java'],
 
   detect: detectJava,
 

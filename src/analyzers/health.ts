@@ -5,21 +5,29 @@
  * 2. Run tools -> gather metrics (deterministic)
  * 3. Score metrics -> formulas (deterministic)
  * 4. Format report -> structured JSON
+ *
+ * Steps 1–2 are wrapped in an `AnalysisResult` and persisted via the
+ * cross-process cache (`src/analyzers/cache.ts`). Step 3 + 4 (scoring
+ * + formatting) run on every call but read from the cached result;
+ * two `vyuh-dxkit health` invocations on the same commit produce
+ * byte-identical reports without re-shelling out to any tool.
  */
 import * as path from 'path';
 import { detect } from '../detect';
 import { DetectedStack } from '../types';
 import { CapabilityReport, HealthMetrics, HealthReport } from './types';
+import type { AnalysisResult, AnalysisResultBody } from '../analysis-result';
+import { readOrBuildAnalysisResult } from './cache';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { loadCoverage } from './tools/coverage';
 import { gatherPackageJsonMetrics } from './tools/package-json';
+import { gatherHygieneMarkers, gatherCommentRatio } from './quality/gather';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
 import {
   CODE_PATTERNS,
   COVERAGE,
-  DEP_VULNS,
   DUPLICATION,
   IMPORTS,
   LINT,
@@ -28,14 +36,16 @@ import {
   TEST_FRAMEWORK,
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
+import { buildSecurityAggregateForHealth, gatherDepVulnsWithAvailability } from './security/gather';
+import { gatherLicensesWithAvailability } from './licenses/gather';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
 import { scoreDocsDimension } from './docs/shallow';
 import { scoreSecurityDimension } from './security/shallow';
 import { scoreMaintainabilityDimension } from './maintainability/shallow';
 import { scoreDxDimension } from './dx/shallow';
-import { computeOverall, ScoreInput } from './scoring';
-import { run } from './tools/runner';
+import { computeOverall } from '../scoring';
+import { ScoreInput } from './types';
 
 /** Default values for all HealthMetrics fields. */
 export function defaultMetrics(): HealthMetrics {
@@ -51,6 +61,7 @@ export function defaultMetrics(): HealthMetrics {
     filesOver500Lines: 0,
     largestFileLines: 0,
     largestFilePath: '',
+    largestFiles: [],
     consoleLogCount: 0,
     anyTypeCount: 0,
     readmeExists: false,
@@ -64,8 +75,15 @@ export function defaultMetrics(): HealthMetrics {
     privateKeyFiles: 0,
     envFilesInGit: 0,
     tlsDisabledCount: 0,
+    todoCount: 0,
+    fixmeCount: 0,
+    hackCount: 0,
+    staleFiles: 0,
+    mixedLanguages: false,
+    commentRatio: null,
     controllers: 0,
     models: 0,
+    routeHandlerFiles: 0,
     directories: 0,
     languages: [],
     nodeEngineVersion: null,
@@ -111,18 +129,49 @@ async function analyzeHealthInternal(
   repoPath: string,
   options: AnalyzeHealthOptions = {},
 ): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
+  const result = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, options),
+  });
+  const report = scoreAndFormatHealth(result);
+  return { report, metrics: result.metrics };
+}
+
+/**
+ * The gather pipeline — everything that produces an `AnalysisResultBody`
+ * for a given repo. Pure with respect to the working tree: same SHA +
+ * same `.dxkit-ignore` + same dxkit version means same output. Scoring
+ * and formatting are deliberately NOT part of this — they live in
+ * `scoreAndFormatHealth` so cache hits skip the tool gather entirely
+ * but still re-render the report (cheap, deterministic, decoupled from
+ * I/O).
+ *
+ * Called by the cache layer (`readOrBuildAnalysisResult`) on a miss.
+ * Exported so other analyzers can drop into the same pattern in
+ * subsequent migrations: each subcommand asks the cache for a
+ * `AnalysisResult`, builder is supplied as `gatherAnalysisResultBody`,
+ * and the subcommand renders its own report from the body.
+ */
+export async function gatherAnalysisResultBody(
+  repoPath: string,
+  options: AnalyzeHealthOptions = {},
+): Promise<AnalysisResultBody> {
   const verbose = !!options.verbose;
 
   // Step 1: Detect stack
   const stack = timed('detect', verbose, () => detect(repoPath));
 
-  // Step 2: Gather metrics -- generic first, then language-specific, then optional
-  const generic = timed('generic (Layer 0)', verbose, () => gatherGenericMetrics(repoPath));
+  // Step 2: Gather metrics -- generic first, then language-specific, then optional.
+  // Active-pack flags from `stack` drive the architecturalShape-aware
+  // path counters (primary components, route handlers, data models).
+  const generic = timed('generic (Layer 0)', verbose, () =>
+    gatherGenericMetrics(repoPath, stack.languages),
+  );
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 
   // `package.json` metrics: npm-script count + `engines.node` pin. These
   // don't fit any capability (Node-specific by nature) and used to live
-  // in the typescript pack's `gatherMetrics` body; extracted in C.5 into
+  // in the typescript pack's `gatherMetrics` body; extracted later into
   // a direct helper so they survive the per-pack channel deletion.
   const pkg = timed('package.json', verbose, () => gatherPackageJsonMetrics(repoPath));
   metrics.npmScriptsCount = pkg.npmScriptsCount;
@@ -132,8 +181,28 @@ async function analyzeHealthInternal(
   // counts, graphify AST stats. Reshaped from the dispatcher's cached
   // envelopes (`tools/parallel.ts`), so each tool shells out at most once
   // per analyzer run.
-  const layer2 = timed('layer2 (parallel)', verbose, () => gatherLayer2Parallel(repoPath, verbose));
+  const layer2 = await timedAsync('layer2 (parallel)', verbose, () =>
+    gatherLayer2Parallel(repoPath, verbose),
+  );
   mergeLayer2(metrics, layer2);
+
+  // Hygiene + comment-ratio metrics shared with the standalone Quality
+  // report. Live in HealthMetrics so the canonical Quality scorer
+  // sees the same values from both consumer paths — closes the
+  // dual-Quality-formula drift class structurally. The standalone
+  // analyzeQuality reads these straight off the cached AnalysisResult.
+  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
+  metrics.todoCount = hygiene.todoCount;
+  metrics.fixmeCount = hygiene.fixmeCount;
+  metrics.hackCount = hygiene.hackCount;
+  // hygiene.consoleLogCount is intentionally NOT mirrored — Layer 2
+  // already populates metrics.consoleLogCount via the shared
+  // gatherDebugStatements helper, and both paths converge on the
+  // same number by construction.
+  metrics.staleFiles = hygiene.staleFiles.length;
+  metrics.mixedLanguages = hygiene.mixedLanguages;
+  const comments = timed('cloc (comment ratio)', verbose, () => gatherCommentRatio(repoPath));
+  metrics.commentRatio = comments.ratio;
 
   // Surface the coverage tool name in `toolsUsed` even though its data
   // lives under `capabilities.coverage`. `loadCoverage` and the COVERAGE
@@ -162,10 +231,9 @@ async function analyzeHealthInternal(
     }
   }
 
-  // Phase 10e.C.1: capability envelopes alongside legacy metrics. Dispatched
-  // in parallel; providers the legacy path already ran are served from the
-  // dispatcher cache (free). Scorers read capability-owned fields from this
-  // bundle (C.2).
+  // Capability envelopes alongside legacy metrics. Dispatched in parallel;
+  // providers the legacy path already ran are served from the dispatcher
+  // cache (free). Scorers read capability-owned fields from this bundle.
   const capabilities = await timedAsync('capabilities', verbose, () =>
     gatherCapabilityReport(repoPath),
   );
@@ -173,14 +241,57 @@ async function analyzeHealthInternal(
   // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
   // clippy, cargo-audit, golangci-lint, govulncheck, dotnet-format,
   // dotnet-vulnerable) into `metrics.toolsUsed` from the LINT + DEP_VULNS
-  // envelopes. Pre-C.5 these came from each pack's `gatherMetrics`; now
-  // they come from the dispatcher's already-computed `tool` field.
+  // envelopes. Sourced from the dispatcher's already-computed `tool` field
+  // rather than each pack's gather body.
   for (const name of toolsFromCapabilities(capabilities)) {
     if (!metrics.toolsUsed.includes(name)) metrics.toolsUsed.push(name);
   }
 
-  // Step 3: Score
-  const scoreInput: ScoreInput = { metrics, capabilities };
+  // Push attempted-but-failed capabilities into metrics.toolsUnavailable
+  // so consumers reading the report see the failure honestly rather
+  // than as silent absence. Reads from the *Availability sibling
+  // fields populated above. The reason text is consumer-renderable;
+  // keep it concise (~one short sentence).
+  pushUnavailable(metrics, capabilities.codePatternsAvailability, 'semgrep');
+  pushUnavailable(metrics, capabilities.duplicationAvailability, 'jscpd');
+  pushUnavailable(metrics, capabilities.structuralAvailability, 'graphify');
+  pushUnavailable(metrics, capabilities.lintAvailability, 'lint');
+
+  return { stack, capabilities, metrics };
+}
+
+/**
+ * Append a `<toolName> (<reason>)` entry to `metrics.toolsUnavailable`
+ * when an availability sibling reports the capability was attempted
+ * but failed. No-ops when the capability is fully clean (available:
+ * true) or when the sibling is absent. Deduplicates against any
+ * entry already pushed by Layer 2's parallel.ts (which renders
+ * gitleaks / graphify failures into the same field).
+ */
+function pushUnavailable(
+  metrics: HealthMetrics,
+  avail: { available: boolean; unavailableReason: string } | undefined,
+  toolName: string,
+): void {
+  if (!avail || avail.available) return;
+  const entry = avail.unavailableReason ? `${toolName} (${avail.unavailableReason})` : toolName;
+  if (!metrics.toolsUnavailable.some((e) => e === entry || e.startsWith(`${toolName} (`))) {
+    metrics.toolsUnavailable.push(entry);
+  }
+}
+
+/**
+ * Score the six dimensions and format the result into a `HealthReport`.
+ * Pure function over a cached `AnalysisResult` — no I/O, no tool
+ * shell-outs. Provenance fields (commitSha, branch, analyzedAt) come
+ * directly from the cached result, which means two `health` calls on
+ * the same commit produce reports with the SAME `analyzedAt`
+ * timestamp: it's "when this gather was built," not "when this read
+ * happened." That's the cross-process-consistency contract.
+ */
+export function scoreAndFormatHealth(result: AnalysisResult): HealthReport {
+  const { stack, capabilities, metrics } = result;
+  const scoreInput: ScoreInput = { metrics, capabilities, languageFlags: stack.languages };
   const dimensions = {
     testing: scoreTestsDimension(scoreInput),
     quality: scoreQualityDimension(scoreInput),
@@ -189,25 +300,21 @@ async function analyzeHealthInternal(
     maintainability: scoreMaintainabilityDimension(scoreInput),
     developerExperience: scoreDxDimension(scoreInput),
   };
-  const { overallScore, grade } = computeOverall(dimensions);
+  const { overallScore, rating } = computeOverall(dimensions);
 
-  // Step 4: Format report
-  const commitSha = run('git rev-parse --short HEAD 2>/dev/null', repoPath);
-  const branch = run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath);
-
-  const report: HealthReport = {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha,
-    branch,
-    summary: { overallScore, grade },
+  return {
+    repo: stack.projectName || path.basename(result.cwd),
+    analyzedAt: result.builtAt,
+    commitSha: result.commitSha,
+    branch: result.branch,
+    summary: { overallScore, rating },
     dimensions,
     languages: metrics.languages,
+    largestFiles: metrics.largestFiles,
     toolsUsed: metrics.toolsUsed,
     toolsUnavailable: metrics.toolsUnavailable,
     capabilities,
   };
-  return { report, metrics };
 }
 
 /**
@@ -257,38 +364,199 @@ function splitToolNames(tool: string): string[] {
  * isolates provider failures.
  */
 async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
+  // D025b (2.4.7): depVulns gathers via `gatherDepVulnsWithAvailability`
+  // (NOT the dispatcher) so the per-pack availability discriminant
+  // survives to the health-side scorer. Health doesn't need the
+  // enrichment passes (EPSS/KEV/reachability/risk) that the standalone
+  // vuln scan does — those run on the standalone path inside
+  // `gatherDepVulns`. The shared primitive returns the same
+  // `DepVulnResult` envelope shape the dispatcher would produce, plus
+  // the availability metadata.
   const [
-    depVulns,
-    lint,
+    depVulnsWithAvail,
+    lintOutcome,
     coverage,
     imports,
     testFramework,
     secrets,
-    codePatterns,
-    duplication,
-    structural,
+    codePatternsOutcome,
+    duplicationOutcome,
+    structuralOutcome,
+    licensesWithAvail,
   ] = await Promise.all([
-    defaultDispatcher.gather(cwd, DEP_VULNS, providersFor(DEP_VULNS, cwd)),
-    defaultDispatcher.gather(cwd, LINT, providersFor(LINT, cwd)),
+    gatherDepVulnsWithAvailability(cwd),
+    // gatherWithProvenance (not gather) so the cached LintResult.tool
+    // can carry the "(not run: <packs>)" suffix when one of the
+    // active packs returned null silently. Standalone analyzeQuality
+    // reads the augmented label off the cached envelope — closes the
+    // cross-process drift class where two surfaces could disagree on
+    // whether a linter ran on a given pack.
+    defaultDispatcher.gatherWithProvenance(cwd, LINT, providersFor(LINT, cwd)),
     defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
     defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
     defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS, cwd)),
-    defaultDispatcher.gather(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
-    defaultDispatcher.gather(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
-    defaultDispatcher.gather(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
+    // gatherWithProvenance so the cache builder can plumb per-capability
+    // availability metadata for tools that may legitimately gather
+    // attempted-but-failed (semgrep / jscpd / graphify under resource
+    // contention; tool not installed; etc.). Without this the cache's
+    // metrics.toolsUnavailable can't distinguish "tool didn't try" from
+    // "tool tried and failed silently" — the same dishonest-rendering
+    // class as the lint case the LINT switch above closes.
+    defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
+    defaultDispatcher.gatherWithProvenance(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
+    defaultDispatcher.gatherWithProvenance(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
+    gatherLicensesWithAvailability(cwd),
   ]);
+  const codePatterns = codePatternsOutcome.envelope;
+  const duplication = duplicationOutcome.envelope;
+  const structural = structuralOutcome.envelope;
   const report: CapabilityReport = {};
-  if (depVulns) report.depVulns = depVulns;
+  if (depVulnsWithAvail.envelope) report.depVulns = depVulnsWithAvail.envelope;
+  // Always plumb availability — even when envelope is null, the bool
+  // disambiguates "no active pack" (available=true, no cap) from
+  // "active pack returned unavailable" (available=false, cap fires).
+  report.depVulnsAvailability = {
+    available: depVulnsWithAvail.available,
+    unavailableReason: depVulnsWithAvail.unavailableReason,
+  };
+  // Augment the lint envelope's tool label with skipped-pack
+  // provenance before caching, so consumers see the same label
+  // analyzeQuality's old standalone gather produced. Reconstructed
+  // (not mutated) because envelope.tool is readonly.
+  //
+  // When `skipReasons` carries a per-pack reason (the typescript +
+  // python lint providers expose `gatherOutcome` for exactly this),
+  // the label includes it so customers can act on the disclosure
+  // instead of being told "typescript lint not run" with no
+  // explanation. Example post-fix label on a platform-style polyglot:
+  //   `ruff (not run: typescript — no eslint config found)`
+  const lint = (() => {
+    if (!lintOutcome.envelope || lintOutcome.skipped.length === 0) {
+      return lintOutcome.envelope;
+    }
+    const annotated = lintOutcome.skipped
+      .map((src) => {
+        const reason = lintOutcome.skipReasons[src];
+        return reason ? `${src} — ${reason}` : src;
+      })
+      .join(', ');
+    return {
+      ...lintOutcome.envelope,
+      tool: `${lintOutcome.envelope.tool} (not run: ${annotated})`,
+    };
+  })();
   if (lint) report.lint = lint;
+  // Lint availability so consumers can distinguish "no active
+  // lint-capable pack" (vacuous clean, available=true, no envelope)
+  // from "every active provider returned null" (available=false —
+  // actionable "try installing dependencies"). Same shape as
+  // licensesAvailability + depVulnsAvailability.
+  if (lintOutcome.attempted.length > 0 && lintOutcome.succeeded.length === 0) {
+    // Every attempted provider returned null — surface the per-pack
+    // reasons (when available via `gatherOutcome`) so the customer
+    // sees what to fix, not just which packs gave up.
+    const annotated = lintOutcome.attempted
+      .map((src) => {
+        const reason = lintOutcome.skipReasons[src];
+        return reason ? `${src} — ${reason}` : src;
+      })
+      .join('; ');
+    const pluralS = lintOutcome.attempted.length === 1 ? '' : 's';
+    report.lintAvailability = {
+      available: false,
+      unavailableReason: `provider${pluralS} returned no data: ${annotated}`,
+    };
+  } else {
+    report.lintAvailability = { available: true, unavailableReason: '' };
+  }
   if (coverage) report.coverage = coverage;
   if (imports) report.imports = imports;
   if (testFramework) report.testFramework = testFramework;
   if (secrets) report.secrets = secrets;
   if (codePatterns) report.codePatterns = codePatterns;
+  // Same shape as lintAvailability — distinguishes "no rulesets
+  // active" (vacuous clean) from "semgrep/jscpd/graphify was
+  // attempted but every provider returned null" (actionable —
+  // the customer's report shouldn't silently miss the tool).
+  report.codePatternsAvailability = availabilityFromOutcome(codePatternsOutcome, 'semgrep');
   if (duplication) report.duplication = duplication;
+  report.duplicationAvailability = availabilityFromOutcome(duplicationOutcome, 'jscpd');
   if (structural) report.structural = structural;
+  report.structuralAvailability = availabilityFromOutcome(structuralOutcome, 'graphify');
+  if (licensesWithAvail.envelope) report.licenses = licensesWithAvail.envelope;
+  // Always plumb availability — even when envelope is null, the bool
+  // disambiguates "no active pack with a licenses provider" (vacuous
+  // success) from "active pack returned unavailable" (banner fires).
+  report.licensesAvailability = {
+    available: licensesWithAvail.available,
+    unavailableReason: licensesWithAvail.unavailableReason,
+  };
+
+  // G_v4_8 (C1.3): build the canonical aggregate from everything we
+  // just gathered, plus the two security finders not represented in
+  // the capability layer (tls-bypass-registry walk, file findings).
+  // Stored on the CapabilityReport so dimension scorers — currently
+  // `security/shallow.ts` — read the SAME aggregate the standalone
+  // vuln-scan reads. Closes the D086 class of cross-consumer drift
+  // by construction.
+  report.securityAggregate = await buildSecurityAggregateForHealth(
+    cwd,
+    secrets ?? undefined,
+    codePatterns ?? undefined,
+    depVulnsWithAvail.envelope ?? undefined,
+    depVulnsWithAvail.available,
+    depVulnsWithAvail.unavailableReason,
+  );
   return report;
+}
+
+/**
+ * Derive `<cap>Availability` metadata from a gatherWithProvenance
+ * outcome. Mirrors the depVulnsAvailability / licensesAvailability
+ * pattern: `available === false` only when at least one provider was
+ * attempted AND none succeeded (i.e. tried + failed silently).
+ * Empty `attempted` list reports available: true (vacuous — nothing
+ * to try, nothing to fail).
+ */
+function availabilityFromOutcome(
+  outcome: {
+    attempted: string[];
+    succeeded: string[];
+    skipped: string[];
+    skipReasons?: Record<string, string>;
+  },
+  _toolLabel: string,
+): { available: boolean; unavailableReason: string } {
+  if (outcome.attempted.length === 0) {
+    return { available: true, unavailableReason: '' };
+  }
+  if (outcome.succeeded.length > 0) {
+    return { available: true, unavailableReason: '' };
+  }
+  // Prefer the per-source reason from the dispatcher's skipReasons map
+  // when present — that channel carries the tool's actual failure mode
+  // (`not installed` / `timed out at 600s` / `exit code 137 (stderr: ...)`
+  // / `no output` / `parse error`). Falls back to the generic prose for
+  // legacy providers without a `gatherOutcome` method, which collapse
+  // every failure to "null returned from gather()" with no reason text.
+  //
+  // The reason intentionally omits the tool name — pushUnavailable
+  // prepends it as `<tool> (<reason>)`, so duplicating the name here
+  // would render as `jscpd (jscpd attempted ...)`.
+  const skipReasons = outcome.skipReasons ?? {};
+  const firstSkipWithReason = outcome.skipped.find((s) => skipReasons[s]);
+  if (firstSkipWithReason) {
+    return {
+      available: false,
+      unavailableReason: skipReasons[firstSkipWithReason],
+    };
+  }
+  return {
+    available: false,
+    unavailableReason:
+      'attempted but produced no output (likely killed by resource limits — try running dxkit on this repo alone)',
+  };
 }
 
 /**

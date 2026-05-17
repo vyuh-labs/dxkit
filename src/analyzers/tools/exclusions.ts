@@ -194,16 +194,33 @@ export function getGrepExcludeDirFlags(cwd: string): string {
 }
 
 /**
- * Build cloc `--exclude-dir` argument value (comma-separated basenames).
- * cloc matches basenames only, so multi-segment sourcePaths get flattened.
+ * Build cloc exclusion flags — `--exclude-dir` (basenames) PLUS
+ * `--fullpath --not-match-d` (Perl regex on full directory path) for
+ * multi-segment sourcePaths.
+ *
+ * D055 (2.4.7): pre-fix, multi-segment paths in `.dxkit-ignore` were
+ * flattened to basenames here, so `Dev/Addons/DPLAddon/SAPB1/` silently
+ * became `{Dev, Addons, DPLAddon, SAPB1}` — cloc then excluded EVERY
+ * directory named `Dev` in the tree, killing 90% of source visibility
+ * on dpl-studio. The split-flag construction preserves the path
+ * structure for cloc.
+ *
+ * The regex is anchored on path-segment boundaries with `(?:^|/)` /
+ * `(?:/|$)` so `Dev/Addons/Foo` doesn't accidentally match `Dev/AddonsX`
+ * or `XDev/Addons`. Path components are regex-escaped so `.`, `+`, etc.
+ * aren't interpreted as metachars.
  */
-export function getClocExcludeDirs(cwd: string): string {
+export function getClocExcludeFlags(cwd: string): string {
   const { dirs, sourcePaths } = loadExclusions(cwd);
-  const basenames = new Set<string>(dirs);
-  for (const p of sourcePaths) {
-    for (const seg of p.split('/')) if (seg) basenames.add(seg);
+  const parts: string[] = [];
+  if (dirs.length > 0) {
+    parts.push(`--exclude-dir=${dirs.join(',')}`);
   }
-  return Array.from(basenames).join(',');
+  if (sourcePaths.length > 0) {
+    const escaped = sourcePaths.map(escapeRegex);
+    parts.push(`--fullpath --not-match-d='(?:^|/)(?:${escaped.join('|')})(?:/|$)'`);
+  }
+  return parts.join(' ');
 }
 
 /**
@@ -217,21 +234,79 @@ export function getSemgrepExcludeFlags(cwd: string): string {
   return `${dirFlags} ${fileFlags}`;
 }
 
-/**
- * Python set literal for graphify script — basenames only (flattened paths).
- * Used as a template substitution in the embedded Python script.
- */
-export function getPythonExcludeSet(cwd: string): string {
-  const { dirs, sourcePaths } = loadExclusions(cwd);
-  const basenames = new Set<string>(dirs);
-  for (const p of sourcePaths) {
-    for (const seg of p.split('/')) if (seg) basenames.add(seg);
+// Build jscpd `--ignore` glob patterns from the centralized exclusion set.
+//
+// jscpd's `--ignore` accepts a comma-separated glob list. Each pattern is
+// prefixed with the recursive-globstar segment so it matches at any
+// directory depth — the same convention `gatherJscpdResult` already uses
+// for autogen patterns.
+//
+// Mapping:
+//   - dirs (basenames)         → recursive-glob/<name>/recursive-glob
+//   - sourcePaths (multi-seg)  → recursive-glob/<path>/recursive-glob
+//   - filePatterns (globs)     → recursive-glob/<glob>
+//
+// Plumbs the same exclusion set the in-process walkers honor (grep, cloc,
+// semgrep, graphify's Python filter) into jscpd's subprocess argument
+// builder. Without this, jscpd only saw the autogen patterns + `--gitignore`,
+// which left it descending into committed-vendored trees that aren't in the
+// project's `.gitignore` — token tables exhaust heap on minified bundles,
+// jscpd gets OOM-killed before flushing its JSON report, and the report
+// reads "Duplication unavailable" on the very repos that need it most.
+//
+// Returns an array so callers can union with tool-specific extras (e.g.
+// `allAutogenSourcePatterns()` in jscpd's wrapper) before joining.
+export function getJscpdIgnorePatterns(cwd: string): string[] {
+  const { dirs, sourcePaths, filePatterns } = loadExclusions(cwd);
+  const out: string[] = [];
+  for (const d of dirs) {
+    out.push(`**/${d}/**`);
   }
-  return (
-    '{' +
-    Array.from(basenames)
-      .map((d) => `'${d}'`)
-      .join(', ') +
-    '}'
-  );
+  for (const p of sourcePaths) {
+    const trimmed = p.replace(/\/+$/, '');
+    if (trimmed) out.push(`**/${trimmed}/**`);
+  }
+  for (const f of filePatterns) {
+    out.push(`**/${f}`);
+  }
+  return out;
+}
+
+/**
+ * Python literals for the graphify walker — emits both a basename set
+ * (`EXCLUDE_DIRS`) and a multi-segment path list (`EXCLUDE_PATHS`) so
+ * the Python filter can preserve the path structure of multi-segment
+ * `.dxkit-ignore` entries.
+ *
+ * D055 (2.4.7): pre-fix, basenames-only flattening here meant
+ * `Dev/Addons/DPLAddon/SAPB1/` became `{Dev, Addons, DPLAddon, SAPB1}`
+ * — graphify then skipped every `Dev/` subtree in dpl-studio (10 files
+ * walked instead of ~1700, Functions=13). The two-set shape lets the
+ * walker check basenames via segment membership AND check paths via
+ * substring match on the file's relpath.
+ */
+export function getPythonExcludeFilter(cwd: string): {
+  dirsSet: string;
+  pathsList: string;
+  fileGlobsList: string;
+} {
+  const { dirs, sourcePaths, filePatterns } = loadExclusions(cwd);
+  // `set([...])` rather than `{...}` because `{}` is an empty dict in Python.
+  const dirsSet = `set([${dirs.map((d) => `'${d}'`).join(', ')}])`;
+  const pathsList = '[' + sourcePaths.map((p) => `'${p}'`).join(', ') + ']';
+  // File-glob patterns (`*.min.js`, `*.bundle.js`, `*.chunk.js`,
+  // `*.generated.ts`, `*.d.ts`). Pre-extension only `dirs` + `sourcePaths`
+  // were passed; the graphify walker enumerated every `*.min.js`
+  // matching basename and graphify's AST extractor analyzed them.
+  // Web-client's densest-file metric ranked
+  // `public/3DFileViewer/assets/index-j54KQSsm.js` (a webpack-hash
+  // bundle) as 4,606 "functions" — the kind of metric that makes the
+  // "split your densest file" recommendation read as a bug to anyone
+  // who knows what the file is.
+  const fileGlobsList = '[' + filePatterns.map((p) => `'${p}'`).join(', ') + ']';
+  return { dirsSet, pathsList, fileGlobsList };
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

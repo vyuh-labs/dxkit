@@ -34,6 +34,23 @@ export interface DuplicationStats {
 }
 
 export interface QualityMetrics {
+  // Source-file count from the canonical health gather, used as the
+  // density denominator for lint / console / any-type / typeError
+  // penalties. Pulled from the AnalysisResult cache so the standalone
+  // Quality score and the health-side Code Quality dimension share
+  // the same denominator and converge on the same number.
+  sourceFiles: number;
+
+  // File-size + type signals carried over from the canonical health
+  // metrics so the standalone slop score sees the same penalties
+  // the health-side dimension sees. Without these the two surfaces
+  // would diverge by ~50 points on a typical TS monorepo (file-size
+  // penalty + any-type-density penalty are big drivers).
+  filesOver500Lines: number;
+  largestFileLines: number;
+  anyTypeCount: number;
+  typeErrors: number | null;
+
   // Lint
   lintErrors: number;
   lintWarnings: number;
@@ -81,4 +98,13 @@ export interface QualityReport {
   slopScore: number;
   toolsUsed: string[];
   toolsUnavailable: string[];
+  /**
+   * Pack ids of every active language pack at scan time (derived from
+   * the cached DetectedStack). The renderer reads this to decide
+   * whether structural-graph signals like `orphanModuleCount` need an
+   * informational qualifier — graphify can't follow C# `using`
+   * directives across assemblies, so on csharp-dominant repos every
+   * .cs file looks orphaned and the raw count misleads.
+   */
+  activeLanguages?: string[];
 }

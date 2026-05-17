@@ -67,6 +67,33 @@ Three layers run pre-commit + CI to keep this rule honest:
 1. **`scripts/check-architecture.sh`** — greps for hardcoded `IF_<LANG>`
    references, direct `config.languages.<id>` lookups outside the
    registry-bridge files, and hardcoded `<lang>.md` rule-file strings.
+   Also enforces:
+   - **G_v4_7** (2.4.7 Phase B): no `grep -r{l,n,c,E,f}` recursive
+     content-scan inside `run()` / `execSync()` outside the 4-file
+     walker allowlist. Canonical replacement: `walkSourceFiles` +
+     `countLineMatches` in `src/analyzers/tools/walk-source-files.ts`.
+   - **G_v4_8** (2.4.7 Phase C1): no `[<var>.severity]++` accumulator
+     bump (or `function countBySeverity`) outside
+     `src/analyzers/security/aggregator.ts`. Canonical replacement:
+     `buildSecurityAggregate` produces ONE `SecurityAggregate` per
+     run; every consumer reads `aggregate.codeBySeverity` /
+     `aggregate.depBySeverity` / `aggregate.secretsBySeverity` by
+     name. Annotate `// aggregator-ok` for legitimate exceptions
+     (legacy fallback in `shallow.ts`, partition-for-deduction in
+     `actions.ts`).
+   - **G_v4_12** (2.4.7 Phase C6.3): no hardcoded `maxDepth = N` or
+     `depth > N` in `src/languages/*.ts`. Manifest and source-file
+     discovery inside language packs MUST route through the canonical
+     depth-unlimited walker `walkPaths` in
+     `src/analyzers/tools/walk-paths.ts`. Closes the class of
+     "manifest deeper than the per-pack hardcoded cap" misses —
+     real customer monorepos routinely exceed every cap any pack
+     author has ever chosen (dpl-studio: csproj files at depths
+     6–9; the previous csharp cap was 3–5). Annotate
+     `// canonical-walker-ok` for justified exceptions (the walker
+     module itself, probes that explicitly target a build-output
+     subtree like `TestResults/` that the canonical walker rightly
+     excludes).
 2. **`test/languages-contract.test.ts`** — for every `LanguageSupport`,
    verifies metadata completeness (`permissions`, `cliBinaries`,
    `defaultVersion`, `projectYamlBlock`) and `tools[]` ↔ source-call
@@ -75,11 +102,145 @@ Three layers run pre-commit + CI to keep this rule honest:
    test. Confirms each pack-iterating consumer (generator, doctor,
    detect, project-yaml, constants, coverage, generic, grep-secrets,
    tool-registry) picks up a hypothetical new pack's contributions.
+   Also asserts the canonical security aggregator picks up
+   synthetic-pack depVuln + cross-tool TLS-bypass contributions
+   regardless of pack identity (G_v4_8 recipe-codification).
    Catches "the architecture stopped being pack-driven" empirically.
 
 Adding a new language pack is a one-command scaffold + filling in TODOs:
 `npm run new-lang <id> "<displayName>"`. See `CONTRIBUTING.md` "Adding a
 new language" for the full walkthrough.
+
+### 7. Dimension scoring lives in declarative specs under `src/scoring/`
+
+Every dimension's score (Security, Code Quality, Tests, Documentation,
+Maintainability, Developer Experience) is produced by a declarative
+`DimensionScoringSpec<T>` consumed by the shared pure-function
+evaluator in `src/scoring/evaluator.ts`. The spec engine produces a
+`ScoreResult` with structured deductions, the binding cap, and
+top-actions sorted by potential uplift — uniform output shape that
+renderers and agents consume directly.
+
+- **Defined** in `src/scoring/dimensions/<id>.ts` (one file per
+  dimension; mirror of CLAUDE.md Rule 6 applied to scoring)
+- **Registered** in `src/scoring/index.ts:SCORING_SPECS`
+- **Evaluated** via `evaluateSpec(SPEC, input)` — never a one-off
+  score-arithmetic function
+- **Anchored** to a Layer-1 methodology citation in
+  `src/scoring/STANDARDS.md`. The `methodology` field on each spec
+  is a token referencing that doc
+
+Status thresholds (A≥80, B≥60, C≥40, D≥20, E<20) and cap-tier
+ceilings (trust-broken=40, unmeasured=35, uncertainty=65,
+partial-uncertainty=75, fixable-finding=79) live in
+`src/scoring/thresholds.ts`. Every consumer routes through
+`ratingFromScore` / `RATING_THRESHOLDS` / `CAP_TIERS` — never
+hardcoded.
+
+**Bad**: `if (score >= 80) return 'excellent'`, `function status(s) { ... }`,
+inline penalty stacks in analyzer subdirs, `score -= 15` outside
+specs, `src/analyzers/quality/scoring.ts` (or any
+`src/analyzers/**/scoring.ts`).
+
+**Good**: `rating = ratingFromScore(score)`, declarative
+`PenaltyRule` + `CapRule` arrays consumed by `evaluateSpec`,
+adapters in `src/analyzers/<dim>/shallow.ts` that build the
+per-dimension input and dispatch through the spec.
+
+#### Scoring-discipline enforcement
+
+Three rules in `scripts/check-architecture.sh` (pre-commit + CI):
+
+1. No `src/analyzers/**/scoring.ts` files (dimension scoring lives
+   in `src/scoring/dimensions/<id>.ts`).
+2. No hardcoded rating-band threshold integers (`>= 80` etc.) in
+   scoring-related code outside `thresholds.ts`.
+3. No hardcoded cap-ceiling values (40 / 35 / 65 / 75 / 79) used as
+   `score = N` or `final = N` outside the scoring module.
+
+Annotate `// scoring-spec-ok` on the violating line for justified
+exceptions (CVSS risk-tier bands, coverage thresholds that
+deliberately differ from rating thresholds, etc.).
+
+The `test/scoring-playbook.test.ts` synthetic-dimension test
+exercises the registry + evaluator + format helpers end-to-end with
+an injected spec. Catches "the architecture stopped being
+spec-driven" empirically — analogous to `test/recipe-playbook.test.ts`
+for language packs.
+
+### 8. Per-stack architectural shape lives in `LanguageSupport.architecturalShape`
+
+Every per-stack architectural fact — primary component paths (the
+surfaces a developer would test first), HTTP route handler paths,
+data-model paths, prose vocabulary, and the per-bucket test-gap
+priority taxonomy — is declared by each language pack and consumed
+through the registry helpers in `src/languages/index.ts`. The
+cross-cutting analyzer + renderer code never carries hardcoded
+backend-centric path patterns or framework vocabulary.
+
+- **Declared** per-pack in `src/languages/<id>.ts:architecturalShape`
+  (optional — packs with no canonical conventions omit it)
+- **Consumed** via `allPrimaryComponentPaths(flags)`,
+  `allRoutePaths(flags)`, `allModelPaths(flags)`,
+  `allTestGapPriorityPaths(flags)`, `dominantVocabulary(flags)` —
+  every cross-cutting consumer reads from the active-pack union, so
+  adding a new pack auto-extends every consumer
+
+The class-fix replaces inline `if (path.includes('/controllers/'))`
+classifier code, hardcoded `find -path "*/controllers/*"` shell
+commands, and "controllers / handlers, models" prose with active-
+pack-driven equivalents. Pre-extension a pure React frontend or .NET
+WinForms desktop app matched none of those backend-centric defaults
+and reported 0/0/0 across test-gap CRITICAL/HIGH/MEDIUM buckets;
+post-extension each stack's primary surface populates correctly.
+
+**Bad**: `'/controllers/'` / `'/services/'` literals inside
+`src/analyzers/` (hardcoded paths); `type: 'controller' | 'service' |
+...` closed unions (pre-extension `SourceFile.type`); inline
+"controllers / handlers" prose in renderers; `find -path
+"*/controllers/*" -name "*.ts"` shell commands in gather code.
+
+**Good**: `for (const p of allPrimaryComponentPaths(flags))` in
+consumers; pack-declared
+`primaryComponentPaths: ['/controllers/', '/components/', '/Forms/']`
+unioned across active packs; `dominantVocabulary(flags)?.components`
+in renderer prose.
+
+#### Architectural-shape enforcement
+
+Two rules in `scripts/check-architecture.sh` (pre-commit + CI),
+both scoped to `src/analyzers/`:
+
+1. No quoted path-style framework literals — strings shaped
+   `/<role>/` for roles in the architectural-shape vocabulary
+   (`controllers`, `handlers`, `services`, `models`, `entities`,
+   `forms`, `viewmodels`, `pages`, `views`, `components`, `hooks`,
+   etc.). Path patterns belong in
+   `src/languages/<id>.ts:architecturalShape.primaryComponentPaths`
+   / `routePaths` / `modelPaths`.
+2. No bare singular role-name string literals (`'controller'`,
+   `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+   `'viewmodel'`, `'viewset'`, `'router'`). The pre-extension
+   `SourceFile.type` closed enum was replaced by a free string label
+   drawn from `patternToLabel(matched architecturalShape pattern)`.
+   Generic words (`'model'`, `'component'`, `'form'`, `'view'`,
+   `'page'`) are NOT flagged — they appear too often in
+   non-architectural contexts (ML data models, view-rendering libs,
+   page-object test patterns).
+
+Allowlist:
+
+- `src/analyzers/maintainability/shallow.ts` for the generic
+  vocabulary fallbacks (`'components'`, `'models'`) consumed when no
+  active pack supplies a label.
+- Annotate `// arch-shape-ok` on a violating line for justified
+  exceptions (rare).
+
+The `test/recipe-playbook.test.ts` synthetic 6th-pack injection test
+asserts the synthetic pack's `architecturalShape` contributions flow
+through the test-gap taxonomy and Maintainability prose — analogous
+to its existing assertion for `depVuln` + `tlsBypass` contributions
+(G_v4_8).
 
 ## Release procedure
 

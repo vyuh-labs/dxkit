@@ -8,6 +8,15 @@ describe('computeRiskScore', () => {
     expect(computeRiskScore({ epssScore: 0.5, kev: true })).toBeNull();
   });
 
+  // D078 (2.4.7): upstream OSV.dev emits cvssScore: 0 for advisories
+  // whose severity bucket comes from GHSA categorical rating, not CVSS.
+  // Rendering **0.0** next to a HIGH-bucket finding misleads users into
+  // reading "high severity, zero risk." Treat 0 same as undefined.
+  it('returns null when CVSS is literal zero (D078)', () => {
+    expect(computeRiskScore({ cvssScore: 0 })).toBeNull();
+    expect(computeRiskScore({ cvssScore: 0, kev: true, epssScore: 0.9 })).toBeNull();
+  });
+
   it('multiplies CVSS by 10 when no modifiers apply and reachable is unknown', () => {
     // base=98, kevMul=1, epssMul=1, reachMul=0.7 → 98 * 1 * 1 * 0.7 ≈ 68.6
     expect(computeRiskScore({ cvssScore: 9.8 })).toBe(68.6);

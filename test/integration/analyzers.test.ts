@@ -108,7 +108,7 @@ beforeAll(async () => {
   testGapsReport = await analyzeTestGaps(tmp);
   securityReport = await analyzeSecurity(tmp);
   qualityReport = await analyzeQuality(tmp);
-  devReport = analyzeDevActivity(tmp);
+  devReport = await analyzeDevActivity(tmp);
 }, 120000);
 
 afterAll(() => {
@@ -119,7 +119,7 @@ describe('analyzeHealth', () => {
   it('produces a complete health report', () => {
     expect(healthReport.summary.overallScore).toBeGreaterThan(0);
     expect(healthReport.summary.overallScore).toBeLessThanOrEqual(100);
-    expect(healthReport.summary.grade).toMatch(/^[A-F]$/);
+    expect(healthReport.summary.rating).toMatch(/^[A-E]$/);
 
     expect(healthReport.dimensions.testing).toBeDefined();
     expect(healthReport.dimensions.quality).toBeDefined();
@@ -131,7 +131,7 @@ describe('analyzeHealth', () => {
     for (const dim of Object.values(healthReport.dimensions)) {
       expect(dim.score).toBeGreaterThanOrEqual(0);
       expect(dim.score).toBeLessThanOrEqual(100);
-      expect(dim.status).toBeTruthy();
+      expect(dim.rating).toBeTruthy();
     }
 
     expect(healthReport.toolsUsed.length).toBeGreaterThan(0);

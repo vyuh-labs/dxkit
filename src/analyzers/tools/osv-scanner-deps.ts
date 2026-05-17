@@ -25,7 +25,13 @@
  * existing candidate wins. Without any of them, returns
  * `tool-missing` (matches python/csharp's manifest-gating pattern).
  */
-import { classifyOsvSeverity, extractOsvCvssScore, resolveCvssScores, type OsvVuln } from './osv';
+import {
+  classifyOsvSeverity,
+  extractOsvCvssScore,
+  extractOsvFixVersion,
+  resolveCvssScores,
+  type OsvVuln,
+} from './osv';
 import { fileExists, run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import type {
@@ -34,6 +40,7 @@ import type {
   DepVulnResult,
   SeverityCounts,
 } from '../../languages/capabilities/types';
+import type { LanguageId } from '../../types';
 
 /** Per-package shape from osv-scanner v2.x JSON output. */
 interface OsvScannerPackage {
@@ -66,6 +73,7 @@ interface OsvScannerOutput {
 export function parseOsvScannerFindings(
   raw: string,
   ecosystem: string,
+  packId?: LanguageId,
 ): {
   counts: SeverityCounts;
   findings: DepVulnFinding[];
@@ -115,9 +123,22 @@ export function parseOsvScannerFindings(
           tool: 'osv-scanner',
           severity: tier,
         };
+        // G_v4_4 (2.4.7): stamp the producing pack so `buildUpgradeCommand`
+        // can dispatch to the right `LanguageSupport.upgradeCommand` without
+        // a hardcoded switch on `tool`. Caller passes the pack id; absent
+        // (`undefined`) only on legacy paths we haven't migrated yet.
+        if (packId) finding.packId = packId;
         if (cvss !== null) finding.cvssScore = cvss;
         if (aliases.length > 0) finding.aliases = aliases;
         if (vuln.summary) finding.summary = vuln.summary;
+        // D042: surface the patch version when OSV's `affected[].
+        // ranges[].events[].fixed` is populated. This is the customer's
+        // actionable next-step (e.g. "upgrade Newtonsoft.Json from
+        // 9.0.1 to 13.0.1 to clear GHSA-5crp-9r3c-p9vr"). Pre-D042 the
+        // standalone scan rendered `Fix: —` for every osv-scanner-
+        // sourced finding because this field went unread.
+        const fixVersion = extractOsvFixVersion(vuln);
+        if (fixVersion) finding.fixedVersion = fixVersion;
         // OSV.dev hosts a canonical page per id — synthesize when the
         // record's `references[]` is empty, otherwise keep the
         // tool-supplied URLs.
@@ -161,7 +182,7 @@ export function parseOsvScannerFindings(
  */
 export async function gatherOsvScannerDepVulnsResult(
   cwd: string,
-  source: string,
+  packId: LanguageId,
   ecosystem: string,
   manifestCandidates: string[],
 ): Promise<DepVulnGatherOutcome> {
@@ -172,19 +193,26 @@ export async function gatherOsvScannerDepVulnsResult(
       break;
     }
   }
-  if (!manifest) return { kind: 'tool-missing' };
+  if (!manifest) {
+    return {
+      kind: 'no-manifest',
+      reason: `no lockfile found (looked for: ${manifestCandidates.join(', ')})`,
+    };
+  }
 
   const scanner = findTool(TOOL_DEFS['osv-scanner'], cwd);
-  if (!scanner.available || !scanner.path) return { kind: 'tool-missing' };
+  if (!scanner.available || !scanner.path) {
+    return { kind: 'unavailable', reason: 'osv-scanner not installed' };
+  }
 
   const raw = run(
     `${scanner.path} scan source --lockfile ${manifest} --format json 2>/dev/null`,
     cwd,
     180000,
   );
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'osv-scanner produced no output' };
 
-  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem);
+  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem, packId);
 
   if (findings.length > 0) {
     const resolved = await resolveCvssScores(vulnsForCvss);
@@ -201,11 +229,9 @@ export async function gatherOsvScannerDepVulnsResult(
     counts,
     findings,
   };
-  // Note: `source` is unused at the envelope level today — DepVulnResult
-  // carries `tool: 'osv-scanner'` as the producer attribution. Reserved
-  // for a future enhancement that distinguishes per-pack provenance
-  // (e.g., when both kotlin and java packs run on a mixed monorepo and
-  // we want to attribute findings to the originating pack).
-  void source;
+  // G_v4_4 (2.4.7): `packId` is forwarded into `parseOsvScannerFindings`
+  // so each finding carries the producing pack, which `buildUpgradeCommand`
+  // dispatches on. Envelope-level `tool: 'osv-scanner'` stays as the
+  // tool-attribution string used in `toolsUsed`.
   return { kind: 'success', envelope };
 }

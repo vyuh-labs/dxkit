@@ -260,4 +260,61 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   it('optional methods have correct types when present', () => {
     if (lang.mapLintSeverity) expect(typeof lang.mapLintSeverity).toBe('function');
   });
+
+  // D021 sub-piece 4 (2.4.7): every pack with a coverage capability
+  // ships a `runTests()` so `vyuh-dxkit coverage` /
+  // `vyuh-dxkit health --with-coverage` / the report orchestrator can
+  // materialize an artifact across the full matrix. Coverage providers
+  // without `runTests` would surface as `'skipped — no runTests()
+  // implementation yet'` in the runner — historically that was a
+  // staging state during pack ramp; post-2.4.7 every shipped pack
+  // covers the round-trip.
+  it('coverage capability ships runTests() if declared', () => {
+    const cov = lang.capabilities?.coverage;
+    if (cov) {
+      expect(
+        typeof cov.runTests,
+        `${lang.id}: coverage capability declared but runTests() missing — ` +
+          `would surface as "skipped" in the coverage runner`,
+      ).toBe('function');
+    }
+  });
+
+  // G_v4_4 (2.4.7): packs with a depVulns capability MUST ship
+  // `upgradeCommand` so `buildUpgradeCommand` can dispatch the
+  // per-ecosystem install template. Pre-G_v4_4 the dispatch lived as
+  // a hardcoded switch on `tool`, which broke when generic tool names
+  // (`osv-scanner`) didn't match the pack-aliased switch keys
+  // (`osv-scanner-nuget-direct`). D062 is the dpl-studio
+  // manifestation.
+  it('upgradeCommand exists when depVulns capability is declared', () => {
+    if (lang.capabilities?.depVulns) {
+      expect(
+        typeof lang.upgradeCommand,
+        `${lang.id}: depVulns declared but upgradeCommand missing — ` +
+          `vuln-scan "Remediation Commands" would fall back to generic prose`,
+      ).toBe('function');
+    }
+    if (lang.upgradeCommand) {
+      const out = lang.upgradeCommand('example-package', '1.2.3');
+      expect(typeof out).toBe('string');
+      expect(out!.length).toBeGreaterThan(0);
+    }
+  });
+
+  // D073 (2.4.7): every pack declares its cloc language names so
+  // `gatherClocMetrics` can filter line counts + the language summary
+  // to "actual source code" (excluding JSON/XML/CSV/Markdown data
+  // formats cloc lists alongside real languages). Pre-D073 dpl-studio
+  // Quality "Comment Ratio" sat at 4.3% because 1.6M JSON + 1.3M XML
+  // lines were summed into the denominator alongside C# code.
+  it('declares non-empty clocLanguageNames', () => {
+    expect(
+      Array.isArray(lang.clocLanguageNames),
+      `${lang.id}: missing clocLanguageNames — cloc's filter would skip this pack ` +
+        `and totalLines / Comment Ratio would drop this language entirely`,
+    ).toBe(true);
+    expect(lang.clocLanguageNames!.length).toBeGreaterThan(0);
+    for (const n of lang.clocLanguageNames!) expect(typeof n).toBe('string');
+  });
 });

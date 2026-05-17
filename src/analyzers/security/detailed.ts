@@ -5,22 +5,25 @@ import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
-import { SecurityCounts, scoreSecurityCounts } from './scoring';
+import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../../scoring';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
   securityScore: number;
-  actions: Array<RankedAction<SecurityCounts>>;
+  actions: Array<RankedAction<SecurityScoreInput>>;
 }
 
 export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedReport {
-  const counts = countsFromReport(report);
-  const actions = rank(buildSecurityActions(report), counts, scoreSecurityCounts);
+  const input = countsFromReport(report);
+  const scoreFromInput = (i: SecurityScoreInput) => evaluateSpec(SECURITY_SCORING_SPEC, i);
+  const actions = rank(buildSecurityActions(report), input, scoreFromInput);
   return {
     ...report,
-    // v12 adds per-advisory dep-vuln detail under summary.dependencies.findings.
-    schemaVersion: '12',
-    securityScore: scoreSecurityCounts(counts).score,
+    // v13 carries the unified scorer output; same path the health
+    // audit's Security dimension uses, identical scores.
+    schemaVersion: '13',
+    securityScore: scoreFromInput(input).score,
     actions,
   };
 }
@@ -187,9 +190,7 @@ export function formatSecurityDetailedMarkdown(
   }
 
   L.push(`**Tools used:** ${detailed.toolsUsed.join(', ')}`);
-  if (detailed.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${detailed.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(detailed.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push(

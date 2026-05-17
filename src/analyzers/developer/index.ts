@@ -3,8 +3,8 @@
  * Orthogonal to health (no dimension score).
  */
 import * as path from 'path';
-import { detect } from '../../detect';
-import { run } from '../tools/runner';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { timed } from '../tools/timing';
 import {
   gatherContributors,
@@ -21,13 +21,24 @@ export interface AnalyzeDevActivityOptions {
   verbose?: boolean;
 }
 
-export function analyzeDevActivity(
+export async function analyzeDevActivity(
   repoPath: string,
   since?: string,
   options: AnalyzeDevActivityOptions = {},
-): DevReport {
+): Promise<DevReport> {
   const verbose = !!options.verbose;
-  const stack = detect(repoPath);
+  // Single canonical analysis envelope shared across consumers.
+  // analyzeDevActivity reads stack + provenance from the cache so
+  // its report header matches every other subcommand on the same
+  // SHA. The git-log gathers (contributors / hot-files / velocity /
+  // commit-quality) stay standalone — they're parameterized by the
+  // since-date, which is orthogonal to the cache key, so they
+  // legitimately run per-invocation.
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack } = cacheResult;
   // Default: last 3 months
   const sinceDate =
     since || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -49,10 +60,10 @@ export function analyzeDevActivity(
       : 0;
 
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     period: { since: sinceDate, until: new Date().toISOString().slice(0, 10) },
     summary: {
       totalCommits: summary.totalCommits,

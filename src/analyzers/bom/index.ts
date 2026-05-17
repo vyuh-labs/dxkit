@@ -15,13 +15,15 @@
  */
 
 import * as path from 'path';
-import { detect } from '../../detect';
+import { readOrBuildAnalysisResult } from '../cache';
+import { gatherAnalysisResultBody } from '../health';
 import { collectFingerprints } from '../tools/fingerprint';
-import { run } from '../tools/runner';
+import { gatherDepVulns } from '../security/gather';
 import { discoverProjectRoots } from './discovery';
-import { buildByTopLevelDep, gatherBomEntries, mergeNestedBomEntries } from './gather';
+import { buildByTopLevelDep, gatherBomEntries } from './gather';
 import { licenseClass, stalenessTier, type LicenseClass } from './pm-signals';
 import type { BomEntry, BomReport, BomSeverity } from './types';
+import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 
 export type { BomReport, BomEntry } from './types';
 
@@ -37,23 +39,53 @@ export interface AnalyzeBomOptions {
    *  29 transitive rows themselves are hidden. Entries with
    *  `isTopLevel === false` are dropped; `undefined` passes through. */
   filter?: BomFilter;
-  /** When `true` (default), walk the repo and aggregate every sub-project
-   *  root with a language manifest. Closes D001a: `bom platform/` would
-   *  previously miss `platform/userserver/` entirely. Set `false` to
-   *  restore the pre-10h.5.0b root-only behavior (useful when the caller
-   *  has already narrowed to a single project and wants to avoid the
-   *  walk cost / cross-root merge). */
-  nested?: boolean;
 }
 
 export async function analyzeBom(
   repoPath: string,
   options: AnalyzeBomOptions = {},
 ): Promise<BomReport> {
-  const stack = detect(repoPath);
-  const nested = options.nested ?? true;
-  const gatherResult = nested ? await gatherNested(repoPath) : await gatherBomEntries(repoPath);
-  const { entries: rawEntries, toolsUsed, toolsUnavailable, projectRoots } = gatherResult;
+  const verbose = !!options.verbose;
+  // Single canonical license inventory shared with `health` and the
+  // `licenses` subcommand. Pulling from the cache means the package
+  // universe one consumer sees is the package universe every consumer
+  // sees — closes the cross-consumer drift class where each surface
+  // independently walked the tree (and disagreed at depth/exclusion
+  // boundaries).
+  const cacheResult = await readOrBuildAnalysisResult({
+    cwd: repoPath,
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+  });
+  const { stack, capabilities } = cacheResult;
+  const cachedLicenses = capabilities.licenses ?? null;
+
+  // Dep-vulns are gathered independently for the enriched per-finding
+  // metadata (EPSS / KEV / reachable / composite riskScore). The cache
+  // intentionally carries only the basic envelope so `health` doesn't
+  // pay for enrichment roundtrips it never surfaces; BoM (and the
+  // standalone vuln-scan) opt in. Severity buckets and unique-fingerprint
+  // counts already align across consumers via the cached
+  // `securityAggregate`.
+  const enrichedDepVulns = await gatherDepVulns(repoPath);
+
+  // Single repo-root gather. The license inventory is now a pre-built
+  // canonical envelope from the cache, so per-sub-root iteration would
+  // re-traverse the same package universe — the cache's licenses
+  // already represents the whole tree.
+  const gatherResult = await gatherBomEntries(repoPath, {
+    licensesOverride: cachedLicenses,
+    depVulnsOverride: enrichedDepVulns,
+  });
+  const { entries: rawEntries, toolsUsed, toolsUnavailable } = gatherResult;
+
+  // Informational project-roots listing. Customers who run BoM on a
+  // monorepo expect to see "we scanned across 12 sub-projects" in the
+  // summary even though the package universe now comes from one
+  // canonical gather. Computed here rather than at the gather layer
+  // because the gather is now strictly single-root.
+  const projectRoots = discoverProjectRoots(repoPath)
+    .map((p) => path.relative(repoPath, p) || '.')
+    .sort();
 
   // byTopLevelDep must be built from the full entry set so the rollup
   // continues to reflect the complete blast radius of upgrading each
@@ -68,7 +100,6 @@ export async function analyzeBom(
   const bySeverity: Record<BomSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let vulnerablePackages = 0;
   let actionableVulns = 0;
-  let totalAdvisories = 0;
   let vulnOnlyPackages = 0;
   for (const e of entries) {
     if (e.maxSeverity) {
@@ -76,7 +107,6 @@ export async function analyzeBom(
       vulnerablePackages++;
       if (e.upgradeAdvice.startsWith('PROPOSAL:')) actionableVulns++;
     }
-    totalAdvisories += e.vulns.length;
     if (!e.joinedFromBoth) vulnOnlyPackages++;
   }
 
@@ -86,11 +116,19 @@ export async function analyzeBom(
   // diffing two filtered reports stays consistent.
   const fingerprints = collectFingerprints(entries.flatMap((e) => e.vulns));
 
+  // D076/D085 (2.4.7): `totalAdvisories` is unique-by-fingerprint, not
+  // sum-of-occurrences. Pre-fix the same advisory affecting N top-level
+  // packages was counted N times here (e.g. on platform: 81 occurrences
+  // / 70 unique), drifting from health's count which is per-finding.
+  // Using fingerprints aligns BoM + health + dashboard on the same
+  // "how many distinct CVEs" semantics most users intuit.
+  const totalAdvisories = fingerprints.length;
+
   return {
-    repo: stack.projectName || path.basename(repoPath),
-    analyzedAt: new Date().toISOString(),
-    commitSha: run('git rev-parse --short HEAD 2>/dev/null', repoPath),
-    branch: run('git rev-parse --abbrev-ref HEAD 2>/dev/null', repoPath),
+    repo: stack.projectName || path.basename(cacheResult.cwd),
+    analyzedAt: cacheResult.builtAt,
+    commitSha: cacheResult.commitSha,
+    branch: cacheResult.branch,
     schemaVersion: '1',
     summary: {
       totalPackages: entries.length,
@@ -109,30 +147,6 @@ export async function analyzeBom(
     toolsUsed,
     toolsUnavailable,
   };
-}
-
-/**
- * Run gatherBomEntries against every discovered project root and
- * merge. When only one root is found (single-project repos, the
- * common case), short-circuits to a normal gather with
- * `projectRoots: ["."]` — zero overhead beyond the directory walk.
- */
-async function gatherNested(
-  repoPath: string,
-): Promise<ReturnType<typeof gatherBomEntries> extends Promise<infer T> ? T : never> {
-  const absRoots = discoverProjectRoots(repoPath);
-  if (absRoots.length <= 1) {
-    // No sub-roots discovered (or only cwd itself): fall through to
-    // the non-nested path so the output shape is identical.
-    return gatherBomEntries(repoPath);
-  }
-  const perRoot = await Promise.all(
-    absRoots.map(async (absRoot) => ({
-      relPath: path.relative(repoPath, absRoot) || '.',
-      result: await gatherBomEntries(absRoot),
-    })),
-  );
-  return mergeNestedBomEntries(perRoot);
 }
 
 const SEV_BADGE: Record<BomSeverity, string> = {
@@ -262,8 +276,13 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
     L.push('| Risk | ID | Package@Version | Rationale | Fix |');
     L.push('|-----:|----|-----------------|-----------|-----|');
     for (const row of triage) {
+      // D063 (2.4.7): one-decimal precision matches the "Vulnerable
+      // Packages" table so threshold-vs-rendering doesn't mislead. A
+      // package at 14.8 reads as `14.8` here and there — neither
+      // table rounds it up to `15`, which would make the
+      // triage-threshold gap (≥ 15.0) invisible.
       L.push(
-        `| **${row.risk.toFixed(0)}** | \`${row.id}\` | \`${row.packageAtVersion}\` | ${row.rationale} | ${row.fix} |`,
+        `| **${row.risk.toFixed(1)}** | \`${row.id}\` | \`${row.packageAtVersion}\` | ${row.rationale} | ${row.fix} |`,
       );
     }
     L.push('');
@@ -276,10 +295,24 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   L.push('## Summary');
   L.push('');
   if (s.projectRoots.length > 1) {
+    // D070 (2.4.7): collapse multi-root listings. Pre-fix dpl-studio
+    // rendered all 68 roots in one paragraph (one long comma-joined
+    // line) — visually unreadable on any screen. Main report now
+    // surfaces only the count + first few roots as a sample; the
+    // detailed.md (`bom-<date>-detailed.md`) carries the full list
+    // for customers who need to audit per-root attribution.
+    const previewCount = 5;
+    const preview = s.projectRoots
+      .slice(0, previewCount)
+      .map((r) => `\`${r}\``)
+      .join(', ');
+    const suffix =
+      s.projectRoots.length > previewCount
+        ? ` … and ${s.projectRoots.length - previewCount} more (see \`bom-${report.analyzedAt.slice(0, 10)}-detailed.md\` for the full list)`
+        : '';
     L.push(
-      `**Aggregated across ${s.projectRoots.length} project roots** — ` +
-        s.projectRoots.map((r) => `\`${r}\``).join(', ') +
-        '. Each row unions the roots that installed the package (see `sources`).',
+      `**Aggregated across ${s.projectRoots.length} project roots** — ${preview}${suffix}. ` +
+        'Each row unions the roots that installed the package (see `sources`).',
     );
     L.push('');
   }
@@ -438,16 +471,28 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
       // KEV cell: `⚠` when any advisory is in the CISA KEV catalog —
       // the strongest "fix now" signal we can surface. Empty otherwise.
       const kevCell = e.vulns.some((v) => v.kev) ? '⚠' : '';
-      // Reach cell: `✓` when the repo's source imports this package
-      // (any advisory on it is reachable); empty cell when every
-      // advisory's `reachable === false`. Unset → blank (treated as
-      // "don't know", which is safer than implying non-reachability).
-      const reachCell = e.vulns.some((v) => v.reachable === true) ? '✓' : '';
+      // Reach cell: three-state per D064 (2.4.7) —
+      //   `✓` when ANY advisory is reachable from source imports,
+      //   `✗` when EVERY advisory recorded `reachable === false`
+      //       (positive evidence of non-reachability — deprioritize),
+      //   blank when no advisory has a reachability signal (unknown).
+      // Pre-D064 the cell was blank for both `false` and `undefined`,
+      // which silently merged "we checked and it's not reachable"
+      // with "we have no idea." Customers couldn't tell which.
+      const reachCell = e.vulns.some((v) => v.reachable === true)
+        ? '✓'
+        : e.vulns.some((v) => v.reachable === false)
+          ? '✗'
+          : '';
       // Risk: max composite riskScore across the package's advisories.
-      // Leading column so the eye catches priority first. Dash when
-      // no advisory had a CVSS (riskScore uncomputable).
+      // Leading column so the eye catches priority first. D063 (2.4.7):
+      // render with one decimal so the triage cutoff is visible — pre-
+      // fix `toFixed(0)` rounded 14.8 → 15, making it look like the
+      // package should appear in the ≥15 triage when it was actually
+      // just below threshold. One decimal lets the reader compare 14.8
+      // vs 15.0 and understand the gap.
       const risk = maxRisk(e);
-      const riskCell = risk >= 0 ? `**${risk.toFixed(0)}**` : '—';
+      const riskCell = risk >= 0 ? `**${risk.toFixed(1)}**` : '—';
       L.push(
         `| ${riskCell} | ${SEV_BADGE[e.maxSeverity!]} | ${cvssCell} | \`${e.package}@${e.version}\` | ${e.licenseType} | ${e.vulns.length} | ${kevCell} | ${reachCell} | ${epssCell} | ${advice} |`,
       );
@@ -465,9 +510,7 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
 
   // Footer
   L.push(`**Tools used:** ${report.toolsUsed.join(', ') || '(none)'}`);
-  if (report.toolsUnavailable.length > 0) {
-    L.push(`**Tools unavailable:** ${report.toolsUnavailable.join(', ')}`);
-  }
+  L.push(...renderToolsUnavailableLines(report.toolsUnavailable));
   L.push(`**Analysis time:** ${elapsed}s`);
   L.push('');
   L.push('*Generated by [VyuhLabs DXKit](https://www.npmjs.com/package/@vyuhlabs/dxkit)*');

@@ -32,7 +32,7 @@ npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks
 
 The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
 
-> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. the 2.4.5 osv-scanner-fix data-mutation fix), run:
+> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. 2.4.7's silent-health-failure fix on heavy polyglot repos, or the jscpd-OOM fix on repos with committed-vendored bundles), run:
 >
 > ```bash
 > npm install -g @vyuhlabs/dxkit@latest
@@ -44,33 +44,39 @@ The two modes are complementary. The analyzers run anywhere; the scaffolder writ
 
 ## Analyzer CLI (`vyuh-dxkit <command>`)
 
-Seven deterministic analyzers. Each emits a markdown report to `.dxkit/reports/` and optional structured JSON.
+Seven deterministic analyzers + a one-shot orchestrator. Each emits a markdown report to `.dxkit/reports/` and a structured JSON file the dashboard reads.
 
 | Command           | What it does                                                                                                                                                                                                                                                                                                          | Runtime | Output                                        |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------- |
 | `health`          | 6-dimension score (Testing, Quality, Docs, Security, Maint, DX)                                                                                                                                                                                                                                                       | 10–20s  | `.dxkit/reports/health-audit-<date>.md`       |
 | `vulnerabilities` | gitleaks + semgrep + per-pack dep-audit (enriched with EPSS exploit probability, CISA KEV catalog, reachability from your source, composite riskScore; per-advisory detail in `--detailed`)                                                                                                                           | 5–30s   | `.dxkit/reports/vulnerability-scan-<date>.md` |
-| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins)                                                                                                                                                                                                                                                          | <1s     | `.dxkit/reports/test-gaps-<date>.md`          |
+| `test-gaps`       | Coverage artifact → import-graph → filename (strongest wins). Headline coverage carries a `coverageFidelity` tier; banners surface heuristic-vs-line-coverage trust.                                                                                                                                                  | <1s     | `.dxkit/reports/test-gaps-<date>.md`          |
 | `quality`         | Slop score + jscpd duplication + eslint/ruff + hygiene                                                                                                                                                                                                                                                                | 5–15s   | `.dxkit/reports/quality-review-<date>.md`     |
-| `dev-report`      | Commits, contributors, hot files, velocity, conventional %                                                                                                                                                                                                                                                            | <1s     | `.dxkit/reports/developer-report-<date>.md`   |
+| `dev-report`      | Commits, contributors, hot files (autogen-filtered), weekly velocity (with zero-rows for empty weeks), conventional %                                                                                                                                                                                                 | <1s     | `.dxkit/reports/developer-report-<date>.md`   |
 | `licenses`        | Dependency license inventory across every active pack (TS, Python, Go, Rust, C#; Kotlin + Java omitted — no canonical CLI license tool for Maven/Gradle ecosystems)                                                                                                                                                   | 5–20s   | `.dxkit/reports/licenses-<date>.md`           |
 | `bom`             | **Bill of Materials** — joins licenses + vulns per package, groups by top-level manifest dep (Snyk-style), enriches with CISA KEV + EPSS + reachability, ranks by composite risk score with "This Week's Triage" summary, aggregates nested sub-projects, `--filter=top-level` collapses transitive rows, 15-col XLSX | 10–40s  | `.dxkit/reports/bom-<date>.{md,xlsx}`         |
+| `coverage`        | Side-effecting — runs each active pack's `test-with-coverage` command to materialize the artifact `test-gaps` / `health` read back. Use this once before analysis, or pass `--with-coverage` to the analyzer.                                                                                                         | 1–10m   | per-pack artifact (`coverage.json` etc.)      |
+| `dashboard`       | Renders every report under `.dxkit/reports/` into a single HTML page (tiles + per-report tabs + cross-cutting "Critical Issues at a Glance"). Reads `*-detailed.json` (written unconditionally as of 2.4.7).                                                                                                          | <1s     | `.dxkit/reports/dashboard.html`               |
+| `report`          | **One-shot full audit** — runs every analyzer + dashboard in dependency order. `--with-coverage` materializes coverage once upfront so both `health` and `test-gaps` benefit without re-running tests per analyzer.                                                                                                   | 5–15m   | every output above + dashboard                |
 
 Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
 
 ### Flags (apply to all analyzer commands)
 
-| Flag             | Effect                                                                                                                                        |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--detailed`     | Also writes `<name>-detailed.md` + `.json` with evidence + ranked remediation actions                                                         |
-| `--json`         | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                                                                               |
-| `--verbose`      | Print per-tool timing to stderr                                                                                                               |
-| `--no-save`      | Skip writing markdown; useful with `--json`                                                                                                   |
-| `--xlsx`         | (`licenses`, `bom` only) Also write 15-col `.xlsx` — drop-in for spreadsheet workflows                                                        |
-| `-o <file>`      | (`licenses`, `bom`, `to-xlsx`) Override output path for xlsx / converted file                                                                 |
-| `--since <date>` | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                                                                                  |
-| `--filter`       | (`bom` only) `all` (default) or `top-level` — keep only root manifest deps; the byTopLevelDep rollup still reflects transitives               |
-| `--no-nested`    | (`bom` only) Disable nested-project aggregation. Default discovers every sub-project with a language manifest under cwd and merges their BOMs |
+| Flag              | Effect                                                                                                                                                                                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`      | Surface the success-log line for the detailed report. (As of 2.4.7 the `-detailed.json` + `-detailed.md` files are written **unconditionally** so the dashboard always finds fresh input — this flag only controls the console-side noise.)                             |
+| `--json`          | Emit pure JSON on stdout. Logs go to stderr so pipes stay clean                                                                                                                                                                                                         |
+| `--verbose`       | Print per-tool timing to stderr                                                                                                                                                                                                                                         |
+| `--no-save`       | Skip writing markdown; useful with `--json`                                                                                                                                                                                                                             |
+| `--xlsx`          | (`licenses`, `bom` only) Also write 15-col `.xlsx` — drop-in for spreadsheet workflows                                                                                                                                                                                  |
+| `-o <file>`       | (`licenses`, `bom`, `to-xlsx`) Override output path for xlsx / converted file                                                                                                                                                                                           |
+| `--since <date>`  | (`dev-report` only) Analyze commits on or after `YYYY-MM-DD`                                                                                                                                                                                                            |
+| `--filter`        | (`bom` only) `all` (default) or `top-level` — keep only root manifest deps; the byTopLevelDep rollup still reflects transitives                                                                                                                                         |
+| `--no-nested`     | (`bom` only) Disable nested-project aggregation. Default discovers every sub-project with a language manifest under cwd and merges their BOMs                                                                                                                           |
+| `--with-coverage` | (`health`, `test-gaps`, `report`) Materialize coverage artifacts via per-pack `runTests()` **before** analysis. Promotes the headline from filename-match heuristic to `line-coverage` truth. With `report`, runs once upfront — health + test-gaps share the artifact. |
+| `--lang <id>`     | (`coverage`, `--with-coverage`) Restrict to one pack id when the repo is polyglot                                                                                                                                                                                       |
+| `--no-fail-fast`  | (`coverage`, `--with-coverage`) Continue running coverage across remaining packs after a `failed` outcome                                                                                                                                                               |
 
 ### Detailed mode — evidence + ranked fixes
 
@@ -85,11 +91,23 @@ Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bo
 
 Three signals, strongest wins for files it covers:
 
-1. **Coverage artifact** — Istanbul JSON (TS/JS), `coverage.json` (Python), `coverage.out` (Go), cobertura XML (C#/Rust), `lcov.info` (Rust), JaCoCo XML (Kotlin). If the tool measured a file, that decision is authoritative.
+1. **Coverage artifact** — Istanbul JSON (TS/JS), `coverage.json` (Python), `coverage.out` (Go), cobertura XML (C#/Rust), `lcov.info` (Rust), JaCoCo XML (Kotlin/Java), SimpleCov resultset (Ruby). If the tool measured a file, that decision is authoritative.
 2. **Import-graph reachability** — files transitively imported from an active test file (up to 3 hops). Rescues integration tests + behavior-named tests the filename matcher misses.
 3. **Filename match** — last-resort basename similarity.
 
 A file counts as "tested" when the strongest available signal says so.
+
+#### Coverage fidelity tier (2.4.7+)
+
+Test-gap reports now carry a `coverageFidelity` tier so a 0% from a heuristic can't be confused with a 0% from a real coverage run:
+
+| Tier             | Source                                                                     | Trust              |
+| ---------------- | -------------------------------------------------------------------------- | ------------------ |
+| `line-coverage`  | Any of the artifacts above                                                 | Line-level truth   |
+| `import-graph`   | Test-file import edges (up to N hops)                                      | Informed heuristic |
+| `filename-match` | Source files with a name-matched test (200-line file / 5-line test passes) | Pure heuristic     |
+
+The test-gaps markdown leads with a ⚠️ / ℹ️ banner when fidelity isn't `line-coverage`, pointing at `vyuh-dxkit coverage` and `vyuh-dxkit health --with-coverage` as the install paths to ground-truth.
 
 ---
 
@@ -281,6 +299,32 @@ Mirrors pre-push but also runs the slop check against the PR base branch, so `--
 
 ---
 
+## Scoring
+
+dxkit produces a 0-100 score + A/B/C/D/E letter rating for six
+dimensions of every codebase. Three properties define the scoring
+model:
+
+- **Deterministic** — pure-function evaluator over a declarative spec
+  per dimension. Same `git rev-parse HEAD` + same dxkit version
+  produces the identical score on every run, every machine. This is
+  the moat against LLM-driven review products, where outputs drift
+  run-to-run.
+- **Anchored** — methodology cites underlying open international
+  standards (ISO/IEC 25010, ISO/IEC 5055, SQALE method, CVSS v4,
+  CWE, OWASP, OpenSSF Scorecard) rather than invented thresholds.
+- **Actionable** — every score is paired with structured provenance
+  so the report says what to fix and how much the score would lift.
+  Customer-facing markdown surfaces a "Top actions" block per
+  dimension; agents consume the same structured `ScoreResult` JSON
+  directly.
+
+The customer-facing methodology document — including the per-
+dimension penalty/cap breakdown and citations — lives at
+**[`docs/SCORING.md`](docs/SCORING.md)**.
+
+---
+
 ## Quality Gates for Agent-Written Code
 
 dxkit's guiding principle: **deterministic guardrails that catch bad output regardless of who wrote it.** Scaffolded hooks + CI give every repo:
@@ -356,24 +400,46 @@ Both loops use the session framework — checkpoints, skill evolution, progress 
 
 ## Reports
 
-All analyzer commands save timestamped reports to `.dxkit/reports/`:
+All analyzer commands save timestamped reports to `.dxkit/reports/`.
+Every command writes a summary markdown, a detailed markdown, and a
+canonical detailed JSON. `bom` adds an XLSX; `licenses` adds an XLSX
+when `--xlsx` is set. `dashboard` (or `report`) writes the single-file
+HTML view that stitches everything together.
 
 ```
 .dxkit/reports/
-  health-audit-<date>.md
-  health-audit-<date>-detailed.md           # with --detailed
-  health-audit-<date>-detailed.json         # agent-consumable
+  health-audit-<date>.md                    # 6-dimension summary
+  health-audit-<date>-detailed.md           # with per-dim plans + evidence
+  health-audit-<date>-detailed.json         # agent-consumable schema
+
   vulnerability-scan-<date>.md
+  vulnerability-scan-<date>-detailed.{md,json}
+
   test-gaps-<date>.md
+  test-gaps-<date>-detailed.{md,json}
+
   quality-review-<date>.md
+  quality-review-<date>-detailed.{md,json}
+
   developer-report-<date>.md
+  developer-report-<date>-detailed.{md,json}
+
+  bom-<date>.md                             # Bill of Materials summary
+  bom-<date>-detailed.{md,json}             # full per-package rows
+  bom-<date>.xlsx                           # 15-col XLSX (with --xlsx)
+
+  licenses-<date>.md                        # license inventory
+  licenses-<date>-detailed.{md,json}
+  licenses-<date>.xlsx                      # with --xlsx
+
+  dashboard.html                            # single-file HTML view
 ```
 
 Export options:
 
-- **HTML dashboard**: `/dashboard` (Claude Code slash command) — dark-themed sidebar navigation
-- **PDF**: `/export-pdf all` — converts all reports to PDF
-- **Structured JSON**: `--detailed` on any command emits a canonical JSON schema
+- **HTML dashboard**: `vyuh-dxkit dashboard` or the `/dashboard` slash command — dark-themed sidebar navigation, reads every `*-detailed.json` under `.dxkit/reports/`
+- **PDF**: `/export-pdf all` — converts every report to PDF
+- **Structured JSON**: every command writes a `-detailed.json` unconditionally as of 2.4.7, so agents and dashboards always have the structured schema available
 
 ---
 
@@ -402,14 +468,21 @@ When create-devstack writes `.project.yaml` before calling dxkit, detection and 
 ## CLI Reference
 
 ```bash
-# Analyzer commands — each writes to .dxkit/reports/<name>-<date>.md
-vyuh-dxkit health [path]                       # 6-dimension score
+# Analyzer commands — each writes to .dxkit/reports/<name>-<date>.md + <name>-<date>-detailed.{md,json}
+vyuh-dxkit health [path] [--with-coverage]     # 6-dimension score
 vyuh-dxkit vulnerabilities [path]              # Security scan, ranked by composite risk
-vyuh-dxkit test-gaps [path]                    # Coverage + gaps + actions
+vyuh-dxkit test-gaps [path] [--with-coverage]  # Coverage + gaps + actions
 vyuh-dxkit quality [path]                      # Slop + duplication + lint
 vyuh-dxkit dev-report [path] [--since <date>]  # Git activity report
 vyuh-dxkit licenses [path]                     # Dependency license inventory
 vyuh-dxkit bom [path] [--filter=top-level]     # Bill of Materials + risk-ranked triage
+
+# Coverage materialization (side-effecting — runs each pack's test runner)
+vyuh-dxkit coverage [path] [--lang <id>] [--no-fail-fast]
+
+# Dashboard + one-shot full audit
+vyuh-dxkit dashboard [path]                    # render .dxkit/reports/ to a single HTML page
+vyuh-dxkit report [path] [--with-coverage]     # run every analyzer + dashboard end-to-end
 
 # Data conversion
 vyuh-dxkit to-xlsx <json-file>        # render licenses/bom detailed JSON as 15-col XLSX
@@ -439,6 +512,38 @@ vyuh-dxkit --version
 5. **Report** — markdown for humans, JSON for agents
 
 No LLM in the analysis path. Scores are reproducible: same repo state → same report.
+
+---
+
+## Community + Contributing
+
+- **[`CHANGELOG.md`](CHANGELOG.md)** — release notes by version,
+  including methodology shifts that may change scores between
+  releases (e.g. the 2.4.7 scoring foundation).
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — local setup, the
+  pre-commit hook stack, test conventions, and the "Adding a new
+  language" walkthrough.
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — a short tour
+  of the analyzer data flow, the three core patterns (language
+  packs, scoring specs, centralized exclusions + tool registry),
+  the subprocess discipline, and the `AnalysisResult` cache.
+- **[`CLAUDE.md`](CLAUDE.md)** — the authoritative architectural
+  rule set with pre-commit + CI enforcement. Required reading
+  before opening a PR that touches scoring, packs, exclusions, or
+  tool invocation.
+- **[`docs/SCORING.md`](docs/SCORING.md)** — full scoring
+  methodology: dimensions, weights, thresholds, caps, and the
+  Layer-1 standards each spec anchors to.
+- **[`SECURITY.md`](SECURITY.md)** — security policy, supported
+  versions, response SLAs, and the [private vulnerability
+  reporting](https://github.com/vyuh-labs/dxkit/security/advisories/new)
+  channel.
+- **[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)** — Contributor
+  Covenant 2.1.
+
+Bug reports, feature requests, and questions: file an
+[issue](https://github.com/vyuh-labs/dxkit/issues/new/choose) using
+one of the templates.
 
 ---
 

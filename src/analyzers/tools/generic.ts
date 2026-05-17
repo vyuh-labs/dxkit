@@ -1,190 +1,263 @@
 /**
- * Generic tool runner -- uses grep, find, wc, git.
+ * Generic tool runner -- uses grep, find, wc, git (and the canonical
+ * walkSourceFiles / countLineMatches helpers for source-line metrics).
  * Works on any Unix machine with no external dependencies.
  * This is Layer 0: always available.
  */
-import * as fs from 'fs';
 import { HealthMetrics } from '../types';
+import type { DetectedStack } from '../../types';
 import { run, countLines, fileExists } from './runner';
 import { getFindExcludeFlags } from './exclusions';
-import { allSourceExtensions, splitTestFilePatterns } from '../../languages';
+import { walkSourceFiles, countLineMatches } from './walk-source-files';
+import { gatherDebugStatements } from './debug-statements';
+import {
+  allDocCommentPatterns,
+  allModelPaths,
+  allPrimaryComponentPaths,
+  allRoutePaths,
+  allTlsBypassPatterns,
+} from '../../languages';
+import * as fs from 'fs';
+import * as path from 'path';
 
-// grepCount uses a narrow filter (node_modules, dist, __pycache__, .d.ts) to
-// preserve pre-refactor byte-equality. The broader EXCLUDED_DIRS list from
-// exclusions.ts is used for find-based counts. Widening this filter would
-// change legitimate metric totals and should be a separate, intentional change.
-const GREP_PIPELINE_FILTER = 'grep -v node_modules | grep -v dist | grep -v __pycache__';
+// D055/D056/D072 (2.4.7): every per-source-file metric (rawSourceFiles,
+// wc-l walk, jsConsoleCount, anyTypeCount, evalCount, docCommentFiles,
+// tlsDisabledCount, testFiles) routes through walkSourceFiles +
+// countLineMatches. Closes the class of "site-specific walker drift"
+// (D075/D077) and "grep maxBuffer overflow" (D082/D083/D084) by
+// construction: ONE walker, ONE counter, files pruned at the
+// directory boundary so we never read minified .min.js into memory.
+//
+// `EXCLUDE = getFindExcludeFlags(cwd)` is retained below for find
+// commands that count NON-source artifacts (controllers, models,
+// directories, ciConfigCount) — those legitimately walk path
+// patterns the walker doesn't model.
 
-/** Reliable grep count that avoids shell escaping issues by writing pattern to a temp file. */
-function grepCount(cwd: string, pattern: string, includes: string[]): number {
-  const patternFile = `/tmp/dxkit-grep-${Date.now()}-${Math.random().toString(36).slice(2)}.pat`;
-  fs.writeFileSync(patternFile, pattern);
-  const includeFlags = includes.map((i) => `--include='${i}'`).join(' ');
-  const result = run(
-    `grep -rEf '${patternFile}' ${includeFlags} . 2>/dev/null | ${GREP_PIPELINE_FILTER} | grep -v '.d.ts' | wc -l`,
-    cwd,
-  );
-  try {
-    fs.unlinkSync(patternFile);
-  } catch {
-    /* ignore */
-  }
-  return parseInt(result) || 0;
+/**
+ * Resolve the git toplevel for `cwd`. D026 (2.4.7): cross-cutting repo
+ * artifacts (`.github/`, `README.md`, `CONTRIBUTING.md`, `Makefile`,
+ * `.env.example`, etc.) conventionally live at the repo root, not in
+ * the subdirectory a user happens to scan. dpl-studio's baseline F8:
+ * customer ran `dxkit health Code/Source/`; both Documentation and DX
+ * dimensions returned 0/100 because none of those probes found
+ * matches in `Code/Source/`. The fix scopes those probes to the
+ * git toplevel.
+ *
+ * Returns `cwd` unchanged when `git rev-parse --show-toplevel` fails
+ * (not in a git repo, or git missing) so non-git workflows keep
+ * working — they just don't get the toplevel-scoped improvement.
+ */
+function resolveGitToplevel(cwd: string): string {
+  const top = run('git rev-parse --show-toplevel 2>/dev/null', cwd).trim();
+  return top.length > 0 ? top : cwd;
 }
 
-// EXCLUDE moved inside gatherGenericMetrics() — must be computed per-cwd now
-// so it picks up project-specific .gitignore / .dxkit-ignore entries.
+/**
+ * Count newlines in `content`. Equivalent to `wc -l` semantics:
+ * trailing newline NOT double-counted; file with no trailing newline
+ * still counts its last line.
+ */
+function lineCount(content: string): number {
+  if (content.length === 0) return 0;
+  let count = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10 /* \n */) count++;
+  }
+  // No trailing newline → the last partial line was a line too.
+  if (content.charCodeAt(content.length - 1) !== 10) count++;
+  return count;
+}
 
-// Pack-driven find expressions (Phase 10i.0-LP.3). Replaces the
-// pre-LP hardcoded extension/pattern lists with iteration over the
-// language registry. Adding a 6th pack auto-extends both expressions.
-//
-// Behavior expansions vs pre-LP.3 (both more correct than before):
-//   - `.mjs`/`.cjs` now counted as source files (TypeScript pack
-//     declared them in `sourceExtensions`; the legacy hardcoded list
-//     missed them).
-//   - Rust integration tests under `tests/*.rs` now counted as test
-//     files (Rust pack declared `tests/*.rs` as a path-anchored
-//     pattern; the legacy used only `-name` and skipped path patterns).
-const SOURCE_EXTS = `\\( ${allSourceExtensions()
-  .map((e) => `-name "*${e}"`)
-  .join(' -o ')} \\)`;
-
-const TEST_PATTERNS = (() => {
-  const { nameOnly, pathAnchored } = splitTestFilePatterns();
-  const nameClauses = nameOnly.map((p) => `-name "${p}"`);
-  const pathClauses = pathAnchored.map((p) => `-path "*/${p}"`);
-  return `\\( ${[...nameClauses, ...pathClauses].join(' -o ')} \\)`;
-})();
-
-/** Gather metrics using only built-in Unix tools. */
-export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
+/**
+ * Gather metrics using only built-in Unix tools + the canonical walker.
+ *
+ * `languageFlags` drives the architecturalShape-aware path counters
+ * (primary components, route handlers, data models). When omitted
+ * (legacy callers, tests) the path counters degrade to zero rather
+ * than silently using a hardcoded backend-centric default — every
+ * shipped caller in the codebase threads the active stack through.
+ */
+export function gatherGenericMetrics(
+  cwd: string,
+  languageFlags?: DetectedStack['languages'],
+): Partial<HealthMetrics> {
   const EXCLUDE = getFindExcludeFlags(cwd);
+  // D026 (2.4.7): repo-level artifacts probed from git toplevel; code-
+  // level metrics (source-file counts, hygiene grep, semgrep) stay
+  // scoped to `cwd` so analyzing a subdirectory still measures that
+  // subdir's code quality.
+  const repoRoot = resolveGitToplevel(cwd);
 
-  // File counts
-  const sourceFiles = countLines(`find . -type f ${SOURCE_EXTS} ${EXCLUDE}`, cwd);
-  const testFiles = countLines(`find . -type f ${TEST_PATTERNS} ${EXCLUDE}`, cwd);
-  const testDirFiles = countLines(
-    `find . -type f ${SOURCE_EXTS} ${EXCLUDE} \\( -path "*/__tests__/*" -o -path "*/tests/*" -o -path "*/test/*" \\) 2>/dev/null`,
-    cwd,
-  );
+  // ─── Source / test file enumeration ───────────────────────────────────────
+  // ONE walker, every consumer routes through it. The walker's filter
+  // pipeline already applies: exclusions (.gitignore + .dxkit-ignore +
+  // bundled defaults), autogen basename globs (*.designer.cs etc.),
+  // autogen header markers (<auto-generated> / @generated / DO NOT EDIT),
+  // test-file patterns (per `includeTests`). Memoized per cwd+opts.
+  //
+  // 2.4.7 class-fix alignment: `sourceFiles` now excludes test files,
+  // matching test-gaps' definition. Pre-fix health included tests in
+  // `sourceFiles` (D075 same-label-different-meaning class). The
+  // Testing dimension's `testRatio = testFiles / sourceFiles` is
+  // mathematically equivalent (numerator drops to 0 simultaneously
+  // when there's a test file in the denominator), so user-visible
+  // scoring is unchanged in practice.
+  const sourceList = walkSourceFiles(cwd);
+  const sourceListWithTests = walkSourceFiles(cwd, { includeTests: true });
+  const testList = sourceListWithTests.filter((p) => !sourceList.includes(p));
 
-  // Total lines, largest file, files over 500 — single find+xargs wc pass
-  const wcRaw = run(
-    `find . -type f ${SOURCE_EXTS} ${EXCLUDE} -print0 2>/dev/null | xargs -0 wc -l 2>/dev/null`,
-    cwd,
-    120000,
-  );
-
+  // ─── Per-file line counts (replaces find + xargs wc -l) ───────────────────
+  // 2.4.7: pure in-process read. Catches the D028-header / autogen
+  // filtering at walker-time, so we don't need a second-pass header
+  // filter the way the old code did. Also: largestFiles + filesOver500.
+  const filteredFiles: Array<{ path: string; lines: number }> = [];
+  for (const relPath of sourceList) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, relPath), 'utf-8');
+    } catch {
+      continue;
+    }
+    filteredFiles.push({ path: relPath, lines: lineCount(content) });
+  }
   let totalLines = 0;
   let largestFileLines = 0;
   let largestFilePath = '';
   let filesOver500Lines = 0;
-
-  if (wcRaw) {
-    for (const line of wcRaw.split('\n')) {
-      const m = line.trim().match(/^(\d+)\s+(.+)$/);
-      if (!m) continue;
-      const lines = parseInt(m[1]);
-      const file = m[2];
-      if (file === 'total') {
-        totalLines = lines;
-      } else {
-        if (lines > largestFileLines) {
-          largestFileLines = lines;
-          largestFilePath = file;
-        }
-        if (lines > 500) filesOver500Lines++;
-      }
+  for (const f of filteredFiles) {
+    totalLines += f.lines;
+    if (f.lines > largestFileLines) {
+      largestFileLines = f.lines;
+      largestFilePath = f.path;
     }
-    // If only one file, xargs wc won't print "total"
-    if (totalLines === 0 && largestFileLines > 0) totalLines = largestFileLines;
+    if (f.lines > 500) filesOver500Lines++;
   }
+  const sourceFiles = sourceList.length;
+  const largestFiles = [...filteredFiles].sort((a, b) => b.lines - a.lines).slice(0, 10);
 
-  // Console/debug statement count -- use grepCount helper for reliability
-  const jsConsoleCount = grepCount(cwd, 'console\\.(log|error|warn)', ['*.ts', '*.tsx', '*.js']);
-  const pyPrintCount = grepCount(cwd, '\\bprint\\(', ['*.py']);
-  const goPrintCount = grepCount(cwd, 'fmt\\.Print', ['*.go']);
-  const consoleLogCount = jsConsoleCount + pyPrintCount + goPrintCount;
+  // ─── Console / debug / type-escape / eval counts (D074 closure) ───────────
+  // skipComments: true filters lines beginning with //, /*, or # so
+  // commented-out occurrences don't inflate the count.
+  //
+  // 2.4.7 D079 closure: `consoleLogCount` now routes through the shared
+  // `gatherDebugStatements` helper — same implementation in health AND
+  // quality, so the two reports cannot drift on this metric. Counts
+  // the print family across active languages (TS/JS/Py/Go).
+  const consoleLogCount = gatherDebugStatements(cwd).count;
 
-  // TypeScript ": any" count
-  const anyTypeCount = grepCount(cwd, ': any', ['*.ts', '*.tsx']);
+  // TypeScript escape-hatch count.
+  const tsFiles = walkSourceFiles(cwd, {
+    extensions: ['.ts', '.tsx', '.js', '.jsx'],
+    includeTests: true,
+  });
+  // prettier-ignore
+  const anyTypeCount = countLineMatches(cwd, tsFiles, [': any'], { skipComments: true }).lines; // slop-ok
 
-  // Documentation
-  const readmeExists = fileExists(cwd, 'README.md', 'readme.md');
-  const readmeLines = parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", cwd)) || 0;
-  const docCommentFiles = countLines(
-    "grep -rlE '/\\*\\*|^\"\"\"|^[[:space:]]*#[[:space:]]' --include='*.ts' --include='*.py' --include='*.go' . 2>/dev/null | grep -v node_modules | grep -v dist",
-    cwd,
-  );
+  // ─── Documentation ────────────────────────────────────────────────────────
+  // D026 (2.4.7): probe from repo root, not from cwd.
+  const readmeExists = fileExists(repoRoot, 'README.md', 'readme.md');
+  const readmeLines =
+    parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", repoRoot)) || 0;
+  // D027 (2.4.7): doc-comment regex + include flags derive from the
+  // language pack registry. countLineMatches mode='files' returns the
+  // file count. NO skipComments here — we explicitly WANT comment lines.
+  const docCommentPatterns = allDocCommentPatterns();
+  const docCommentFiles =
+    docCommentPatterns.length > 0
+      ? countLineMatches(cwd, sourceList, docCommentPatterns, { mode: 'files' }).files
+      : 0;
   const apiDocsExist = fileExists(
-    cwd,
+    repoRoot,
     'openapi.json',
     'openapi.yaml',
     'swagger.json',
     'swagger.yaml',
   );
-  const architectureDocsExist = fileExists(cwd, 'ARCHITECTURE.md', 'docs/', 'ADR/', 'adr/');
-  const contributingExists = fileExists(cwd, 'CONTRIBUTING.md');
-  const changelogExists = fileExists(cwd, 'CHANGELOG.md', 'CHANGES.md');
+  const architectureDocsExist = fileExists(repoRoot, 'ARCHITECTURE.md', 'docs/', 'ADR/', 'adr/');
+  const contributingExists = fileExists(repoRoot, 'CONTRIBUTING.md');
+  const changelogExists = fileExists(repoRoot, 'CHANGELOG.md', 'CHANGES.md');
 
-  // Security — secret scanning lives entirely under the SECRETS capability
-  // (gitleaks, 800+ patterns). The 7-pattern grep fallback that used to
-  // live here was deleted in Phase 10e.C.7 along with the legacy
-  // `secretFindings` / `secretDetails` fields. When gitleaks is absent
-  // the report surfaces that fact through `toolsUnavailable` and the
-  // capability envelope is simply absent.
-  const evalCount =
-    parseInt(
-      run(
-        "grep -rnE '\\beval\\(' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | grep -v dist | wc -l",
-        cwd,
-      ),
-    ) || 0;
+  // ─── Security (eval + TLS-bypass + cert/key files) ────────────────────────
+  // D056 (2.4.7): routed through the canonical counter so .dxkit-ignore /
+  // .gitignore / bundled defaults all apply. D074 (2.4.7): skipComments
+  // strips commented-out `eval(` and TLS-bypass idioms.
+  const evalFiles = walkSourceFiles(cwd, {
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.py'],
+    includeTests: true,
+  });
+  const evalCount = countLineMatches(cwd, evalFiles, ['\\beval\\('], {
+    skipComments: true,
+  }).lines;
 
   const privateKeyFiles = countLines(
     `find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE} 2>/dev/null`,
     cwd,
   );
   const envFilesInGit = countLines('git ls-files .env .env.* 2>/dev/null', cwd);
+  // D034 (2.4.7): TLS-bypass detection derives from the pack registry.
+  // D074 (2.4.7): skipComments closes the "vuln-scan rendered a
+  // `// NODE_TLS_REJECT_UNAUTHORIZED=0` comment as a HIGH finding"
+  // false-positive class on platform.
+  const tlsBypassPatterns = allTlsBypassPatterns();
   const tlsDisabledCount =
-    parseInt(
-      run(
-        "grep -rnE 'NODE_TLS_REJECT_UNAUTHORIZED.*0|rejectUnauthorized.*false|VERIFY_SSL.*false' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | wc -l",
-        cwd,
-      ),
-    ) || 0;
+    tlsBypassPatterns.length > 0
+      ? countLineMatches(cwd, sourceList, tlsBypassPatterns, { skipComments: true }).lines
+      : 0;
 
-  // Maintainability
-  const controllers = countLines(
-    `find . \\( -path "*/controllers/*" -name "*.ts" -o -path "*/handlers/*" -name "*.go" -o -path "*/views/*" -name "*.py" \\) ${EXCLUDE} 2>/dev/null`,
-    cwd,
-  );
-  const models = countLines(
-    `find . -path "*/models/*" -type f ${SOURCE_EXTS} ${EXCLUDE} 2>/dev/null`,
-    cwd,
-  );
+  // ─── Maintainability (per-pack architectural counts) ───────────────────────
+  // Primary-component, route-handler, and data-model counts derive
+  // from the active language packs' `architecturalShape`. Pre-extension
+  // these were three hardcoded find commands keyed on backend-centric
+  // paths (`controllers/`, `handlers/`, `views/`, `models/`), so a pure
+  // React frontend or a .NET WinForms desktop app reported zero in all
+  // three counters regardless of how much primary architecture sat on
+  // disk. The walker visit already enumerated every source file; here
+  // we filter `sourceList` (pre-walked + autogen-excluded + exclusion-
+  // honoured) by case-insensitive substring match against the unioned
+  // pack contributions.
+  const flags = languageFlags ?? ({} as DetectedStack['languages']);
+  const primaryPaths = allPrimaryComponentPaths(flags).map((p) => p.toLowerCase());
+  const routePaths = allRoutePaths(flags).map((p) => p.toLowerCase());
+  const modelPaths = allModelPaths(flags).map((p) => p.toLowerCase());
+  const matchesAny = (p: string, needles: string[]): boolean => {
+    if (needles.length === 0) return false;
+    const lower = p.toLowerCase();
+    for (const n of needles) {
+      if (lower.includes(n)) return true;
+    }
+    return false;
+  };
+  let controllers = 0;
+  let routeHandlerFiles = 0;
+  let models = 0;
+  for (const rel of sourceList) {
+    // Match against the path with a leading slash so substring patterns
+    // like "/controllers/" anchor on a directory boundary, never on a
+    // filename like "controllers-helper.ts" floating outside such a dir.
+    const anchored = '/' + rel;
+    if (matchesAny(anchored, primaryPaths)) controllers++;
+    if (matchesAny(anchored, routePaths)) routeHandlerFiles++;
+    if (matchesAny(anchored, modelPaths)) models++;
+  }
   const directories = countLines(`find . -type d ${EXCLUDE} 2>/dev/null`, cwd);
 
-  // Developer Experience
+  // ─── Developer Experience (repo-root scoped) ──────────────────────────────
   const ciConfigCount = countLines(
     'find .github/workflows -name "*.yml" -o -name "*.yaml" 2>/dev/null; ls .gitlab-ci.yml Jenkinsfile .circleci/config.yml 2>/dev/null',
-    cwd,
+    repoRoot,
   );
   const dockerConfigCount = countLines(
     'ls Dockerfile docker-compose.yml docker-compose.yaml .devcontainer/devcontainer.json 2>/dev/null',
-    cwd,
+    repoRoot,
   );
   const precommitConfigCount = countLines(
     'ls -d .husky .pre-commit-config.yaml .git/hooks/pre-commit 2>/dev/null',
-    cwd,
+    repoRoot,
   );
-  const makefileExists = fileExists(cwd, 'Makefile', 'justfile', 'Taskfile.yml');
-  const envExampleExists = fileExists(cwd, '.env.example', '.env.sample', '.env.template');
-
-  // Coverage config
+  const makefileExists = fileExists(repoRoot, 'Makefile', 'justfile', 'Taskfile.yml');
+  const envExampleExists = fileExists(repoRoot, '.env.example', '.env.sample', '.env.template');
   const coverageConfigExists = fileExists(
-    cwd,
+    repoRoot,
     '.nycrc',
     '.nycrc.json',
     '.c8rc',
@@ -200,12 +273,13 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
 
   return {
     sourceFiles,
-    testFiles: testFiles + testDirFiles,
+    testFiles: testList.length,
     totalLines,
     coverageConfigExists,
     filesOver500Lines,
     largestFileLines,
     largestFilePath,
+    largestFiles,
     consoleLogCount,
     anyTypeCount,
     readmeExists,
@@ -221,6 +295,7 @@ export function gatherGenericMetrics(cwd: string): Partial<HealthMetrics> {
     tlsDisabledCount,
     controllers,
     models,
+    routeHandlerFiles,
     directories,
     ciConfigCount,
     dockerConfigCount,

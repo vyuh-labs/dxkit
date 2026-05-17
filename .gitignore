@@ -19,8 +19,12 @@ graphify-out/
 
 # Build artifacts in cross-ecosystem benchmark fixtures —
 # regenerated on demand by each ecosystem's tooling.
-#   - obj/, bin/  → .NET (dotnet restore in integration test beforeAll)
-#   - target/     → Rust (cargo build / cargo clippy in matrix — lint, Phase 10i.0.2)
+#   - obj/, bin/    → .NET (dotnet restore in integration test beforeAll)
+#   - target/       → Rust (cargo build / cargo clippy in matrix — lint, Phase 10i.0.2)
+#   - coverage.out  → Go (D021 runTests — go test -coverprofile)
+#   - lcov.info     → Rust (D021 runTests — cargo llvm-cov)
 test/fixtures/benchmarks/**/obj/
 test/fixtures/benchmarks/**/bin/
 test/fixtures/benchmarks/**/target/
+test/fixtures/benchmarks/**/coverage.out
+test/fixtures/benchmarks/**/lcov.info

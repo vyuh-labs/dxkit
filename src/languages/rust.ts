@@ -6,9 +6,15 @@ import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { parseCoberturaXml } from './csharp';
 import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -16,6 +22,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -254,6 +261,7 @@ export function parseCargoAuditOutput(
       package: v.package?.name ?? adv.package ?? 'unknown',
       installedVersion: v.package?.version,
       tool: 'cargo-audit',
+      packId: 'rust',
       severity,
     };
     if (cvssScore !== null) finding.cvssScore = cvssScore;
@@ -409,15 +417,19 @@ function loadRustTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * for entries where cargo-audit's bundled vector is missing.
  */
 async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
-  if (!fileExists(cwd, 'Cargo.lock')) return { kind: 'tool-missing' };
+  if (!fileExists(cwd, 'Cargo.lock')) {
+    return { kind: 'no-manifest', reason: 'no Cargo.lock — run cargo generate-lockfile first' };
+  }
   const audit = findTool(TOOL_DEFS['cargo-audit'], cwd);
-  if (!audit.available || !audit.path) return { kind: 'tool-missing' };
+  if (!audit.available || !audit.path) {
+    return { kind: 'unavailable', reason: 'cargo-audit not installed' };
+  }
 
   const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'cargo-audit produced no output' };
 
   const parsed = parseCargoAuditOutput(raw);
-  if (!parsed) return { kind: 'parse-error' };
+  if (!parsed) return { kind: 'unavailable', reason: 'cargo-audit output failed JSON parse' };
 
   const { counts, findings } = parsed;
 
@@ -457,11 +469,14 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
   return { kind: 'success', envelope };
 }
 
-const rustDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const rustDepVulnsProvider: DepVulnsProvider = {
   source: 'rust',
   async gather(cwd) {
     const outcome = await gatherRustDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherRustDepVulnsResult(cwd);
   },
 };
 
@@ -545,10 +560,53 @@ function gatherRustCoverageResult(cwd: string): CoverageResult | null {
   return null;
 }
 
+/**
+ * Run `cargo llvm-cov --lcov --output-path lcov.info` from cwd (D021).
+ *
+ * cargo-llvm-cov drives the standard `cargo test` runner under LLVM
+ * source-based coverage instrumentation, so this is the canonical
+ * "test + coverage" command for any Cargo workspace. The output file
+ * `lcov.info` is the first artifact `gatherRustCoverageResult` looks
+ * for on the next dispatcher pass.
+ *
+ * Preflight:
+ *   - `Cargo.toml` must exist — otherwise this isn't a Rust project
+ *     and cargo's own "could not find Cargo.toml" framing is worse than
+ *     a fast "skipped" outcome.
+ *   - `cargo-llvm-cov` must be installed. Unlike Go's built-in
+ *     `go test -cover`, Rust coverage requires the third-party subcommand;
+ *     without it `cargo` would exit non-zero with "no such command:
+ *     llvm-cov", which we'd classify as `failed` — misleading framing for
+ *     what is really a missing tool. Route the user to the install path
+ *     instead (per CLAUDE.md rule #1: tools go through the registry).
+ */
+function runRustTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'rust',
+      cmd: 'cargo llvm-cov --lcov --output-path lcov.info',
+      cwd,
+      artifact: 'lcov.info',
+      preflight: (cwd) => {
+        if (!fileExists(cwd, 'Cargo.toml')) {
+          return 'no Cargo.toml in this directory — not a Rust project';
+        }
+        if (!findTool(TOOL_DEFS['cargo-llvm-cov'], cwd).available) {
+          return 'cargo-llvm-cov not installed — run `vyuh-dxkit tools install`';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const rustCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'rust',
   async gather(cwd) {
     return gatherRustCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runRustTestsWithCoverage(cwd);
   },
 };
 
@@ -654,22 +712,28 @@ interface CargoLicenseEntry {
  * (no per-package disk read needed). Returns null cleanly when the repo
  * isn't a Cargo workspace or the tool isn't installed.
  */
-function gatherRustLicensesResult(cwd: string): LicensesResult | null {
-  if (!fileExists(cwd, 'Cargo.toml')) return null;
+function gatherRustLicensesResult(cwd: string): LicensesGatherOutcome {
+  if (!fileExists(cwd, 'Cargo.toml')) {
+    return { kind: 'no-manifest', reason: 'no Cargo.toml' };
+  }
 
   const status = findTool(TOOL_DEFS['cargo-license'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'cargo-license not installed' };
+  }
 
   const raw = run(`${status.path} --json 2>/dev/null`, cwd, 120000);
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'cargo-license produced no output' };
 
   let data: CargoLicenseEntry[];
   try {
     data = JSON.parse(raw) as CargoLicenseEntry[];
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'unavailable', reason: `cargo-license parse error: ${(err as Error).message}` };
   }
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data)) {
+    return { kind: 'unavailable', reason: 'cargo-license output was not a JSON array' };
+  }
 
   // Same self-parent invariant as the other packs: cargo metadata's
   // resolve graph seeds BFS from each direct dep, so `index[top]`
@@ -694,16 +758,21 @@ function gatherRustLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'cargo-license',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const rustLicensesProvider: CapabilityProvider<LicensesResult> = {
+const rustLicensesProvider: LicensesProvider = {
   source: 'rust',
   async gather(cwd) {
+    const outcome = gatherRustLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherRustLicensesResult(cwd);
   },
 };
@@ -763,6 +832,43 @@ export const rust: LanguageSupport = {
   // or in a dedicated tests/ directory. Filename patterns cover the latter.
   testFilePatterns: ['*_test.rs', 'tests/*.rs'],
   extraExcludes: ['target'],
+
+  // D027 (2.4.7): rustdoc uses outer (`///`) and inner (`//!`)
+  // doc-comment markers. Both at the start of a (possibly indented)
+  // line.
+  docCommentPatterns: ['^[[:space:]]*///', '^[[:space:]]*//!'],
+
+  // D034 (2.4.7): `reqwest`'s permissive opt-outs are the dominant
+  // Rust TLS-bypass idiom (`Client::builder().danger_accept_invalid_certs(true)`).
+  // Function names are explicitly `danger_*` — high-signal greppable
+  // tokens with near-zero false-positive rate.
+  tlsBypassPatterns: ['danger_accept_invalid_certs', 'danger_accept_invalid_hostnames'],
+
+  upgradeCommand(name, version) {
+    return `cargo update -p ${name} --precise ${version}`;
+  },
+
+  // Rust's build layout (`src/bin/`, `src/lib.rs`, `src/main.rs`)
+  // is too generic to call "primary architecture" — every Rust
+  // project has it. axum/actix/rocket web frameworks organize HTTP
+  // surface under `handlers/`, `routes/`, `api/`; CLI tools and
+  // standalone binaries don't, and degrade cleanly to "no primary
+  // architecture detected."
+  architecturalShape: {
+    primaryComponentPaths: ['/handlers/', '/routes/', '/api/', '/services/'],
+    routePaths: ['/handlers/', '/routes/', '/api/'],
+    modelPaths: ['/models/'],
+    vocabulary: {
+      components: 'handlers/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/handlers/', '/routes/', '/services/'],
+    },
+  },
+
+  clocLanguageNames: ['Rust'],
 
   detect(cwd) {
     return fileExists(cwd, 'Cargo.toml');

@@ -7,6 +7,7 @@
  *   semgrep    → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
  *   dispatcher → dependency CVEs unioned across every active language pack
  */
+import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { enrichEpss, extractCveId } from '../tools/epss';
 import { stampFingerprints } from '../tools/fingerprint';
@@ -16,9 +17,12 @@ import { buildReachablePackageSet, markReachable } from '../tools/reachability';
 import { scoreFindings } from '../tools/risk-score';
 import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { getFindExcludeFlags } from '../tools/exclusions';
-import { SecurityFinding, DepVulnSummary } from './types';
+import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-source-files';
+import * as path from 'path';
+import { SecurityFinding, DepVulnSummary, Severity } from './types';
+import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
 import { defaultDispatcher } from '../dispatcher';
-import { detectActiveLanguages } from '../../languages';
+import { allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
 import {
   CODE_PATTERNS,
   DEP_VULNS,
@@ -26,7 +30,6 @@ import {
   SECRETS,
 } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
-import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { DepVulnResult } from '../../languages/capabilities/types';
 
 // ─── dispatcher-driven secrets gather ────────────────────────────────────────
@@ -101,6 +104,96 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   return findings;
 }
 
+// ─── TLS / certificate-validation bypass gather (D045 / D034) ──────────────
+
+/**
+ * D045 (2.4.7): surface TLS-bypass idioms as first-class
+ * `SecurityFinding[]` entries with file:line attribution. Each pack
+ * declares its language-specific patterns via
+ * `LanguageSupport.tlsBypassPatterns` (D034); this gather runs the
+ * unioned alternation across every registered pack's source
+ * extensions and emits one finding per matching line.
+ *
+ * Architecture note (why this is independent of semgrep): semgrep's
+ * `p/security-audit` ruleset does not include per-language TLS-bypass
+ * idioms (`ServerCertificateValidationCallback`,
+ * `DangerousAcceptAnyServerCertificateValidator`,
+ * `InsecureSkipVerify: true`, `danger_accept_invalid_certs`,
+ * `TrustAllX509TrustManager`, `OpenSSL::SSL::VERIFY_NONE`, etc.). The
+ * registry-driven per-pack patterns ARE the source of truth for these
+ * checks; both the health-side `tlsDisabledCount` metric and the
+ * standalone vuln-scan Code Findings table flow through the same
+ * patterns. False-positive rate is near zero — these are tight
+ * class/method tokens, not loose word matches.
+ *
+ * Pre-D045 dpl-studio surfaced `tlsDisabledCount: 1` in
+ * `gatherGenericMetrics` (via `countTlsBypassLines`), but the
+ * standalone vuln scan's Code Findings table reported `_Sources:
+ * (none)_` with all zeros — the count never reached the standalone
+ * scan because TLS-bypass wasn't a first-class finding source. This
+ * gather closes that gap.
+ *
+ * Severity assignment: `high`. CWE: 295 (Improper Certificate
+ * Validation).
+ *
+ * Empty patterns array → returns []. Empty grep output → returns [].
+ * Both are legitimate "no TLS-bypass idioms in this codebase" states.
+ */
+/**
+ * G_v4_7 (2.4.7): route TLS-bypass discovery through the canonical
+ * walker + per-file in-process line scan. Eliminates the `grep -rnEf`
+ * shell path (no maxBuffer ceiling, no per-finding shell escaping).
+ * D074 closure: skip comment lines so a commented-out
+ * `// NODE_TLS_REJECT_UNAUTHORIZED=0` no longer renders as a HIGH
+ * SecurityFinding (the platform vuln-scan false-positive class).
+ *
+ * `includeTests: true` preserves pre-migration scope — TLS-bypass
+ * idioms inside test fixtures were detected before; still are.
+ */
+export function gatherTlsBypassFindings(cwd: string): SecurityFinding[] {
+  const patterns = allTlsBypassPatterns();
+  if (patterns.length === 0) return [];
+  const compiled = patterns.map((p) => new RegExp(p));
+  const files = walkSourceFiles(cwd, { includeTests: true });
+  const findings: SecurityFinding[] = [];
+  for (const relPath of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, relPath), 'utf-8');
+    } catch {
+      continue;
+    }
+    const lines = content.split('\n');
+    const syntax = commentSyntaxFor(relPath);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (syntax !== 'none' && isCommentLine(line, syntax)) continue;
+      let matched = false;
+      for (const re of compiled) {
+        re.lastIndex = 0;
+        if (re.test(line)) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) continue;
+      const trimmed = line.trim();
+      const snippet = trimmed.length > 100 ? `${trimmed.slice(0, 97)}…` : trimmed;
+      findings.push({
+        severity: 'high',
+        category: 'code',
+        cwe: 'CWE-295',
+        rule: 'tls-validation-disabled',
+        title: `TLS / certificate validation bypass: ${snippet}`,
+        file: relPath,
+        line: i + 1,
+        tool: 'tls-bypass-registry',
+      });
+    }
+  }
+  return findings;
+}
+
 // ─── dispatcher-driven codePatterns gather ──────────────────────────────────
 
 /**
@@ -144,6 +237,12 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
   total: 0,
   tool: null,
   findings: [],
+  // No active pack → genuinely "nothing to scan" (not "scan failed"). The
+  // security scorer should not cap the dimension in this case; e.g. a
+  // pure-static-asset repo with no language packs active legitimately
+  // has no deps to audit. available=true preserves this.
+  available: true,
+  unavailableReason: '',
 };
 
 /**
@@ -155,15 +254,94 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
  * provider, or when every provider returned null (no tool installed
  * / nothing to audit).
  */
-export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
-  const providers: CapabilityProvider<DepVulnResult>[] = [];
-  for (const lang of detectActiveLanguages(cwd)) {
-    if (lang.capabilities?.depVulns) providers.push(lang.capabilities.depVulns);
+/**
+ * Shared primitive for availability-aware dep-vuln aggregation. Used by
+ * both `gatherDepVulns` (standalone scan + BoM, with enrichment) and
+ * `gatherCapabilityReport` in health.ts (no enrichment). Bypassing the
+ * dispatcher is the whole point — the dispatcher's `gather()` path
+ * collapses every non-success outcome to null, which makes the scorer
+ * blind to "tool unavailable" vs "no findings" (the F4 dpl-studio
+ * customer-credibility lie). Calling `gatherOutcome` directly preserves
+ * the discriminant, then we aggregate via the existing DEP_VULNS
+ * descriptor's aggregator.
+ *
+ * Returned envelope is null only when NO success outcomes occurred;
+ * `available` is false when at least one active pack returned
+ * `unavailable`. `no-manifest` outcomes do NOT degrade availability —
+ * polyglot repos where one pack activates but has nothing to scan are
+ * a clean "we checked, found nothing here" state.
+ */
+export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
+  envelope: DepVulnResult | null;
+  available: boolean;
+  unavailableReason: string;
+}> {
+  const activePacks = detectActiveLanguages(cwd).filter((l) => l.capabilities?.depVulns);
+  if (activePacks.length === 0) {
+    return { envelope: null, available: true, unavailableReason: '' };
   }
-  if (providers.length === 0) return EMPTY_DEP_VULNS;
 
-  const envelope = await defaultDispatcher.gather(cwd, DEP_VULNS, providers);
-  if (!envelope) return EMPTY_DEP_VULNS;
+  const outcomes = await Promise.allSettled(
+    activePacks.map((l) => l.capabilities!.depVulns!.gatherOutcome(cwd)),
+  );
+  const successEnvelopes: DepVulnResult[] = [];
+  let firstUnavailable: { pack: string; reason: string } | null = null;
+  for (let i = 0; i < outcomes.length; i++) {
+    const r = outcomes[i];
+    if (r.status === 'rejected') {
+      if (!firstUnavailable) {
+        firstUnavailable = {
+          pack: activePacks[i].id,
+          reason: `provider threw: ${(r.reason as Error)?.message ?? 'unknown error'}`,
+        };
+      }
+      continue;
+    }
+    const outcome = r.value;
+    if (outcome.kind === 'success') {
+      successEnvelopes.push(outcome.envelope);
+    } else if (outcome.kind === 'unavailable' && !firstUnavailable) {
+      firstUnavailable = { pack: activePacks[i].id, reason: outcome.reason };
+    }
+  }
+
+  const envelope = successEnvelopes.length > 0 ? DEP_VULNS.aggregate(successEnvelopes) : null;
+  // G_v4_8 (2.4.7 Phase C1.3): stamp fingerprints on the envelope's
+  // findings here, in the shared primitive, so BOTH the health path
+  // and the enrichment path (`gatherDepVulns`) produce fingerprint-
+  // stamped findings. The aggregator's dep-side dedup needs the
+  // fingerprint key; without it, unstamped findings each get a
+  // synthetic unique key (no dedup), and health's
+  // `depBySeverity` / `dependencyAdvisoryUniqueCount` would drift
+  // from vuln-scan's. Idempotent — re-stamping in `gatherDepVulns`
+  // produces the same hashes.
+  if (envelope?.findings) {
+    stampFingerprints(envelope.findings);
+  }
+  return {
+    envelope,
+    available: firstUnavailable === null,
+    unavailableReason: firstUnavailable
+      ? `${firstUnavailable.pack}: ${firstUnavailable.reason}`
+      : '',
+  };
+}
+
+export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
+  // D025b (2.4.7): delegates to `gatherDepVulnsWithAvailability` for
+  // the availability-aware aggregation; this function adds the
+  // enrichment passes (EPSS, KEV, reachability, risk scoring) on top.
+  // Health audit calls the shared primitive directly without enrichment;
+  // standalone vuln scan + BoM call this function for the enriched path.
+  const { envelope, available, unavailableReason } = await gatherDepVulnsWithAvailability(cwd);
+
+  if (!envelope) {
+    return {
+      ...EMPTY_DEP_VULNS,
+      available,
+      unavailableReason,
+    };
+  }
 
   // Cross-pack EPSS enrichment. Every pack's dep-vuln provider emits
   // findings with an `id` + optional `aliases` list; we hoist CVE IDs
@@ -266,5 +444,106 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     total: critical + high + medium + low,
     tool: envelope.tool,
     findings,
+    // Even with successful envelopes from some packs, ONE pack returning
+    // unavailable means the overall scan was partial — cap honesty
+    // applies. The dpl-studio shape post-D025f (sub-branch #3) will have
+    // csharp surfacing real CVEs AND any other unavailable pack still
+    // capping; that's the architecturally-correct outcome.
+    available,
+    unavailableReason,
   };
+}
+
+// ─── Shared aggregate builder for health (G_v4_8 / C1.3) ─────────────────────
+
+/**
+ * Build the canonical `SecurityAggregate` from inputs available to the
+ * health analyzer. Re-uses the capability envelopes already gathered by
+ * `gatherCapabilityReport` (no double-shells — dispatcher cache hits
+ * are free), additionally invoking the two finders not represented in
+ * the capability layer (TLS-bypass-registry walk, file findings for
+ * private keys + `.env`-in-git).
+ *
+ * D086 closure foundation: health's `scoreSecurityDimension` reads
+ * from this aggregate via `c.securityAggregate?.codeBySeverity`,
+ * which is the SAME field the standalone vuln-scan reads after C1.2.
+ * Two consumers, one source — no drift possible.
+ */
+export async function buildSecurityAggregateForHealth(
+  cwd: string,
+  secrets:
+    | {
+        tool: string;
+        findings: ReadonlyArray<{
+          severity: Severity;
+          rule: string;
+          title?: string;
+          file: string;
+          line: number;
+        }>;
+      }
+    | undefined,
+  codePatterns:
+    | {
+        tool: string;
+        findings: ReadonlyArray<{
+          severity: Severity;
+          rule: string;
+          title: string;
+          file: string;
+          line: number;
+          cwe: string;
+        }>;
+      }
+    | undefined,
+  depVulnsEnvelope: DepVulnResult | undefined,
+  depVulnsAvailable: boolean,
+  depVulnsUnavailableReason: string,
+): Promise<SecurityAggregate> {
+  // The two gathers not represented in CapabilityReport (vuln-scan-only).
+  // Both are cheap: `gatherTlsBypassFindings` is a JS line-scan via
+  // `walkSourceFiles`; `gatherFileFindings` is one `find` + one `git
+  // ls-files`. Total ~0.5s on a 500-file repo.
+  const tlsBypass = gatherTlsBypassFindings(cwd);
+  const fileFindings = gatherFileFindings(cwd);
+
+  const secretFindings: SecurityFinding[] = secrets
+    ? secrets.findings.map((f) => ({
+        severity: f.severity,
+        category: 'secret' as const,
+        cwe: 'CWE-798',
+        rule: f.rule,
+        title: f.title ?? `Secret detected: ${f.rule}`,
+        file: f.file,
+        line: f.line,
+        tool: secrets.tool,
+      }))
+    : [];
+
+  const codeFindings: SecurityFinding[] = codePatterns
+    ? codePatterns.findings.map((f) => ({
+        severity: f.severity,
+        category: 'code' as const,
+        cwe: f.cwe,
+        rule: f.rule,
+        title: f.title,
+        file: f.file,
+        line: f.line,
+        tool: codePatterns.tool,
+      }))
+    : [];
+
+  return buildSecurityAggregate({
+    secrets: { findings: secretFindings, toolUsed: secrets?.tool ?? null },
+    fileFindings,
+    codePatterns: { findings: codeFindings, toolUsed: codePatterns?.tool ?? null },
+    tlsBypass,
+    tlsBypassPatternCount: allTlsBypassPatterns().length,
+    depVulns: {
+      findings: depVulnsEnvelope?.findings ?? [],
+      tool: depVulnsEnvelope?.tool ?? null,
+      available: depVulnsAvailable,
+      unavailableReason: depVulnsUnavailableReason,
+    },
+  });
 }

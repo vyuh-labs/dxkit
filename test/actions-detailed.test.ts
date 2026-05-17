@@ -48,7 +48,7 @@ import { SecurityReport } from '../src/analyzers/security/types';
 import { QualityReport, QualityMetrics } from '../src/analyzers/quality/types';
 import { TestGapsReport } from '../src/analyzers/tests/types';
 import { CapabilityReport, HealthReport, HealthMetrics } from '../src/analyzers/types';
-import { ScoreInput } from '../src/analyzers/scoring';
+import { ScoreInput } from '../src/analyzers/types';
 import { DevReport } from '../src/analyzers/developer/types';
 import {
   depVulnCapability,
@@ -82,17 +82,21 @@ function securityReport(overrides: Partial<SecurityReport> = {}): SecurityReport
       {
         rule: 'hardcoded-secret',
         severity: 'critical',
+        category: 'secret',
+        cwe: 'CWE-798',
+        title: 'API key found',
         file: 'src/config.ts',
         line: 42,
-        message: 'API key found',
         tool: 'gitleaks',
       },
       {
         rule: 'eval-usage',
         severity: 'high',
+        category: 'code',
+        cwe: 'CWE-95',
+        title: 'eval() use',
         file: 'src/parser.ts',
         line: 100,
-        message: 'eval() use',
         tool: 'semgrep',
       },
     ],
@@ -176,6 +180,7 @@ function testGapsReport(overrides: Partial<TestGapsReport> = {}): TestGapsReport
 function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
   return {
     sourceFiles: 50,
+    routeHandlerFiles: 0,
     testFiles: 5,
     totalLines: 5000,
     testsPass: null,
@@ -186,6 +191,7 @@ function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
     filesOver500Lines: 2,
     largestFileLines: 800,
     largestFilePath: 'src/big.ts',
+    largestFiles: [{ path: 'src/big.ts', lines: 800 }],
     consoleLogCount: 20,
     anyTypeCount: 15,
     readmeExists: true,
@@ -199,6 +205,12 @@ function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
     privateKeyFiles: 0,
     envFilesInGit: 0,
     tlsDisabledCount: 0,
+    todoCount: 0,
+    fixmeCount: 0,
+    hackCount: 0,
+    staleFiles: 0,
+    mixedLanguages: false,
+    commentRatio: null,
     controllers: 5,
     models: 8,
     directories: 10,
@@ -257,7 +269,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
   const dim = (score: number) => ({
     score,
     maxScore: 100,
-    status: 'good' as const,
+    rating: 'B' as const,
     metrics: {},
     details: '',
   });
@@ -266,7 +278,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
     analyzedAt: '2026-04-16T00:00:00Z',
     commitSha: 'abc123',
     branch: 'main',
-    summary: { overallScore: 70, grade: 'B' as const },
+    summary: { overallScore: 70, rating: 'B' as const },
     dimensions: {
       testing: dim(60),
       quality: dim(70),
@@ -276,6 +288,7 @@ function healthReport(metrics: HealthMetrics, capabilities?: CapabilityReport): 
       developerExperience: dim(70),
     },
     languages: metrics.languages,
+    largestFiles: [],
     toolsUsed: ['cloc', 'gitleaks'],
     toolsUnavailable: [],
     capabilities: capabilities ?? healthCapabilities(),
@@ -323,12 +336,18 @@ function devReport(): DevReport {
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe('security/actions', () => {
-  it('countsFromReport projects findings + deps into SecurityCounts', () => {
+  it('countsFromReport projects findings + deps into SecurityScoreInput', () => {
     const c = securityCountsFromReport(securityReport());
-    expect(c.critical).toBe(2);
-    expect(c.high).toBe(5);
-    expect(c.depCritical).toBe(1);
-    expect(c.depHigh).toBe(3);
+    // The fixture has 2 findings: one gitleaks secret (critical, category=secret)
+    // and one semgrep code finding (high, category=code).
+    expect(c.secretFindings).toBe(1);
+    expect(c.privateKeyFiles).toBe(0);
+    expect(c.envFilesInGit).toBe(0);
+    expect(c.codeFindings.high).toBe(1);
+    expect(c.codeFindings.critical).toBe(0);
+    // Dep counts mirror summary.dependencies.
+    expect(c.depVulns.critical).toBe(1);
+    expect(c.depVulns.high).toBe(3);
   });
 
   it('buildSecurityActions returns ranked actions', () => {
@@ -345,6 +364,8 @@ describe('security/actions', () => {
     const clean = securityReport({
       summary: {
         findings: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+        codeOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+        secretsOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
         dependencies: {
           critical: 0,
           high: 0,
@@ -353,6 +374,8 @@ describe('security/actions', () => {
           total: 0,
           tool: null,
           findings: [],
+          available: true,
+          unavailableReason: '',
         },
       },
       findings: [],

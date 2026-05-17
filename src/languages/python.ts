@@ -5,9 +5,17 @@ import { type Coverage, type FileCoverage, round1, toRelative } from '../analyze
 import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
+import { walkPaths } from '../analyzers/tools/walk-paths';
+import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import type { CapabilityProvider } from './capabilities/provider';
+import type {
+  CapabilityProvider,
+  DepVulnsProvider,
+  LicensesProvider,
+  LintProvider,
+  RunTestsOutcome,
+} from './capabilities/provider';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -15,6 +23,7 @@ import type {
   DepVulnResult,
   ImportsResult,
   LicenseFinding,
+  LicensesGatherOutcome,
   LicensesResult,
   LintGatherOutcome,
   LintResult,
@@ -62,28 +71,27 @@ function toRel(abs: string, cwd: string): string {
   return path.relative(cwd, abs).split(path.sep).join('/');
 }
 
-function hasPyFileWithinDepth(cwd: string, maxDepth = 2): boolean {
-  function search(dir: string, depth: number): boolean {
-    if (depth > maxDepth) return false;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const e of entries) {
-      if (
-        e.name.startsWith('.') ||
-        ['node_modules', 'vendor', 'bin', 'obj', 'target'].includes(e.name)
-      ) {
-        continue;
-      }
-      if (e.isFile() && e.name.endsWith('.py')) return true;
-      if (e.isDirectory() && search(path.join(dir, e.name), depth + 1)) return true;
-    }
-    return false;
-  }
-  return search(cwd, 0);
+function hasPyFile(cwd: string): boolean {
+  // Depth-unlimited via the canonical walker. The previous depth-2
+  // cap missed real Python monorepos (e.g. `services/<svc>/src/*.py`
+  // layouts).
+  //
+  // Requires >=3 `.py` files when no Python manifest is present.
+  // The earlier "any .py file anywhere" threshold over-activated on
+  // polyglot repos where a single build-output artifact (e.g. a
+  // WinForms desktop app shipping one staging `.py` under
+  // `StagingArea/Debug/net9.0-windows/`) would otherwise flip the
+  // python pack on. With the pack active, `dominantVocabulary`
+  // would then pick its Django/Flask-shaped words over the actual
+  // dominant language pack's vocabulary — surfaces as wrong-stack
+  // prose ("0 views/services, 0 models" on a 2,995-file C# repo).
+  //
+  // Real Python codebases without a manifest (small scripts, ad-hoc
+  // analysis dirs, learning projects) still activate above the
+  // threshold — the bar moved from "any" to "non-trivial," not to
+  // "requires manifest." Manifest-bearing repos always activate
+  // regardless of file count via the caller's `fileExists` checks.
+  return walkPaths(cwd, { extensions: ['.py'] }).length >= 3;
 }
 
 /**
@@ -351,13 +359,17 @@ function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
  */
 async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
   const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
-  if (!pipAudit.available || !pipAudit.path) return { kind: 'tool-missing' };
+  if (!pipAudit.available || !pipAudit.path) {
+    return { kind: 'unavailable', reason: 'pip-audit not installed' };
+  }
 
   const cmd = buildPipAuditCommand(cwd, pipAudit.path);
-  if (!cmd) return { kind: 'tool-missing' };
+  if (!cmd) {
+    return { kind: 'no-manifest', reason: 'no pyproject.toml / setup.py / requirements.txt' };
+  }
 
   const raw = run(cmd, cwd, 120000);
-  if (!raw) return { kind: 'no-output' };
+  if (!raw) return { kind: 'unavailable', reason: 'pip-audit produced no output' };
 
   try {
     const data = JSON.parse(raw) as PipAuditReport;
@@ -425,6 +437,7 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
           package: dep.name ?? 'unknown',
           installedVersion: dep.version,
           tool: 'pip-audit',
+          packId: 'python',
           severity,
         };
         // Embedded score from the primary enrichment pass; alias-fallback
@@ -487,16 +500,19 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
       findings,
     };
     return { kind: 'success', envelope };
-  } catch {
-    return { kind: 'parse-error' };
+  } catch (err) {
+    return { kind: 'unavailable', reason: `pip-audit parse error: ${(err as Error).message}` };
   }
 }
 
-const pyDepVulnsProvider: CapabilityProvider<DepVulnResult> = {
+const pyDepVulnsProvider: DepVulnsProvider = {
   source: 'python',
   async gather(cwd) {
     const outcome = await gatherPyDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherPyDepVulnsResult(cwd);
   },
 };
 
@@ -548,11 +564,14 @@ function gatherPyLintResult(cwd: string): LintGatherOutcome {
   }
 }
 
-const pyLintProvider: CapabilityProvider<LintResult> = {
+const pyLintProvider: LintProvider = {
   source: 'python',
   async gather(cwd) {
     const outcome = gatherPyLintResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
+    return gatherPyLintResult(cwd);
   },
 };
 
@@ -576,10 +595,57 @@ function gatherPyCoverageResult(cwd: string): CoverageResult | null {
   }
 }
 
+/**
+ * Run `python -m pytest --cov --cov-report=json:coverage.json` from cwd
+ * (D021). Prefer the project's own venv python (`.venv`, poetry, pipenv)
+ * when resolvable so the test run uses the env that has pytest +
+ * pytest-cov installed — falling back to the user's PATH `python`
+ * otherwise.
+ *
+ * Preflight: require at least one Python manifest (pyproject.toml,
+ * setup.py, requirements.txt, Pipfile). Without one, this is almost
+ * certainly not a Python project (or it's a script-only directory that
+ * would need explicit `--lang python` to opt in).
+ *
+ * Note: pytest-cov plugin presence is NOT preflighted — there is no
+ * TOOL_DEFS entry for it, and the spawn outcome is sufficiently clear
+ * when it's missing (`pytest: unrecognized arguments: --cov`). The
+ * `coverage-py` tool is registry-tracked but the design-doc command
+ * uses pytest-cov, not standalone coverage.py.
+ */
+function runPyTestsWithCoverage(cwd: string): Promise<RunTestsOutcome> {
+  return Promise.resolve(
+    runTestsWithCoverage({
+      pack: 'python',
+      cmd: (() => {
+        const venvPython = findPyProjectVenvPython(cwd);
+        const py = venvPython ?? 'python';
+        return `${py} -m pytest --cov --cov-report=json:coverage.json`;
+      })(),
+      cwd,
+      artifact: 'coverage.json',
+      preflight: (cwd) => {
+        const hasManifest =
+          fileExists(cwd, 'pyproject.toml') ||
+          fileExists(cwd, 'setup.py') ||
+          fileExists(cwd, 'requirements.txt') ||
+          fileExists(cwd, 'Pipfile');
+        if (!hasManifest) {
+          return 'no Python project manifest (pyproject.toml/setup.py/requirements.txt/Pipfile) in this directory';
+        }
+        return null;
+      },
+    }),
+  );
+}
+
 const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
   source: 'python',
   async gather(cwd) {
     return gatherPyCoverageResult(cwd);
+  },
+  async runTests(cwd) {
+    return runPyTestsWithCoverage(cwd);
   },
 };
 
@@ -819,34 +885,45 @@ export function findPyProjectVenvPython(cwd: string): string | null {
  * (i.e. garbage). Returns null when either prerequisite is missing so
  * the dispatcher drops the pack cleanly.
  */
-function gatherPyLicensesResult(cwd: string): LicensesResult | null {
+function gatherPyLicensesResult(cwd: string): LicensesGatherOutcome {
   const hasManifest =
     fileExists(cwd, 'pyproject.toml') ||
     fileExists(cwd, 'setup.py') ||
     fileExists(cwd, 'requirements.txt') ||
     fileExists(cwd, 'Pipfile');
-  if (!hasManifest) return null;
+  if (!hasManifest) {
+    return {
+      kind: 'no-manifest',
+      reason: 'no pyproject.toml / setup.py / requirements.txt / Pipfile',
+    };
+  }
 
   const venvPython = findPyProjectVenvPython(cwd);
-  if (!venvPython) return null;
+  if (!venvPython) {
+    return { kind: 'unavailable', reason: 'no resolvable project venv python' };
+  }
 
   const status = findTool(TOOL_DEFS['pip-licenses'], cwd);
-  if (!status.available || !status.path) return null;
+  if (!status.available || !status.path) {
+    return { kind: 'unavailable', reason: 'pip-licenses not installed' };
+  }
 
   const raw = run(
     `${status.path} --python ${venvPython} --format=json --with-license-file --no-license-path --with-description --with-urls --with-authors 2>/dev/null`,
     cwd,
     120000,
   );
-  if (!raw) return null;
+  if (!raw) return { kind: 'unavailable', reason: 'pip-licenses produced no output' };
 
   let data: PipLicensesEntry[];
   try {
     data = JSON.parse(raw) as PipLicensesEntry[];
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'unavailable', reason: `pip-licenses parse error: ${(err as Error).message}` };
   }
-  if (!Array.isArray(data)) return null;
+  if (!Array.isArray(data)) {
+    return { kind: 'unavailable', reason: 'pip-licenses output was not a JSON array' };
+  }
 
   // Top-level attribution reuses the same pip-show-graph BFS the
   // depVulns path builds. Self-parent invariant (`index[top]` contains
@@ -874,16 +951,21 @@ function gatherPyLicensesResult(cwd: string): LicensesResult | null {
     });
   }
 
-  return {
+  const envelope: LicensesResult = {
     schemaVersion: 1,
     tool: 'pip-licenses',
     findings,
   };
+  return { kind: 'success', envelope };
 }
 
-const pyLicensesProvider: CapabilityProvider<LicensesResult> = {
+const pyLicensesProvider: LicensesProvider = {
   source: 'python',
   async gather(cwd) {
+    const outcome = gatherPyLicensesResult(cwd);
+    return outcome.kind === 'success' ? outcome.envelope : null;
+  },
+  async gatherOutcome(cwd) {
     return gatherPyLicensesResult(cwd);
   },
 };
@@ -895,13 +977,60 @@ export const python: LanguageSupport = {
   testFilePatterns: ['test_*.py', '*_test.py'],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],
 
+  // D027 (2.4.7): Python module/class/function docstrings use either
+  // triple-double or triple-single quotes. Match the docstring opener
+  // at the start of a (possibly indented) line.
+  docCommentPatterns: ['^[[:space:]]*"""', "^[[:space:]]*'''"],
+
+  // D034 (2.4.7): `requests` and `urllib3` TLS-bypass idioms.
+  // `verify=False` is the canonical opt-out on every `requests` call;
+  // `disable_warnings(InsecureRequestWarning)` typically accompanies it
+  // to silence the runtime warning. `VERIFY_SSL=false` is a common
+  // env-var convention in Django/Flask configs.
+  tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
+
+  upgradeCommand(name, version) {
+    return `pip install '${name}==${version}'`;
+  },
+
+  // Django (views/viewsets/serializers), Flask/FastAPI (routers, api
+  // endpoints), Celery (tasks) — declarations cover the dominant
+  // server-side Python patterns. Plain library / data-science code
+  // (where `services/` is rare) simply doesn't match anything and
+  // the analyzer degrades to "no primary architecture detected" —
+  // exactly the pre-extension behavior.
+  architecturalShape: {
+    primaryComponentPaths: [
+      '/views/',
+      '/viewsets/',
+      '/handlers/',
+      '/services/',
+      '/api/',
+      '/routers/',
+      '/tasks/',
+    ],
+    routePaths: ['/views/', '/viewsets/', '/routers/', '/api/', '/urls.py'],
+    modelPaths: ['/models/', '/schemas/', '/serializers/'],
+    vocabulary: {
+      components: 'views/services',
+      models: 'models',
+      routes: 'routes',
+    },
+    testGapPriority: {
+      high: ['/views/', '/services/', '/handlers/', '/tasks/'],
+      medium: ['/viewsets/', '/routers/', '/api/', '/serializers/'],
+    },
+  },
+
+  clocLanguageNames: ['Python'],
+
   detect(cwd) {
     return (
       fileExists(cwd, 'pyproject.toml') ||
       fileExists(cwd, 'setup.py') ||
       fileExists(cwd, 'requirements.txt') ||
       fileExists(cwd, 'Pipfile') ||
-      hasPyFileWithinDepth(cwd, 2)
+      hasPyFile(cwd)
     );
   },
 

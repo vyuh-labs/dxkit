@@ -6,11 +6,19 @@ import { scoreDxDimension } from '../src/analyzers/dx/shallow';
 import { scoreSecurityDimension } from '../src/analyzers/security/shallow';
 import { scoreQualityDimension } from '../src/analyzers/quality/shallow';
 import { scoreTestsDimension } from '../src/analyzers/tests/shallow';
-import { scoreSecurityCounts } from '../src/analyzers/security/scoring';
+import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../src/scoring';
+
+const scoreSecurityFromInput = (input: SecurityScoreInput) =>
+  evaluateSpec(SECURITY_SCORING_SPEC, input);
 import { scoreTestGapsCounts } from '../src/analyzers/tests/scoring';
+import { buildSecurityDetailed } from '../src/analyzers/security/detailed';
+import type { SecurityReport } from '../src/analyzers/security/types';
 import {
   coverageCapability,
+  codePatternsCapabilityWithFindings,
+  depVulnCapability,
   lintCapability,
+  qualityMeasuredCapabilities,
   secretsCapabilityWithCount,
   withInput,
 } from './fixtures/score-input';
@@ -24,7 +32,7 @@ describe('shallow dimension scorers', () => {
     const r = scoreDocsDimension(baseInput);
     expect(r).toHaveProperty('score');
     expect(r).toHaveProperty('maxScore', 100);
-    expect(r).toHaveProperty('status');
+    expect(r).toHaveProperty('rating');
     expect(typeof r.score).toBe('number');
   });
 
@@ -71,11 +79,16 @@ describe('shallow dimension scorers', () => {
   });
 
   it('quality score drops with lint errors + large files', () => {
+    // Use a measured-capabilities baseline so the cap doesn't shadow
+    // the formula's penalty contribution we're testing.
+    const measuredBaseline = withInput({ capabilities: qualityMeasuredCapabilities() });
     const bad = withInput({
       metrics: { filesOver500Lines: 20, consoleLogCount: 200 },
-      capabilities: { lint: lintCapability(0, 100) },
+      capabilities: { ...qualityMeasuredCapabilities(), lint: lintCapability(0, 100) },
     });
-    expect(scoreQualityDimension(bad).score).toBeLessThan(scoreQualityDimension(baseInput).score);
+    expect(scoreQualityDimension(bad).score).toBeLessThan(
+      scoreQualityDimension(measuredBaseline).score,
+    );
   });
 
   it('maintainability score drops with huge god files', () => {
@@ -110,64 +123,405 @@ describe('shallow dimension scorers', () => {
   });
 });
 
-// ── Security sub-scorer ────────────────────────────────────────────────
+// ── Canonical security scorer ──────────────────────────────────────────
 
-describe('scoreSecurityCounts', () => {
-  it('returns 100 for zero findings', () => {
-    const r = scoreSecurityCounts({
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      depCritical: 0,
-      depHigh: 0,
-      depMedium: 0,
-      depLow: 0,
-    });
-    expect(r.score).toBe(100);
+function emptyScoreInput(overrides: Partial<SecurityScoreInput> = {}): SecurityScoreInput {
+  return {
+    secretFindings: 0,
+    privateKeyFiles: 0,
+    envFilesInGit: 0,
+    codeFindings: { critical: 0, high: 0, medium: 0, low: 0 },
+    depVulns: { critical: 0, high: 0, medium: 0, low: 0 },
+    // D025b default: helper models the "happy path" where the dep-vuln
+    // scan ran cleanly. Tests for the cap explicitly override
+    // `depVulnsAvailable: false`.
+    depVulnsAvailable: true,
+    ...overrides,
+  };
+}
+
+describe('scoreSecurityFromInput', () => {
+  it('returns 100 for an empty input', () => {
+    expect(scoreSecurityFromInput(emptyScoreInput()).score).toBe(100);
   });
 
-  it('penalizes critical findings heavily', () => {
-    const r = scoreSecurityCounts({
-      critical: 3,
-      high: 0,
-      medium: 0,
-      low: 0,
-      depCritical: 0,
-      depHigh: 0,
-      depMedium: 0,
-      depLow: 0,
-    });
-    expect(r.score).toBe(85);
+  it('C2.2 / D098: every secret-class signal caps the score at 40', () => {
+    // Pre-C2.2: secretFindings tier penalties produced 85 / 80 / 75
+    // and privateKeyFiles produced 80 — all "Good" or "Excellent"
+    // territory despite committed credentials. Post-C2.2:
+    // SECRETS_PRESENT_CAP forces the dimension to ≤ 40 ("Fair") for
+    // ANY non-zero count. Foundational trust failure regardless of
+    // magnitude.
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 6 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ secretFindings: 11 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ privateKeyFiles: 5 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 1 })).score).toBe(40);
+    expect(scoreSecurityFromInput(emptyScoreInput({ envFilesInGit: 7 })).score).toBe(40);
   });
 
-  it('stacks code + dep penalties', () => {
-    const r = scoreSecurityCounts({
-      critical: 11,
-      high: 6,
-      medium: 15,
-      low: 0,
-      depCritical: 1,
-      depHigh: 6,
-      depMedium: 0,
-      depLow: 0,
-    });
-    expect(r.score).toBeLessThanOrEqual(35);
+  it('C2.2 / D098: secrets cap compounds with deeper penalties below the cap', () => {
+    // The cap is a CEILING, not a floor. When other penalties drive
+    // the score below 40, the cap doesn't lift it back up. A repo
+    // with 11 secrets (-25) + 11 critical code findings (-25) +
+    // private keys (-20) starts at 100 - 70 = 30, which is below 40.
+    // Final = 30.
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({
+          secretFindings: 11,
+          privateKeyFiles: 1,
+          codeFindings: { critical: 11, high: 0, medium: 0, low: 0 },
+        }),
+      ).score,
+    ).toBe(30);
   });
 
-  it('clamps within 0-100 on extreme inputs', () => {
-    const r = scoreSecurityCounts({
-      critical: 100,
-      high: 100,
-      medium: 100,
-      low: 100,
-      depCritical: 100,
-      depHigh: 100,
-      depMedium: 100,
-      depLow: 100,
-    });
-    expect(r.score).toBeGreaterThanOrEqual(0);
-    expect(r.score).toBeLessThanOrEqual(100);
+  it('tiers code-finding penalties by severity (capped at fixable-finding for HIGH+ open)', () => {
+    // Any open HIGH or CRITICAL code finding caps the dimension at
+    // CAP_TIERS['fixable-finding'] (79). The raw-penalty tiers still
+    // apply when the penalty drives the score below the cap.
+
+    // critical: raw 85 / 80 → both capped at 79; raw 75 stays at 75
+    // (below the cap, so the cap doesn't bind).
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 1, high: 0, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(79);
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 6, high: 0, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(79);
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 11, high: 0, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(75);
+    // high: raw 95 / 90 → both capped at 79.
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 0, high: 1, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(79);
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 0, high: 6, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(79);
+    // medium > 10: raw 95, cap does NOT apply (no HIGH/CRITICAL open).
+    // The cap is severity-gated, not count-gated.
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ codeFindings: { critical: 0, high: 0, medium: 11, low: 0 } }),
+      ).score,
+    ).toBe(95);
+  });
+
+  it('deducts for dep vulns by severity', () => {
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ depVulns: { critical: 1, high: 0, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(85);
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ depVulns: { critical: 0, high: 3, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(95);
+    expect(
+      scoreSecurityFromInput(
+        emptyScoreInput({ depVulns: { critical: 0, high: 10, medium: 0, low: 0 } }),
+      ).score,
+    ).toBe(90);
+  });
+
+  it('stacks penalties and clamps to 0', () => {
+    const s = scoreSecurityFromInput(
+      emptyScoreInput({
+        secretFindings: 20,
+        privateKeyFiles: 5,
+        envFilesInGit: 1,
+        codeFindings: { critical: 20, high: 20, medium: 20, low: 0 },
+        depVulns: { critical: 5, high: 20, medium: 0, low: 0 },
+      }),
+    );
+    expect(s.score).toBe(0);
+  });
+
+  it('clamps to 0 on absurdly large inputs', () => {
+    const s = scoreSecurityFromInput(
+      emptyScoreInput({
+        secretFindings: 1000,
+        privateKeyFiles: 1000,
+        envFilesInGit: 1000,
+        codeFindings: { critical: 1000, high: 1000, medium: 1000, low: 1000 },
+        depVulns: { critical: 1000, high: 1000, medium: 1000, low: 1000 },
+      }),
+    );
+    expect(s.score).toBe(0);
+  });
+
+  // ── D025b honesty cap ─────────────────────────────────────────────────
+
+  it('caps at 65 when depVulnsAvailable is false on otherwise-clean signals', () => {
+    // Pre-D025b: this would return 100 (no penalties applied).
+    // Post-D025b: cap fires because dxkit can't honestly claim "excellent"
+    // when it never actually scanned the deps. This is the F4 baseline
+    // dpl-studio lie closure.
+    const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: false }));
+    expect(s.score).toBe(65);
+  });
+
+  it('does NOT cap when depVulnsAvailable is true and signals are clean', () => {
+    // Sanity check: cap only fires on the false case.
+    const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: true }));
+    expect(s.score).toBe(100);
+  });
+
+  it('dep-availability cap is a ceiling, not a floor — other penalties still drop the score below 65', () => {
+    // 100 - 15 (1 critical code finding) - 5 (1 high) - 10 (>5 high) - 25 (>10 critical) ... etc.
+    // Adjusted post-C2.2 to use code-only inputs (no secrets/private-
+    // keys/.env so the SECRETS_PRESENT_CAP at 40 doesn't fire). This
+    // test specifically pins the DEP_VULNS_UNAVAILABLE_CAP composition
+    // with other penalties below the cap.
+    //
+    // 11 critical code findings → 100 - 25 = 75. With depVulnsAvailable
+    // false, capped to 65. Adding 11 more critical → 100 - 25 = 75
+    // unchanged (the > 10 tier maxes out). So we use 11 critical +
+    // 11 high to trigger an additional -10 = 65, then need MORE to
+    // drop below 65.
+    //
+    // Final: 100 - 25 (critical>10) - 10 (high>5) - 5 (med>10) - 15
+    // (critical dep) - 10 (high dep > 5) = 35. The dep-cap is a
+    // ceiling at 65 but penalties already drove us to 35.
+    const s = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: false,
+        codeFindings: { critical: 11, high: 6, medium: 11, low: 0 },
+        depVulns: { critical: 1, high: 6, medium: 0, low: 0 },
+      }),
+    );
+    expect(s.score).toBe(35);
+  });
+
+  it('multiple caps compose monotonically (most-aggressive wins)', () => {
+    // 100 - 15 (1 critical code finding) = raw 85. Then:
+    //   • dep-vulns-unavailable cap brings it to 65 (uncertainty tier).
+    //   • fixable-finding cap (79) would also apply but is less
+    //     aggressive than 65, so the dep-unavailable cap dominates.
+    const cappedByBoth = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: false,
+        codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
+      }),
+    );
+    expect(cappedByBoth.score).toBe(65);
+    // Without dep-unavailable: fixable-finding cap (79) binds, since
+    // raw 85 > 79.
+    const cappedByHighOnly = scoreSecurityFromInput(
+      emptyScoreInput({
+        depVulnsAvailable: true,
+        codeFindings: { critical: 1, high: 0, medium: 0, low: 0 },
+      }),
+    );
+    expect(cappedByHighOnly.score).toBe(79);
+  });
+});
+
+// ── D023 parity: health dimension score === standalone vuln-scan score ─
+
+describe('D023 parity: unified security scorer', () => {
+  it('health Security dim score equals standalone Security Score for the same signals', () => {
+    // Build a SecurityReport whose findings match the same signals we
+    // feed through the health-side adapter. If the two adapters agree
+    // on what each finding means, the unified scorer produces the
+    // same number from both paths.
+    const securityReport: SecurityReport = {
+      repo: 'test',
+      analyzedAt: '2026-05-10T00:00:00.000Z',
+      commitSha: 'abc1234',
+      branch: 'main',
+      summary: {
+        findings: { critical: 4, high: 4, medium: 0, low: 0, total: 8 },
+        codeOnly: { critical: 4, high: 4, medium: 0, low: 0, total: 8 },
+        secretsOnly: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+        dependencies: {
+          critical: 1,
+          high: 2,
+          medium: 0,
+          low: 0,
+          total: 3,
+          tool: 'npm-audit',
+          findings: [],
+          available: true,
+          unavailableReason: '',
+        },
+      },
+      findings: [
+        // 3 gitleaks-detected secrets
+        {
+          severity: 'high',
+          category: 'secret',
+          cwe: 'CWE-798',
+          rule: 'aws-key',
+          title: 's1',
+          file: 'a.ts',
+          line: 1,
+          tool: 'gitleaks',
+        },
+        {
+          severity: 'high',
+          category: 'secret',
+          cwe: 'CWE-798',
+          rule: 'aws-key',
+          title: 's2',
+          file: 'b.ts',
+          line: 1,
+          tool: 'gitleaks',
+        },
+        {
+          severity: 'high',
+          category: 'secret',
+          cwe: 'CWE-798',
+          rule: 'aws-key',
+          title: 's3',
+          file: 'c.ts',
+          line: 1,
+          tool: 'gitleaks',
+        },
+        // 2 private-key files on disk
+        {
+          severity: 'critical',
+          category: 'secret',
+          cwe: 'CWE-798',
+          rule: 'private-key-file',
+          title: 'pk1',
+          file: 'k1.pem',
+          line: 0,
+          tool: 'find',
+        },
+        {
+          severity: 'critical',
+          category: 'secret',
+          cwe: 'CWE-798',
+          rule: 'private-key-file',
+          title: 'pk2',
+          file: 'k2.pem',
+          line: 0,
+          tool: 'find',
+        },
+        // 1 .env in git
+        {
+          severity: 'high',
+          category: 'config',
+          cwe: 'CWE-798',
+          rule: 'env-in-git',
+          title: 'env',
+          file: '.env',
+          line: 0,
+          tool: 'git',
+        },
+        // 4 critical + 1 high semgrep code findings
+        {
+          severity: 'critical',
+          category: 'code',
+          cwe: 'CWE-89',
+          rule: 'sqli',
+          title: 'sql',
+          file: 'q.ts',
+          line: 1,
+          tool: 'semgrep',
+        },
+        {
+          severity: 'critical',
+          category: 'code',
+          cwe: 'CWE-89',
+          rule: 'sqli',
+          title: 'sql',
+          file: 'q.ts',
+          line: 2,
+          tool: 'semgrep',
+        },
+        {
+          severity: 'critical',
+          category: 'code',
+          cwe: 'CWE-79',
+          rule: 'xss',
+          title: 'xss',
+          file: 'r.ts',
+          line: 1,
+          tool: 'semgrep',
+        },
+        {
+          severity: 'critical',
+          category: 'code',
+          cwe: 'CWE-79',
+          rule: 'xss',
+          title: 'xss',
+          file: 'r.ts',
+          line: 2,
+          tool: 'semgrep',
+        },
+        {
+          severity: 'high',
+          category: 'code',
+          cwe: 'CWE-95',
+          rule: 'eval',
+          title: 'eval',
+          file: 's.ts',
+          line: 1,
+          tool: 'semgrep',
+        },
+      ],
+      toolsUsed: ['gitleaks', 'find', 'git', 'semgrep', 'npm-audit'],
+      toolsUnavailable: [],
+    };
+
+    // Standalone path: SecurityReport → countsFromReport → scorer.
+    const detailed = buildSecurityDetailed(securityReport);
+    const standaloneScore = detailed.securityScore;
+
+    // Health path: synthesize a ScoreInput whose capability envelopes
+    // describe the SAME signals, then run the dimension scorer.
+    const healthScore = scoreSecurityDimension(
+      withInput({
+        metrics: {
+          privateKeyFiles: 2,
+          envFilesInGit: 1,
+          // evalCount + tlsDisabledCount are only consulted as a
+          // fallback when codePatterns is absent; codePatterns IS
+          // present below, so leave the grep-based fields at 0 to
+          // avoid double-counting.
+          evalCount: 0,
+          tlsDisabledCount: 0,
+        },
+        capabilities: {
+          secrets: secretsCapabilityWithCount(3),
+          codePatterns: codePatternsCapabilityWithFindings({ critical: 4, high: 1 }),
+          depVulns: depVulnCapability(1, 2),
+        },
+      }),
+    ).score;
+
+    expect(standaloneScore).toBe(healthScore);
+  });
+
+  it('health-side falls back to grep-based metrics when codePatterns is absent', () => {
+    // Without semgrep, the health-side should still penalize eval/TLS
+    // through the m.evalCount + m.tlsDisabledCount grep counts so the
+    // semgrep-less environment doesn't surface as fully clean.
+    const r = scoreSecurityDimension(
+      withInput({
+        metrics: { evalCount: 1, tlsDisabledCount: 1 },
+      }),
+    );
+    // 2 high-severity code findings raw-penalize -5 (high > 0), then
+    // the fixable-finding cap brings the dimension to 79 — even one
+    // open HIGH code finding caps the rating at B.
+    expect(r.score).toBe(79);
   });
 });
 
