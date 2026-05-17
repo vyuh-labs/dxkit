@@ -469,6 +469,90 @@ if [ -n "$CAP_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Architectural-shape discipline: framework path patterns + role
+# vocabulary live in `src/languages/*.ts:architecturalShape` — never
+# inline in `src/analyzers/`.
+#
+# What this prevents:
+#   Re-introducing the pre-extension class of "hardcoded
+#   backend-centric paths in cross-cutting consumers": `*/controllers/*`
+#   in find commands, `if (lower.includes('/services/'))` in classifier
+#   code, `'controller' | 'service' | ...` enum types, "controllers /
+#   handlers, models" prose in renderers. The class caused web-client
+#   and dpl-studio to report empty test-gap CRITICAL/HIGH/MEDIUM
+#   buckets pre-extension because the patterns matched neither React
+#   components/pages nor .NET Forms/Services.
+#
+# Canonical replacement: each language pack declares its own
+#   `architecturalShape` in `src/languages/<id>.ts`. Cross-cutting
+#   consumers union contributions via `allPrimaryComponentPaths`,
+#   `allRoutePaths`, `allModelPaths`, `allTestGapPriorityPaths`,
+#   `dominantVocabulary` from `src/languages/index.ts`.
+#
+# Rule 1: no quoted path-style framework literals (`'/controllers/'`,
+#   `"/services/"`, `'\/Forms\/'`) in `src/analyzers/`. The leading
+#   AND trailing slash ensures we catch path patterns (where the
+#   meaning is "files under this directory") rather than property
+#   names or unrelated tokens.
+#
+# Allowlist:
+#   - `src/analyzers/maintainability/shallow.ts`: holds the generic
+#     vocabulary fallbacks (`'components'`, `'models'`) consumed when
+#     no active pack supplies `dominantVocabulary`. These are
+#     deliberately stack-agnostic words at the renderer surface, not
+#     hardcoded framework paths.
+#
+#   Annotate `// arch-shape-ok` for justified exceptions (e.g. a
+#   legitimate runtime probe path that's not pack-relevant).
+ARCH_SHAPE_ALLOWLIST="src/analyzers/maintainability/shallow.ts"
+
+arch_shape_path_re="['\"\`]\\/(controllers?|handlers?|services?|repositories?|interceptors?|middleware|models?|entities|forms?|viewmodels?|pages|views|components|hooks|screens|usecases|routers|viewsets|daos?|resources|endpoints|usercontrols|workers|jobs|helpers|channels|serializers|schemas|dtos?|domain|api)\\/"
+arch_shape_word_re="['\"\`](controller|service|interceptor|repository|handler|viewmodel|viewset|router)['\"\`]"
+
+ALLOW_FILTER_AS=""
+for f in $ARCH_SHAPE_ALLOWLIST; do
+  ALLOW_FILTER_AS="$ALLOW_FILTER_AS -e ^${f}:"
+done
+
+ARCH_SHAPE_PATH_VIOLATIONS=$(grep -rnEi "$arch_shape_path_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// arch-shape-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_AS" ] && grep -v $ALLOW_FILTER_AS || cat; })
+if [ -n "$ARCH_SHAPE_PATH_VIOLATIONS" ]; then
+  echo "❌ Architectural-shape violation: hardcoded framework path literal in analyzer code:"
+  echo "$ARCH_SHAPE_PATH_VIOLATIONS"
+  echo "   → Path patterns like '/controllers/', '/components/', '/Forms/' belong in"
+  echo "     src/languages/<id>.ts under architecturalShape.primaryComponentPaths /"
+  echo "     routePaths / modelPaths / testGapPriority. Consumers union active-pack"
+  echo "     contributions via the helpers in src/languages/index.ts."
+  echo "   → Annotate '// arch-shape-ok' if your case is a genuine exception (runtime"
+  echo "     probe path that doesn't represent stack vocabulary, etc.)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 2: no quoted singular role-name literals (`'controller'`,
+#   `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+#   `'viewmodel'`, `'viewset'`, `'router'`) in `src/analyzers/`.
+#   These were the pre-extension `SourceFile.type` enum values; the
+#   post-extension type is a free string drawn from
+#   `patternToLabel(matchedPattern)`. Excludes generic words
+#   (`'model'`, `'component'`, `'form'`, `'view'`, `'page'`) that
+#   commonly appear in non-architectural contexts (data models in
+#   ML code, view rendering libraries, page-object test patterns).
+ARCH_SHAPE_WORD_VIOLATIONS=$(grep -rnE "$arch_shape_word_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// arch-shape-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_AS" ] && grep -v $ALLOW_FILTER_AS || cat; })
+if [ -n "$ARCH_SHAPE_WORD_VIOLATIONS" ]; then
+  echo "❌ Architectural-shape violation: hardcoded role-name string literal in analyzer code:"
+  echo "$ARCH_SHAPE_WORD_VIOLATIONS"
+  echo "   → Role-name labels come from patternToLabel(matched architecturalShape pattern)."
+  echo "     The pre-extension closed enum ('controller' | 'service' | ...) was replaced"
+  echo "     by a free string label drawn from the matched pack pattern's last segment."
+  echo "   → Annotate '// arch-shape-ok' for non-architectural uses (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

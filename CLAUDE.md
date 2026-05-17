@@ -168,6 +168,80 @@ an injected spec. Catches "the architecture stopped being
 spec-driven" empirically — analogous to `test/recipe-playbook.test.ts`
 for language packs.
 
+### 8. Per-stack architectural shape lives in `LanguageSupport.architecturalShape`
+
+Every per-stack architectural fact — primary component paths (the
+surfaces a developer would test first), HTTP route handler paths,
+data-model paths, prose vocabulary, and the per-bucket test-gap
+priority taxonomy — is declared by each language pack and consumed
+through the registry helpers in `src/languages/index.ts`. The
+cross-cutting analyzer + renderer code never carries hardcoded
+backend-centric path patterns or framework vocabulary.
+
+- **Declared** per-pack in `src/languages/<id>.ts:architecturalShape`
+  (optional — packs with no canonical conventions omit it)
+- **Consumed** via `allPrimaryComponentPaths(flags)`,
+  `allRoutePaths(flags)`, `allModelPaths(flags)`,
+  `allTestGapPriorityPaths(flags)`, `dominantVocabulary(flags)` —
+  every cross-cutting consumer reads from the active-pack union, so
+  adding a new pack auto-extends every consumer
+
+The class-fix replaces inline `if (path.includes('/controllers/'))`
+classifier code, hardcoded `find -path "*/controllers/*"` shell
+commands, and "controllers / handlers, models" prose with active-
+pack-driven equivalents. Pre-extension a pure React frontend or .NET
+WinForms desktop app matched none of those backend-centric defaults
+and reported 0/0/0 across test-gap CRITICAL/HIGH/MEDIUM buckets;
+post-extension each stack's primary surface populates correctly.
+
+**Bad**: `'/controllers/'` / `'/services/'` literals inside
+`src/analyzers/` (hardcoded paths); `type: 'controller' | 'service' |
+...` closed unions (pre-extension `SourceFile.type`); inline
+"controllers / handlers" prose in renderers; `find -path
+"*/controllers/*" -name "*.ts"` shell commands in gather code.
+
+**Good**: `for (const p of allPrimaryComponentPaths(flags))` in
+consumers; pack-declared
+`primaryComponentPaths: ['/controllers/', '/components/', '/Forms/']`
+unioned across active packs; `dominantVocabulary(flags)?.components`
+in renderer prose.
+
+#### Architectural-shape enforcement
+
+Two rules in `scripts/check-architecture.sh` (pre-commit + CI),
+both scoped to `src/analyzers/`:
+
+1. No quoted path-style framework literals — strings shaped
+   `/<role>/` for roles in the architectural-shape vocabulary
+   (`controllers`, `handlers`, `services`, `models`, `entities`,
+   `forms`, `viewmodels`, `pages`, `views`, `components`, `hooks`,
+   etc.). Path patterns belong in
+   `src/languages/<id>.ts:architecturalShape.primaryComponentPaths`
+   / `routePaths` / `modelPaths`.
+2. No bare singular role-name string literals (`'controller'`,
+   `'service'`, `'handler'`, `'interceptor'`, `'repository'`,
+   `'viewmodel'`, `'viewset'`, `'router'`). The pre-extension
+   `SourceFile.type` closed enum was replaced by a free string label
+   drawn from `patternToLabel(matched architecturalShape pattern)`.
+   Generic words (`'model'`, `'component'`, `'form'`, `'view'`,
+   `'page'`) are NOT flagged — they appear too often in
+   non-architectural contexts (ML data models, view-rendering libs,
+   page-object test patterns).
+
+Allowlist:
+
+- `src/analyzers/maintainability/shallow.ts` for the generic
+  vocabulary fallbacks (`'components'`, `'models'`) consumed when no
+  active pack supplies a label.
+- Annotate `// arch-shape-ok` on a violating line for justified
+  exceptions (rare).
+
+The `test/recipe-playbook.test.ts` synthetic 6th-pack injection test
+asserts the synthetic pack's `architecturalShape` contributions flow
+through the test-gap taxonomy and Maintainability prose — analogous
+to its existing assertion for `depVuln` + `tlsBypass` contributions
+(G_v4_8).
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local
