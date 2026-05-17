@@ -19,6 +19,7 @@ import { SECURITY_SCORING_SPEC } from './dimensions/security';
 import { QUALITY_SCORING_SPEC } from './dimensions/quality';
 import { TESTING_SCORING_SPEC } from './dimensions/testing';
 import { DOCUMENTATION_SCORING_SPEC } from './dimensions/documentation';
+import { MAINTAINABILITY_SCORING_SPEC } from './dimensions/maintainability';
 
 export { SECURITY_SCORING_SPEC } from './dimensions/security';
 export type { SecurityScoreInput } from './dimensions/security';
@@ -28,6 +29,8 @@ export { TESTING_SCORING_SPEC } from './dimensions/testing';
 export type { TestingScoreInput } from './dimensions/testing';
 export { DOCUMENTATION_SCORING_SPEC } from './dimensions/documentation';
 export type { DocumentationScoreInput } from './dimensions/documentation';
+export { MAINTAINABILITY_SCORING_SPEC } from './dimensions/maintainability';
+export type { MaintainabilityScoreInput } from './dimensions/maintainability';
 
 /**
  * Central index of all dimension scoring specs. Each per-dimension
@@ -40,4 +43,5 @@ export const SCORING_SPECS: readonly DimensionScoringSpec<unknown>[] = [
   QUALITY_SCORING_SPEC as DimensionScoringSpec<unknown>,
   TESTING_SCORING_SPEC as DimensionScoringSpec<unknown>,
   DOCUMENTATION_SCORING_SPEC as DimensionScoringSpec<unknown>,
+  MAINTAINABILITY_SCORING_SPEC as DimensionScoringSpec<unknown>,
 ];

@@ -44,76 +44,11 @@ function clamp(value: number, min = 0, max = 100): number {
 // (`security/shallow.ts:scoreSecurityDimension`) and the standalone
 // vuln scan (`security/detailed.ts`).
 
-/** Maintainability: 0-100 */
-export function scoreMaintainability(input: ScoreInput): DimensionScore {
-  const m = input.metrics;
-  const c = input.capabilities;
-
-  const godNodeCount = c.structural?.godNodeCount ?? null;
-  const communityCount = c.structural?.communityCount ?? null;
-  const avgCohesion = c.structural?.avgCohesion ?? null;
-
-  let score = 70;
-
-  if (m.largestFileLines > 10000) score -= 25;
-  else if (m.largestFileLines > 5000) score -= 15;
-  else if (m.largestFileLines > 2000) score -= 10;
-  else if (m.largestFileLines > 1000) score -= 5;
-
-  if (m.filesOver500Lines > 30) score -= 15;
-  else if (m.filesOver500Lines > 15) score -= 10;
-  else if (m.filesOver500Lines > 5) score -= 5;
-
-  if (m.consoleLogCount > 500) score -= 10;
-  else if (m.consoleLogCount > 100) score -= 5;
-
-  if (m.nodeEngineVersion) {
-    const majorMatch = m.nodeEngineVersion.match(/(\d+)/);
-    if (majorMatch) {
-      const major = parseInt(majorMatch[1]);
-      if (major < 16) score -= 10;
-      else if (major < 18) score -= 5;
-    }
-  }
-
-  if (m.sourceFiles < 50) score += 10;
-  if (m.sourceFiles < 20) score += 5;
-
-  if (godNodeCount !== null) {
-    const godRatio = godNodeCount / Math.max(m.sourceFiles, 1);
-    if (godRatio > 0.1) score -= 10;
-    else if (godRatio > 0.05) score -= 5;
-  }
-  if (avgCohesion !== null && avgCohesion < 0.15) score -= 5;
-
-  score = clamp(score);
-  return {
-    score,
-    maxScore: 100,
-    rating: ratingFromScore(score),
-    // Schema v11: `metrics` surfaces only the non-capability signals.
-    // AST-derived stats (god-node / community / cohesion / orphan module
-    // counts) live in `report.capabilities.structural`.
-    metrics: {
-      sourceFiles: m.sourceFiles,
-      controllers: m.controllers,
-      models: m.models,
-      directories: m.directories,
-      largestFileLines: m.largestFileLines,
-      filesOver500Lines: m.filesOver500Lines,
-      nodeEngineVersion: m.nodeEngineVersion,
-    },
-    details:
-      `${m.sourceFiles} source files across ${m.directories} directories` +
-      `. ${m.controllers} controllers/handlers, ${m.models} models` +
-      `. Largest file: ${m.largestFileLines} lines` +
-      `. ${m.filesOver500Lines} files over 500 lines` +
-      (m.nodeEngineVersion ? `. Node engine: ${m.nodeEngineVersion}` : '') +
-      (communityCount !== null ? `. ${communityCount} architectural communities` : '') +
-      (avgCohesion !== null ? `. Avg cohesion: ${avgCohesion.toFixed(2)}` : '') +
-      '.',
-  };
-}
+// The Maintainability dimension scorer used to live here; the canonical
+// formula is now owned by `src/scoring/dimensions/maintainability.ts` as
+// a declarative spec. The adapter at `src/analyzers/maintainability/
+// shallow.ts` builds the per-dimension input and dispatches through
+// `evaluateSpec`.
 
 /** Developer Experience: 0-100 */
 export function scoreDeveloperExperience(input: ScoreInput): DimensionScore {

@@ -1,11 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import {
-  scoreMaintainability,
-  scoreDeveloperExperience,
-  computeOverall,
-} from '../src/analyzers/scoring';
+import { scoreDeveloperExperience, computeOverall } from '../src/analyzers/scoring';
 import { scoreTestsDimension as scoreTest } from '../src/analyzers/tests/shallow';
 import { scoreDocsDimension as scoreDocumentation } from '../src/analyzers/docs/shallow';
+import { scoreMaintainabilityDimension as scoreMaintainability } from '../src/analyzers/maintainability/shallow';
 import { DimensionScore } from '../src/analyzers/types';
 import { coverageCapability, structuralCapability, withInput } from './fixtures/score-input';
 
@@ -170,48 +167,53 @@ describe('scoreDocumentation', () => {
 // (standalone), with a parity test asserting they agree.
 
 describe('scoreMaintainability', () => {
-  it('baseline starts at 70', () => {
-    // 100 source files → no small-codebase bonus
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 100 } })).score).toBe(70);
+  // 2.4.7: scorer migrated to declarative spec at
+  // src/scoring/dimensions/maintainability.ts. Baseline now 100 (was 70);
+  // small-codebase bonus removed as overfit. Scores rise for clean repos
+  // and the SQALE-inspired step penalties land violations in B/C/D bands
+  // proportional to severity.
+
+  it('clean repo with no violations scores 100', () => {
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 100 } })).score).toBe(100);
   });
 
-  it('gives small-codebase bonuses', () => {
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 40 } })).score).toBe(80);
-    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 10 } })).score).toBe(85);
+  it('small codebases are not specially bonused (overfit removed in 2.4.7)', () => {
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 40 } })).score).toBe(100);
+    expect(scoreMaintainability(withInput({ metrics: { sourceFiles: 10 } })).score).toBe(100);
   });
 
   it('deducts for god files tiered', () => {
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 1500 } }))
         .score,
-    ).toBe(65);
+    ).toBe(95);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 3000 } }))
         .score,
-    ).toBe(60);
+    ).toBe(90);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 7000 } }))
         .score,
-    ).toBe(55);
+    ).toBe(85);
     expect(
       scoreMaintainability(withInput({ metrics: { sourceFiles: 100, largestFileLines: 15000 } }))
         .score,
-    ).toBe(45);
+    ).toBe(75);
   });
 
   it('deducts for outdated node engine', () => {
     const old = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=14.0.0' } }),
     );
-    expect(old.score).toBe(60);
+    expect(old.score).toBe(90);
     const midOld = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=16.0.0' } }),
     );
-    expect(midOld.score).toBe(65);
+    expect(midOld.score).toBe(95);
     const modern = scoreMaintainability(
       withInput({ metrics: { sourceFiles: 100, nodeEngineVersion: '>=20.0.0' } }),
     );
-    expect(modern.score).toBe(70);
+    expect(modern.score).toBe(100);
   });
 
   it('deducts for AST god-node ratio', () => {
@@ -221,8 +223,8 @@ describe('scoreMaintainability', () => {
         capabilities: { structural: structuralCapability({ godNodeCount: 15 }) },
       }),
     );
-    // ratio 0.15 → -10
-    expect(s.score).toBe(60);
+    // ratio 0.15 → -10 from baseline 100
+    expect(s.score).toBe(90);
   });
 });
 
