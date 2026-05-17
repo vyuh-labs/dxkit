@@ -49,6 +49,10 @@ penalty has a citation back to an underlying international standard.
 cap-tier taxonomy, citations (ISO/IEC 25010, ISO/IEC 5055, SQALE,
 CVSS v4, CWE, OpenSSF Scorecard), and reproducibility guide.
 
+If you script against dxkit's JSON report output, the
+**[2.4.7 scoring migration guide](MIGRATING-TO-2.4.7-SCORING.md)**
+documents the new optional fields and the `grade` → `rating` rename.
+
 ## Reading the output
 
 Most commands produce two artifacts in `.dxkit/reports/`:

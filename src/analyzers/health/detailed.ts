@@ -71,7 +71,12 @@ export function buildHealthDetailed(
 
   return {
     ...report,
-    schemaVersion: '11',
+    // 2.4.7: bumped 11 → 12 for the actionable-scoring fields surfaced
+    // per dimension (rawScore, rawPenalty, methodology, deductions,
+    // capsApplied, topActions) plus the summary.grade → summary.rating
+    // rename + F→E letter unification. See docs/MIGRATING-TO-2.4.7-
+    // SCORING.md for the downstream-consumer migration guide.
+    schemaVersion: '12',
     plans,
     projectedOverallScore: projected,
     projectedGrade,
