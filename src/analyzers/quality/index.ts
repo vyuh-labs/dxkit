@@ -11,7 +11,7 @@ import {
   gatherHygieneMarkers,
   gatherHygieneTopOffenders,
 } from './gather';
-import { scoreQualityFromInput, type QualityScoreInput } from './scoring';
+import { QUALITY_SCORING_SPEC, type QualityScoreInput, evaluateSpec } from '../../scoring';
 import { QualityReport, QualityMetrics } from './types';
 
 export type { QualityReport, QualityMetrics } from './types';
@@ -178,7 +178,7 @@ export async function analyzeQuality(
     topTodoFiles: topOffenders.topTodoFiles,
   };
 
-  metrics.slopScore = scoreQualityFromInput(qualityMetricsToScoreInput(metrics)).score;
+  metrics.slopScore = evaluateSpec(QUALITY_SCORING_SPEC, qualityMetricsToScoreInput(metrics)).score;
 
   const activeLanguages = Object.entries(stack.languages)
     .filter(([, active]) => active)

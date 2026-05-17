@@ -16,9 +16,12 @@ export { evaluateSpec } from './evaluator';
 
 import type { DimensionScoringSpec } from './spec';
 import { SECURITY_SCORING_SPEC } from './dimensions/security';
+import { QUALITY_SCORING_SPEC } from './dimensions/quality';
 
 export { SECURITY_SCORING_SPEC } from './dimensions/security';
 export type { SecurityScoreInput } from './dimensions/security';
+export { QUALITY_SCORING_SPEC } from './dimensions/quality';
+export type { QualityScoreInput } from './dimensions/quality';
 
 /**
  * Central index of all dimension scoring specs. Each per-dimension
@@ -28,4 +31,5 @@ export type { SecurityScoreInput } from './dimensions/security';
  */
 export const SCORING_SPECS: readonly DimensionScoringSpec<unknown>[] = [
   SECURITY_SCORING_SPEC as DimensionScoringSpec<unknown>,
+  QUALITY_SCORING_SPEC as DimensionScoringSpec<unknown>,
 ];

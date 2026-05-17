@@ -15,9 +15,13 @@
  * The canonical formula now lives in `quality/scoring.ts`; both
  * surfaces compute the same number from the same partitioned inputs.
  */
-import { ratingFromScore } from '../../scoring';
+import {
+  QUALITY_SCORING_SPEC,
+  type QualityScoreInput,
+  evaluateSpec,
+  ratingFromScore,
+} from '../../scoring';
 import { DimensionScore, ScoreInput } from '../types';
-import { scoreQualityFromInput, type QualityScoreInput } from './scoring';
 
 /**
  * Build the canonical `QualityScoreInput` from the health-side
@@ -82,7 +86,7 @@ export function toQualityScoreInput(input: ScoreInput): QualityScoreInput {
  * `health/actions.ts` stays symmetric across dimensions.
  */
 export function scoreQualityFromScoreInput(input: ScoreInput): { score: number } {
-  return scoreQualityFromInput(toQualityScoreInput(input));
+  return evaluateSpec(QUALITY_SCORING_SPEC, toQualityScoreInput(input));
 }
 
 /**
@@ -94,7 +98,8 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
   const m = input.metrics;
   const c = input.capabilities;
   const scoreInput = toQualityScoreInput(input);
-  const { score } = scoreQualityFromInput(scoreInput);
+  const result = evaluateSpec(QUALITY_SCORING_SPEC, scoreInput);
+  const score = result.score;
 
   const lintToolFromCache = c.lint?.tool ?? null;
   const lintWarnings = (c.lint?.counts.medium ?? 0) + (c.lint?.counts.low ?? 0);
@@ -112,6 +117,12 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
     score,
     maxScore: 100,
     rating: ratingFromScore(score),
+    rawScore: result.rawScore,
+    rawPenalty: result.rawPenalty,
+    methodology: result.methodology,
+    deductions: result.deductions,
+    capsApplied: result.capsApplied,
+    topActions: result.topActions,
     // Schema v11: `metrics` surfaces only the non-capability signals.
     // Lint counts + tool live in `report.capabilities.lint`; god-file +
     // dead-import stats live in `report.capabilities.structural`.

@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
-  scoreQualityFromInput,
-  QUALITY_ALL_UNMEASURED_CAP,
-  QUALITY_PARTIAL_CAP,
+  CAP_TIERS,
+  QUALITY_SCORING_SPEC,
+  evaluateSpec,
   type QualityScoreInput,
-} from '../src/analyzers/quality/scoring';
+} from '../src/scoring';
+
+const scoreQualityFromInput = (input: QualityScoreInput) =>
+  evaluateSpec(QUALITY_SCORING_SPEC, input);
+const QUALITY_ALL_UNMEASURED_CAP = CAP_TIERS.unmeasured;
+const QUALITY_PARTIAL_CAP = CAP_TIERS['partial-uncertainty'];
 
 /** A QualityScoreInput with every signal at the "no penalty" value
  *  and every measurement available. Score from this baseline is 100.
