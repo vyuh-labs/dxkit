@@ -1,0 +1,78 @@
+name: dxkit baseline refresh
+
+# After every merge to main, regenerate `.dxkit/baselines/main.json`
+# to capture the new "approved" state of the repo. The next PR's
+# guardrail check is gated against this refreshed anchor, so a
+# regression introduced in PR N+1 stands out from the noise of
+# whatever was merged in PR N.
+#
+# The auto-commit carries `[skip ci]` so it doesn't re-trigger this
+# workflow or the guardrails PR-gate.
+
+on:
+  push:
+    branches: [main]
+    # Ignore pushes that only changed the baseline file — those are
+    # this workflow's own commits, and re-running would be a no-op
+    # anyway. Belt-and-braces with [skip ci] below.
+    paths-ignore:
+      - '.dxkit/baselines/**'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # Don't re-run on our own auto-commit (defensive — paths-ignore
+    # above already filters the common case).
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # `persist-credentials: true` (the default) leaves the
+          # token in .git/config so the final `git push` reuses it.
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dxkit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+
+      - name: Recompute baseline
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" baseline create --force
+
+      - name: Commit and push refreshed baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- .dxkit/baselines/; then
+            echo "Baseline unchanged — nothing to commit."
+            exit 0
+          fi
+          git add .dxkit/baselines/
+          git commit -m "chore(baseline): refresh main anchor [skip ci]"
+          git push
