@@ -97,6 +97,24 @@ describe('createBaseline (integration)', () => {
     expect(second.file.analysis.ignoreHash).not.toBe(first.file.analysis.ignoreHash);
   });
 
+  it('records real tool versions in the tools map (D143 closure)', async () => {
+    const result = await createBaseline({ cwd: dir });
+    // No security findings on the bare fixture so the tools map can
+    // be empty; the assertion that matters is "no value is the
+    // literal 'unknown' string sentinel for tools that DID run."
+    // The bare repo gathers no tool envelopes, so any present tool
+    // entry must carry a real version (or the in-process
+    // tls-bypass-registry tag).
+    for (const [tool, version] of Object.entries(result.file.tools)) {
+      expect(version, `${tool} version`).not.toBe('unknown');
+      if (tool === 'tls-bypass-registry') {
+        expect(version).toMatch(/^dxkit-/);
+      }
+    }
+    // toolchainHash must reflect the tools map content
+    expect(result.file.analysis.toolchainHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
   it('picks up stale + large-file findings from the fixture repo', async () => {
     // Commit a stale on-disk artifact and a >500-line source file.
     writeFileSync(join(dir, 'leftover.bak'), 'old\n');
