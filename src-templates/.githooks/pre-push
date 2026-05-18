@@ -1,0 +1,63 @@
+#!/usr/bin/env sh
+#
+# dxkit pre-push hook — full guardrail check against the baseline.
+#
+# Runs the full `vyuh-dxkit guardrail check` (no --changed-only),
+# so every regression introduced since the baseline blocks the push.
+# Slower than pre-commit, but the push boundary is the last point
+# we can stop bad code from leaving the developer's machine.
+#
+# Install:
+#   git config core.hooksPath .githooks
+#
+# Escape hatches:
+#   DXKIT_SKIP_HOOKS=1 git push ...       # one-off bypass
+#   git push --no-verify ...              # standard git bypass
+
+set -e
+
+if [ "${DXKIT_SKIP_HOOKS:-0}" = "1" ]; then
+  echo "[dxkit pre-push] DXKIT_SKIP_HOOKS=1 set — skipping guardrail check."
+  exit 0
+fi
+
+# Delete-only pushes (e.g. `git push origin --delete <branch>`) carry
+# no commits to gate. Git invokes pre-push with stdin lines of the
+# form: <local-ref> <local-sha> <remote-ref> <remote-sha>. A delete
+# has local-sha = 40 zeros. Skip rather than failing the gate on an
+# empty diff.
+all_zero=true
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  if [ "${local_sha}" != "0000000000000000000000000000000000000000" ]; then
+    all_zero=false
+    break
+  fi
+done
+if [ "${all_zero}" = "true" ]; then
+  echo "[dxkit pre-push] Delete-only push detected — skipping guardrail check."
+  exit 0
+fi
+
+# Resolve the dxkit binary: prefer the project-local install, fall
+# back to a global one. Match the pre-commit hook's resolution order.
+if [ -x "./node_modules/.bin/vyuh-dxkit" ]; then
+  DXKIT="./node_modules/.bin/vyuh-dxkit"
+elif command -v vyuh-dxkit >/dev/null 2>&1; then
+  DXKIT="vyuh-dxkit"
+else
+  echo "[dxkit pre-push] vyuh-dxkit not found on PATH or in ./node_modules/.bin." >&2
+  echo "  Install it with: npm install --save-dev @vyuhlabs/dxkit" >&2
+  echo "  Or skip this hook for this push: DXKIT_SKIP_HOOKS=1 git push ..." >&2
+  exit 1
+fi
+
+BASELINE_NAME="${DXKIT_BASELINE_NAME:-main}"
+BASELINE_FILE=".dxkit/baselines/${BASELINE_NAME}.json"
+
+if [ ! -f "${BASELINE_FILE}" ]; then
+  echo "[dxkit pre-push] No baseline at ${BASELINE_FILE} — not blocking."
+  echo "  Run \`${DXKIT} baseline create\` once to start gating pushes."
+  exit 0
+fi
+
+"${DXKIT}" guardrail check --name "${BASELINE_NAME}"
