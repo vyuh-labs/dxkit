@@ -207,10 +207,20 @@ function resolveToolVersionUncached(name: string, cwd: string): string {
     const candidate = parts.slice(0, i).join('-');
     const def = TOOL_DEFS[candidate];
     if (!def) continue;
-    const status = findTool(def, cwd);
-    if (status.version) return status.version;
-    // Tool resolves but version probe returned empty — distinct
-    // from "tool name doesn't match any TOOL_DEFS entry."
+    // Probe the version a few times — under heavy CPU load (parallel
+    // test pools, concurrent scanner runs) the underlying `execSync`
+    // subprocess can occasionally return before its `--version`
+    // output streams back, leaving us with a bare `'present'` even
+    // though the tool itself is fully functional. The per-process
+    // VERSION_CACHE then locks that empty result for the lifetime of
+    // the run, which is what we want for byte-stable toolchainHashes
+    // but is wrong when the empty result was a transient artifact.
+    // Three attempts absorb the hiccup without slowing the common
+    // path (first probe succeeds → exit immediately).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const status = findTool(def, cwd);
+      if (status.version) return status.version;
+    }
     return 'present';
   }
   return 'unknown';
