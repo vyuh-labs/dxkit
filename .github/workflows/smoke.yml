@@ -1,0 +1,207 @@
+name: smoke tests
+
+# End-to-end packaging + devcontainer smoke tests. These run on a
+# fresh CI runner that has none of the host-local state our `npm
+# pack --dry-run` step in ci.yml can't see. Catches:
+#   - Files that are committed to the repo but missing from
+#     `package.json` `files` (would ship as if-broken to npm consumers).
+#   - Templates that copy-templates.js forgot to ship to `templates/`.
+#   - `dxkit init --full` writing files the post-install hook expects.
+#   - The baseline + guardrail flow actually surfacing a real-world
+#     regression on the dxkit repo itself.
+#
+# The devcontainer build runs only when the devcontainer template
+# changes OR on the release branches — it pulls a 2GB+ universal
+# image and takes 10-15 minutes, too heavy for every PR.
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  pack-smoke:
+    name: npm pack + init --full + baseline + guardrail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Build npm tarball
+        id: pack
+        run: |
+          tarball=$(npm pack --silent)
+          echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
+          echo "Built tarball: ${tarball}"
+
+      - name: Install tarball into a fresh consumer repo
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dxkit-smoke
+          cd /tmp/dxkit-smoke
+          git init -q -b main
+          git config user.email "smoke@example.com"
+          git config user.name "smoke"
+          # Seed a small TypeScript project so the analyzers have
+          # something to scan. dxkit's pre-built scanners detect a
+          # node stack from `package.json`.
+          cat > package.json <<'EOF'
+          {
+            "name": "dxkit-smoke",
+            "version": "0.0.0",
+            "private": true
+          }
+          EOF
+          mkdir -p src
+          cat > src/index.ts <<'EOF'
+          export function add(a: number, b: number): number {
+            return a + b;
+          }
+          EOF
+          git add . && git commit -q -m "init"
+          npm install --save-dev "${{ steps.pack.outputs.tarball }}"
+
+      - name: Run `vyuh-dxkit init --full --yes`
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          ./node_modules/.bin/vyuh-dxkit init --full --yes
+
+      - name: Assert ship templates landed
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          for f in \
+            .githooks/pre-commit \
+            .githooks/pre-push \
+            .devcontainer/devcontainer.json \
+            .devcontainer/post-create.sh \
+            .devcontainer/install-agent-clis.sh \
+            .github/workflows/dxkit-guardrails.yml \
+            .github/workflows/dxkit-baseline-refresh.yml
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing expected file after init --full: $f"
+              exit 1
+            fi
+          done
+          # Verify executables (POSIX bit set on the hook scripts).
+          for f in .githooks/pre-commit .githooks/pre-push .devcontainer/post-create.sh .devcontainer/install-agent-clis.sh; do
+            if [ ! -x "$f" ]; then
+              echo "::error::Expected executable: $f"
+              exit 1
+            fi
+          done
+          # The baseline-refresh workflow must have its branch placeholder
+          # substituted — the consumer repo defaults to `main`.
+          if ! grep -q 'branches: \[main\]' .github/workflows/dxkit-baseline-refresh.yml; then
+            echo "::error::baseline-refresh workflow did not substitute default branch"
+            cat .github/workflows/dxkit-baseline-refresh.yml
+            exit 1
+          fi
+
+      - name: Capture baseline
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          ./node_modules/.bin/vyuh-dxkit baseline create
+          test -f .dxkit/baselines/main.json
+
+      - name: Inject a regression + assert guardrail blocks
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          # New oversized file in a primary-source location — trips
+          # the test-gap producer (no test file alongside) and the
+          # large-file producer (if we make it > 500 lines).
+          {
+            echo '// dxkit-smoke synthetic regression'
+            for i in $(seq 1 600); do
+              echo "export const x${i} = ${i};"
+            done
+          } > src/regression.ts
+          # Run guardrail check; expect non-zero exit.
+          if ./node_modules/.bin/vyuh-dxkit guardrail check; then
+            echo "::error::guardrail check should have blocked a synthetic regression but exited 0"
+            exit 1
+          fi
+          echo "Guardrail blocked the regression as expected."
+
+      - name: Restore + assert guardrail passes
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          rm src/regression.ts
+          if ! ./node_modules/.bin/vyuh-dxkit guardrail check; then
+            echo "::error::guardrail check should have passed on the restored baseline state but exited non-zero"
+            exit 1
+          fi
+          echo "Guardrail passed on clean state as expected."
+
+  devcontainer-smoke:
+    name: devcontainer build + post-create
+    runs-on: ubuntu-latest
+    # Heavy job — universal image pull is ~2GB. Only run on
+    # devcontainer template changes or release-branch pushes.
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'smoke:devcontainer')
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Build npm tarball
+        id: pack
+        run: |
+          tarball=$(npm pack --silent)
+          echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
+
+      - name: Stage a consumer repo with --with-devcontainer
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dxkit-dc-smoke
+          cd /tmp/dxkit-dc-smoke
+          git init -q -b main
+          echo '{"name":"dc-smoke","private":true}' > package.json
+          npm install --save-dev "${{ steps.pack.outputs.tarball }}"
+          ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --yes
+          test -f .devcontainer/devcontainer.json
+
+      - name: Build + run devcontainer, exercise post-create
+        uses: devcontainers/ci@v0.3
+        with:
+          workspaceFolder: /tmp/dxkit-dc-smoke
+          push: never
+          # Inside the container: verify the AI-agent CLIs and the
+          # scanner toolchain installed successfully. Skip the CLI
+          # check when the env opt-outs are set so a future user can
+          # configure either CLI off without failing this job.
+          runCmd: |
+            set -euo pipefail
+            echo "==> Verifying scanner toolchain"
+            ./node_modules/.bin/vyuh-dxkit tools list
+            echo "==> Verifying agent CLIs"
+            command -v claude || echo "WARN: claude CLI not on PATH"
+            command -v codex  || echo "WARN: codex  CLI not on PATH"
+            echo "==> Smoke: baseline create inside container"
+            ./node_modules/.bin/vyuh-dxkit baseline create
+            test -f .dxkit/baselines/main.json
