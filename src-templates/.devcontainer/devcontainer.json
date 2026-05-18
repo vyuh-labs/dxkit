@@ -1,0 +1,81 @@
+{
+  "name": "dxkit dev environment",
+
+  // Universal base + composable features. Each language pack dxkit
+  // supports has a corresponding feature here so the same image works
+  // for monorepos that span multiple ecosystems. Tune by removing
+  // features your project does not need — smaller image, faster
+  // Codespaces prebuild.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22",
+      "nvmVersion": "latest"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12",
+      "installTools": true
+    },
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.21"
+    },
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "8.0"
+    },
+    "ghcr.io/devcontainers/features/ruby:1": {
+      "version": "3.3"
+    },
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "17",
+      "installGradle": true
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "stable",
+      "profile": "default"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  // Reproducibility note: language toolchains are pinned in the
+  // features block above. Scanner tools (gitleaks, semgrep, cloc,
+  // jscpd, ruff, osv-scanner, ...) are pinned in dxkit's TOOL_DEFS
+  // registry and installed by `vyuh-dxkit tools install --yes` in
+  // post-create.sh. Bumping a scanner version is a dxkit upgrade,
+  // not a Dockerfile edit.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // Run on every container start (incl. Codespaces resume). Keeps
+  // `dxkit tools list` accurate if a tool was uninstalled or the
+  // registry pinned-versions advanced since last use.
+  "postStartCommand": "command -v vyuh-dxkit >/dev/null 2>&1 && vyuh-dxkit tools list || true",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "golang.go",
+        "rust-lang.rust-analyzer",
+        "ms-dotnettools.csharp",
+        "redhat.java",
+        "fwcd.kotlin",
+        "rebornix.ruby",
+        "github.vscode-github-actions",
+        "github.vscode-pull-request-github"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "files.eol": "\n"
+      }
+    }
+  },
+
+  "remoteUser": "vscode",
+
+  // Forward dxkit's HTTP analyzer dashboard if you run it locally.
+  "forwardPorts": []
+}
