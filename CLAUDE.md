@@ -276,8 +276,10 @@ silently opting out of that contract.
 Four rules in `scripts/check-architecture.sh` + `test/`:
 
 1. **No `createHash` for finding identity outside the canonical
-   files.** Allowed in `src/analyzers/tools/fingerprint.ts` and
-   `src/baseline/finding-identity.ts`. Annotate
+   files.** Allowed in `src/analyzers/tools/fingerprint.ts`,
+   `src/baseline/finding-identity.ts`, and
+   `src/baseline/content-hash.ts` (content-hash fingerprints for
+   the drift-tolerant matcher fallback). Annotate
    `// fingerprint-helper-ok` for justified non-identity hashing
    (today: zero needed inside `src/analyzers/` and `src/baseline/`).
 2. **No inline `Math.floor(x / N) * N`-style line-bucketing**

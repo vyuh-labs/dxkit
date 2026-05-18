@@ -57,6 +57,13 @@ const CONFIDENCE_GIT_EXACT = 0.95;
 const CONFIDENCE_GIT_FUZZ = 0.88;
 /** Range of the line-fuzz lookup window. */
 const LINE_FUZZ_RANGE = 2;
+/** Confidence assigned to a content-hash pair. Below git-line-fuzz
+ *  so the policy's per-severity confidence thresholds naturally
+ *  distinguish "matched via git diff" from "matched via context
+ *  bytes alone." For low-severity findings (default threshold 0.90),
+ *  a content-hash pair demotes to `'uncertain'`; for critical
+ *  findings (threshold 0.75), it passes through cleanly. */
+const CONFIDENCE_CONTENT_HASH = 0.8;
 
 /**
  * Per-finding identity plus the locator info needed to query git.
@@ -73,6 +80,14 @@ export interface LocatedIdentity {
   readonly file?: string;
   readonly line?: number;
   readonly rule?: string;
+  /** Optional content-hash for the finding's surrounding context.
+   *  Producer (Phase 3 baseline-create) computes via
+   *  `computeContentHash` and stamps on the entry. When present on
+   *  both prior and current sides for a `(canonical-rule, hash)`
+   *  pair, the matcher's content-hash pass uses it as a fallback
+   *  after the git-aware location pass exhausts. Absent when the
+   *  producer can't read the file (binary, deleted, missing). */
+  readonly contentHash?: string;
 }
 
 export interface GitAwareMatchOptions {
@@ -183,7 +198,7 @@ function walkHunks(diff: string, baseLine: number): number | null {
 }
 
 /**
- * Composite matcher. Two passes:
+ * Composite matcher. Three passes, decreasing in match strength:
  *
  *   1. Location-aware pairing (when git is available): for each
  *      line-anchored prior finding, map its base line to the
@@ -192,8 +207,18 @@ function walkHunks(diff: string, baseLine: number): number | null {
  *      effective path is the prior path translated through the
  *      rename map; status is `'relocated'` when the path changed,
  *      `'persisted'` when it didn't.
- *      Lookups try the exact mapped line first, then a ±2 fuzz
- *      window. Confidence is reported per match.
+ *      Lookups try the exact mapped line first (confidence 0.95),
+ *      then a ±2 fuzz window (confidence 0.88).
+ *
+ *   1.5. Content-hash pairing (when both sides carry content
+ *      hashes): match prior+current by `(canonicalRule,
+ *      contentHash)`. Runs regardless of git reachability — the
+ *      hash is file-content-derived and doesn't need git. Catches
+ *      cases git can't (shallow clone, force-pushed baseline) and
+ *      cases git misses (line-bucket boundary shifts where the
+ *      surrounding context survived intact). Confidence 0.80 — the
+ *      policy's per-severity thresholds naturally tune whether to
+ *      trust this layer.
  *
  *   2. Multiset exact-identity diff over whatever remains. Catches:
  *        - findings without a file-line locator (dep-vuln, license,
@@ -208,7 +233,8 @@ function walkHunks(diff: string, baseLine: number): number | null {
  * spurious "persisted" matches when two findings of the same rule
  * in the same file naturally shift into each other's buckets. Pass 1
  * pairs them by real diff position, which is what a developer
- * intuitively expects.
+ * intuitively expects. Pass 1.5 catches the cases where pass 1 isn't
+ * available; pass 2 handles content-independent identity kinds.
  */
 export function gitAwareMatch(
   prior: ReadonlyArray<LocatedIdentity>,
@@ -309,6 +335,55 @@ export function gitAwareMatch(
     }
   }
 
+  // Pass 1.5 — content-hash fallback. Pairs prior+current findings
+  // by `(canonicalRule, contentHash)` when both sides carry a
+  // content hash (stamped by the producer). Runs regardless of git
+  // reachability — content hashes are file-content-derived and
+  // don't need git to compare. Confidence is below the git-line
+  // tier so the policy classifier's per-severity thresholds tune
+  // whether to trust the match.
+  {
+    const currentByContent = new Map<string, LocatedIdentity[]>();
+    for (const c of current) {
+      if (currentMatched.has(c)) continue;
+      if (!c.contentHash || !c.rule) continue;
+      const key = contentKey(c.rule, c.contentHash);
+      const bucket = currentByContent.get(key);
+      if (bucket) bucket.push(c);
+      else currentByContent.set(key, [c]);
+    }
+    const takeContent = (key: string): LocatedIdentity | undefined => {
+      const bucket = currentByContent.get(key);
+      if (!bucket || bucket.length === 0) return undefined;
+      const head = bucket.shift();
+      if (bucket.length === 0) currentByContent.delete(key);
+      return head;
+    };
+    for (const p of prior) {
+      if (priorMatched.has(p)) continue;
+      if (!p.contentHash || !p.rule) continue;
+      const candidate = takeContent(contentKey(p.rule, p.contentHash));
+      if (!candidate) continue;
+      priorMatched.add(p);
+      currentMatched.add(candidate);
+      const pathChanged = !!(p.file && candidate.file && p.file !== candidate.file);
+      pairs.push({
+        priorId: p.id,
+        currentId: candidate.id,
+        status: pathChanged ? 'relocated' : 'persisted',
+        confidence: CONFIDENCE_CONTENT_HASH,
+        reasons: [
+          {
+            code: 'content-hash',
+            detail: pathChanged
+              ? `content-hash match across rename: ${p.file ?? '?'} → ${candidate.file ?? '?'}`
+              : 'content-hash match (surrounding code byte-identical after whitespace normalization)',
+          },
+        ],
+      });
+    }
+  }
+
   // Pass 2 — multiset exact-id diff over leftovers.
   const priorRemaining: FindingId[] = [];
   const currentRemaining: FindingId[] = [];
@@ -349,6 +424,10 @@ export function gitAwareMatch(
 
 function locationKey(file: string, rule: string, line: number): string {
   return `${file}\0${rule}\0${line}`;
+}
+
+function contentKey(rule: string, contentHash: string): string {
+  return `content\0${rule}\0${contentHash}`;
 }
 
 /**

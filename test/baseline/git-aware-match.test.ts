@@ -288,6 +288,114 @@ describe('gitAwareMatch', () => {
     expect(result.degradedReason).toMatch(/not reachable/);
   });
 
+  it('pairs via content-hash when both sides carry one and locations differ', () => {
+    // Identity bytes differ (different file path → different location
+    // fingerprint), but the producer stamped the same content hash
+    // on both sides. The matcher's content-hash pass should pair
+    // them with confidence 0.80 and the content-hash reason.
+    writeFileSync(join(dir, 'a.ts'), lines('one'));
+    const sha = commit(dir, 'initial');
+    const sharedHash = 'abc123def456cafe';
+    const prior: LocatedIdentity[] = [
+      { id: 'prior-id', file: 'src/old.ts', line: 10, rule: 'demo-rule', contentHash: sharedHash },
+    ];
+    const current: LocatedIdentity[] = [
+      {
+        id: 'current-id',
+        file: 'src/new.ts',
+        line: 99,
+        rule: 'demo-rule',
+        contentHash: sharedHash,
+      },
+    ];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: sha });
+    expect(result.removed).toEqual([]);
+    expect(result.added).toEqual([]);
+    expect(result.pairs).toHaveLength(1);
+    const [pair] = result.pairs;
+    expect(pair.confidence).toBe(0.8);
+    expect(pair.status).toBe('relocated'); // different file path
+    expect(pair.reasons.some((r) => r.code === 'content-hash')).toBe(true);
+  });
+
+  it('content-hash pass does not pair across different rules', () => {
+    writeFileSync(join(dir, 'a.ts'), lines('one'));
+    const sha = commit(dir, 'initial');
+    const sharedHash = 'abc123def456cafe';
+    const prior: LocatedIdentity[] = [
+      { id: 'prior-id', file: 'src/a.ts', line: 10, rule: 'rule-A', contentHash: sharedHash },
+    ];
+    const current: LocatedIdentity[] = [
+      { id: 'current-id', file: 'src/a.ts', line: 99, rule: 'rule-B', contentHash: sharedHash },
+    ];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: sha });
+    expect(result.persisted).toEqual([]);
+    expect(new Set(result.removed)).toEqual(new Set(['prior-id']));
+    expect(new Set(result.added)).toEqual(new Set(['current-id']));
+  });
+
+  it('content-hash pass reports persisted (not relocated) when paths match', () => {
+    writeFileSync(join(dir, 'a.ts'), lines('one'));
+    const sha = commit(dir, 'initial');
+    const sharedHash = 'abc123def456cafe';
+    const prior: LocatedIdentity[] = [
+      { id: 'prior-id', file: 'src/a.ts', line: 10, rule: 'demo-rule', contentHash: sharedHash },
+    ];
+    const current: LocatedIdentity[] = [
+      { id: 'current-id', file: 'src/a.ts', line: 99, rule: 'demo-rule', contentHash: sharedHash },
+    ];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: sha });
+    const [pair] = result.pairs;
+    expect(pair.status).toBe('persisted');
+  });
+
+  it('content-hash pass works even when git is unavailable (shallow-clone fallback)', () => {
+    // Pass 1 (git-line) requires reachable baseSha — pass 1.5
+    // (content-hash) doesn't. The content hashes are stamped at
+    // producer time; the matcher just compares them.
+    const sharedHash = 'feedfaceabad1dea';
+    const prior: LocatedIdentity[] = [
+      { id: 'prior-id', file: 'src/a.ts', line: 5, rule: 'demo-rule', contentHash: sharedHash },
+    ];
+    const current: LocatedIdentity[] = [
+      { id: 'current-id', file: 'src/a.ts', line: 8, rule: 'demo-rule', contentHash: sharedHash },
+    ];
+    const result = gitAwareMatch(prior, current, {
+      cwd: dir,
+      baseSha: '0000000000000000000000000000000000000000', // unreachable
+    });
+    expect(result.gitAware).toBe(false);
+    expect(result.degradedReason).toBeDefined();
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0].reasons[0].code).toBe('content-hash');
+    expect(result.pairs[0].status).toBe('persisted');
+  });
+
+  it('content-hash pass runs after git-line pass — git-line wins when both apply', () => {
+    // Same file, line shift that git can map. Both pass-1 (git-line)
+    // and pass-1.5 (content-hash) could pair — pass-1 runs first, so
+    // the result should be a git-line match (confidence 0.95), not
+    // a content-hash match (0.80).
+    const baseContent = Array.from({ length: 30 }, (_, i) => `base-${i + 1}`);
+    writeFileSync(join(dir, 'a.ts'), baseContent.join('\n') + '\n');
+    const base = commit(dir, 'initial');
+    const headContent = [...Array.from({ length: 10 }, (_, i) => `top-${i + 1}`), ...baseContent];
+    writeFileSync(join(dir, 'a.ts'), headContent.join('\n') + '\n');
+    const head = commit(dir, 'prepend 10 lines');
+
+    const shared = 'aaaabbbbccccdddd';
+    const prior: LocatedIdentity[] = [
+      { id: 'p-id', file: 'a.ts', line: 15, rule: 'demo-rule', contentHash: shared },
+    ];
+    const current: LocatedIdentity[] = [
+      { id: 'c-id', file: 'a.ts', line: 25, rule: 'demo-rule', contentHash: shared },
+    ];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0].confidence).toBe(0.95); // git-line-exact, not content-hash
+    expect(result.pairs[0].reasons[0].code).toBe('git-line-exact');
+  });
+
   it('exposes git-aware match reasons + confidence on pair entries', () => {
     writeFileSync(join(dir, 'a.ts'), lines('alpha', 'beta', 'gamma'));
     const base = commit(dir, 'initial');
