@@ -91,7 +91,11 @@ export type IdentityInput =
   | CoverageGapIdentityInput
   | TestGapIdentityInput
   | HygieneOffenderIdentityInput
-  | LicenseIdentityInput;
+  | LicenseIdentityInput
+  | TestFileDegradationIdentityInput
+  | GodFileIdentityInput
+  | StaleFileIdentityInput
+  | LargeFileIdentityInput;
 
 /** gitleaks + private-key files + similar secret detectors. */
 export interface SecretIdentityInput {
@@ -222,6 +226,68 @@ export interface LicenseIdentityInput {
 }
 
 /**
+ * A test file flagged by the test-gaps analyzer as degraded — present
+ * but not actively exercising the system under test. Identity carries
+ * the degradation status because a file moving between states (an
+ * empty stub becoming a schema-only test, or a commented-out test
+ * being uncommented into an empty body) is a real change worth a
+ * fresh guardrail signal.
+ */
+export type TestFileDegradationStatus = 'commented-out' | 'empty' | 'schema-only';
+
+export interface TestFileDegradationIdentityInput {
+  readonly kind: 'test-file-degradation';
+  readonly file: string;
+  readonly status: TestFileDegradationStatus;
+}
+
+/**
+ * A source file flagged by the quality analyzer's complexity signals
+ * as a "god file" — a top offender for function count, function
+ * length, or graphify-derived complexity. Identity is per-file: the
+ * fact that this file IS a top offender is the durable signal. When
+ * a different file becomes the top offender, identity changes
+ * appropriately.
+ */
+export interface GodFileIdentityInput {
+  readonly kind: 'god-file';
+  readonly file: string;
+}
+
+/**
+ * A stale on-disk artifact tracked in git — `.swp`, `.bak`, `.orig`,
+ * `.tmp`, and similar editor / merge / backup leftovers. Identity
+ * pairs the path with the offending suffix so a file moved between
+ * directories registers as a fresh finding (the move ought to be
+ * noticed) but a single file's identity stays stable across runs.
+ */
+export interface StaleFileIdentityInput {
+  readonly kind: 'stale-file';
+  readonly file: string;
+  /** Lower-case suffix without the leading dot (`'swp'`, `'bak'`,
+   *  `'orig'`, `'tmp'`). The producer derives this from the file
+   *  extension; storing it in identity makes the reason for the
+   *  flag inspectable from the baseline alone. */
+  readonly suffix: string;
+}
+
+/**
+ * A source file flagged by the health analyzer as over the
+ * largest-file threshold (today: 500 lines). Identity is per-file —
+ * the fact that this specific file crossed the threshold is the
+ * durable signal. Crossing back under the threshold removes the
+ * identity; crossing back over re-adds it.
+ *
+ * Note: aggregate "the largest file grew by N lines" reporting is a
+ * separate concern handled by `--fail-on-largest-file-size`; this
+ * identity tracks the discrete "X is now too large" finding.
+ */
+export interface LargeFileIdentityInput {
+  readonly kind: 'large-file';
+  readonly file: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -254,7 +320,16 @@ export type BaselineEntry =
     }
   | { id: FindingId; kind: 'test-gap'; file: string; risk: TestGapRisk }
   | { id: FindingId; kind: 'hygiene'; file: string; line: number; marker: HygieneMarker }
-  | { id: FindingId; kind: 'license'; package: string; version: string; licenseType: string };
+  | { id: FindingId; kind: 'license'; package: string; version: string; licenseType: string }
+  | {
+      id: FindingId;
+      kind: 'test-file-degradation';
+      file: string;
+      status: TestFileDegradationStatus;
+    }
+  | { id: FindingId; kind: 'god-file'; file: string }
+  | { id: FindingId; kind: 'stale-file'; file: string; suffix: string }
+  | { id: FindingId; kind: 'large-file'; file: string };
 
 /**
  * One pairing decision from the matcher. Carries enough context for
