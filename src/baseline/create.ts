@@ -12,13 +12,24 @@
  * `policy.ts`. The two are connected by the file format defined in
  * `baseline-file.ts`.
  *
- * Today's producer coverage:
+ * Today's producer coverage (11 of 14 identity kinds):
  *   - secret / code / config / dep-vuln (security aggregator)
+ *   - secret-hmac (gitleaks raw-secret pass)
+ *   - duplication (jscpd topClones)
+ *   - stale-file (hygiene gather)
+ *   - large-file (canonical large-file threshold)
+ *   - license (licenses capability envelope)
+ *   - test-gap / test-file-degradation (analyzeTestGaps report)
  *
- * Remaining kinds (duplication, coverage-gap, test-gap, hygiene,
- * license, test-file-degradation, god-file, stale-file, large-file,
- * secret-hmac) land alongside their analyzer wiring in a follow-up
- * commit; the orchestrator's shape stays the same.
+ * Three kinds without producers yet:
+ *   - god-file — `QualityMetrics.topGodFiles` is forward-declared
+ *     but no analyzer populates it today; will light up when
+ *     graphify surfaces per-file complexity offenders.
+ *   - hygiene — per-occurrence positions need a gather extension
+ *     (`gatherHygieneMarkers` returns counts, not positions);
+ *     pending in a follow-up.
+ *   - coverage-gap — needs symbol-aware or line-range coverage
+ *     output from the coverage tool; pending.
  */
 
 import { execFileSync } from 'child_process';
@@ -27,6 +38,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { gatherAnalysisResultBody } from '../analyzers/health';
 import { readOrBuildAnalysisResult } from '../analyzers/cache';
+import { gatherHygieneMarkers } from '../analyzers/quality/gather';
+import { analyzeTestGaps } from '../analyzers/tests';
 import { gatherGitleaksResult } from '../analyzers/tools/gitleaks';
 import type { GitleaksRawSecret } from '../analyzers/tools/gitleaks';
 import { VERSION as DXKIT_VERSION } from '../constants';
@@ -38,8 +51,12 @@ import {
 } from './baseline-file';
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
 import { DEFAULT_BROWNFIELD_POLICY } from './policy';
-import { securityAggregateToBaselineEntries } from './producers/security';
+import { largeFilesToBaselineEntries } from './producers/health';
+import { licensesToBaselineEntries } from './producers/licenses';
+import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './producers/quality';
 import { rawSecretsToBaselineEntries } from './producers/secret-hmac';
+import { securityAggregateToBaselineEntries } from './producers/security';
+import { testGapsToBaselineEntries } from './producers/tests';
 import { resolveSalt } from './salt';
 import type { BaselineEntry } from './types';
 
@@ -176,11 +193,20 @@ export async function createBaseline(
   // it can't).
   const { mode: saltMode, salt } = resolveSalt(cwd);
 
-  // Producers. Today's set covers the security aggregator's four
-  // categories plus secret-HMAC (content-keyed companion to the
-  // location-keyed `secret` entries). Remaining kinds land in
-  // follow-up commits; once the producer registry exists every
-  // producer dispatches through it instead of being named here.
+  // Producers. Today's set covers security (secret/code/config/
+  // dep-vuln), secret-HMAC, duplication, stale-file, large-file,
+  // license, test-gap, and test-file-degradation. Three identity
+  // kinds (god-file, hygiene per-occurrence, coverage-gap) are
+  // declared in the union but have no analyzer source yet and will
+  // light up alongside the upstream gathers. Once the producer
+  // registry exists (CLAUDE.md Rule 10), every producer dispatches
+  // through it instead of being named here.
+  const testGapsReport = await analyzeTestGaps(cwd, { verbose: !!options.verbose });
+  const hygiene = gatherHygieneMarkers(cwd);
+  const gitleaksOutcome = gatherGitleaksResult(cwd);
+  const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
+    gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
+
   const findings: BaselineEntry[] = [];
   findings.push(
     ...securityAggregateToBaselineEntries(aggregate, {
@@ -188,10 +214,12 @@ export async function createBaseline(
       commitSha: repoState.commitSha || undefined,
     }),
   );
-  const gitleaksOutcome = gatherGitleaksResult(cwd);
-  const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
-    gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
   findings.push(...rawSecretsToBaselineEntries({ rawSecrets, salt }));
+  findings.push(...duplicationToBaselineEntries(analysisResult.capabilities.duplication));
+  findings.push(...staleFilesToBaselineEntries(hygiene.staleFiles));
+  findings.push(...largeFilesToBaselineEntries(analysisResult.metrics));
+  findings.push(...licensesToBaselineEntries(analysisResult.capabilities.licenses));
+  findings.push(...testGapsToBaselineEntries(testGapsReport));
 
   const toolNames = new Set<string>();
   if (aggregate.provenance.secrets.tool) toolNames.add(aggregate.provenance.secrets.tool);
