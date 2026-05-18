@@ -129,6 +129,28 @@ describe('runGuardrailCheck (integration)', () => {
       await expect(runGuardrailCheck({ cwd: dir, policyPath })).rejects.toThrow(/not valid JSON/);
     }, 60_000);
 
+    it('auto-discovers .dxkit/policy.json when no --policy flag is passed', async () => {
+      await createBaseline({ cwd: dir });
+      writeFileSync(join(dir, 'leftover.bak'), 'x\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'add bak'], { cwd: dir });
+
+      // Permissive policy at the conventional location — no flag.
+      const dxkitDir = join(dir, '.dxkit');
+      // The .dxkit/ dir already exists (baseline was created above).
+      writeFileSync(
+        join(dxkitDir, 'policy.json'),
+        JSON.stringify({ block: [], warn: ['added'], blockRules: {} }, null, 2),
+      );
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      expect(result.policy.block).toEqual([]);
+      expect(result.blocks).toBe(false);
+      const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
+      expect(addedPairs.length).toBeGreaterThan(0);
+      for (const p of addedPairs) expect(p.classification.blocks).toBe(false);
+    }, 60_000);
+
     it('permissive --policy override unblocks every `added` finding', async () => {
       await createBaseline({ cwd: dir });
       writeFileSync(join(dir, 'leftover.bak'), 'x\n');
