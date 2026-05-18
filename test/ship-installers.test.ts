@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import {
   installHooks,
   installDevcontainer,
   installCiGuardrails,
   installCiBaselineRefresh,
+  detectDefaultBranch,
 } from '../src/ship-installers';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -209,6 +211,55 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     expect(fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-guardrails.yml'), 'utf8')).toBe(
       '# previous version',
     );
+  });
+
+  it('substitutes the consumer default branch into baseline-refresh', () => {
+    execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: tmp });
+
+    const result = installCiBaselineRefresh(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
+
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-baseline-refresh.yml'),
+      'utf8',
+    );
+    expect(content).toContain('branches: [trunk]');
+    expect(content).not.toContain('__DXKIT_DEFAULT_BRANCH__');
+    expect(result.notes.some((n) => n.includes("'trunk' branch"))).toBe(true);
+  });
+
+  it('falls back to main when default branch cannot be detected', () => {
+    // No `git init` in tmp — detection should fall through every probe
+    // to the 'main' default.
+    const result = installCiBaselineRefresh(tmp);
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-baseline-refresh.yml'),
+      'utf8',
+    );
+    expect(content).toContain('branches: [main]');
+    // Note is only emitted when the detected branch isn't 'main' — quiet path.
+    expect(result.notes.every((n) => !n.includes("'main' branch"))).toBe(true);
+  });
+
+  it('detectDefaultBranch prefers origin HEAD when available', () => {
+    // Build a tiny remote + clone so origin/HEAD is set.
+    const upstream = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-upstream-'));
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'release'], { cwd: upstream });
+    const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-clone-'));
+    execFileSync('git', ['init', '-q', '-b', 'release'], { cwd: clone });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: clone });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: clone });
+    fs.writeFileSync(path.join(clone, 'README.md'), 'x');
+    execFileSync('git', ['add', '.'], { cwd: clone });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: clone });
+    execFileSync('git', ['remote', 'add', 'origin', upstream], { cwd: clone });
+    execFileSync('git', ['push', '-q', 'origin', 'release'], { cwd: clone });
+    execFileSync('git', ['remote', 'set-head', 'origin', 'release'], { cwd: clone });
+
+    expect(detectDefaultBranch(clone)).toBe('release');
+
+    fs.rmSync(upstream, { recursive: true, force: true });
+    fs.rmSync(clone, { recursive: true, force: true });
   });
 
   it('force overrides existing workflow', () => {
