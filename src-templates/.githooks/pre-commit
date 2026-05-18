@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+#
+# dxkit pre-commit hook — fast guardrail check against the baseline.
+#
+# Runs `vyuh-dxkit guardrail check --changed-only` so only findings
+# overlapping lines you just changed can block the commit. The full
+# guardrail (without --changed-only) runs in the pre-push hook and
+# in the CI PR-gate workflow; this one prioritises feedback speed.
+#
+# Install:
+#   git config core.hooksPath .githooks
+#
+# Escape hatches:
+#   DXKIT_SKIP_HOOKS=1 git commit ...     # one-off bypass
+#   git commit --no-verify ...            # standard git bypass
+#
+# First-time setup: this hook does NOT block when no baseline exists
+# yet. Run `vyuh-dxkit baseline create` once to capture today's state,
+# then commits start being gated against it.
+
+set -e
+
+if [ "${DXKIT_SKIP_HOOKS:-0}" = "1" ]; then
+  echo "[dxkit pre-commit] DXKIT_SKIP_HOOKS=1 set — skipping guardrail check."
+  exit 0
+fi
+
+# Resolve the dxkit binary: prefer the project-local install, fall
+# back to a global one. We deliberately do NOT shell out to `npx`
+# here — npx may try to fetch from the registry, which makes the
+# hook fail offline and slow down every commit.
+if [ -x "./node_modules/.bin/vyuh-dxkit" ]; then
+  DXKIT="./node_modules/.bin/vyuh-dxkit"
+elif command -v vyuh-dxkit >/dev/null 2>&1; then
+  DXKIT="vyuh-dxkit"
+else
+  echo "[dxkit pre-commit] vyuh-dxkit not found on PATH or in ./node_modules/.bin." >&2
+  echo "  Install it with: npm install --save-dev @vyuhlabs/dxkit" >&2
+  echo "  Or skip this hook for this commit: DXKIT_SKIP_HOOKS=1 git commit ..." >&2
+  exit 1
+fi
+
+BASELINE_NAME="${DXKIT_BASELINE_NAME:-main}"
+BASELINE_FILE=".dxkit/baselines/${BASELINE_NAME}.json"
+
+if [ ! -f "${BASELINE_FILE}" ]; then
+  echo "[dxkit pre-commit] No baseline at ${BASELINE_FILE} — not blocking."
+  echo "  Run \`${DXKIT} baseline create\` once to start gating commits."
+  exit 0
+fi
+
+# `--changed-only` restricts blocking to findings whose anchor line
+# overlaps the diff between the baseline's anchor commit and HEAD.
+# Pre-commit is fast-mode by design; the pre-push hook runs full.
+"${DXKIT}" guardrail check --changed-only --name "${BASELINE_NAME}"
