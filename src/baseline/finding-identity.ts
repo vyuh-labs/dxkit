@@ -18,6 +18,11 @@ import {
   computeFingerprint,
   lineWindowFor,
 } from '../analyzers/tools/fingerprint';
+// Note: `computeSecretHmac` is the producer-side primitive that turns
+// a raw secret + salt into the HMAC string stored in
+// `SecretHmacIdentityInput.hmac`. It's called by the producer (Phase
+// 3 baseline-create), not by `identityFor` — by the time we reach
+// the dispatch, the HMAC is already in the input.
 import type {
   FindingId,
   HygieneMarker,
@@ -80,6 +85,8 @@ export function identityFor(
       return computeStaleFileIdentity(input.file, input.suffix);
     case 'large-file':
       return computeLargeFileIdentity(input.file);
+    case 'secret-hmac':
+      return computeSecretHmacIdentity(input.tool, input.rule, input.hmac);
   }
 }
 
@@ -212,6 +219,23 @@ function computeStaleFileIdentity(file: string, suffix: string): FindingId {
  */
 function computeLargeFileIdentity(file: string): FindingId {
   const input = `large-file\0v1\0${file}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for a secret keyed on its HMAC rather than its file
+ * position. Pairs with `SecretIdentityInput` (the location-based
+ * scheme) — the same underlying secret produces both identities,
+ * and the matcher can use either to recognize the finding across
+ * runs.
+ *
+ * Canonical-rule mapping applies so two scanners detecting the same
+ * secret class (e.g., gitleaks and a hypothetical second tool) emit
+ * the same identity bytes when their HMACs match.
+ */
+function computeSecretHmacIdentity(tool: string, rule: string, hmac: string): FindingId {
+  const canonicalRule = canonicalRuleFor(tool, rule);
+  const input = `secret-hmac\0v1\0${canonicalRule}\0${hmac}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
