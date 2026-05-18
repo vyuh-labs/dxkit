@@ -130,10 +130,10 @@ function buildAnalysisMeta(cwd: string): BaselineAnalysisMeta {
  *  `versionCheck` invocation via `findTool`, so the resulting
  *  `toolchainHash` actually differs when a tool is upgraded —
  *  closing the drift-detection gap that placeholder values left
- *  open. `tls-bypass-registry` is in-process (not an external
- *  binary), so its "version" tracks the dxkit version; bumping
- *  dxkit invalidates the registry hash even when no external tool
- *  changed.
+ *  open. In-process scanners (no external binary) are tagged with
+ *  the dxkit version so a dxkit upgrade invalidates the toolchain
+ *  hash even when no external tool changed — see
+ *  `IN_PROCESS_TOOLS`.
  *
  *  Compound tool names like `'osv-scanner-nuget-direct'` (the
  *  per-pack synthetic names the dep-vuln providers emit) are
@@ -150,8 +150,22 @@ function buildToolsMap(toolNames: ReadonlyArray<string>, cwd: string): Record<st
   return out;
 }
 
+/**
+ * Scanner names that don't correspond to an external binary — their
+ * "version" tracks the dxkit version. Adding a new in-process
+ * scanner (e.g. a future regex-based dependency checker) means
+ * appending its name here, never special-casing inside
+ * `resolveToolVersion`.
+ *
+ * Drives the `provenance.{secrets,codePatterns,...}.tool` values
+ * that surface when external tools are unavailable — gitleaks
+ * absent → `grep-secrets` runs the in-process fallback; the
+ * TLS-bypass registry is always in-process.
+ */
+const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set(['tls-bypass-registry', 'grep-secrets']);
+
 function resolveToolVersion(name: string, cwd: string): string {
-  if (name === 'tls-bypass-registry') return `dxkit-${DXKIT_VERSION}`;
+  if (IN_PROCESS_TOOLS.has(name)) return `dxkit-${DXKIT_VERSION}`;
   const parts = name.split('-');
   for (let i = parts.length; i > 0; i--) {
     const candidate = parts.slice(0, i).join('-');

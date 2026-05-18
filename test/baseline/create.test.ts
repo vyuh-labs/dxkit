@@ -102,13 +102,14 @@ describe('createBaseline (integration)', () => {
     // No security findings on the bare fixture so the tools map can
     // be empty; the assertion that matters is "no value is the
     // literal 'unknown' string sentinel for tools that DID run."
-    // The bare repo gathers no tool envelopes, so any present tool
-    // entry must carry a real version (or the in-process
-    // tls-bypass-registry tag).
+    // In-process scanners (tls-bypass-registry; grep-secrets when
+    // gitleaks isn't installed — surfaces on the CI runner, which
+    // ships without gitleaks) carry the dxkit-prefixed tag.
+    const inProcessTools = new Set(['tls-bypass-registry', 'grep-secrets']);
     for (const [tool, version] of Object.entries(result.file.tools)) {
       expect(version, `${tool} version`).not.toBe('unknown');
-      if (tool === 'tls-bypass-registry') {
-        expect(version).toMatch(/^dxkit-/);
+      if (inProcessTools.has(tool)) {
+        expect(version, `${tool} should carry the dxkit-version tag`).toMatch(/^dxkit-/);
       }
     }
     // toolchainHash must reflect the tools map content
