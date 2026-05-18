@@ -55,9 +55,9 @@
  * outside this file, mirroring G_v4_7's walker allowlist.
  */
 
-import { createHash } from 'crypto';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { Severity, FindingCategory, SecurityFinding } from './types';
+import { canonicalRuleFor, computeCodeFingerprint } from '../tools/fingerprint';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
 
@@ -203,53 +203,6 @@ export interface SecurityAggregate {
  * double-counting. Future entries land when a new language pack or
  * semgrep ruleset surfaces overlap with an existing finding type.
  */
-const CANONICAL_RULE_MAP = new Map<string, string>([
-  // TLS / certificate validation bypass — D091 closure
-  ['tls-bypass-registry:tls-validation-disabled', 'canonical:tls-bypass'],
-  ['semgrep:bypass-tls-verification', 'canonical:tls-bypass'],
-  ['semgrep:nodejsscan.node_tls_reject_unauthorized', 'canonical:tls-bypass'],
-
-  // Private-key file on disk — find + gitleaks may both surface
-  ['find:private-key-file', 'canonical:private-key-on-disk'],
-  ['gitleaks:private-key', 'canonical:private-key-on-disk'],
-]);
-
-function canonicalRuleFor(tool: string, rule: string): string {
-  return CANONICAL_RULE_MAP.get(`${tool}:${rule}`) ?? `raw:${tool}:${rule}`;
-}
-
-/**
- * Line-window bucketing. Tools report the same code construct at
- * slightly-different lines (semgrep on the declaration, registry-grep
- * on the assignment — D091's `:72` vs `:74` shape). 3-line buckets
- * absorb that drift without collapsing genuinely-different findings
- * in the same file.
- *
- * Boundary edge case closed by C1.10: the natural fixed-boundary
- * bucketing alone would miss adjacent findings straddling a
- * multiple-of-3 (a JS-heavy customer frontend surfaced
- * SetupConfigForm.js:43 + :45 → buckets 42 + 45 → no collapse
- * pre-C1.10). The grouping loop now
- * does a neighbor-bucket lookup (naturalBucket ± 3) after the natural
- * miss, restoring D091's intent across boundary-straddling pairs.
- * Effective collapse window: ~3-5 lines depending on alignment.
- */
-function lineWindowFor(line: number): number {
-  return Math.floor(line / 3) * 3;
-}
-
-/**
- * Stable 16-char hex hash of `(canonicalRule | file | lineWindow)`.
- * NUL-separated so distinct tuples can't collide via concatenation
- * tricks. Mirrors `tools/fingerprint.computeFingerprint`'s format
- * (SHA-1 first 8 bytes hex) so dep-vuln and code-finding fingerprints
- * share a downstream type contract.
- */
-function computeCodeFingerprint(canonicalRule: string, file: string, line: number): string {
-  const input = `${canonicalRule}\0${file}\0${lineWindowFor(line)}`;
-  return createHash('sha1').update(input).digest('hex').slice(0, 16);
-}
-
 // ─── Severity helpers ─────────────────────────────────────────────────────
 
 const SEVERITY_RANK: Record<Severity, number> = {
