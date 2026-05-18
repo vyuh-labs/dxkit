@@ -1,0 +1,98 @@
+name: dxkit guardrails
+
+# Runs the dxkit guardrail check on every pull request. New regressions
+# vs. the committed `.dxkit/baselines/main.json` block the PR. Existing
+# findings (your "brownfield debt") are allowed — they were already
+# captured when you ran `vyuh-dxkit baseline create`.
+#
+# Customise by editing your project's `.dxkit/policy.json` (created by
+# `vyuh-dxkit init --with-ci`). The matcher's classifications
+# (added / relocated / tooling_drift / config_drift / persisted /
+# removed / fixed) map to block/warn buckets there.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  guardrail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so the git-aware matcher can resolve the
+          # baseline's anchor commit + diff against HEAD.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Install dxkit. Prefers a project-local install (devDependencies)
+      # so the version is pinned alongside the project. Falls back to a
+      # global install for non-JS projects.
+      - name: Install dxkit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      # Install the scanner toolchain dxkit needs for this stack
+      # (gitleaks, semgrep, cloc, jscpd, ruff, osv-scanner, etc.).
+      # `--yes` makes the install non-interactive; the registry
+      # decides what to install based on detected languages.
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+
+      # Capture the markdown report regardless of exit code so we can
+      # post it as a PR comment even when the guardrail blocks.
+      - name: Run guardrail check
+        id: guardrail
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          set +e
+          "${DXKIT}" guardrail check --markdown > guardrail-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Find a previous dxkit-guardrails comment by marker so we
+          # update in place rather than appending a new one per push.
+          MARKER='<!-- dxkit-guardrails -->'
+          {
+            printf '%s\n' "$MARKER"
+            cat guardrail-report.md
+          } > comment.md
+          existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" \
+            | head -n1)
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH \
+              "repos/${{ github.repository }}/issues/comments/${existing}" \
+              -F body=@comment.md
+          else
+            gh pr comment "${PR_NUMBER}" --body-file comment.md
+          fi
+
+      - name: Fail if guardrail blocked
+        run: exit ${{ steps.guardrail.outputs.exit_code }}
