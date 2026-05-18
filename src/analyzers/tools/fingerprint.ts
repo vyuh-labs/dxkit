@@ -1,30 +1,29 @@
 /**
- * Advisory fingerprints — durable per-finding identity across runs.
+ * Durable per-finding identity across runs — used by both intra-run dedup
+ * (the security aggregator collapses cross-tool overlaps via fingerprint)
+ * and cross-run diff tooling (baselines compare today's fingerprint set
+ * against yesterday's to surface added / removed / persisted findings).
  *
- * The dispatcher's dep-vuln aggregator (src/analyzers/security/gather.ts)
- * stamps every finding with a stable hash of `(package, installedVersion,
- * id)` before scoring + reporting. The same advisory against the same
- * installed version produces the same fingerprint on every run, so
- * consumers (agent-driven upgrade bots, suppressions, CI gates) can diff
- * a current bom against a stored prior to detect:
+ * Two fingerprint families live here:
  *
- *   - new advisories (fingerprint present now, absent before)
- *   - resolved advisories (fingerprint absent now, present before)
- *   - unchanged advisories (fingerprint in both sets)
+ *   1. Dependency-advisory fingerprints — stable hash of
+ *      `(package, installedVersion, id)`. Used by `gatherDepVulns` +
+ *      BoM. Excludes severity / cvssScore / enrichment fields
+ *      (epssScore, kev, reachable, riskScore), producer `tool`, and
+ *      `upgradeAdvice` / `upgradePlan` so re-scoring the same advisory
+ *      against the same install never mints a new identity.
  *
- * Excluded from the hash:
- *   - severity / cvssScore — re-scoring the same advisory against the
- *     same install must not mint a new identity
- *   - enrichment fields (epssScore, kev, reachable, riskScore) — same
- *     reason; these are signals about the advisory, not part of it
- *   - producer `tool` — the same advisory hit by two producers (e.g.
- *     npm-audit + snyk) should collapse to one identity
- *   - `upgradeAdvice` / `upgradePlan` — resolution suggestions change
- *     across releases of the fix tooling; identity must outlive them
+ *   2. Code/secret/config-finding fingerprints — stable hash of
+ *      `(canonicalRule, file, lineWindow)`. The canonical-rule map
+ *      collapses cross-tool overlaps (e.g. semgrep + a per-language
+ *      grep-based pattern both reporting the same TLS-bypass
+ *      construct). The line-window absorbs the small offset between
+ *      tools that report the declaration vs. the assignment.
  *
- * Format: 16-char lowercase hex (first 8 bytes of SHA-1). Short enough
- * to embed inline in reports, long enough to make collisions between
- * non-identical tuples effectively impossible for repo-scale sets.
+ * Both families share format: 16-char lowercase hex (first 8 bytes of
+ * SHA-1). Short enough to embed inline in reports, long enough to make
+ * collisions between non-identical tuples effectively impossible at
+ * repo scale. Producers may render either inline interchangeably.
  */
 
 import { createHash } from 'crypto';
@@ -79,4 +78,67 @@ export function collectFingerprints(findings: ReadonlyArray<DepVulnFinding>): st
     if (f.fingerprint) set.add(f.fingerprint);
   }
   return [...set].sort();
+}
+
+// ─── Code/secret/config-finding fingerprints ─────────────────────────────────
+
+/**
+ * Maps raw `(tool, rule)` pairs to a canonical rule id. Two raw
+ * findings with the same canonical rule (and same file + line window)
+ * fingerprint identically — the aggregator's dedup pipeline collapses
+ * them into a single CodeFinding with `producedBy` listing every
+ * contributing tool. Adding a new collapse is a one-line addition; no
+ * algorithm changes.
+ *
+ * Unmapped pairs fall through to `raw:${tool}:${rule}` — conservative
+ * default. Never accidentally collapses unrelated findings.
+ */
+export const CANONICAL_RULE_MAP: ReadonlyMap<string, string> = new Map<string, string>([
+  // TLS / certificate validation bypass
+  ['tls-bypass-registry:tls-validation-disabled', 'canonical:tls-bypass'],
+  ['semgrep:bypass-tls-verification', 'canonical:tls-bypass'],
+  ['semgrep:nodejsscan.node_tls_reject_unauthorized', 'canonical:tls-bypass'],
+
+  // Private-key file on disk — find + gitleaks may both surface
+  ['find:private-key-file', 'canonical:private-key-on-disk'],
+  ['gitleaks:private-key', 'canonical:private-key-on-disk'],
+]);
+
+/** Resolve a raw `(tool, rule)` pair to its canonical rule id. */
+export function canonicalRuleFor(tool: string, rule: string): string {
+  return CANONICAL_RULE_MAP.get(`${tool}:${rule}`) ?? `raw:${tool}:${rule}`;
+}
+
+/**
+ * Width of the line-number bucket used by code-finding fingerprints.
+ * Tools report the same construct at slightly different lines (one
+ * tool on the declaration, another on the assignment). Bucketing
+ * absorbs that drift without collapsing unrelated findings on
+ * nearby lines.
+ */
+export const CODE_FINGERPRINT_LINE_WINDOW = 3;
+
+/**
+ * Bucket a line number to its canonical line-window value. Findings
+ * sharing the same `(canonicalRule, file, lineWindow)` tuple share a
+ * fingerprint.
+ *
+ * Note on boundary cases: the aggregator additionally probes the two
+ * neighbor buckets (±lineWindow) to catch adjacent findings that
+ * straddle a bucket boundary; that lookup lives in the aggregator
+ * because it owns the merge policy, not here.
+ */
+export function lineWindowFor(line: number): number {
+  return Math.floor(line / CODE_FINGERPRINT_LINE_WINDOW) * CODE_FINGERPRINT_LINE_WINDOW;
+}
+
+/**
+ * Stable 16-char hex hash of `(canonicalRule, file, lineWindow)`.
+ * NUL-separated so distinct tuples can't collide via concatenation
+ * tricks. Same byte format as `computeFingerprint` so dep-vuln and
+ * code-finding fingerprints share a downstream type contract.
+ */
+export function computeCodeFingerprint(canonicalRule: string, file: string, line: number): string {
+  const input = `${canonicalRule}\0${file}\0${lineWindowFor(line)}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
