@@ -48,6 +48,9 @@ function printUsage(): void {
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
+    vyuh-dxkit baseline create [path] [--name <name>] [--force]
+                                 Capture per-finding identities to .dxkit/baselines/<name>.json
+                                 (read later by guardrail check to gate new regressions)
 
   ${logger.bold('Init options:')}
     --dx-only    Just .claude/ + CLAUDE.md (default)
@@ -1273,6 +1276,39 @@ export async function run(argv: string[]): Promise<void> {
 
       logger.success(`Wrote ${path.relative(cwd, outputPath)} (${buf.length} bytes)`);
       logger.dim(`Converted in ${elapsed}s · report kind: ${kind}`);
+      break;
+    }
+
+    case 'baseline': {
+      const subCommand = positionals[1];
+      if (subCommand !== 'create') {
+        logger.fail(
+          `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
+            `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force]`,
+        );
+        process.exit(1);
+      }
+      const targetPath = resolveRepoPath(positionals[2]);
+      const { createBaseline } = await import('./baseline/create');
+      logger.header('vyuh-dxkit baseline create');
+      logger.info(`Capturing baseline for ${targetPath}...`);
+      const startTime = Date.now();
+      try {
+        const result = await createBaseline({
+          cwd: targetPath,
+          name: values.name as string | undefined,
+          force: !!values.force,
+          verbose: !!values.verbose,
+        });
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const rel = path.relative(targetPath, result.path);
+        logger.success(
+          `Wrote ${rel} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
+        );
+      } catch (err) {
+        logger.fail((err as Error).message);
+        process.exit(1);
+      }
       break;
     }
 
