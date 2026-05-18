@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { securityAggregateToBaselineEntries } from '../../../src/baseline/producers/security';
 import type { CodeFinding, SecurityAggregate } from '../../../src/analyzers/security/aggregator';
 import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
 import { identityFor } from '../../../src/baseline/finding-identity';
+import { computeContentHash } from '../../../src/baseline/content-hash';
 
 function codeFinding(over: Partial<CodeFinding> = {}): CodeFinding {
   return {
@@ -142,5 +147,78 @@ describe('securityAggregateToBaselineEntries', () => {
     const entries = securityAggregateToBaselineEntries(aggregate);
     expect(entries).toHaveLength(2);
     expect(entries[0].id).toBe(entries[1].id);
+  });
+
+  it('omits contentHash when cwd or commitSha is missing', () => {
+    const f = codeFinding({ file: 'x.ts', line: 5 });
+    const aggregate = emptyAggregate({
+      findingsByCategory: { secret: [], code: [f], config: [], dependency: [] },
+    });
+    const entries = securityAggregateToBaselineEntries(aggregate);
+    const e = entries[0];
+    if (e.kind !== 'code') throw new Error('shape');
+    expect(e.contentHash).toBeUndefined();
+  });
+
+  describe('content-hash stamping (with git fixture)', () => {
+    let dir: string;
+    let sha: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'dxkit-prod-sec-'));
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+      execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+      writeFileSync(
+        join(dir, 'config.ts'),
+        ['// line 1', 'const a = 1;', 'const b = 2;', 'const c = 3;', '// line 5'].join('\n') +
+          '\n',
+      );
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: dir });
+      sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    });
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('stamps a content-hash matching computeContentHash on the file', () => {
+      const f = codeFinding({ file: 'config.ts', line: 3 });
+      const aggregate = emptyAggregate({
+        findingsByCategory: { secret: [], code: [f], config: [], dependency: [] },
+      });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const e = entries[0];
+      if (e.kind !== 'code') throw new Error('shape');
+      expect(e.contentHash).toMatch(/^[0-9a-f]{16}$/);
+
+      const fileContent =
+        ['// line 1', 'const a = 1;', 'const b = 2;', 'const c = 3;', '// line 5'].join('\n') +
+        '\n';
+      expect(e.contentHash).toBe(computeContentHash(fileContent, 3));
+    });
+
+    it('omits contentHash for line 0 (whole-file findings)', () => {
+      const f = codeFinding({ category: 'config', file: 'config.ts', line: 0 });
+      const aggregate = emptyAggregate({
+        findingsByCategory: { secret: [], code: [], config: [f], dependency: [] },
+      });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const e = entries[0];
+      if (e.kind !== 'config') throw new Error('shape');
+      expect(e.contentHash).toBeUndefined();
+    });
+
+    it('omits contentHash when the file is missing at the commit', () => {
+      const f = codeFinding({ file: 'missing.ts', line: 1 });
+      const aggregate = emptyAggregate({
+        findingsByCategory: { secret: [], code: [f], config: [], dependency: [] },
+      });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const e = entries[0];
+      if (e.kind !== 'code') throw new Error('shape');
+      expect(e.contentHash).toBeUndefined();
+    });
   });
 });
