@@ -1,35 +1,22 @@
 /**
  * `dxkit baseline create` orchestrator.
  *
- * Runs the canonical security analyzer, hands its aggregate through
- * per-kind producers to derive `BaselineEntry` identities, captures
- * repo + analysis-environment metadata, and writes the result to
- * `.dxkit/baselines/<name>.json`. The on-disk file is the durable
- * record subsequent `guardrail check` runs diff against.
+ * Builds the shared producer context (runs every analyzer once),
+ * dispatches through the canonical producer registry (CLAUDE.md
+ * Rule 10), captures repo + analysis-environment metadata, and
+ * writes the result to `.dxkit/baselines/<name>.json`. The on-disk
+ * file is the durable record subsequent `guardrail check` runs diff
+ * against.
  *
  * This module is the producer side; the matcher + classifier on the
  * consumer side already exist in `git-aware-match.ts` and
  * `policy.ts`. The two are connected by the file format defined in
  * `baseline-file.ts`.
  *
- * Today's producer coverage (11 of 14 identity kinds):
- *   - secret / code / config / dep-vuln (security aggregator)
- *   - secret-hmac (gitleaks raw-secret pass)
- *   - duplication (jscpd topClones)
- *   - stale-file (hygiene gather)
- *   - large-file (canonical large-file threshold)
- *   - license (licenses capability envelope)
- *   - test-gap / test-file-degradation (analyzeTestGaps report)
- *
- * Three kinds without producers yet:
- *   - god-file — `QualityMetrics.topGodFiles` is forward-declared
- *     but no analyzer populates it today; will light up when
- *     graphify surfaces per-file complexity offenders.
- *   - hygiene — per-occurrence positions need a gather extension
- *     (`gatherHygieneMarkers` returns counts, not positions);
- *     pending in a follow-up.
- *   - coverage-gap — needs symbol-aware or line-range coverage
- *     output from the coverage tool; pending.
+ * Per-kind producer coverage + deferral rationale live in the
+ * registry index (`./producers/index.ts`) — the single discovery
+ * surface. Adding a new identity kind or analyzer means
+ * registering a producer there, never an edit here.
  */
 
 import { execFileSync } from 'child_process';
@@ -51,12 +38,8 @@ import {
 } from './baseline-file';
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
 import { DEFAULT_BROWNFIELD_POLICY } from './policy';
-import { largeFilesToBaselineEntries } from './producers/health';
-import { licensesToBaselineEntries } from './producers/licenses';
-import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './producers/quality';
-import { rawSecretsToBaselineEntries } from './producers/secret-hmac';
-import { securityAggregateToBaselineEntries } from './producers/security';
-import { testGapsToBaselineEntries } from './producers/tests';
+import { PRODUCERS, runProducers } from './producers';
+import type { ProducerContext } from './producers';
 import { resolveSalt } from './salt';
 import type { BaselineEntry } from './types';
 
@@ -193,33 +176,32 @@ export async function createBaseline(
   // it can't).
   const { mode: saltMode, salt } = resolveSalt(cwd);
 
-  // Producers. Today's set covers security (secret/code/config/
-  // dep-vuln), secret-HMAC, duplication, stale-file, large-file,
-  // license, test-gap, and test-file-degradation. Three identity
-  // kinds (god-file, hygiene per-occurrence, coverage-gap) are
-  // declared in the union but have no analyzer source yet and will
-  // light up alongside the upstream gathers. Once the producer
-  // registry exists (CLAUDE.md Rule 10), every producer dispatches
-  // through it instead of being named here.
+  // Build the producer context once. Every analyzer's gather runs
+  // here (or earlier inside readOrBuildAnalysisResult) so producers
+  // can be pure or near-pure consumers — adding a new producer
+  // means extending this context with one more input, never
+  // adding another producer-specific block in this function.
   const testGapsReport = await analyzeTestGaps(cwd, { verbose: !!options.verbose });
-  const hygiene = gatherHygieneMarkers(cwd);
+  const hygieneMarkers = gatherHygieneMarkers(cwd);
   const gitleaksOutcome = gatherGitleaksResult(cwd);
   const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
     gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
 
-  const findings: BaselineEntry[] = [];
-  findings.push(
-    ...securityAggregateToBaselineEntries(aggregate, {
-      cwd,
-      commitSha: repoState.commitSha || undefined,
-    }),
-  );
-  findings.push(...rawSecretsToBaselineEntries({ rawSecrets, salt }));
-  findings.push(...duplicationToBaselineEntries(analysisResult.capabilities.duplication));
-  findings.push(...staleFilesToBaselineEntries(hygiene.staleFiles));
-  findings.push(...largeFilesToBaselineEntries(analysisResult.metrics));
-  findings.push(...licensesToBaselineEntries(analysisResult.capabilities.licenses));
-  findings.push(...testGapsToBaselineEntries(testGapsReport));
+  const producerCtx: ProducerContext = {
+    cwd,
+    commitSha: repoState.commitSha,
+    salt,
+    analysisResult,
+    testGapsReport,
+    hygiene: hygieneMarkers,
+    rawSecrets,
+  };
+
+  // Dispatch through the canonical producer registry (CLAUDE.md
+  // Rule 10). Adding a new identity kind means registering a
+  // producer in `src/baseline/producers/index.ts` — never an edit
+  // here.
+  const findings: BaselineEntry[] = runProducers(producerCtx, PRODUCERS);
 
   const toolNames = new Set<string>();
   if (aggregate.provenance.secrets.tool) toolNames.add(aggregate.provenance.secrets.tool);
