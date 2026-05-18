@@ -242,6 +242,58 @@ through the test-gap taxonomy and Maintainability prose — analogous
 to its existing assertion for `depVuln` + `tlsBypass` contributions
 (G_v4_8).
 
+### 9. Per-finding identity flows through the canonical fingerprint helpers
+
+Every actionable per-finding output dxkit surfaces (secrets,
+code-pattern findings, dependency advisories, license attributions,
+duplicate blocks, coverage gaps, test-gap source files, hygiene
+markers, and any future kind) MUST receive its durable identity from
+the canonical helpers, never an inline hash:
+
+- **Compute** via `src/analyzers/tools/fingerprint.ts` — the home of
+  every SHA-1[0:16] fingerprint scheme (`computeFingerprint` for
+  dep-vulns, `computeCodeFingerprint` for code/secret/config,
+  `canonicalRuleFor` for cross-tool dedup, `lineWindowFor` for the
+  shared 3-line bucket).
+- **Dispatch** via `src/baseline/finding-identity.ts:identityFor` —
+  the single switch over `IdentityInput` discriminants. Adding a new
+  finding kind is a three-line change (interface → union →
+  case branch), with TypeScript's exhaustiveness check enforcing
+  switch completeness.
+- **Compare** via `src/baseline/finding-identity.ts:matchAcrossRuns`
+  (multiset-aware set diff) or `src/baseline/git-aware-match.ts`
+  (git-aware line relocation with file-rename support and
+  ±2 line fuzz). Every match pair carries confidence in [0, 1]
+  plus structured reasons (`exact-id`, `git-line-exact`,
+  `git-line-fuzz`, `git-rename`).
+
+The fingerprint is the durable contract between today's scan and
+tomorrow's guardrail check. Bypassing the canonical helpers means
+silently opting out of that contract.
+
+#### Fingerprint-discipline enforcement
+
+Four rules in `scripts/check-architecture.sh` + `test/`:
+
+1. **No `createHash` for finding identity outside the canonical
+   files.** Allowed in `src/analyzers/tools/fingerprint.ts` and
+   `src/baseline/finding-identity.ts`. Annotate
+   `// fingerprint-helper-ok` for justified non-identity hashing
+   (today: zero needed inside `src/analyzers/` and `src/baseline/`).
+2. **No inline `Math.floor(x / N) * N`-style line-bucketing**
+   outside `tools/fingerprint.ts`. Forces consumers through
+   `lineWindowFor()` so the 3-line constant lives in one place.
+3. **Every `IdentityInput` discriminant has a fixture row in
+   `test/baseline/finding-identity.test.ts`.** Asserted at test
+   time: when a new kind lands in the union, a fixture must
+   accompany it or the assertion fails.
+4. **Synthetic-pack findings flow through the canonical helpers.**
+   `test/recipe-playbook.test.ts` asserts the synthetic pack's
+   code-pattern + dep-vuln contributions emerge from the aggregator
+   with non-empty `fingerprint` fields matching the canonical
+   format — codifies "fingerprinting is pack-driven, not
+   analyzer-by-analyzer."
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

@@ -555,6 +555,72 @@ if [ -n "$ARCH_SHAPE_WORD_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Rule 9 (fingerprint discipline): one home for finding-identity hashes ──
+#
+# What this prevents:
+#   A future analyzer rolling its own SHA scheme for finding identity,
+#   silently opting out of the baseline / guardrail contract. Every
+#   per-finding fingerprint flows through the canonical helpers in
+#   `src/analyzers/tools/fingerprint.ts`, dispatched by
+#   `src/baseline/finding-identity.ts:identityFor`.
+#
+# Canonical sites (`createHash` allowed):
+#   - `src/analyzers/tools/fingerprint.ts` — the home of every
+#     SHA-1[0:16] fingerprint scheme.
+#   - `src/baseline/finding-identity.ts` — the dispatch that delegates
+#     to those helpers for cross-kind identity output.
+#
+# Scope:
+#   `src/analyzers/` + `src/baseline/`. `src/files.ts` legitimately
+#   uses SHA-256 for file-content hashing (caching / dedup, NOT finding
+#   identity); it sits outside the scope and is unaffected.
+#
+# Annotate `// fingerprint-helper-ok` on a specific line for a
+# justified non-identity hash inside the scoped directories.
+FINGERPRINT_HELPER_ALLOWLIST="src/analyzers/tools/fingerprint.ts src/baseline/finding-identity.ts"
+ALLOW_FILTER_FP=""
+for f in $FINGERPRINT_HELPER_ALLOWLIST; do
+  ALLOW_FILTER_FP="$ALLOW_FILTER_FP -e ^${f}:"
+done
+
+ROGUE_HASH=$(grep -rnE "createHash[[:space:]]*\(" src/analyzers/ src/baseline/ 2>/dev/null \
+  | grep -v "// fingerprint-helper-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_FP" ] && grep -v $ALLOW_FILTER_FP || cat; })
+if [ -n "$ROGUE_HASH" ]; then
+  echo "❌ Rule 9 violation: createHash() used outside the canonical fingerprint helpers:"
+  echo "$ROGUE_HASH"
+  echo "   → Use computeFingerprint or computeCodeFingerprint from src/analyzers/tools/fingerprint.ts."
+  echo "   → For new finding kinds, extend src/baseline/finding-identity.ts:identityFor"
+  echo "     with a new IdentityInput discriminant rather than hashing inline."
+  echo "   → Annotate '// fingerprint-helper-ok' for justified non-identity hashing."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Line-bucketing reimplementation gate: the 3-line window used by code-
+# finding fingerprints lives in `lineWindowFor()` and only there. Any
+# `Math.floor(x / N) * N`-shaped expression inside the scoped
+# directories is a candidate for rolling-your-own bucket scheme.
+LINE_BUCKET_ALLOWLIST="src/analyzers/tools/fingerprint.ts"
+ALLOW_FILTER_LB=""
+for f in $LINE_BUCKET_ALLOWLIST; do
+  ALLOW_FILTER_LB="$ALLOW_FILTER_LB -e ^${f}:"
+done
+
+ROGUE_BUCKET=$(grep -rnE "Math\.floor\([^/]*\/[[:space:]]*[0-9]+[[:space:]]*\)[[:space:]]*\*[[:space:]]*[0-9]+" src/analyzers/ src/baseline/ 2>/dev/null \
+  | grep -v "// fingerprint-helper-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$ALLOW_FILTER_LB" ] && grep -v $ALLOW_FILTER_LB || cat; })
+if [ -n "$ROGUE_BUCKET" ]; then
+  echo "❌ Rule 9 violation: inline line-bucketing outside the canonical helper:"
+  echo "$ROGUE_BUCKET"
+  echo "   → Import { lineWindowFor } from '../tools/fingerprint' instead of"
+  echo "     reimplementing Math.floor(line / N) * N inline."
+  echo "   → The 3-line constant lives in CODE_FINGERPRINT_LINE_WINDOW."
+  echo "   → Annotate '// fingerprint-helper-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
