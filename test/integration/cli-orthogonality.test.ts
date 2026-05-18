@@ -5,7 +5,7 @@
  * that wanted both stdout JSON AND the on-disk markdown had to invoke
  * the command twice — once with `--json` for stdout and once without
  * for the file — which doubled wall-clock for slow analyzers
- * (web-client's quality step ran 33 min total: Friction #19).
+ * (a JS-heavy customer frontend's quality step ran 33 min total: Friction #19).
  *
  * Post-D018: `--json` controls stdout shape; `--no-save` controls
  * disk. They're orthogonal. These tests verify the contract for the

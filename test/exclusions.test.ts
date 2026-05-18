@@ -108,10 +108,13 @@ describe('getJscpdIgnorePatterns', () => {
   });
 
   it('emits multi-segment sourcePaths as `**/<path>/**`', () => {
-    fs.writeFileSync(path.join(tmp, '.dxkit-ignore'), 'Code/Source/Dev/Addons/DPLAddon/SAPB1/\n');
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit-ignore'),
+      'Code/Source/Dev/Addons/VendorAddon/SAPB1/\n',
+    );
     clearExclusionsCache();
     const patterns = getJscpdIgnorePatterns(tmp);
-    expect(patterns).toContain('**/Code/Source/Dev/Addons/DPLAddon/SAPB1/**');
+    expect(patterns).toContain('**/Code/Source/Dev/Addons/VendorAddon/SAPB1/**');
   });
 
   it('emits file-globs as `**/<glob>`', () => {

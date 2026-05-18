@@ -4,7 +4,7 @@
  * Pure-function coverage of the parser + adhoc-lockfile builder; no
  * real `osv-scanner` or `.NET` toolchain involvement. The integration
  * path (parser → adhoc lockfile → osv-scanner → DepVulnResult) is
- * covered separately by the dpl-studio re-validation at sub-branch
+ * covered separately by the .NET WinForms benchmark re-validation at sub-branch
  * close + the existing cross-ecosystem matrix's csharp-vulnerable
  * fixture (which now exercises this codepath when `dotnet` is absent).
  */
@@ -166,7 +166,7 @@ describe('buildNugetAdhocLockfile', () => {
   it('last-write-wins when the same package appears twice (cross-csproj merge)', () => {
     // Documented behavior at the parser layer: cross-csproj merging
     // collapses to one entry per package name. Lockfile maintains the
-    // last-stamped version. dpl-studio-shape repos with ~74 csprojs
+    // last-stamped version. Enterprise-shape repos with ~74 csprojs
     // hitting the same dep at the same version converge cleanly;
     // version-divergent monorepos accept the trade-off.
     const adhoc = buildNugetAdhocLockfile([

@@ -136,8 +136,8 @@ describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {
     expect(agg.dedupCollisions[0].collapsedFrom).toHaveLength(2);
   });
 
-  it('C1.10: collapses adjacent findings that straddle a multiple-of-3 line boundary (web-client D091-class regression)', () => {
-    // Web-client surfaced this in C1.7: DBConfigureForm.js:43 (semgrep
+  it('C1.10: collapses adjacent findings that straddle a multiple-of-3 line boundary (D091-class regression)', () => {
+    // A JS-heavy customer frontend surfaced this in C1.7: SetupConfigForm.js:43 (semgrep
     // MEDIUM) + :45 (registry HIGH), both canonical:tls-bypass, same
     // file, 2 lines apart. Pre-C1.10 the natural buckets were 42 and
     // 45 (different), no collapse fired. Post-C1.10 the neighbor-bucket
@@ -150,7 +150,7 @@ describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {
           severity: 'medium',
           rule: 'bypass-tls-verification',
           tool: 'semgrep',
-          file: 'src/components/setupscreen/DBConfigureForm.js',
+          file: 'src/components/setupscreen/SetupConfigForm.js',
           line: 43,
         }),
       ],
@@ -160,7 +160,7 @@ describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {
         severity: 'high',
         rule: 'tls-validation-disabled',
         tool: 'tls-bypass-registry',
-        file: 'src/components/setupscreen/DBConfigureForm.js',
+        file: 'src/components/setupscreen/SetupConfigForm.js',
         line: 45,
       }),
     ];

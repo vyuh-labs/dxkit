@@ -502,7 +502,7 @@ describe('mergeAssetParses (D003 — multi-project merge)', () => {
 // D035 (2.4.7) — depVulns gather preflight depth parity with detect().
 //
 // Pre-D035, `hasCsharpProject` used a depth-1 walk while detect() (post-
-// D024) walked depth 5. dpl-studio's `Code/Source/Dev/Core/<Module>/
+// D024) walked depth 5. The .NET WinForms benchmark's `Code/Source/Dev/Core/<Module>/
 // <Module>.csproj` layout produced Stack: csharp at the top level but
 // "Unavailable: dep-audit" at the gather level — because the preflight
 // rejected the deep-cwd before reaching D025c's dotnet probe. Post-D035

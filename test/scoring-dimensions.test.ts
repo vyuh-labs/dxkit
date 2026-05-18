@@ -270,7 +270,7 @@ describe('scoreSecurityFromInput', () => {
     // Pre-D025b: this would return 100 (no penalties applied).
     // Post-D025b: cap fires because dxkit can't honestly claim "excellent"
     // when it never actually scanned the deps. This is the F4 baseline
-    // dpl-studio lie closure.
+    // .NET WinForms benchmark lie closure.
     const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: false }));
     expect(s.score).toBe(65);
   });

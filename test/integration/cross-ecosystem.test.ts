@@ -761,8 +761,8 @@ describe('matrix — test-gaps (Phase 10i.0.4)', () => {
  * minimal (source-only) because the matrix's job is contract
  * conformance, not test-runner setup. Real-run coverage exercise lives
  * in the per-pack unit tests (`test/languages-*-coverage*.test.ts`)
- * and in the `coverageFidelity` matrix downstream of dpl-studio
- * customer audits.
+ * and in the `coverageFidelity` matrix downstream of the .NET WinForms
+ * benchmark customer audits.
  */
 describe('matrix — coverage (D021 sub-piece 4)', () => {
   for (const lang of BENCHMARK_LANGUAGES) {

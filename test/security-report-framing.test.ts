@@ -4,7 +4,7 @@
  * Pre-D025e: every case where `summary.dependencies.tool` was null
  * collapsed to a single string — *"No dependency audit data — no
  * language pack with a depVulns provider was active."* That framing
- * is factually wrong for the dpl-studio case where the csharp pack
+ * is factually wrong for the .NET WinForms benchmark case where the csharp pack
  * IS active and DOES expose a depVulns provider; the tool just
  * couldn't run (dotnet not on PATH, no `packages.lock.json`).
  *
@@ -271,7 +271,7 @@ describe('formatSecurityReport — Remediation Commands split (D090)', () => {
  * G_v4_10 / D111 (2.4.7 Phase C3): dep-action title phrasing branches
  * on `fixedVersion`. Pre-fix the literal `Upgrade ${pkg} to
  * ${fixedVersion ?? '(no patch)'}` produced "Upgrade `SharpCompress`
- * to (no patch)" on dpl-studio Top 5 when D108 sparse-tier fallback
+ * to (no patch)" on the .NET WinForms benchmark Top 5 when D108 sparse-tier fallback
  * floated a mitigation-only finding into the table.
  *
  * The canonical helper is the only authorized site for this phrasing;
@@ -296,7 +296,7 @@ describe('formatDepActionTitle (G_v4_10 / D111)', () => {
   });
 
   it('regression — D108 × D111 intersection: mitigation-only finding in Top 5 uses Review-advisory phrasing', () => {
-    // Reproduces dpl-studio's sparse-repo state: 1 mitigation-only
+    // Reproduces a sparse-repo state: 1 mitigation-only
     // finding makes it into Top 5 via the D108 sparse-tier fallback.
     // Pre-D111 root fix this produced "Upgrade `SharpCompress` to (no
     // patch)" — grammatically nonsensical.
