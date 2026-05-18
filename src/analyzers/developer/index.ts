@@ -5,6 +5,7 @@
 import * as path from 'path';
 import { readOrBuildAnalysisResult } from '../cache';
 import { gatherAnalysisResultBody } from '../health';
+import { getReportDate } from '../tools/report-date';
 import { timed } from '../tools/timing';
 import {
   gatherContributors,
@@ -64,7 +65,7 @@ export async function analyzeDevActivity(
     analyzedAt: cacheResult.builtAt,
     commitSha: cacheResult.commitSha,
     branch: cacheResult.branch,
-    period: { since: sinceDate, until: new Date().toISOString().slice(0, 10) },
+    period: { since: sinceDate, until: getReportDate() },
     summary: {
       totalCommits: summary.totalCommits,
       nonMergeCommits: nonMerge,

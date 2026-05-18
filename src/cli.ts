@@ -11,6 +11,7 @@ import * as logger from './logger';
 import { GenerationMode } from './types';
 import { formatTopActionLine, formatTopActionsBlock } from './scoring';
 import { renderToolsUnavailableLines } from './analyzers/tools/tools-unavailable-prose';
+import { getReportDate } from './analyzers/tools/report-date';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -340,7 +341,7 @@ export async function run(argv: string[]): Promise<void> {
       // call unconditionally.
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `health-audit-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatMarkdownReport(report, elapsed));
@@ -460,7 +461,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `vulnerability-scan-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatSecurityReport(report, elapsed));
@@ -553,7 +554,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `test-gaps-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatTestGapsReport(report, elapsed));
@@ -640,7 +641,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `quality-review-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatQualityReport(report, elapsed));
@@ -714,7 +715,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `developer-report-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatDevReport(report, elapsed));
@@ -783,7 +784,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `licenses-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatLicensesReport(report, elapsed));
@@ -889,7 +890,7 @@ export async function run(argv: string[]): Promise<void> {
       // Disk side: orthogonal to --json (closes D018).
       if (!values['no-save']) {
         const reportDir = path.join(targetPath, '.dxkit', 'reports');
-        const date = new Date().toISOString().slice(0, 10);
+        const date = getReportDate();
         const reportPath = path.join(reportDir, `bom-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
@@ -1140,14 +1141,20 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       const reportDir = path.join(targetPath, '.dxkit', 'reports');
-      const dateStr = new Date().toISOString().slice(0, 10);
+      // Snapshot the date once at orchestrator startup so every
+      // spawned subcommand writes filenames against the same date —
+      // long runs crossing UTC midnight otherwise produce a mix of
+      // pre- and post-midnight suffixes, and the post-step file-
+      // existence checks below miss the rolled-forward files.
+      const dateStr = getReportDate();
+      const childEnv = { ...process.env, DXKIT_REPORT_DATE: dateStr };
       for (const step of analyzerSteps) {
         logger.info(`[${stepDurations.length + 1}/${analyzerSteps.length + 1}] ${step.label}...`);
         const t0 = Date.now();
         const rc = spawnSync(
           process.execPath,
           [process.argv[1], step.cmd, targetPath, ...passthroughFlags, ...(step.extraFlags ?? [])],
-          { stdio: 'inherit' },
+          { stdio: 'inherit', env: childEnv },
         ).status;
         let effectiveRc = rc ?? -1;
         // Post-step assertion: the child returned rc=0 BUT did the
@@ -1177,6 +1184,7 @@ export async function run(argv: string[]): Promise<void> {
       const dashT0 = Date.now();
       const dashRc = spawnSync(process.execPath, [process.argv[1], 'dashboard', targetPath], {
         stdio: 'inherit',
+        env: childEnv,
       }).status;
       stepDurations.push({ label: 'Dashboard', ms: Date.now() - dashT0, rc: dashRc ?? -1 });
 

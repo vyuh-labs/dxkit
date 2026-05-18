@@ -23,6 +23,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { getReportDate } from '../tools/report-date';
 
 /** Known report stems → display config. Order here = sidebar order. */
 const REPORT_STEMS: Array<{
@@ -319,7 +320,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   }
 
   const overviewBadge = healthScore !== null ? `${healthScore}/100 (${healthGrade ?? '?'})` : '';
-  const generationDate = new Date().toISOString().slice(0, 10);
+  const generationDate = getReportDate();
 
   const html = renderHtml({
     projectName,
