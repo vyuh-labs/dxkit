@@ -48,6 +48,12 @@ export interface SecretHmacProducerInput {
  */
 export function rawSecretsToBaselineEntries(input: SecretHmacProducerInput): BaselineEntry[] {
   const out: BaselineEntry[] = [];
+  // Identity is `(rule, hmac)` — two raw secrets that map to the same
+  // `(rule, hmac)` (the same value detected at multiple lines, or by
+  // overlapping gitleaks rules pointing at the same canonical kind)
+  // collapse to one baseline entry. The location-based `secret`
+  // producer still records each occurrence separately.
+  const seen = new Set<string>();
   for (const raw of input.rawSecrets) {
     if (!raw.secret) continue;
     const hmac = computeSecretHmac(raw.secret, input.salt);
@@ -57,8 +63,11 @@ export function rawSecretsToBaselineEntries(input: SecretHmacProducerInput): Bas
       rule: raw.rule,
       hmac,
     };
+    const id = identityFor(identityInput);
+    if (seen.has(id)) continue;
+    seen.add(id);
     out.push({
-      id: identityFor(identityInput),
+      id,
       kind: 'secret-hmac',
       tool: 'gitleaks',
       rule: raw.rule,

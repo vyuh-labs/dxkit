@@ -68,6 +68,35 @@ describe('rawSecretsToBaselineEntries', () => {
     expect(ea.id).toBe(eb.id);
   });
 
+  it('dedupes when the same value is detected at multiple locations', () => {
+    // Same secret value found on two different lines (a token that
+    // appears in the source twice). The location-based `secret`
+    // producer records both occurrences; this value-based producer
+    // collapses them — one entry per unique `(rule, hmac)`.
+    const entries = rawSecretsToBaselineEntries({
+      rawSecrets: [
+        raw({ file: 'src/a.ts', line: 1 }),
+        raw({ file: 'src/a.ts', line: 99 }),
+        raw({ file: 'src/b.ts', line: 7 }),
+      ],
+      salt: SALT,
+    });
+    expect(entries).toHaveLength(1);
+    const ids = new Set(entries.map((e) => e.id));
+    expect(ids.size).toBe(1);
+  });
+
+  it('dedupes by `(rule, hmac)` not just by hmac', () => {
+    // Same value but different gitleaks rules collide on hmac but
+    // differ on rule — identity = `(rule, hmac)`, so they're
+    // distinct entries.
+    const entries = rawSecretsToBaselineEntries({
+      rawSecrets: [raw({ rule: 'generic-api-key' }), raw({ rule: 'aws-access-token' })],
+      salt: SALT,
+    });
+    expect(entries).toHaveLength(2);
+  });
+
   it('skips entries with an empty secret value (defensive)', () => {
     const entries = rawSecretsToBaselineEntries({
       rawSecrets: [raw(), raw({ secret: '' })],
