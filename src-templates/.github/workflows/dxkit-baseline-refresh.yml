@@ -11,7 +11,7 @@ name: dxkit baseline refresh
 
 on:
   push:
-    branches: [main]
+    branches: [__DXKIT_DEFAULT_BRANCH__]
     # Ignore pushes that only changed the baseline file — those are
     # this workflow's own commits, and re-running would be a no-op
     # anyway. Belt-and-braces with [skip ci] below.
