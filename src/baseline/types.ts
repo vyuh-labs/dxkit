@@ -368,6 +368,56 @@ export interface MatchPair {
 }
 
 /**
+ * Severity tier carried alongside each match pair for policy
+ * classification. Mirrors the global severity vocabulary used by the
+ * security analyzer and dimension scoring.
+ */
+export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/**
+ * Full taxonomy of post-classification status values a guardrail
+ * check can emit. Wider than `MatchStatus` because policy adds context
+ * the matcher doesn't have:
+ *
+ *   - `persisted` / `relocated` / `added` / `removed` — direct
+ *     pass-through of the matcher's pair status.
+ *   - `fixed` — a `removed` finding that the policy treats as a
+ *     positive event (resolution rather than disappearance). Today
+ *     this is informational only; Phase 3 distinguishes the two when
+ *     `--detailed` flags it.
+ *   - `newly_detected` — current-only finding that surfaced because
+ *     the scanner / ruleset / advisory DB / policy config changed,
+ *     not because a developer introduced new code. Parent category;
+ *     `tooling_drift` and `config_drift` are the specific subtypes.
+ *   - `tooling_drift` — scanner or advisory-db version differs
+ *     between baseline and current. Reclassified `added` is suspect.
+ *   - `config_drift` — `.dxkit-ignore` / policy / suppressions hash
+ *     differs between runs.
+ *   - `probable_existing` — current-only with weak evidence it's
+ *     truly new (a prior near-match exists but didn't pair cleanly).
+ *     Reserved for the content-hash / semantic fallback layer in
+ *     Sprint 0.x.
+ *   - `uncertain` — confidence below the per-severity threshold;
+ *     the policy can't classify with conviction.
+ *
+ * The enum is the contract Phase 3's guardrail CLI reads. Today's
+ * classifier emits a subset — the remaining states are reserved for
+ * the Phase 3 baseline-metadata work that will provide the
+ * contextual signals (scanner versions, config hashes, etc.).
+ */
+export type FindingStatus =
+  | 'persisted'
+  | 'relocated'
+  | 'added'
+  | 'removed'
+  | 'fixed'
+  | 'newly_detected'
+  | 'tooling_drift'
+  | 'config_drift'
+  | 'probable_existing'
+  | 'uncertain';
+
+/**
  * Composite result of comparing two runs.
  *
  * The structured `pairs` field carries one entry per matched +
