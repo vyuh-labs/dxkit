@@ -11,7 +11,16 @@ tmp/
 coverage/
 graphify-out/
 .ai/reports/
-.dxkit/
+
+# .dxkit/ subtree: only the project-root `.dxkit/baselines/` tree is
+# committed — it's the brownfield anchor every clone shares. Reports
+# + cache + the salt file are per-developer ephemeral state and stay
+# ignored at any depth. Test-fixture .dxkit subtrees are wholly
+# ignored — each test constructs its own baseline inside a tmpdir.
+**/.dxkit/reports/
+**/.dxkit/cache/
+**/.dxkit/salt
+test/fixtures/**/.dxkit/
 
 # Claude Code local state — per-user, not committed
 .claude/settings.local.json
