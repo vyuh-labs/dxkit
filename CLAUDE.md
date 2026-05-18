@@ -296,6 +296,56 @@ Four rules in `scripts/check-architecture.sh` + `test/`:
    format — codifies "fingerprinting is pack-driven, not
    analyzer-by-analyzer."
 
+### 10. Baseline producers flow through the canonical registry
+
+Every analyzer that surfaces per-finding output MUST flow into the
+baseline file via a producer registered in
+`src/baseline/producers/index.ts:PRODUCERS`. The baseline-create
+orchestrator iterates the registry — no per-analyzer wiring
+elsewhere. Without the registry, adding a new analyzer means
+remembering to also edit the orchestrator, and the bug is invisible
+(guardrails pass while silently bypassing the new finding kind).
+
+- **Register** in `src/baseline/producers/index.ts:PRODUCERS` —
+  the single discovery surface. Each producer declares the
+  `IdentityKind` values it contributes and supplies a pure
+  `produce(ctx: ProducerContext) => BaselineEntry[]` function.
+- **Defer** in `src/baseline/producers/index.ts:DEFERRED_KINDS` —
+  identity kinds without an upstream gather yet land here with
+  explicit `reason` + `landingPhase`. Makes architectural gaps
+  discoverable from one place rather than requiring code spelunking.
+- **Compute identity** via `identityFor` only from inside a
+  registered producer (or from the dispatch definition itself in
+  `src/baseline/finding-identity.ts`). The arch gate enforces this
+  at commit time.
+
+The registry is the durable contract between today's analyzer set
+and tomorrow's guardrail check. Bypassing it means silently opting
+out of the contract.
+
+#### Producer-discipline enforcement
+
+Three rules:
+
+1. **`scripts/check-architecture.sh` Rule 10**: `identityFor(` is
+   only callable from `src/baseline/producers/**` and from
+   `src/baseline/finding-identity.ts`. Annotate
+   `// rule10-producer-ok` for justified exceptions (today: zero
+   needed).
+2. **`test/baseline/producers-contract.test.ts`**: every
+   `IdentityKind` is EITHER contributed by some registered
+   producer OR present in `DEFERRED_KINDS` with non-empty
+   `reason` + `landingPhase`. Never both. Every deferred entry
+   references a real `IdentityKind`. Producer names are unique;
+   no two producers claim the same kind.
+3. **`test/baseline/producer-playbook.test.ts`**: synthetic-
+   producer injection. Build a fake `BaselineProducer`, call
+   `runProducers([... PRODUCERS, fake])`, assert the fake's
+   sentinel entry appears in the output. Catches "orchestrator
+   stopped iterating the registry" — mirror of
+   `recipe-playbook.test.ts` for language packs (CLAUDE.md
+   Rule 6).
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

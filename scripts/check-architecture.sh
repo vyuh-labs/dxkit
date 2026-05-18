@@ -621,6 +621,36 @@ if [ -n "$ROGUE_BUCKET" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Rule 10 (baseline producer coverage): identity calls confined ──────────
+# Closes the class of bug where a new analyzer's findings reach disk
+# via a one-off `BaselineEntry`-builder that bypasses the canonical
+# producer registry. Every `identityFor(` call MUST live inside a
+# producer module (so the registry sees the contribution) or inside
+# the dispatch itself.
+#
+# Canonical sites:
+#   - `src/baseline/finding-identity.ts` — the dispatch definition.
+#   - `src/baseline/producers/**` — every registered producer.
+#
+# Annotate `// rule10-producer-ok` on the violating line for justified
+# exceptions (today: zero needed; the registry is the right home).
+RULE10_ALLOWLIST="src/baseline/finding-identity.ts"
+ROGUE_IDENTITY=$(grep -rnE "identityFor[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// rule10-producer-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/baseline/producers/" \
+  | { [ -n "$RULE10_ALLOWLIST" ] && grep -v -e "^${RULE10_ALLOWLIST}:" || cat; })
+if [ -n "$ROGUE_IDENTITY" ]; then
+  echo "❌ Rule 10 violation: identityFor() called outside the producer registry:"
+  echo "$ROGUE_IDENTITY"
+  echo "   → Register a producer in src/baseline/producers/index.ts:PRODUCERS"
+  echo "     and put the identityFor() call inside that producer module."
+  echo "   → The orchestrator iterates the registry; bypassing it means the"
+  echo "     new finding kind silently misses guardrail coverage."
+  echo "   → Annotate '// rule10-producer-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
