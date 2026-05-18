@@ -151,9 +151,9 @@ export interface BomGatherResult {
  * the analyzer layer hand BoM a canonical inventory + advisory set
  * built once at repo-root, so the gather pipeline never re-walks the
  * tree from a different cwd (the root cause of cross-consumer drift
- * on the same logical metric — e.g. dpl-studio's licenses-vs-BoM
- * package count diverging because two walks visited two different
- * subsets of csproj files).
+ * on the same logical metric — e.g. licenses-vs-BoM package count
+ * diverging on a deep C# monorepo because two walks visited two
+ * different subsets of csproj files).
  *
  * `depVulnsOverride`: shared dep-vuln set across nested callers.
  *   Pre-fix BoM called `gatherDepVulns(absRoot)` per sub-root, and

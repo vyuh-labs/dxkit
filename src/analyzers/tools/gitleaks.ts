@@ -80,7 +80,7 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
   // enterprise codebases would exceed the 1MB default maxBuffer and
   // silently return empty (same bug class as jscpd.ts). Direct file
   // read sidesteps the buffer entirely; gitleaks reports on
-  // dpl-studio-class repos can reach MB-range when many findings are
+  // enterprise repos can reach MB-range when many findings are
   // surfaced.
   let reportRaw: string;
   try {

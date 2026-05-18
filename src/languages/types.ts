@@ -135,7 +135,7 @@ export interface LanguageSupport {
    *   go:     `['*.pb.go', '*_string.go']`        (protobuf, stringer)
    *   java:   `['*Generated.java']`               (Lombok, etc.)
    *
-   * dpl-studio is the motivating case: Visual Studio's WinForms
+   * The .NET WinForms benchmark is the motivating case: Visual Studio's WinForms
    * designer generates `*.designer.cs` files that are typically large
    * (>500 lines), repetitive, and not authored — pre-D028 these
    * inflated Code Quality + Maintainability dimensions for any .NET
@@ -154,9 +154,9 @@ export interface LanguageSupport {
    * `gatherGenericMetrics` (the Documentation score input). Pre-D027
    * the regex was JS-shaped and the grep --include list was hardcoded
    * to TS / Python / Go extensions, so any csharp / kotlin / java /
-   * rust / ruby project reported zero doc-comment files. dpl-studio
-   * (3,234 .cs files with XML-doc triple-slash) is the motivating
-   * case: Documentation score was pinned at 0/100.
+   * rust / ruby project reported zero doc-comment files. The .NET
+   * WinForms benchmark (3,234 .cs files with XML-doc triple-slash)
+   * is the motivating case: Documentation score was pinned at 0/100.
    *
    * POSIX-compatible: prefer `[[:space:]]` over `\s`; escape regex
    * metacharacters for grep -E. Each entry is a standalone regex; the
@@ -209,8 +209,8 @@ export interface LanguageSupport {
    * non-pack code) and broke when generic tool names (`osv-scanner`,
    * via `osv-scanner-deps.ts`) didn't match the pack-aliased switch
    * keys (`osv-scanner-nuget-direct`). Findings then shipped as bare
-   * comments instead of actionable commands. D062 is the dpl-studio
-   * manifestation.
+   * comments instead of actionable commands. D062 is the .NET WinForms
+   * benchmark manifestation.
    *
    * Contract: receives the vulnerable package name and the patched
    * version (caller short-circuits on missing fixedVersion). Returns
@@ -269,7 +269,7 @@ export interface LanguageSupport {
    * aggregation to the union of every active pack's declarations.
    * Pre-D073 the cloc result included markup/data formats (JSON, XML,
    * CSV, YAML) in the `totalLines` denominator, deflating the quality
-   * report's "Comment Ratio" (1.6M JSON lines on dpl-studio dragged
+   * report's "Comment Ratio" (1.6M JSON lines on the .NET WinForms benchmark dragged
    * the C# comment ratio from ~25% down to 4.3%). Filter lets cloc
    * stay the authoritative line counter for actual source code while
    * data files stop polluting source metrics.

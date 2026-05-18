@@ -199,11 +199,11 @@ export function getGrepExcludeDirFlags(cwd: string): string {
  * multi-segment sourcePaths.
  *
  * D055 (2.4.7): pre-fix, multi-segment paths in `.dxkit-ignore` were
- * flattened to basenames here, so `Dev/Addons/DPLAddon/SAPB1/` silently
- * became `{Dev, Addons, DPLAddon, SAPB1}` — cloc then excluded EVERY
+ * flattened to basenames here, so `Dev/Addons/VendorAddon/SAPB1/` silently
+ * became `{Dev, Addons, VendorAddon, SAPB1}` — cloc then excluded EVERY
  * directory named `Dev` in the tree, killing 90% of source visibility
- * on dpl-studio. The split-flag construction preserves the path
- * structure for cloc.
+ * on the .NET WinForms benchmark. The split-flag construction preserves
+ * the path structure for cloc.
  *
  * The regex is anchored on path-segment boundaries with `(?:^|/)` /
  * `(?:/|$)` so `Dev/Addons/Foo` doesn't accidentally match `Dev/AddonsX`
@@ -279,8 +279,8 @@ export function getJscpdIgnorePatterns(cwd: string): string[] {
  * `.dxkit-ignore` entries.
  *
  * D055 (2.4.7): pre-fix, basenames-only flattening here meant
- * `Dev/Addons/DPLAddon/SAPB1/` became `{Dev, Addons, DPLAddon, SAPB1}`
- * — graphify then skipped every `Dev/` subtree in dpl-studio (10 files
+ * `Dev/Addons/VendorAddon/SAPB1/` became `{Dev, Addons, VendorAddon, SAPB1}`
+ * — graphify then skipped every `Dev/` subtree in the .NET WinForms benchmark (10 files
  * walked instead of ~1700, Functions=13). The two-set shape lets the
  * walker check basenames via segment membership AND check paths via
  * substring match on the file's relpath.

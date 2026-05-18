@@ -5,7 +5,7 @@
  * `gather()` collapses every non-success outcome to null, which
  * makes the licenses report unable to differentiate "0 packages —
  * scan ran cleanly" from "0 packages — tool not installed" (the F12
- * dpl-studio customer-credibility class).
+ * customer-credibility class observed on the .NET WinForms benchmark).
  *
  * Per-pack helpers live in `src/languages/{typescript,python,go,
  * rust,csharp}.ts` (kotlin/java/ruby don't declare a licenses

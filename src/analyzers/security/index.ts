@@ -67,7 +67,7 @@ function buildUpgradeCommand(f: {
  * action. Branches on `fixedVersion` because "upgrade" and "mitigate"
  * are linguistically different actions — squashing them into one
  * template with a `?? '(no patch)'` literal produced the grammatically
- * broken "Upgrade `SharpCompress` to (no patch)" on dpl-studio when
+ * broken "Upgrade `SharpCompress` to (no patch)" on the .NET WinForms benchmark when
  * D108 sparse-tier fallback floated mitigation-only items into Top 5.
  *
  * This is the ONLY authorized site for phrasing "(no patch)" / "no
@@ -404,7 +404,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   }
   // 5. Top non-KEV dep vulns. D108 closure: graceful tiering for
   //    sparse repos. Pre-D108 the filter `riskScore >= 25` excluded
-  //    the "watch" tier (10-25); on dpl-studio with MongoDB.Driver
+  //    the "watch" tier (10-25); on the .NET WinForms benchmark with MongoDB.Driver
   //    risk 19 + SharpCompress risk 15, no deps surfaced in Top 5
   //    even though both have unpatched advisories. Fix: iterate
   //    risk-score tiers and stop only when Top 5 is full.

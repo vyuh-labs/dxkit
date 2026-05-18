@@ -7,8 +7,9 @@
  * osv-scanner ingests via `--lockfile=<path>` (the file MUST be
  * literally named `packages.lock.json` — osv-scanner v2.x detects the
  * NuGet ecosystem by filename, not by a prefix). This closes the D036
- * customer-outcome gap on dpl-studio (where `dotnet list package`
- * couldn't run from a multi-project parent directory).
+ * customer-outcome gap on the .NET WinForms benchmark (where
+ * `dotnet list package` couldn't run from a multi-project parent
+ * directory).
  *
  * Lives under `src/analyzers/tools/` (alongside `osv-scanner-deps.ts`,
  * `jacoco.ts`, `npm-registry.ts`, `cvss-v4.ts`) — CLAUDE.md rule #6
@@ -24,8 +25,9 @@
  *   Microsoft-recommended non-sudo install) got dotnet discovered.
  *   That fix was necessary but not sufficient: `dotnet list package
  *   --vulnerable` still requires an explicit `.csproj`/`.sln` in cwd,
- *   and dpl-studio's `Code/Source/Dev/Core/<Module>/<Module>.csproj`
- *   layout puts the project files 3 levels deeper than the natural
+ *   and the .NET WinForms benchmark's
+ *   `Code/Source/Dev/Core/<Module>/<Module>.csproj` layout puts the
+ *   project files 3 levels deeper than the natural
  *   `dxkit vulnerabilities Code/Source/` cwd.
  *
  *   D025f sidesteps the dotnet CLI entirely. We walk every `.csproj`
@@ -181,7 +183,7 @@ export function buildNugetAdhocLockfile(entries: ReadonlyArray<PackageReferenceE
     // versions, last-write-wins per the lockfile shape (it's one entry
     // per package name within a framework). osv-scanner will scan
     // whichever version we stamped; the cross-csproj merging trade-off
-    // is documented at the caller. For dpl-studio scale (~74 csprojs)
+    // is documented at the caller. At enterprise scale (~74 csprojs)
     // collisions are common but typically converge on a single resolved
     // version per the repo's dependency hygiene practices.
     dependencies['net0.0'][entry.name] = {

@@ -177,8 +177,8 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   // `vulns.findings` (code findings — semgrep/gitleaks). Dependency
   // vulnerabilities live in `vulns.summary.dependencies.findings`
   // (per VulnReport schema v11+). Reading only the code-findings
-  // array caused the Vulnerabilities tile to show 0 on dpl-studio
-  // even when osv-scanner-nuget-direct surfaced 1 HIGH (MongoDB.Driver)
+  // array caused the Vulnerabilities tile to show 0 on the .NET
+  // WinForms benchmark even when osv-scanner-nuget-direct surfaced 1 HIGH (MongoDB.Driver)
   // + 1 MEDIUM (SharpCompress). Union both arrays so the tile and
   // the "Critical Issues at a Glance" section reflect the full
   // security signal.

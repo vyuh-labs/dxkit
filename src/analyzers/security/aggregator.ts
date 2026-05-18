@@ -227,8 +227,9 @@ function canonicalRuleFor(tool: string, rule: string): string {
  *
  * Boundary edge case closed by C1.10: the natural fixed-boundary
  * bucketing alone would miss adjacent findings straddling a
- * multiple-of-3 (web-client surfaced DBConfigureForm.js:43 + :45 →
- * buckets 42 + 45 → no collapse pre-C1.10). The grouping loop now
+ * multiple-of-3 (a JS-heavy customer frontend surfaced
+ * SetupConfigForm.js:43 + :45 → buckets 42 + 45 → no collapse
+ * pre-C1.10). The grouping loop now
  * does a neighbor-bucket lookup (naturalBucket ± 3) after the natural
  * miss, restoring D091's intent across boundary-straddling pairs.
  * Effective collapse window: ~3-5 lines depending on alignment.
@@ -349,9 +350,10 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     const naturalFingerprint = computeCodeFingerprint(canonicalRule, f.file, f.line);
 
     // C1.10: neighbor-bucket lookup. The 3-line fixed bucket misses
-    // adjacent findings that straddle a multiple-of-3 line (web-client
-    // DBConfigureForm.js:43 + :45 → buckets 42 + 45 → different keys
-    // → no collapse pre-C1.10). Look up the natural bucket first, then
+    // adjacent findings that straddle a multiple-of-3 line (the JS-heavy
+    // customer frontend surfaced SetupConfigForm.js:43 + :45 → buckets 42
+    // + 45 → different keys → no collapse pre-C1.10). Look up the natural
+    // bucket first, then
     // the adjacent buckets (naturalBucket ± 3 via `line ± 3`). Same
     // canonical-rule + file + neighbor-bucket counts as a match; merges
     // into that group. Effective dedup window grows from "0-2 lines

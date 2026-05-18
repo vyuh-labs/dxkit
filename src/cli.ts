@@ -1152,8 +1152,8 @@ export async function run(argv: string[]): Promise<void> {
         let effectiveRc = rc ?? -1;
         // Post-step assertion: the child returned rc=0 BUT did the
         // expected markdown actually land on disk? On heavy polyglot
-        // repos (web-client; 13K+ graphify nodes, jscpd timeout
-        // exhaustion) the health child was observed to silently exit
+        // repos (a JS-heavy customer frontend; 13K+ graphify nodes,
+        // jscpd timeout exhaustion) the health child was observed to silently exit
         // 0 without writing its markdown — the dashboard then renders
         // "no <X> data" and the customer never learns their report
         // is missing. The orchestrator owns the "did the report

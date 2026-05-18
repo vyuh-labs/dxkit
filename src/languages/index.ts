@@ -134,8 +134,9 @@ export function allTlsBypassPatterns(): string[] {
  * code" — JSON / XML / CSV / Markdown that cloc emits stay out of the
  * source-line counters that quality's Comment Ratio + health's
  * Documentation derive from. Pre-D073 cloc's `SUM` summed every
- * language including markup/data, deflating the dpl-studio comment
- * ratio (1.6M JSON lines dragged 25%-true C# comment ratio down to
+ * language including markup/data, deflating the .NET WinForms
+ * benchmark's comment ratio (1.6M JSON lines dragged 25%-true C#
+ * comment ratio down to
  * 4.3%).
  *
  * Scope mirrors `allAutogenSourcePatterns` — union across active +

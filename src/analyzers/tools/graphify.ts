@@ -63,7 +63,7 @@ target = Path(sys.argv[1])
 
 # Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
 # segment matching skips the file). EXCLUDE_PATHS holds multi-segment
-# relative paths from .dxkit-ignore (e.g. 'Dev/Addons/DPLAddon/SAPB1')
+# relative paths from .dxkit-ignore (e.g. 'Dev/Addons/VendorAddon/SAPB1')
 # and matches via substring on the file's relpath. EXCLUDE_FILE_GLOBS
 # carries basename-glob patterns from bundled defaults + .gitignore
 # ('*.min.js', '*.bundle.js', '*.chunk.js', '*.generated.ts', '*.d.ts')

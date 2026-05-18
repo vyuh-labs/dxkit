@@ -149,7 +149,7 @@ export async function gatherJscpdResult(cwd: string): Promise<DuplicationGatherO
   // Read the report file directly. Pre-D-fix this used
   // `run('cat <path>')` which routed through execSync with the default
   // 1MB maxBuffer — jscpd reports on enterprise codebases routinely
-  // exceed that (dpl-studio's was 25MB / 395k lines), causing execSync
+  // exceed that (the .NET WinForms benchmark's was 25MB / 395k lines), causing execSync
   // to truncate the output to empty and the gather to misreport
   // jscpd as "unavailable" even after a fully-successful run.
   // Direct file read sidesteps the buffer entirely.

@@ -428,7 +428,7 @@ export type LintGatherOutcome =
  *     per-package license inventory.
  *
  *   - **unavailable**: tool isn't installed OR the gather failed
- *     mid-run. F12 in dpl-studio's baseline was exactly this:
+ *     mid-run. F12 in the .NET WinForms benchmark baseline was exactly this:
  *     `nuget-license` absent → pre-D031 the licenses report rendered
  *     "0 packages" with no caveat, indistinguishable from a repo
  *     that legitimately has no third-party deps.

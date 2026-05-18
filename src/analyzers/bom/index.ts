@@ -295,8 +295,8 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
   L.push('## Summary');
   L.push('');
   if (s.projectRoots.length > 1) {
-    // D070 (2.4.7): collapse multi-root listings. Pre-fix dpl-studio
-    // rendered all 68 roots in one paragraph (one long comma-joined
+    // D070 (2.4.7): collapse multi-root listings. Pre-fix the deep
+    // C# monorepo benchmark rendered all 68 roots in one paragraph (one long comma-joined
     // line) — visually unreadable on any screen. Main report now
     // surfaces only the count + first few roots as a sample; the
     // detailed.md (`bom-<date>-detailed.md`) carries the full list

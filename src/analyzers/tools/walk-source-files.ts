@@ -8,7 +8,7 @@
  * site-specific implementations that were drifting (D075, D079).
  *
  * NEVER shells out. Pre-fix `grep -rEf <pat> --include=*.js .` on
- * web-client produced 67MB of stdout (matched minified .js content)
+ * a JS-heavy customer frontend produced 67MB of stdout (matched minified .js content)
  * and silently failed with ENOBUFS — `run()`'s 64MB ceiling truncated
  * to empty string, `consoleLogCount` reported 0 when reality was ~1370
  * (D082/D083). Walking the curated set in JS and scanning each file's
