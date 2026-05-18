@@ -83,4 +83,19 @@ describe('largeFilesToBaselineEntries', () => {
   it('threshold is 500 lines (canonical maintainability constant)', () => {
     expect(LARGE_FILE_THRESHOLD_LINES).toBe(500);
   });
+
+  it('emits one entry per file when many files exceed the threshold', () => {
+    // Regression guard: a previous shape capped `largestFiles` to
+    // the top-10 at the gather layer, leaking the renderer's
+    // display contract into the producer and silently dropping
+    // findings for repos with more than 10 oversized files.
+    const oversized = Array.from({ length: 47 }, (_, i) => ({
+      path: `src/file-${i}.ts`,
+      lines: LARGE_FILE_THRESHOLD_LINES + 1 + i,
+    }));
+    const entries = largeFilesToBaselineEntries(emptyMetrics({ largestFiles: oversized }));
+    expect(entries).toHaveLength(47);
+    const ids = new Set(entries.map((e) => e.id));
+    expect(ids.size).toBe(47);
+  });
 });

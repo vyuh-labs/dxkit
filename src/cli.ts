@@ -1683,7 +1683,9 @@ function formatMarkdownReport(
     lines.push('');
     lines.push('| Rank | File | Lines |');
     lines.push('|-----:|------|------:|');
-    report.largestFiles.forEach((f, i) => {
+    // Top 10 is the render contract — the underlying metric carries
+    // every file over the threshold (consumed by the baseline producer).
+    report.largestFiles.slice(0, 10).forEach((f, i) => {
       lines.push(`| ${i + 1} | \`${f.path}\` | ${f.lines.toLocaleString()} |`);
     });
     lines.push('');
@@ -1696,7 +1698,9 @@ function formatMarkdownReport(
     // etc.; the remaining cases (most commonly `/libs/`) live in
     // customer-specific paths that can't be defaulted-away without
     // false-positives on first-party monorepo layouts.
-    const suspects = suspectVendoredEntries(report.largestFiles);
+    // Scope the vendored advisor to the rendered top 10 — the tip
+    // calls out files the user can see in the table above.
+    const suspects = suspectVendoredEntries(report.largestFiles.slice(0, 10));
     if (suspects.length > 0) {
       lines.push(
         `> **Tip — possibly vendored:** ${suspects
