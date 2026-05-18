@@ -1087,13 +1087,39 @@ async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcom
     });
   }
 
-  // Populate releaseDate (xlsx col 10 / D006) from the npm registry.
+  // Populate releaseDate (xlsx col 10) from the npm registry.
   // Batched per unique package name; one HTTP call per package
   // regardless of how many versions are installed. Graceful fallback:
   // unreachable registry / unknown package leaves `releaseDate` unset.
-  const dateMap = await enrichReleaseDates(
-    findings.map((f) => ({ package: f.package, version: f.version })),
-  );
+  //
+  // Hard time budget: the per-request 10s timeout + 20-way concurrency
+  // are usually enough, but a flaky network or rate-limited registry
+  // can push a 700-package run past the dispatcher's 720s deadline.
+  // When that happens the entire licenses capability is dropped and
+  // the baseline silently loses every license entry — a much worse
+  // outcome than missing the optional releaseDate field. Race the
+  // enrichment against a wall-clock budget; on timeout, proceed with
+  // whatever the cache happened to fill in (often nothing) and let
+  // releaseDate stay unset on the affected findings.
+  let dateMap: Map<string, string>;
+  try {
+    dateMap = await Promise.race([
+      enrichReleaseDates(findings.map((f) => ({ package: f.package, version: f.version }))),
+      new Promise<Map<string, string>>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('enrichReleaseDates wall-clock budget exceeded')),
+          60_000,
+        );
+      }),
+    ]);
+  } catch (err) {
+    if (process.env.DXKIT_DEBUG_NPM_REGISTRY) {
+      process.stderr.write(
+        `[dxkit-licenses] release-date enrich aborted: ${(err as Error).message}\n`,
+      ); // slop-ok
+    }
+    dateMap = new Map();
+  }
   for (const f of findings) {
     const iso = dateMap.get(`${f.package}@${f.version}`);
     if (iso) f.releaseDate = iso;
