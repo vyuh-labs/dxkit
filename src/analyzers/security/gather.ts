@@ -9,6 +9,7 @@
  */
 import * as fs from 'fs';
 import { run } from '../tools/runner';
+import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from '../tools/deadline';
 import { enrichEpss, extractCveId } from '../tools/epss';
 import { stampFingerprints } from '../tools/fingerprint';
 import { enrichKev } from '../tools/kev';
@@ -282,8 +283,30 @@ export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
     return { envelope: null, available: true, unavailableReason: '' };
   }
 
+  // Every per-pack gatherOutcome is wrapped in a deadline (mirrors the
+  // dispatcher's per-provider deadline) so a single pack that hangs
+  // can't keep the cross-pack `Promise.allSettled` pending forever.
+  // A stall is materialised as an `unavailable` outcome with a
+  // deadline reason, so the existing availability machinery surfaces
+  // it through `toolsUnavailable` without any consumer change.
   const outcomes = await Promise.allSettled(
-    activePacks.map((l) => l.capabilities!.depVulns!.gatherOutcome(cwd)),
+    activePacks.map((l) =>
+      withDeadline(l.capabilities!.depVulns!.gatherOutcome(cwd), DEFAULT_PROVIDER_DEADLINE_MS).then(
+        (deadlineOutcome) => {
+          if (deadlineOutcome.stalled) {
+            const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
+            process.stderr.write(
+              `[dxkit] depVulns provider "${l.id}" stalled after >${seconds}s (deadline) — treating as unavailable\n`,
+            );
+            return {
+              kind: 'unavailable' as const,
+              reason: `stalled at >${seconds}s (deadline)`,
+            };
+          }
+          return deadlineOutcome.value;
+        },
+      ),
+    ),
   );
   const successEnvelopes: DepVulnResult[] = [];
   let firstUnavailable: { pack: string; reason: string } | null = null;

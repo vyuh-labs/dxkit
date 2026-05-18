@@ -19,10 +19,26 @@
 import type { CapabilityProvider } from '../languages/capabilities/provider';
 import type { CapabilityDescriptor } from '../languages/capabilities/descriptors';
 import type { CapabilityEnvelope } from '../languages/capabilities/types';
+import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from './tools/deadline';
 
 export interface DispatcherOptions {
   /** Called once per provider that throws or rejects. Default: silent. */
   onProviderError?(capId: string, source: string, err: unknown): void;
+  /**
+   * Called once per provider whose Promise never settles within the
+   * deadline. Default: warns on stderr. Tests pass a stub to capture
+   * stalls without polluting test output.
+   */
+  onProviderStall?(capId: string, source: string, stalledMs: number): void;
+  /**
+   * Per-provider deadline. Stalled providers are treated as if they
+   * had returned `null` with a "stalled at >Ns (deadline)" reason —
+   * the rest of the dispatch still completes via `Promise.allSettled`,
+   * and the stall surfaces in `toolsUnavailable` via the existing
+   * `availabilityFromOutcome` machinery. Default:
+   * `DEFAULT_PROVIDER_DEADLINE_MS` (12 minutes).
+   */
+  providerDeadlineMs?: number;
 }
 
 /**
@@ -121,6 +137,16 @@ export class CapabilityDispatcher {
     // facing report wants. Fall back to plain `gather()` for legacy
     // providers — the only loss is per-pack reason text; success/skip
     // attribution still works.
+    //
+    // Every provider's promise is wrapped in a deadline so a single
+    // never-settling Promise can't keep `Promise.allSettled` pending
+    // forever (the silent-failure shape observed when the capabilities
+    // gather hung and the parent exited rc=0 with no work done). A
+    // stall is materialised as `{ value: null, reason: "stalled at
+    // >Ns (deadline)" }` so the existing skip/skipReason channels
+    // carry it through to `toolsUnavailable` without any consumer
+    // change.
+    const deadlineMs = this.opts.providerDeadlineMs ?? DEFAULT_PROVIDER_DEADLINE_MS;
     const settled = await Promise.allSettled(
       providers.map((p) => {
         const candidate = p as CapabilityProvider<T> & {
@@ -128,15 +154,30 @@ export class CapabilityDispatcher {
             cwd: string,
           ): Promise<{ kind: 'success'; envelope: T } | { kind: string; reason?: string }>;
         };
-        if (typeof candidate.gatherOutcome === 'function') {
-          return candidate.gatherOutcome(cwd).then((o) => {
-            if (o.kind === 'success') {
-              return { value: (o as { envelope: T }).envelope, reason: null };
-            }
-            return { value: null as T | null, reason: (o as { reason?: string }).reason ?? null };
-          });
-        }
-        return p.gather(cwd).then((v) => ({ value: v, reason: null }));
+        const inner: Promise<{ value: T | null; reason: string | null }> =
+          typeof candidate.gatherOutcome === 'function'
+            ? candidate.gatherOutcome(cwd).then((o) => {
+                if (o.kind === 'success') {
+                  return { value: (o as { envelope: T }).envelope, reason: null };
+                }
+                return {
+                  value: null as T | null,
+                  reason: (o as { reason?: string }).reason ?? null,
+                };
+              })
+            : p.gather(cwd).then((v) => ({ value: v, reason: null }));
+        return withDeadline(inner, deadlineMs).then((outcome) => {
+          if (outcome.stalled) {
+            const stalledSeconds = Math.round(outcome.stalledMs / 1000);
+            const onStall = this.opts.onProviderStall ?? defaultOnProviderStall;
+            onStall(cap.id, p.source, outcome.stalledMs);
+            return {
+              value: null as T | null,
+              reason: `stalled at >${stalledSeconds}s (deadline)`,
+            };
+          }
+          return outcome.value;
+        });
       }),
     );
     const succeeded: string[] = [];
@@ -163,6 +204,20 @@ export class CapabilityDispatcher {
     const envelope = successful.length === 0 ? null : cap.aggregate(successful);
     return { envelope, attempted, succeeded, skipped, skipReasons };
   }
+}
+
+/**
+ * Default stall notifier — emits a single stderr line so a stalled
+ * provider is visible in `vyuh-dxkit report --verbose` and CI logs.
+ * Tests pass `onProviderStall` to suppress the write.
+ */
+function defaultOnProviderStall(capId: string, source: string, stalledMs: number): void {
+  const seconds = Math.round(stalledMs / 1000);
+  // Stderr keeps the stall visible in --verbose + CI logs without
+  // polluting subprocess stdout (the orchestrator parses stdout).
+  process.stderr.write(
+    `[dxkit] capability "${capId}" provider "${source}" stalled after >${seconds}s (deadline) — treating as skipped\n`,
+  );
 }
 
 /** Process-wide singleton. Tests should construct their own instance. */
