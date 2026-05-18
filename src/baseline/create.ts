@@ -164,7 +164,43 @@ function buildToolsMap(toolNames: ReadonlyArray<string>, cwd: string): Record<st
  */
 const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set(['tls-bypass-registry', 'grep-secrets']);
 
+/**
+ * Per-process cache of resolved tool versions, keyed by `${name}::${cwd}`.
+ *
+ * Why this exists: `findTool` spawns an `execFileSync` subprocess to
+ * run each tool's `versionCheck` command. Under heavy concurrent
+ * load (parallel vitest workers, large suites running side-by-side),
+ * that subprocess can occasionally complete with empty stdout —
+ * `resolveToolVersion`'s `if (status.version) return status.version`
+ * branch is skipped, the `return 'present'` fallback fires, and the
+ * resulting toolchainHash drifts between two back-to-back gathers
+ * within the same process. The matcher's `tooling_drift` gate then
+ * fires spuriously.
+ *
+ * Tool versions don't change mid-process — once we've resolved
+ * `gitleaks → 8.24.0` for `cwd`, every subsequent ask in the same
+ * process should return the same answer. The cache locks the first
+ * probe's outcome and skips later subprocess spawns entirely; same
+ * answer always, with the side benefit of faster repeated gathers.
+ *
+ * NOT applied to `findTool` itself: `tools-cli.ts` runs an install
+ * command then immediately re-probes (the install just created the
+ * binary, we need fresh state). That callsite must keep getting
+ * uncached results. The cache stays local to the toolchain-version
+ * resolver here.
+ */
+const VERSION_CACHE = new Map<string, string>();
+
 function resolveToolVersion(name: string, cwd: string): string {
+  const cacheKey = `${name}::${cwd}`;
+  const cached = VERSION_CACHE.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const resolved = resolveToolVersionUncached(name, cwd);
+  VERSION_CACHE.set(cacheKey, resolved);
+  return resolved;
+}
+
+function resolveToolVersionUncached(name: string, cwd: string): string {
   if (IN_PROCESS_TOOLS.has(name)) return `dxkit-${DXKIT_VERSION}`;
   const parts = name.split('-');
   for (let i = parts.length; i > 0; i--) {
@@ -178,6 +214,16 @@ function resolveToolVersion(name: string, cwd: string): string {
     return 'present';
   }
   return 'unknown';
+}
+
+/**
+ * Test seam: clear the version cache between test runs so per-test
+ * fixtures don't leak resolutions into one another. Production
+ * callers never use this — the cache lives for the entire CLI
+ * invocation and dies with the process.
+ */
+export function clearToolVersionCache(): void {
+  VERSION_CACHE.clear();
 }
 
 /**
