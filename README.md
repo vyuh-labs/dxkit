@@ -32,11 +32,11 @@ npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks
 
 The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
 
-> **Already installed dxkit globally? Upgrade explicitly.** `npx @vyuhlabs/dxkit@<version>` resolves the `vyuh-dxkit` binary off PATH first — if you previously ran `npm install -g @vyuhlabs/dxkit`, npx silently uses that older global binary regardless of the `@<version>` you specified. This is npx behavior, not a dxkit bug. To pick up the latest fixes (e.g. 2.4.7's silent-health-failure fix on heavy polyglot repos, or the jscpd-OOM fix on repos with committed-vendored bundles), run:
+> **Already installed dxkit globally?** Globals don't auto-update. If you previously ran `npm install -g @vyuhlabs/dxkit`, the `vyuh-dxkit` binary on your PATH stays pinned to whatever version was installed then; running `vyuh-dxkit` (without `npx`) keeps using the pinned version. To pick up the latest fixes, either upgrade the global or remove it and rely on `npx` (which fetches the requested version on demand):
 >
 > ```bash
 > npm install -g @vyuhlabs/dxkit@latest
-> # or, if you don't need a global install, remove the old one and rely on npx:
+> # or:
 > npm uninstall -g @vyuhlabs/dxkit
 > ```
 
