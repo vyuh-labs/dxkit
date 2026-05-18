@@ -142,7 +142,47 @@ This is the full audit (`health` + `vulnerabilities` + `test-gaps` +
 minutes. On large JS-heavy codebases the `jscpd` (duplicate-code)
 phase dominates — expect 20-30 min.
 
-## 5. What to do when something goes wrong
+## 5. Wire commit-time guardrails (new in 2.5.0)
+
+Once you've seen the reports, the next step for a brownfield repo is
+to lock in today's state as the floor and block any new regressions
+from landing — without forcing a cleanup sprint first.
+
+```bash
+# Install hooks + devcontainer + GitHub Actions PR-gate + baseline-refresh.
+vyuh-dxkit init --full
+
+# Or pick à la carte:
+vyuh-dxkit init --with-hooks --with-ci
+
+# Activate the hooks (once per clone).
+git config core.hooksPath .githooks
+
+# Capture today's findings as the brownfield anchor.
+vyuh-dxkit baseline create
+
+# Commit the anchor + workflow files.
+git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
+git commit -m "chore: enable dxkit guardrails"
+```
+
+From this point:
+
+- Every `git commit` runs a fast `guardrail check --changed-only`.
+- Every `git push` runs the full `guardrail check`.
+- Every PR is gated by the `dxkit-guardrails.yml` workflow, which
+  posts a markdown comment.
+- Every merge to `main` auto-regenerates `.dxkit/baselines/main.json`
+  so the next PR's anchor reflects merged state.
+
+Customize what blocks vs. warns by writing a
+[`.dxkit/policy.json`](configuration/policy.md) — auto-discovered when
+present.
+
+See [`baseline`](commands/baseline.md) and [`guardrail`](commands/guardrail.md)
+for the full surface.
+
+## 6. What to do when something goes wrong
 
 ```bash
 vyuh-dxkit doctor

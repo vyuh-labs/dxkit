@@ -8,6 +8,26 @@ Deterministic code-health analysis for 8 language ecosystems
 **[Getting started](getting-started.md)** — install dxkit, install the
 tools it drives, run your first report.
 
+## Commit-time guardrails (2.5.0)
+
+Capture today's findings as a baseline; every PR after that is diffed
+against the baseline so new regressions block while existing debt is
+allowed to remain. Wire it into pre-commit, pre-push, and a GitHub
+Actions PR-gate in one command.
+
+```bash
+vyuh-dxkit init --full          # hooks + devcontainer + CI + baseline-refresh
+vyuh-dxkit baseline create      # capture today's state
+git config core.hooksPath .githooks   # activate hooks
+```
+
+| Command                                         | What it does                                                   |
+| ----------------------------------------------- | -------------------------------------------------------------- |
+| [`baseline create`](commands/baseline.md)       | Write per-finding identities to `.dxkit/baselines/<name>.json` |
+| [`baseline show`](commands/baseline.md)         | Pretty-print or filter the on-disk baseline                    |
+| [`guardrail check`](commands/guardrail.md)      | Diff current scan vs. baseline; block on net-new regressions   |
+| [`.dxkit/policy.json`](configuration/policy.md) | Tune which classifications block vs. warn                      |
+
 ## What you can run
 
 Once dxkit + its tools are installed, here's the command surface:
@@ -29,6 +49,9 @@ Once dxkit + its tools are installed, here's the command surface:
 | [`init`](commands/init.md)                       | "Scaffold a new project with dxkit pre-configured"        | 5-30 sec                           |
 | [`update`](commands/update.md)                   | "Re-generate scaffolded files, preserving customizations" | 5-30 sec                           |
 | [`to-xlsx`](commands/to-xlsx.md)                 | "Convert a licenses/bom JSON report to 15-col XLSX"       | < 5 sec                            |
+| [`baseline create`](commands/baseline.md)        | "Capture today's findings as a brownfield anchor"         | 30s-2m                             |
+| [`baseline show`](commands/baseline.md)          | "Inspect/filter the on-disk baseline"                     | < 1 sec                            |
+| [`guardrail check`](commands/guardrail.md)       | "Block on net-new regressions vs. the baseline"           | 30s-2m                             |
 
 ## Configuration
 
@@ -36,6 +59,9 @@ Once dxkit + its tools are installed, here's the command surface:
   analysis (same syntax as `.gitignore`)
 - [`dxkit.yml`](configuration/dxkit-yml.md) — per-project overrides
   (force-activate a pack, pin a language version)
+- [`.dxkit/policy.json`](configuration/policy.md) — brownfield policy
+  for `guardrail check`: which classifications block, confidence
+  thresholds, per-finding-kind block rules
 - [Language packs](configuration/language-packs.md) — how dxkit detects
   your stack and which tools it activates per language
 
