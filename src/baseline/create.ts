@@ -29,6 +29,7 @@ import { gatherHygieneMarkers } from '../analyzers/quality/gather';
 import { analyzeTestGaps } from '../analyzers/tests';
 import { gatherGitleaksResult } from '../analyzers/tools/gitleaks';
 import type { GitleaksRawSecret } from '../analyzers/tools/gitleaks';
+import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { VERSION as DXKIT_VERSION } from '../constants';
 import {
   BASELINE_SCHEMA_VERSION,
@@ -123,16 +124,44 @@ function buildAnalysisMeta(cwd: string): BaselineAnalysisMeta {
 
 /** Build the per-tool name → version map from the security
  *  aggregate's provenance. Sparse; only the tools that actually
- *  ran appear. Versions are placeholder strings until per-tool
- *  version capture lands; the names are enough for the
- *  `tooling_drift` reclassification to fire on "tool went from
- *  present to absent." */
-function buildToolsMap(toolNames: ReadonlyArray<string>): Record<string, string> {
+ *  ran appear. Versions come from each tool's registered
+ *  `versionCheck` invocation via `findTool`, so the resulting
+ *  `toolchainHash` actually differs when a tool is upgraded —
+ *  closing the drift-detection gap that placeholder values left
+ *  open. `tls-bypass-registry` is in-process (not an external
+ *  binary), so its "version" tracks the dxkit version; bumping
+ *  dxkit invalidates the registry hash even when no external tool
+ *  changed.
+ *
+ *  Compound tool names like `'osv-scanner-nuget-direct'` (the
+ *  per-pack synthetic names the dep-vuln providers emit) are
+ *  resolved by progressively shortening on `-` boundaries until a
+ *  matching TOOL_DEFS key is found — so
+ *  `'osv-scanner-nuget-direct'` → `'osv-scanner-nuget'` →
+ *  `'osv-scanner'` (the canonical key). */
+function buildToolsMap(toolNames: ReadonlyArray<string>, cwd: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const name of toolNames) {
-    if (name) out[name] = 'unknown';
+    if (!name) continue;
+    out[name] = resolveToolVersion(name, cwd);
   }
   return out;
+}
+
+function resolveToolVersion(name: string, cwd: string): string {
+  if (name === 'tls-bypass-registry') return `dxkit-${DXKIT_VERSION}`;
+  const parts = name.split('-');
+  for (let i = parts.length; i > 0; i--) {
+    const candidate = parts.slice(0, i).join('-');
+    const def = TOOL_DEFS[candidate];
+    if (!def) continue;
+    const status = findTool(def, cwd);
+    if (status.version) return status.version;
+    // Tool resolves but version probe returned empty — distinct
+    // from "tool name doesn't match any TOOL_DEFS entry."
+    return 'present';
+  }
+  return 'unknown';
 }
 
 /**
@@ -208,7 +237,7 @@ export async function createBaseline(
   if (aggregate.provenance.codePatterns.tool) toolNames.add(aggregate.provenance.codePatterns.tool);
   if (aggregate.provenance.depVulns.tool) toolNames.add(aggregate.provenance.depVulns.tool);
   if (aggregate.provenance.tlsBypass.ran) toolNames.add('tls-bypass-registry');
-  const tools = buildToolsMap([...toolNames].sort());
+  const tools = buildToolsMap([...toolNames].sort(), cwd);
 
   const analysis: BaselineAnalysisMeta = {
     ...buildAnalysisMeta(cwd),
