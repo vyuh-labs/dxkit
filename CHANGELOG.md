@@ -7,6 +7,197 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.8] - 2026-05-18
+
+### Summary
+
+Focused patch release closing the regressions surfaced by a
+post-2.4.7 user-simulation evaluation across the three external
+audit repos. The biggest item is the structural follow-up to
+D134 — the silent-health failure root-caused in 2.4.7 was a
+real abandoned-Promise inside `runDetached`, but the underlying
+class (unbounded await chain at the dispatcher level) had a
+second failure mode that the 2.4.7 fix didn't reach. 2.4.8
+closes it structurally. Plus: a date-rollover false-failure on
+long runs, a Tools-used footer attribution drift, a cascade
+warning when the analysis cache can't be built, and a README
+upgrade-advisory correction. Tests: 1265 / 0 (up from 1241 at
+the 2.4.7 baseline).
+
+#### Per-provider deadline closes a second silent-health failure mode (D141)
+
+D134 in 2.4.7 added a `settle()` guard plus a safety deadline
+**inside** `runDetached` so that exit / error / safety-deadline
+each force the subprocess Promise to resolve. That closed the
+shape where a `runDetached` Promise itself stayed pending. But
+a post-ship user-simulation reproduced the same silent-rc=0
+behavior on a JS-heavy customer frontend audit — and this time
+the runDetached safety deadline did not fire, because the
+abandoned Promise was not inside `runDetached` at all. It was
+inside the capability dispatcher's `Promise.allSettled` over
+nine providers: one of those providers' `gatherOutcome` chains
+contained a Promise that never settled, `Promise.allSettled`
+cannot collapse an unsettled Promise, the whole
+`gatherCapabilityReport` stayed pending forever, Node's event
+loop emptied and the parent saw a clean rc=0 with no markdown
+written.
+
+Fix (commit `611321d`):
+
+- New `src/analyzers/tools/deadline.ts` with a
+  `withDeadline(promise, deadlineMs)` helper that races any
+  Promise against a timer.
+- The dispatcher (`src/analyzers/dispatcher.ts`) wraps every
+  provider's `gather` / `gatherOutcome` call in a 720-second
+  deadline (`DEFAULT_PROVIDER_DEADLINE_MS`). A stalled provider
+  is materialised as a skipped source with reason
+  `"stalled at >Ns (deadline)"` that flows through the existing
+  availability machinery into the `Tools unavailable` surface.
+  A stderr line names the stalled capability + source so the
+  abandoned-Promise location is visible in `--verbose` and CI
+  logs.
+- The two non-dispatcher gathers
+  (`gatherDepVulnsWithAvailability` and
+  `gatherLicensesWithAvailability`) iterate active packs
+  themselves; both apply the same per-pack deadline pattern.
+- New `DispatcherOptions` fields (`providerDeadlineMs`,
+  `onProviderStall`) so tests can wrap deadlines around 50-ms
+  stubs without polluting test output. Default `onProviderStall`
+  emits the stderr notification.
+- New regression test
+  (`test/dispatcher-deadline.test.ts`, 7 cases) exercises the
+  helper directly, the dispatcher with one hung + one good
+  provider, the all-hung case, the bounded wall-clock claim,
+  and confirms thrown-provider rejections still route through
+  `onProviderError` (not `onProviderStall`).
+
+Verification on the failure repo:
+
+- Pre-fix (2.4.7 user-sim): `report` exited 1 after ~1428 s;
+  Health step hung in the capabilities Promise.all and never
+  wrote `health-audit-*.md`; orchestrator's 2.4.7
+  defense-in-depth guard surfaced the ✗ but the underlying
+  hang remained.
+- Post-fix: `report` exited 0 in 1264.5 s; all 8 steps wrote
+  their reports; one stderr line attributed the stall to the
+  typescript-pack licenses provider walking a deep
+  `node_modules` tree — the reproducible offender behind the
+  intermittent hang. The Licenses report's framing notice
+  reads `typescript: stalled at >720s (deadline)` so the
+  customer sees what to act on.
+
+The class is now closed by construction: a never-settling
+provider can no longer keep `Promise.allSettled` pending
+forever; the worst-case behaviour is one capability surfacing
+as unavailable with the deadline reason visible to the user.
+
+#### Orchestrator date snapshot survives UTC-midnight rollover (D140)
+
+Long `vyuh-dxkit report` runs that crossed UTC midnight
+produced false failures. Files written before midnight got the
+old date suffix; files written after got the new one; the
+orchestrator's post-step file-existence check compared against
+the date snapshot it captured at startup. Several reports were
+on disk under the new date but the orchestrator reported them
+as missing.
+
+Fix (commit `cc1f146`):
+
+- New `src/analyzers/tools/report-date.ts` exposes
+  `getReportDate()`, which honors the optional
+  `DXKIT_REPORT_DATE=YYYY-MM-DD` env var (validated) and falls
+  back to today's UTC date.
+- The orchestrator captures the date once at startup and
+  threads it to every child subcommand via the env var, so
+  every report filename in a single run shares the same date.
+- All 10 internal date-stamping call sites in
+  `src/cli.ts` + dashboard + dev-report routed through the
+  helper.
+- 6 new tests in `test/report-date.test.ts`, including a
+  `Date.now` jump that emulates the orchestrator-snapshot
+  surviving a midnight rollover.
+
+#### Tools-used footer reads cleanly when one pack's lint skipped (D138 follow-up)
+
+The 2.4.7 D138 work landed honesty-prose in the dedicated
+`⚠ Lint coverage gap` row when one active language pack's
+linter didn't run. But the `Tools used:` footer at the bottom
+of every report was still rendering the augmented label
+verbatim — so on a polyglot repo it read
+`..., ruff (not run: typescript — config error), ...`, which
+parses as "ruff did not run because of typescript" (false;
+ruff ran fine on Python files; the parenthetical describes
+eslint's fate, not ruff's). Internal commas inside the
+parenthetical also broke the comma-split that fanned the
+footer string into individual tool names.
+
+Fix (commit `98ea153`):
+
+- New `src/analyzers/tools/lint-label.ts` centralises the
+  parse (regex + `stripNotRunSuffix` helper).
+- `splitToolNames` in `health.ts` and the `toolsUsed` push in
+  `quality/index.ts` both strip the `(not run: ...)` suffix
+  before emitting into the footer.
+- The dedicated `⚠ Lint coverage gap` row keeps its own
+  augmented-label parse — that row is exactly where the
+  per-pack skip belongs.
+- 11 tests in `test/lint-label.test.ts` cover single-pack,
+  multi-pack with internal commas, and malformed input.
+
+#### Cascade warning when health fails before the analysis cache builds (related to D141)
+
+When the Health step fails before the cross-process
+`AnalysisResult` cache is built, every downstream report
+(Vulnerabilities, BoM, Licenses, Test gaps, Quality,
+Developer) re-runs detection + Layer 0 + Layer 2 gather from
+scratch — measurably slower than the cache-hit path. On a
+heavy polyglot repo this can add hundreds of seconds across
+the run. The structural fix (build the cache from the
+gather output even when the markdown write fails) is the
+larger piece; this release surfaces the symptom honestly so
+the user understands why the remaining steps feel slower.
+
+Fix (commit `fa019f8`):
+
+- When Health fails before the cache is built, the
+  orchestrator logs:
+  `Health failed before the analysis cache could be built.
+  The remaining steps will re-detect the stack and re-gather
+  shared metrics from scratch (expect each to be measurably
+  slower than usual).`
+- No new tests — the warning is exercised end-to-end via
+  the orchestrator's existing integration coverage.
+
+#### README upgrade advisory now matches the observed behavior of modern npm (related to F3 audit finding)
+
+The 2.4.7 README's "Already installed dxkit globally?" callout
+claimed `npx @vyuhlabs/dxkit@<version>` falls through to a
+stale `vyuh-dxkit` global on PATH. Tested under npm 11.6.0
+with a stale 2.4.2 global installed, `npx @vyuhlabs/dxkit@2.4.7
+--version` correctly returned `2.4.7` — modern npm/npx does
+not fall through. A reader following the advisory might
+uninstall a working global install on advice that doesn't
+match their environment.
+
+Fix (commit `6d8363b`): rewrites the callout to keep the
+genuinely useful upgrade hint (globals don't auto-update;
+either upgrade them or remove them and rely on `npx`) without
+the inaccurate npx-behaviour assertion. Also drops the
+2.4.7-specific fix-mention which would have gone stale after
+this release.
+
+### Test posture
+
+- `npm run test:run` — **1265 / 0** (up from 1241).
+- `+6` tests for D140 (`test/report-date.test.ts`).
+- `+11` tests for D138 follow-up (`test/lint-label.test.ts`).
+- `+7` tests for D141 (`test/dispatcher-deadline.test.ts`),
+  including the D138-class regression that simulates a
+  never-settling provider and asserts the dispatcher returns
+  within the deadline window with the stalled source in
+  `skipped` + `skipReasons`.
+- arch / slop / lint / format / typecheck — all clean.
+
 ## [2.4.7] - 2026-05-17
 
 ### Summary
