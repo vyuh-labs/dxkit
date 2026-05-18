@@ -1,9 +1,10 @@
 # @vyuhlabs/dxkit
 
-AI-native analyzer and scaffolder for any repository. Two modes in one CLI:
+AI-native analyzer, scaffolder, and commit-time guardrail for any repository. Three modes in one CLI:
 
 1. **Analyze** any repo deterministically — health, security, test gaps, code quality, developer activity — in seconds, no LLM required.
-2. **Scaffold** `.claude/` agents, skills, commands, and hooks tuned to your stack.
+2. **Scaffold** `.claude/` agents, skills, commands, hooks, devcontainer, and CI workflows tuned to your stack.
+3. **Guard** every commit, push, and PR against a per-finding baseline so new regressions block while existing debt is left alone.
 
 Built so agent-written code has deterministic guardrails before it ships. Scores don't move just because an LLM had a different mood today.
 
@@ -23,14 +24,24 @@ npx @vyuhlabs/dxkit licenses                  # dependency license inventory
 npx @vyuhlabs/dxkit dev-report                # git activity + contributors
 ```
 
-**Scaffold AI tooling into a repo:**
+**Scaffold AI tooling + commit-time guardrails into a repo:**
 
 ```bash
 npx @vyuhlabs/dxkit init --detect             # auto-detect stack, minimal prompts
-npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks + CI
+npx @vyuhlabs/dxkit init --full --yes         # everything: DX + quality + hooks +
+                                              #             devcontainer + CI gate
 ```
 
-The two modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers.
+**Gate every commit/push/PR (new in 2.5.0):**
+
+```bash
+npx @vyuhlabs/dxkit baseline create           # capture today's findings as the anchor
+git config core.hooksPath .githooks           # activate hooks (after init --with-hooks)
+# ...then every commit runs `dxkit guardrail check --changed-only`,
+# every push runs the full check, and the PR-gate workflow blocks merges.
+```
+
+The three modes are complementary. The analyzers run anywhere; the scaffolder writes `.claude/` so Claude Code and other agents have project-specific context and slash commands that delegate to the same analyzers; the guardrail diffs each scan against a committed baseline so brownfield debt stays grandfathered while new regressions are caught.
 
 > **Already installed dxkit globally?** Globals don't auto-update. If you previously ran `npm install -g @vyuhlabs/dxkit`, the `vyuh-dxkit` binary on your PATH stays pinned to whatever version was installed then; running `vyuh-dxkit` (without `npx`) keeps using the pinned version. To pick up the latest fixes, either upgrade the global or remove it and rely on `npx` (which fetches the requested version on demand):
 >
@@ -60,6 +71,25 @@ Seven deterministic analyzers + a one-shot orchestrator. Each emits a markdown r
 | `report`          | **One-shot full audit** — runs every analyzer + dashboard in dependency order. `--with-coverage` materializes coverage once upfront so both `health` and `test-gaps` benefit without re-running tests per analyzer.                                                                                                   | 5–15m   | every output above + dashboard                |
 
 Plus a converter: `vyuh-dxkit to-xlsx <json-file>` renders any `licenses` or `bom` detailed JSON as the canonical 15-column XLSX.
+
+## Commit-time guardrails
+
+| Command           | What it does                                                                                                                                                                                                | Runtime | Output                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------- |
+| `baseline create` | Runs every analyzer, fingerprints each finding, writes `.dxkit/baselines/<name>.json` (default `main`) as the brownfield anchor                                                                             | 30s–2m  | `.dxkit/baselines/main.json` |
+| `baseline show`   | Pretty-print or filter the on-disk baseline (`--kind <kind>` drills into one kind; `--json` emits a schema-banner payload)                                                                                  | <1s     | stdout                       |
+| `guardrail check` | Diff a current scan against the baseline using a git-aware matcher (rename + ±2 line fuzz + content-hash fallback); block on net-new regressions per `.dxkit/policy.json`; emits console, JSON, or markdown | 30s–2m  | exit 0/1 + report            |
+
+Composable aggregate gates on every analyzer command:
+
+| Flag                        | What it does                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--fail-on-score <N>`       | Exit 1 when the headline score drops below `N` (applies to `health`, `test-gaps`)                                           |
+| `--fail-on-severity <tier>` | Exit 1 when any finding at `<tier>` or higher exists (applies to `vulnerabilities`, `bom`; tier ∈ critical/high/medium/low) |
+
+JSON outputs carry a `schema: 'dxkit.<kind>-report.v1'` banner so consumers can version-gate.
+
+Configure block/warn classifications + per-finding-kind block rules in `.dxkit/policy.json` (auto-discovered at the repo root). See [`docs/configuration/policy.md`](docs/configuration/policy.md).
 
 ### Flags (apply to all analyzer commands)
 
