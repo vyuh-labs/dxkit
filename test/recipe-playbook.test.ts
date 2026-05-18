@@ -349,6 +349,12 @@ describe('recipe playbook — synthetic pack', () => {
     expect(aggregate.depBySeverity.critical).toBe(1);
     expect(aggregate.depBySeverity.high).toBe(1);
     expect(aggregate.findingsByCategory.dependency).toHaveLength(2);
+    // Rule 9: synthetic-pack dep-vuln findings carry the fingerprint
+    // they entered with — the aggregator must not strip the canonical
+    // identity. Future packs producing dep-vulns inherit this contract.
+    for (const f of aggregate.findingsByCategory.dependency) {
+      expect(f.fingerprint).toBeTruthy();
+    }
   });
 
   it('buildSecurityAggregate collapses cross-tool TLS-bypass regardless of pack identity (G_v4_8 / D091)', async () => {
@@ -400,6 +406,10 @@ describe('recipe playbook — synthetic pack', () => {
     ]);
     expect(aggregate.codeBySeverity.high).toBe(1);
     expect(aggregate.dedupCollisions).toHaveLength(1);
+    // Rule 9: the collapsed CodeFinding carries a fingerprint stamped
+    // by the canonical helper. Synthetic pack contributions inherit
+    // the same identity contract that real packs do.
+    expect(aggregate.findingsByCategory.code[0].fingerprint).toMatch(/^[0-9a-f]{16}$/);
   });
 
   // ─── ArchitecturalShape (2.4.7 C8): per-stack paths + vocabulary
