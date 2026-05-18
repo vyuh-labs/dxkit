@@ -42,7 +42,9 @@ import { DEFAULT_BROWNFIELD_POLICY } from './policy';
 import { PRODUCERS, runProducers } from './producers';
 import type { ProducerContext } from './producers';
 import { resolveSalt } from './salt';
+import type { SaltMode } from './salt';
 import type { BaselineEntry } from './types';
+import type { SecurityAggregate } from '../analyzers/security/aggregator';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -165,22 +167,45 @@ function resolveToolVersion(name: string, cwd: string): string {
 }
 
 /**
- * Run the baseline-create pipeline. Pure-orchestrator: each step has
- * a single responsibility (analyze → produce entries → resolve
- * envelope metadata → write file).
+ * Snapshot of one analyzer run, in the exact shape the baseline file
+ * and the guardrail-check both need. Built by `gatherCurrentScan`
+ * once and consumed by either path.
+ *
+ * Why this is shared: the guardrail check re-runs every analyzer to
+ * produce the "current" side of the diff. Without a shared step, the
+ * gather + producer-dispatch logic would have to be duplicated in
+ * `check.ts` — exactly the class of duplication CLAUDE.md Rule 2
+ * forbids for tool invocation, and the same hazard applies here.
  */
-export async function createBaseline(
-  options: CreateBaselineOptions,
-): Promise<CreateBaselineResult> {
+export interface CurrentScan {
+  readonly findings: ReadonlyArray<BaselineEntry>;
+  readonly aggregate: SecurityAggregate;
+  readonly repoState: BaselineRepoState;
+  readonly saltMode: SaltMode;
+  /** Per-tool name → version map for the run that just completed. */
+  readonly tools: Readonly<Record<string, string>>;
+  /** Envelope metadata for the run. `toolchainHash` is already
+   *  resolved from `tools`. */
+  readonly analysisMeta: BaselineAnalysisMeta;
+  /** Echoed back so the guardrail check can attribute per-pair
+   *  severity, overlap, and reachable signals without re-gathering. */
+  readonly producerCtx: ProducerContext;
+}
+
+/**
+ * Run every analyzer once, dispatch through the producer registry,
+ * and return the assembled `CurrentScan`. Used by `createBaseline`
+ * to capture today's state and by `runGuardrailCheck` to gather the
+ * current side of the cross-run diff.
+ *
+ * Pure-orchestrator: each step has a single responsibility (analyze
+ * → produce entries → resolve envelope metadata).
+ */
+export async function gatherCurrentScan(options: {
+  readonly cwd: string;
+  readonly verbose?: boolean;
+}): Promise<CurrentScan> {
   const cwd = path.resolve(options.cwd);
-  const name = options.name ?? DEFAULT_BASELINE_NAME;
-  const filePath = pathForBaseline(cwd, name);
-  if (!options.force && fs.existsSync(filePath)) {
-    throw new Error(
-      `baseline already exists at ${filePath}. Pass force: true to overwrite, ` +
-        `or use a different --name to keep both.`,
-    );
-  }
 
   const analysisResult = await readOrBuildAnalysisResult({
     cwd,
@@ -189,7 +214,7 @@ export async function createBaseline(
   const aggregate = analysisResult.capabilities.securityAggregate;
   if (!aggregate) {
     throw new Error(
-      'baseline create: cached AnalysisResult missing securityAggregate ' +
+      'baseline scan: cached AnalysisResult missing securityAggregate ' +
         '(expected to be populated by gatherAnalysisResultBody).',
     );
   }
@@ -239,20 +264,51 @@ export async function createBaseline(
   if (aggregate.provenance.tlsBypass.ran) toolNames.add('tls-bypass-registry');
   const tools = buildToolsMap([...toolNames].sort(), cwd);
 
-  const analysis: BaselineAnalysisMeta = {
+  const analysisMeta: BaselineAnalysisMeta = {
     ...buildAnalysisMeta(cwd),
     toolchainHash: hashContent(JSON.stringify(tools)),
   };
+
+  return {
+    findings,
+    aggregate,
+    repoState,
+    saltMode,
+    tools,
+    analysisMeta,
+    producerCtx,
+  };
+}
+
+/**
+ * Run the baseline-create pipeline. Pure-orchestrator: gather the
+ * current scan via the shared step, then write it to disk under the
+ * given name.
+ */
+export async function createBaseline(
+  options: CreateBaselineOptions,
+): Promise<CreateBaselineResult> {
+  const cwd = path.resolve(options.cwd);
+  const name = options.name ?? DEFAULT_BASELINE_NAME;
+  const filePath = pathForBaseline(cwd, name);
+  if (!options.force && fs.existsSync(filePath)) {
+    throw new Error(
+      `baseline already exists at ${filePath}. Pass force: true to overwrite, ` +
+        `or use a different --name to keep both.`,
+    );
+  }
+
+  const scan = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
   const file: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     name,
     createdAt: new Date().toISOString(),
-    repo: repoState,
-    analysis,
-    tools,
-    saltMode,
-    findings,
+    repo: scan.repoState,
+    analysis: scan.analysisMeta,
+    tools: scan.tools,
+    saltMode: scan.saltMode,
+    findings: scan.findings,
   };
 
   writeBaselineFile(filePath, file);

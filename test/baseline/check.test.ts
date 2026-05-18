@@ -1,0 +1,167 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { createBaseline } from '../../src/baseline/create';
+import { runGuardrailCheck } from '../../src/baseline/check';
+import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
+
+/**
+ * End-to-end exercise of the guardrail-check orchestrator. The
+ * matcher + classifier have their own unit tests; this file proves
+ * the orchestration glue (baseline file → producer rerun → match →
+ * classify → render) works on a real git repo.
+ *
+ * Each `createBaseline` + `runGuardrailCheck` runs every analyzer
+ * on the fixture repo (~10-15s), so the file consolidates many
+ * assertions per test to keep total runtime reasonable. Per-axis
+ * unit coverage lives in `git-aware-match.test.ts`, `policy.test.ts`,
+ * and `entry-to-located.test.ts`; this file proves they wire
+ * together correctly.
+ */
+function makeRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dxkit-guardrail-'));
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+  writeFileSync(join(dir, 'README.md'), '# fixture repo\n');
+  execFileSync('git', ['add', '.'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+  return dir;
+}
+
+describe('runGuardrailCheck (integration)', () => {
+  let savedEnv: string | undefined;
+
+  beforeAll(() => {
+    savedEnv = process.env.DXKIT_BASELINE_SALT;
+    delete process.env.DXKIT_BASELINE_SALT;
+  });
+
+  afterAll(() => {
+    if (savedEnv === undefined) delete process.env.DXKIT_BASELINE_SALT;
+    else process.env.DXKIT_BASELINE_SALT = savedEnv;
+  });
+
+  describe('happy paths', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = makeRepo();
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('reports no changes, then detects a new stale-file across check + renderers + explicit --baseline path', async () => {
+      // Step 1: clean repo. Baseline + immediate check should
+      // report no changes. Renderers handle the empty case.
+      const created = await createBaseline({ cwd: dir });
+      const noop = await runGuardrailCheck({ cwd: dir });
+      expect(noop.blocks).toBe(false);
+      expect(noop.warns).toBe(false);
+      expect(noop.pairs).toEqual([]);
+      expect(noop.envelopeDrift.toolchainHashChanged).toBe(false);
+      // Renderers must not throw on the empty case.
+      const emptyConsole = renderConsole(noop);
+      expect(emptyConsole).toContain('Guardrail PASSED');
+      expect(emptyConsole).toContain('Baseline');
+      const emptyJson = renderJson(noop);
+      expect(emptyJson.schema).toBe('dxkit.guardrail-check.v1');
+      expect(emptyJson.verdict.exitCode).toBe(0);
+      expect(emptyJson.summary.pairs).toBe(0);
+      expect(() => JSON.parse(JSON.stringify(emptyJson))).not.toThrow();
+      const emptyMd = renderMarkdown(noop);
+      expect(emptyMd).toContain('## Guardrail: PASSED');
+
+      // Step 2: introduce a stale .bak file the quality producer
+      // catches. Confirm the addition surfaces + the renderers
+      // include it + --baseline overrides the lookup path.
+      writeFileSync(join(dir, 'leftover.bak'), 'old\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'drop a .bak'], { cwd: dir });
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      const added = result.pairs.filter((p) => p.classification.status === 'added');
+      expect(added.length).toBeGreaterThan(0);
+      const staleAdds = added.filter((p) => p.kind === 'stale-file');
+      expect(staleAdds).toHaveLength(1);
+      expect(staleAdds[0].file).toContain('leftover.bak');
+
+      const consoleOut = renderConsole(result);
+      expect(consoleOut).toContain('stale-file');
+      const jsonOut = renderJson(result);
+      expect(jsonOut.summary.pairs).toBeGreaterThan(0);
+      const mdOut = renderMarkdown(result);
+      expect(mdOut).toMatch(/_Baseline_:/);
+
+      // Explicit --baseline path override.
+      const stashed = join(dir, 'stashed-baseline.json');
+      writeFileSync(stashed, readFileSync(created.path));
+      const viaPath = await runGuardrailCheck({ cwd: dir, baselinePath: stashed });
+      expect(viaPath.baselinePath).toBe(stashed);
+      expect(viaPath.baseline.name).toBe('main');
+    }, 90_000);
+  });
+
+  describe('error + policy + drift paths', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = makeRepo();
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('errors on missing baseline, malformed --policy, missing --policy file', async () => {
+      await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(/baseline file not found/);
+
+      await createBaseline({ cwd: dir });
+      await expect(
+        runGuardrailCheck({ cwd: dir, policyPath: join(dir, 'does-not-exist.json') }),
+      ).rejects.toThrow(/not readable/);
+
+      const policyPath = join(dir, 'broken.json');
+      writeFileSync(policyPath, '{ this is not json');
+      await expect(runGuardrailCheck({ cwd: dir, policyPath })).rejects.toThrow(/not valid JSON/);
+    }, 60_000);
+
+    it('permissive --policy override unblocks every `added` finding', async () => {
+      await createBaseline({ cwd: dir });
+      writeFileSync(join(dir, 'leftover.bak'), 'x\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'add bak'], { cwd: dir });
+
+      const policyPath = join(dir, 'policy.json');
+      writeFileSync(
+        policyPath,
+        JSON.stringify({ block: [], warn: ['added'], blockRules: {} }, null, 2),
+      );
+      const result = await runGuardrailCheck({ cwd: dir, policyPath });
+      expect(result.policy.block).toEqual([]);
+      expect(result.blocks).toBe(false);
+      const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
+      expect(addedPairs.length).toBeGreaterThan(0);
+      for (const p of addedPairs) expect(p.classification.blocks).toBe(false);
+    }, 60_000);
+
+    it('reclassifies `added` as `config_drift` when the ignore file changes', async () => {
+      await createBaseline({ cwd: dir });
+      // Add a .dxkit-ignore + a new .bak in the same commit; the
+      // ignore-hash drift demotes the added entry's status.
+      writeFileSync(join(dir, '.dxkit-ignore'), 'fixtures/\n');
+      writeFileSync(join(dir, 'leftover.bak'), 'x\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'add ignore + bak'], { cwd: dir });
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      expect(result.envelopeDrift.ignoreHashChanged).toBe(true);
+      const driftPairs = result.pairs.filter(
+        (p) =>
+          p.classification.status === 'config_drift' || p.classification.status === 'tooling_drift',
+      );
+      expect(driftPairs.length).toBeGreaterThan(0);
+    }, 60_000);
+  });
+});

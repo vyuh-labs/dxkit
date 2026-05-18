@@ -51,6 +51,11 @@ function printUsage(): void {
     vyuh-dxkit baseline create [path] [--name <name>] [--force]
                                  Capture per-finding identities to .dxkit/baselines/<name>.json
                                  (read later by guardrail check to gate new regressions)
+    vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
+                               [--changed-only] [--policy <path>]
+                               [--json | --markdown]
+                                 Diff current scan against the named baseline; block on net-new
+                                 regressions per brownfield policy. Exit code 1 when blocked.
 
   ${logger.bold('Init options:')}
     --dx-only    Just .claude/ + CLAUDE.md (default)
@@ -118,6 +123,10 @@ export async function run(argv: string[]): Promise<void> {
       timeout: { type: 'string' },
       'no-fail-fast': { type: 'boolean', default: false },
       'with-coverage': { type: 'boolean', default: false },
+      'changed-only': { type: 'boolean', default: false },
+      baseline: { type: 'string' },
+      policy: { type: 'string' },
+      markdown: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -1305,6 +1314,49 @@ export async function run(argv: string[]): Promise<void> {
         logger.success(
           `Wrote ${rel} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
         );
+      } catch (err) {
+        logger.fail((err as Error).message);
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'guardrail': {
+      const subCommand = positionals[1];
+      if (subCommand !== 'check') {
+        logger.fail(
+          `Unknown guardrail subcommand: ${subCommand ?? '(missing)'}. ` +
+            `Available: vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>] ` +
+            `[--changed-only] [--policy <path>] [--json | --markdown]`,
+        );
+        process.exit(1);
+      }
+      const targetPath = resolveRepoPath(positionals[2]);
+      const { runGuardrailCheck } = await import('./baseline/check');
+      const { renderConsole, renderJson, renderMarkdown } =
+        await import('./baseline/check-renderers');
+      if (!values.json) logger.header('vyuh-dxkit guardrail check');
+      if (!values.json) logger.info(`Checking ${targetPath} against baseline...`);
+      const startTime = Date.now();
+      try {
+        const result = await runGuardrailCheck({
+          cwd: targetPath,
+          name: values.name as string | undefined,
+          baselinePath: values.baseline as string | undefined,
+          changedOnly: !!values['changed-only'],
+          policyPath: values.policy as string | undefined,
+          verbose: !!values.verbose,
+        });
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        if (values.json) {
+          await emitJson(renderJson(result));
+        } else if (values.markdown) {
+          process.stdout.write(renderMarkdown(result) + '\n');
+        } else {
+          process.stdout.write(renderConsole(result) + '\n');
+          logger.dim(`Completed in ${elapsed}s`);
+        }
+        process.exit(result.blocks ? 1 : 0);
       } catch (err) {
         logger.fail((err as Error).message);
         process.exit(1);
