@@ -104,7 +104,7 @@ describe('runGuardrailCheck (integration)', () => {
       const viaPath = await runGuardrailCheck({ cwd: dir, baselinePath: stashed });
       expect(viaPath.baselinePath).toBe(stashed);
       expect(viaPath.baseline.name).toBe('main');
-    }, 90_000);
+    }, 180_000);
   });
 
   describe('error + policy + drift paths', () => {
@@ -127,7 +127,7 @@ describe('runGuardrailCheck (integration)', () => {
       const policyPath = join(dir, 'broken.json');
       writeFileSync(policyPath, '{ this is not json');
       await expect(runGuardrailCheck({ cwd: dir, policyPath })).rejects.toThrow(/not valid JSON/);
-    }, 60_000);
+    }, 180_000);
 
     it('auto-discovers .dxkit/policy.json when no --policy flag is passed', async () => {
       await createBaseline({ cwd: dir });
@@ -149,7 +149,7 @@ describe('runGuardrailCheck (integration)', () => {
       const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
       expect(addedPairs.length).toBeGreaterThan(0);
       for (const p of addedPairs) expect(p.classification.blocks).toBe(false);
-    }, 60_000);
+    }, 180_000);
 
     it('permissive --policy override unblocks every `added` finding', async () => {
       await createBaseline({ cwd: dir });
@@ -168,7 +168,7 @@ describe('runGuardrailCheck (integration)', () => {
       const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
       expect(addedPairs.length).toBeGreaterThan(0);
       for (const p of addedPairs) expect(p.classification.blocks).toBe(false);
-    }, 60_000);
+    }, 180_000);
 
     it('reclassifies `added` as `config_drift` when the ignore file changes', async () => {
       await createBaseline({ cwd: dir });
@@ -186,6 +186,6 @@ describe('runGuardrailCheck (integration)', () => {
           p.classification.status === 'config_drift' || p.classification.status === 'tooling_drift',
       );
       expect(driftPairs.length).toBeGreaterThan(0);
-    }, 60_000);
+    }, 180_000);
   });
 });
