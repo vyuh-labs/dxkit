@@ -776,7 +776,14 @@ describe('identityFor — cross-kind disjointness', () => {
         installedVersion: 'api-key',
         id: 'src/a.ts',
       }),
-      identityFor({ kind: 'duplication', fileA: 'gitleaks', fileB: 'api-key', tokens: 10 }),
+      identityFor({
+        kind: 'duplication',
+        fileA: 'gitleaks',
+        fileB: 'api-key',
+        lines: 10,
+        startLineA: 1,
+        startLineB: 1,
+      }),
       identityFor({ kind: 'coverage-gap', file: 'src/a.ts', symbol: 'gitleaks' }),
     ]);
     // The first three (secret/code/config) intentionally collide — they
