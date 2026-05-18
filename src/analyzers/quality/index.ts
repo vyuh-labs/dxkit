@@ -14,6 +14,7 @@ import {
 import { QUALITY_SCORING_SPEC, type QualityScoreInput, evaluateSpec } from '../../scoring';
 import { QualityReport, QualityMetrics } from './types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import { stripNotRunSuffix } from '../tools/lint-label';
 
 export type { QualityReport, QualityMetrics } from './types';
 
@@ -138,7 +139,14 @@ export async function analyzeQuality(
   const lintTool: string | null =
     lintFromCache ??
     (lintAvail && !lintAvail.available ? `not run — ${lintAvail.unavailableReason}` : null);
-  if (lintFromCache) toolsUsed.push(lintFromCache);
+  if (lintFromCache) {
+    // Strip the augmented "(not run: <pack> — <reason>)" parenthetical
+    // before pushing into the Tools-used footer. The conflated form
+    // reads as "ruff didn't run because of typescript"; the not-run
+    // packs still surface via the dedicated Lint coverage gap row.
+    const cleanTool = stripNotRunSuffix(lintFromCache);
+    if (cleanTool) toolsUsed.push(cleanTool);
+  }
   if (cm.commentRatio !== null) toolsUsed.push('cloc');
 
   const metrics: QualityMetrics = {

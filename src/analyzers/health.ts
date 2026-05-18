@@ -20,6 +20,7 @@ import type { AnalysisResult, AnalysisResultBody } from '../analysis-result';
 import { readOrBuildAnalysisResult } from './cache';
 import { gatherGenericMetrics } from './tools/generic';
 import { gatherLayer2Parallel } from './tools/parallel';
+import { stripNotRunSuffix } from './tools/lint-label';
 import { loadCoverage } from './tools/coverage';
 import { gatherPackageJsonMetrics } from './tools/package-json';
 import { gatherHygieneMarkers, gatherCommentRatio } from './quality/gather';
@@ -349,7 +350,16 @@ function toolsFromCapabilities(caps: CapabilityReport): string[] {
 }
 
 function splitToolNames(tool: string): string[] {
-  return tool
+  // The lint label may carry a `(not run: <pack> — <reason>[, ...])`
+  // parenthetical (built by the lint augmentation block earlier in
+  // this file). The Tools-used footer wants only the actual tool that
+  // ran — leaving the parenthetical in makes the footer row read as
+  // "ruff didn't run because of typescript" and also breaks the
+  // comma-split here when multiple packs are skipped (internal commas
+  // inside the parenthetical get treated as tool boundaries). Strip
+  // it before splitting. The not-run packs still surface via the
+  // dedicated Lint coverage gap row downstream.
+  return stripNotRunSuffix(tool)
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
