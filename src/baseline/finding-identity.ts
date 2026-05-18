@@ -68,7 +68,13 @@ export function identityFor(
         id: input.id,
       });
     case 'duplication':
-      return computeDuplicationIdentity(input.fileA, input.fileB, input.tokens);
+      return computeDuplicationIdentity(
+        input.fileA,
+        input.fileB,
+        input.lines,
+        input.startLineA,
+        input.startLineB,
+      );
     case 'coverage-gap':
       return computeCoverageGapIdentity(input.file, input.symbol, input.lineRange);
     case 'test-gap':
@@ -91,18 +97,39 @@ export function identityFor(
 }
 
 /**
- * Symmetric-by-construction identity for a duplicate-block pair. File
- * names are sorted lexicographically before hashing so a clone reported
- * as `(a, b)` in one run and `(b, a)` in another hashes identically.
+ * Symmetric-by-construction identity for a duplicate-block pair. The
+ * two `(file, startLine)` pairs are sorted lexicographically (first by
+ * file path, then by start line) before hashing so a clone reported as
+ * `(a:10, b:20)` and one reported as `(b:20, a:10)` produce the same
+ * identity.
  *
- * `tokens` is included so refactoring one side of the pair (which
- * shrinks the block's token count) reports a fresh identity — that's
- * the right signal for a guardrail: "the duplicate moved or shrank,
- * which deserves a look."
+ * `lines` is included so refactoring one side of the pair (which
+ * shrinks or grows the block) reports a fresh identity — the right
+ * signal for a guardrail: "the duplicate moved or shrank, which
+ * deserves a look." `lines` is preferred over `tokens` because
+ * jscpd's JSON reporter does not populate `tokens` in practice
+ * (always emits 0), which would silently break the size-sensitivity
+ * property.
+ *
+ * Both start lines participate in identity so intra-file clones
+ * (`fileA === fileB`, multiple copies of the same block at different
+ * line positions inside one file) produce distinct identities.
+ * Without this, three intra-file clones in a single file would all
+ * collapse to one identity.
  */
-function computeDuplicationIdentity(fileA: string, fileB: string, tokens: number): FindingId {
-  const [first, second] = [fileA, fileB].sort();
-  const input = `duplication\0v1\0${first}\0${second}\0${tokens}`;
+function computeDuplicationIdentity(
+  fileA: string,
+  fileB: string,
+  lines: number,
+  startLineA: number,
+  startLineB: number,
+): FindingId {
+  const pairs: Array<[string, number]> = [
+    [fileA, startLineA],
+    [fileB, startLineB],
+  ];
+  pairs.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
+  const input = `duplication\0v1\0${pairs[0][0]}\0${pairs[0][1]}\0${pairs[1][0]}\0${pairs[1][1]}\0${lines}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

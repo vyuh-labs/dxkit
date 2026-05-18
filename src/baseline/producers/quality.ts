@@ -48,14 +48,18 @@ export function duplicationToBaselineEntries(
       kind: 'duplication',
       fileA: clone.a.file,
       fileB: clone.b.file,
-      tokens: clone.tokens,
+      lines: clone.lines,
+      startLineA: clone.a.startLine,
+      startLineB: clone.b.startLine,
     };
     out.push({
       id: identityFor(input),
       kind: 'duplication',
       fileA: clone.a.file,
       fileB: clone.b.file,
-      tokens: clone.tokens,
+      lines: clone.lines,
+      startLineA: clone.a.startLine,
+      startLineB: clone.b.startLine,
     });
   }
   return out;

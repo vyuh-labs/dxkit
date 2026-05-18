@@ -151,9 +151,19 @@ export interface DuplicationIdentityInput {
    *  inside `identityFor` so swapped sides hash identically. */
   readonly fileA: string;
   readonly fileB: string;
-  /** Token count of the duplicated block. Stable across pure file
-   *  movement but changes when the block itself is refactored. */
-  readonly tokens: number;
+  /** Line count of the duplicated block. `lines` is preferred over
+   *  the `tokens` field jscpd also reports because jscpd's JSON
+   *  reporter does not populate `tokens` in practice — it's always
+   *  0, which would degenerate the identity tuple and silently lose
+   *  the "block-size changes → identity changes" property. */
+  readonly lines: number;
+  /** Start line of the block on side A. Combined with `startLineB`
+   *  this distinguishes intra-file clones at different positions
+   *  (same `fileA === fileB`, different line ranges) which would
+   *  otherwise collapse to one identity. */
+  readonly startLineA: number;
+  /** Start line of the block on side B. */
+  readonly startLineB: number;
 }
 
 /**
@@ -349,7 +359,15 @@ export type BaselineEntry =
       installedVersion?: string;
       advisoryId: string;
     }
-  | { id: FindingId; kind: 'duplication'; fileA: string; fileB: string; tokens: number }
+  | {
+      id: FindingId;
+      kind: 'duplication';
+      fileA: string;
+      fileB: string;
+      lines: number;
+      startLineA: number;
+      startLineB: number;
+    }
   | {
       id: FindingId;
       kind: 'coverage-gap';
