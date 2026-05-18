@@ -116,6 +116,24 @@ describe('createBaseline (integration)', () => {
     expect(result.file.analysis.toolchainHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  it('produces byte-identical tools maps across two back-to-back captures (D144 closure)', async () => {
+    // D144: `findTool`'s subprocess version probe can complete with
+    // empty stdout under load, causing `resolveToolVersion` to
+    // surface the `'present'` sentinel instead of the parsed semver.
+    // Two back-to-back captures inside the same process would then
+    // produce different tools maps, and the matcher's `tooling_drift`
+    // gate would fire spuriously on a `guardrail check` immediately
+    // after `baseline create`. The fix caches resolved versions
+    // per-process; this test asserts the cache holds across two
+    // sequential captures.
+    const { clearToolVersionCache } = await import('../../src/baseline/create');
+    clearToolVersionCache();
+    const first = await createBaseline({ cwd: dir });
+    const second = await createBaseline({ cwd: dir, force: true });
+    expect(second.file.tools).toEqual(first.file.tools);
+    expect(second.file.analysis.toolchainHash).toBe(first.file.analysis.toolchainHash);
+  });
+
   it('picks up stale + large-file findings from the fixture repo', async () => {
     // Commit a stale on-disk artifact and a >500-line source file.
     writeFileSync(join(dir, 'leftover.bak'), 'old\n');

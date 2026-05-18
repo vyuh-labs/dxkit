@@ -56,17 +56,15 @@ describe('runGuardrailCheck (integration)', () => {
 
     it('reports no changes, then detects a new stale-file across check + renderers + explicit --baseline path', async () => {
       // Step 1: clean repo. Baseline + immediate check should
-      // report no per-finding changes. Renderers handle the empty
-      // case. (toolchainHash is NOT asserted: the tool-version probe
-      // path inside `buildToolsMap` runs `findTool` fresh on every
-      // gather and can momentarily return 'present' instead of a
-      // pinned version when a probe stutters — a separate latent
-      // non-determinism that doesn't surface as pair drift here.)
+      // report no per-finding changes and no envelope drift —
+      // toolchainHash stability across the back-to-back gathers
+      // is guaranteed by the per-process version cache.
       const created = await createBaseline({ cwd: dir });
       const noop = await runGuardrailCheck({ cwd: dir });
       expect(noop.blocks).toBe(false);
       expect(noop.warns).toBe(false);
       expect(noop.pairs).toEqual([]);
+      expect(noop.envelopeDrift.toolchainHashChanged).toBe(false);
       // Renderers must not throw on the empty case.
       const emptyConsole = renderConsole(noop);
       expect(emptyConsole).toContain('Guardrail PASSED');
