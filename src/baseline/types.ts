@@ -334,6 +334,13 @@ export type BaselineEntry =
       rule: string;
       file: string;
       line: number;
+      /** 16-char hex hash of normalized context around `line` at
+       *  baseline-create time. Stamped via `computeContentHashFromCommit`;
+       *  the matcher's third pass uses it as a fallback when git-aware
+       *  location matching fails (shallow clones, force-pushed base,
+       *  context survives but line shifts past the fuzz window). Absent
+       *  when the producer couldn't read the file. */
+      contentHash?: string;
     }
   | {
       id: FindingId;
@@ -351,7 +358,17 @@ export type BaselineEntry =
       lineRange?: readonly [number, number];
     }
   | { id: FindingId; kind: 'test-gap'; file: string; risk: TestGapRisk }
-  | { id: FindingId; kind: 'hygiene'; file: string; line: number; marker: HygieneMarker }
+  | {
+      id: FindingId;
+      kind: 'hygiene';
+      file: string;
+      line: number;
+      marker: HygieneMarker;
+      /** Same content-hash semantics as the secret/code/config variant
+       *  — populated when the producer can read the file at the
+       *  baseline commit. */
+      contentHash?: string;
+    }
   | { id: FindingId; kind: 'license'; package: string; version: string; licenseType: string }
   | {
       id: FindingId;
