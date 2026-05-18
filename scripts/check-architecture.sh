@@ -577,7 +577,7 @@ fi
 #
 # Annotate `// fingerprint-helper-ok` on a specific line for a
 # justified non-identity hash inside the scoped directories.
-FINGERPRINT_HELPER_ALLOWLIST="src/analyzers/tools/fingerprint.ts src/baseline/finding-identity.ts"
+FINGERPRINT_HELPER_ALLOWLIST="src/analyzers/tools/fingerprint.ts src/baseline/finding-identity.ts src/baseline/content-hash.ts"
 ALLOW_FILTER_FP=""
 for f in $FINGERPRINT_HELPER_ALLOWLIST; do
   ALLOW_FILTER_FP="$ALLOW_FILTER_FP -e ^${f}:"
