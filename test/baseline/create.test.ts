@@ -96,4 +96,27 @@ describe('createBaseline (integration)', () => {
     const second = await createBaseline({ cwd: dir, force: true });
     expect(second.file.analysis.ignoreHash).not.toBe(first.file.analysis.ignoreHash);
   });
+
+  it('picks up stale + large-file findings from the fixture repo', async () => {
+    // Commit a stale on-disk artifact and a >500-line source file.
+    writeFileSync(join(dir, 'leftover.bak'), 'old\n');
+    const bigLines: string[] = [];
+    for (let i = 0; i < 600; i++) bigLines.push(`const v${i} = ${i};`);
+    writeFileSync(join(dir, 'huge.ts'), bigLines.join('\n') + '\n');
+    execFileSync('git', ['add', '.'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'add fixture content'], { cwd: dir });
+
+    const result = await createBaseline({ cwd: dir });
+    const kinds = new Set(result.file.findings.map((f) => f.kind));
+    expect(kinds.has('stale-file')).toBe(true);
+    expect(kinds.has('large-file')).toBe(true);
+
+    const stale = result.file.findings.find((f) => f.kind === 'stale-file');
+    if (!stale || stale.kind !== 'stale-file') throw new Error('shape');
+    expect(stale.suffix).toBe('bak');
+
+    const large = result.file.findings.find((f) => f.kind === 'large-file');
+    if (!large || large.kind !== 'large-file') throw new Error('shape');
+    expect(large.file).toBe('huge.ts');
+  });
 });
