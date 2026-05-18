@@ -7,6 +7,218 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-05-18
+
+### Summary
+
+2.5.0 introduces **commit-time guardrails** — a per-finding baseline
+captured once on a brownfield repo, then diffed against every
+subsequent scan to detect net-new regressions while grandfathering
+existing debt. The product promise: existing issues stay where they
+are, new ones block.
+
+The release ships three coordinated surfaces:
+
+1. **A new `baseline` / `guardrail` CLI** that captures stable
+   per-finding identities, diffs current scans against them, and
+   classifies each pair (`added` / `relocated` / `tooling_drift` /
+   `config_drift` / `persisted` / `removed` / `fixed`) with a
+   confidence score and structured reasons.
+2. **Init-installable templates** for git hooks (`pre-commit` +
+   `pre-push`), a devcontainer with pinned toolchains + AI coding-
+   agent CLIs, a GitHub Actions PR-gate workflow that posts a
+   markdown summary as a PR comment, and a post-merge baseline-
+   refresh workflow that keeps the anchor current.
+3. **Aggregate-gate flags** (`--fail-on-score`, `--fail-on-severity`)
+   on every analyzer command, plus a stable JSON schema banner on
+   every `--json` output so consumers can version-gate.
+
+Tests: 1521 unit + integration cases pass on the integrated branch
+(up from 1265 at the 2.4.8 baseline; +256 across fingerprinting,
+producers, policy, matcher, ship installers, and the CLI surface).
+
+#### New CLI surface
+
+```bash
+vyuh-dxkit baseline create [path] [--name <name>] [--force]
+                                  [--verbose]
+vyuh-dxkit baseline show   [path] [--name <name>] [--baseline <p>]
+                                  [--kind <kind>] [--json]
+vyuh-dxkit guardrail check [path] [--name <name>] [--baseline <p>]
+                                  [--changed-only] [--policy <p>]
+                                  [--json | --markdown]
+```
+
+- `baseline create` runs every analyzer, fingerprints each per-
+  finding entity through the canonical identity dispatcher
+  (`src/baseline/finding-identity.ts`), and writes
+  `.dxkit/baselines/<name>.json`. Schema-versioned
+  (`dxkit-baseline/v1`); commit it.
+- `baseline show` pretty-prints the on-disk baseline, optionally
+  filtered by kind or emitted as a schema-banner-wrapped JSON.
+- `guardrail check` loads the baseline, re-runs the analyzers,
+  matches via the git-aware matcher (`-M` renames, ±2 line fuzz,
+  content-hash fallback for shallow clones), classifies each pair
+  through the brownfield policy, and exits 1 when the policy
+  blocks. Output modes: console (default), `--json` (schema
+  `dxkit.guardrail-check.v1`), or `--markdown` (used by the PR-
+  gate workflow to post a comment).
+
+The full read/write/compare triplet flows through a registered
+producer pipeline (`src/baseline/producers/index.ts:PRODUCERS`) —
+adding a new identity kind means registering a producer, not
+editing the orchestrator. Architectural rule documented in
+`CLAUDE.md` Rule 10 with three enforcement gates (arch check +
+contract test + synthetic-producer playbook).
+
+#### Aggregate gates + schema banner
+
+Every analyzer command (`health`, `test-gaps`, `quality`,
+`vulnerabilities`, `bom`) gains composable exit-code gates:
+
+- `--fail-on-score <N>` — exit 1 when the headline score drops
+  below N (applies to `health`, `test-gaps`).
+- `--fail-on-severity <tier>` — exit 1 when any finding at `<tier>`
+  or higher exists (applies to `vulnerabilities`, `bom`; tier ∈
+  critical / high / medium / low).
+
+Every `--json` output carries a top-level
+`schema: 'dxkit.<kind>-report.v1'` banner so consumers can version-
+gate against future schema migrations.
+
+#### `vyuh-dxkit init` ship flags
+
+`init` gains four new flags, all implied by `--full`:
+
+- `--with-hooks` writes `.githooks/pre-commit` (fast,
+  `--changed-only`) and `.githooks/pre-push` (full).
+- `--with-devcontainer` writes a lightweight `.devcontainer/`
+  layering all seven supported language toolchains via devcontainer
+  features + a `post-create.sh` that runs `vyuh-dxkit tools install
+  --yes` to provision the scanner toolchain pinned in the registry
+  + `install-agent-clis.sh` that installs Claude Code + OpenAI
+  Codex CLIs (opt out of either with `CLAUDE_CODE_VERSION=skip` /
+  `CODEX_VERSION=skip`).
+- `--with-ci` writes `.github/workflows/dxkit-guardrails.yml` (PR-
+  gate that posts a markdown summary as a PR comment, updating in
+  place across pushes via an HTML marker).
+- `--with-baseline-refresh` writes
+  `.github/workflows/dxkit-baseline-refresh.yml` (regenerates the
+  baseline on every push to the consumer's default branch and
+  auto-commits with `[skip ci]`). The default-branch name is
+  detected at install time from the consumer's git state, with
+  fallbacks for `main` / `master` / `trunk` / `develop`.
+
+Installs are **additive by default**. Existing `.githooks/<hook>`
+or `.husky/<hook>` files trigger a `.dxkit` sidecar + merge note
+instead of an overwrite. An existing `.devcontainer/devcontainer.json`
+stashes the full dxkit set under `.devcontainer/.dxkit-reference/`
+for manual merge. Workflow files are uniquely named so they don't
+collide; if our exact filename already exists, init skips it. The
+`--force` flag overrides every additive fallback and writes in
+place.
+
+#### Brownfield policy
+
+`.dxkit/policy.json` (auto-discovered at the repo root) tunes which
+classifications block vs warn, per-severity confidence thresholds
+that demote low-quality matches to `uncertain`, and per-finding-kind
+block rules (`newSecret`, `newCriticalSecurity`,
+`newCriticalDependencyVulnerability`, etc.). Compiled-in defaults
+ship a conservative posture: block on `added`, warn on
+`tooling_drift` / `config_drift` / `newly_detected` /
+`probable_existing` / `uncertain`. The `--policy <path>` flag
+overrides auto-discovery; when no policy is found, the defaults
+apply.
+
+#### Architectural fixes surfaced by the customer-repo audit
+
+A pre-ship audit on three real customer repositories (a 444-source
+TypeScript backend, a 553-source TypeScript frontend, and a
+.NET WinForms project) surfaced four drift classes between the
+report aggregates and the per-finding identity sets the baseline
+captures. All four are closed in 2.5.0:
+
+1. **Large-file producer was capped at top 10.** The gather layer
+   pre-sliced `largestFiles` to ten entries for the markdown
+   renderer's "Top Files by Size" table; the baseline producer
+   inherited the cap and silently dropped per-file identity for
+   every oversized file beyond the first ten. A real customer
+   brownfield with 47 files over 500 lines saw 10 baseline entries;
+   the .NET project with 926 oversized files saw 10. The gather now
+   emits every file over the 500-line threshold sorted descending;
+   the renderer adds an explicit `.slice(0, 10)` at the table site.
+   `HealthMetrics.filesOver500Lines` aggregate now matches the
+   per-kind count in the baseline byte for byte. Combined recovery
+   across the three audit repos: 1,087 previously-silently-missed
+   `large-file` findings now flow into baselines.
+
+2. **Secret-HMAC producer emitted duplicates.** When the same
+   secret value appeared at multiple locations — the same token on
+   two lines of one file, a leaked key in both `.env` and
+   `src/config.ts`, or two overlapping gitleaks rules firing on the
+   same line — the producer wrote multiple entries with identical
+   `(rule, hmac)` identity. Identity sets aren't supposed to have
+   duplicates by definition. Now a per-call `Set<string>` keyed on
+   the computed identity collapses repeats; first write wins,
+   output order is stable.
+
+3. **Tools-map version probes occasionally cached `'present'`
+   under load.** The per-process version cache locks the first
+   probe's outcome to keep `toolchainHash` byte-stable across two
+   back-to-back gathers (a previously-shipped flake closure). But
+   when the first `execSync(<tool> --version)` raced its 5-second
+   timeout under heavy CPU load — parallel scanner pools or the
+   post-merge workflow doing two scans in series — the cache locked
+   the `'present'` fallback for the rest of the process. The tools
+   map in the baseline file then read `gitleaks@present` instead of
+   a real version, and the next run flagged spurious tooling-drift.
+   The fix retries the version probe up to three times before
+   falling back; each attempt is fresh. The cache layer is
+   unchanged — once a value settles (real version or genuine
+   `'present'`), it's locked for the rest of the process.
+
+4. **TypeScript license enrichment could stall the entire licenses
+   capability.** `gatherTsLicensesResult` calls `enrichReleaseDates`
+   after license-checker returns to populate the optional
+   `releaseDate` field from the npm registry. The enrichment runs
+   with 20-way concurrency, 10s per request — usually fast — but a
+   flaky network or rate-limited registry can push a 700-package
+   run past the dispatcher's 720-second deadline. When that
+   happens, the entire licenses capability is dropped and the
+   baseline silently loses every license entry. On the TypeScript
+   frontend audit repo, license-checker itself returned 749KB of
+   JSON in under 10 seconds when invoked manually; the enrichment
+   stalled the whole capability. Now the enrichment is raced
+   against a 60-second wall-clock budget; on timeout, the license
+   findings still emit with their static fields and `releaseDate`
+   is left unset on the unenriched ones. A previously-zero baseline
+   now captures 1,897 license entries on that repo.
+
+Together these four fixes recover **~3,000 baseline findings** that
+were being silently dropped on real customer repos pre-2.5.0.
+
+#### Migration guidance for 2.4.x users
+
+No breaking changes. Existing analyzer commands continue to work
+exactly as before. The new commands and flags are additive.
+
+To start using guardrails on an existing repo:
+
+```bash
+vyuh-dxkit init --with-hooks --with-ci --with-baseline-refresh
+git config core.hooksPath .githooks
+vyuh-dxkit baseline create
+git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
+git commit -m "chore: enable dxkit guardrails"
+```
+
+See [`docs/getting-started.md`](docs/getting-started.md),
+[`docs/commands/baseline.md`](docs/commands/baseline.md),
+[`docs/commands/guardrail.md`](docs/commands/guardrail.md), and
+[`docs/configuration/policy.md`](docs/configuration/policy.md) for
+the full walkthrough.
+
 ## [2.4.8] - 2026-05-18
 
 ### Summary
