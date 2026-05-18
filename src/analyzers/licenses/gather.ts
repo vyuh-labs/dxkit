@@ -19,6 +19,7 @@
 import { detectActiveLanguages } from '../../languages';
 import { PER_PACK_REGISTRY } from '../../languages/capabilities/descriptors';
 import type { LicensesResult } from '../../languages/capabilities/types';
+import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from '../tools/deadline';
 
 /**
  * Shared primitive for availability-aware licenses aggregation. Used
@@ -41,8 +42,29 @@ export async function gatherLicensesWithAvailability(cwd: string): Promise<{
     return { envelope: null, available: true, unavailableReason: '' };
   }
 
+  // Every per-pack gatherOutcome is wrapped in a deadline (mirrors the
+  // dispatcher's per-provider deadline) so a single pack that hangs
+  // can't keep the cross-pack `Promise.allSettled` pending forever.
+  // A stall is materialised as an `unavailable` outcome with a
+  // deadline reason, so the framing-notice path surfaces it.
   const outcomes = await Promise.allSettled(
-    activePacks.map((l) => l.capabilities!.licenses!.gatherOutcome(cwd)),
+    activePacks.map((l) =>
+      withDeadline(l.capabilities!.licenses!.gatherOutcome(cwd), DEFAULT_PROVIDER_DEADLINE_MS).then(
+        (deadlineOutcome) => {
+          if (deadlineOutcome.stalled) {
+            const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
+            process.stderr.write(
+              `[dxkit] licenses provider "${l.id}" stalled after >${seconds}s (deadline) — treating as unavailable\n`,
+            );
+            return {
+              kind: 'unavailable' as const,
+              reason: `stalled at >${seconds}s (deadline)`,
+            };
+          }
+          return deadlineOutcome.value;
+        },
+      ),
+    ),
   );
   const successEnvelopes: LicensesResult[] = [];
   let firstUnavailable: { pack: string; reason: string } | null = null;
