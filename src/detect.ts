@@ -211,9 +211,9 @@ function detectProjectName(cwd: string): string {
   // Prefer cwd basename when it's strictly more descriptive than the
   // manifest-declared name. Triggers when the manifest name is a
   // substring of the cwd basename AND the cwd is longer — e.g.
-  // package.json `name: "client"` in a directory called `web-client`.
-  // The customer running `dxkit X /path/to/web-client` expects
-  // "web-client" in the report header, not "client".
+  // package.json `name: "client"` in a directory called `web-app`.
+  // The customer running `dxkit X /path/to/web-app` expects
+  // "web-app" in the report header, not "client".
   function preferCwdWhenMoreDescriptive(manifestName: string): string {
     if (
       cwdBasename.length > manifestName.length &&

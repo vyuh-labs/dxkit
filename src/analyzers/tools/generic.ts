@@ -37,7 +37,7 @@ import * as path from 'path';
  * Resolve the git toplevel for `cwd`. D026 (2.4.7): cross-cutting repo
  * artifacts (`.github/`, `README.md`, `CONTRIBUTING.md`, `Makefile`,
  * `.env.example`, etc.) conventionally live at the repo root, not in
- * the subdirectory a user happens to scan. dpl-studio's baseline F8:
+ * the subdirectory a user happens to scan. The .NET WinForms benchmark's baseline F8:
  * customer ran `dxkit health Code/Source/`; both Documentation and DX
  * dimensions returned 0/100 because none of those probes found
  * matches in `Code/Source/`. The fix scopes those probes to the

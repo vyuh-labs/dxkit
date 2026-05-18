@@ -161,7 +161,7 @@ fi
 # hardcoded `*.ts/*.tsx/*.js/*.jsx/*.py/*.go` list since Phase 6
 # (2026-04-13). The list pre-dated the language-pack registry; 5
 # subsequent pack additions (rust, csharp, kotlin, java, ruby) never
-# updated it, so dpl-studio reported 0 TODOs on 3,234 `.cs` files —
+# updated it, so the .NET WinForms benchmark reported 0 TODOs on 3,234 `.cs` files —
 # the hygiene grep silently skipped every C# source.
 #
 # Cross-cutting `grep --include='*.<ext>'` lists MUST derive from
@@ -186,8 +186,9 @@ fi
 #
 # What this prevents:
 #   `grep -rEf <pat> --include=*.js .` style content scans that walk the
-#   whole tree producing stdout matched per content line. The web-client
-#   D082/D083 silent-zero cascade traced to this shape — minified files
+#   whole tree producing stdout matched per content line. A JS-heavy
+#   customer frontend's D082/D083 silent-zero cascade traced to this
+#   shape — minified files
 #   matched ~11,500 times × ~6KB content = 67MB stdout, overflowing
 #   run()'s 64MB ceiling, returning empty, consoleLogCount fell to 0.
 #
@@ -296,7 +297,7 @@ fi
 #   Re-introducing the `${fixedVersion ?? '(no patch)'}` literal in
 #   action titles, bash-comment headers, or any other rendered surface.
 #   D111 traced to that pattern producing the grammatically broken
-#   "Upgrade `SharpCompress` to (no patch)" on dpl-studio Top 5 when
+#   "Upgrade `SharpCompress` to (no patch)" on the .NET WinForms benchmark Top 5 when
 #   D108 sparse-tier floated a mitigation-only finding into the table.
 #
 # Canonical replacement: formatDepActionTitle(pkg, fixedVersion) in
@@ -382,7 +383,7 @@ fi
 # (`walkPaths` from `src/analyzers/tools/walk-paths.ts`) for manifest
 # and source-file discovery. Hardcoded `maxDepth` parameters and direct
 # recursive `fs.readdirSync` walkers in `src/languages/*.ts` silently
-# missed real customer monorepos — dpl-studio's C# projects sit 6–9
+# missed real customer monorepos — the .NET WinForms benchmark's C# projects sit 6–9
 # levels under repo root, well past every previous per-pack cap
 # (python 2, csharp 3, kotlin 3, java 5, ruby 5). The canonical walker
 # closes the class by removing depth caps entirely; this gate stops
@@ -478,8 +479,9 @@ fi
 #   backend-centric paths in cross-cutting consumers": `*/controllers/*`
 #   in find commands, `if (lower.includes('/services/'))` in classifier
 #   code, `'controller' | 'service' | ...` enum types, "controllers /
-#   handlers, models" prose in renderers. The class caused web-client
-#   and dpl-studio to report empty test-gap CRITICAL/HIGH/MEDIUM
+#   handlers, models" prose in renderers. The class caused both a JS-heavy
+#   customer frontend and the .NET WinForms benchmark to report empty
+#   test-gap CRITICAL/HIGH/MEDIUM
 #   buckets pre-extension because the patterns matched neither React
 #   components/pages nor .NET Forms/Services.
 #

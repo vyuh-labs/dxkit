@@ -126,7 +126,7 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
  * patterns. False-positive rate is near zero — these are tight
  * class/method tokens, not loose word matches.
  *
- * Pre-D045 dpl-studio surfaced `tlsDisabledCount: 1` in
+ * Pre-D045 the .NET WinForms benchmark surfaced `tlsDisabledCount: 1` in
  * `gatherGenericMetrics` (via `countTlsBypassLines`), but the
  * standalone vuln scan's Code Findings table reported `_Sources:
  * (none)_` with all zeros — the count never reached the standalone
@@ -260,8 +260,9 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
  * `gatherCapabilityReport` in health.ts (no enrichment). Bypassing the
  * dispatcher is the whole point — the dispatcher's `gather()` path
  * collapses every non-success outcome to null, which makes the scorer
- * blind to "tool unavailable" vs "no findings" (the F4 dpl-studio
- * customer-credibility lie). Calling `gatherOutcome` directly preserves
+ * blind to "tool unavailable" vs "no findings" (the F4
+ * customer-credibility lie observed on the .NET WinForms benchmark).
+ * Calling `gatherOutcome` directly preserves
  * the discriminant, then we aggregate via the existing DEP_VULNS
  * descriptor's aggregator.
  *
@@ -446,7 +447,7 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     findings,
     // Even with successful envelopes from some packs, ONE pack returning
     // unavailable means the overall scan was partial — cap honesty
-    // applies. The dpl-studio shape post-D025f (sub-branch #3) will have
+    // applies. The .NET WinForms benchmark shape post-D025f (sub-branch #3) will have
     // csharp surfacing real CVEs AND any other unavailable pack still
     // capping; that's the architecturally-correct outcome.
     available,

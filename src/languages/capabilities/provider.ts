@@ -72,8 +72,8 @@ export interface CapabilityProvider<T extends CapabilityEnvelope> {
  * D025b (2.4.7): the dispatcher-routed `gather()` method collapses every
  * non-success outcome to `null`, which makes the security scorer blind
  * to the difference between "tool ran cleanly with zero findings" and
- * "tool wasn't available / no manifest" — the dpl-studio F4 baseline
- * (Security 100/100 on 133 unscanned NuGet refs). `gatherOutcome` is
+ * "tool wasn't available / no manifest" — the .NET WinForms benchmark
+ * F4 baseline (Security 100/100 on 133 unscanned NuGet refs). `gatherOutcome` is
  * the channel by which `gatherDepVulns` in `analyzers/security/gather.ts`
  * computes `DepVulnSummary.available`, which the security scorer reads
  * via `SecurityScoreInput.depVulnsAvailable` to cap the dimension at
@@ -97,8 +97,8 @@ export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
  * `gatherOutcome` method exposing the underlying
  * `LicensesGatherOutcome` discriminant. Same architectural shape as
  * `DepVulnsProvider` (D025b) — solves the same customer-credibility
- * lie (the licenses report rendering "0 packages" on dpl-studio when
- * `nuget-license` is absent, indistinguishable from a repo with
+ * lie (the licenses report rendering "0 packages" on the .NET WinForms benchmark
+ * when `nuget-license` is absent, indistinguishable from a repo with
  * legitimately zero third-party deps).
  *
  * `gatherOutcome` channels the discriminant to `gatherLicensesWith

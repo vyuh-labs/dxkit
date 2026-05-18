@@ -29,7 +29,7 @@
 /**
  * Path tokens that strongly suggest a file is vendored / external in
  * its containing directory's role. Matched as case-insensitive path
- * segments (`/libs/` matches `public/snapXReditor/libs/colorpicker/`
+ * segments (`/libs/` matches `public/richtexteditor/libs/colorpicker/`
  * but not a file named `libs-utils.ts`).
  *
  * Keep this list tight — only patterns we've observed in real

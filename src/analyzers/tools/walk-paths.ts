@@ -28,7 +28,7 @@
  *     the previous per-pack walkers shipped: `maxDepth = 2/3/4/5`
  *     caps chosen by each pack author based on their idea of "deep
  *     enough." Real customer monorepos routinely exceed every one of
- *     those values (dpl-studio: 6–9). This walker walks the whole
+ *     those values (the .NET WinForms benchmark: 6–9). This walker walks the whole
  *     tree minus exclusions, period.
  *
  *   - **Exclusion-aware.** Honors the bundled exclusion list

@@ -20,7 +20,7 @@ export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
   // D055 (2.4.7): getClocExcludeFlags emits BOTH `--exclude-dir` (basenames)
   // AND `--fullpath --not-match-d` (Perl regex on full path) so multi-segment
-  // `.dxkit-ignore` entries like `Dev/Addons/DPLAddon/SAPB1/` exclude the
+  // `.dxkit-ignore` entries like `Dev/Addons/VendorAddon/SAPB1/` exclude the
   // correct subtree instead of every dir named `Dev`.
   const excludeFlags = getClocExcludeFlags(cwd);
   const flags = `--json --timeout 0 ${excludeFlags}`;
@@ -44,7 +44,7 @@ function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
   // declared by registered packs. Pre-D073 the language table + the
   // `totalLines` denominator included markup/data formats (JSON,
   // XML, CSV, YAML, Markdown) that cloc lists alongside "real"
-  // languages. On dpl-studio the 1.6M-line JSON + 1.3M-line XML
+  // languages. On the .NET WinForms benchmark the 1.6M-line JSON + 1.3M-line XML
   // dragged the quality "Comment Ratio" from a true ~25% (C#
   // comments / C# total) to 4.3% (all comments / all-cloc-totals).
   // The pack registry is the canonical source of "what counts as
@@ -79,7 +79,7 @@ function parseClocResult(result: ClocOutput): Partial<HealthMetrics> {
   // D057 (2.4.7): cloc no longer writes `sourceFiles`. Pre-fix the
   // mergeLayer2 overlay blindly overwrote generic's find-based count
   // with cloc's, which (a) included markup/data files (JSON/XML/CSV)
-  // that aren't source, and (b) on dpl-studio was broken by D055.
+  // that aren't source, and (b) on the .NET WinForms benchmark was broken by D055.
   // Field ownership: generic.ts owns sourceFiles; cloc owns line
   // counts + language breakdown. (Class-fix tracked as G_v4_8 in
   // recipe v4 — "each gather declares which fields it owns; merger
