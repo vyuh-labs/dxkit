@@ -27,6 +27,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { gatherAnalysisResultBody } from '../analyzers/health';
 import { readOrBuildAnalysisResult } from '../analyzers/cache';
+import { gatherGitleaksResult } from '../analyzers/tools/gitleaks';
+import type { GitleaksRawSecret } from '../analyzers/tools/gitleaks';
 import { VERSION as DXKIT_VERSION } from '../constants';
 import {
   BASELINE_SCHEMA_VERSION,
@@ -37,6 +39,7 @@ import {
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
 import { DEFAULT_BROWNFIELD_POLICY } from './policy';
 import { securityAggregateToBaselineEntries } from './producers/security';
+import { rawSecretsToBaselineEntries } from './producers/secret-hmac';
 import { resolveSalt } from './salt';
 import type { BaselineEntry } from './types';
 
@@ -162,12 +165,33 @@ export async function createBaseline(
     );
   }
 
-  const findings: BaselineEntry[] = securityAggregateToBaselineEntries(aggregate);
-
   const repoState: BaselineRepoState = {
     ...readRepoState(cwd),
     root: cwd,
   };
+
+  // Salt resolves once; threaded into every producer that needs to
+  // compute HMACs. The mode lands on the baseline file so the
+  // matcher can re-derive the same salt at check time (or warn when
+  // it can't).
+  const { mode: saltMode, salt } = resolveSalt(cwd);
+
+  // Producers. Today's set covers the security aggregator's four
+  // categories plus secret-HMAC (content-keyed companion to the
+  // location-keyed `secret` entries). Remaining kinds land in
+  // follow-up commits; once the producer registry exists every
+  // producer dispatches through it instead of being named here.
+  const findings: BaselineEntry[] = [];
+  findings.push(
+    ...securityAggregateToBaselineEntries(aggregate, {
+      cwd,
+      commitSha: repoState.commitSha || undefined,
+    }),
+  );
+  const gitleaksOutcome = gatherGitleaksResult(cwd);
+  const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
+    gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
+  findings.push(...rawSecretsToBaselineEntries({ rawSecrets, salt }));
 
   const toolNames = new Set<string>();
   if (aggregate.provenance.secrets.tool) toolNames.add(aggregate.provenance.secrets.tool);
@@ -180,8 +204,6 @@ export async function createBaseline(
     ...buildAnalysisMeta(cwd),
     toolchainHash: hashContent(JSON.stringify(tools)),
   };
-
-  const { mode: saltMode } = resolveSalt(cwd);
 
   const file: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,

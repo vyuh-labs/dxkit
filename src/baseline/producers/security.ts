@@ -3,8 +3,10 @@
  *
  * Converts the canonical `SecurityAggregate` produced by the security
  * analyzer (`src/analyzers/security/aggregator.ts`) into the per-kind
- * `BaselineEntry` shape stored in the baseline file. Pure function:
- * no I/O, deterministic over its input.
+ * `BaselineEntry` shape stored in the baseline file. Pure function
+ * over its input apart from the optional content-hash stamp, which
+ * reads the file at the baseline commit via git (skipped when the
+ * caller doesn't supply a commit SHA).
  *
  * Four `BaselineEntry` kinds are derived here, matching the four
  * categories the aggregator emits:
@@ -18,12 +20,25 @@
  * secret that stays in the same file. The companion `secret-hmac`
  * scheme (recognizes a leaked token moving files) requires raw
  * secret values that the aggregator doesn't carry — those entries
- * come from the gitleaks-side producer wired in a later phase. The
- * two schemes co-exist: a single secret can be represented by both
- * a `secret` entry (location identity) and a `secret-hmac` entry
- * (content identity).
+ * are produced by the sibling `secret-hmac.ts` producer. The two
+ * schemes co-exist: a single underlying secret can be represented by
+ * both a `secret` entry (location identity, stable across re-runs at
+ * the same line) and a `secret-hmac` entry (content identity, stable
+ * across file moves).
+ *
+ * Content-hash stamping (third-pass matcher fallback): when `cwd` +
+ * `commitSha` are supplied, the producer reads each file at the
+ * baseline commit and hashes the normalized context window around
+ * the finding's line. The hash lands in `BaselineEntry.contentHash`
+ * for the secret / code / config kinds; the matcher's content-hash
+ * pass uses it to pair findings across runs even when git diff can't
+ * map the line position. Producers can pass `undefined` for the SHA
+ * (e.g., non-git directories) and content-hash matching is simply
+ * unavailable for that baseline — the matcher's other passes still
+ * work.
  */
 
+import { computeContentHashFromCommit } from '../content-hash';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import { identityFor } from '../finding-identity';
 import type {
@@ -34,13 +49,33 @@ import type {
   SecretIdentityInput,
 } from '../types';
 
+export interface SecurityProducerOptions {
+  /** Repo path; used by `computeContentHashFromCommit` to invoke
+   *  `git show`. Omitting it disables content-hash stamping. */
+  readonly cwd?: string;
+  /** Commit SHA the baseline is anchored to. When the working tree
+   *  has uncommitted changes, callers may pass `'HEAD'` so the hash
+   *  reflects committed state — content-hash matching against a
+   *  later run will still work as long as both sides read the same
+   *  SHA. */
+  readonly commitSha?: string;
+}
+
 /**
  * Build `BaselineEntry`s from a `SecurityAggregate`. Returned in the
  * iteration order of the four categories so the produced baseline
  * stays stable across re-runs of the same scan.
  */
-export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate): BaselineEntry[] {
+export function securityAggregateToBaselineEntries(
+  aggregate: SecurityAggregate,
+  options: SecurityProducerOptions = {},
+): BaselineEntry[] {
   const out: BaselineEntry[] = [];
+  const stamp = (file: string, line: number): string | undefined => {
+    if (!options.cwd || !options.commitSha || line <= 0) return undefined;
+    const hash = computeContentHashFromCommit(options.cwd, options.commitSha, file, line);
+    return hash ?? undefined;
+  };
 
   for (const f of aggregate.findingsByCategory.secret) {
     const input: SecretIdentityInput = {
@@ -50,6 +85,7 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       file: f.file,
       line: f.line,
     };
+    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'secret',
@@ -57,6 +93,7 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
 
@@ -68,6 +105,7 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       file: f.file,
       line: f.line,
     };
+    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'code',
@@ -75,6 +113,7 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
 
@@ -86,6 +125,9 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       file: f.file,
       line: f.line,
     };
+    // Whole-file findings (`.env in git`) carry line 0; content-hash
+    // is meaningless for them and `stamp` returns undefined.
+    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'config',
@@ -93,6 +135,7 @@ export function securityAggregateToBaselineEntries(aggregate: SecurityAggregate)
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
 

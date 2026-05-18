@@ -26,14 +26,42 @@ interface GitleaksFinding {
 }
 
 /**
+ * Per-finding raw value carried alongside the public envelope. Stays
+ * out of `SecretsResult` (and therefore out of `SecurityAggregate`,
+ * `SecurityReport`, the dashboard, JSON outputs) so the secret value
+ * never leaks through the normal reporting surfaces. The only legit
+ * consumer is the baseline-side secret-HMAC producer, which immediately
+ * HMACs the value and discards it.
+ *
+ * Lives in this outcome rather than fetched separately so the memoized
+ * gitleaks invocation (`gatherGitleaksResult` runs at most once per
+ * cwd) covers both the public envelope path and the HMAC path.
+ */
+export interface GitleaksRawSecret {
+  readonly file: string;
+  readonly line: number;
+  readonly rule: string;
+  /** The matched secret value as reported by gitleaks. Process-only;
+   *  callers MUST NOT write this to disk, log it, or include it in
+   *  any output payload. */
+  readonly secret: string;
+}
+
+/**
  * Outcome union used by `gatherGitleaksResult`. The capability provider
  * collapses this to `SecretsResult | null`; the Layer 2 reshape in
  * `tools/parallel.ts` reads `unavailable.reason` so the
  * `toolsUnavailable` strings carry install-missing vs parse-failure
- * detail.
+ * detail. The `rawSecrets` field is read only by the baseline-side
+ * secret-HMAC producer; other consumers ignore it.
  */
 export type SecretsGatherOutcome =
-  | { kind: 'success'; envelope: SecretsResult; suppressedCount: number }
+  | {
+      kind: 'success';
+      envelope: SecretsResult;
+      suppressedCount: number;
+      rawSecrets: ReadonlyArray<GitleaksRawSecret>;
+    }
   | { kind: 'unavailable'; reason: string };
 
 /**
@@ -106,37 +134,50 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
       findings: [],
       suppressedCount: 0,
     };
-    return { kind: 'success', envelope, suppressedCount: 0 };
+    return { kind: 'success', envelope, suppressedCount: 0, rawSecrets: [] };
   }
 
-  const raw: SecretFinding[] = parsed.map((f) => ({
-    file: toProjectRelative(cwd, f.File),
-    line: f.StartLine,
-    rule: f.RuleID,
-    severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
-    title: f.Description,
+  // Carry the raw `Secret` value alongside each `SecretFinding` through
+  // filter + suppression so the surviving entries pair 1:1 with their
+  // captured value. The raw value never enters the public envelope.
+  type Combined = { finding: SecretFinding; secret: string };
+  const combined: Combined[] = parsed.map((f) => ({
+    finding: {
+      file: toProjectRelative(cwd, f.File),
+      line: f.StartLine,
+      rule: f.RuleID,
+      severity: f.RuleID.includes('private-key') ? 'critical' : 'high',
+      title: f.Description,
+    },
+    secret: f.Secret,
   }));
 
   // Gitleaks --no-git scans everything on disk (ignores .gitignore), so
   // we re-apply the resolved exclusion set via isExcludedPath().
-  const filtered = raw.filter((d) => !isExcludedPath(cwd, d.file));
+  const filteredCombined = combined.filter((c) => !isExcludedPath(cwd, c.finding.file));
 
   // Apply `.dxkit-suppressions.json` so known-false positives don't count.
   const suppressions = loadSuppressions(cwd);
   const { kept, suppressed } = applySuppressions(
-    filtered,
+    filteredCombined,
     suppressions.gitleaks,
-    (d) => d.rule,
-    (d) => d.file,
+    (c) => c.finding.rule,
+    (c) => c.finding.file,
   );
 
   const envelope: SecretsResult = {
     schemaVersion: 1,
     tool: 'gitleaks',
-    findings: kept,
+    findings: kept.map((c) => c.finding),
     suppressedCount: suppressed.length,
   };
-  return { kind: 'success', envelope, suppressedCount: suppressed.length };
+  const rawSecrets: GitleaksRawSecret[] = kept.map((c) => ({
+    file: c.finding.file,
+    line: c.finding.line,
+    rule: c.finding.rule,
+    secret: c.secret,
+  }));
+  return { kind: 'success', envelope, suppressedCount: suppressed.length, rawSecrets };
 }
 
 /**
