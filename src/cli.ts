@@ -1177,6 +1177,24 @@ export async function run(argv: string[]): Promise<void> {
           }
         }
         stepDurations.push({ label: step.label, ms: Date.now() - t0, rc: effectiveRc });
+        // When the FIRST step (Health) fails, the AnalysisResult cache
+        // didn't get built — every downstream step then re-runs the
+        // full detect + Layer 0 + Layer 2 gather from scratch. On a
+        // heavy polyglot frontend this added ~86 s of redundant Layer
+        // 2 work to Step 2 (Vulnerabilities) alone, and ~10× that
+        // across the remaining 6 steps. Surface the cascade so the
+        // user understands why subsequent steps feel slower; the
+        // alternative path (build the cache directly from the failed
+        // gather) is a structural fix tracked for a later release.
+        if (step.cmd === 'health' && effectiveRc !== 0) {
+          logger.warn(
+            'Health failed before the analysis cache could be built. ' +
+              'The remaining steps will re-detect the stack and re-gather ' +
+              'shared metrics from scratch (expect each to be measurably ' +
+              'slower than usual). Their reports will still be written ' +
+              'when they succeed individually.',
+          );
+        }
         console.log(''); // slop-ok
       }
 
