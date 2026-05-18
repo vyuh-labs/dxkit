@@ -428,6 +428,66 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     current: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.1', licenseType: 'MIT' },
     expected: 'changed',
   },
+
+  // ─── test-file-degradation (2) ────────────────────────────────────────
+  {
+    name: 'test-file-degradation/clean — same file + same status',
+    prior: { kind: 'test-file-degradation', file: 'test/api/users.test.ts', status: 'empty' },
+    current: { kind: 'test-file-degradation', file: 'test/api/users.test.ts', status: 'empty' },
+    expected: 'persisted',
+  },
+  {
+    name: 'test-file-degradation/status-transition — identity changes',
+    prior: { kind: 'test-file-degradation', file: 'test/api/users.test.ts', status: 'empty' },
+    current: {
+      kind: 'test-file-degradation',
+      file: 'test/api/users.test.ts',
+      status: 'commented-out',
+    },
+    expected: 'changed',
+  },
+
+  // ─── god-file (2) ─────────────────────────────────────────────────────
+  {
+    name: 'god-file/clean — same file remains top offender',
+    prior: { kind: 'god-file', file: 'src/handlers/orders.ts' },
+    current: { kind: 'god-file', file: 'src/handlers/orders.ts' },
+    expected: 'persisted',
+  },
+  {
+    name: 'god-file/different-file — identity changes',
+    prior: { kind: 'god-file', file: 'src/handlers/orders.ts' },
+    current: { kind: 'god-file', file: 'src/handlers/inventory.ts' },
+    expected: 'changed',
+  },
+
+  // ─── stale-file (2) ───────────────────────────────────────────────────
+  {
+    name: 'stale-file/clean — same path + suffix',
+    prior: { kind: 'stale-file', file: 'src/legacy/dump.bak', suffix: 'bak' },
+    current: { kind: 'stale-file', file: 'src/legacy/dump.bak', suffix: 'bak' },
+    expected: 'persisted',
+  },
+  {
+    name: 'stale-file/different-suffix — identity changes',
+    prior: { kind: 'stale-file', file: 'src/legacy/dump.bak', suffix: 'bak' },
+    current: { kind: 'stale-file', file: 'src/legacy/dump.bak', suffix: 'orig' },
+    expected: 'changed',
+  },
+
+  // ─── large-file (2) ───────────────────────────────────────────────────
+  {
+    name: 'large-file/clean — same file over threshold',
+    prior: { kind: 'large-file', file: 'src/services/payments.ts' },
+    current: { kind: 'large-file', file: 'src/services/payments.ts' },
+    expected: 'persisted',
+  },
+  {
+    name: 'large-file/different-file — identity changes',
+    prior: { kind: 'large-file', file: 'src/services/payments.ts' },
+    current: { kind: 'large-file', file: 'src/services/orders.ts' },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -561,6 +621,10 @@ const EXPECTED_KINDS = [
   'test-gap',
   'hygiene',
   'license',
+  'test-file-degradation',
+  'god-file',
+  'stale-file',
+  'large-file',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

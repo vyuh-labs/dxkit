@@ -26,6 +26,7 @@ import type {
   MatchPair,
   MatchReason,
   MatchResult,
+  TestFileDegradationStatus,
   TestGapRisk,
 } from './types';
 
@@ -71,6 +72,14 @@ export function identityFor(
       return computeHygieneIdentity(input.file, input.line, input.marker);
     case 'license':
       return computeLicenseIdentity(input.package, input.version, input.licenseType);
+    case 'test-file-degradation':
+      return computeTestFileDegradationIdentity(input.file, input.status);
+    case 'god-file':
+      return computeGodFileIdentity(input.file);
+    case 'stale-file':
+      return computeStaleFileIdentity(input.file, input.suffix);
+    case 'large-file':
+      return computeLargeFileIdentity(input.file);
   }
 }
 
@@ -153,6 +162,56 @@ function computeLicenseIdentity(
   licenseType: string,
 ): FindingId {
   const input = `license\0v1\0${packageName}\0${version}\0${licenseType}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for a degraded test file. Degradation status is part of
+ * identity so transitions between states register as fresh findings
+ * (e.g. an `'empty'` test body that becomes `'commented-out'` later
+ * is semantically a different problem worth a guardrail signal).
+ */
+function computeTestFileDegradationIdentity(
+  file: string,
+  status: TestFileDegradationStatus,
+): FindingId {
+  const input = `test-file-degradation\0v1\0${file}\0${status}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for a "god file" complexity offender. The fact that this
+ * specific file is a top offender is the durable signal — when a
+ * different file becomes the offender, identity changes appropriately
+ * because the producer emits a fresh finding pointing at the new
+ * path.
+ */
+function computeGodFileIdentity(file: string): FindingId {
+  const input = `god-file\0v1\0${file}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for a stale on-disk artifact tracked in git. Suffix is in
+ * identity so a path that's flagged for both a `.swp` and a `.bak`
+ * (rare but possible if a developer leaves both kinds of leftovers)
+ * surfaces as two distinct findings rather than one collapsed entry.
+ * The producer lowercases the suffix and strips the dot before
+ * calling.
+ */
+function computeStaleFileIdentity(file: string, suffix: string): FindingId {
+  const input = `stale-file\0v1\0${file}\0${suffix}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for a source file flagged as exceeding the large-file
+ * line-count threshold. Per-file, no further discriminator: the
+ * binary "this file is too big" signal is what guardrails act on.
+ * Discrete crossings of the threshold add or remove the identity.
+ */
+function computeLargeFileIdentity(file: string): FindingId {
+  const input = `large-file\0v1\0${file}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
