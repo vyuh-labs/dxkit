@@ -12,6 +12,14 @@ import { GenerationMode } from './types';
 import { formatTopActionLine, formatTopActionsBlock } from './scoring';
 import { renderToolsUnavailableLines } from './analyzers/tools/tools-unavailable-prose';
 import { getReportDate } from './analyzers/tools/report-date';
+import {
+  checkFailOnScore,
+  checkFailOnSeverity,
+  parseScoreThreshold,
+  parseSeverityTier,
+} from './fail-on';
+import type { SeverityCounts } from './fail-on';
+import { stampSchema } from './report-schema';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -24,6 +32,51 @@ async function emitJson(payload: unknown): Promise<void> {
   const data = JSON.stringify(payload, null, 2) + '\n';
   if (!process.stdout.write(data)) {
     await new Promise<void>((resolve) => process.stdout.once('drain', resolve));
+  }
+}
+
+/**
+ * Apply `--fail-on-score` to a higher-is-better score. Exits with
+ * code 1 + a logged reason when the gate fires. Skips when the user
+ * didn't pass the flag. Centralized so every analyzer that supports
+ * the flag fires consistent messages.
+ */
+function applyFailOnScore(raw: string | undefined, score: number, scoreLabel: string): void {
+  if (raw === undefined) return;
+  const threshold = parseScoreThreshold(raw);
+  if (threshold === null) {
+    logger.fail(`--fail-on-score: invalid value "${raw}". Expected a number in [0, 100].`);
+    process.exit(1);
+  }
+  const verdict = checkFailOnScore(score, threshold);
+  if (verdict.fails) {
+    logger.fail(`${scoreLabel} ${verdict.reason}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Apply `--fail-on-severity` to a per-severity count map. Exits
+ * with code 1 + a logged reason when the gate fires. Skips when
+ * the user didn't pass the flag.
+ */
+function applyFailOnSeverity(
+  raw: string | undefined,
+  counts: SeverityCounts,
+  countsLabel: string,
+): void {
+  if (raw === undefined) return;
+  const tier = parseSeverityTier(raw);
+  if (tier === null) {
+    logger.fail(
+      `--fail-on-severity: invalid tier "${raw}". Expected one of: critical, high, medium, low.`,
+    );
+    process.exit(1);
+  }
+  const verdict = checkFailOnSeverity(counts, tier);
+  if (verdict.fails) {
+    logger.fail(`${countsLabel}: ${verdict.reason}`);
+    process.exit(1);
   }
 }
 
@@ -72,7 +125,8 @@ function printUsage(): void {
     --rescan     Re-run codebase analysis
 
   ${logger.bold('Analyzer options (health, vulnerabilities, test-gaps, quality, dev-report, licenses, bom):')}
-    --json            Print report as JSON to stdout
+    --json            Print report as JSON to stdout (top-level 'schema' field
+                      carries the dxkit.<kind>-report.v1 banner for version-gating)
     --verbose         Print per-tool timing to stderr
     --no-save         Skip writing the markdown report file
     --detailed        Also write <name>-detailed.md + .json with evidence + ranked actions
@@ -82,6 +136,12 @@ function printUsage(): void {
                       advisory rollup under byTopLevelDep still reflects transitives)
     --with-coverage   Health/test-gaps: materialize coverage artifacts via per-pack
                       runTests() before analysis (line-coverage truth vs filename match)
+    --fail-on-score <N>     Exit 1 when the analyzer's headline score drops below N.
+                            Applies to: health (overallScore), test-gaps (effectiveCoverage).
+    --fail-on-severity <tier>
+                      Exit 1 when any finding at <tier> or higher exists.
+                      tier ∈ critical|high|medium|low.
+                      Applies to: vulnerabilities, bom.
 
   ${logger.bold('Examples:')}
     npx vyuh-dxkit init                  # Interactive
@@ -127,6 +187,8 @@ export async function run(argv: string[]): Promise<void> {
       baseline: { type: 'string' },
       policy: { type: 'string' },
       markdown: { type: 'boolean', default: false },
+      'fail-on-score': { type: 'string' },
+      'fail-on-severity': { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -311,7 +373,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report);
+        await emitJson(stampSchema(report, 'health'));
       } else {
         // Console output
         console.log('');
@@ -374,13 +436,25 @@ export async function run(argv: string[]): Promise<void> {
         const detailed = buildHealthDetailed(report, healthMetrics);
         const detailedJsonPath = path.join(reportDir, `health-audit-${date}-detailed.json`);
         const detailedMdPath = path.join(reportDir, `health-audit-${date}-detailed.md`);
-        fs.writeFileSync(detailedJsonPath, JSON.stringify(detailed, null, 2));
+        fs.writeFileSync(
+          detailedJsonPath,
+          JSON.stringify(stampSchema(detailed as object, 'health-detailed'), null, 2),
+        );
         fs.writeFileSync(detailedMdPath, formatHealthDetailedMarkdown(detailed, elapsed));
         if (values.detailed) {
           logger.success(`Detailed report saved to ${path.relative(targetPath, detailedMdPath)}`);
           logger.success(`Detailed JSON saved to ${path.relative(targetPath, detailedJsonPath)}`);
         }
       }
+
+      // --fail-on-score: applies to the overall health score. Runs
+      // after disk writes so a failure still leaves a complete
+      // report behind for inspection.
+      applyFailOnScore(
+        values['fail-on-score'] as string | undefined,
+        report.summary.overallScore,
+        'health overallScore',
+      );
 
       if (!values.json) {
         // Hint about missing tools (exclude project-side config errors).
@@ -449,7 +523,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report);
+        await emitJson(stampSchema(report, 'vulnerabilities'));
       } else {
         const s = report.summary.findings;
         const d = report.summary.dependencies;
@@ -492,7 +566,14 @@ export async function run(argv: string[]): Promise<void> {
           reportDir,
           `vulnerability-scan-${date}-detailed.md`,
         );
-        fs.writeFileSync(securityDetailedJsonPath, JSON.stringify(securityDetailed, null, 2));
+        fs.writeFileSync(
+          securityDetailedJsonPath,
+          JSON.stringify(
+            stampSchema(securityDetailed as object, 'vulnerabilities-detailed'),
+            null,
+            2,
+          ),
+        );
         fs.writeFileSync(
           securityDetailedMdPath,
           formatSecurityDetailedMarkdown(securityDetailed, elapsed),
@@ -506,6 +587,22 @@ export async function run(argv: string[]): Promise<void> {
           );
         }
       }
+
+      // --fail-on-severity: applies to both code findings and
+      // dependency advisories. Code findings fire first because
+      // they're typically actionable (a SAST hit you wrote);
+      // dependency advisories second (transitive issue you may need
+      // to triage).
+      applyFailOnSeverity(
+        values['fail-on-severity'] as string | undefined,
+        report.summary.findings,
+        'vulnerabilities (code)',
+      );
+      applyFailOnSeverity(
+        values['fail-on-severity'] as string | undefined,
+        report.summary.dependencies,
+        'vulnerabilities (dependencies)',
+      );
       break;
     }
 
@@ -544,7 +641,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report);
+        await emitJson(stampSchema(report, 'test-gaps'));
       } else {
         const s = report.summary;
         console.log('');
@@ -579,7 +676,10 @@ export async function run(argv: string[]): Promise<void> {
         const testGapsDetailed = buildTestGapsDetailed(report);
         const testGapsDetailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
         const testGapsDetailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
-        fs.writeFileSync(testGapsDetailedJsonPath, JSON.stringify(testGapsDetailed, null, 2));
+        fs.writeFileSync(
+          testGapsDetailedJsonPath,
+          JSON.stringify(stampSchema(testGapsDetailed as object, 'test-gaps-detailed'), null, 2),
+        );
         fs.writeFileSync(
           testGapsDetailedMdPath,
           formatTestGapsDetailedMarkdown(testGapsDetailed, elapsed),
@@ -593,6 +693,16 @@ export async function run(argv: string[]): Promise<void> {
           );
         }
       }
+
+      // --fail-on-score: applies to the headline effectiveCoverage
+      // percentage. Tests-gap reports use a higher-is-better
+      // coverage scale, so the same threshold semantics work as
+      // for the health overall score.
+      applyFailOnScore(
+        values['fail-on-score'] as string | undefined,
+        report.summary.effectiveCoverage,
+        'test-gaps effectiveCoverage',
+      );
       break;
     }
 
@@ -609,7 +719,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report);
+        await emitJson(stampSchema(report, 'quality'));
       } else {
         const m = report.metrics;
         const slopLabel =
@@ -699,7 +809,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report);
+        await emitJson(stampSchema(report, 'dev-report'));
       } else {
         const s = report.summary;
         console.log('');
@@ -768,7 +878,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report); // slop-ok
+        await emitJson(stampSchema(report, 'licenses')); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
@@ -856,7 +966,7 @@ export async function run(argv: string[]): Promise<void> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       if (values.json) {
-        await emitJson(report); // slop-ok
+        await emitJson(stampSchema(report, 'bom')); // slop-ok
       } else {
         const s = report.summary;
         console.log(''); // slop-ok
@@ -937,6 +1047,17 @@ export async function run(argv: string[]): Promise<void> {
           logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
         }
       }
+
+      // --fail-on-severity: BomReport.summary.bySeverity carries
+      // per-package max-severity counts. A package with multiple
+      // advisories is counted once at its highest severity, which
+      // is what a "block at this tier" gate wants — not double
+      // counting.
+      applyFailOnSeverity(
+        values['fail-on-severity'] as string | undefined,
+        report.summary.bySeverity,
+        'bom severity',
+      );
       break;
     }
 
