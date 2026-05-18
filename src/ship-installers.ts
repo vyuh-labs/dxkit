@@ -12,7 +12,60 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { makeExecutable } from './files';
+
+/**
+ * Detect the consumer repo's default branch so workflow templates
+ * that fire on pushes to "the main branch" point at the right name.
+ * The resolution order is intentionally lenient — we'd rather
+ * substitute *some* sensible branch and let the consumer edit the
+ * workflow than refuse to install when git state is incomplete.
+ *
+ *   1. `git symbolic-ref refs/remotes/origin/HEAD` (set whenever the
+ *      repo was cloned from a remote with a default-branch HEAD)
+ *   2. `git rev-parse --verify <name>` against `main` / `master` /
+ *      `trunk` / `develop` — the four conventions that cover ~all
+ *      real repos
+ *   3. The current branch (`git branch --show-current`) — the best
+ *      guess in a freshly-`git init`'d repo that hasn't been pushed
+ *   4. Fallback to `'main'` — the GitHub default-branch default
+ */
+export function detectDefaultBranch(cwd: string): string {
+  try {
+    const ref = execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const match = ref.match(/^refs\/remotes\/origin\/(.+)$/);
+    if (match && match[1]) return match[1];
+  } catch {
+    /* fall through */
+  }
+  for (const candidate of ['main', 'master', 'trunk', 'develop']) {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', candidate], {
+        cwd,
+        stdio: 'ignore',
+      });
+      return candidate;
+    } catch {
+      /* try next */
+    }
+  }
+  try {
+    const current = execFileSync('git', ['branch', '--show-current'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (current) return current;
+  } catch {
+    /* fall through */
+  }
+  return 'main';
+}
 
 export interface ShipInstallResult {
   /** Relative paths (from cwd) of files newly written to the consumer repo. */
@@ -200,8 +253,18 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
  * --with-baseline-refresh (post-merge auto-regen). Both targets are
  * uniquely-named workflow files; conflict only happens on a re-run
  * against an existing dxkit install, which we skip with a note.
+ *
+ * `substitutions` lets a workflow template carry placeholders the
+ * installer fills in at write time. The baseline-refresh workflow
+ * uses this for the consumer's default branch name; the PR-gate
+ * workflow ships verbatim.
  */
-function installWorkflow(cwd: string, fileName: string, opts: InstallerOpts): ShipInstallResult {
+function installWorkflow(
+  cwd: string,
+  fileName: string,
+  opts: InstallerOpts,
+  substitutions: Readonly<Record<string, string>> = {},
+): ShipInstallResult {
   const result = emptyResult();
   const srcAbs = path.join(templatesDir(), '.github', 'workflows', fileName);
   const destAbs = path.join(cwd, '.github', 'workflows', fileName);
@@ -212,7 +275,15 @@ function installWorkflow(cwd: string, fileName: string, opts: InstallerOpts): Sh
   }
 
   fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-  fs.copyFileSync(srcAbs, destAbs);
+  if (Object.keys(substitutions).length === 0) {
+    fs.copyFileSync(srcAbs, destAbs);
+  } else {
+    let content = fs.readFileSync(srcAbs, 'utf8');
+    for (const [key, value] of Object.entries(substitutions)) {
+      content = content.split(key).join(value);
+    }
+    fs.writeFileSync(destAbs, content, 'utf8');
+  }
   result.installed.push(path.relative(cwd, destAbs));
   return result;
 }
@@ -222,5 +293,15 @@ export function installCiGuardrails(cwd: string, opts: InstallerOpts = {}): Ship
 }
 
 export function installCiBaselineRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
-  return installWorkflow(cwd, 'dxkit-baseline-refresh.yml', opts);
+  const defaultBranch = detectDefaultBranch(cwd);
+  const result = installWorkflow(cwd, 'dxkit-baseline-refresh.yml', opts, {
+    __DXKIT_DEFAULT_BRANCH__: defaultBranch,
+  });
+  if (result.installed.length > 0 && defaultBranch !== 'main') {
+    result.notes.push(
+      `baseline-refresh workflow targets the '${defaultBranch}' branch (detected from your repo). ` +
+        `Edit the workflow's \`branches:\` trigger if you want a different one.`,
+    );
+  }
+  return result;
 }
