@@ -3,9 +3,9 @@ import { looksVendored, suspectVendoredEntries } from '../src/analyzers/tools/ve
 
 describe('looksVendored', () => {
   it('flags /libs/ paths (most-common customer-specific vendored case)', () => {
-    expect(looksVendored('public/snapXReditor/libs/colorpicker/js/bootstrap-colorpicker.js')).toBe(
-      true,
-    );
+    expect(
+      looksVendored('public/richtexteditor/libs/colorpicker/js/bootstrap-colorpicker.js'),
+    ).toBe(true);
     expect(looksVendored('apps/web/libs/lexical/editor.js')).toBe(true);
   });
 
@@ -37,9 +37,9 @@ describe('looksVendored', () => {
     expect(looksVendored('lib/cesium/Cesium.js')).toBe(true);
   });
 
-  it('flags SAP B1 / OData proxy classes (dpl-studio case)', () => {
-    expect(looksVendored('Code/Source/Dev/Addons/DPLAddon/SAPB1/Admission/AADM.cs')).toBe(true);
-    expect(looksVendored('Code/Source/Dev/Addons/DPLAddon/SAPByD/Services/Sales.cs')).toBe(true);
+  it('flags SAP B1 / OData proxy classes (WinForms SAP-integration case)', () => {
+    expect(looksVendored('Code/Source/Dev/Addons/VendorAddon/SAPB1/Admission/AADM.cs')).toBe(true);
+    expect(looksVendored('Code/Source/Dev/Addons/VendorAddon/SAPByD/Services/Sales.cs')).toBe(true);
     expect(looksVendored('Code/Source/Generated/OData/Customer.cs')).toBe(true);
   });
 

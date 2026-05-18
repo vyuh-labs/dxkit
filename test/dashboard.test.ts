@@ -111,12 +111,12 @@ describe('analyzeDashboard', () => {
   });
 
   it('aggregates dep-vulns from summary.dependencies.findings into the Vulnerabilities tile (regression guard)', () => {
-    // Pre-fix bug (caught 2026-05-13 on dpl-studio): the dashboard
-    // read only `vulns.findings` (code findings — semgrep/gitleaks).
-    // Dependency vulnerabilities live in
+    // Pre-fix bug (caught 2026-05-13 on the .NET WinForms benchmark):
+    // the dashboard read only `vulns.findings` (code findings —
+    // semgrep/gitleaks). Dependency vulnerabilities live in
     // `vulns.summary.dependencies.findings`. Reading only the code
-    // array caused the Vulnerabilities tile to show 0 on dpl-studio
-    // even when osv-scanner-nuget-direct surfaced real CVEs. Both
+    // array caused the Vulnerabilities tile to show 0 on the
+    // benchmark even when osv-scanner-nuget-direct surfaced real CVEs. Both
     // streams must be unioned for tile counts AND for the "Critical
     // Issues at a Glance" surfacing.
     write('vulnerability-scan-2026-05-11.md', '# Vuln');

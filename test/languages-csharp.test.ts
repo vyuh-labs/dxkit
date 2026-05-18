@@ -31,7 +31,7 @@ describe('csharp.detect', () => {
     expect(csharp.detect(tmp)).toBe(true);
   });
 
-  // D024: enterprise .NET layouts (e.g. dpl-studio) nest .csproj 5 levels
+  // D024: enterprise .NET layouts (e.g. deep WinForms monorepos) nest .csproj 5 levels
   // below the repo root. The depth bump 3→5 in detect() lifts the cutoff
   // to cover these without descending into deeply-nested package dirs.
   it('detects via .csproj nested at depth 5 (D024)', () => {
@@ -42,8 +42,8 @@ describe('csharp.detect', () => {
   });
 
   // Recipe-hardened contract: manifest discovery is depth-unlimited
-  // via the canonical walker. Real customer monorepos (dpl-studio:
-  // .csproj files at depths 6–9) need this; the previous depth-5 cap
+  // via the canonical walker. Real customer monorepos (the .NET WinForms
+  // benchmark: .csproj files at depths 6–9) need this; the previous depth-5 cap
   // misclassified them as non-.NET. The walker still honors
   // `.gitignore` + bundled excludes (node_modules, bin, obj,
   // packages, vendor), so this isn't a free pass — anything excluded
@@ -67,7 +67,7 @@ describe('csharp.detect', () => {
     expect(csharp.detect(tmp)).toBe(false);
   });
 
-  // D024: also verify the committed fixture (mirrors dpl-studio shape)
+  // D024: also verify the committed fixture (mirrors the .NET WinForms benchmark shape)
   // is detectable from its root. Catches drift between the fixture's
   // depth and the detect() cutoff.
   it('detects the committed csharp-nested benchmark fixture (D024)', () => {

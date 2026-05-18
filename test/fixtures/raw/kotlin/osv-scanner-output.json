@@ -2,7 +2,7 @@
   "results": [
     {
       "source": {
-        "path": "/home/sidc42/projects/dxkit/tmp/kotlin-harvest/pom.xml",
+        "path": "/home/auditor/repo/tmp/kotlin-harvest/pom.xml",
         "type": "lockfile"
       },
       "packages": [

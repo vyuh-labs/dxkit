@@ -285,7 +285,7 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   // per-ecosystem install template. Pre-G_v4_4 the dispatch lived as
   // a hardcoded switch on `tool`, which broke when generic tool names
   // (`osv-scanner`) didn't match the pack-aliased switch keys
-  // (`osv-scanner-nuget-direct`). D062 is the dpl-studio
+  // (`osv-scanner-nuget-direct`). D062 is the .NET WinForms benchmark
   // manifestation.
   it('upgradeCommand exists when depVulns capability is declared', () => {
     if (lang.capabilities?.depVulns) {
@@ -305,8 +305,9 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   // D073 (2.4.7): every pack declares its cloc language names so
   // `gatherClocMetrics` can filter line counts + the language summary
   // to "actual source code" (excluding JSON/XML/CSV/Markdown data
-  // formats cloc lists alongside real languages). Pre-D073 dpl-studio
-  // Quality "Comment Ratio" sat at 4.3% because 1.6M JSON + 1.3M XML
+  // formats cloc lists alongside real languages). Pre-D073 the .NET
+  // WinForms benchmark Quality "Comment Ratio" sat at 4.3% because
+  // 1.6M JSON + 1.3M XML
   // lines were summed into the denominator alongside C# code.
   it('declares non-empty clocLanguageNames', () => {
     expect(

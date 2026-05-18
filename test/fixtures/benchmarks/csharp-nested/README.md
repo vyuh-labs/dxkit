@@ -1,7 +1,7 @@
 # csharp-nested benchmark fixture (Sprint A regression coverage)
 
-Mirrors the shape of `~/projects/external-repos/dpl-studio`: a deep
-enterprise .NET layout where the `.csproj` files live under
+Mirrors the shape of a deep enterprise .NET WinForms repo where the
+`.csproj` files live under
 `Code/Source/Dev/Core/<Module>/<Module>.csproj` — five directory
 levels below the repo root.
 

@@ -1,7 +1,7 @@
 /**
  * G_v4_7 (2.4.7): unit tests for the canonical source-file walker +
  * line-match counter. Builds a synthetic fixture tree with the same
- * intentional traps that surfaced on dpl-studio / platform / web-client
+ * intentional traps that surfaced across the customer audit benchmarks
  * (autogen basename glob, autogen header marker, multi-segment ignore
  * path, test files, minified-style content) and verifies each filter
  * step in the pipeline.
@@ -394,7 +394,7 @@ describe('countLineMatches — skipComments (D074 closure)', () => {
 
 describe('integration — walker + counter pipeline (D082/D083 simulation)', () => {
   it('curated walk + in-process count never touches excluded files', () => {
-    // Simulate the web-client failure mode: large minified `.min.js`
+    // Simulate the JS-heavy customer frontend failure mode: large minified `.min.js`
     // content that would have blown grep's maxBuffer. The walker
     // excludes it by file-pattern, the counter never reads it.
     write('.gitignore', '*.min.js\n');

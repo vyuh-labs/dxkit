@@ -2,7 +2,7 @@
   "results": [
     {
       "source": {
-        "path": "/home/sidc42/projects/dxkit/test/fixtures/benchmarks/java/pom.xml",
+        "path": "/home/auditor/repo/test/fixtures/benchmarks/java/pom.xml",
         "type": "lockfile"
       },
       "packages": [

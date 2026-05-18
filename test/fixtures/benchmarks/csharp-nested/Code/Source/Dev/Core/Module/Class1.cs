@@ -1,6 +1,6 @@
 namespace Dxkit.Benchmark.Nested;
 
-// TODO: dpl-studio sentinel — D030 hygiene grep should surface this from
+// TODO: benchmark sentinel — D030 hygiene grep should surface this from
 // the fixture root via allSourceExtensions(); pre-D030 this line was
 // invisible because '*.cs' wasn't in the include list.
 // FIXME: regression marker for sub-branch #1 (sprint-a-rest); a 0 count
