@@ -68,7 +68,9 @@ export interface RunGuardrailCheckOptions {
   /** Path to a `.dxkit/policy.json` override. The on-disk shape
    *  matches `BrownfieldPolicy` (modulo readonly markers); unknown
    *  fields are preserved but not type-checked here — the policy
-   *  classifier reads only the fields it knows. */
+   *  classifier reads only the fields it knows. When omitted, a
+   *  `<cwd>/.dxkit/policy.json` is auto-loaded if it exists; otherwise
+   *  the compiled-in defaults apply. */
   readonly policyPath?: string;
   /** Forwarded to the underlying analyzers for per-tool timing logs. */
   readonly verbose?: boolean;
@@ -168,7 +170,7 @@ export async function runGuardrailCheck(
     );
   }
   const baseline = readBaselineFile(baselinePath);
-  const policy = resolvePolicy(options.policyPath);
+  const policy = resolvePolicy(options.policyPath, cwd);
 
   const current = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
@@ -286,22 +288,36 @@ export async function runGuardrailCheck(
   };
 }
 
-function resolvePolicy(policyPath: string | undefined): BrownfieldPolicy {
-  if (!policyPath) return DEFAULT_BROWNFIELD_POLICY;
+/** Conventional location for a per-repo brownfield policy. Loaded
+ *  automatically when present; can be overridden with `--policy`. */
+const DEFAULT_POLICY_FILENAME = path.join('.dxkit', 'policy.json');
+
+function resolvePolicy(policyPath: string | undefined, cwd: string): BrownfieldPolicy {
+  // Resolution order:
+  //   1. `--policy <path>` flag (explicit; errors if unreadable)
+  //   2. `<cwd>/.dxkit/policy.json` (conventional; silently skipped
+  //      when absent so consumers without a policy use the defaults)
+  //   3. DEFAULT_BROWNFIELD_POLICY (compiled-in defaults)
+  let resolvedPath: string | undefined = policyPath;
+  if (!resolvedPath) {
+    const conventional = path.join(cwd, DEFAULT_POLICY_FILENAME);
+    if (fs.existsSync(conventional)) resolvedPath = conventional;
+  }
+  if (!resolvedPath) return DEFAULT_BROWNFIELD_POLICY;
   let raw: string;
   try {
-    raw = fs.readFileSync(policyPath, 'utf8');
+    raw = fs.readFileSync(resolvedPath, 'utf8');
   } catch (err) {
-    throw new Error(`policy file not readable: ${policyPath} (${(err as Error).message})`);
+    throw new Error(`policy file not readable: ${resolvedPath} (${(err as Error).message})`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`policy file is not valid JSON: ${policyPath} (${(err as Error).message})`);
+    throw new Error(`policy file is not valid JSON: ${resolvedPath} (${(err as Error).message})`);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`policy file root is not an object: ${policyPath}`);
+    throw new Error(`policy file root is not an object: ${resolvedPath}`);
   }
   // Shallow merge over the default. Per-field overrides win; unknown
   // fields are preserved (the classifier reads only the fields it
