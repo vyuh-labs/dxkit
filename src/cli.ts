@@ -20,6 +20,13 @@ import {
 } from './fail-on';
 import type { SeverityCounts } from './fail-on';
 import { stampSchema } from './report-schema';
+import {
+  installHooks,
+  installDevcontainer,
+  installCiGuardrails,
+  installCiBaselineRefresh,
+} from './ship-installers';
+import type { ShipInstallResult } from './ship-installers';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -116,14 +123,23 @@ function printUsage(): void {
                                  regressions per brownfield policy. Exit code 1 when blocked.
 
   ${logger.bold('Init options:')}
-    --dx-only    Just .claude/ + CLAUDE.md (default)
-    --full       Everything: DX + quality + hooks + CI
-    --detect     Auto-detect stack, minimal prompts
-    --yes        Accept all defaults, no prompts
-    --force      Overwrite existing files (except evolved)
-    --stealth    Gitignore generated files (local-only, not committed)
-    --name <n>   Override project name
-    --no-scan    Skip codebase analysis
+    --dx-only                 Just .claude/ + CLAUDE.md (default)
+    --full                    Everything: DX + quality + hooks + devcontainer +
+                              CI guardrails + baseline-refresh workflow
+    --with-hooks              Install .githooks/{pre-commit,pre-push} guardrail hooks
+    --with-devcontainer       Install .devcontainer/ with pinned toolchains +
+                              dxkit + Claude Code & Codex CLIs
+    --with-ci                 Install .github/workflows/dxkit-guardrails.yml
+                              (PR-gate that posts a markdown summary comment)
+    --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
+                              (post-merge auto-regen of .dxkit/baselines/main.json)
+    --detect                  Auto-detect stack, minimal prompts
+    --yes                     Accept all defaults, no prompts
+    --force                   Overwrite existing files (incl. existing hooks/
+                              devcontainer instead of writing .dxkit sidecars)
+    --stealth                 Gitignore generated files (local-only, not committed)
+    --name <n>                Override project name
+    --no-scan                 Skip codebase analysis
 
   ${logger.bold('Update options:')}
     --force      Overwrite modified files (except evolved)
@@ -196,6 +212,10 @@ export async function run(argv: string[]): Promise<void> {
       'fail-on-severity': { type: 'string' },
       summary: { type: 'boolean', default: false },
       kind: { type: 'string' },
+      'with-hooks': { type: 'boolean', default: false },
+      'with-devcontainer': { type: 'boolean', default: false },
+      'with-ci': { type: 'boolean', default: false },
+      'with-baseline-refresh': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -296,6 +316,40 @@ export async function run(argv: string[]): Promise<void> {
       }
       const result = await generate(cwd, config, finalMode, !!values.force, !!values['no-scan']);
 
+      // Phase Ship installers (additive). `--full` implies every flag
+      // so a one-command setup gets the full 2.5.0 ship surface.
+      const isFull = !!values.full;
+      const wantHooks = isFull || !!values['with-hooks'];
+      const wantDevcontainer = isFull || !!values['with-devcontainer'];
+      const wantCi = isFull || !!values['with-ci'];
+      const wantBaselineRefresh = isFull || !!values['with-baseline-refresh'];
+
+      const shipResults: { label: string; result: ShipInstallResult }[] = [];
+      if (wantHooks) {
+        shipResults.push({
+          label: 'Git hooks',
+          result: installHooks(cwd, { force: !!values.force }),
+        });
+      }
+      if (wantDevcontainer) {
+        shipResults.push({
+          label: 'Devcontainer',
+          result: installDevcontainer(cwd, { force: !!values.force }),
+        });
+      }
+      if (wantCi) {
+        shipResults.push({
+          label: 'CI guardrails workflow',
+          result: installCiGuardrails(cwd, { force: !!values.force }),
+        });
+      }
+      if (wantBaselineRefresh) {
+        shipResults.push({
+          label: 'CI baseline-refresh workflow',
+          result: installCiBaselineRefresh(cwd, { force: !!values.force }),
+        });
+      }
+
       // Summary
       console.log('');
       logger.header('Summary');
@@ -303,6 +357,24 @@ export async function run(argv: string[]): Promise<void> {
       if (result.skipped.length)
         logger.warn(`Skipped: ${result.skipped.length} files (already exist)`);
       if (result.overwritten.length) logger.info(`Overwritten: ${result.overwritten.length} files`);
+
+      for (const { label, result: r } of shipResults) {
+        if (r.installed.length) {
+          logger.success(`${label}: installed ${r.installed.length} file(s)`);
+          for (const f of r.installed) logger.dim(`    ${f}`);
+        }
+        if (r.sidecars.length) {
+          logger.warn(
+            `${label}: ${r.sidecars.length} sidecar(s) written (existing files preserved)`,
+          );
+          for (const f of r.sidecars) logger.dim(`    ${f}`);
+        }
+        if (r.skipped.length) {
+          logger.dim(`${label}: ${r.skipped.length} file(s) skipped (already present)`);
+        }
+        for (const note of r.notes) logger.info(note);
+      }
+
       console.log('');
       logger.info('Manifest written to .vyuh-dxkit.json');
 
@@ -316,6 +388,9 @@ export async function run(argv: string[]): Promise<void> {
       console.log('');
       logger.dim('  Run `vyuh-dxkit doctor` to verify setup');
       logger.dim('  Run `vyuh-dxkit update` to re-generate after changes');
+      if (shipResults.length > 0) {
+        logger.dim("  Run `vyuh-dxkit baseline create` to capture today's state");
+      }
       break;
     }
 
