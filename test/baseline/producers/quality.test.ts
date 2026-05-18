@@ -49,13 +49,17 @@ describe('duplicationToBaselineEntries', () => {
     if (e.kind !== 'duplication') throw new Error('shape');
     expect(e.fileA).toBe(c.a.file);
     expect(e.fileB).toBe(c.b.file);
-    expect(e.tokens).toBe(c.tokens);
+    expect(e.lines).toBe(c.lines);
+    expect(e.startLineA).toBe(c.a.startLine);
+    expect(e.startLineB).toBe(c.b.startLine);
     expect(e.id).toBe(
       identityFor({
         kind: 'duplication',
         fileA: c.a.file,
         fileB: c.b.file,
-        tokens: c.tokens,
+        lines: c.lines,
+        startLineA: c.a.startLine,
+        startLineB: c.b.startLine,
       }),
     );
   });
@@ -66,6 +70,48 @@ describe('duplicationToBaselineEntries', () => {
     const [eAB] = duplicationToBaselineEntries(emptyDup({ topClones: [ab] }));
     const [eBA] = duplicationToBaselineEntries(emptyDup({ topClones: [ba] }));
     expect(eAB.id).toBe(eBA.id);
+  });
+
+  it('distinguishes intra-file clones at different positions (D142 closure)', () => {
+    const intraA = clone({
+      a: { file: 'src/big.ts', startLine: 100, endLine: 160 },
+      b: { file: 'src/big.ts', startLine: 250, endLine: 310 },
+    });
+    const intraB = clone({
+      a: { file: 'src/big.ts', startLine: 500, endLine: 560 },
+      b: { file: 'src/big.ts', startLine: 700, endLine: 760 },
+    });
+    const [eA] = duplicationToBaselineEntries(emptyDup({ topClones: [intraA] }));
+    const [eB] = duplicationToBaselineEntries(emptyDup({ topClones: [intraB] }));
+    expect(eA.id).not.toBe(eB.id);
+  });
+
+  it('identity changes when the block grows or shrinks (D142 closure)', () => {
+    const small = clone({ lines: 30 });
+    const big = clone({ lines: 80 });
+    const [eS] = duplicationToBaselineEntries(emptyDup({ topClones: [small] }));
+    const [eB] = duplicationToBaselineEntries(emptyDup({ topClones: [big] }));
+    expect(eS.id).not.toBe(eB.id);
+  });
+
+  it('three intra-file clones at distinct positions produce three distinct ids', () => {
+    const clones = [
+      clone({
+        a: { file: 'src/big.ts', startLine: 100, endLine: 180 },
+        b: { file: 'src/big.ts', startLine: 250, endLine: 330 },
+      }),
+      clone({
+        a: { file: 'src/big.ts', startLine: 500, endLine: 580 },
+        b: { file: 'src/big.ts', startLine: 700, endLine: 780 },
+      }),
+      clone({
+        a: { file: 'src/big.ts', startLine: 900, endLine: 980 },
+        b: { file: 'src/big.ts', startLine: 1200, endLine: 1280 },
+      }),
+    ];
+    const entries = duplicationToBaselineEntries(emptyDup({ topClones: clones }));
+    const ids = new Set(entries.map((e) => e.id));
+    expect(ids.size).toBe(3);
   });
 });
 
