@@ -504,9 +504,9 @@ describe('matchAcrossRuns — set diff over identity', () => {
     const a = ['aaaa1111bbbb2222', 'cccc3333dddd4444'];
     const b = ['cccc3333dddd4444', 'eeee5555ffff6666'];
     const result = matchAcrossRuns(a, b);
-    expect(result.persisted.sort()).toEqual(['cccc3333dddd4444']);
-    expect(result.added.sort()).toEqual(['eeee5555ffff6666']);
-    expect(result.removed.sort()).toEqual(['aaaa1111bbbb2222']);
+    expect([...result.persisted].sort()).toEqual(['cccc3333dddd4444']);
+    expect([...result.added].sort()).toEqual(['eeee5555ffff6666']);
+    expect([...result.removed].sort()).toEqual(['aaaa1111bbbb2222']);
   });
 
   it('preserves occurrence count via multiset semantics', () => {
