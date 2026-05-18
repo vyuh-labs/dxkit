@@ -133,7 +133,12 @@ export function gatherGenericMetrics(
     if (f.lines > 500) filesOver500Lines++;
   }
   const sourceFiles = sourceList.length;
-  const largestFiles = [...filteredFiles].sort((a, b) => b.lines - a.lines).slice(0, 10);
+  // Every file over the canonical large-file threshold, sorted
+  // descending. Filtered (not pre-sliced) at this layer so the
+  // baseline `large-file` producer captures one entry per file and
+  // the per-kind count matches `filesOver500Lines` above. The
+  // markdown renderer caps to top 10 at the display site.
+  const largestFiles = filteredFiles.filter((f) => f.lines > 500).sort((a, b) => b.lines - a.lines);
 
   // ─── Console / debug / type-escape / eval counts (D074 closure) ───────────
   // skipComments: true filters lines beginning with //, /*, or # so

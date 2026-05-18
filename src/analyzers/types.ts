@@ -323,10 +323,12 @@ export interface HealthReport {
   };
   languages: Array<{ name: string; files: number; lines: number; percentage: number }>;
   /**
-   * 2.4.7 — top 10 largest source files by line count (post-autogen
-   * exclusion). Surfaced verbatim from `HealthMetrics.largestFiles`
-   * so consumers (markdown report, dashboard, AI agent) don't have
-   * to re-derive. Empty array when no source files were counted.
+   * Every source file over the large-file threshold (500 lines),
+   * sorted by line count descending. Surfaced verbatim from
+   * `HealthMetrics.largestFiles` so the baseline `large-file`
+   * producer captures one entry per file. Renderers slice to top-N
+   * at the display site (the markdown table shows the top 10).
+   * Empty array when no source files were counted.
    */
   largestFiles: Array<{ path: string; lines: number }>;
   toolsUsed: string[];
