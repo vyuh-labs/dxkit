@@ -88,8 +88,8 @@ Three layers run pre-commit + CI to keep this rule honest:
      `src/analyzers/tools/walk-paths.ts`. Closes the class of
      "manifest deeper than the per-pack hardcoded cap" misses —
      real customer monorepos routinely exceed every cap any pack
-     author has ever chosen (dpl-studio: csproj files at depths
-     6–9; the previous csharp cap was 3–5). Annotate
+     author has ever chosen (the .NET WinForms benchmark: csproj
+     files at depths 6–9; the previous csharp cap was 3–5). Annotate
      `// canonical-walker-ok` for justified exceptions (the walker
      module itself, probes that explicitly target a build-output
      subtree like `TestResults/` that the canonical walker rightly

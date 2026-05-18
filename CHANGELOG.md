@@ -204,7 +204,7 @@ Fix (commit `425d0ef`):
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | D124 / D100 / D118   | Vendored-source exclusion class-fix — top-largest-file metric on all 3 customer repos now first-party (or correctly flagged by the per-file advisor). Generic `largest_files` walk routes through canonical exclusions. | `72ec70a`      |
 | D113 / D128          | Per-pack lint-skip reasons plumbed end-to-end. Tools row reads `ruff (not run: typescript — config error)` instead of dropping the skip silently.                                                                       | `b878553`      |
-| D118-residue         | Graphify enumeration honors file-glob + content-minified exclusions. Webpack-hash bundles no longer rank as the densest file on customer reports (web-client: 4 606 fn artifact → 228 fn real first-party densest).     | `0da08bd`      |
+| D118-residue         | Graphify enumeration honors file-glob + content-minified exclusions. Webpack-hash bundles no longer rank as the densest file on customer reports (the JS-heavy customer frontend: 4 606 fn artifact → 228 fn real first-party densest).     | `0da08bd`      |
 | D135 / D136 (interim) | Vendored-advisor token list extended for SAP B1 OData proxy classes, map-library, proto-gen conventions. Customers with heavy-autogen .NET ERP integrations now see actionable `.dxkit-ignore` guidance.                | `d9f0c31`      |
 
 Tests at this phase close: 1241 / 0 (+15 new unit tests for
@@ -283,11 +283,11 @@ consumer.
 - **platform** (TS / Node backend): test-gap MEDIUM 207;
   Maintainability prose reads "controllers / components"
   (typescript wins cloc weight on a 106k-line monorepo).
-- **web-client** (React frontend): test-gap MEDIUM 499 → 379
+- **the JS-heavy customer frontend** (React frontend): test-gap MEDIUM 499 → 379
   (-120) because the vendored-exclusion class-fix in the
   audit-residue phase above also excludes lexical-playground
   subtrees from primary-component matching. Honest count.
-- **dpl-studio** (.NET WinForms): Maintainability vocabulary
+- **the .NET WinForms benchmark** (.NET WinForms): Maintainability vocabulary
   reads "Forms / Services"; test-gap classification correctly
   picks up the WinForms project structure.
 
@@ -401,11 +401,11 @@ for JSON-consumer migration.
 
 Two-phase release. **Phase A** (audit-driven hot-patches, originally
 shipped 2026-05-13) closed a 17-defect cascade surfaced by a critical
-post-shipment audit on dpl-studio (enterprise C# / 1500+ files / 68
+post-shipment audit on the .NET WinForms benchmark (enterprise C# / 1500+ files / 68
 sub-projects / 1.6M lines of cloc-counted JSON), plus the long-deferred
 D021 (coverage workflow). **Phase B** (class-fix release, 2026-05-14)
 pivoted from patch shipping to architectural class-fix shipping after
-pre-ship audits on platform and web-client surfaced 12 NEW defects
+pre-ship audits on platform and the JS-heavy customer frontend surfaced 12 NEW defects
 (D074–D085), 9 of which were repeated instances of the same disease
 class fixed at different sites.
 
@@ -430,7 +430,7 @@ scoring-credibility, and prioritization gaps that remained.
   siblings of `findings`; renderer reads them by name.
 
 - **C2.2 / D098 — `SECRETS_PRESENT_CAP = 40`** (commit `243fa86`).
-  Pre-C2 baseline: web-client scored Security 60/100 "Good" despite
+  Pre-C2 baseline: the JS-heavy customer frontend scored Security 60/100 "Good" despite
   4 hardcoded API keys + 1 .env in git. Credentials in source-control
   history are presumed compromised even after rotation, and a "Good"
   score reads as deprioritizable. C2.2 caps the Security dimension at
@@ -438,8 +438,8 @@ scoring-credibility, and prioritization gaps that remained.
   privateKeyFiles > 0 || envFilesInGit > 0`. Applied as a ceiling
   AFTER all per-signal penalties and the dep-availability cap, so
   it composes monotonically with everything else.
-  - Validated: web-client 60 → 40 "Fair" (✓ cap fires);
-    platform 45 → 40 "Fair" (✓); dpl-studio 90 → 90 (✓ cap
+  - Validated: the JS-heavy customer frontend 60 → 40 "Fair" (✓ cap fires);
+    platform 45 → 40 "Fair" (✓); the .NET WinForms benchmark 90 → 90 (✓ cap
     correctly does NOT fire — no committed credentials).
 
 - **C2.3 / D099 — `.env`-in-git callout block** (commit `7f43dfc`).
@@ -466,7 +466,7 @@ scoring-credibility, and prioritization gaps that remained.
   sections below.
 
 - **D108 — Top 5 sparse-tier fallback** (commit `c09ba87`). C2.5
-  audit surfaced D108: dpl-studio's Top 5 had only 1 entry despite
+  audit surfaced D108: the .NET WinForms benchmark's Top 5 had only 1 entry despite
   2 unpatched dep vulns (MongoDB.Driver risk 19 + SharpCompress
   risk 15). The original C2.4 dep filter required `riskScore >= 25`
   which excluded the "watch" tier (10-25 per risk-score.ts), leaving
@@ -478,13 +478,13 @@ scoring-credibility, and prioritization gaps that remained.
 ### Phase C2 — Verification audit (C2.5)
 
 Cross-report parity audit on three customer repos (`platform`,
-`dpl-studio`, `web-client`). All vuln-scan + health pairs verified:
+the .NET WinForms benchmark, the JS-heavy customer frontend). All vuln-scan + health pairs verified:
 
 - **D086 / D087 / D091 closures from C1 remain intact** across
   all 3 repos. Cross-report parity holds.
-- **D098 secrets-cap fires correctly**: web-client + platform both
-  drop to 40 "Fair"; dpl-studio (no secrets) stays at 90.
-- **D099 .env callout renders correctly on web-client** (the only
+- **D098 secrets-cap fires correctly**: the JS-heavy customer frontend + platform both
+  drop to 40 "Fair"; the .NET WinForms benchmark (no secrets) stays at 90.
+- **D099 .env callout renders correctly on the JS-heavy customer frontend** (the only
   repo with a tracked .env).
 - **D105 Top 5 surfaces actionable rows on every repo**, post-D108
   including the sparse-repo case.
@@ -545,7 +545,7 @@ pre-release audit and fixed before ship.
     ScoreInput fixtures predating the aggregator field).
 
 - **D107 — BoM vs vuln-scan disagreement (NEW, surfaced in C1.7
-  audit)** (commit `4ae69ed`). dpl-studio: vuln-scan reported 2 dep
+  audit)** (commit `4ae69ed`). the .NET WinForms benchmark: vuln-scan reported 2 dep
   advisories (MongoDB.Driver HIGH + SharpCompress MEDIUM via
   osv-scanner-nuget-direct) while BoM reported 0. Root cause: BoM
   walks per-sub-root project directories and called `gatherDepVulns`
@@ -555,7 +555,7 @@ pre-release audit and fixed before ship.
   now gathers dep-vulns ONCE at the repo root and passes the result
   to every per-sub-root entry builder via a new `depVulnsOverride`
   option. License-side stays per-sub-root (legitimately
-  per-project). Post-fix: dpl-studio BoM 2 ≡ vuln-scan 2.
+  per-project). Post-fix: the .NET WinForms benchmark BoM 2 ≡ vuln-scan 2.
 
 - **G_v4_9 — csharp pack cwd-invariant** (commit `14b02a7`). The
   pack-contract defect underneath D107: `gatherCsharpDepVulnsResult`
@@ -570,7 +570,7 @@ pre-release audit and fixed before ship.
   consistency.
 
 - **D091 boundary case (NEW, surfaced in C1.7 audit)** (commit
-  `c7b72e2`). Web-client `DBConfigureForm.js:43` (semgrep MEDIUM
+  `c7b72e2`). The JS-heavy customer frontend `SetupConfigForm.js:43` (semgrep MEDIUM
   `bypass-tls-verification`) and `:45` (registry HIGH
   `tls-validation-disabled`) — same root, 2 lines apart, same
   canonical rule — failed to collapse because the
@@ -579,7 +579,7 @@ pre-release audit and fixed before ship.
   edge case in the C1.1 commit; biting in production was the trigger
   to fix it. Fix: after the natural-bucket lookup misses, check
   neighbor buckets at `(canonicalRule, file, line ± 3)`. Two
-  MEDIUMs absorbed into HIGHs on web-client, reducing apparent
+  MEDIUMs absorbed into HIGHs on the JS-heavy customer frontend, reducing apparent
   code-finding count from 13 → 11 in the right direction.
 
 - **G_v4_8 architectural gate** (commit `6e89131`) in
@@ -620,12 +620,12 @@ post-Phase-C1):
     **81**" ≡ BoM `totalAdvisories` **81** ✓
   - 5 cross-tool TLS-bypass collisions deduped (MEDIUM bucket
     14 → 9)
-- **dpl-studio** (C#, 3 nested project roots):
+- **the .NET WinForms benchmark** (C#, 3 nested project roots):
   - vuln-scan **2** ≡ BoM **2** ≡ health **2** (dep) ✓
   - health code findings **1** ≡ vuln-scan code findings **1** ✓
-- **web-client** (JS-heavy, large repo with degraded license info):
+- **the JS-heavy customer frontend** (JS-heavy, large repo with degraded license info):
   - dep advisories **31** ≡ **31** ≡ **31** ✓
-  - D091-boundary case on `DBConfigureForm.js:43+:45` collapses (the
+  - D091-boundary case on `SetupConfigForm.js:43+:45` collapses (the
     C1.10 fix)
   - 2 MEDIUMs absorbed into HIGHs via neighbor-bucket lookup
 
@@ -657,7 +657,7 @@ and a permanent gate:
 
 - **G_v4_7 — `walkSourceFiles` + `countLineMatches`** (new canonical
   helpers in `src/analyzers/tools/walk-source-files.ts`). Pure JS,
-  no shell. The web-client D082/D083 silent-zero cascade was caused
+  no shell. The the JS-heavy customer frontend D082/D083 silent-zero cascade was caused
   by `grep -rEf <pat> --include=*.js .` producing 67MB of stdout on
   minified files, overflowing `run()`'s 64MB ceiling, and returning
   empty. The walker prunes excluded files at the directory boundary,
@@ -699,10 +699,10 @@ and a permanent gate:
 | D078 — BoM Risk `**0.0**` for missing CVSS | MED | `46b0d6e` (`computeRiskScore` returns `null` for `cvssScore=0`) |
 | D079 — duplicate grep-count implementations | MED | `82e0e75` + `e7a8821` (shared `gatherDebugStatements`) |
 | D080 — lint dispatcher last-wins | MED | `72cd102` (`gatherWithProvenance` exposes attempted+skipped sources; label reads `"ruff (not run: typescript)"`) |
-| D082 — web-client `consoleLogCount = 0` silent zero | CRITICAL | `0e71683` + `3275e1e` + `e7a8821` (walker prunes minified files at directory boundary) |
+| D082 — the JS-heavy customer frontend `consoleLogCount = 0` silent zero | CRITICAL | `0e71683` + `3275e1e` + `e7a8821` (walker prunes minified files at directory boundary) |
 | D083 — `run()` maxBuffer overflow on minified-JS | CRITICAL | `0e71683` + `3275e1e` + `099e844` + `32574e0` |
 | D084 — D082 cascade (anyType, eval) | HIGH | closes with D082/D083 |
-| D085 — web-client dep-count drift | HIGH | `06b0cec` |
+| D085 — the JS-heavy customer frontend dep-count drift | HIGH | `06b0cec` |
 
 **Deferred to 2.4.8**:
 - D081 (`Dead Imports: 0` suspicious) — investigated; root cause is
@@ -719,7 +719,7 @@ and a permanent gate:
 
 Convergence audit on three customer repos:
 
-- **dpl-studio**: 1537 source files consistent across health,
+- **the .NET WinForms benchmark**: 1537 source files consistent across health,
   test-gaps, maintainability dimension; `consoleLogCount=1`,
   `tlsDisabledCount=1` stable.
 - **platform** (the audit's most-troubled repo): `sourceFiles`
@@ -727,7 +727,7 @@ Convergence audit on three customer repos:
   `consoleLogCount` cross-report converged 1578/1555 → **698 / 698**;
   `tlsDisabledCount` 18 reported / 11 active → **11**; lint label
   `"ruff"` → `"ruff (not run: typescript)"`.
-- **web-client**: `consoleLogCount` **0 → 1066** (D082/D083 closure;
+- **the JS-heavy customer frontend**: `consoleLogCount` **0 → 1066** (D082/D083 closure;
   catastrophic silent zero eliminated).
 
 ### Phase A — Audit-driven hot-patches (2026-05-13)
@@ -792,7 +792,7 @@ Four pieces shipped together:
   declares the names cloc emits in its `--json` output. cloc's
   per-language summary + `totalLines` aggregation now filter to the
   active-pack set, so markup/data formats (JSON / XML / CSV /
-  Markdown) stop deflating quality metrics. On dpl-studio: Comment
+  Markdown) stop deflating quality metrics. On the .NET WinForms benchmark: Comment
   Ratio 4.3% → 27.9% (a 1.6M JSON denominator vs C#'s 568K).
 
 ### Fixed — Tier 1 (credibility critical)
@@ -800,8 +800,8 @@ Four pieces shipped together:
 The post-shipment audit's master bug + its direct cascade:
 
 - **D055** — `.dxkit-ignore` multi-segment paths flatten to basenames
-  in cloc / graphify / grep. `Dev/Addons/DPLAddon/SAPB1/` silently
-  became `{Dev, Addons, DPLAddon, SAPB1}` — cloc then excluded every
+  in cloc / graphify / grep. `Dev/Addons/VendorAddon/SAPB1/` silently
+  became `{Dev, Addons, VendorAddon, SAPB1}` — cloc then excluded every
   directory named `Dev` in the tree, killing 90% of source visibility.
   Fix: `getClocExcludeFlags` emits `--exclude-dir` (basenames) PLUS
   `--fullpath --not-match-d` (Perl regex on full path).
@@ -822,7 +822,7 @@ The post-shipment audit's master bug + its direct cascade:
   content marker) that `gatherGenericMetrics` uses for `sourceFiles`.
   Pre-D072 docCommentFiles counted designer.cs / .g.cs files in the
   numerator but not in `sourceFiles`'s denominator, producing 104%
-  docRatio on dpl-studio even after D055.
+  docRatio on the .NET WinForms benchmark even after D055.
 - **D062** closure via **G_v4_4** above.
 
 ### Fixed — Tier 2 (visible UX bugs)
@@ -832,7 +832,7 @@ The post-shipment audit's master bug + its direct cascade:
   W10 7, W14 1, W16 6, ...` had silent gaps that implied "data
   missing" when reality was zero commits.
 - **D061** — Hot Files filters auto-generated files via the existing
-  `autogeneratedSourcePatterns` registry. Pre-fix dpl-studio's hot
+  `autogeneratedSourcePatterns` registry. Pre-fix the .NET WinForms benchmark's hot
   list included `*.Designer.cs` files (WinForms designer regeneration
   noise).
 - **D063** — BoM Risk column rendered to one decimal (`18.5`,
