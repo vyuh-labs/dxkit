@@ -104,6 +104,11 @@ function printUsage(): void {
     vyuh-dxkit baseline create [path] [--name <name>] [--force]
                                  Capture per-finding identities to .dxkit/baselines/<name>.json
                                  (read later by guardrail check to gate new regressions)
+    vyuh-dxkit baseline show [path] [--name <n>] [--baseline <path>]
+                             [--kind <kind>] [--json]
+                                 Pretty-print the on-disk baseline. Default: summary +
+                                 per-kind counts. --kind drills into one kind. --json
+                                 emits a schema-banner-wrapped payload.
     vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
                                [--changed-only] [--policy <path>]
                                [--json | --markdown]
@@ -189,6 +194,8 @@ export async function run(argv: string[]): Promise<void> {
       markdown: { type: 'boolean', default: false },
       'fail-on-score': { type: 'string' },
       'fail-on-severity': { type: 'string' },
+      summary: { type: 'boolean', default: false },
+      kind: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -1411,34 +1418,74 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'baseline': {
       const subCommand = positionals[1];
-      if (subCommand !== 'create') {
-        logger.fail(
-          `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
-            `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force]`,
-        );
-        process.exit(1);
+      if (subCommand === 'create') {
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { createBaseline } = await import('./baseline/create');
+        logger.header('vyuh-dxkit baseline create');
+        logger.info(`Capturing baseline for ${targetPath}...`);
+        const startTime = Date.now();
+        try {
+          const result = await createBaseline({
+            cwd: targetPath,
+            name: values.name as string | undefined,
+            force: !!values.force,
+            verbose: !!values.verbose,
+          });
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          const rel = path.relative(targetPath, result.path);
+          logger.success(
+            `Wrote ${rel} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
+          );
+        } catch (err) {
+          logger.fail((err as Error).message);
+          process.exit(1);
+        }
+        break;
       }
-      const targetPath = resolveRepoPath(positionals[2]);
-      const { createBaseline } = await import('./baseline/create');
-      logger.header('vyuh-dxkit baseline create');
-      logger.info(`Capturing baseline for ${targetPath}...`);
-      const startTime = Date.now();
-      try {
-        const result = await createBaseline({
-          cwd: targetPath,
-          name: values.name as string | undefined,
-          force: !!values.force,
-          verbose: !!values.verbose,
-        });
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const rel = path.relative(targetPath, result.path);
-        logger.success(
-          `Wrote ${rel} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
-        );
-      } catch (err) {
-        logger.fail((err as Error).message);
-        process.exit(1);
+      if (subCommand === 'show') {
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } =
+          await import('./baseline/baseline-file');
+        const { parseKindFilter, renderSummary, renderKind, renderJson, FILTER_KINDS } =
+          await import('./baseline/show');
+        const name = (values.name as string | undefined) ?? DEFAULT_BASELINE_NAME;
+        const filePath =
+          (values.baseline as string | undefined) ?? pathForBaseline(targetPath, name);
+        let file;
+        try {
+          file = readBaselineFile(filePath);
+        } catch (err) {
+          logger.fail((err as Error).message);
+          process.exit(1);
+        }
+        // Optional kind filter. Validated up-front so a typo surfaces
+        // a clear error rather than a silently-empty result.
+        let kindFilter: ReturnType<typeof parseKindFilter> | undefined;
+        if (values.kind !== undefined) {
+          const parsed = parseKindFilter(values.kind as string);
+          if (parsed === null) {
+            logger.fail(
+              `--kind: unknown value "${values.kind}". Expected one of: ${FILTER_KINDS.join(', ')}.`,
+            );
+            process.exit(1);
+          }
+          kindFilter = parsed;
+        }
+        if (values.json) {
+          await emitJson(renderJson(file, kindFilter ? { kind: kindFilter } : {}));
+        } else if (kindFilter) {
+          process.stdout.write(renderKind(file, kindFilter) + '\n');
+        } else {
+          process.stdout.write(renderSummary(file) + '\n');
+        }
+        break;
       }
+      logger.fail(
+        `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
+          `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force] · ` +
+          `vyuh-dxkit baseline show [path] [--name <name>] [--baseline <path>] [--kind <kind>] [--json]`,
+      );
+      process.exit(1);
       break;
     }
 
