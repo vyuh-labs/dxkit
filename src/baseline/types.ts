@@ -95,7 +95,8 @@ export type IdentityInput =
   | TestFileDegradationIdentityInput
   | GodFileIdentityInput
   | StaleFileIdentityInput
-  | LargeFileIdentityInput;
+  | LargeFileIdentityInput
+  | SecretHmacIdentityInput;
 
 /** gitleaks + private-key files + similar secret detectors. */
 export interface SecretIdentityInput {
@@ -288,6 +289,37 @@ export interface LargeFileIdentityInput {
 }
 
 /**
+ * Content-based identity for a detected secret. Companion to the
+ * location-based `SecretIdentityInput` — both can describe the same
+ * underlying finding, with the location identity locating WHERE the
+ * secret lives and the HMAC identity locating WHAT secret it is.
+ *
+ * The producer (gitleaks provider in Phase 3) computes the HMAC via
+ * `computeSecretHmac(secretValue, repoSalt)`. The salt lives in
+ * `.dxkit/salt` per repo, generated once and gitignored — see the
+ * baseline-create command for the salt-management contract.
+ *
+ * Identity-relocation use case: when a leaked token is copied from
+ * `.env` to `src/config.ts`, the location identities differ but the
+ * HMAC identities match. The matcher recognizes the move via HMAC
+ * and reports the pair as relocated rather than added+removed.
+ *
+ * Producer never stores the raw secret. Only the HMAC enters the
+ * baseline file, so a baseline leak doesn't leak secrets.
+ */
+export interface SecretHmacIdentityInput {
+  readonly kind: 'secret-hmac';
+  /** Producer tool name (e.g. 'gitleaks'). */
+  readonly tool: string;
+  /** Producer-specific rule id. The canonical-rule map applies here
+   *  too: two tools detecting the same secret class collapse to one
+   *  canonical rule. */
+  readonly rule: string;
+  /** 16-char hex from `computeSecretHmac(secret, repoSalt)`. */
+  readonly hmac: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -329,7 +361,8 @@ export type BaselineEntry =
     }
   | { id: FindingId; kind: 'god-file'; file: string }
   | { id: FindingId; kind: 'stale-file'; file: string; suffix: string }
-  | { id: FindingId; kind: 'large-file'; file: string };
+  | { id: FindingId; kind: 'large-file'; file: string }
+  | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string };
 
 /**
  * One pairing decision from the matcher. Carries enough context for

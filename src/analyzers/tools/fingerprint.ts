@@ -26,7 +26,7 @@
  * repo scale. Producers may render either inline interchangeably.
  */
 
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 
 /**
@@ -141,4 +141,35 @@ export function lineWindowFor(line: number): number {
 export function computeCodeFingerprint(canonicalRule: string, file: string, line: number): string {
   const input = `${canonicalRule}\0${file}\0${lineWindowFor(line)}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+// ─── Secret HMAC primitive ───────────────────────────────────────────────────
+
+/**
+ * HMAC-SHA256 of a detected secret value, keyed by a per-repo salt.
+ * The output is 16-char lowercase hex (first 8 bytes of the 32-byte
+ * HMAC) so it shares the byte format of the other fingerprint helpers
+ * and can be embedded inline in reports without taking real estate.
+ *
+ * Cryptographic posture: HMAC (not bare hash) so the producer cannot
+ * recover the secret from its identity even if the salt is leaked,
+ * and the salt cannot be recovered from the identity even if the
+ * secret is known. Truncating to 8 bytes is safe at repo scale —
+ * collision probability for distinct secrets is ~2^-32 per pair,
+ * negligible for any realistic finding set.
+ *
+ * Used by the secret-hmac identity scheme: a leaked token that moves
+ * files between runs produces the same HMAC, so the matcher can
+ * recognize "same secret, different location" as a relocated finding
+ * rather than a deleted+added pair. The salt is per-repo so
+ * cross-repo identity collisions are impossible (the same secret in
+ * two repos hashes to two different HMACs).
+ *
+ * The producer never stores the secret value itself — only the HMAC.
+ * That's the whole reason this scheme is preferred over a bare
+ * content hash of the secret: zero secret-recovery risk in the
+ * baseline file.
+ */
+export function computeSecretHmac(secret: string, salt: string): string {
+  return createHmac('sha256', salt).update(secret).digest('hex').slice(0, 16);
 }

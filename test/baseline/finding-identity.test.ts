@@ -488,6 +488,59 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     current: { kind: 'large-file', file: 'src/services/orders.ts' },
     expected: 'changed',
   },
+
+  // ─── secret-hmac (3) ──────────────────────────────────────────────────
+  {
+    name: 'secret-hmac/clean — same tool, rule, HMAC',
+    prior: {
+      kind: 'secret-hmac',
+      tool: 'gitleaks',
+      rule: 'generic-api-key',
+      hmac: 'a1b2c3d4e5f60718',
+    },
+    current: {
+      kind: 'secret-hmac',
+      tool: 'gitleaks',
+      rule: 'generic-api-key',
+      hmac: 'a1b2c3d4e5f60718',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'secret-hmac/different-secret — identity changes',
+    prior: {
+      kind: 'secret-hmac',
+      tool: 'gitleaks',
+      rule: 'generic-api-key',
+      hmac: 'a1b2c3d4e5f60718',
+    },
+    current: {
+      kind: 'secret-hmac',
+      tool: 'gitleaks',
+      rule: 'generic-api-key',
+      hmac: 'deadbeefcafebabe',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'secret-hmac/cross-tool with canonical-rule mapping — private-key collapses',
+    // Same underlying secret value (same HMAC) detected by two
+    // different scanners using two different rule names. The
+    // canonical-rule map collapses them so identity matches.
+    prior: {
+      kind: 'secret-hmac',
+      tool: 'find',
+      rule: 'private-key-file',
+      hmac: 'a1b2c3d4e5f60718',
+    },
+    current: {
+      kind: 'secret-hmac',
+      tool: 'gitleaks',
+      rule: 'private-key',
+      hmac: 'a1b2c3d4e5f60718',
+    },
+    expected: 'persisted',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -625,6 +678,7 @@ const EXPECTED_KINDS = [
   'god-file',
   'stale-file',
   'large-file',
+  'secret-hmac',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {
