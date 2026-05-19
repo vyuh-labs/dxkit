@@ -18,13 +18,7 @@ paths:
 
 # Testing
 
-## Commands
-- `make test` - Run all tests (report: `tmp/reports/test-report.md`)
-- `make test-unit` - Fast unit tests only (no coverage)
-- `make test-quick` - Alias for test-unit
-- `make test-integration` - Integration tests only
-- `make test-coverage` - Detailed coverage report
-- Coverage threshold: **{{COVERAGE_THRESHOLD}}%**
+**Coverage threshold**: {{COVERAGE_THRESHOLD}}%
 
 {{#IF_PYTHON}}
 ## Python

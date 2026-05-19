@@ -12,28 +12,27 @@ paths:
 
 # Secrets Management (Infisical)
 
-## Commands
-- `make secrets-pull` - Pull secrets from Infisical to `.env`
-- `make secrets-show` - Show Infisical configuration (**no secrets displayed**)
-- `make setup` - Configure Infisical during initial setup
+## How it works
 
-## How It Works
 1. Infisical stores secrets centrally (encrypted, access-controlled)
-2. `make secrets-pull` fetches secrets and merges into `.env`
+2. `infisical run -- <command>` or `infisical export --format=dotenv > .env` pulls them into the local environment
 3. `.env` is gitignored — **never commit secrets**
 
 ## Configuration
-Required in `.env` (set during `make setup`):
-- `INFISICAL_TOKEN` - Authentication token
-- `INFISICAL_PROJECT_ID` - Project identifier
-- `INFISICAL_ENV` - Environment (default: `dev`)
 
-## Checking Configuration
-Always use `make secrets-show` — it displays config keys without values:
-```
-INFISICAL_PROJECT_ID=abc123
-INFISICAL_ENV=dev
-INFISICAL_TOKEN=***configured***
+Authenticate via `infisical login`. Per-project config typically lives in `.infisical.json` (project ID + environment).
+
+Required environment variables (set during initial project bootstrap):
+- `INFISICAL_TOKEN` — auth token (for headless/CI usage)
+- `INFISICAL_PROJECT_ID` — project identifier
+- `INFISICAL_ENV` — environment (default: `dev`)
+
+## Checking configuration
+
+Look at the variable names without their values:
+
+```bash
+infisical secrets --plain | cut -d= -f1
 ```
 
 ## Security — CRITICAL
@@ -43,10 +42,10 @@ INFISICAL_TOKEN=***configured***
 3. **NEVER include secrets** in session checkpoints or skill files
 4. **NEVER pass secrets as CLI arguments** — they appear in process lists
 5. **NEVER commit** `.env`, `.env.*`, or `.env.secrets`
-6. Use `make secrets-show` to verify configuration without exposing values
-7. If a secret is accidentally exposed, rotate it immediately
+6. If a secret is accidentally exposed, rotate it immediately
 
 ## Troubleshooting
-- Token expired → re-authenticate via `make setup`
-- Pull fails → check `make secrets-show` for config, verify token permissions
-- Missing env var → check if it exists in Infisical project, correct environment
+
+- Token expired → re-run `infisical login`
+- Pull fails → check the project ID and environment, verify token permissions
+- Missing variable → confirm it exists in the right Infisical environment

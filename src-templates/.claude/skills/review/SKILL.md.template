@@ -5,13 +5,14 @@ description: Review code for quality, security, and patterns. Use when asked to 
 
 # Code Review
 
-## Quick Check
-Run `make check` first — it validates, lints, tests, and checks docs in one command.
+## Quick check
+
+Run `/quality` and `/test` first — they cover lint, format, slop, duplication, and test results.
 
 ## Review Checklist
 
 ### 1. Quality
-- [ ] `make quality` passes
+- [ ] `/quality` passes
 - [ ] Coverage meets threshold ({{COVERAGE_THRESHOLD}}%)
 - [ ] No suppressed lint rules without justification
 

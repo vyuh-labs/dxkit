@@ -5,39 +5,21 @@ description: Deploy services, release to production, push to cloud. Use when ask
 
 # Deployment
 
-## Commands
-- `make deploy` - Deploy services (configure deployment target first)
-- `make build` - Build before deploying
-- `make check` - Run full validation before deploying
+## Pre-deployment checklist
 
-## Pre-Deployment Checklist
-- [ ] `make check` passes (quality + tests + validation)
+- [ ] `/quality` and `/test` pass
 - [ ] All changes committed and pushed
 - [ ] PR reviewed and approved
-{{#IF_INFISICAL}}
-- [ ] Secrets pulled: `make secrets-pull`
-{{/IF_INFISICAL}}
 - [ ] No hardcoded secrets in code or config
 
-## Deployment Safety
+## Deployment safety
 
 **CRITICAL: Never auto-approve destructive deployment operations.**
 
 - Always preview/dry-run before applying changes
 - Require explicit user confirmation for production deployments
 - Never force-push or skip CI checks before deploying
-{{#IF_INFISICAL}}
-
-## Secrets for Deployment
-
-Pull secrets before deploying:
-```bash
-make secrets-pull     # fetch from Infisical to .env
-make secrets-show     # verify configuration (masked values)
-```
-
-**Never pass secrets as CLI arguments** — use environment variables or secret managers.
-{{/IF_INFISICAL}}
+- Never pass secrets as CLI arguments — use environment variables or secret managers
 
 {{#IF_GCLOUD}}
 ## Google Cloud Deployment
@@ -122,9 +104,7 @@ For Docker, use multi-stage builds:
 
 ## CI/CD
 
-CI pipeline (`.github/workflows/ci.yml`) runs automatically on PR:
-- Validation, quality checks, tests per enabled language
-- Coverage enforcement at {{COVERAGE_THRESHOLD}}%
+Set up the project's CI pipeline so it runs the same checks as `/quality` and `/test` on every PR.
 
 ## Gotchas
 

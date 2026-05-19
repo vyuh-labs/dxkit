@@ -22,7 +22,7 @@ Read these first for context (skip any that don't exist):
 - `.claude/skills/learned/references/gotchas.md` — Known gotchas
 - `.claude/skills/learned/references/conventions.md` — Team conventions
 - `README.md` — Project readme
-- `package.json`, `go.mod`, `pyproject.toml`, `*.csproj` — Dependencies
+- `package.json`, `go.mod`, `pyproject.toml`, `*.csproj`, `Cargo.toml`, `Gemfile` — Dependencies
 
 ## How to Help
 
@@ -48,9 +48,10 @@ Prioritize by learning order:
 5. Tests — how things are verified
 
 ### If asked about setup/environment:
-1. Check for Makefile, docker-compose.yml, package.json scripts
-2. Walk through the setup process step by step
-3. Warn about common setup issues from gotchas.md
+1. Check for the standard entry points: `package.json` scripts, `docker-compose.yml`, `.devcontainer/`, language-specific build files
+2. Walk through the setup process step by step (clone → install deps → run the dev/test command shown in README)
+3. If the repo has dxkit installed, point them at `/doctor` for environment validation
+4. Warn about common setup issues from gotchas.md
 
 ## Rules
 
