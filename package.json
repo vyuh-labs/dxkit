@@ -1,7 +1,7 @@
 {
   "name": "@vyuhlabs/dxkit",
   "version": "2.5.0",
-  "description": "AI-native developer experience toolkit for any repository",
+  "description": "AI-native developer experience toolkit for any codebase",
   "license": "MIT",
   "author": "Vyuh Labs",
   "repository": {
@@ -80,16 +80,22 @@
     "vitest": "^3.2.4"
   },
   "keywords": [
-    "vyuh",
-    "dxkit",
-    "claude",
-    "copilot",
+    "ai-coding-agents",
+    "agentic-development",
+    "claude-code",
     "codex",
-    "cursor",
-    "dx",
-    "developer-experience",
-    "ai",
-    "skills"
+    "guardrails",
+    "brownfield",
+    "baseline",
+    "static-analysis",
+    "code-quality",
+    "security-scanning",
+    "pre-commit-hooks",
+    "ci-cd",
+    "codespaces",
+    "devcontainers",
+    "dxkit",
+    "vyuh"
   ],
   "dependencies": {
     "exceljs": "^4.4.0",

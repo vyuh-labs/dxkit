@@ -1,11 +1,12 @@
 # dxkit
 
-**Make your codebase safe for AI coding agents.**
+**AI-native developer experience toolkit for any codebase.**
 
-Equip your agent with repo-native context. Guard every commit and PR
-with deterministic checks. **One command scaffolds the guardrails;
-one baseline turns them on.** Works across major language stacks,
-greenfield or brownfield.
+Make your existing codebase safe for Claude Code, Codex, and other AI
+coding agents. Equip the agent with repo-native context. Guard every
+commit and PR with deterministic checks. **One command scaffolds the
+agent DX; one baseline turns on the guardrails.** Works across major
+language stacks, greenfield or brownfield.
 
 ```bash
 npx @vyuhlabs/dxkit@latest init --full
@@ -97,7 +98,7 @@ From this point:
 
 ```text
 $ npx @vyuhlabs/dxkit@latest init --full
-✓ Created: 81 files
+✓ Created: 73 files
 ✓ Git hooks: installed 2 file(s)
 ✓ Devcontainer: installed 3 file(s)
 ✓ CI guardrails workflow: installed 1 file(s)

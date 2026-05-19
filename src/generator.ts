@@ -146,7 +146,7 @@ export async function generate(
 
   // === DX-ONLY TIER ===
 
-  logger.header('Generating Claude Code DX');
+  logger.header('Generating Agent DX');
 
   // 1. CLAUDE.md
   await writeTemplate('CLAUDE.md.template', 'CLAUDE.md');
