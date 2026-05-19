@@ -330,6 +330,34 @@ export interface LanguageSupport {
   defaultVersion?: string;
 
   /**
+   * Per-pack devcontainer feature declaration. Drives the per-stack
+   * `features` block in `src-templates/.devcontainer/devcontainer.json`:
+   * only active packs' features land in the generated container, so a
+   * pure-TypeScript repo no longer pulls .NET / Ruby / Java / Rust /
+   * etc. toolchains (~25 min of unused image build).
+   *
+   * `name` is the canonical ghcr.io feature key (e.g.
+   * `ghcr.io/devcontainers/features/python:1`); `opts` is forwarded
+   * verbatim as the feature's value (version pins, install flags, etc.).
+   *
+   * Two packs may declare the same feature key (e.g. java and kotlin
+   * both need a JDK). Object-key dedup handles the union — the last
+   * pack's opts win. For features with branching opts, factor the
+   * declarations so all consumers agree on the shape.
+   *
+   * Always-on features (Node — dxkit's own runtime; GitHub CLI) are
+   * declared by the installer, not per-pack, so a non-Node project
+   * still gets the dxkit runtime container.
+   *
+   * Optional — packs without a canonical ghcr.io feature omit it
+   * (today: rare; every shipped pack has one).
+   */
+  devcontainerFeature?: {
+    name: string;
+    opts?: Record<string, unknown>;
+  };
+
+  /**
    * Key under `DetectedStack.versions` where this pack's version lives —
    * AND the lowercase prefix used to derive template-variable + condition
    * names (`NODE_VERSION`, `IF_NODE`). Defaults to `id` when omitted.

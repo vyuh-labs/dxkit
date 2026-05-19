@@ -519,4 +519,13 @@ export const kotlin: LanguageSupport = {
   ruleFile: 'kotlin.md',
   cliBinaries: ['gradle', 'detekt'],
   defaultVersion: '2.0.21',
+  // No first-party Kotlin devcontainer feature on ghcr.io/devcontainers
+  // — the canonical Android/JVM tooling for a Kotlin project is a JDK
+  // + Gradle, which the java feature provides. detekt installs via
+  // TOOL_DEFS at post-create. When both java and kotlin packs are
+  // active, object-key dedup unions cleanly (same feature key).
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/java:1',
+    opts: { version: '17', installGradle: true },
+  },
 };

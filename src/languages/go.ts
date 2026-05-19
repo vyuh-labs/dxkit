@@ -947,4 +947,8 @@ export const go: LanguageSupport = {
   ruleFile: 'go.md',
   defaultVersion: '1.24.0',
   cliBinaries: ['go', 'golangci-lint'],
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/go:1',
+    opts: { version: '1.21' },
+  },
 };

@@ -505,4 +505,8 @@ export const java: LanguageSupport = {
 
   // Java 17 is current LTS as of 2026-04 with very wide deployment.
   defaultVersion: '17',
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/java:1',
+    opts: { version: '17', installGradle: true },
+  },
 };

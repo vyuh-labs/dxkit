@@ -1052,4 +1052,8 @@ export const python: LanguageSupport = {
   ruleFile: 'python.md',
   defaultVersion: '3.12',
   cliBinaries: ['python3', 'ruff'],
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/python:1',
+    opts: { version: '3.12', installTools: true },
+  },
 };

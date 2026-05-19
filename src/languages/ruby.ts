@@ -749,4 +749,8 @@ export const ruby: LanguageSupport = {
   cliBinaries: ['ruby', 'bundle'],
 
   defaultVersion: '3.3.0',
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/ruby:1',
+    opts: { version: '3.3' },
+  },
 };

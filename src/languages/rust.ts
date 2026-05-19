@@ -893,4 +893,8 @@ export const rust: LanguageSupport = {
   ruleFile: 'rust.md',
   defaultVersion: 'stable',
   cliBinaries: ['rustc', 'cargo'],
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/rust:1',
+    opts: { version: 'stable', profile: 'default' },
+  },
 };

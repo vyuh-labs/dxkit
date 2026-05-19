@@ -307,3 +307,37 @@ export function splitTestFilePatterns(patterns: string[] = allTestFilePatterns()
     pathAnchored: patterns.filter((p) => p.includes('/')),
   };
 }
+
+/**
+ * Build the devcontainer `features` block for a given detected stack.
+ * Returns a `{ [featureName]: opts }` map ready to serialize as the
+ * value of `features` in `.devcontainer/devcontainer.json`.
+ *
+ * Always-on entries (Node — dxkit's own runtime; GitHub CLI) land
+ * regardless of detected stack so the post-create script can run npm
+ * and `gh` even on non-Node projects. Per-pack entries layer on top
+ * via object-key dedup, so the typescript pack's node feature
+ * overrides the always-on default (e.g. with a different version).
+ *
+ * Pre-Phase-2.5.1 the features block was a static JSON object that
+ * unconditionally enabled every toolchain dxkit supports — pure-TS
+ * repos still pulled .NET / Ruby / Java / Rust toolchains (~25 min
+ * of unused image build). This helper drives a stack-aware generation
+ * path that's testable in isolation.
+ */
+export function buildDevcontainerFeatures(
+  flags: DetectedStack['languages'],
+): Record<string, Record<string, unknown>> {
+  const features: Record<string, Record<string, unknown>> = {
+    // Always-on: dxkit's own runtime + the gh CLI used by
+    // setup-branch-protection / setup-prebuild / PR review.
+    'ghcr.io/devcontainers/features/node:1': { version: '22', nvmVersion: 'latest' },
+    'ghcr.io/devcontainers/features/github-cli:1': {},
+  };
+  for (const lang of activeLanguagesFromFlags(flags)) {
+    if (lang.devcontainerFeature) {
+      features[lang.devcontainerFeature.name] = lang.devcontainerFeature.opts ?? {};
+    }
+  }
+  return features;
+}

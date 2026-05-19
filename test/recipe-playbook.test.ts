@@ -49,6 +49,7 @@ import {
   allTlsBypassPatterns,
   activeLanguagesFromFlags,
   activeLanguagesFromStack,
+  buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
 } from '../src/languages';
@@ -108,6 +109,13 @@ const mockPlaybookPack = {
   cliBinaries: ['playbookc-mock'],
   defaultVersion: '99.0.0',
   versionKey: 'playbook',
+  // Distinctive feature name so the assertion verifies the synthetic
+  // pack's contribution specifically, never accidentally satisfied by
+  // a real pack that shares a feature URL.
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/playbook-mock:99',
+    opts: { version: '99.0.0', playbookFlag: true },
+  },
 } as unknown as LanguageSupport;
 
 // ─── Registry mutation ──────────────────────────────────────────────────────
@@ -186,6 +194,35 @@ describe('recipe playbook — synthetic pack', () => {
     expect(patterns).toContain('ServerCertificateValidationCallback'); // csharp
     expect(patterns).toContain('InsecureSkipVerify[[:space:]]*:[[:space:]]*true'); // go
     expect(patterns).toContain('NODE_TLS_REJECT_UNAUTHORIZED.*0'); // typescript
+  });
+
+  it('buildDevcontainerFeatures picks up the synthetic pack contribution (Phase 2.5.1)', () => {
+    // Activate only the synthetic pack via its flag so we observe its
+    // contribution without bleeding real pack features into the
+    // assertion.
+    const flags = {
+      typescript: false,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const features = buildDevcontainerFeatures(flags);
+    // Always-on entries land regardless of active packs.
+    expect(features['ghcr.io/devcontainers/features/node:1']).toBeDefined();
+    expect(features['ghcr.io/devcontainers/features/github-cli:1']).toBeDefined();
+    // Synthetic-pack contribution flows through without any
+    // code change to installDevcontainer or buildDevcontainerFeatures.
+    expect(features['ghcr.io/devcontainers/features/playbook-mock:99']).toBeDefined();
+    expect(features['ghcr.io/devcontainers/features/playbook-mock:99']).toEqual({
+      version: '99.0.0',
+      playbookFlag: true,
+    });
   });
 
   // D030 (2.4.7): hygiene scope's extension list was hardcoded since

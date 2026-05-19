@@ -1243,6 +1243,11 @@ export const typescript: LanguageSupport = {
   permissions: ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)'],
   defaultVersion: '20',
   versionKey: 'node',
+  devcontainerFeature: {
+    name: 'ghcr.io/devcontainers/features/node:1',
+    // Node 22 LTS — matches the smoke workflow's `setup-node@v6` line.
+    opts: { version: '22', nvmVersion: 'latest' },
+  },
   // No ruleFile — there is no `.claude/rules/typescript.md`. nextjs.md
   // is a framework rule (not language) and stays hardcoded in
   // generator.ts under `IF_NEXTJS`.

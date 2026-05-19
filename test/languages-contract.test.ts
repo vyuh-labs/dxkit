@@ -221,6 +221,18 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     expect(lang.defaultVersion!.length).toBeGreaterThan(0);
   });
 
+  it('declares `devcontainerFeature` (per-stack feature for installDevcontainer)', () => {
+    // Every shipped pack today has a canonical ghcr.io feature. If a
+    // future pack genuinely has no feature surface, drop this
+    // assertion for that pack and document why.
+    expect(
+      lang.devcontainerFeature,
+      `${lang.id}: missing devcontainerFeature — installDevcontainer would omit this pack's toolchain`,
+    ).toBeDefined();
+    expect(typeof lang.devcontainerFeature!.name).toBe('string');
+    expect(lang.devcontainerFeature!.name).toMatch(/^ghcr\.io\/devcontainers/);
+  });
+
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);
