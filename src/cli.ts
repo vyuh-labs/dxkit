@@ -125,7 +125,8 @@ function printUsage(): void {
     --dx-only                 Just .claude/ + CLAUDE.md (default)
     --full                    Everything: DX + quality + hooks + devcontainer +
                               CI guardrails + baseline-refresh workflow
-    --with-hooks              Install .githooks/{pre-commit,pre-push} guardrail hooks
+    --with-hooks              Install .githooks/pre-push guardrail hook (pre-commit opt-in)
+    --with-precommit-hook     Also install .githooks/pre-commit (slow on large repos)
     --with-devcontainer       Install .devcontainer/ with pinned toolchains +
                               dxkit + Claude Code & Codex CLIs
     --with-ci                 Install .github/workflows/dxkit-guardrails.yml
@@ -212,6 +213,7 @@ export async function run(argv: string[]): Promise<void> {
       summary: { type: 'boolean', default: false },
       kind: { type: 'string' },
       'with-hooks': { type: 'boolean', default: false },
+      'with-precommit-hook': { type: 'boolean', default: false },
       'with-devcontainer': { type: 'boolean', default: false },
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
@@ -287,7 +289,16 @@ export async function run(argv: string[]): Promise<void> {
       // Phase Ship installers (additive). `--full` implies every flag
       // so a one-command setup gets the full 2.5.0 ship surface.
       const isFull = !!values.full;
-      const wantHooks = isFull || !!values['with-hooks'];
+      // pre-commit hook stays opt-in even under --full because it
+      // re-runs every analyzer on every commit (slow on large
+      // codebases until incremental scanning lands). Pre-push +
+      // CI catch the same regressions before code leaves the
+      // developer's machine.
+      const wantPrecommitHook = !!values['with-precommit-hook'];
+      // --with-precommit-hook implies --with-hooks (so the
+      // installer actually runs to install pre-commit alongside
+      // pre-push).
+      const wantHooks = isFull || !!values['with-hooks'] || wantPrecommitHook;
       const wantDevcontainer = isFull || !!values['with-devcontainer'];
       const wantCi = isFull || !!values['with-ci'];
       const wantBaselineRefresh = isFull || !!values['with-baseline-refresh'];
@@ -296,7 +307,10 @@ export async function run(argv: string[]): Promise<void> {
       if (wantHooks) {
         shipResults.push({
           label: 'Git hooks',
-          result: installHooks(cwd, { force: !!values.force }),
+          result: installHooks(cwd, {
+            force: !!values.force,
+            withPrecommit: wantPrecommitHook,
+          }),
         });
       }
       if (wantDevcontainer) {

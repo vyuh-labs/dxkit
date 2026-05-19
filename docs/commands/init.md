@@ -29,18 +29,19 @@ vyuh-dxkit init [options]
 
 ## Options
 
-| Option                    | Effect                                                                                            |
-| ------------------------- | ------------------------------------------------------------------------------------------------- |
-| `--with-hooks`            | Install `.githooks/{pre-commit,pre-push}` for [guardrail check](guardrail.md)                     |
-| `--with-devcontainer`     | Install `.devcontainer/` with pinned toolchains + Claude Code & Codex CLIs                        |
-| `--with-ci`               | Install `.github/workflows/dxkit-guardrails.yml` (PR-gate)                                        |
-| `--with-baseline-refresh` | Install `.github/workflows/dxkit-baseline-refresh.yml` (post-merge auto-regen)                    |
-| `--detect`                | Auto-detect stack (language, framework); skip most prompts                                        |
-| `--yes`                   | Accept all defaults                                                                               |
-| `--force`                 | Overwrite existing files in place (otherwise sidecars are emitted — see "Additive install" below) |
-| `--stealth`               | Generated files are gitignored — local-only, not committed                                        |
-| `--name <n>`              | Override the project name                                                                         |
-| `--no-scan`               | Skip the codebase analysis step                                                                   |
+| Option                    | Effect                                                                                                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--with-hooks`            | Install `.githooks/pre-push` for [guardrail check](guardrail.md). Pre-commit is opt-in (`--with-precommit-hook`) because it re-runs every analyzer on every commit (slow on large repos). |
+| `--with-precommit-hook`   | Additionally install `.githooks/pre-commit`. Implies `--with-hooks`. Use on small/fast repos where every-commit gating is worth the wait.                                                 |
+| `--with-devcontainer`     | Install `.devcontainer/` with pinned toolchains + Claude Code & Codex CLIs                                                                                                                |
+| `--with-ci`               | Install `.github/workflows/dxkit-guardrails.yml` (PR-gate)                                                                                                                                |
+| `--with-baseline-refresh` | Install `.github/workflows/dxkit-baseline-refresh.yml` (post-merge auto-regen)                                                                                                            |
+| `--detect`                | Auto-detect stack (language, framework); skip most prompts                                                                                                                                |
+| `--yes`                   | Accept all defaults                                                                                                                                                                       |
+| `--force`                 | Overwrite existing files in place (otherwise sidecars are emitted — see "Additive install" below)                                                                                         |
+| `--stealth`               | Generated files are gitignored — local-only, not committed                                                                                                                                |
+| `--name <n>`              | Override the project name                                                                                                                                                                 |
+| `--no-scan`               | Skip the codebase analysis step                                                                                                                                                           |
 
 `--full` implies every `--with-*` flag.
 

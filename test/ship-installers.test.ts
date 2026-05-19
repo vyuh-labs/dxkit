@@ -51,71 +51,83 @@ describe('installHooks', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('writes hooks in place on a fresh dir', () => {
+  it('writes only pre-push by default (pre-commit is opt-in)', () => {
     const result = installHooks(tmp);
+    expect(result.installed).toContain('.githooks/pre-push');
+    expect(result.installed).not.toContain('.githooks/pre-commit');
+    expect(result.sidecars).toHaveLength(0);
+
+    expect(fs.existsSync(path.join(tmp, '.githooks/pre-push'))).toBe(true);
+    expect(fs.existsSync(path.join(tmp, '.githooks/pre-commit'))).toBe(false);
+
+    if (process.platform !== 'win32') {
+      const prePushMode = fs.statSync(path.join(tmp, '.githooks/pre-push')).mode;
+      expect(prePushMode & 0o111).not.toBe(0);
+    }
+  });
+
+  it('writes both hooks when --with-precommit-hook is enabled', () => {
+    const result = installHooks(tmp, { withPrecommit: true });
     expect(result.installed).toContain('.githooks/pre-commit');
     expect(result.installed).toContain('.githooks/pre-push');
     expect(result.sidecars).toHaveLength(0);
 
     expect(fs.existsSync(path.join(tmp, '.githooks/pre-commit'))).toBe(true);
     expect(fs.existsSync(path.join(tmp, '.githooks/pre-push'))).toBe(true);
-
-    // Both files should be executable (POSIX-only check)
-    if (process.platform !== 'win32') {
-      const preCommitMode = fs.statSync(path.join(tmp, '.githooks/pre-commit')).mode;
-      expect(preCommitMode & 0o111).not.toBe(0);
-    }
   });
 
-  it('writes sidecars when .githooks/pre-commit already exists', () => {
+  it('writes sidecars when .githooks/pre-push already exists', () => {
     fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.githooks/pre-commit'), '#!/bin/sh\necho existing\n');
     fs.writeFileSync(path.join(tmp, '.githooks/pre-push'), '#!/bin/sh\necho existing\n');
 
     const result = installHooks(tmp);
-    expect(result.sidecars).toContain('.githooks/pre-commit.dxkit');
     expect(result.sidecars).toContain('.githooks/pre-push.dxkit');
     expect(result.installed).toHaveLength(0);
 
-    // Existing files preserved
-    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-commit'), 'utf8')).toContain(
+    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-push'), 'utf8')).toContain(
       'echo existing',
     );
-    // Sidecars carry dxkit content
-    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-commit.dxkit'), 'utf8')).toContain(
-      'dxkit pre-commit hook',
+    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-push.dxkit'), 'utf8')).toContain(
+      'dxkit pre-push hook',
     );
-
-    // Merge note surfaced
     expect(result.notes.some((n) => n.includes('sidecar'))).toBe(true);
   });
 
-  it('writes sidecars when .husky/pre-commit exists (husky users)', () => {
+  it('writes pre-commit sidecar when --with-precommit-hook AND .husky/pre-commit exists', () => {
     fs.mkdirSync(path.join(tmp, '.husky'), { recursive: true });
     fs.writeFileSync(path.join(tmp, '.husky/pre-commit'), '#!/bin/sh\necho husky\n');
 
-    const result = installHooks(tmp);
+    const result = installHooks(tmp, { withPrecommit: true });
     expect(result.sidecars).toContain('.githooks/pre-commit.dxkit');
-    // pre-push had no conflict — installed normally
     expect(result.installed).toContain('.githooks/pre-push');
   });
 
-  it('force overrides existing hooks in place', () => {
+  it('force overrides existing pre-push in place', () => {
     fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
-    fs.writeFileSync(path.join(tmp, '.githooks/pre-commit'), '#!/bin/sh\necho existing\n');
+    fs.writeFileSync(path.join(tmp, '.githooks/pre-push'), '#!/bin/sh\necho existing\n');
 
     const result = installHooks(tmp, { force: true });
-    expect(result.installed).toContain('.githooks/pre-commit');
-    expect(result.sidecars).not.toContain('.githooks/pre-commit.dxkit');
+    expect(result.installed).toContain('.githooks/pre-push');
+    expect(result.sidecars).not.toContain('.githooks/pre-push.dxkit');
 
-    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-commit'), 'utf8')).toContain(
-      'dxkit pre-commit hook',
+    expect(fs.readFileSync(path.join(tmp, '.githooks/pre-push'), 'utf8')).toContain(
+      'dxkit pre-push hook',
     );
   });
 
   it('always emits the core.hooksPath activate note', () => {
     const result = installHooks(tmp);
     expect(result.notes.some((n) => n.includes('core.hooksPath'))).toBe(true);
+  });
+
+  it('surfaces opt-in note when pre-commit is omitted (default)', () => {
+    const result = installHooks(tmp);
+    expect(result.notes.some((n) => n.includes('with-precommit-hook'))).toBe(true);
+  });
+
+  it('does NOT surface the opt-in note when pre-commit is installed', () => {
+    const result = installHooks(tmp, { withPrecommit: true });
+    expect(result.notes.some((n) => n.includes('with-precommit-hook'))).toBe(false);
   });
 });
 

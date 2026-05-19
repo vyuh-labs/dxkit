@@ -81,6 +81,21 @@ export interface ShipInstallResult {
 interface InstallerOpts {
   /** Overwrite consumer files in place rather than emitting sidecars. */
   readonly force?: boolean;
+  /**
+   * Install the pre-commit hook in addition to pre-push.
+   *
+   * Default off: pre-commit re-runs every analyzer on the full repo
+   * (no incremental scope yet), which makes it slow on large
+   * codebases (~3 min on a 500-file repo). Pre-push is faster to
+   * tolerate because it fires once per push regardless of how many
+   * commits batch up.
+   *
+   * Customers who want commit-time gating (e.g. on small repos where
+   * the scan is fast) can opt in with `--with-precommit-hook`.
+   * Incremental scoped scanning lands in a future phase; the trade-
+   * off goes away then.
+   */
+  readonly withPrecommit?: boolean;
 }
 
 function emptyResult(): ShipInstallResult {
@@ -129,14 +144,17 @@ function copyAdditive(
 }
 
 /**
- * Hooks installer. Writes `.githooks/pre-commit` and
- * `.githooks/pre-push`. When the consumer already has a pre-commit
- * hook (via .githooks/ or .husky/), emits a `.dxkit` sidecar instead
- * and prints merge instructions.
+ * Hooks installer. Writes `.githooks/pre-push` by default;
+ * additionally writes `.githooks/pre-commit` when
+ * `opts.withPrecommit === true`. When the consumer already has a
+ * matching hook (via .githooks/ or .husky/), emits a `.dxkit`
+ * sidecar instead and prints merge instructions.
  *
  * Customer still needs to run `git config core.hooksPath .githooks`
  * to activate. We don't run it for them — that's a global git config
  * mutation outside dxkit's purview.
+ *
+ * Why pre-commit is opt-in: see `InstallerOpts.withPrecommit`.
  */
 export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = emptyResult();
@@ -147,10 +165,12 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
   // existing `.githooks/<name>` *or* `.husky/<name>` as a conflict —
   // both routes mean the consumer already has an active hook, even
   // though only the .githooks/ path is the destination we write to.
-  const hookNames: Array<{ name: 'pre-commit' | 'pre-push' }> = [
-    { name: 'pre-commit' },
-    { name: 'pre-push' },
-  ];
+  //
+  // pre-commit is opt-in (slow on large repos until incremental
+  // scanning lands); pre-push always installs (acceptable cost).
+  const hookNames: Array<{ name: 'pre-commit' | 'pre-push' }> = opts.withPrecommit
+    ? [{ name: 'pre-commit' }, { name: 'pre-push' }]
+    : [{ name: 'pre-push' }];
   let anyConflict = false;
 
   for (const { name } of hookNames) {
@@ -189,6 +209,13 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
   result.notes.push(
     'Activate the hooks: `git config core.hooksPath .githooks` (one-time, per clone).',
   );
+  if (!opts.withPrecommit) {
+    result.notes.push(
+      'pre-commit hook NOT installed (default). The full guardrail re-runs every analyzer ' +
+        'and is slow on large repos. Pre-push catches the same regressions before code leaves ' +
+        'the machine. Re-run init with `--with-precommit-hook` to enable commit-time gating.',
+    );
+  }
 
   return result;
 }
