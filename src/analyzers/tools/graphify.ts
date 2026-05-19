@@ -59,6 +59,15 @@ except ImportError:
     print(json.dumps({"error": "graphify not installed"}))
     sys.exit(0)
 
+# Redirect graphify's on-disk cache BEFORE any graphify function runs.
+# collect_files() eagerly resolves cache_dir() during enumeration, so
+# the patch has to land before the first graphify call — not after.
+# Pre-patch, a 'graphify-out/cache/' directory was created in the
+# customer's repo every time the analyzer touched a project.
+import graphify.cache as _gc
+_gc.cache_dir = lambda root=None: _cache_dir / "cache"
+(_cache_dir / "cache").mkdir(parents=True, exist_ok=True)
+
 target = Path(sys.argv[1])
 
 # Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
@@ -123,11 +132,6 @@ files = [f for f in all_files if not _is_excluded(f)]
 if not files:
     print(json.dumps({"error": "no files found"}))
     sys.exit(0)
-
-# Monkey-patch cache to use /tmp instead of target repo
-import graphify.cache as _gc
-_gc.cache_dir = lambda root=None: _cache_dir / "cache"
-(_cache_dir / "cache").mkdir(parents=True, exist_ok=True)
 
 # Suppress progress output by redirecting stdout during extraction
 import io

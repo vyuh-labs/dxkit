@@ -339,6 +339,11 @@ describe('installIgnoreFiles', () => {
     const gi = fs.readFileSync(path.join(tmp, '.gitignore'), 'utf-8');
     expect(gi).toContain('.dxkit/reports/');
     expect(gi).toContain('.dxkit/dashboard.html');
+    // Defensive: graphify's on-disk cache is redirected to /tmp at
+    // runtime, but the ignore entry catches any reappearance (older
+    // dxkit versions, future graphify code paths) before it lands
+    // in a customer commit.
+    expect(gi).toContain('graphify-out/');
     // Selective: baselines stay tracked (they're the guardrail anchor)
     expect(gi).not.toContain('.dxkit/baselines');
     expect(gi).not.toContain('.dxkit/\n'); // no broad .dxkit/ exclude
