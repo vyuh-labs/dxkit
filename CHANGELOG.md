@@ -32,19 +32,33 @@ The release ships three coordinated surfaces:
    per-finding identities, diffs current scans against them, and
    classifies each pair (`added` / `relocated` / `tooling_drift` /
    `config_drift` / `persisted` / `removed` / `fixed`) with a
-   confidence score and structured reasons.
-2. **Init-installable templates** for git hooks (`pre-commit` +
-   `pre-push`), a devcontainer with pinned toolchains + AI coding-
-   agent CLIs, a GitHub Actions PR-gate workflow that posts a
-   markdown summary as a PR comment, and a post-merge baseline-
-   refresh workflow that keeps the anchor current.
+   confidence score and structured reasons. The classifier ships
+   with a **scanner-wobble demotion** that converts `added` findings
+   on UNCHANGED lines into `uncertain` (warn) for high-wobble kinds
+   (`code`, `hygiene`), so semgrep's per-run non-determinism on
+   large codebases doesn't trigger false-positive blocks. Findings
+   inside the diff's changed lines still block — real regressions
+   are caught. Customers can extend or clear the kind list via
+   `addedRequiresChangedLines` in `.dxkit/policy.json`.
+2. **Init-installable templates** for the pre-push guardrail hook,
+   a devcontainer with pinned toolchains + Claude Code & Codex
+   CLIs, a GitHub Actions PR-gate workflow that posts a markdown
+   summary as a PR comment, and a post-merge baseline-refresh
+   workflow that keeps the anchor current. Pre-commit + AI-PR-
+   review are opt-in via `--with-precommit-hook` and
+   `--with-pr-review` respectively (slow on large repos / requires
+   API-cost opt-in). Every `init` also seeds `.gitignore` entries
+   for the analyzer runtime outputs (`.dxkit/reports/`,
+   `.dxkit/dashboard.html`) and writes a starter `.dxkit-ignore`
+   template for dxkit-specific scan-exclusion tuning.
 3. **Aggregate-gate flags** (`--fail-on-score`, `--fail-on-severity`)
    on every analyzer command, plus a stable JSON schema banner on
    every `--json` output so consumers can version-gate.
 
-Tests: 1521 unit + integration cases pass on the integrated branch
-(up from 1265 at the 2.4.8 baseline; +256 across fingerprinting,
-producers, policy, matcher, ship installers, and the CLI surface).
+Tests: ~1530 unit + integration cases pass on the integrated branch
+(up from 1265 at the 2.4.8 baseline; +265 across fingerprinting,
+producers, policy, matcher, ship installers, the smart classifier,
+opt-in hook + workflow installers, and the CLI surface).
 
 #### New CLI surface
 
