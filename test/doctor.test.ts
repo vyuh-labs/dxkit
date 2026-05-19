@@ -4,7 +4,7 @@
  * Pre-2.4.7, `dxkit doctor` on a fresh repo without `.claude/` reported
  * "Fail: 10" — making users think dxkit was broken when actually the
  * reports CLI worked fine. The two-tier split (Reports prerequisites vs
- * Claude Code DX prerequisites) keeps the diagnostic value of the DX
+ * Agent DX prerequisites) keeps the diagnostic value of the DX
  * checks but stops it from gating the exit code.
  *
  * These tests shell out to the built CLI rather than calling runDoctor()
@@ -84,7 +84,7 @@ describe('doctor (F-UX-1): two-tier framing', () => {
   it('surfaces the two tiers separately in the output', () => {
     const r = runDoctor(bareTmp);
     expect(r.stdout).toContain('Reports prerequisites');
-    expect(r.stdout).toContain('Claude Code DX prerequisites');
+    expect(r.stdout).toContain('Agent DX prerequisites');
   });
 
   it('reports tier shows Node + git as passing on a viable host', () => {
@@ -95,15 +95,15 @@ describe('doctor (F-UX-1): two-tier framing', () => {
 
   it('DX tier scores zero on a bare repo and hints at `init`', () => {
     const r = runDoctor(bareTmp);
-    expect(r.stdout).toMatch(/Claude Code DX:\s*0\/\d+/);
+    expect(r.stdout).toMatch(/Agent DX:\s*0\/\d+/);
     expect(r.stdout).toContain('Run `vyuh-dxkit init`');
   });
 
   it('DX tier scores higher when scaffolding is present', () => {
     const bare = runDoctor(bareTmp);
     const scaffolded = runDoctor(scaffoldedTmp);
-    const bareMatch = bare.stdout.match(/Claude Code DX:\s*(\d+)\//);
-    const scaffoldedMatch = scaffolded.stdout.match(/Claude Code DX:\s*(\d+)\//);
+    const bareMatch = bare.stdout.match(/Agent DX:\s*(\d+)\//);
+    const scaffoldedMatch = scaffolded.stdout.match(/Agent DX:\s*(\d+)\//);
     expect(bareMatch).not.toBeNull();
     expect(scaffoldedMatch).not.toBeNull();
     expect(parseInt(scaffoldedMatch![1], 10)).toBeGreaterThan(parseInt(bareMatch![1], 10));
