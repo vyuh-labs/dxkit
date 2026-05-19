@@ -82,7 +82,13 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/dxkit-smoke
-          ./node_modules/.bin/vyuh-dxkit init --full --yes
+          # Exercise the opt-in flags too — --with-precommit-hook
+          # for the pre-commit hook (default-off), --with-pr-review
+          # for the AI PR-review workflow (default-off). The smoke
+          # asserts they install correctly when opted in.
+          ./node_modules/.bin/vyuh-dxkit init --full --yes \
+            --with-precommit-hook \
+            --with-pr-review
 
       - name: Assert ship templates landed
         run: |
@@ -95,7 +101,10 @@ jobs:
             .devcontainer/post-create.sh \
             .devcontainer/install-agent-clis.sh \
             .github/workflows/dxkit-guardrails.yml \
-            .github/workflows/dxkit-baseline-refresh.yml
+            .github/workflows/dxkit-baseline-refresh.yml \
+            .github/workflows/pr-review.yml \
+            .gitignore \
+            .dxkit-ignore
           do
             if [ ! -f "$f" ]; then
               echo "::error::Missing expected file after init --full: $f"
@@ -116,6 +125,34 @@ jobs:
             cat .github/workflows/dxkit-baseline-refresh.yml
             exit 1
           fi
+          # Verify .gitignore got the runtime-output entries.
+          if ! grep -q '\.dxkit/reports/' .gitignore; then
+            echo "::error::.gitignore missing .dxkit/reports/ entry"
+            cat .gitignore
+            exit 1
+          fi
+          # And the bare-`init` default of pre-commit being opt-in:
+          # re-run init in a separate dir without --with-precommit-hook
+          # and assert it's NOT installed.
+          mkdir -p /tmp/dxkit-smoke-default
+          cd /tmp/dxkit-smoke-default
+          git init -q
+          npm init -y >/dev/null
+          npm install --save-dev "${{ steps.pack.outputs.tarball }}" --silent
+          ./node_modules/.bin/vyuh-dxkit init --full --yes
+          if [ -f .githooks/pre-commit ]; then
+            echo "::error::pre-commit hook should NOT install without --with-precommit-hook"
+            exit 1
+          fi
+          if [ ! -f .githooks/pre-push ]; then
+            echo "::error::pre-push hook should always install under --full"
+            exit 1
+          fi
+          if [ -f .github/workflows/pr-review.yml ]; then
+            echo "::error::pr-review.yml should NOT install without --with-pr-review"
+            exit 1
+          fi
+          echo "Default-off behavior validated."
 
       - name: Capture baseline
         run: |
