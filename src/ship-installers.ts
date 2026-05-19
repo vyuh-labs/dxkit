@@ -357,3 +357,90 @@ export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInst
   }
   return result;
 }
+
+const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
+const GITIGNORE_ENTRIES = ['.dxkit/reports/', '.dxkit/dashboard.html', '.dxkit/cache/'];
+
+/**
+ * Seed `.gitignore` with dxkit's runtime-output paths and write a
+ * starter `.dxkit-ignore` template explaining the optional dxkit-
+ * specific scan-exclusion file.
+ *
+ * Concerns the seeded files address:
+ *   - `.gitignore`: stops customers from accidentally committing
+ *     `.dxkit/reports/*.md` and `.dxkit/dashboard.html` (which
+ *     churn on every analyzer run). Selectively keeps
+ *     `.dxkit/baselines/` tracked — it IS the guardrail anchor.
+ *   - `.dxkit-ignore`: dxkit's own scan-exclusion file. Loaded by
+ *     `loadExclusions()` if present; never created by dxkit before
+ *     this commit. Seeding a documented template makes the feature
+ *     discoverable.
+ *
+ * Both are additive: existing `.gitignore` entries are preserved
+ * (dedup against current contents); existing `.dxkit-ignore` is
+ * never overwritten.
+ */
+export function installIgnoreFiles(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = emptyResult();
+
+  // .gitignore: append runtime-output entries
+  const gitignorePath = path.join(cwd, '.gitignore');
+  let existing = '';
+  if (fs.existsSync(gitignorePath)) {
+    existing = fs.readFileSync(gitignorePath, 'utf-8');
+    if (existing.includes(GITIGNORE_HEADER)) {
+      result.skipped.push('.gitignore');
+    } else {
+      const existingLines = new Set(existing.split('\n').map((l) => l.trim()));
+      const newEntries = GITIGNORE_ENTRIES.filter((e) => !existingLines.has(e));
+      if (newEntries.length > 0) {
+        const block = '\n' + GITIGNORE_HEADER + '\n' + newEntries.join('\n') + '\n';
+        fs.appendFileSync(gitignorePath, block, 'utf-8');
+        result.installed.push('.gitignore');
+      } else {
+        result.skipped.push('.gitignore');
+      }
+    }
+  } else {
+    const content = GITIGNORE_HEADER + '\n' + GITIGNORE_ENTRIES.join('\n') + '\n';
+    fs.writeFileSync(gitignorePath, content, 'utf-8');
+    result.installed.push('.gitignore');
+  }
+
+  // .dxkit-ignore: write starter template (never overwrite)
+  const dxkitIgnorePath = path.join(cwd, '.dxkit-ignore');
+  if (fs.existsSync(dxkitIgnorePath) && !opts.force) {
+    result.skipped.push('.dxkit-ignore');
+  } else {
+    fs.writeFileSync(dxkitIgnorePath, DXKIT_IGNORE_TEMPLATE, 'utf-8');
+    result.installed.push('.dxkit-ignore');
+  }
+
+  return result;
+}
+
+const DXKIT_IGNORE_TEMPLATE = `# .dxkit-ignore — extra paths dxkit's analyzers should skip.
+#
+# Format: same as .gitignore (directory/, file-glob, multi-segment).
+# Union'd on top of:
+#   - dxkit's bundled defaults (node_modules/, dist/, .git/, build/, ...)
+#   - this repo's .gitignore
+#
+# Use this file for dxkit-specific exclusions that you don't want in
+# .gitignore (e.g. vendored code you DO commit but DON'T want dxkit
+# to analyze for quality / coverage / security findings).
+#
+# Common examples (uncomment + adjust to your project):
+#
+# vendor/                    # vendored third-party code committed to git
+# third_party/
+# generated/                 # generated code (protobuf, GraphQL types, ORM)
+# *.generated.ts
+# *.designer.cs
+# legacy/                    # pre-existing code you don't want to track findings against
+# fixtures/large/            # test fixtures that inflate metrics
+#
+# After editing, the next \`vyuh-dxkit baseline create\` will pick up the
+# changes. Note: changes to this file invalidate cached baselines
+# (the file's content hash lands in the baseline envelope).
+`;

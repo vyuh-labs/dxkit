@@ -9,6 +9,7 @@ import {
   installCiGuardrails,
   installCiBaselineRefresh,
   installPrReview,
+  installIgnoreFiles,
   detectDefaultBranch,
 } from '../src/ship-installers';
 
@@ -318,5 +319,71 @@ describe('installPrReview', () => {
     const result = installPrReview(tmp);
     expect(result.skipped).toContain('.github/workflows/pr-review.yml');
     expect(result.installed).toHaveLength(0);
+  });
+});
+
+describe('installIgnoreFiles', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ignore-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('creates .gitignore + .dxkit-ignore on a fresh dir', () => {
+    const result = installIgnoreFiles(tmp);
+    expect(result.installed).toContain('.gitignore');
+    expect(result.installed).toContain('.dxkit-ignore');
+
+    const gi = fs.readFileSync(path.join(tmp, '.gitignore'), 'utf-8');
+    expect(gi).toContain('.dxkit/reports/');
+    expect(gi).toContain('.dxkit/dashboard.html');
+    // Selective: baselines stay tracked (they're the guardrail anchor)
+    expect(gi).not.toContain('.dxkit/baselines');
+    expect(gi).not.toContain('.dxkit/\n'); // no broad .dxkit/ exclude
+
+    const dki = fs.readFileSync(path.join(tmp, '.dxkit-ignore'), 'utf-8');
+    expect(dki).toContain('extra paths dxkit');
+    expect(dki).toContain('vendor/');
+  });
+
+  it('appends to existing .gitignore (additive, dedup)', () => {
+    fs.writeFileSync(path.join(tmp, '.gitignore'), 'node_modules/\n.env\n');
+    const result = installIgnoreFiles(tmp);
+    expect(result.installed).toContain('.gitignore');
+
+    const gi = fs.readFileSync(path.join(tmp, '.gitignore'), 'utf-8');
+    expect(gi).toContain('node_modules/'); // preserved
+    expect(gi).toContain('.env'); // preserved
+    expect(gi).toContain('.dxkit/reports/'); // appended
+  });
+
+  it('skips .gitignore append when the dxkit block is already present', () => {
+    fs.writeFileSync(
+      path.join(tmp, '.gitignore'),
+      'node_modules/\n\n# dxkit — runtime outputs (analyzer reports + dashboard)\n.dxkit/reports/\n',
+    );
+    const result = installIgnoreFiles(tmp);
+    expect(result.skipped).toContain('.gitignore');
+  });
+
+  it('never overwrites existing .dxkit-ignore unless --force', () => {
+    fs.writeFileSync(path.join(tmp, '.dxkit-ignore'), '# custom\nmy-vendor/\n');
+    const result = installIgnoreFiles(tmp);
+    expect(result.skipped).toContain('.dxkit-ignore');
+
+    const dki = fs.readFileSync(path.join(tmp, '.dxkit-ignore'), 'utf-8');
+    expect(dki).toContain('my-vendor/'); // user content preserved
+    expect(dki).not.toContain('extra paths dxkit'); // template NOT installed
+  });
+
+  it('force overwrites existing .dxkit-ignore', () => {
+    fs.writeFileSync(path.join(tmp, '.dxkit-ignore'), '# custom\nmy-vendor/\n');
+    const result = installIgnoreFiles(tmp, { force: true });
+    expect(result.installed).toContain('.dxkit-ignore');
+
+    const dki = fs.readFileSync(path.join(tmp, '.dxkit-ignore'), 'utf-8');
+    expect(dki).toContain('extra paths dxkit'); // template installed
   });
 });
