@@ -88,10 +88,10 @@ function applyFailOnSeverity(
 
 function printUsage(): void {
   console.log(`
-  ${logger.bold('vyuh-dxkit')} v${VERSION} — AI-native developer experience toolkit
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — AI-native developer experience toolkit for any codebase
 
   ${logger.bold('Usage:')}
-    vyuh-dxkit init [options]    Initialize Claude Code DX in this repo
+    vyuh-dxkit init [options]    Install dxkit agent DX in this repo
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis

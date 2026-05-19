@@ -13,9 +13,9 @@ import * as logger from './logger';
  * be present for ANY dxkit CLI command to work. Node 18+ and git.
  * Failure here = dxkit can't function = exit 1.
  *
- * Tier 2 — Claude Code DX prerequisites: the `.vyuh-dxkit.json`
+ * Tier 2 — Agent DX prerequisites: the `.vyuh-dxkit.json`
  * manifest + the `.claude/*` scaffolding that `vyuh-dxkit init`
- * generates. These only matter if you want Claude Code DX features.
+ * generates. These only matter if you want Agent DX features.
  * Failure here = informational warn + a hint to run `init`; exit
  * code is unaffected.
  *
@@ -29,7 +29,7 @@ import * as logger from './logger';
 interface DoctorResult {
   /** Reports-tier checks (mandatory). */
   reports: { pass: number; fail: number };
-  /** Claude Code DX-tier checks (informational). */
+  /** Agent DX-tier checks (informational). */
   dx: { pass: number; fail: number };
 }
 
@@ -89,9 +89,9 @@ export async function runDoctor(cwd: string): Promise<void> {
   trackReports(check(`Node ≥ 18 (running ${process.versions.node})`, nodeMajor >= 18));
   trackReports(check('git', commandAvailable('git')));
 
-  // ─── Tier 2: Claude Code DX prerequisites (informational) ──────────────
+  // ─── Tier 2: Agent DX prerequisites (informational) ──────────────
   console.log(''); // slop-ok
-  logger.info('Claude Code DX prerequisites (only required for `init`-generated artifacts):');
+  logger.info('Agent DX prerequisites (only required for `init`-generated artifacts):');
 
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   const hasManifest = fs.existsSync(manifestPath);
@@ -145,7 +145,7 @@ export async function runDoctor(cwd: string): Promise<void> {
   // Claude learns — their absence is mildly informational, not a
   // problem in any tier.
   console.log(''); // slop-ok
-  logger.info('Claude Code DX — evolving files (start empty, fill over time):');
+  logger.info('Agent DX — evolving files (start empty, fill over time):');
   trackDx(
     checkInfo(
       'learned/gotchas.md',
@@ -172,7 +172,7 @@ export async function runDoctor(cwd: string): Promise<void> {
   // language's analyzers — the rest of dxkit keeps working).
   if (manifest?.config?.languages) {
     console.log(''); // slop-ok
-    logger.info('Claude Code DX — toolchains:');
+    logger.info('Agent DX — toolchains:');
     for (const lang of activeLanguagesFromStack(manifest.config)) {
       for (const bin of lang.cliBinaries ?? []) {
         trackDx(checkInfo(bin, commandAvailable(bin)));
@@ -202,17 +202,17 @@ export async function runDoctor(cwd: string): Promise<void> {
   const dxTotal = result.dx.pass + result.dx.fail;
   if (dxTotal > 0) {
     if (result.dx.fail === 0) {
-      logger.success(`Claude Code DX: ${result.dx.pass}/${dxTotal} — fully scaffolded`);
+      logger.success(`Agent DX: ${result.dx.pass}/${dxTotal} — fully scaffolded`);
     } else {
-      logger.warn(`Claude Code DX: ${result.dx.pass}/${dxTotal} — partial scaffolding`);
+      logger.warn(`Agent DX: ${result.dx.pass}/${dxTotal} — partial scaffolding`);
       console.log(''); // slop-ok
       if (!hasManifest) {
         logger.dim(
-          '💡 Run `vyuh-dxkit init` to enable Claude Code DX features (skills, agents, slash commands). Reports CLI works without it.',
+          '💡 Run `vyuh-dxkit init` to enable Agent DX features (skills, agents, slash commands). Reports CLI works without it.',
         );
       } else {
         logger.dim(
-          '💡 Run `vyuh-dxkit update` to refresh missing Claude Code DX files (the manifest already exists).',
+          '💡 Run `vyuh-dxkit update` to refresh missing Agent DX files (the manifest already exists).',
         );
       }
     }

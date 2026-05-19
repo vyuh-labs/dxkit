@@ -14,8 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 2.5.0 introduces **commit-time guardrails** — a per-finding baseline
 captured once on a brownfield repo, then diffed against every
 subsequent scan to detect net-new regressions while grandfathering
-existing debt. The product promise: existing issues stay where they
-are, new ones block.
+existing debt. Existing issues stay where they are, new ones block.
+
+This release also **prunes the legacy task-runner scaffolding** that
+prior versions of `init --full` bundled (Makefile, `.project/` task
+scripts, `.ai/` prompt scaffolding, per-language config templates,
+non-dxkit CI workflows, `.editorconfig`, `.pre-commit-config.yaml`).
+The agent DX surface is now the sole `init --full` output —
+`init --full` lands 73 files (down from 119), every one of them
+focused on equipping AI coding agents to operate safely on the
+codebase. Customers who relied on the legacy scaffolding can use
+`@vyuhlabs/create-devstack` for greenfield project bootstrap.
 
 The release ships three coordinated surfaces:
 

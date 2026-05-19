@@ -4,13 +4,15 @@
 > or `npx @vyuhlabs/dxkit <cmd>` for one-shot use. Examples on this
 > page use the short form.
 
-Scaffold a new project with Claude Code DX pre-configured — generates
-`.claude/`, `CLAUDE.md`, and (with `--full`) CI workflows, pre-commit
-hooks, ESLint/Prettier configs, and quality tooling.
+Install the dxkit agent DX layer in a repository: `CLAUDE.md`,
+`.claude/` (skills, commands, agents, per-language rules), plus —
+optionally — git hooks, devcontainer, CI guardrails, and the post-
+merge baseline-refresh workflow.
 
-This is primarily a **greenfield** command. Brownfield repos
-typically don't need `init` — they just install dxkit and start
-running reports.
+Works on any codebase, greenfield or brownfield. dxkit is additive:
+existing `.husky/`, `.devcontainer/`, or CI workflows are never
+destroyed — sidecars are written instead (see "Additive install"
+below).
 
 ## Usage
 
@@ -20,10 +22,10 @@ vyuh-dxkit init [options]
 
 ## Modes
 
-| Mode                  | Effect                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| `--dx-only` (default) | Just the developer-experience layer — `.claude/`, `CLAUDE.md`, agent definitions            |
-| `--full`              | Everything — DX + quality tooling + hooks + devcontainer + CI guardrails + baseline-refresh |
+| Mode                  | Effect                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--dx-only` (default) | Agent DX layer only — `.claude/`, `CLAUDE.md`, `.vyuh-dxkit.json` manifest                             |
+| `--full`              | Agent DX + git hooks + devcontainer + CI guardrails + baseline-refresh (every `--with-*` flag enabled) |
 
 ## Options
 
@@ -42,32 +44,30 @@ vyuh-dxkit init [options]
 
 `--full` implies every `--with-*` flag.
 
-## What it generates (default mode)
+## What it generates (default `--dx-only` mode)
 
 ```
+CLAUDE.md              # entry-point doc loaded by Claude Code at session start
 .claude/
-  agents/
-    *.md           # specialized agent definitions
-  commands/
-    *.md           # slash commands
-  rules/
-    *.md           # per-language coding conventions
-CLAUDE.md          # the entry point for Claude Code
-.dxkit/
-  config.yml       # what was generated, when
+  settings.json        # tool permissions
+  skills/              # domain context loaded on demand
+  commands/            # slash commands (/health, /quality, /test-gaps, ...)
+  agents/              # active agent specialists (auto-triggered)
+  agents-available/    # dormant agents (opt in via /enable-agent)
+  rules/               # per-language coding conventions
+.vyuh-dxkit.json       # install manifest (what was generated, when, evolving flags)
 ```
 
 ## `--full` adds
 
-- `.github/workflows/` — CI pipelines (lint + test + dxkit health)
-- `.husky/` — pre-commit + commit-msg hooks
-- `.eslintrc` / `.prettierrc` / similar — quality configs
-- `tsconfig.json` / `pyproject.toml` / similar — per-pack scaffold
-- `package.json` / `pyproject.toml` updates with required dev deps
-- `.githooks/{pre-commit,pre-push}` — fast-mode + full-mode [guardrail](guardrail.md) hooks
-- `.devcontainer/{devcontainer.json,post-create.sh,install-agent-clis.sh}` — pinned toolchains + AI agent CLIs
-- `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that posts a markdown comment
-- `.github/workflows/dxkit-baseline-refresh.yml` — post-merge auto-regen of `.dxkit/baselines/main.json`
+- `.githooks/{pre-commit,pre-push}` — fast-mode + full-mode
+  [guardrail](guardrail.md) hooks
+- `.devcontainer/{devcontainer.json,post-create.sh,install-agent-clis.sh}` —
+  pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned)
+- `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that
+  posts a markdown comment
+- `.github/workflows/dxkit-baseline-refresh.yml` — post-merge
+  auto-regen of `.dxkit/baselines/main.json` (gated on PR-gate success)
 
 After `--full` (or any `--with-hooks`):
 
@@ -96,13 +96,6 @@ vyuh-dxkit baseline create            # capture today's state as the brownfield 
 `--force` overwrites except files marked as "evolved" (touched by
 the user since generation). Use `vyuh-dxkit update` to re-generate
 preserving evolved files explicitly.
-
-## When to use
-
-- **Greenfield:** new project, scaffold everything at once
-- **Brownfield:** when you want the Claude DX layer in an existing
-  repo, but typically without `--full` (which would overwrite
-  existing CI configs)
 
 ## See also
 
