@@ -517,19 +517,6 @@ export const kotlin: LanguageSupport = {
 
   permissions: ['Bash(./gradlew:*)', 'Bash(gradle:*)', 'Bash(detekt:*)'],
   ruleFile: 'kotlin.md',
-  templateFiles: [],
   cliBinaries: ['gradle', 'detekt'],
   defaultVersion: '2.0.21',
-
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      `  kotlin:`,
-      `    enabled: ${enabled}`,
-      `    version: "${config.versions.kotlin ?? ''}"`,
-      `    quality:`,
-      `      coverage: ${config.coverageThreshold}`,
-      `      lint: true`,
-      `      typecheck: true`,
-      `      format: true`,
-    ].join('\n'),
 };

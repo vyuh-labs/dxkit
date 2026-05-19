@@ -96,8 +96,7 @@ Three layers run pre-commit + CI to keep this rule honest:
      excludes).
 2. **`test/languages-contract.test.ts`** — for every `LanguageSupport`,
    verifies metadata completeness (`permissions`, `cliBinaries`,
-   `defaultVersion`, `projectYamlBlock`) and `tools[]` ↔ source-call
-   parity (closes D009).
+   `defaultVersion`) and `tools[]` ↔ source-call parity.
 3. **`test/recipe-playbook.test.ts`** — synthetic 6th-pack injection
    test. Confirms each pack-iterating consumer (generator, doctor,
    detect, project-yaml, constants, coverage, generic, grep-secrets,

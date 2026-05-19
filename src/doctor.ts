@@ -159,21 +159,10 @@ export async function runDoctor(cwd: string): Promise<void> {
     ),
   );
 
-  // Full mode infrastructure (informational, only relevant when the
-  // manifest declares full mode). Same tier — fails here don't break
-  // any CLI command, they just signal that the `init --full` template
-  // hasn't been (re-)applied.
-  if (manifest?.mode === 'full') {
-    console.log(''); // slop-ok
-    logger.info('Claude Code DX — full-mode infrastructure:');
-    trackDx(checkInfo('.project.yaml', fs.existsSync(path.join(cwd, '.project.yaml'))));
-    trackDx(checkInfo('.project/ directory', fs.existsSync(path.join(cwd, '.project'))));
-    trackDx(checkInfo('Makefile', fs.existsSync(path.join(cwd, 'Makefile'))));
-    trackDx(checkInfo('.ai/ directory', fs.existsSync(path.join(cwd, '.ai'))));
-
-    // Toolchain CLIs — pack-driven via `LanguageSupport.cliBinaries`.
-    // These are informational (a missing toolchain just disables that
-    // language's analyzers — the rest of dxkit keeps working).
+  // Toolchain CLIs — pack-driven via `LanguageSupport.cliBinaries`.
+  // These are informational (a missing toolchain just disables that
+  // language's analyzers — the rest of dxkit keeps working).
+  if (manifest) {
     console.log(''); // slop-ok
     logger.info('Claude Code DX — toolchains:');
     for (const lang of activeLanguagesFromStack(manifest.config)) {

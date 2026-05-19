@@ -309,9 +309,6 @@ export const ${id}: LanguageSupport = {
   // Filename under src-templates/.claude/rules/. Created by the scaffolder.
   ruleFile: '${id}.md',
 
-  // Per-pack templates scaffolded by 'vyuh-dxkit init'.
-  templateFiles: [],
-
   // CLI binaries 'vyuh-dxkit doctor' checks for. Adding the language's
   // primary toolchain binary here is the minimum.
   cliBinaries: [/* TODO: e.g. 'kotlinc', 'gradle' */],
@@ -324,14 +321,6 @@ export const ${id}: LanguageSupport = {
   // Only override when legacy template/config naming differs (typescript
   // pack uses versionKey: 'node' for historical reasons).
   // versionKey: '${id}',
-
-  // Renders this pack's section under languages: in .project.yaml.
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      \`  ${id}:\`,
-      \`    enabled: \${enabled}\`,
-      \`    version: "\${config.versions['${id}' as keyof typeof config.versions] ?? 'TODO'}"\`,
-    ].join('\\n'),
 };
 `;
 
@@ -603,20 +592,7 @@ writeIfMissing(
   RULE_TEMPLATE,
 );
 
-// ─── 5. Template-configs dir: src-templates/configs/<id>/ ───────────────────
-
-const configsDir = path.join(REPO_ROOT, 'src-templates', 'configs', id);
-ensureDir(configsDir);
-const CONFIGS_README = `Add per-pack template files here (e.g. \`build.gradle.kts.template\`,
-\`Package.swift.template\`). Reference them from
-\`src/languages/${id}.ts:templateFiles\`.
-
-\`vyuh-dxkit init\` writes these to project root, skipping if the
-output path already exists.
-`;
-writeIfMissing(path.join(configsDir, 'README.md'), CONFIGS_README);
-
-// ─── 6. Update src/types.ts (extend LanguageId union) ───────────────────────
+// ─── 5. Update src/types.ts (extend LanguageId union) ───────────────────────
 // Post-10f.4: this is the ONLY type-system edit required for a new pack.
 // `DetectedStack.languages` is `Record<LanguageId, boolean>` and updates
 // transparently when LanguageId gains a member.
@@ -644,7 +620,7 @@ if (new RegExp(`['"]${id}['"]`).test(existingUnion)) {
   ok(`updated src/types.ts (extended LanguageId union with '${id}')`);
 }
 
-// ─── 7. Update src/languages/index.ts (register in LANGUAGES) ──────────────
+// ─── 6. Update src/languages/index.ts (register in LANGUAGES) ──────────────
 
 const indexPath = path.join(REPO_ROOT, 'src', 'languages', 'index.ts');
 let indexSrc = fs.readFileSync(indexPath, 'utf-8');
@@ -684,7 +660,7 @@ if (indexSrc.includes(importLine)) {
   ok(`updated src/languages/index.ts (registered ${id} in LANGUAGES)`);
 }
 
-// ─── 8. G6 (Recipe v3): CHANGELOG [Unreleased] stub ───────────────────────
+// ─── 7. CHANGELOG [Unreleased] stub ────────────────────────────────────────
 // Append a TODO line under the existing `## [Unreleased]` section so
 // the developer doesn't forget to write release notes at ship time.
 // Idempotent — skips if a line for this pack already exists.

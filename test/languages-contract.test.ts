@@ -221,33 +221,6 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     expect(lang.defaultVersion!.length).toBeGreaterThan(0);
   });
 
-  it('declares `projectYamlBlock` and it returns a non-empty string', () => {
-    expect(
-      typeof lang.projectYamlBlock,
-      `${lang.id}: missing projectYamlBlock — .project.yaml's languages: section would skip this pack`,
-    ).toBe('function');
-    // Build a plausible context to invoke the renderer.
-    const fakeConfig = {
-      languages: { typescript: false, python: false, go: false, rust: false, csharp: false },
-      versions: { python: '3.12', go: '1.24.0', node: '20', rust: 'stable', csharp: '8.0' },
-      coverageThreshold: '80',
-      projectName: 'x',
-      projectDescription: '',
-      infrastructure: { docker: false, postgres: false, redis: false },
-      tools: { gcloud: false, pulumi: false, infisical: false, ghCli: false },
-      requiredTools: [],
-      precommit: false,
-      qualityChecks: false,
-      aiSessions: false,
-      aiPrompts: false,
-      claudeCode: false,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
-    const out = lang.projectYamlBlock!({ config: fakeConfig, enabled: true });
-    expect(typeof out).toBe('string');
-    expect(out.length).toBeGreaterThan(0);
-  });
-
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);
