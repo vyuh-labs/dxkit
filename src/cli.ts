@@ -25,6 +25,7 @@ import {
   installCiGuardrails,
   installCiBaselineRefresh,
   installPrReview,
+  installIgnoreFiles,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
 import * as fs from 'fs';
@@ -345,6 +346,14 @@ export async function run(argv: string[]): Promise<void> {
           result: installPrReview(cwd, { force: !!values.force }),
         });
       }
+
+      // .gitignore + .dxkit-ignore seeding: default-on, no flag.
+      // Additive (existing entries preserved); safe for both fresh
+      // installs and re-runs.
+      shipResults.push({
+        label: 'Ignore files',
+        result: installIgnoreFiles(cwd, { force: !!values.force }),
+      });
 
       // Summary
       console.log('');
