@@ -28,8 +28,9 @@ export default [
     },
   },
   {
-    // Node CommonJS build scripts
-    files: ['scripts/**/*.js'],
+    // Node CommonJS build scripts + zero-dep sibling packages (e.g.
+    // packages/create-dxkit/) that ship as standalone CJS modules.
+    files: ['scripts/**/*.js', 'packages/**/*.js'],
     languageOptions: {
       globals: { ...globals.node },
       sourceType: 'commonjs',

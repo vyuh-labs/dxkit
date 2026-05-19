@@ -1,0 +1,36 @@
+{
+  "name": "@vyuhlabs/create-dxkit",
+  "version": "0.1.0",
+  "description": "One-command bootstrap for @vyuhlabs/dxkit. Runs `npm install --save-dev @vyuhlabs/dxkit` then `vyuh-dxkit init`.",
+  "license": "MIT",
+  "author": "Vyuh Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vyuh-labs/dxkit.git",
+    "directory": "packages/create-dxkit"
+  },
+  "homepage": "https://github.com/vyuh-labs/dxkit#readme",
+  "bugs": {
+    "url": "https://github.com/vyuh-labs/dxkit/issues"
+  },
+  "bin": {
+    "create-dxkit": "./index.js"
+  },
+  "main": "./index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dxkit",
+    "vyuh",
+    "create",
+    "init",
+    "scaffold",
+    "bootstrap"
+  ]
+}
