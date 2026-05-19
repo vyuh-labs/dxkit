@@ -184,6 +184,7 @@ vyuh-dxkit init --with-precommit-hook     # add the pre-commit hook (opt-in; slo
 vyuh-dxkit init --with-devcontainer       # just the devcontainer
 vyuh-dxkit init --with-ci                 # just the PR-gate workflow
 vyuh-dxkit init --with-baseline-refresh   # just the auto-refresh
+vyuh-dxkit init --with-pr-review          # AI PR-review workflow (opt-in, needs API key)
 ```
 
 ---

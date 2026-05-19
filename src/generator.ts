@@ -260,13 +260,6 @@ export async function generate(
   }
   logger.success('.claude/agents/');
 
-  // 6b. PR review workflow (dx-only mode — always copy if GitHub Actions dir doesn't conflict)
-  const prReviewSrc = path.join(templatesDir, '.github', 'workflows', 'pr-review.yml');
-  if (fs.existsSync(prReviewSrc)) {
-    copyStatic('.github/workflows/pr-review.yml', '.github/workflows/pr-review.yml');
-    logger.success('.github/workflows/pr-review.yml');
-  }
-
   // 7. Codebase scan
   if (!noScan) {
     logger.info('Scanning codebase...');
