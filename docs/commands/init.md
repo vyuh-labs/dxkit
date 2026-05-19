@@ -61,8 +61,8 @@ CLAUDE.md              # entry-point doc loaded by Claude Code at session start
 
 ## `--full` adds
 
-- `.githooks/{pre-commit,pre-push}` — fast-mode + full-mode
-  [guardrail](guardrail.md) hooks
+- `.githooks/pre-push` — full-mode [guardrail](guardrail.md) hook
+  (pre-commit available via `--with-precommit-hook`)
 - `.devcontainer/{devcontainer.json,post-create.sh,install-agent-clis.sh}` —
   pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned)
 - `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that
