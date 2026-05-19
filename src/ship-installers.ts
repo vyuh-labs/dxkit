@@ -359,7 +359,12 @@ export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInst
 }
 
 const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
-const GITIGNORE_ENTRIES = ['.dxkit/reports/', '.dxkit/dashboard.html', '.dxkit/cache/'];
+const GITIGNORE_ENTRIES = [
+  '.dxkit/reports/',
+  '.dxkit/dashboard.html',
+  '.dxkit/cache/',
+  'graphify-out/',
+];
 
 /**
  * Seed `.gitignore` with dxkit's runtime-output paths and write a
