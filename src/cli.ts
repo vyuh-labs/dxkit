@@ -137,6 +137,9 @@ function printUsage(): void {
     --with-precommit-hook     Also install .githooks/pre-commit (slow on large repos)
     --with-devcontainer       Install .devcontainer/ with pinned toolchains +
                               dxkit + Claude Code & Codex CLIs
+    --with-dxkit-agents       Install AGENTS.md + CLAUDE.md shim + the 6 dxkit-
+                              specific skills (learn/init/config/hooks/reports/
+                              action) for Claude Code auto-discovery
     --with-ci                 Install .github/workflows/dxkit-guardrails.yml
                               (PR-gate that posts a markdown summary comment)
     --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
@@ -224,6 +227,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-hooks': { type: 'boolean', default: false },
       'with-precommit-hook': { type: 'boolean', default: false },
       'with-devcontainer': { type: 'boolean', default: false },
+      'with-dxkit-agents': { type: 'boolean', default: false },
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
@@ -294,7 +298,20 @@ export async function run(argv: string[]): Promise<void> {
         : values['dx-only']
           ? 'dx-only'
           : promptResult.mode;
-      const result = await generate(cwd, config, finalMode, !!values.force, !!values['no-scan']);
+      // The six dxkit-* skills + AGENTS.md + CLAUDE.md shim are the
+      // marquee 2.5.1 surface. Default-off on bare `init` (keep the
+      // first-install quiet); default-on under `--full` (matches the
+      // rest of the ship surface — hooks/devcontainer/CI all opt-in
+      // via flags but bundled under --full).
+      const wantDxkitAgents = !!values.full || !!values['with-dxkit-agents'];
+      const result = await generate(
+        cwd,
+        config,
+        finalMode,
+        !!values.force,
+        !!values['no-scan'],
+        wantDxkitAgents,
+      );
 
       // Phase Ship installers (additive). `--full` implies every flag
       // so a one-command setup gets the full 2.5.0 ship surface.
