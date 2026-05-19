@@ -67,6 +67,29 @@ export interface BrownfieldPolicy {
   readonly confidence: Readonly<Record<FindingSeverity, number>>;
   /** Per-kind block-on-new overrides. */
   readonly blockRules: BrownfieldBlockRules;
+  /**
+   * Finding kinds whose `added` classification only blocks when the
+   * finding overlaps lines actually changed in the current diff.
+   *
+   * Some upstream scanners (notably semgrep on large codebases) are
+   * non-deterministic across runs — parallel rule execution + per-
+   * rule timeouts mean each run discovers a slightly different
+   * subset of the full match space. When the baseline missed a real
+   * finding and a later scan catches it on UNCHANGED code, the
+   * matcher legitimately reports `added` — but the developer
+   * didn't introduce it.
+   *
+   * For kinds listed here, an `added` finding outside the diff's
+   * changed lines gets demoted to `uncertain` (a warn status).
+   * Findings inside changed lines still block — that's where the
+   * developer actually wrote code.
+   *
+   * Default: `['code', 'hygiene']` — the kinds with confirmed
+   * scanner-wobble risk. Customers can extend (`'duplication'`,
+   * `'large-file'`) or clear it (block on everything regardless of
+   * diff overlap) via `.dxkit/policy.json`.
+   */
+  readonly addedRequiresChangedLines: ReadonlyArray<string>;
 }
 
 /**
@@ -106,6 +129,7 @@ export const DEFAULT_BROWNFIELD_POLICY: BrownfieldPolicy = Object.freeze({
     newUntestedChangedSource: true,
     newSevereQualityIssueInChangedFiles: true,
   }),
+  addedRequiresChangedLines: Object.freeze(['code', 'hygiene']),
 });
 
 /**
@@ -188,6 +212,22 @@ export function classify(
       reasons.push({
         code: 'config-drift',
         detail: 'suppression or policy config changed between runs',
+      });
+    } else if (
+      context.kind &&
+      policy.addedRequiresChangedLines.includes(context.kind) &&
+      context.overlapsChangedLines === false
+    ) {
+      // Scanner-wobble demotion: an `added` finding from a high-
+      // wobble scanner (semgrep code, grep-based hygiene) that
+      // sits outside the diff's changed lines is more likely a
+      // baseline gap than a real regression. Demote to `uncertain`
+      // (warn). The block-rules below still fire for findings the
+      // diff actually touched.
+      status = 'uncertain';
+      reasons.push({
+        code: 'unchanged-lines',
+        detail: `${context.kind} finding outside diff hunks — demoted from added to uncertain (likely scanner wobble, not a developer-introduced regression)`,
       });
     }
   }
