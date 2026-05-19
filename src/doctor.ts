@@ -113,7 +113,15 @@ export async function runDoctor(cwd: string): Promise<void> {
   );
   trackDx(checkInfo('.claude/skills/', fs.existsSync(path.join(cwd, '.claude', 'skills'))));
   trackDx(checkInfo('.claude/commands/', fs.existsSync(path.join(cwd, '.claude', 'commands'))));
-  trackDx(checkInfo('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
+  // .claude/rules/ is created only when an active language pack declares
+  // a ruleFile. Pure-typescript projects skip this dir (typescript pack
+  // has no ruleFile) — don't flag its absence as a scaffolding gap.
+  const expectsRules =
+    manifest?.config?.languages &&
+    activeLanguagesFromStack(manifest.config).some((l) => l.ruleFile);
+  if (expectsRules) {
+    trackDx(checkInfo('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
+  }
   trackDx(
     checkInfo(
       '.claude/agents-available/',
