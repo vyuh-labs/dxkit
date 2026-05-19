@@ -14,6 +14,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { makeExecutable } from './files';
+import { detect } from './detect';
+import { buildDevcontainerFeatures } from './languages';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -221,18 +223,51 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
 }
 
 /**
+ * Render the per-stack features block as a properly-indented JSON
+ * fragment slotted into the template's `"features": __PLACEHOLDER__`
+ * line. The first line stays flush; continuation lines get the
+ * template's two-space outer indent so the resulting object reads
+ * naturally inside the surrounding JSONC.
+ */
+function renderFeaturesBlock(features: Record<string, Record<string, unknown>>): string {
+  const raw = JSON.stringify(features, null, 2);
+  return raw
+    .split('\n')
+    .map((line, i) => (i === 0 ? line : '  ' + line))
+    .join('\n');
+}
+
+/**
+ * Read the devcontainer.json template, substitute the
+ * `__DXKIT_DEVCONTAINER_FEATURES__` placeholder with the detected
+ * stack's features block, and return the rendered text. Pure-ish:
+ * one filesystem read, no writes.
+ */
+function renderDevcontainerJson(tmplDir: string, cwd: string): string {
+  const srcAbs = path.join(tmplDir, 'devcontainer.json');
+  const template = fs.readFileSync(srcAbs, 'utf8');
+  const stack = detect(cwd);
+  const features = buildDevcontainerFeatures(stack.languages);
+  return template.replace('__DXKIT_DEVCONTAINER_FEATURES__', renderFeaturesBlock(features));
+}
+
+/**
  * Devcontainer installer. Writes the dxkit lightweight devcontainer
  * (devcontainer.json + post-create.sh + install-agent-clis.sh) into
  * `.devcontainer/`. If the consumer already has a devcontainer.json,
  * writes the entire dxkit set into `.devcontainer/.dxkit-reference/`
  * for manual merge.
+ *
+ * devcontainer.json is rendered per-detected-stack: only active
+ * packs' features land in the output. Always-on entries (Node +
+ * GitHub CLI) ship regardless so the post-create script can run on
+ * a non-Node project.
  */
 export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = emptyResult();
   const tmplDir = path.join(templatesDir(), '.devcontainer');
   const destDir = path.join(cwd, '.devcontainer');
-  const filesToInstall = [
-    { name: 'devcontainer.json', executable: false },
+  const filesToCopyVerbatim = [
     { name: 'post-create.sh', executable: true },
     { name: 'install-agent-clis.sh', executable: true },
   ];
@@ -242,9 +277,15 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
   if (hasExistingDevcontainer && !opts.force) {
     // Stash the whole dxkit set under a reference dir so the
     // consumer can read it without it interfering with their own.
+    // The reference devcontainer.json is rendered with the
+    // per-stack features so the customer sees the same shape as
+    // a fresh install — they can lift the features block directly.
     const refDir = path.join(destDir, '.dxkit-reference');
     fs.mkdirSync(refDir, { recursive: true });
-    for (const f of filesToInstall) {
+    const renderedJson = renderDevcontainerJson(tmplDir, cwd);
+    fs.writeFileSync(path.join(refDir, 'devcontainer.json'), renderedJson, 'utf8');
+    result.sidecars.push(path.relative(cwd, path.join(refDir, 'devcontainer.json')));
+    for (const f of filesToCopyVerbatim) {
       const srcAbs = path.join(tmplDir, f.name);
       const destAbs = path.join(refDir, f.name);
       fs.copyFileSync(srcAbs, destAbs);
@@ -262,7 +303,15 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
     return result;
   }
 
-  for (const f of filesToInstall) {
+  // devcontainer.json gets rendered (per-stack features substitution),
+  // the rest are flat copies.
+  fs.mkdirSync(destDir, { recursive: true });
+  const renderedJson = renderDevcontainerJson(tmplDir, cwd);
+  const destDevcontainerJson = path.join(destDir, 'devcontainer.json');
+  fs.writeFileSync(destDevcontainerJson, renderedJson, 'utf8');
+  result.installed.push(path.relative(cwd, destDevcontainerJson));
+
+  for (const f of filesToCopyVerbatim) {
     copyAdditive(
       path.join(tmplDir, f.name),
       path.join(destDir, f.name),

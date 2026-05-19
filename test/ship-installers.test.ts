@@ -188,6 +188,52 @@ describe('installDevcontainer', () => {
     const final = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
     expect(final).toContain('dxkit dev environment');
   });
+
+  it('renders only Node + GitHub CLI features on an empty (no-stack) repo', () => {
+    // No source files, no package.json deps → detect() returns
+    // all-false language flags. Even so, dxkit's runtime + gh CLI
+    // ship as always-on features.
+    const result = installDevcontainer(tmp);
+    expect(result.installed).toContain('.devcontainer/devcontainer.json');
+    const content = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
+    expect(content).toContain('ghcr.io/devcontainers/features/node:1');
+    expect(content).toContain('ghcr.io/devcontainers/features/github-cli:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/python:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/dotnet:2');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/ruby:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/java:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/rust:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/go:1');
+  });
+
+  it('renders only Python + Node + gh CLI on a Python-only repo', () => {
+    // requirements.txt is enough to activate the python pack.
+    fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'requests==2.0\n');
+    fs.writeFileSync(path.join(tmp, 'app.py'), "print('hi')\n");
+    const result = installDevcontainer(tmp);
+    expect(result.installed).toContain('.devcontainer/devcontainer.json');
+    const content = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
+    expect(content).toContain('ghcr.io/devcontainers/features/node:1');
+    expect(content).toContain('ghcr.io/devcontainers/features/python:1');
+    expect(content).toContain('ghcr.io/devcontainers/features/github-cli:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/dotnet:2');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/ruby:1');
+    expect(content).not.toContain('ghcr.io/devcontainers/features/java:1');
+  });
+
+  it('produces JSON that parses cleanly after comment-strip (JSONC contract)', () => {
+    installDevcontainer(tmp);
+    const content = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
+    // Strip // line comments — devcontainer.json is JSONC, but the
+    // features block itself is plain JSON, so this minimal scrub is
+    // enough to validate structural integrity.
+    const stripped = content.replace(/^\s*\/\/.*$/gm, '');
+    expect(() => JSON.parse(stripped)).not.toThrow();
+    const pkg = JSON.parse(stripped);
+    expect(pkg.name).toBe('dxkit dev environment');
+    expect(pkg.features).toBeTypeOf('object');
+    expect(pkg.features['ghcr.io/devcontainers/features/node:1']).toBeDefined();
+  });
 });
 
 describe('installCiGuardrails + installCiBaselineRefresh', () => {

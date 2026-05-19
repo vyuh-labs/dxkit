@@ -250,6 +250,24 @@ jobs:
           npm install --save-dev "${{ steps.pack.outputs.tarball }}"
           ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --yes
           test -f .devcontainer/devcontainer.json
+          # Per-stack devcontainer features (Phase 2.5.1): the consumer
+          # has no detectable language pack active beyond TypeScript-
+          # default (Node always-on), so the rendered features block
+          # must contain Node + GitHub CLI and must NOT contain the
+          # toolchains for inactive packs.
+          if ! grep -q 'ghcr.io/devcontainers/features/node:1' .devcontainer/devcontainer.json; then
+            echo "::error::devcontainer.json missing always-on node feature"
+            cat .devcontainer/devcontainer.json
+            exit 1
+          fi
+          for inactive in python:1 dotnet:2 ruby:1 java:1 rust:1 go:1; do
+            if grep -q "ghcr.io/devcontainers/features/${inactive}" .devcontainer/devcontainer.json; then
+              echo "::error::devcontainer.json includes feature ${inactive} on a Node-only repo"
+              cat .devcontainer/devcontainer.json
+              exit 1
+            fi
+          done
+          echo "Per-stack devcontainer features validated."
 
       - name: Build + run devcontainer, exercise post-create
         uses: devcontainers/ci@v0.3
