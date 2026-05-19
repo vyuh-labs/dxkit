@@ -168,12 +168,27 @@ git commit -m "chore: enable dxkit guardrails"
 
 From this point:
 
-- Every `git commit` runs a fast `guardrail check --changed-only`.
-- Every `git push` runs the full `guardrail check`.
+- Every `git push` runs the full `guardrail check` (pre-commit is
+  opt-in via `--with-precommit-hook` — slow on large repos until
+  incremental scoped scanning lands; see
+  [`guardrail`](commands/guardrail.md#hooks) for the trade-off).
 - Every PR is gated by the `dxkit-guardrails.yml` workflow, which
   posts a markdown comment.
 - Every merge to `main` auto-regenerates `.dxkit/baselines/main.json`
   so the next PR's anchor reflects merged state.
+
+One-off bypass:
+
+```bash
+DXKIT_SKIP_HOOKS=1 git push ...      # dxkit-specific (audit-friendly)
+git push --no-verify ...             # standard git bypass
+```
+
+Turn dxkit hooks off entirely (per-clone) without uninstalling:
+
+```bash
+git config --unset core.hooksPath
+```
 
 Customize what blocks vs. warns by writing a
 [`.dxkit/policy.json`](configuration/policy.md) — auto-discovered when
