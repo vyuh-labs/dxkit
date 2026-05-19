@@ -4,7 +4,6 @@ import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { writeFile, copyFile, sha256 } from './files';
-import { scanCodebase, renderCodebaseSkill, renderArchitectureRef } from './codebase-scanner';
 import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 
@@ -20,31 +19,33 @@ function readTemplate(templatePath: string): string {
   return fs.readFileSync(fullPath, 'utf-8');
 }
 
-function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, boolean>): string {
+/**
+ * Narrowed permission list for the dxkit-specific agent surface.
+ * Carries only the binaries the six dxkit-* skills actually run:
+ * git status/diff/log/branch (read-only inspection), the dxkit binary
+ * itself (every analyzer / hook / baseline command), and the active
+ * language packs' contributed commands (so the dxkit-action skill
+ * can run `npm test` / `pytest` / etc. to verify a fix without
+ * prompting on every step).
+ *
+ * Pre-2.5.1 the file carried Stop-hook noise about a `/learn` slash
+ * command that no longer ships, plus conditional gcloud / pulumi /
+ * docker entries tied to generic skills that also no longer ship.
+ * Dropped here.
+ */
+function buildSettingsJson(config: ResolvedConfig): string {
   const perms: string[] = [
     'Bash(git status:*)',
     'Bash(git diff:*)',
     'Bash(git log:*)',
     'Bash(git branch:*)',
     'Bash(npx vyuh-dxkit:*)',
+    'Bash(./node_modules/.bin/vyuh-dxkit:*)',
+    'Bash(vyuh-dxkit:*)',
   ];
-
-  // Per-language permissions — declared on each pack via
-  // `LanguageSupport.permissions`, iterated here.
   for (const lang of activeLanguagesFromStack(config)) {
     if (lang.permissions) perms.push(...lang.permissions);
   }
-  if (conditions.IF_DOCKER)
-    perms.push('Bash(docker ps:*)', 'Bash(docker-compose ps:*)', 'Bash(docker-compose logs:*)');
-  if (conditions.IF_GCLOUD)
-    perms.push(
-      'Bash(gcloud config:*)',
-      'Bash(gcloud projects list:*)',
-      'Bash(gcloud services list:*)',
-      'Bash(gcloud run services list:*)',
-    );
-  if (conditions.IF_PULUMI)
-    perms.push('Bash(pulumi preview:*)', 'Bash(pulumi stack:*)', 'Bash(pulumi config:*)');
 
   return (
     JSON.stringify(
@@ -54,26 +55,28 @@ function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, bo
           allow: perms,
           deny: [],
         },
-        hooks: {
-          Stop: [
-            {
-              matcher: '',
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'echo "If this conversation involved debugging, fixing issues, or discovering patterns — consider running /learn to capture it for future sessions."',
-                },
-              ],
-            },
-          ],
-        },
       },
       null,
       2,
     ) + '\n'
   );
 }
+
+/**
+ * The six dxkit-specific skills shipped under `--with-dxkit-agents`.
+ * Each lives at `.claude/skills/<name>/SKILL.md` in the template dir;
+ * generator copies them verbatim (no template substitution — the
+ * skill content references the canonical `vyuh-dxkit` CLI surface
+ * and doesn't need per-project variables).
+ */
+const DXKIT_SKILLS = [
+  'dxkit-learn',
+  'dxkit-init',
+  'dxkit-config',
+  'dxkit-hooks',
+  'dxkit-reports',
+  'dxkit-action',
+] as const;
 
 interface GenerateResult {
   created: string[];
@@ -87,7 +90,8 @@ export async function generate(
   config: ResolvedConfig,
   mode: GenerationMode,
   force: boolean,
-  noScan = false,
+  _noScan = false,
+  withDxkitAgents = false,
 ): Promise<GenerateResult> {
   const variables = buildVariables(config);
   const conditions = buildConditions(config);
@@ -125,7 +129,6 @@ export async function generate(
     };
   }
 
-  // Helper: process and write a template file
   async function writeTemplate(templatePath: string, outputRel: string, evolving = false) {
     const raw = readTemplate(templatePath);
     const processed = processTemplate(raw, variables, conditions);
@@ -134,7 +137,6 @@ export async function generate(
     track(outputPath, processed, res, evolving);
   }
 
-  // Helper: copy a static file
   function copyStatic(templatePath: string, outputRel: string, evolving = false) {
     const srcPath = path.join(templatesDir, templatePath);
     if (!fs.existsSync(srcPath)) return;
@@ -144,154 +146,62 @@ export async function generate(
     track(outputPath, content, res, evolving);
   }
 
-  // === DX-ONLY TIER ===
+  if (withDxkitAgents) {
+    logger.header('Generating dxkit agent context');
 
-  logger.header('Generating Agent DX');
+    // Open-standard project prose — read by every coding agent
+    // (Claude / Codex / Cursor / Aider). Pre-2.5.1 this content lived
+    // in CLAUDE.md; AGENTS.md is the cross-platform replacement.
+    await writeTemplate('AGENTS.md.template', 'AGENTS.md');
+    logger.success('AGENTS.md');
 
-  // 1. CLAUDE.md
-  await writeTemplate('CLAUDE.md.template', 'CLAUDE.md');
-  logger.success('CLAUDE.md');
+    // CLAUDE.md becomes a small shim that points at AGENTS.md. Claude
+    // Code reads both at session start; the shim carries Claude-
+    // specific config (skill list, rules pointer) and defers shared
+    // context to AGENTS.md.
+    await writeTemplate('CLAUDE.md.template', 'CLAUDE.md');
+    logger.success('CLAUDE.md');
 
-  // 2. settings.json
-  const settingsContent = buildSettingsJson(config, conditions);
-  const settingsPath = path.join(targetDir, '.claude', 'settings.json');
-  const settingsRes = await writeFile(settingsPath, settingsContent, opts(false));
-  track(settingsPath, settingsContent, settingsRes, false);
-  logger.success('.claude/settings.json');
+    // Narrowed settings.json — drops the Stop-hook noise + conditional
+    // gcloud/pulumi/docker entries that referenced generic skills that
+    // no longer ship.
+    const settingsContent = buildSettingsJson(config);
+    const settingsPath = path.join(targetDir, '.claude', 'settings.json');
+    const settingsRes = await writeFile(settingsPath, settingsContent, opts(false));
+    track(settingsPath, settingsContent, settingsRes, false);
+    logger.success('.claude/settings.json');
 
-  // 3. Skills — template-processed
-  for (const skill of ['quality', 'test', 'build', 'review', 'scaffold']) {
-    await writeTemplate(
-      `.claude/skills/${skill}/SKILL.md.template`,
-      `.claude/skills/${skill}/SKILL.md`,
-    );
-  }
+    // The six dxkit-specific skills. Each ships as a single SKILL.md
+    // under `.claude/skills/dxkit-<name>/`. Auto-discovered by Claude
+    // Code via skill frontmatter (`name` + `description`).
+    for (const skill of DXKIT_SKILLS) {
+      copyStatic(`.claude/skills/${skill}/SKILL.md`, `.claude/skills/${skill}/SKILL.md`);
+    }
+    logger.success('.claude/skills/dxkit-*');
 
-  // Skills — static (always)
-  for (const skill of ['doctor', 'session', 'learned']) {
-    copyStatic(`.claude/skills/${skill}/SKILL.md`, `.claude/skills/${skill}/SKILL.md`);
-  }
-
-  // Deploy skill (template + references)
-  await writeTemplate('.claude/skills/deploy/SKILL.md.template', '.claude/skills/deploy/SKILL.md');
-  copyStatic(
-    '.claude/skills/deploy/references/gotchas.md',
-    '.claude/skills/deploy/references/gotchas.md',
-    true,
-  );
-
-  // Evolving reference files
-  for (const skill of ['quality', 'test', 'learned']) {
-    const refDir = `.claude/skills/${skill}/references`;
-    const srcRefDir = path.join(templatesDir, refDir);
-    if (fs.existsSync(srcRefDir)) {
-      for (const file of fs.readdirSync(srcRefDir)) {
-        copyStatic(`${refDir}/${file}`, `${refDir}/${file}`, true);
+    // Per-language rules from each active pack — still useful as
+    // contextual hints to any agent (coding conventions, lint rule
+    // exceptions, etc.).
+    for (const lang of activeLanguagesFromStack(config)) {
+      if (lang.ruleFile) {
+        copyStatic(`.claude/rules/${lang.ruleFile}`, `.claude/rules/${lang.ruleFile}`);
       }
     }
+    // Framework-specific rules — NOT pack-owned. Frameworks
+    // (nextjs/loopback/express) live under the top-level `framework`
+    // signal, not in `languages`. Stay hardcoded here until a
+    // framework-pack abstraction exists.
+    if (conditions.IF_NEXTJS) copyStatic('.claude/rules/nextjs.md', '.claude/rules/nextjs.md');
+    if (config.framework === 'loopback')
+      copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
+    if (config.framework === 'express')
+      copyStatic('.claude/rules/express.md', '.claude/rules/express.md');
+    logger.success('.claude/rules/');
   }
 
-  // Conditional skills
-  if (conditions.IF_INFISICAL) {
-    copyStatic('.claude/skills/secrets/SKILL.md', '.claude/skills/secrets/SKILL.md');
-  }
-  if (conditions.IF_GCLOUD) {
-    copyStatic('.claude/skills/gcloud/SKILL.md', '.claude/skills/gcloud/SKILL.md');
-    copyStatic(
-      '.claude/skills/gcloud/references/gotchas.md',
-      '.claude/skills/gcloud/references/gotchas.md',
-      true,
-    );
-  }
-  if (conditions.IF_PULUMI) {
-    copyStatic('.claude/skills/pulumi/SKILL.md', '.claude/skills/pulumi/SKILL.md');
-  }
-  logger.success('.claude/skills/');
-
-  // 4. Rules (conditional on language)
-  // Per-language rule files declared via `LanguageSupport.ruleFile`.
-  for (const lang of activeLanguagesFromStack(config)) {
-    if (lang.ruleFile) {
-      copyStatic(`.claude/rules/${lang.ruleFile}`, `.claude/rules/${lang.ruleFile}`);
-    }
-  }
-  // Framework-specific rules — NOT pack-owned. Frameworks
-  // (nextjs/loopback/express) live under the top-level `framework`
-  // signal, not in `languages`. Stay hardcoded here until a
-  // framework-pack abstraction exists.
-  if (conditions.IF_NEXTJS) copyStatic('.claude/rules/nextjs.md', '.claude/rules/nextjs.md');
-  if (config.framework === 'loopback')
-    copyStatic('.claude/rules/loopback.md', '.claude/rules/loopback.md');
-  if (config.framework === 'express')
-    copyStatic('.claude/rules/express.md', '.claude/rules/express.md');
-  logger.success('.claude/rules/');
-
-  // 5. Commands (static .md copied as-is, .md.template processed through engine)
-  const commandsDir = path.join(templatesDir, '.claude', 'commands');
-  if (fs.existsSync(commandsDir)) {
-    for (const file of fs.readdirSync(commandsDir)) {
-      if (file.endsWith('.md.template')) {
-        const outputName = file.replace('.template', '');
-        await writeTemplate(`.claude/commands/${file}`, `.claude/commands/${outputName}`);
-      } else {
-        copyStatic(`.claude/commands/${file}`, `.claude/commands/${file}`);
-      }
-    }
-  }
-  logger.success('.claude/commands/');
-
-  // Ensure .ai/sessions/ exists for session commands (works in dx-only mode)
-  fs.mkdirSync(path.join(targetDir, '.ai', 'sessions'), { recursive: true });
-
-  // 6. Agents-available (dormant) and agents (active by default)
-  const agentsAvailDir = path.join(templatesDir, '.claude', 'agents-available');
-  if (fs.existsSync(agentsAvailDir)) {
-    fs.mkdirSync(path.join(targetDir, '.claude', 'agents'), { recursive: true });
-    for (const file of fs.readdirSync(agentsAvailDir)) {
-      copyStatic(`.claude/agents-available/${file}`, `.claude/agents-available/${file}`);
-    }
-  }
-  const activeAgentsDir = path.join(templatesDir, '.claude', 'agents');
-  if (fs.existsSync(activeAgentsDir)) {
-    fs.mkdirSync(path.join(targetDir, '.claude', 'agents'), { recursive: true });
-    for (const file of fs.readdirSync(activeAgentsDir)) {
-      copyStatic(`.claude/agents/${file}`, `.claude/agents/${file}`);
-    }
-  }
-  logger.success('.claude/agents/');
-
-  // 7. Codebase scan
-  if (!noScan) {
-    logger.info('Scanning codebase...');
-    const analysis = scanCodebase(targetDir);
-    const skillContent = renderCodebaseSkill(analysis);
-    const skillPath = path.join(targetDir, '.claude', 'skills', 'codebase', 'SKILL.md');
-    const skillRes = await writeFile(skillPath, skillContent, opts(true));
-    track(skillPath, null, skillRes, true);
-
-    const refContent = renderArchitectureRef(analysis);
-    const refPath = path.join(
-      targetDir,
-      '.claude',
-      'skills',
-      'codebase',
-      'references',
-      'architecture.md',
-    );
-    const refRes = await writeFile(refPath, refContent, opts(true));
-    track(refPath, null, refRes, true);
-
-    logger.success(
-      `.claude/skills/codebase/ (${analysis.fileCount} files, ${analysis.entryPoints.length} entry points, ${analysis.apiEndpoints.length} API routes)`,
-    );
-    if (analysis.testFileCount < 5 && analysis.sourceFileCount > 20) {
-      logger.warn(
-        `Minimal tests: ${analysis.testFileCount} test files for ${analysis.sourceFileCount} source files`,
-      );
-    }
-  }
-
-  // Write manifest
+  // Always write the manifest — `vyuh-dxkit update` / `doctor` / etc.
+  // read it to know what was configured even when no agent scaffold
+  // is present.
   const manifestContent = JSON.stringify(result.manifest, null, 2) + '\n';
   fs.mkdirSync(targetDir, { recursive: true });
   fs.writeFileSync(path.join(targetDir, '.vyuh-dxkit.json'), manifestContent, 'utf-8');

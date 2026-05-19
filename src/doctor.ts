@@ -107,12 +107,37 @@ export async function runDoctor(cwd: string): Promise<void> {
     }
   }
 
+  // Agent context — present when `init` was run with --with-dxkit-agents
+  // (default-on under --full). Absent on bare `init` runs by design, so
+  // these are informational rather than required.
+  trackDx(checkInfo('AGENTS.md', fs.existsSync(path.join(cwd, 'AGENTS.md'))));
   trackDx(checkInfo('CLAUDE.md', fs.existsSync(path.join(cwd, 'CLAUDE.md'))));
   trackDx(
     checkInfo('.claude/settings.json', fs.existsSync(path.join(cwd, '.claude', 'settings.json'))),
   );
-  trackDx(checkInfo('.claude/skills/', fs.existsSync(path.join(cwd, '.claude', 'skills'))));
-  trackDx(checkInfo('.claude/commands/', fs.existsSync(path.join(cwd, '.claude', 'commands'))));
+
+  // The six dxkit-* skills are the marquee 2.5.1 agent surface. Each
+  // landing as its own dir under .claude/skills/dxkit-<name>/ — count
+  // present-vs-expected so customers see at a glance whether the
+  // agent scaffold landed.
+  const DXKIT_SKILL_NAMES = [
+    'dxkit-learn',
+    'dxkit-init',
+    'dxkit-config',
+    'dxkit-hooks',
+    'dxkit-reports',
+    'dxkit-action',
+  ];
+  const presentSkills = DXKIT_SKILL_NAMES.filter((name) =>
+    fs.existsSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md')),
+  );
+  trackDx(
+    checkInfo(
+      `.claude/skills/dxkit-* (${presentSkills.length}/${DXKIT_SKILL_NAMES.length})`,
+      presentSkills.length === DXKIT_SKILL_NAMES.length,
+    ),
+  );
+
   // .claude/rules/ is created only when an active language pack declares
   // a ruleFile. Pure-typescript projects skip this dir (typescript pack
   // has no ruleFile) — don't flag its absence as a scaffolding gap.
@@ -122,12 +147,6 @@ export async function runDoctor(cwd: string): Promise<void> {
   if (expectsRules) {
     trackDx(checkInfo('.claude/rules/', fs.existsSync(path.join(cwd, '.claude', 'rules'))));
   }
-  trackDx(
-    checkInfo(
-      '.claude/agents-available/',
-      fs.existsSync(path.join(cwd, '.claude', 'agents-available')),
-    ),
-  );
 
   // Settings.json validity (only when the file exists; absence already
   // counted above).
@@ -140,32 +159,6 @@ export async function runDoctor(cwd: string): Promise<void> {
       trackDx(checkInfo('settings.json is valid JSON', false));
     }
   }
-
-  // Evolving files. These start empty after `init` and accumulate as
-  // Claude learns — their absence is mildly informational, not a
-  // problem in any tier.
-  console.log(''); // slop-ok
-  logger.info('Agent DX — evolving files (start empty, fill over time):');
-  trackDx(
-    checkInfo(
-      'learned/gotchas.md',
-      fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'gotchas.md')),
-    ),
-  );
-  trackDx(
-    checkInfo(
-      'learned/conventions.md',
-      fs.existsSync(path.join(cwd, '.claude', 'skills', 'learned', 'references', 'conventions.md')),
-    ),
-  );
-  trackDx(
-    checkInfo(
-      'deny-recommendations.md',
-      fs.existsSync(
-        path.join(cwd, '.claude', 'skills', 'learned', 'references', 'deny-recommendations.md'),
-      ),
-    ),
-  );
 
   // Toolchain CLIs — pack-driven via `LanguageSupport.cliBinaries`.
   // These are informational (a missing toolchain just disables that

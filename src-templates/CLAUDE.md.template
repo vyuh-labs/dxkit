@@ -1,121 +1,26 @@
-# {{PROJECT_NAME}}
+# {{PROJECT_NAME}} — Claude Code config
 
-{{PROJECT_DESCRIPTION}}
+Project context lives in [`AGENTS.md`](./AGENTS.md) (open-standard, read by every coding agent). This file is Claude-Code-specific config that points at it.
 
-## How to use this file
+Whenever Claude Code starts a session in this repo, it reads BOTH files: this one (Claude-specific shortcuts) and `AGENTS.md` (project prose).
 
-This file is loaded by Claude Code at the start of every session in this repo. It tells the agent what this project is, how to run common commands, and what safety rules to follow.
+## dxkit skills
 
-The rest of `.claude/` extends this:
-- **Skills** (`.claude/skills/`) — domain context loaded on demand
-- **Commands** (`.claude/commands/`) — slash commands for common workflows
-- **Agents** (`.claude/agents/`) — specialists Claude delegates to automatically
-- **Rules** (`.claude/rules/`) — language-specific conventions
+Six dxkit-specific skills are installed under `.claude/skills/`. Claude Code auto-discovers them via their frontmatter `description` fields:
 
-Run `/help` for the full list.
+- `dxkit-learn` — explain what dxkit does, what scores mean, what scanners run
+- `dxkit-init` — walk through `vyuh-dxkit init` flag choices
+- `dxkit-config` — edit `.dxkit-ignore` / `.vyuh-dxkit.json` / policy
+- `dxkit-hooks` — install / troubleshoot git hooks
+- `dxkit-reports` — run analyzers + read output
+- `dxkit-action` — prioritize + fix + verify + re-baseline
 
-{{#IF_PYTHON}}
-## Python {{PYTHON_VERSION}}
+When the user asks about dxkit concepts or wants to run an analyzer, reach for the matching skill before improvising.
 
-- **Tests**: `pytest`
-- **Lint/format**: `ruff check .` / `ruff format .`
-- **Type check**: `mypy src/`
-- **Package config**: `pyproject.toml`
-{{/IF_PYTHON}}
+## Per-language rules
 
-{{#IF_GO}}
-## Go {{GO_VERSION}}
+`.claude/rules/<lang>.md` files carry per-language conventions for any active language pack. They're loaded automatically.
 
-- **Tests**: `go test ./...`
-- **Lint**: `golangci-lint run`
-- **Format**: `gofmt -w .` / `goimports -w .`
-- **Module**: `go.mod`
-{{/IF_GO}}
+## Security rules + per-language commands
 
-{{#IF_NODE}}
-## Node.js {{NODE_VERSION}}
-
-- **Tests**: `npm test`
-- **Build**: `npm run build`
-- **Lint/format**: `npx eslint .` / `npx prettier --write .`
-- **Package config**: `package.json`, `tsconfig.json`
-{{/IF_NODE}}
-
-{{#IF_NEXTJS}}
-## Next.js
-
-- **Directory**: `frontend/`
-- **Dev server**: `cd frontend && npm run dev`
-- **Build**: `cd frontend && npm run build`
-- **Lint**: `cd frontend && npm run lint`
-{{/IF_NEXTJS}}
-
-{{#IF_RUST}}
-## Rust {{RUST_VERSION}}
-
-- **Tests**: `cargo test`
-- **Build**: `cargo build` / `cargo build --release`
-- **Lint**: `cargo clippy`
-- **Format**: `cargo fmt`
-- **Package**: `Cargo.toml`
-{{/IF_RUST}}
-
-{{#IF_CSHARP}}
-## C# {{CSHARP_VERSION}}
-
-- **Tests**: `dotnet test`
-- **Build**: `dotnet build` / `dotnet publish -c Release`
-- **Format**: `dotnet format`
-- **Solution**: `*.sln`, projects under `*.csproj`
-{{/IF_CSHARP}}
-
-{{#IF_GCLOUD}}
-## Google Cloud
-
-- **Auth**: `gcloud auth login`
-- **Project**: set via `gcloud config set project <id>` or `GOOGLE_CLOUD_PROJECT` env var
-{{/IF_GCLOUD}}
-
-{{#IF_PULUMI}}
-## Pulumi
-
-- **Auth**: `pulumi login`
-- **Workflow**: always `pulumi preview` before `pulumi up`
-- **Secrets**: `pulumi config set --secret` for sensitive values
-{{/IF_PULUMI}}
-
-## Common slash commands
-
-- `/health` — full codebase health audit (6 dimensions)
-- `/vulnerabilities` — scan dependencies + code for security issues
-- `/test-gaps` — find critical untested code paths
-- `/quality` — code quality + slop analysis
-- `/dev-report` — team activity from git history
-- `/ask <question>` — natural-language Q&A against the codebase
-- `/explore-codebase` — deep architecture exploration (run once on a new repo)
-- `/setup-hooks` — install git pre-commit/pre-push hooks
-- `/learn` — capture a gotcha or convention from the current conversation
-
-Run `/help` for the full list of commands and agents.
-
-## Security rules — never violate
-
-1. **Never output, log, or commit secrets** — no API keys, tokens, passwords, or credentials in code, commits, checkpoints, or skill files
-2. **Never read `.env` directly** — if you need to confirm a value exists, grep for the variable name only
-3. **Never pass secrets as CLI arguments** — they appear in process lists and shell history
-4. **Never include secrets in build args or Dockerfiles**
-5. **Sensitive files are gitignored**: `.env`, `.env.*`, `.env.secrets`, `.claude/settings.local.json`
-6. **Before committing**: verify no secrets in staged files (`git diff --cached`)
-{{#IF_INFISICAL}}
-7. **Infisical tokens**: never output `INFISICAL_TOKEN` values
-{{/IF_INFISICAL}}
-{{#IF_GCLOUD}}
-8. **GCP credentials**: never output `gcloud auth print-access-token` or service account JSON keys
-{{/IF_GCLOUD}}
-
-## Conventions
-
-- Run `/quality` and `/test` before committing
-- For changes to risky areas (auth, payments, data mutations), write tests first
-- Capture surprising behaviors via `/learn` so the next session inherits them
-- Check `/help` for available commands and agents
+See [`AGENTS.md`](./AGENTS.md). All shared project context lives there so other agents (Codex / Cursor / Aider) get the same instructions Claude does.

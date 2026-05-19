@@ -1,0 +1,137 @@
+# {{PROJECT_NAME}}
+
+{{PROJECT_DESCRIPTION}}
+
+## How to use this file
+
+`AGENTS.md` is the open-standard project-context file read by AI coding agents (Claude Code, Codex, Cursor, Aider, …). It describes what this project is, how to run common commands, and the safety rules that apply.
+
+For agent-specific config, see the editor-specific files alongside this one — `CLAUDE.md` (Claude Code), `.cursor/rules` (Cursor), etc. — which point back here for shared context.
+
+## What dxkit does in this repo
+
+This repo is managed by [`@vyuhlabs/dxkit`](https://github.com/vyuh-labs/dxkit). dxkit measures code health across 6 dimensions, captures a per-finding baseline, and gates PRs on net-new regressions.
+
+Six skills are installed under `.claude/skills/` (Claude Code auto-discovers via skill frontmatter):
+
+- **dxkit-learn** — explains dxkit concepts (baselines, dimensions, scanners)
+- **dxkit-init** — interactive setup walkthrough
+- **dxkit-config** — edit `.dxkit-ignore`, `.vyuh-dxkit.json`, policy
+- **dxkit-hooks** — install / troubleshoot git hooks
+- **dxkit-reports** — run analyzers, explain output, dashboard
+- **dxkit-action** — prioritize + fix + verify + re-baseline
+
+Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxkit` CLI with workflow guidance.
+
+{{#IF_PYTHON}}
+## Python {{PYTHON_VERSION}}
+
+- **Tests**: `pytest`
+- **Lint/format**: `ruff check .` / `ruff format .`
+- **Type check**: `mypy src/`
+- **Package config**: `pyproject.toml`
+{{/IF_PYTHON}}
+
+{{#IF_GO}}
+## Go {{GO_VERSION}}
+
+- **Tests**: `go test ./...`
+- **Lint**: `golangci-lint run`
+- **Format**: `gofmt -w .` / `goimports -w .`
+- **Module**: `go.mod`
+{{/IF_GO}}
+
+{{#IF_NODE}}
+## Node.js {{NODE_VERSION}}
+
+- **Tests**: `npm test`
+- **Build**: `npm run build`
+- **Lint/format**: `npx eslint .` / `npx prettier --write .`
+- **Package config**: `package.json`, `tsconfig.json`
+{{/IF_NODE}}
+
+{{#IF_NEXTJS}}
+## Next.js
+
+- **Directory**: `frontend/`
+- **Dev server**: `cd frontend && npm run dev`
+- **Build**: `cd frontend && npm run build`
+- **Lint**: `cd frontend && npm run lint`
+{{/IF_NEXTJS}}
+
+{{#IF_RUST}}
+## Rust {{RUST_VERSION}}
+
+- **Tests**: `cargo test`
+- **Build**: `cargo build` / `cargo build --release`
+- **Lint**: `cargo clippy`
+- **Format**: `cargo fmt`
+- **Package**: `Cargo.toml`
+{{/IF_RUST}}
+
+{{#IF_CSHARP}}
+## C# {{CSHARP_VERSION}}
+
+- **Tests**: `dotnet test`
+- **Build**: `dotnet build` / `dotnet publish -c Release`
+- **Format**: `dotnet format`
+- **Solution**: `*.sln`, projects under `*.csproj`
+{{/IF_CSHARP}}
+
+{{#IF_KOTLIN}}
+## Kotlin {{KOTLIN_VERSION}}
+
+- **Tests**: `./gradlew test`
+- **Build**: `./gradlew build`
+- **Lint**: `detekt`
+- **Package**: `build.gradle.kts` / `settings.gradle.kts`
+{{/IF_KOTLIN}}
+
+{{#IF_JAVA}}
+## Java {{JAVA_VERSION}}
+
+- **Tests**: `mvn test` / `./gradlew test`
+- **Build**: `mvn package` / `./gradlew build`
+- **Lint**: `pmd`
+- **Package**: `pom.xml` / `build.gradle`
+{{/IF_JAVA}}
+
+{{#IF_RUBY}}
+## Ruby {{RUBY_VERSION}}
+
+- **Tests**: `bundle exec rspec` / `bundle exec rails test`
+- **Lint**: `bundle exec rubocop`
+- **Coverage**: SimpleCov (loaded from `spec_helper.rb`)
+- **Package**: `Gemfile`
+{{/IF_RUBY}}
+
+## dxkit commands
+
+| Purpose | Command |
+|---|---|
+| Overall health (6 dimensions) | `npx vyuh-dxkit health` |
+| Deep security scan | `npx vyuh-dxkit vulnerabilities` |
+| Test coverage gaps | `npx vyuh-dxkit test-gaps` |
+| Code quality + slop | `npx vyuh-dxkit quality` |
+| Bill of materials | `npx vyuh-dxkit bom` |
+| Dashboard (HTML) | `npx vyuh-dxkit dashboard` |
+| Guardrail check (baseline diff) | `npx vyuh-dxkit guardrail check` |
+| Doctor (verify setup) | `npx vyuh-dxkit doctor` |
+
+The pre-push hook runs `guardrail check` automatically — blocks net-new regressions before they leave your machine.
+
+## Security rules — never violate
+
+1. **Never output, log, or commit secrets** — no API keys, tokens, passwords, or credentials in code, commits, or files Claude writes
+2. **Never read `.env` directly** — to confirm a variable exists, grep for the variable name only
+3. **Never pass secrets as CLI arguments** — they appear in process lists and shell history
+4. **Never include secrets in build args or Dockerfiles**
+5. **Sensitive files are gitignored**: `.env`, `.env.*`, `.env.secrets`, `.claude/settings.local.json`
+6. **Before committing**: verify no secrets in staged files (`git diff --cached`)
+
+## Conventions
+
+- Run `npx vyuh-dxkit health` before opening a PR
+- For changes to risky areas (auth, payments, data mutations), write tests first
+- Capture surprising behaviors as comments in `.dxkit-ignore` or the relevant skill file
+- Pre-push hook will block net-new regressions — fix them in the same PR or accept-as-baseline with a commit message explaining why
