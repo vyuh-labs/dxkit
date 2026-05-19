@@ -131,6 +131,25 @@ jobs:
             cat .gitignore
             exit 1
           fi
+          # Verify package.json got the postinstall hooks-activation wire-up
+          # — every clone + `npm install` should auto-set core.hooksPath.
+          if ! grep -q 'vyuh-dxkit hooks activate' package.json; then
+            echo "::error::package.json missing postinstall 'vyuh-dxkit hooks activate'"
+            cat package.json
+            exit 1
+          fi
+          # And the activation actually works end-to-end: re-run `npm
+          # install` (which re-fires postinstall) and verify
+          # core.hooksPath landed on '.githooks'.
+          rm -rf .git/config.lock || true
+          git config --local --unset core.hooksPath 2>/dev/null || true
+          npm install --silent >/dev/null 2>&1 || true
+          hooks_path="$(git config --local --get core.hooksPath || echo '')"
+          if [ "$hooks_path" != ".githooks" ]; then
+            echo "::error::postinstall didn't activate hooks (core.hooksPath = '$hooks_path')"
+            exit 1
+          fi
+          echo "postinstall hooks-activation validated."
           # And the bare-`init` default of pre-commit being opt-in:
           # re-run init in a separate dir without --with-precommit-hook
           # and assert it's NOT installed.

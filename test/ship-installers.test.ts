@@ -10,6 +10,7 @@ import {
   installCiBaselineRefresh,
   installPrReview,
   installIgnoreFiles,
+  installHooksPostinstall,
   detectDefaultBranch,
 } from '../src/ship-installers';
 
@@ -390,5 +391,81 @@ describe('installIgnoreFiles', () => {
 
     const dki = fs.readFileSync(path.join(tmp, '.dxkit-ignore'), 'utf-8');
     expect(dki).toContain('extra paths dxkit'); // template installed
+  });
+});
+
+describe('installHooksPostinstall', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-postinstall-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('skips cleanly when no package.json exists (non-Node repo)', () => {
+    const result = installHooksPostinstall(tmp);
+    expect(result.installed).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(result.notes).toEqual([]);
+  });
+
+  it('adds scripts.postinstall when package.json has no scripts block', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'demo' }, null, 2));
+    const result = installHooksPostinstall(tmp);
+    expect(result.installed).toContain('package.json (postinstall)');
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.scripts.postinstall).toBe('vyuh-dxkit hooks activate');
+  });
+
+  it('adds scripts.postinstall when scripts exists but postinstall is absent', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo', scripts: { test: 'vitest' } }, null, 2),
+    );
+    const result = installHooksPostinstall(tmp);
+    expect(result.installed).toContain('package.json (postinstall)');
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.scripts.postinstall).toBe('vyuh-dxkit hooks activate');
+    // Preserves existing scripts
+    expect(pkg.scripts.test).toBe('vitest');
+  });
+
+  it('is idempotent: re-running skips when scripts.postinstall already has our command', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'demo' }, null, 2));
+    installHooksPostinstall(tmp);
+    const result = installHooksPostinstall(tmp);
+    expect(result.skipped).toContain('package.json (postinstall)');
+    expect(result.installed).toEqual([]);
+  });
+
+  it('leaves existing custom postinstall in place + emits a chain note', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo', scripts: { postinstall: 'husky install' } }, null, 2),
+    );
+    const result = installHooksPostinstall(tmp);
+    expect(result.installed).toEqual([]);
+    expect(result.notes.some((n) => n.includes('postinstall preserved'))).toBe(true);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    // Original script untouched.
+    expect(pkg.scripts.postinstall).toBe('husky install');
+  });
+
+  it('handles a malformed package.json without crashing', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{ not valid json');
+    const result = installHooksPostinstall(tmp);
+    expect(result.installed).toEqual([]);
+    expect(result.notes.some((n) => n.includes('not valid JSON'))).toBe(true);
+  });
+
+  it('preserves trailing newline on the original package.json', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo' }, null, 2) + '\n',
+    );
+    installHooksPostinstall(tmp);
+    const written = fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8');
+    expect(written.endsWith('\n')).toBe(true);
   });
 });
