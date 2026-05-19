@@ -206,11 +206,25 @@ jobs:
           # configure either CLI off without failing this job.
           runCmd: |
             set -euo pipefail
+            # Resolve the dxkit binary: prefer the project-local
+            # install when post-create's `npm install` succeeded;
+            # fall back to the globally-installed version that
+            # post-create's last-ditch fallback brings in. (Inside
+            # this CI smoke the consumer's lockfile points at a
+            # host-only tarball path that doesn't exist in the
+            # container, so the project-local install soft-fails
+            # and global is what we end up with.)
+            if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+              DXKIT="./node_modules/.bin/vyuh-dxkit"
+            else
+              DXKIT="vyuh-dxkit"
+            fi
+            echo "==> Using dxkit: $DXKIT"
             echo "==> Verifying scanner toolchain"
-            ./node_modules/.bin/vyuh-dxkit tools list
+            "$DXKIT" tools list
             echo "==> Verifying agent CLIs"
             command -v claude || echo "WARN: claude CLI not on PATH"
             command -v codex  || echo "WARN: codex  CLI not on PATH"
             echo "==> Smoke: baseline create inside container"
-            ./node_modules/.bin/vyuh-dxkit baseline create
+            "$DXKIT" baseline create
             test -f .dxkit/baselines/main.json
