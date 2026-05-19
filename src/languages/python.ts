@@ -1051,21 +1051,5 @@ export const python: LanguageSupport = {
   permissions: ['Bash(python3:*)', 'Bash(pytest:*)', 'Bash(ruff:*)'],
   ruleFile: 'python.md',
   defaultVersion: '3.12',
-  templateFiles: [
-    { template: 'configs/python/pyproject.toml.template', output: 'pyproject.toml' },
-    { template: 'configs/python/ruff.toml.template', output: 'ruff.toml' },
-    { template: 'configs/python/pytest.ini.template', output: 'pytest.ini' },
-  ],
   cliBinaries: ['python3', 'ruff'],
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      `  python:`,
-      `    enabled: ${enabled}`,
-      `    version: "${config.versions.python}"`,
-      `    quality:`,
-      `      coverage: ${config.coverageThreshold}`,
-      `      lint: true`,
-      `      typecheck: true`,
-      `      format: true`,
-    ].join('\n'),
 };

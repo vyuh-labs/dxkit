@@ -746,16 +746,7 @@ export const ruby: LanguageSupport = {
 
   ruleFile: 'ruby.md',
 
-  templateFiles: [],
-
   cliBinaries: ['ruby', 'bundle'],
 
   defaultVersion: '3.3.0',
-
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      `  ruby:`,
-      `    enabled: ${enabled}`,
-      `    version: "${config.versions['ruby' as keyof typeof config.versions] ?? '3.3.0'}"`,
-    ].join('\n'),
 };

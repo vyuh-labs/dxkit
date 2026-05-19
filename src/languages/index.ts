@@ -9,13 +9,7 @@ import { kotlin } from './kotlin';
 import { java } from './java';
 import { ruby } from './ruby';
 
-export type {
-  ArchitecturalShape,
-  LanguageId,
-  LanguageSupport,
-  LintSeverity,
-  ProjectYamlContext,
-} from './types';
+export type { ArchitecturalShape, LanguageId, LanguageSupport, LintSeverity } from './types';
 
 export const LANGUAGES: readonly LanguageSupport[] = [
   python,

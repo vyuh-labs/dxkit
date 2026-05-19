@@ -475,7 +475,6 @@ const CONFIG_FILES: Record<string, string> = {
   'pytest.ini': 'Python test config',
   '.pre-commit-config.yaml': 'Pre-commit hooks',
   '.editorconfig': 'Editor config',
-  '.project.yaml': 'Project config (template)',
   'Pulumi.yaml': 'Pulumi IaC config',
   'appsettings.json': 'C# application config',
   'global.json': '.NET SDK config',

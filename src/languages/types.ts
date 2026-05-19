@@ -1,4 +1,4 @@
-import type { LanguageId, ResolvedConfig } from '../types';
+import type { LanguageId } from '../types';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -315,31 +315,12 @@ export interface LanguageSupport {
   ruleFile?: string;
 
   /**
-   * Per-pack template→output pairs scaffolded by `vyuh-dxkit init` when
-   * this pack is active. Templates live under
-   * `src-templates/configs/<lang>/`. Skipped silently if the output
-   * already exists (so `update` doesn't clobber user-customized
-   * configs).
-   */
-  templateFiles?: { template: string; output: string }[];
-
-  /**
    * External CLI binaries `vyuh-dxkit doctor` checks for when this pack
    * is active. Today this is the per-language toolchain (e.g. python +
    * ruff for python; dotnet for csharp). Surfacing missing binaries to
    * users is the doctor command's primary job.
    */
   cliBinaries?: string[];
-
-  /**
-   * Renders this pack's section under `languages:` in `.project.yaml`.
-   * Receives the resolved project config + an `enabled` flag the
-   * registry computes (since the YAML emits `enabled: false` for
-   * inactive packs too — the section is iterated over ALL packs, not
-   * just active ones). Returning a multi-line string (lines joined by
-   * "\n") is conventional.
-   */
-  projectYamlBlock?: (ctx: ProjectYamlContext) => string;
 
   /**
    * Default language version surfaced in `DEFAULT_VERSIONS` (e.g. '3.12'
@@ -362,10 +343,4 @@ export interface LanguageSupport {
    * alongside D009/D010 in 10f.4.
    */
   versionKey?: keyof import('../types').DetectedStack['versions'];
-}
-
-/** Context passed to `LanguageSupport.projectYamlBlock`. */
-export interface ProjectYamlContext {
-  config: ResolvedConfig;
-  enabled: boolean;
 }

@@ -1246,8 +1246,5 @@ export const typescript: LanguageSupport = {
   // No ruleFile — there is no `.claude/rules/typescript.md`. nextjs.md
   // is a framework rule (not language) and stays hardcoded in
   // generator.ts under `IF_NEXTJS`.
-  templateFiles: [{ template: 'configs/node/tsconfig.json.template', output: 'tsconfig.json' }],
   cliBinaries: ['node', 'npm'],
-  projectYamlBlock: ({ config, enabled }) =>
-    [`  node:`, `    enabled: ${enabled}`, `    version: "${config.versions.node}"`].join('\n'),
 };

@@ -3,9 +3,9 @@ import * as path from 'path';
 import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
-import { writeFile, copyFile, sha256, makeExecutable, copyDirectory } from './files';
+import { writeFile, copyFile, sha256 } from './files';
 import { scanCodebase, renderCodebaseSkill, renderArchitectureRef } from './codebase-scanner';
-import { LANGUAGES, activeLanguagesFromStack } from './languages';
+import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 
 function getTemplatesDir(): string {
@@ -22,29 +22,11 @@ function readTemplate(templatePath: string): string {
 
 function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, boolean>): string {
   const perms: string[] = [
-    'Bash(make test:*)',
-    'Bash(make test-unit:*)',
-    'Bash(make test-coverage:*)',
-    'Bash(make quality:*)',
-    'Bash(make quality-fix:*)',
-    'Bash(make lint:*)',
-    'Bash(make format:*)',
-    'Bash(make check:*)',
-    'Bash(make fix:*)',
-    'Bash(make doctor:*)',
-    'Bash(make info:*)',
-    'Bash(make validate:*)',
-    'Bash(make generate:*)',
-    'Bash(make build:*)',
-    'Bash(make clean:*)',
-    'Bash(make docs:*)',
-    'Bash(make sync:*)',
-    'Bash(make sync-preview:*)',
-    'Bash(make lang-list:*)',
     'Bash(git status:*)',
     'Bash(git diff:*)',
     'Bash(git log:*)',
     'Bash(git branch:*)',
+    'Bash(npx vyuh-dxkit:*)',
   ];
 
   // Per-language permissions — declared on each pack via
@@ -52,7 +34,6 @@ function buildSettingsJson(config: ResolvedConfig, conditions: Record<string, bo
   for (const lang of activeLanguagesFromStack(config)) {
     if (lang.permissions) perms.push(...lang.permissions);
   }
-  if (conditions.IF_INFISICAL) perms.push('Bash(make secrets-pull:*)', 'Bash(make secrets-show:*)');
   if (conditions.IF_DOCKER)
     perms.push('Bash(docker ps:*)', 'Bash(docker-compose ps:*)', 'Bash(docker-compose logs:*)');
   if (conditions.IF_GCLOUD)
@@ -317,152 +298,10 @@ export async function generate(
     }
   }
 
-  // === FULL TIER ===
-
-  if (mode === 'full') {
-    logger.header('Generating Quality & Infrastructure');
-
-    // .project/ scripts
-    const projectSrcDir = path.join(templatesDir, '.project');
-    if (fs.existsSync(projectSrcDir)) {
-      const count = copyDirectory(projectSrcDir, path.join(targetDir, '.project'), { force });
-      // Make scripts executable
-      const scriptsDir = path.join(targetDir, '.project', 'scripts');
-      if (fs.existsSync(scriptsDir)) {
-        for (const file of findFiles(scriptsDir, '.sh')) {
-          makeExecutable(file);
-        }
-        for (const file of findFiles(scriptsDir, '.py')) {
-          makeExecutable(file);
-        }
-      }
-      logger.success(`.project/ (${count} files)`);
-    }
-
-    // Makefile
-    copyStatic('Makefile', 'Makefile');
-    logger.success('Makefile');
-
-    // .ai/ directory
-    const aiSrcDir = path.join(templatesDir, '.ai');
-    if (fs.existsSync(aiSrcDir)) {
-      copyDirectory(aiSrcDir, path.join(targetDir, '.ai'), { force });
-      fs.mkdirSync(path.join(targetDir, '.ai', 'sessions'), { recursive: true });
-      logger.success('.ai/');
-    }
-
-    // Language configs (only if not already present) — declared on
-    // each pack via `LanguageSupport.templateFiles`.
-    for (const lang of activeLanguagesFromStack(config)) {
-      for (const tpl of lang.templateFiles ?? []) {
-        await writeTemplateIfMissing(tpl.template, tpl.output);
-      }
-    }
-    logger.success('Language configs (skipped existing)');
-
-    // Pre-commit config
-    const precommitTemplate = path.join(templatesDir, '.pre-commit-config.yaml.template');
-    if (fs.existsSync(precommitTemplate) && conditions.IF_PRECOMMIT) {
-      await writeTemplate('.pre-commit-config.yaml.template', '.pre-commit-config.yaml');
-      logger.success('.pre-commit-config.yaml');
-    }
-
-    // GitHub workflows
-    const ciTemplate = path.join(templatesDir, '.github', 'workflows', 'ci.yml.template');
-    if (fs.existsSync(ciTemplate)) {
-      await writeTemplate('.github/workflows/ci.yml.template', '.github/workflows/ci.yml');
-      await writeTemplate(
-        '.github/workflows/quality.yml.template',
-        '.github/workflows/quality.yml',
-      );
-      logger.success('.github/workflows/');
-    }
-
-    // .editorconfig
-    copyStatic('configs/shared/.editorconfig', '.editorconfig');
-    logger.success('.editorconfig');
-
-    // .project.yaml
-    const projectYaml = generateProjectYaml(config);
-    const yamlPath = path.join(targetDir, '.project.yaml');
-    const yamlRes = await writeFile(yamlPath, projectYaml, opts(false));
-    track(yamlPath, projectYaml, yamlRes, false);
-    logger.success('.project.yaml');
-  }
-
   // Write manifest
   const manifestContent = JSON.stringify(result.manifest, null, 2) + '\n';
   fs.mkdirSync(targetDir, { recursive: true });
   fs.writeFileSync(path.join(targetDir, '.vyuh-dxkit.json'), manifestContent, 'utf-8');
 
   return result;
-
-  // --- helper for full mode: only write config if file doesn't exist ---
-  async function writeTemplateIfMissing(templatePath: string, outputRel: string) {
-    const outputPath = path.join(targetDir, outputRel);
-    if (fs.existsSync(outputPath)) {
-      result.skipped.push(outputRel);
-      return;
-    }
-    try {
-      await writeTemplate(templatePath, outputRel);
-    } catch {
-      // Template may not exist — skip silently
-    }
-  }
-}
-
-function generateProjectYaml(config: ResolvedConfig): string {
-  const lines = [
-    `project:`,
-    `  name: "${config.projectName}"`,
-    `  description: "${config.projectDescription}"`,
-    ``,
-    `languages:`,
-  ];
-
-  // Each pack renders its own `languages:` section via
-  // `projectYamlBlock`. Iterates over ALL packs (not just active) so
-  // the YAML emits `enabled: false` for inactive packs — matches the
-  // pre-pack hardcoded shape so no .project.yaml diffs land just from
-  // this refactor.
-  const active = activeLanguagesFromStack(config);
-  for (const lang of LANGUAGES) {
-    if (!lang.projectYamlBlock) continue;
-    lines.push(lang.projectYamlBlock({ config, enabled: active.includes(lang) }));
-  }
-  // nextjs is a framework signal (10f.4: moved out of `languages` to
-  // the top-level `framework` field). The YAML block is preserved for
-  // backwards compat — readers still see `nextjs.enabled`.
-  lines.push(`  nextjs:`);
-  lines.push(`    enabled: ${config.framework === 'nextjs'}`);
-  lines.push(``);
-  lines.push(
-    `infrastructure:`,
-    `  postgres:`,
-    `    enabled: ${config.infrastructure.postgres}`,
-    `  redis:`,
-    `    enabled: ${config.infrastructure.redis}`,
-    ``,
-    `precommit: ${config.precommit}`,
-    ``,
-    `tools:`,
-    `  claude_code: true`,
-    `  github_cli: ${config.tools.ghCli}`,
-    `  docker: ${config.infrastructure.docker}`,
-    `  gcloud: ${config.tools.gcloud}`,
-    `  pulumi: ${config.tools.pulumi}`,
-    `  infisical: ${config.tools.infisical}`,
-  );
-  return lines.join('\n') + '\n';
-}
-
-function findFiles(dir: string, ext: string): string[] {
-  const results: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) results.push(...findFiles(full, ext));
-    else if (entry.name.endsWith(ext)) results.push(full);
-  }
-  return results;
 }
