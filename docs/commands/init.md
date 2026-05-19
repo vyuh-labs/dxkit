@@ -44,7 +44,7 @@ vyuh-dxkit init [options]
 | `--name <n>`              | Override the project name                                                                                                                                                                                                                                     |
 | `--no-scan`               | Skip the codebase analysis step                                                                                                                                                                                                                               |
 
-`--full` implies every `--with-*` flag.
+`--full` implies `--with-hooks` + `--with-devcontainer` + `--with-ci` + `--with-baseline-refresh`. It does NOT imply `--with-precommit-hook` (slow on large repos) or `--with-pr-review` (needs API-cost opt-in). Combine when you want both: `--full --with-precommit-hook --with-pr-review`.
 
 ## What it generates (default `--dx-only` mode)
 
