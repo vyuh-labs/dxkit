@@ -171,6 +171,93 @@ describe('classify — block-rule overrides', () => {
   });
 });
 
+describe('classify — wobble demotion via addedRequiresChangedLines', () => {
+  it('demotes an added code finding to uncertain when outside changed lines', () => {
+    // Semgrep on a large codebase occasionally finds different
+    // subsets each run. An added finding the diff didn't touch is
+    // a baseline gap, not a developer-introduced regression — demote
+    // to uncertain (warn) so guardrail stays trustworthy.
+    const ctx: ClassifyContext = {
+      kind: 'code',
+      severity: 'medium',
+      overlapsChangedLines: false,
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('uncertain');
+    expect(result.blocks).toBe(false);
+    expect(result.warns).toBe(true);
+    expect(result.reasons.some((r) => r.code === 'unchanged-lines')).toBe(true);
+  });
+
+  it('still blocks added code findings that DO overlap changed lines', () => {
+    // The developer actually wrote code on these lines — block.
+    const ctx: ClassifyContext = {
+      kind: 'code',
+      severity: 'medium',
+      overlapsChangedLines: true,
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('added');
+    expect(result.blocks).toBe(true);
+  });
+
+  it('does not demote when overlapsChangedLines is undefined (no diff context)', () => {
+    // Local hook context without a base-ref to diff against — fall
+    // back to blocking (status quo).
+    const ctx: ClassifyContext = {
+      kind: 'code',
+      severity: 'medium',
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('added');
+    expect(result.blocks).toBe(true);
+  });
+
+  it('does not demote kinds outside addedRequiresChangedLines', () => {
+    // Secrets stay block-on-add regardless of diff overlap — even
+    // a pre-existing secret that wasn't in the baseline should
+    // block (rotate the credential, then unblock).
+    const ctx: ClassifyContext = {
+      kind: 'secret',
+      severity: 'high',
+      overlapsChangedLines: false,
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('added');
+    expect(result.blocks).toBe(true);
+  });
+
+  it('respects a custom addedRequiresChangedLines list', () => {
+    // Customer who wants stricter behavior can clear the list and
+    // block on every added finding regardless of diff overlap.
+    const strict: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      addedRequiresChangedLines: [],
+    };
+    const ctx: ClassifyContext = {
+      kind: 'code',
+      severity: 'medium',
+      overlapsChangedLines: false,
+    };
+    const result = classify(pair('added'), strict, ctx);
+    expect(result.status).toBe('added');
+    expect(result.blocks).toBe(true);
+  });
+
+  it('scanner-version drift wins over wobble demotion', () => {
+    // Tooling drift is the more specific signal — when both apply,
+    // classify as tooling_drift not uncertain.
+    const ctx: ClassifyContext = {
+      kind: 'code',
+      severity: 'medium',
+      overlapsChangedLines: false,
+      scannerVersionDiffers: true,
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('tooling_drift');
+  });
+});
+
 describe('classify — custom policy', () => {
   it('respects a permissive policy that blocks nothing', () => {
     const permissive: BrownfieldPolicy = {
@@ -179,6 +266,7 @@ describe('classify — custom policy', () => {
       warn: ['added', 'tooling_drift', 'config_drift'],
       confidence: { critical: 0.5, high: 0.5, medium: 0.5, low: 0.5 },
       blockRules: {},
+      addedRequiresChangedLines: [],
     };
     const result = classify(pair('added'), permissive);
     expect(result.status).toBe('added');

@@ -30,19 +30,21 @@ the compiled-in defaults apply.
     "newHighReachableDependencyVulnerability": true,
     "newUntestedChangedSource": true,
     "newSevereQualityIssueInChangedFiles": true
-  }
+  },
+  "addedRequiresChangedLines": ["code", "hygiene"]
 }
 ```
 
 ## Shape
 
-| Key          | Type           | Effect                                                                                                         |
-| ------------ | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `mode`       | `"brownfield"` | Always `brownfield` in 2.5.0. Reserved for future greenfield-strict modes.                                     |
-| `block`      | `string[]`     | Finding statuses that fail the guardrail check (exit code 1).                                                  |
-| `warn`       | `string[]`     | Statuses that print a warning but don't fail.                                                                  |
-| `confidence` | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`. |
-| `blockRules` | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.        |
+| Key                         | Type           | Effect                                                                                                                                                                             |
+| --------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | `"brownfield"` | Always `brownfield` in 2.5.0. Reserved for future greenfield-strict modes.                                                                                                         |
+| `block`                     | `string[]`     | Finding statuses that fail the guardrail check (exit code 1).                                                                                                                      |
+| `warn`                      | `string[]`     | Statuses that print a warning but don't fail.                                                                                                                                      |
+| `confidence`                | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`.                                                                     |
+| `blockRules`                | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.                                                                            |
+| `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn). |
 
 ## Finding statuses
 
@@ -97,6 +99,25 @@ of confidence" policy lines. Set any flag to `false` to suppress.
 {
   "confidence": { "critical": 0.85, "high": 0.85, "medium": 0.85, "low": 0.95 }
 }
+```
+
+### Block every `added` finding regardless of diff overlap
+
+The default policy demotes `added` `code` / `hygiene` findings to
+`uncertain` (warn) when they sit outside lines changed by the current
+diff — to suppress upstream scanner-wobble false positives. To restore
+strict blocking on every `added` finding (useful when you control
+scanner versions tightly and want maximum signal):
+
+```json
+{ "addedRequiresChangedLines": [] }
+```
+
+To extend the demotion to other wobble-prone kinds (`duplication` is
+the most common candidate beyond `code` / `hygiene`):
+
+```json
+{ "addedRequiresChangedLines": ["code", "hygiene", "duplication"] }
 ```
 
 ## Loading order

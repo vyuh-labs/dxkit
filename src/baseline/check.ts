@@ -330,6 +330,8 @@ function resolvePolicy(policyPath: string | undefined, cwd: string): BrownfieldP
     blockRules: { ...DEFAULT_BROWNFIELD_POLICY.blockRules, ...(obj.blockRules ?? {}) },
     block: obj.block ?? DEFAULT_BROWNFIELD_POLICY.block,
     warn: obj.warn ?? DEFAULT_BROWNFIELD_POLICY.warn,
+    addedRequiresChangedLines:
+      obj.addedRequiresChangedLines ?? DEFAULT_BROWNFIELD_POLICY.addedRequiresChangedLines,
     mode: 'brownfield',
   };
 }
