@@ -23,15 +23,29 @@ echo "==> dxkit post-create starting in $(pwd)"
 # annoying but shouldn't take down the rest of the post-create. The
 # user can re-run `npm install` after authenticating or fixing the
 # lockfile.
+#
+# The fallback chain layers three install strategies before giving up:
+#
+#   1. `npm ci` (lockfile path only) — strict, fast, uses the lockfile
+#      verbatim. Happy path on a healthy tree.
+#   2. `npm install` — looser; rebuilds lockfile entries if the
+#      lockfile drifted (lockfile vs package.json mismatch after a
+#      merge, for example).
+#   3. `npm install --legacy-peer-deps` — last resort. npm v7+ defaults
+#      to strict peer-dep resolution; brownfield monorepos almost
+#      always carry unresolved peers (eslint 8↔10, react cross-pkg
+#      peer mismatches, etc.) which fail both prior steps with
+#      multi-line ERESOLVE dumps. Legacy mode skips the peer-dep
+#      check and gets a working node_modules/.
 if [ -f package.json ]; then
   echo "==> Installing project dependencies..."
   if [ -f package-lock.json ]; then
-    npm ci || npm install || {
-      echo "WARN: project dependency install failed — re-run 'npm install' manually if needed." >&2
+    npm ci || npm install || npm install --legacy-peer-deps || {
+      echo "WARN: project dependency install failed even with --legacy-peer-deps — re-run 'npm install --legacy-peer-deps' manually after fixing the cause." >&2
     }
   else
-    npm install || {
-      echo "WARN: project dependency install failed — re-run 'npm install' manually if needed." >&2
+    npm install || npm install --legacy-peer-deps || {
+      echo "WARN: project dependency install failed even with --legacy-peer-deps — re-run 'npm install --legacy-peer-deps' manually after fixing the cause." >&2
     }
   fi
 fi
