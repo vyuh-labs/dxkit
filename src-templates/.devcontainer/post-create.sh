@@ -17,15 +17,22 @@ set -euo pipefail
 
 echo "==> dxkit post-create starting in $(pwd)"
 
-# Install project dependencies if this is a Node project. Soft-fail on
-# `npm ci` (lockfile out of sync, peer-dep changes, etc.) and fall back
-# to a regular install so the rest of the post-create still runs.
+# Install project dependencies if this is a Node project. Soft-fail
+# the whole step: a lockfile that won't resolve (tarball moved,
+# private-registry auth not configured yet, peer-dep churn) is
+# annoying but shouldn't take down the rest of the post-create. The
+# user can re-run `npm install` after authenticating or fixing the
+# lockfile.
 if [ -f package.json ]; then
   echo "==> Installing project dependencies..."
   if [ -f package-lock.json ]; then
-    npm ci || npm install
+    npm ci || npm install || {
+      echo "WARN: project dependency install failed — re-run 'npm install' manually if needed." >&2
+    }
   else
-    npm install
+    npm install || {
+      echo "WARN: project dependency install failed — re-run 'npm install' manually if needed." >&2
+    }
   fi
 fi
 
