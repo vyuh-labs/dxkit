@@ -5,84 +5,76 @@ description: Build code, compile binaries, install dependencies, clean artifacts
 
 # Build
 
-## Commands
-- `make build` - Build all services
-- `make clean` - Remove build artifacts (bin/, pyc, coverage, tmp/)
-- `make dev` - Start all services (docker-compose up)
-- `make stop` - Stop all services (docker-compose down)
-
 {{#IF_PYTHON}}
-## Python Build
+## Python
 
-Python services use editable installs:
+Editable installs for development:
 ```bash
-pip install -e services/python/<service-name>/
+pip install -e <package-dir>/
 ```
 
 Build checks:
 - Syntax: `python3 -m py_compile <file>`
 - Types: `mypy src/`
-- Package: `python3 -m build` (if pyproject.toml has build-system)
+- Package: `python3 -m build` (if `pyproject.toml` has `build-system`)
 {{/IF_PYTHON}}
 
 {{#IF_GO}}
-## Go Build
+## Go
 
-Go services compile to `bin/`:
 ```bash
-go build -o bin/<service-name> ./services/go/<service-name>/
+go build ./...           # build everything
+go build -o bin/<name>   # build a specific binary to bin/
 ```
 
 Build flags:
 - `CGO_ENABLED=0` for static binaries (container-friendly)
-- `-ldflags="-s -w"` to strip debug info (smaller binary)
+- `-ldflags="-s -w"` to strip debug info
 - `GOOS=linux GOARCH=amd64` for cross-compilation
 {{/IF_GO}}
 
 {{#IF_NODE}}
-## Node.js Build
+## Node.js
 
 ```bash
-npm install          # install dependencies
-npm run build        # compile TypeScript / bundle
+npm install              # install dependencies
+npm run build            # compile TypeScript / bundle
 ```
 {{/IF_NODE}}
 
 {{#IF_NEXTJS}}
-## Next.js Build
+## Next.js
 
 ```bash
 cd frontend
 npm install
-npm run build        # production build (checks for errors)
-npm run dev          # development server
+npm run build            # production build (catches TS + import errors)
+npm run dev              # development server
 ```
-
-The build step catches TypeScript errors and missing imports — run it before deploying.
 {{/IF_NEXTJS}}
 
 {{#IF_RUST}}
-## Rust Build
+## Rust
 
 ```bash
-cargo build              # debug build
-cargo build --release    # optimized build
+cargo build              # debug
+cargo build --release    # optimized
 ```
 {{/IF_RUST}}
 
 {{#IF_CSHARP}}
-## C# Build
+## C#
 
 ```bash
-dotnet restore                       # restore NuGet packages
-dotnet build                         # debug build
-dotnet build --configuration Release # release build
+dotnet restore                       # NuGet packages
+dotnet build                         # debug
+dotnet build --configuration Release # release
 dotnet publish -c Release -o out/    # publish for deployment
 ```
 {{/IF_CSHARP}}
 
 {{#IF_DOCKER}}
-## Docker Build
+## Docker
 
 ```bash
 docker-compose build              # build all services

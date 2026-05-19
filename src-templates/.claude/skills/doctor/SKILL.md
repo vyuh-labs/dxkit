@@ -3,52 +3,29 @@ name: doctor
 description: Diagnose and fix development environment issues. Use when setup fails, tools are missing, the environment is broken, or something is misconfigured.
 ---
 
-# Doctor & Setup
+# Doctor
 
-## Commands
-- `make doctor` - Diagnose common setup issues (checks files, toolchains, config)
-- `make setup` - Interactive setup for new developers
-- `make info` - Show project configuration dashboard
-- `make config` - Interactive configuration editor
+## Diagnose
 
-## What Doctor Checks
-1. Core files (`.project.yaml`, `Makefile`, `.project/`)
-2. YAML syntax validation
-3. Language toolchain versions (Python, Go, Node, Rust)
-4. Quality tools installation (linters, formatters)
-5. Pre-commit hook configuration
-6. Git configuration
-7. Docker/Docker Compose availability
-8. Service health (if infrastructure enabled)
+Walk through this checklist when something feels off:
 
-## Common Issues & Fixes
+1. **Git**: `git --version`, working tree clean?
+2. **Language toolchains** (only for languages present in this repo):
+   - Node: `node --version` / `npm --version`; `node_modules/` populated?
+   - Python: `python3 --version`; virtual env activated? deps installed?
+   - Go: `go version`; modules downloaded?
+   - .NET: `dotnet --version`
+   - Rust: `rustc --version` / `cargo --version`
+3. **Docker** (if `docker-compose.yml` present): `docker --version`; daemon running?
+4. **dxkit health**: `npx vyuh-dxkit doctor` — verifies dxkit-managed tools (gitleaks, semgrep, cloc, etc.) and the `.claude/` install
+5. **Hooks active**: `git config core.hooksPath` should report `.githooks` if hooks are installed
 
-### Missing tools
-```bash
-make doctor    # identify what's missing
-make setup     # re-run interactive setup
-```
+## Fix
 
-### Config out of sync
-```bash
-make sync          # re-sync .project.yaml to language files
-make sync-preview  # preview changes first (dry run)
-```
-
-### Pre-commit failures
-```bash
-make fix       # auto-fix all issues
-make check     # verify everything passes
-```
-
-### Build failures after config change
-```bash
-make sync      # sync config
-make clean     # clean artifacts
-make build     # rebuild
-```
+- Missing dxkit tools: `npx vyuh-dxkit tools install`
+- Stale `node_modules/`: `rm -rf node_modules && npm install`
+- Hooks not firing: `git config core.hooksPath .githooks`
 
 ## Environment
-- DevContainer-based (see `.devcontainer/`)
-- `post-create.sh` runs automatically on container creation
-- All tools installed via devcontainer features or post-create script
+
+If the repo has `.devcontainer/`, the canonical environment is the container — open in a devcontainer-aware editor (VS Code "Reopen in Container", Codespaces) instead of fighting host-machine setup.
