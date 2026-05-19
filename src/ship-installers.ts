@@ -424,6 +424,81 @@ export function installIgnoreFiles(cwd: string, opts: InstallerOpts = {}): ShipI
   return result;
 }
 
+/**
+ * Wire `vyuh-dxkit hooks activate` into the consumer's `package.json`
+ * postinstall script so cloning + `npm install` auto-activates the
+ * dxkit hook directory. Closes the per-clone "run this one git config
+ * command" friction step that today's installHooks emits as a note.
+ *
+ * Conflict policy (mirrors the rest of the ship surface):
+ *   - No package.json → skip cleanly (Python-only / Go-only / etc.
+ *     repos use the existing manual-activation path).
+ *   - scripts.postinstall absent → write ours.
+ *   - scripts.postinstall already mentions `vyuh-dxkit hooks activate`
+ *     → skip (idempotent re-runs).
+ *   - scripts.postinstall is set to something else → leave it alone
+ *     and emit a note asking the consumer to chain. Auto-chaining
+ *     risks breaking their existing script's exit-code semantics.
+ */
+const POSTINSTALL_CMD = 'vyuh-dxkit hooks activate';
+
+export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}): ShipInstallResult {
+  const result = emptyResult();
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    // Non-Node repos (Python-only, Go-only, .NET-only, etc.) — no
+    // postinstall surface to wire into. Fall back to the existing
+    // manual note emitted by `installHooks`.
+    return result;
+  }
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(pkgPath, 'utf-8');
+  } catch {
+    return result;
+  }
+
+  type PackageJson = { scripts?: Record<string, string> } & Record<string, unknown>;
+  let pkg: PackageJson;
+  try {
+    pkg = JSON.parse(raw) as PackageJson;
+  } catch {
+    // Malformed package.json — bail rather than risk corrupting it.
+    result.notes.push(
+      `Skipped postinstall hooks-activation wire-up: ${path.relative(cwd, pkgPath)} is not valid JSON.`,
+    );
+    return result;
+  }
+
+  const existing = pkg.scripts?.postinstall;
+  if (existing && existing.includes(POSTINSTALL_CMD)) {
+    result.skipped.push('package.json (postinstall)');
+    return result;
+  }
+  if (existing && existing.trim().length > 0) {
+    // Don't auto-chain — too risky. Surface a clear note instead.
+    result.notes.push(
+      `Existing package.json scripts.postinstall preserved. To auto-activate dxkit hooks on every clone, ` +
+        `chain by hand: \`"postinstall": "${existing} && ${POSTINSTALL_CMD}"\`.`,
+    );
+    return result;
+  }
+
+  pkg.scripts = { ...(pkg.scripts ?? {}), postinstall: POSTINSTALL_CMD };
+
+  // Preserve trailing newline if the original had one — many editors
+  // and linters expect it.
+  const trailingNewline = raw.endsWith('\n') ? '\n' : '';
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailingNewline, 'utf-8');
+  result.installed.push('package.json (postinstall)');
+  result.notes.push(
+    'Wired `vyuh-dxkit hooks activate` into package.json postinstall — every clone + `npm install` ' +
+      'will activate `core.hooksPath = .githooks` automatically. (Manual one-time activation no longer needed.)',
+  );
+  return result;
+}
+
 const DXKIT_IGNORE_TEMPLATE = `# .dxkit-ignore — extra paths dxkit's analyzers should skip.
 #
 # Format: same as .gitignore (directory/, file-glob, multi-segment).

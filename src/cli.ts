@@ -26,6 +26,7 @@ import {
   installCiBaselineRefresh,
   installPrReview,
   installIgnoreFiles,
+  installHooksPostinstall,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
 import * as fs from 'fs';
@@ -122,6 +123,11 @@ function printUsage(): void {
                                [--json | --markdown]
                                  Diff current scan against the named baseline; block on net-new
                                  regressions per brownfield policy. Exit code 1 when blocked.
+    vyuh-dxkit hooks activate [path]
+                                 Idempotently set core.hooksPath = .githooks. Wired into
+                                 package.json postinstall by 'init --with-hooks' so every
+                                 clone + 'npm install' activates the dxkit hooks
+                                 automatically. Safe to run by hand; always exits 0.
 
   ${logger.bold('Init options:')}
     --dx-only                 Just .claude/ + CLAUDE.md (default)
@@ -320,6 +326,15 @@ export async function run(argv: string[]): Promise<void> {
             force: !!values.force,
             withPrecommit: wantPrecommitHook,
           }),
+        });
+        // Auto-activate hooksPath via package.json postinstall when a
+        // package.json is present. No-ops for non-Node repos. Skipping
+        // requires explicit user choice rather than a flag: customers
+        // who don't want automation can delete the line from
+        // scripts.postinstall after init.
+        shipResults.push({
+          label: 'Hooks auto-activation',
+          result: installHooksPostinstall(cwd, { force: !!values.force }),
         });
       }
       if (wantDevcontainer) {
@@ -1493,6 +1508,22 @@ export async function run(argv: string[]): Promise<void> {
 
       logger.success(`Wrote ${path.relative(cwd, outputPath)} (${buf.length} bytes)`);
       logger.dim(`Converted in ${elapsed}s · report kind: ${kind}`);
+      break;
+    }
+
+    case 'hooks': {
+      const subCommand = positionals[1];
+      if (subCommand === 'activate') {
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { runHooksActivate } = await import('./hooks-cli');
+        runHooksActivate(targetPath);
+        break;
+      }
+      logger.fail(
+        `Unknown hooks subcommand: ${subCommand ?? '(missing)'}. ` +
+          `Available: vyuh-dxkit hooks activate [path]`,
+      );
+      process.exit(1);
       break;
     }
 
