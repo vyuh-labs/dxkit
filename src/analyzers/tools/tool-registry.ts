@@ -88,6 +88,18 @@ export interface ToolDefinition extends ToolRequirement {
   };
   /** Command that prints version info (used to verify tool works). */
   versionCheck?: string;
+  /**
+   * Optional applicability gate. Returns a short human-readable reason
+   * string when the tool is NOT applicable to the project at `cwd`
+   * (e.g. `@vitest/coverage-v8` on a mocha-based repo). Returns null
+   * when the tool IS applicable — detection then proceeds normally.
+   *
+   * The gate runs BEFORE binary/probe lookup so non-applicable tools
+   * never get reported as "missing." The CLI surfaces them as "n/a"
+   * with the reason string and excludes them from missing-count math
+   * so customers don't chase a non-fixable warning.
+   */
+  applicabilityGuard?: (cwd: string) => string | null;
 }
 
 export interface ToolStatus {
@@ -95,8 +107,14 @@ export interface ToolStatus {
   available: boolean;
   path: string | null;
   version: string | null;
-  source: 'path' | 'brew' | 'npm-g' | 'pipx' | 'cargo' | 'go' | 'probe' | 'missing';
+  source: 'path' | 'brew' | 'npm-g' | 'pipx' | 'cargo' | 'go' | 'probe' | 'missing' | 'n/a';
   requirement: ToolDefinition;
+  /**
+   * Populated when `source === 'n/a'`. Carries the reason from the
+   * applicabilityGuard so renderers can show e.g. "no vitest in this
+   * repo" alongside the n/a status.
+   */
+  notApplicableReason?: string;
 }
 
 /**
@@ -273,6 +291,24 @@ function findGraphifyPython(cwd: string): string | null {
  * Returns the first matching absolute path, or null.
  */
 export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
+  // Applicability gate runs first. Non-applicable tools (e.g.
+  // vitest-coverage on a mocha repo) get an explicit "n/a" status so
+  // they never inflate the missing-count.
+  if (def.applicabilityGuard) {
+    const reason = def.applicabilityGuard(cwd || process.cwd());
+    if (reason) {
+      return {
+        name: def.name,
+        available: false,
+        path: null,
+        version: null,
+        source: 'n/a',
+        requirement: def,
+        notApplicableReason: reason,
+      };
+    }
+  }
+
   // Special case: graphify is a Python module, not a binary
   if (def.name === 'graphify') {
     const pyPath = findGraphifyPython(cwd || process.cwd());
@@ -802,6 +838,15 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     installScope: 'project-local',
     binaries: [],
     nodePackage: '@vitest/coverage-v8',
+    // Non-applicable on mocha/jest/ava-only repos: the V8 coverage
+    // provider is a peer of vitest itself, so installing it without
+    // vitest just adds dead weight and makes `tools list` report a
+    // misleading "missing" entry. Guard against that by checking for
+    // vitest in the consumer's tree first.
+    applicabilityGuard: (cwd) =>
+      fs.existsSync(path.join(cwd, 'node_modules', 'vitest', 'package.json'))
+        ? null
+        : 'no vitest in this repo',
     // Version auto-detect via `require('vitest/package.json')` assumed
     // vitest was present in the target repo. Repos using mocha/jest/ava
     // hit a MODULE_NOT_FOUND crash (pre-2.3.1 failure mode). Gate with
