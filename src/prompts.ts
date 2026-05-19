@@ -35,10 +35,6 @@ export async function promptForConfig(
         ...detected,
         projectName: options.name || detected.projectName,
         coverageThreshold: DEFAULT_COVERAGE,
-        precommit: true,
-        qualityChecks: true,
-        aiSessions: true,
-        aiPrompts: true,
         claudeCode: true,
       },
       mode: options.detect ? 'dx-only' : 'full',
@@ -84,10 +80,8 @@ export async function promptForConfig(
     const mode: GenerationMode = includeFull ? 'full' : 'dx-only';
 
     let coverageThreshold = DEFAULT_COVERAGE;
-    let precommit = true;
     if (includeFull) {
       coverageThreshold = await ask(rl, 'Coverage threshold?', DEFAULT_COVERAGE);
-      precommit = await confirm(rl, 'Enable pre-commit hooks?', true);
     }
 
     return {
@@ -95,10 +89,6 @@ export async function promptForConfig(
         ...detected,
         projectName,
         coverageThreshold,
-        precommit,
-        qualityChecks: includeFull,
-        aiSessions: true,
-        aiPrompts: true,
         claudeCode: true,
       },
       mode,

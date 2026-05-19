@@ -162,7 +162,7 @@ export async function runDoctor(cwd: string): Promise<void> {
   // Toolchain CLIs — pack-driven via `LanguageSupport.cliBinaries`.
   // These are informational (a missing toolchain just disables that
   // language's analyzers — the rest of dxkit keeps working).
-  if (manifest) {
+  if (manifest?.config?.languages) {
     console.log(''); // slop-ok
     logger.info('Claude Code DX — toolchains:');
     for (const lang of activeLanguagesFromStack(manifest.config)) {
@@ -170,10 +170,10 @@ export async function runDoctor(cwd: string): Promise<void> {
         trackDx(checkInfo(bin, commandAvailable(bin)));
       }
     }
-    if (manifest.config.tools.gcloud) {
+    if (manifest.config.tools?.gcloud) {
       trackDx(checkInfo('gcloud', commandAvailable('gcloud')));
     }
-    if (manifest.config.tools.infisical) {
+    if (manifest.config.tools?.infisical) {
       trackDx(checkInfo('infisical', commandAvailable('infisical')));
     }
   }
