@@ -12,13 +12,13 @@ tools it drives, run your first report.
 
 Capture today's findings as a baseline; every PR after that is diffed
 against the baseline so new regressions block while existing debt is
-allowed to remain. Wire it into pre-commit, pre-push, and a GitHub
-Actions PR-gate in one command.
+allowed to remain. Wire it into pre-push and a GitHub Actions PR-gate
+in one command (pre-commit is opt-in via `--with-precommit-hook`).
 
 ```bash
-vyuh-dxkit init --full          # hooks + devcontainer + CI + baseline-refresh
+vyuh-dxkit init --full          # pre-push + devcontainer + CI + baseline-refresh
 vyuh-dxkit baseline create      # capture today's state
-git config core.hooksPath .githooks   # activate hooks
+git config core.hooksPath .githooks   # activate hooks (per-clone)
 ```
 
 | Command                                         | What it does                                                   |

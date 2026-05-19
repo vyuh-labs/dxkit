@@ -58,7 +58,8 @@ npx @vyuhlabs/dxkit@latest init --full
                       toolchains, dxkit's scanner toolchain auto-
                       installed, install scripts for AI agent CLIs
                       (auth stays user-owned).
-.githooks/            pre-commit + pre-push guardrail hooks.
+.githooks/            pre-push guardrail hook (pre-commit opt-in
+                      via --with-precommit-hook).
 .github/workflows/    PR-gate workflow + post-merge baseline-refresh
                       workflow (refresh runs only after the PR-gate
                       passes — see "Safety + trust" below).
@@ -81,12 +82,22 @@ git commit -m "chore: enable dxkit guardrails"
 
 From this point:
 
-- Every commit runs a fast guardrail check over what you just touched.
-- Every push runs the full guardrail check.
+- Every push runs the full guardrail check (pre-commit hook is
+  opt-in via `--with-precommit-hook` — slow on large repos until
+  scoped incremental scanning lands).
 - Every PR is gated by GitHub Actions, which posts a markdown summary
   as a comment.
 - After the PR-gate workflow passes and the PR merges, the baseline
   is refreshed so the next PR is gated against the up-to-date state.
+
+Bypass + disable mechanisms:
+
+```bash
+DXKIT_SKIP_HOOKS=1 git push ...      # one-off bypass
+git push --no-verify ...             # standard git bypass
+git config --unset core.hooksPath    # disable all dxkit hooks (per-clone)
+rm .githooks/pre-commit              # disable just pre-commit (keep pre-push)
+```
 
 > **Additive by default.** Existing hooks, devcontainer, or workflows
 > are never destroyed. dxkit detects them and writes sidecar `.dxkit`
@@ -168,7 +179,8 @@ vyuh-dxkit guardrail check --changed-only
 À la carte if you only want specific pieces:
 
 ```bash
-vyuh-dxkit init --with-hooks              # just the git hooks
+vyuh-dxkit init --with-hooks              # just the pre-push hook (default for hooks)
+vyuh-dxkit init --with-precommit-hook     # add the pre-commit hook (opt-in; slow on large repos)
 vyuh-dxkit init --with-devcontainer       # just the devcontainer
 vyuh-dxkit init --with-ci                 # just the PR-gate workflow
 vyuh-dxkit init --with-baseline-refresh   # just the auto-refresh
@@ -404,7 +416,7 @@ dxkit is local-first.
 - [x] Per-finding fingerprinting + git-aware matching
 - [x] Baseline + guardrail commands
 - [x] Brownfield policy classifier
-- [x] Git hooks (pre-commit, pre-push)
+- [x] Git hooks (pre-push default; pre-commit opt-in)
 - [x] GitHub Actions PR-gate + gated baseline-refresh workflows
 - [x] Devcontainer with pinned toolchains
 - [ ] First-class scaffolding for every major coding agent —

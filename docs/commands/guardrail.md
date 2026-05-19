@@ -85,20 +85,53 @@ vyuh-dxkit guardrail check  # auto-discovers .dxkit/policy.json
 
 ## Hooks
 
-`dxkit init --with-hooks` installs `.githooks/pre-commit` (fast-mode,
-`--changed-only`) and `.githooks/pre-push` (full check). Both honor
-two escape hatches:
+### What gets installed
 
-- `DXKIT_SKIP_HOOKS=1 git <cmd>` — one-off bypass
-- `git <cmd> --no-verify` — standard git bypass
+| Flag                                    | Hook                   | When it fires      | Scope                                                                                  | Wall-clock                                                             |
+| --------------------------------------- | ---------------------- | ------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | full guardrail (every regression since baseline)                                       | scales with repo size (~3 min on a 500-file repo)                      |
+| `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `--changed-only` (just lines you touched) — but the underlying scan is still full-repo | same as pre-push today; incremental-scope work lands in a future phase |
 
-Override the baseline name via `DXKIT_BASELINE_NAME=<n>`.
+The pre-commit hook is **opt-in** because re-running every analyzer on every commit is slow on large codebases. Pre-push amortises the same cost across the batch of commits in a push; CI runs the same check server-side as an unbypassable backstop. Customers on small/fast repos who want commit-time gating can opt in.
 
-Activate the hooks after install:
+### Activate (one-time per clone)
 
 ```bash
 git config core.hooksPath .githooks
 ```
+
+This is a per-clone setting — each developer who clones the repo runs it once. The hook files themselves are committed (under `.githooks/`), so the team-wide enforcement story is "files in repo + each dev activates locally + CI as the safety net."
+
+### Switch pre-commit on or off later
+
+After init, the on/off decision is just file presence:
+
+```bash
+# Turn pre-commit ON (re-run init with the flag, or copy the template manually)
+vyuh-dxkit init --with-precommit-hook --force
+
+# Turn pre-commit OFF (delete the hook file — pre-push stays active)
+rm .githooks/pre-commit
+
+# Turn ALL dxkit hooks off (unset the hooksPath; team unaffected — they keep theirs activated locally)
+git config --unset core.hooksPath
+```
+
+### One-off bypass mechanisms
+
+| Bypass                         | Effect                                                       |
+| ------------------------------ | ------------------------------------------------------------ |
+| `DXKIT_SKIP_HOOKS=1 git <cmd>` | dxkit-specific bypass (clearer audit trail in shell history) |
+| `git <cmd> --no-verify`        | standard git bypass (skips ALL git hooks, not just dxkit's)  |
+| `DXKIT_BASELINE_NAME=<n>`      | switch which baseline file the hook checks against           |
+
+### Existing hooks (additive install)
+
+If `.githooks/<name>` or `.husky/<name>` already exists, the dxkit hook lands as `.githooks/<name>.dxkit` instead. Chain by adding `sh .githooks/<name>.dxkit` to the existing hook. `--force` overrides.
+
+### Local hooks are bypassable — CI is the enforcement layer
+
+Any local bypass (`--no-verify`, `DXKIT_SKIP_HOOKS`, missing `core.hooksPath`) is just convenience for the developer. The CI PR-gate workflow (`--with-ci`) runs the same check server-side; set it as a required check in branch protection so a bypassed commit can't merge without the guardrail passing.
 
 ## CI
 
