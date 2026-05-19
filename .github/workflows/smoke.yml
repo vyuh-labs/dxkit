@@ -16,8 +16,13 @@ name: smoke tests
 
 on:
   pull_request:
+    # Include `labeled` so a `smoke:devcontainer` label added after the
+    # PR was opened actually re-triggers the workflow. The default
+    # activity types (opened, synchronize, reopened) miss this case.
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, 'release/**']
+  workflow_dispatch:
 
 permissions:
   contents: read
