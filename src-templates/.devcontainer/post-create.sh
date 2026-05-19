@@ -4,52 +4,57 @@
 # (and again on Codespaces prebuild). Idempotent — safe to re-run.
 #
 # Responsibilities:
-#   1. Install dxkit itself.
-#   2. Install dxkit's scanner toolchain (gitleaks, semgrep, cloc, etc.)
+#   1. Install project dependencies if this is a Node project.
+#   2. Ensure dxkit is on PATH (project-local first, global fallback).
+#   3. Install dxkit's scanner toolchain (gitleaks, semgrep, cloc, etc.)
 #      via the TOOL_DEFS registry — pinned versions, language-aware.
-#   3. Install the AI coding-agent CLIs (Claude Code, Codex) for the
-#      AI-native dev loop.
+#   4. Install the AI coding-agent CLIs for the AI-native dev loop.
+#
+# Run from the repo root — the devcontainer's workspaceFolder is set
+# by `devcontainer.json` so the post-create command starts there.
 
 set -euo pipefail
 
-echo "==> dxkit post-create starting..."
+echo "==> dxkit post-create starting in $(pwd)"
 
-# Install dxkit. Local-first: if the project pins dxkit in
-# devDependencies (recommended), `npm ci` already brought it in.
-# Otherwise install the latest published release globally so the
-# binary is on PATH for any subshell.
-if [ -f /workspaces/*/package.json ] 2>/dev/null; then
-  WORKSPACE=$(find /workspaces -mindepth 1 -maxdepth 1 -type d | head -n1)
-  cd "${WORKSPACE}"
+# Install project dependencies if this is a Node project. Soft-fail on
+# `npm ci` (lockfile out of sync, peer-dep changes, etc.) and fall back
+# to a regular install so the rest of the post-create still runs.
+if [ -f package.json ]; then
+  echo "==> Installing project dependencies..."
   if [ -f package-lock.json ]; then
-    npm ci
-  elif [ -f package.json ]; then
+    npm ci || npm install
+  else
     npm install
   fi
 fi
 
-if ! command -v vyuh-dxkit >/dev/null 2>&1 \
-  && [ ! -x ./node_modules/.bin/vyuh-dxkit ]; then
-  echo "==> Installing @vyuhlabs/dxkit globally..."
-  npm install -g @vyuhlabs/dxkit
-fi
-
-# Resolve the binary for subsequent calls.
+# Resolve dxkit. Prefer the project-local install if a `package.json`
+# pinned dxkit in devDependencies; otherwise install globally so the
+# binary is on PATH for the rest of the script and any subshell.
 if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
   DXKIT="./node_modules/.bin/vyuh-dxkit"
+elif command -v vyuh-dxkit >/dev/null 2>&1; then
+  DXKIT="vyuh-dxkit"
 else
+  echo "==> Installing @vyuhlabs/dxkit globally..."
+  npm install -g @vyuhlabs/dxkit
   DXKIT="vyuh-dxkit"
 fi
+echo "==> Using dxkit binary: ${DXKIT}"
 
 echo "==> Installing scanner toolchain via dxkit registry..."
 # `tools install --yes` reads the detector's required-tools list and
 # runs the pinned install command for each one. Tools already present
-# are no-ops, so this is fast on warm containers.
+# are no-ops, so this is fast on warm containers. Soft-fail so a
+# single tool's install hiccup doesn't break the whole container.
 "${DXKIT}" tools install --yes || {
   echo "WARN: some scanner tools failed to install — run 'vyuh-dxkit tools list' to see status." >&2
 }
 
 echo "==> Installing AI coding-agent CLIs..."
-bash "$(dirname "$0")/install-agent-clis.sh"
+bash "$(dirname "$0")/install-agent-clis.sh" || {
+  echo "WARN: agent CLI install had issues — install manually if needed." >&2
+}
 
 echo "==> dxkit post-create done. Run 'vyuh-dxkit health' to verify."
