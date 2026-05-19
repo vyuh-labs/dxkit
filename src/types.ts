@@ -100,10 +100,6 @@ export interface DetectedStack {
 
 export interface ResolvedConfig extends DetectedStack {
   coverageThreshold: string;
-  precommit: boolean;
-  qualityChecks: boolean;
-  aiSessions: boolean;
-  aiPrompts: boolean;
   claudeCode: boolean;
 }
 

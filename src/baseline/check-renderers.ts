@@ -189,7 +189,7 @@ function formatDrift(drift: EnvelopeDrift): string[] {
   if (drift.toolchainHashChanged) out.push('toolchainHash changed');
   if (drift.policyHashChanged) out.push('policy hash changed');
   if (drift.ignoreHashChanged) out.push('.dxkit-ignore changed');
-  if (drift.configHashChanged) out.push('.vyuh-dxkit.json or .project.yaml changed');
+  if (drift.configHashChanged) out.push('.vyuh-dxkit.json changed');
   for (const d of drift.toolVersionDiffs) {
     out.push(
       `tool drift: ${d.tool} ${d.baselineVersion ?? '(absent)'} → ${d.currentVersion ?? '(absent)'}`,

@@ -325,8 +325,7 @@ export interface LanguageSupport {
   /**
    * Default language version surfaced in `DEFAULT_VERSIONS` (e.g. '3.12'
    * for Python, '20' for Node). Plumbed into template variables as
-   * `<KEY>_VERSION` (uppercased `versionKey`) and into `.project.yaml`'s
-   * `version:` field for inactive packs.
+   * `<KEY>_VERSION` (uppercased `versionKey`).
    */
   defaultVersion?: string;
 

@@ -3,7 +3,6 @@ import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig } from './prompts';
-import { hasProjectYaml, readProjectYaml } from './project-yaml';
 import { runUpdate } from './update';
 import { runDoctor } from './doctor';
 import { VERSION } from './constants';
@@ -250,70 +249,39 @@ export async function run(argv: string[]): Promise<void> {
     case 'init': {
       logger.header('vyuh-dxkit init');
 
-      let config;
-      let finalMode: GenerationMode = values.full ? 'full' : 'dx-only';
+      logger.info('Detecting stack...');
+      const detected = detect(cwd);
+      const langs = Object.entries(detected.languages)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      const tools = Object.entries(detected.tools)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
 
-      // If .project.yaml exists (written by create-devstack), try using it as config source
-      if (hasProjectYaml(cwd)) {
-        const yamlConfig = readProjectYaml(cwd);
-
-        if (yamlConfig) {
-          logger.info('Found .project.yaml — using as config source.');
-          config = yamlConfig;
-
-          const langs = Object.entries(config.languages)
-            .filter(([, v]) => v)
-            .map(([k]) => k);
-          const tools = Object.entries(config.tools)
-            .filter(([, v]) => v)
-            .map(([k]) => k);
-
-          if (langs.length) logger.success(`Languages: ${langs.join(', ')}`);
-          if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
-          console.log('');
-
-          // .project.yaml implies full mode (create-devstack handles the wizard)
-          finalMode = values['dx-only'] ? 'dx-only' : 'full';
-        } else {
-          logger.warn('Found .project.yaml but it is malformed — falling back to detection.');
-        }
+      if (langs.length === 0) {
+        logger.warn('No languages detected. Generating with minimal config.');
+      } else {
+        logger.success(`Languages: ${langs.join(', ')}`);
       }
+      if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
+      if (detected.framework) logger.success(`Framework: ${detected.framework}`);
+      if (detected.testRunner)
+        logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);
+      console.log(''); // slop-ok
 
-      if (!config) {
-        // No .project.yaml — detect stack and prompt as before
-        logger.info('Detecting stack...');
-        const detected = detect(cwd);
-        const langs = Object.entries(detected.languages)
-          .filter(([, v]) => v)
-          .map(([k]) => k);
-        const tools = Object.entries(detected.tools)
-          .filter(([, v]) => v)
-          .map(([k]) => k);
+      const promptOpts = {
+        yes: !!(values.yes || values.detect),
+        detect: !!values.detect,
+        name: values.name as string | undefined,
+      };
+      const promptResult = await promptForConfig(detected, promptOpts);
+      const config = promptResult.config;
 
-        if (langs.length === 0) {
-          logger.warn('No languages detected. Generating with minimal config.');
-        } else {
-          logger.success(`Languages: ${langs.join(', ')}`);
-        }
-        if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
-        if (detected.framework) logger.success(`Framework: ${detected.framework}`);
-        if (detected.testRunner)
-          logger.success(
-            `Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`,
-          );
-        console.log('');
-
-        // Resolve config via prompts
-        const promptOpts = {
-          yes: !!(values.yes || values.detect),
-          detect: !!values.detect,
-          name: values.name as string | undefined,
-        };
-        const result = await promptForConfig(detected, promptOpts);
-        config = result.config;
-
-        finalMode = values.full ? 'full' : values['dx-only'] ? 'dx-only' : result.mode;
-      }
+      const finalMode: GenerationMode = values.full
+        ? 'full'
+        : values['dx-only']
+          ? 'dx-only'
+          : promptResult.mode;
       const result = await generate(cwd, config, finalMode, !!values.force, !!values['no-scan']);
 
       // Phase Ship installers (additive). `--full` implies every flag

@@ -32,10 +32,6 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   const config = {
     ...detected,
     coverageThreshold: manifest.config.coverageThreshold,
-    precommit: manifest.config.precommit,
-    qualityChecks: manifest.config.qualityChecks,
-    aiSessions: manifest.config.aiSessions,
-    aiPrompts: manifest.config.aiPrompts,
     claudeCode: manifest.config.claudeCode,
   };
 

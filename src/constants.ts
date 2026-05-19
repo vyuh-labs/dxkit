@@ -117,10 +117,6 @@ export function buildConditions(config: ResolvedConfig): Record<string, boolean>
     IF_INFISICAL: config.tools.infisical,
     IF_GH_CLI: config.tools.ghCli,
     IF_CLAUDE_CODE: config.claudeCode,
-    IF_QUALITY_CHECKS: config.qualityChecks,
     IF_COVERAGE_ENABLED: parseInt(config.coverageThreshold || DEFAULT_COVERAGE) > 0,
-    IF_PRECOMMIT: config.precommit,
-    IF_AI_SESSIONS: config.aiSessions,
-    IF_AI_PROMPTS: config.aiPrompts,
   };
 }

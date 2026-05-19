@@ -114,11 +114,7 @@ function readRepoState(cwd: string): { commitSha: string; branch: string } {
 function buildAnalysisMeta(cwd: string): BaselineAnalysisMeta {
   const policyHash = hashContent(JSON.stringify(DEFAULT_BROWNFIELD_POLICY));
   const ignoreHash = hashContent(readOptionalFile(path.join(cwd, '.dxkit-ignore')));
-  const configHash = hashContent(
-    readOptionalFile(path.join(cwd, '.vyuh-dxkit.json')) +
-      '\n' +
-      readOptionalFile(path.join(cwd, '.project.yaml')),
-  );
+  const configHash = hashContent(readOptionalFile(path.join(cwd, '.vyuh-dxkit.json')));
   // toolchainHash is filled in by `createBaseline` once the
   // per-tool version map has been resolved (depends on the gather).
   return { dxkitVersion: DXKIT_VERSION, policyHash, ignoreHash, toolchainHash: '', configHash };
