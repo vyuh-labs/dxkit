@@ -498,8 +498,6 @@ export const java: LanguageSupport = {
 
   ruleFile: 'java.md',
 
-  templateFiles: [],
-
   // doctor checks the runtime + build tool + linter. `java` is the
   // JVM runtime PMD/JaCoCo wrappers shell into; `mvn` is the dominant
   // build tool; `pmd` is the canonical linter wired in 10k.1.3.
@@ -507,11 +505,4 @@ export const java: LanguageSupport = {
 
   // Java 17 is current LTS as of 2026-04 with very wide deployment.
   defaultVersion: '17',
-
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      `  java:`,
-      `    enabled: ${enabled}`,
-      `    version: "${config.versions['java' as keyof typeof config.versions] ?? '17'}"`,
-    ].join('\n'),
 };

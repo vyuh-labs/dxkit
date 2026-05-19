@@ -1427,15 +1427,5 @@ export const csharp: LanguageSupport = {
   ],
   ruleFile: 'csharp.md',
   defaultVersion: '8.0',
-  // No templateFiles — .csproj/.sln are project-owned, not pack-generated.
   cliBinaries: ['dotnet'],
-  projectYamlBlock: ({ config, enabled }) =>
-    [
-      `  csharp:`,
-      `    enabled: ${enabled}`,
-      `    version: "${config.versions.csharp}"`,
-      `    quality:`,
-      `      lint: true`,
-      `      format: true`,
-    ].join('\n'),
 };

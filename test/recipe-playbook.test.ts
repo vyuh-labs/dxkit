@@ -105,12 +105,9 @@ const mockPlaybookPack = {
   },
   permissions: ['Bash(mock-playbook-permission:*)'],
   ruleFile: 'playbook-mock.md',
-  templateFiles: [{ template: 'configs/playbook-mock/foo.template', output: 'foo' }],
   cliBinaries: ['playbookc-mock'],
   defaultVersion: '99.0.0',
   versionKey: 'playbook',
-  projectYamlBlock: ({ enabled }: { enabled: boolean }) =>
-    [`  playbook-mock:`, `    enabled: ${enabled}`, `    version: "99.0.0"`].join('\n'),
 } as unknown as LanguageSupport;
 
 // ─── Registry mutation ──────────────────────────────────────────────────────

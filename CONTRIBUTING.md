@@ -164,7 +164,6 @@ test/languages-<id>.test.ts            # parser-test stubs + fixture-loading hel
 test/fixtures/benchmarks/<id>/README.md # standard 5-file convention + TODO checklist
 test/fixtures/raw/<id>/HARVEST.md      # commands to capture real tool-output bytes
 src-templates/.claude/rules/<id>.md    # Claude rule file stub
-src-templates/configs/<id>/            # template-config dir + README
 ```
 
 And **updates 2 existing files**:
@@ -224,11 +223,9 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
 - **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
   `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
   `ruleFile?` (filename under `src-templates/.claude/rules/`),
-  `templateFiles?[]` (per-pack `init` scaffold templates),
   `cliBinaries[]` (commands `doctor` checks for), `defaultVersion?`,
   `versionKey?` (lookup key in `DetectedStack['versions']`; defaults
-  to `id` — only override for legacy template-name compat),
-  `projectYamlBlock?` (renders this pack's `.project.yaml` block)
+  to `id` — only override for legacy template-name compat)
 - **Lint severity** — `mapLintSeverity?(ruleId)` if your linter has
   rule IDs you can tier into critical/high/medium/low
 - **Per-pack pattern registries** (CI-enforced; the contract test
@@ -268,8 +265,8 @@ Three layers prevent recipe drift:
    registry bridge, hardcoded `<lang>.md` rule-file strings.
 2. **Pack contract tests** (`test/languages-contract.test.ts`) — fail
    when a pack omits required metadata (`permissions`, `cliBinaries`,
-   `defaultVersion`, `projectYamlBlock`) or when declared `tools[]`
-   drift from actual invocations.
+   `defaultVersion`) or when declared `tools[]` drift from actual
+   invocations.
 3. **Synthetic 6th-pack playbook** (`test/recipe-playbook.test.ts`) —
    injects a mock pack into the registry and asserts every
    pack-iterating consumer (generator, doctor, detect, project-yaml,
