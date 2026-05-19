@@ -5,28 +5,12 @@ description: Run code quality checks, linting, formatting, and auto-fixing. Use 
 
 # Code Quality
 
-## Commands
-- `make quality` - Run all quality checks (report: `tmp/reports/quality-report.md`)
-- `make quality-fix` - Auto-fix all fixable issues
-- `make lint` - Lint only
-- `make format` - Format all code
-- `make fix` - Fix + format (shorthand)
-- `make check` - Full pre-commit check (validate + quality + test)
-- `make format-check` - Check formatting without modifying
-
-## Quality Presets
-- `make quality-strict` - 90% coverage, all checks
-- `make quality-standard` - 80% coverage (default)
-- `make quality-relaxed` - 50% coverage
-- `make quality-off` - Disable checks
-- `make quality-config` - Show current settings
+Run `/quality` for the full deterministic report (lint + format + slop + duplication metrics).
 
 {{#IF_PYTHON}}
 ## Python
 
-**Tools:** ruff (lint + format), mypy (types)
-**Config:** `ruff.toml`, `pyproject.toml`
-**Script:** `.project/scripts/quality/lint-python.sh`
+**Tools**: ruff (lint + format), mypy (types)
 
 Common fixes:
 ```bash
@@ -35,16 +19,13 @@ ruff format .
 mypy src/
 ```
 
-Key ruff rules: pycodestyle (E), pyflakes (F), isort (I), mccabe (C90), bugbear (B).
-Per-file ignores configured in `ruff.toml` for tests (assertions, fixtures).
+Key ruff rule groups: pycodestyle (E), pyflakes (F), isort (I), mccabe (C90), bugbear (B).
 {{/IF_PYTHON}}
 
 {{#IF_GO}}
 ## Go
 
-**Tools:** golangci-lint (27 linters), gofmt, goimports
-**Config:** `.golangci.yml`
-**Script:** `.project/scripts/quality/lint-go.sh`
+**Tools**: golangci-lint, gofmt, goimports
 
 Common fixes:
 ```bash

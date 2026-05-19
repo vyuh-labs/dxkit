@@ -12,8 +12,8 @@ paths:
 # Pulumi (Infrastructure as Code)
 
 ## Setup
-- **Auth:** `pulumi login` (configured during `make setup`)
-- **SDK:** Installed via devcontainer post-create script
+- **Auth:** `pulumi login`
+- **SDK:** install from https://www.pulumi.com/docs/install/ (devcontainer users get it via the post-create script)
 - **Path:** `~/.pulumi/bin/pulumi`
 
 ## Core Workflow

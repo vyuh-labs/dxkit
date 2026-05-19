@@ -21,7 +21,7 @@ Explore this repository and generate a thorough understanding of:
 
 ### Phase 1: Orientation (broad scan)
 1. `Glob("**/*")` to see the directory tree
-2. Read top-level config files: `package.json`, `go.mod`, `pyproject.toml`, `*.csproj`, `Cargo.toml`, `Makefile`, `docker-compose.yml`
+2. Read top-level config files: `package.json`, `go.mod`, `pyproject.toml`, `*.csproj`, `Cargo.toml`, `Gemfile`, `pom.xml`, `build.gradle`, `docker-compose.yml`, `.devcontainer/`
 3. Read `README.md` if it exists
 4. Identify what languages, frameworks, and tools are in use
 

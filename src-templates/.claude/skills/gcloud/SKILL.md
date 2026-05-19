@@ -11,9 +11,9 @@ paths:
 # Google Cloud (gcloud)
 
 ## Setup
-- **Auth:** `gcloud auth login` (configured during `make setup`)
-- **Project:** Set in `.env` as `GOOGLE_CLOUD_PROJECT`
-- **SDK:** Installed via devcontainer post-create script
+- **Auth:** `gcloud auth login`
+- **Project:** set via `gcloud config set project <id>` or the `GOOGLE_CLOUD_PROJECT` env var
+- **SDK:** install from https://cloud.google.com/sdk (devcontainer users get it via the post-create script)
 
 ## Common Commands
 
@@ -42,12 +42,12 @@ gcloud logging read "severity>=ERROR" --limit=20 --format=json
 
 ## Integration with Secrets
 
-GCP project ID is stored in `.env`:
+GCP project ID is typically set as an environment variable:
 ```
 GOOGLE_CLOUD_PROJECT=my-project-id
 ```
 
-Use `make secrets-pull` to fetch GCP-related secrets from Infisical.
+Source it from a secret store (Infisical, Doppler, GitHub Secrets) rather than committing to `.env`.
 
 ## Security — CRITICAL
 

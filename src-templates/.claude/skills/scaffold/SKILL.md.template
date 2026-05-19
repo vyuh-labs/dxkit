@@ -5,17 +5,7 @@ description: Scaffold new code — services, packages, modules, components. Use 
 
 # Code Scaffolding
 
-## Project Structure
-- `.project.yaml` - Central config (edit via `make config`, view via `make info`)
-- `.project/` - Framework tooling and scripts
-- `.ai/` - AI session management and checkpoints
-
-## Language Management
-- `make lang-list` - Show enabled languages
-- `make lang-add LANG=<name>` - Enable a language
-- `make lang-remove LANG=<name>` - Disable a language
-- `make sync` - Sync `.project.yaml` to language config files
-- `make sync-preview` - Preview sync changes (dry run)
+Match existing layout and patterns when adding new code. Read a few neighboring files in the same area before creating new ones — naming, error handling, and test placement should look like the rest of the codebase.
 
 {{#IF_PYTHON}}
 ## Python Structure
@@ -117,7 +107,7 @@ tests/<ProjectName>.Tests/
 - xUnit + Moq for testing
 {{/IF_CSHARP}}
 
-## After Scaffolding
-1. Run `make sync` to update config files
-2. Run `make doctor` to verify setup
-3. Run `make test` to confirm everything works
+## After scaffolding
+
+1. Add tests next to the new code (mirroring how the rest of the codebase locates them)
+2. Run `/test` and `/quality` to confirm nothing regressed

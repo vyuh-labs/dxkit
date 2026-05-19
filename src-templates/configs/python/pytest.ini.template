@@ -47,7 +47,6 @@ omit =
     */test_*.py
     */__pycache__/*
     */site-packages/*
-    .project/*
 
 [coverage:report]
 exclude_lines =

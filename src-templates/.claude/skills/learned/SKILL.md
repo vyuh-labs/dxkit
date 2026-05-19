@@ -10,7 +10,7 @@ It is updated during session-end checkpoints.
 
 ## How This Works
 
-1. During `make session-end`, the checkpoint process reviews the session
+1. During `/session-end` (or anytime via `/learn`), the conversation is reviewed for learnings
 2. Any new gotchas, patterns, or conventions are appended to the reference files
 3. Over time, this becomes the most valuable skill — real failure points and patterns
 
