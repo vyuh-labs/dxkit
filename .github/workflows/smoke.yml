@@ -181,10 +181,14 @@ jobs:
           echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
 
       - name: Stage a consumer repo with --with-devcontainer
+        # Stage inside `${{ github.workspace }}/consumer/` because the
+        # devcontainers/ci action looks for the config relative to the
+        # workspace root via the `subFolder` input. A path outside the
+        # workspace (e.g. `/tmp/...`) doesn't reach it.
         run: |
           set -euo pipefail
-          mkdir -p /tmp/dxkit-dc-smoke
-          cd /tmp/dxkit-dc-smoke
+          mkdir -p "${{ github.workspace }}/consumer"
+          cd "${{ github.workspace }}/consumer"
           git init -q -b main
           echo '{"name":"dc-smoke","private":true}' > package.json
           npm install --save-dev "${{ steps.pack.outputs.tarball }}"
@@ -194,7 +198,7 @@ jobs:
       - name: Build + run devcontainer, exercise post-create
         uses: devcontainers/ci@v0.3
         with:
-          workspaceFolder: /tmp/dxkit-dc-smoke
+          subFolder: consumer
           push: never
           # Inside the container: verify the AI-agent CLIs and the
           # scanner toolchain installed successfully. Skip the CLI
