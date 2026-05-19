@@ -16,6 +16,7 @@ import {
   buildRequiredTools,
   TOOL_DEFS,
   checkAllTools,
+  findTool,
 } from '../src/analyzers/tools/tool-registry';
 
 let tmp: string;
@@ -307,5 +308,30 @@ describe('checkAllTools', () => {
       expect(s).toHaveProperty('source');
       expect(s).toHaveProperty('requirement');
     }
+  });
+});
+
+describe('findTool applicabilityGuard', () => {
+  it('marks vitest-coverage as n/a (with reason) when no vitest in this repo', () => {
+    const status = findTool(TOOL_DEFS['vitest-coverage'], tmp);
+    expect(status.available).toBe(false);
+    expect(status.source).toBe('n/a');
+    expect(status.notApplicableReason).toMatch(/vitest/i);
+  });
+
+  it('does NOT mark vitest-coverage as n/a when vitest is present in node_modules', () => {
+    // Synthesize a vitest install under node_modules so the guard
+    // passes. We're not testing the underlying nodePackage probe
+    // here, just that the guard yields control back to it — so the
+    // status MUST NOT be 'n/a' regardless of whether the coverage
+    // provider itself is installed.
+    fs.mkdirSync(path.join(tmp, 'node_modules', 'vitest'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'node_modules', 'vitest', 'package.json'),
+      JSON.stringify({ name: 'vitest', version: '1.0.0' }),
+    );
+    const status = findTool(TOOL_DEFS['vitest-coverage'], tmp);
+    expect(status.source).not.toBe('n/a');
+    expect(status.notApplicableReason).toBeUndefined();
   });
 });

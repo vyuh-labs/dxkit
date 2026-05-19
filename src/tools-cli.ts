@@ -81,13 +81,19 @@ function sortByLayer(statuses: ToolStatus[]): ToolStatus[] {
 }
 
 function formatStatusLine(s: ToolStatus): string {
-  const icon = s.available ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
   const name = s.name.padEnd(16);
   const layer = LAYER_LABEL[s.requirement.layer] || s.requirement.layer;
   const forStack = s.requirement.for.padEnd(7);
   if (s.available) {
     const src = s.source === 'path' ? '' : ` (${s.source})`;
-    return `  ${icon} ${name}  ${layer}  ${forStack}  ${logger.bold('found')}${src}`;
+    return `  \x1b[32m✓\x1b[0m ${name}  ${layer}  ${forStack}  ${logger.bold('found')}${src}`;
+  }
+  // N/A tools (applicability gate fired): show a distinct icon + the
+  // reason so users see "not for this stack" rather than "missing".
+  // These intentionally do NOT count toward the missing tally.
+  if (s.source === 'n/a') {
+    const reason = s.notApplicableReason ? ` \x1b[2m(${s.notApplicableReason})\x1b[0m` : '';
+    return `  \x1b[2m−\x1b[0m ${name}  ${layer}  ${forStack}  \x1b[2mn/a${reason ? '' : ' for this stack'}\x1b[0m${reason}`;
   }
   // Project-local tools (F-UX-3): annotate so users don't confuse a
   // missing dev-dep with a missing system tool.
@@ -95,7 +101,7 @@ function formatStatusLine(s: ToolStatus): string {
     s.requirement.installScope === 'project-local'
       ? ' \x1b[2m(project-local — `npm ci`)\x1b[0m'
       : '';
-  return `  ${icon} ${name}  ${layer}  ${forStack}  \x1b[2mmissing\x1b[0m${scopeNote}`;
+  return `  \x1b[31m✗\x1b[0m ${name}  ${layer}  ${forStack}  \x1b[2mmissing\x1b[0m${scopeNote}`;
 }
 
 /** Show tool status for the repo's detected stack. */
@@ -126,13 +132,27 @@ function showStatus(targetPath: string): ToolStatus[] {
     }
   }
 
-  const missing = statuses.filter((s) => !s.available);
+  // Split the unavailable set: truly missing (actionable) vs n/a
+  // (informational — the applicability gate excluded the tool from
+  // this stack). Missing-count math must not include n/a entries or
+  // customers see false "1/14 missing" alarms on repos that
+  // legitimately don't use the tool.
+  const missing = statuses.filter((s) => !s.available && s.source !== 'n/a');
+  const notApplicable = statuses.filter((s) => s.source === 'n/a');
   const total = statuses.length;
+  const applicable = total - notApplicable.length;
   console.log('');
   if (missing.length === 0) {
-    logger.success(`All ${total} required tools available.`);
+    if (notApplicable.length === 0) {
+      logger.success(`All ${total} required tools available.`);
+    } else {
+      logger.success(
+        `All ${applicable} applicable tools available (${notApplicable.length} n/a for this stack).`,
+      );
+    }
   } else {
-    logger.warn(`${missing.length}/${total} tools missing.`);
+    const naSuffix = notApplicable.length > 0 ? `, ${notApplicable.length} n/a` : '';
+    logger.warn(`${missing.length}/${applicable} applicable tools missing${naSuffix}.`);
     console.log('');
 
     // F-UX-3: partition missing by install scope so the hint matches
@@ -217,13 +237,34 @@ async function runInstall(
     modeLabel = 'Install missing tools';
   }
 
-  const missing = statuses.filter((s) => !s.available);
+  // Exclude n/a entries — applicability gate already determined the
+  // tool doesn't apply to this stack, so attempting an install would
+  // either no-op or pull in dead weight.
+  const missing = statuses.filter((s) => !s.available && s.source !== 'n/a');
+  const notApplicable = statuses.filter((s) => s.source === 'n/a');
+
+  // Targeted single-tool install hitting an n/a tool: surface the
+  // reason and exit cleanly rather than silently skipping. Users who
+  // explicitly typed the name deserve a direct answer.
+  if (options.toolName && notApplicable.length === 1 && missing.length === 0) {
+    const reason = notApplicable[0].notApplicableReason ?? 'not applicable to this stack';
+    logger.info(`${options.toolName} is not applicable here: ${reason}.`);
+    return;
+  }
 
   if (missing.length === 0) {
     if (options.toolName) {
       logger.success(`${options.toolName} is already installed.`);
     } else if (options.all) {
-      logger.success(`All ${statuses.length} known tools already installed.`);
+      const naSuffix =
+        notApplicable.length > 0 ? ` (${notApplicable.length} n/a for this stack — skipped)` : '';
+      logger.success(
+        `All ${statuses.length - notApplicable.length} applicable tools already installed.${naSuffix}`,
+      );
+    } else if (notApplicable.length > 0) {
+      logger.success(
+        `All applicable tools available (${notApplicable.length} n/a for this stack — skipped).`,
+      );
     }
     return;
   }
@@ -301,7 +342,8 @@ async function runInstall(
   const installed = results.filter((r) => r.status === 'installed').length;
   const skipped = results.filter((r) => r.status === 'skipped').length;
   const failed = results.filter((r) => r.status === 'failed').length;
-  logger.info(`${installed} installed, ${skipped} skipped, ${failed} failed`);
+  const naSuffix = notApplicable.length > 0 ? `, ${notApplicable.length} n/a` : '';
+  logger.info(`${installed} installed, ${skipped} skipped, ${failed} failed${naSuffix}`);
 
   if (failed > 0) {
     console.log('');
