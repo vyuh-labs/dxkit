@@ -8,6 +8,7 @@ import {
   installDevcontainer,
   installCiGuardrails,
   installCiBaselineRefresh,
+  installPrReview,
   detectDefaultBranch,
 } from '../src/ship-installers';
 
@@ -286,5 +287,36 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     expect(
       fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-guardrails.yml'), 'utf8'),
     ).toContain('dxkit guardrails');
+  });
+});
+
+describe('installPrReview', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ship-pr-review-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('installs pr-review.yml on a fresh dir', () => {
+    const result = installPrReview(tmp);
+    expect(result.installed).toContain('.github/workflows/pr-review.yml');
+    expect(fs.existsSync(path.join(tmp, '.github/workflows/pr-review.yml'))).toBe(true);
+  });
+
+  it('surfaces the dormant-until-configured note when installed', () => {
+    const result = installPrReview(tmp);
+    expect(
+      result.notes.some((n) => n.includes('ANTHROPIC_API_KEY') && n.includes('ENABLE_AI_REVIEW')),
+    ).toBe(true);
+  });
+
+  it('skips when pr-review.yml already exists (additive)', () => {
+    fs.mkdirSync(path.join(tmp, '.github/workflows'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.github/workflows/pr-review.yml'), '# existing');
+    const result = installPrReview(tmp);
+    expect(result.skipped).toContain('.github/workflows/pr-review.yml');
+    expect(result.installed).toHaveLength(0);
   });
 });

@@ -332,3 +332,28 @@ export function installCiBaselineRefresh(cwd: string, opts: InstallerOpts = {}):
   }
   return result;
 }
+
+/**
+ * AI PR-review workflow installer. Writes
+ * `.github/workflows/pr-review.yml` — a workflow that runs Claude
+ * Code over a PR's diff and posts a review comment.
+ *
+ * Opt-in (via `--with-pr-review`) because the workflow needs an
+ * `ANTHROPIC_API_KEY` repo secret AND a flipped `ENABLE_AI_REVIEW`
+ * repo variable to actually run anything; without both, the
+ * workflow file just sits inert in the repo and clutters the
+ * Actions tab. Customers who want this should opt in explicitly
+ * with the flag (and configure the repo secret + variable
+ * separately).
+ */
+export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = installWorkflow(cwd, 'pr-review.yml', opts);
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'pr-review.yml is dormant until you configure both: ' +
+        '(1) `ANTHROPIC_API_KEY` repo secret, and ' +
+        '(2) `ENABLE_AI_REVIEW=true` repo variable.',
+    );
+  }
+  return result;
+}

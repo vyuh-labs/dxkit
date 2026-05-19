@@ -24,6 +24,7 @@ import {
   installDevcontainer,
   installCiGuardrails,
   installCiBaselineRefresh,
+  installPrReview,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
 import * as fs from 'fs';
@@ -132,6 +133,7 @@ function printUsage(): void {
     --with-ci                 Install .github/workflows/dxkit-guardrails.yml
                               (PR-gate that posts a markdown summary comment)
     --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
+    --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
     --detect                  Auto-detect stack, minimal prompts
     --yes                     Accept all defaults, no prompts
@@ -217,6 +219,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-devcontainer': { type: 'boolean', default: false },
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
+      'with-pr-review': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -302,6 +305,11 @@ export async function run(argv: string[]): Promise<void> {
       const wantDevcontainer = isFull || !!values['with-devcontainer'];
       const wantCi = isFull || !!values['with-ci'];
       const wantBaselineRefresh = isFull || !!values['with-baseline-refresh'];
+      // pr-review is opt-in even under --full because the workflow
+      // is inert without `ANTHROPIC_API_KEY` + `ENABLE_AI_REVIEW=true`
+      // configured separately. Shipping it by default just clutters
+      // the Actions tab on repos that don't intend to enable it.
+      const wantPrReview = !!values['with-pr-review'];
 
       const shipResults: { label: string; result: ShipInstallResult }[] = [];
       if (wantHooks) {
@@ -329,6 +337,12 @@ export async function run(argv: string[]): Promise<void> {
         shipResults.push({
           label: 'CI baseline-refresh workflow',
           result: installCiBaselineRefresh(cwd, { force: !!values.force }),
+        });
+      }
+      if (wantPrReview) {
+        shipResults.push({
+          label: 'AI PR-review workflow',
+          result: installPrReview(cwd, { force: !!values.force }),
         });
       }
 
