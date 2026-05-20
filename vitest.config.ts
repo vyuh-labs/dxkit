@@ -21,14 +21,19 @@ export default defineConfig({
       'test/fixtures/**',
       'test/integration/**',
     ],
-    // 180s default: cross-ecosystem.test.ts shells out to pip-audit /
+    // 300s default: cross-ecosystem.test.ts shells out to pip-audit /
     // govulncheck / cargo-audit / dotnet, which hit the npm / pypi /
     // crates.io / nuget registries. 60s was tight on cold-cache /
     // resource-constrained machines (cargo-audit + pip-audit both
-    // observed >60s on WSL2 with concurrent VSCode tsservers). Unit
+    // observed >60s on WSL2 with concurrent VSCode tsservers). The
+    // baseline integration tests in test/baseline/{check,create}.test.ts
+    // were observed at 175-228s under concurrent WSL2 load (VSCode
+    // language servers + browser + dxkit subprocesses), pushing them
+    // past a 180s ceiling on the wrong side of the headroom. 300s
+    // covers both registry-bound and load-induced variance. Unit
     // tests are unaffected — they fail fast on assertion errors; only
     // hangs care about the timeout.
-    testTimeout: 180000,
+    testTimeout: 300000,
     // Match testTimeout for hooks. Default vitest hookTimeout is 10s,
     // which is too short for the C# `beforeAll` blocks that run
     // `dotnet restore` against a cold NuGet cache (observed: 2026-04-28
@@ -36,7 +41,7 @@ export default defineConfig({
     // timed out at the 10s default). Same network/cold-cache risk
     // applies to any future beforeAll that pre-warms a toolchain
     // (cargo fetch, pip install, gradle wrapper download).
-    hookTimeout: 180000,
+    hookTimeout: 300000,
     // pool: 'forks' instead of vitest 3.x default 'threads' — the
     // threads-pool birpc channel between worker and main starves under
     // heavy concurrent subprocess fan-out (cross-ecosystem.test.ts
