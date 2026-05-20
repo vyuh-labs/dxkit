@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-05-20
+
+### Added
+
+- New `vyuh-dxkit hooks activate` CLI subcommand. Idempotently sets
+  `core.hooksPath = .githooks`. Wired into `init`'s scaffolded
+  `package.json` as a `postinstall` script so every clone plus
+  `npm install` activates the dxkit hooks transparently — no more
+  one-time-per-clone manual step.
+- New `--with-dxkit-agents` `init` flag (default-on under `--full`).
+  Installs six dxkit-specific skills under `.claude/skills/dxkit-*/`
+  (`learn` / `init` / `config` / `hooks` / `reports` / `action`)
+  alongside `AGENTS.md` (open-standard project context) and a small
+  `CLAUDE.md` shim. The skills wrap the `vyuh-dxkit` CLI as
+  workflow-aware surfaces that Claude Code auto-discovers via skill
+  frontmatter.
+- New optional `LanguageSupport.devcontainerFeature?` field. Each
+  language pack declares its canonical `ghcr.io/devcontainers/features`
+  entry; `installDevcontainer` renders the per-stack features block.
+  Cold devcontainer rebuilds drop from ~25 minutes (every supported
+  toolchain installed) to ~7 minutes on a pure-TypeScript repo
+  (only the toolchains the repo actually needs).
+- New optional `ToolDefinition.applicabilityGuard?` field. Tools
+  whose preconditions aren't met on the current repo
+  (e.g. `vitest-coverage` on a mocha-based codebase) now report as
+  `n/a` with an inline reason instead of inflating the
+  missing-count. `tools install` filters n/a entries from the
+  install loop.
+- New `@vyuhlabs/create-dxkit` shim package (zero dependencies; code
+  shipped under `packages/create-dxkit/`). First npm publish is a
+  manual tag-and-release step after this version lands on main.
+  Once published, `npm init @vyuhlabs/dxkit` will collapse the
+  prior two-step first install (`npm i -D @vyuhlabs/dxkit && npx
+  vyuh-dxkit init`) into one command.
+
+### Changed
+
+- The generic 73-file `.claude/` scaffold (`agents/`,
+  `agents-available/`, `commands/`, generic skills, etc.) is replaced
+  with six dxkit-specific skills plus `AGENTS.md` and the
+  `CLAUDE.md` shim. Customers upgrading keep their existing
+  `.claude/` (`init` is additive — won't overwrite without
+  `--force`). Fresh `--full` installs now land ~20 files instead of
+  ~73, focused entirely on equipping coding agents to drive the
+  dxkit CLI safely.
+- `post-create.sh` now falls back through a three-step npm install
+  chain (`npm ci` → `npm install` → `npm install --legacy-peer-deps`)
+  so brownfield Node monorepos with peer-dep tangles survive the
+  devcontainer post-create cleanly.
+- `doctor` no longer checks for the deleted generic scaffold files.
+  It now reports an `X/6 dxkit-* skills present` tally plus an
+  `AGENTS.md` presence check, giving customers a clearer signal of
+  what's missing on partially-scaffolded repos.
+
+### Fixed
+
+- Graphify's on-disk cache no longer leaks `graphify-out/cache/` into
+  consumer repos. The temp-dir redirection monkey-patch now fires
+  before the first graphify call; `graphify-out/` is also added to
+  the scaffolded `.gitignore` defensively.
+
+### Deferred to next polish release
+
+The following items rolled out of this release and will ship in
+2.5.2 (or bundle into 2.6 depending on the marketplace decision):
+
+- `vyuh-dxkit setup-branch-protection` CLI (wraps `gh api` for
+  branch-protection enforcement).
+- `vyuh-dxkit setup-prebuild` CLI (wraps `gh api` for Codespaces
+  prebuilds — cold-start cuts from ~25 minutes to ~30 seconds).
+- Full `doctor` pivot to onboarding-health checks (hooks active,
+  branch protection set, baseline current). This release partially
+  shipped the pivot — the generic-scaffold checks were dropped — but
+  the new positive checks await the two CLI subcommands above.
+- CI tool cache via `actions/cache@v4` on the scanner toolchain in
+  `dxkit-guardrails.yml`.
+
 ## [2.5.0] - 2026-05-18
 
 ### Summary
