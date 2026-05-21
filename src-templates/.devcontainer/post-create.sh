@@ -50,17 +50,32 @@ if [ -f package.json ]; then
   fi
 fi
 
-# Resolve dxkit. Prefer the project-local install if a `package.json`
-# pinned dxkit in devDependencies; otherwise install globally so the
-# binary is on PATH for the rest of the script and any subshell.
+# Resolve dxkit for THIS script. Prefer the project-local install if a
+# package.json pinned dxkit in devDependencies (so the script uses the
+# project's pinned version); otherwise install globally and use that.
 if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
   DXKIT="./node_modules/.bin/vyuh-dxkit"
 elif command -v vyuh-dxkit >/dev/null 2>&1; then
   DXKIT="vyuh-dxkit"
 else
-  echo "==> Installing @vyuhlabs/dxkit globally..."
+  echo "==> Installing @vyuhlabs/dxkit globally (for script use)..."
   npm install -g @vyuhlabs/dxkit
   DXKIT="vyuh-dxkit"
+fi
+
+# Make sure `vyuh-dxkit` is on the CUSTOMER's interactive shell PATH
+# regardless of where the script-local resolution above ended up.
+# Project-local installs (./node_modules/.bin/) are NOT on PATH for
+# terminal sessions or for the dxkit-* agent skills' bash invocations
+# — only the global install puts the bare command on PATH. Without
+# this, the customer types `vyuh-dxkit doctor` and gets "command not
+# found" until they discover `npx vyuh-dxkit`. Soft-fail: if global
+# install fails (offline / registry hiccup), `npx vyuh-dxkit` still
+# works as a fallback.
+if ! command -v vyuh-dxkit >/dev/null 2>&1; then
+  echo "==> Installing @vyuhlabs/dxkit globally (for shell PATH)..."
+  npm install -g @vyuhlabs/dxkit || \
+    echo "WARN: global install failed — customer terminal will need 'npx vyuh-dxkit'." >&2
 fi
 echo "==> Using dxkit binary: ${DXKIT}"
 
