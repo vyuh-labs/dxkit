@@ -568,22 +568,40 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     name: 'osv-scanner',
     description:
       'OSV.dev dependency scanner + fix planner — populates structured upgradePlan on dep-vuln findings (Tier-2, Node/npm pack)',
-    install: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+    install: 'brew install osv-scanner',
     check: 'osv-scanner --version',
     for: 'node',
     layer: 'language',
     binaries: ['osv-scanner'],
-    // Go installs to $GOBIN (→ $GOPATH/bin by default, or ~/go/bin) which
-    // is typically in $PATH on dev machines. Probe the canonical default
-    // explicitly so detection works on machines that only have `go` in
-    // PATH but not `go/bin`.
+    // ~/go/bin retained for backward-compat: machines that already
+    // installed osv-scanner via `go install` before this change get
+    // picked up without re-installing. ~/.local/bin (where the new
+    // install lands) is already in getSystemPaths(), so no explicit
+    // probe needed there.
     probePaths: [path.join(os.homedir(), 'go', 'bin')],
     versionCheck: 'osv-scanner --version 2>/dev/null',
+    // Install via GitHub releases binary (mirrors the gitleaks pattern):
+    // the prior `go install` path silently failed on every customer
+    // container without a Go toolchain (the majority of stacks — Node,
+    // Python, Ruby, .NET, JVM, etc.), leaving dep-vuln reports without
+    // osv-scanner's structured upgradePlan enrichment. GitHub release
+    // binaries are statically linked + need only curl + chmod.
+    //
+    // Version pinned here, NOT in the URL on the macOS line — Homebrew
+    // tracks its own version; we only need our own pin for the curl
+    // fallback. Bumping requires editing this line, copy-package, and
+    // dist/ rebuild.
     installCommands: {
       macos:
-        'brew install osv-scanner || go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
-      linux: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
-      windows: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest',
+        'brew install osv-scanner || ' +
+        '(mkdir -p ~/.local/bin && ' +
+        'curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_darwin_amd64 -o ~/.local/bin/osv-scanner && ' +
+        'chmod +x ~/.local/bin/osv-scanner)',
+      linux:
+        'mkdir -p ~/.local/bin && ' +
+        'curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64 -o ~/.local/bin/osv-scanner && ' +
+        'chmod +x ~/.local/bin/osv-scanner',
+      windows: 'scoop install osv-scanner',
     },
   },
   'license-checker-rseidelsohn': {
