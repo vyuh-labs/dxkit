@@ -108,11 +108,5 @@ export function buildConditions(config: ResolvedConfig): Record<string, boolean>
     // moved out of `languages` in 10f.4).
     IF_NODE: config.languages.typescript ?? false,
     IF_NEXTJS: config.framework === 'nextjs',
-    IF_POSTGRES: config.infrastructure.postgres,
-    IF_REDIS: config.infrastructure.redis,
-    IF_HAS_SERVICES: config.infrastructure.postgres || config.infrastructure.redis,
-    IF_DOCKER: config.infrastructure.docker,
-    IF_CLAUDE_CODE: config.claudeCode,
-    IF_COVERAGE_ENABLED: parseInt(config.coverageThreshold || DEFAULT_COVERAGE) > 0,
   };
 }
