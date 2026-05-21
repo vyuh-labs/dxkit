@@ -25,9 +25,9 @@ interface DoctorRun {
   exitCode: number;
 }
 
-function runDoctor(cwd: string): DoctorRun {
+function runDoctor(cwd: string, args: string[] = []): DoctorRun {
   try {
-    const stdout = execFileSync('node', [cliPath, 'doctor'], {
+    const stdout = execFileSync('node', [cliPath, 'doctor', ...args], {
       cwd,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -115,5 +115,135 @@ describe('doctor (F-UX-1): two-tier framing', () => {
     // "Fail: N" (the pre-2.4.7 framing that caused the credibility hit).
     expect(r.stdout).not.toMatch(/Fail:\s*\d+/);
     expect(r.stdout).toContain('partial scaffolding');
+  });
+});
+
+describe('doctor: operational health (tier 3)', () => {
+  let bareTmp: string;
+  let scaffoldedTmp: string;
+
+  beforeAll(() => {
+    bareTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-op-bare-'));
+    execSync('git init -q', { cwd: bareTmp });
+
+    scaffoldedTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-op-scaff-'));
+    execSync('git init -q', { cwd: scaffoldedTmp });
+    // Minimum scaffold the operational-tier checks key off of.
+    fs.writeFileSync(
+      path.join(scaffoldedTmp, '.vyuh-dxkit.json'),
+      JSON.stringify({ version: '1', mode: 'full', config: { languages: {} } }),
+    );
+    // A pre-push hook file present but hooksPath unset — exactly the
+    // D147 reproduction case.
+    fs.mkdirSync(path.join(scaffoldedTmp, '.githooks'), { recursive: true });
+    fs.writeFileSync(path.join(scaffoldedTmp, '.githooks', 'pre-push'), '#!/bin/sh\n');
+  });
+
+  afterAll(() => {
+    if (bareTmp) fs.rmSync(bareTmp, { recursive: true, force: true });
+    if (scaffoldedTmp) fs.rmSync(scaffoldedTmp, { recursive: true, force: true });
+  });
+
+  it('surfaces an Operational health tier when there are runtime signals to check', () => {
+    const r = runDoctor(scaffoldedTmp);
+    expect(r.stdout).toContain('Operational health');
+  });
+
+  it('flags hooks-not-activated when .githooks/pre-push exists but core.hooksPath is unset', () => {
+    const r = runDoctor(scaffoldedTmp);
+    // Exact label so dxkit-fix can parse it.
+    expect(r.stdout).toContain('git hooks active');
+    expect(r.stdout).toMatch(/git hooks active.*\.githooks/);
+    // Fix hint surfaces the activate command.
+    expect(r.stdout).toContain('npx vyuh-dxkit hooks activate');
+  });
+
+  it('flags missing baseline when manifest exists but .dxkit/baselines/main.json does not', () => {
+    const r = runDoctor(scaffoldedTmp);
+    expect(r.stdout).toContain('baseline captured');
+    expect(r.stdout).toContain('npx vyuh-dxkit baseline create');
+  });
+
+  it('renders the Suggested fixes section when operational issues exist', () => {
+    const r = runDoctor(scaffoldedTmp);
+    expect(r.stdout).toContain('Suggested fixes');
+    expect(r.stdout).toContain('dxkit-fix skill');
+  });
+});
+
+describe('doctor --json: structured output', () => {
+  let scaffoldedTmp: string;
+
+  beforeAll(() => {
+    scaffoldedTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-json-'));
+    execSync('git init -q', { cwd: scaffoldedTmp });
+    fs.writeFileSync(
+      path.join(scaffoldedTmp, '.vyuh-dxkit.json'),
+      JSON.stringify({ version: '1', mode: 'full', config: { languages: {} } }),
+    );
+    fs.mkdirSync(path.join(scaffoldedTmp, '.githooks'), { recursive: true });
+    fs.writeFileSync(path.join(scaffoldedTmp, '.githooks', 'pre-push'), '#!/bin/sh\n');
+  });
+
+  afterAll(() => {
+    if (scaffoldedTmp) fs.rmSync(scaffoldedTmp, { recursive: true, force: true });
+  });
+
+  it('emits valid JSON to stdout with the doctor.v1 schema', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    expect(report.schema).toBe('doctor.v1');
+    expect(report.cwd).toBe(scaffoldedTmp);
+    expect(Array.isArray(report.checks)).toBe(true);
+    expect(report.checks.length).toBeGreaterThan(0);
+  });
+
+  it('groups checks by tier (reports / dx / operational)', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    const tiers = new Set(report.checks.map((c: { tier: string }) => c.tier));
+    expect(tiers.has('reports')).toBe(true);
+    expect(tiers.has('dx')).toBe(true);
+    expect(tiers.has('operational')).toBe(true);
+  });
+
+  it('every failing check with a known fix carries fix metadata', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    const failingWithFix = report.checks.filter(
+      (c: { ok: boolean; fix?: unknown }) => !c.ok && c.fix,
+    );
+    expect(failingWithFix.length).toBeGreaterThan(0);
+    for (const c of failingWithFix) {
+      expect(c.fix.hint).toBeTruthy();
+      // Commands are optional but when present, must be non-empty strings.
+      if (c.fix.command !== undefined) expect(typeof c.fix.command).toBe('string');
+    }
+  });
+
+  it('exposes a fixable[] array in summary that dxkit-fix consumes', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    expect(Array.isArray(report.summary.fixable)).toBe(true);
+    // Every entry in fixable must have ok=false and a fix block.
+    for (const c of report.summary.fixable) {
+      expect(c.ok).toBe(false);
+      expect(c.fix).toBeDefined();
+    }
+  });
+
+  it('summarizes per-tier status (ok / partial / fail / absent)', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    expect(['ok', 'fail']).toContain(report.summary.reports.status);
+    expect(['ok', 'partial', 'absent']).toContain(report.summary.dx.status);
+    expect(['ok', 'partial', 'fail']).toContain(report.summary.operational.status);
+  });
+
+  it('does not include prose output on stdout in --json mode', () => {
+    const r = runDoctor(scaffoldedTmp, ['--json']);
+    // Prose headers route to stderr via setJsonMode. stdout should be pure JSON.
+    expect(r.stdout).not.toContain('vyuh-dxkit doctor');
+    expect(r.stdout).not.toContain('━━━');
   });
 });
