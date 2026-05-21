@@ -20,6 +20,11 @@ const shim = require('../packages/create-dxkit/index.js') as {
   ensurePackageJson: (cwd: string, fsMod?: typeof fs, pathMod?: typeof path) => { seeded: boolean };
   npmBin: (platform?: NodeJS.Platform) => string;
   npxBin: (platform?: NodeJS.Platform) => string;
+  persistLegacyPeerDeps: (
+    cwd: string,
+    fsMod?: typeof fs,
+    pathMod?: typeof path,
+  ) => { changed: boolean; reason: string };
 };
 
 let tmp: string;
@@ -85,6 +90,45 @@ describe('ensurePackageJson', () => {
     } finally {
       fs.rmSync(weird, { recursive: true, force: true });
     }
+  });
+});
+
+describe('persistLegacyPeerDeps', () => {
+  it('creates .npmrc when missing', () => {
+    const result = shim.persistLegacyPeerDeps(tmp);
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('created');
+    const npmrc = fs.readFileSync(path.join(tmp, '.npmrc'), 'utf-8');
+    expect(npmrc).toContain('legacy-peer-deps=true');
+  });
+
+  it('appends to existing .npmrc without clobbering other settings', () => {
+    const existing = 'registry=https://registry.example.com/\nfund=false\n';
+    fs.writeFileSync(path.join(tmp, '.npmrc'), existing);
+
+    const result = shim.persistLegacyPeerDeps(tmp);
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('appended');
+    const npmrc = fs.readFileSync(path.join(tmp, '.npmrc'), 'utf-8');
+    expect(npmrc).toContain('registry=https://registry.example.com/');
+    expect(npmrc).toContain('fund=false');
+    expect(npmrc).toContain('legacy-peer-deps=true');
+  });
+
+  it('is idempotent when the line is already present', () => {
+    fs.writeFileSync(path.join(tmp, '.npmrc'), 'legacy-peer-deps=true\n');
+    const result = shim.persistLegacyPeerDeps(tmp);
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe('already-present');
+  });
+
+  it('handles existing .npmrc without a trailing newline', () => {
+    fs.writeFileSync(path.join(tmp, '.npmrc'), 'fund=false'); // no newline
+    const result = shim.persistLegacyPeerDeps(tmp);
+    expect(result.changed).toBe(true);
+    const npmrc = fs.readFileSync(path.join(tmp, '.npmrc'), 'utf-8');
+    // Both settings on separate lines.
+    expect(npmrc).toBe('fund=false\nlegacy-peer-deps=true\n');
   });
 });
 
