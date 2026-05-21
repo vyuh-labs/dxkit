@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Manifest } from './types';
+import { Manifest, ManifestInstallFlags } from './types';
 import { detect } from './detect';
 import { generate } from './generator';
 import {
@@ -16,28 +16,22 @@ import {
 import * as logger from './logger';
 
 /**
- * Snapshot of which optional install surfaces are currently present in
- * the customer's workspace. Drives `update` so we refresh exactly the
- * artifacts the customer installed at init time and DON'T regenerate
- * surfaces they intentionally skipped.
- *
- * Workspace-derived rather than manifest-stored, so legacy installs
- * predating any manifest-based persistence still upgrade correctly.
- * The cost of false-positive detection (e.g. a customer-authored
- * .githooks/ that doesn't follow dxkit's shape) is bounded because
- * the installers themselves are idempotent + content-aware via
- * sidecar emission when conflicts exist.
+ * Re-exports the shared type so callers within the update module can
+ * import either name. The canonical declaration lives in `./types` so
+ * the manifest schema is one place.
  */
-export interface InstallFlags {
-  withDxkitAgents: boolean;
-  withHooks: boolean;
-  withPrecommit: boolean;
-  withDevcontainer: boolean;
-  withCiGuardrails: boolean;
-  withBaselineRefresh: boolean;
-  withPrReview: boolean;
-}
+export type InstallFlags = ManifestInstallFlags;
 
+/**
+ * Workspace-derived flag detection. Used in two cases:
+ *   1. The manifest doesn't carry `installFlags` (pre-2.5.2 manifests
+ *      written by dxkit 2.5.0 / 2.5.1).
+ *   2. Defensive fallback if manifest is corrupt / partial.
+ *
+ * False-positive risk is bounded — the installers themselves are
+ * idempotent and emit sidecars when they detect competing files, so
+ * even spurious detection can't clobber customer state.
+ */
 export function detectInstallFlags(cwd: string): InstallFlags {
   return {
     withDxkitAgents: fs.existsSync(path.join(cwd, '.claude', 'skills', 'dxkit-learn')),
@@ -50,6 +44,47 @@ export function detectInstallFlags(cwd: string): InstallFlags {
     ),
     withPrReview: fs.existsSync(path.join(cwd, '.github', 'workflows', 'pr-review.yml')),
   };
+}
+
+/**
+ * Resolves the install flags for an update. Manifest-stored values
+ * take precedence (canonical source of truth, set at init time);
+ * workspace detection is the fallback for legacy manifests.
+ *
+ * Returns the flags plus a `source` field so the caller can decide
+ * whether to self-migrate (write detected flags back to the manifest
+ * so the NEXT update reads them from the canonical source).
+ */
+export function resolveInstallFlags(
+  manifest: Manifest,
+  cwd: string,
+): { flags: InstallFlags; source: 'manifest' | 'workspace-derived' } {
+  if (manifest.installFlags) {
+    return { flags: manifest.installFlags, source: 'manifest' };
+  }
+  return { flags: detectInstallFlags(cwd), source: 'workspace-derived' };
+}
+
+/**
+ * Patch `installFlags` into the on-disk manifest. Used by init (after
+ * ship-installers complete to record what actually landed) AND by
+ * update's self-migration path on legacy manifests.
+ *
+ * Idempotent: writing the same flags twice is a no-op. Defensive
+ * against a manifest file being deleted mid-flight (returns false in
+ * that case rather than throwing).
+ */
+export function writeInstallFlags(cwd: string, flags: InstallFlags): boolean {
+  const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Manifest;
+    manifest.installFlags = flags;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface AggregateUpdateResult {
@@ -91,13 +126,23 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
 
   logger.info(`Previous init: ${manifest.generatedAt} (mode: ${manifest.mode})`);
 
-  const flags = detectInstallFlags(cwd);
+  const { flags, source } = resolveInstallFlags(manifest, cwd);
   const flagSummary = Object.entries(flags)
     .filter(([, v]) => v)
     .map(([k]) => k)
     .join(', ');
   if (flagSummary) {
-    logger.info(`Detected install surfaces: ${flagSummary}`);
+    const sourceTag = source === 'manifest' ? 'manifest' : 'detected from workspace';
+    logger.info(`Install surfaces (${sourceTag}): ${flagSummary}`);
+  }
+
+  // Self-migrate: if the manifest didn't carry installFlags (legacy
+  // pre-2.5.2 manifest), stamp the detected flags back so the NEXT
+  // update reads from the canonical source instead of re-detecting.
+  if (source === 'workspace-derived') {
+    if (writeInstallFlags(cwd, flags)) {
+      logger.dim('  → Stamped install flags into manifest for future updates.');
+    }
   }
 
   logger.info('Re-detecting stack...');

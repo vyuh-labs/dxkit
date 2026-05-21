@@ -13,7 +13,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync, execSync } from 'child_process';
-import { detectInstallFlags } from '../src/update';
+import { detectInstallFlags, resolveInstallFlags, writeInstallFlags } from '../src/update';
+import type { Manifest, ManifestInstallFlags } from '../src/types';
 
 const cliPath = path.resolve(__dirname, '..', 'dist', 'index.js');
 
@@ -95,6 +96,96 @@ describe('detectInstallFlags', () => {
   });
 });
 
+describe('resolveInstallFlags + writeInstallFlags: manifest persistence', () => {
+  let tmp: string;
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-flag-persistence-'));
+  });
+
+  afterAll(() => {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const baseManifest: Manifest = {
+    version: '2.5.2',
+    mode: 'full',
+    generatedAt: new Date().toISOString(),
+    config: {
+      languages: {
+        typescript: true,
+        python: false,
+        go: false,
+        rust: false,
+        csharp: false,
+        kotlin: false,
+        java: false,
+        ruby: false,
+      },
+      versions: { node: '22' },
+      frameworks: {},
+      tools: {},
+      tests: {},
+      coverageThreshold: '60',
+      claudeCode: true,
+    },
+    files: {},
+  };
+
+  const allOff: ManifestInstallFlags = {
+    withDxkitAgents: false,
+    withHooks: false,
+    withPrecommit: false,
+    withDevcontainer: false,
+    withCiGuardrails: false,
+    withBaselineRefresh: false,
+    withPrReview: false,
+  };
+
+  it('writeInstallFlags persists flags into the manifest', () => {
+    fs.writeFileSync(path.join(tmp, '.vyuh-dxkit.json'), JSON.stringify(baseManifest, null, 2));
+    const flags: ManifestInstallFlags = { ...allOff, withDxkitAgents: true, withHooks: true };
+    const ok = writeInstallFlags(tmp, flags);
+    expect(ok).toBe(true);
+
+    const reread = JSON.parse(
+      fs.readFileSync(path.join(tmp, '.vyuh-dxkit.json'), 'utf-8'),
+    ) as Manifest;
+    expect(reread.installFlags).toEqual(flags);
+  });
+
+  it('writeInstallFlags returns false when the manifest is missing', () => {
+    const missing = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-no-manifest-'));
+    try {
+      expect(writeInstallFlags(missing, allOff)).toBe(false);
+    } finally {
+      fs.rmSync(missing, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveInstallFlags prefers manifest.installFlags when present', () => {
+    const flags: ManifestInstallFlags = { ...allOff, withCiGuardrails: true };
+    const manifest = { ...baseManifest, installFlags: flags };
+    const out = resolveInstallFlags(manifest, tmp);
+    expect(out.source).toBe('manifest');
+    expect(out.flags).toEqual(flags);
+  });
+
+  it('resolveInstallFlags falls back to workspace detection on legacy manifests', () => {
+    const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-legacy-manifest-'));
+    try {
+      // Plant a hook file so workspace detection returns a non-empty signal.
+      fs.mkdirSync(path.join(legacy, '.githooks'), { recursive: true });
+      fs.writeFileSync(path.join(legacy, '.githooks', 'pre-push'), '#!/bin/sh\n');
+      const out = resolveInstallFlags(baseManifest, legacy); // no installFlags
+      expect(out.source).toBe('workspace-derived');
+      expect(out.flags.withHooks).toBe(true);
+    } finally {
+      fs.rmSync(legacy, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('vyuh-dxkit update: end-to-end refresh', () => {
   let tmp: string;
 
@@ -129,10 +220,13 @@ describe('vyuh-dxkit update: end-to-end refresh', () => {
     expect(fs.existsSync(path.join(tmp, '.devcontainer', 'devcontainer.json'))).toBe(true);
   });
 
-  it('update detects installed surfaces and reports them up front', () => {
+  it('update reports installed surfaces up front (from manifest or workspace)', () => {
     const r = runCli(tmp, ['update']);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toMatch(/Detected install surfaces:/);
+    // Matches either "Install surfaces (manifest):" or "Install surfaces
+    // (detected from workspace):" — the resolver flips to manifest source
+    // after init writes installFlags but the assertion is invariant.
+    expect(r.stdout).toMatch(/Install surfaces \(.+\):/);
     expect(r.stdout).toContain('withDxkitAgents');
     expect(r.stdout).toContain('withDevcontainer');
     expect(r.stdout).toContain('withHooks');

@@ -120,12 +120,37 @@ export interface ManifestFileEntry {
   evolving: boolean;
 }
 
+/**
+ * Optional ship-installer surfaces the customer landed at init time.
+ * Drives `vyuh-dxkit update` so we refresh exactly the surfaces the
+ * customer installed and don't regenerate ones they opted out of.
+ *
+ * Persisted in `manifest.installFlags`. Manifests written before this
+ * field existed (pre-2.5.2) don't carry it; `update` falls back to
+ * workspace detection and self-migrates by writing the detected
+ * flags back on first run.
+ */
+export interface ManifestInstallFlags {
+  withDxkitAgents: boolean;
+  withHooks: boolean;
+  withPrecommit: boolean;
+  withDevcontainer: boolean;
+  withCiGuardrails: boolean;
+  withBaselineRefresh: boolean;
+  withPrReview: boolean;
+}
+
 export interface Manifest {
   version: string;
   mode: GenerationMode;
   generatedAt: string;
   config: ResolvedConfig;
   files: Record<string, ManifestFileEntry>;
+  /**
+   * Optional — present on manifests written by dxkit 2.5.2 or later.
+   * Older manifests fall back to workspace detection in `update`.
+   */
+  installFlags?: ManifestInstallFlags;
 }
 
 export interface InitOptions {
