@@ -231,6 +231,9 @@ export async function run(argv: string[]): Promise<void> {
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
+      // setup-branch-protection flags
+      branch: { type: 'string' },
+      'require-reviews': { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -1667,6 +1670,17 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail((err as Error).message);
         process.exit(1);
       }
+      break;
+    }
+
+    case 'setup-branch-protection': {
+      const { runSetupBranchProtection } = await import('./setup-branch-protection');
+      const requireReviewsRaw = values['require-reviews'] as string | undefined;
+      await runSetupBranchProtection(cwd, {
+        branch: values.branch as string | undefined,
+        requireReviews: requireReviewsRaw ? parseInt(requireReviewsRaw, 10) : undefined,
+        force: !!values.force,
+      });
       break;
     }
 
