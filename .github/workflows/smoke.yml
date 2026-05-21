@@ -246,7 +246,15 @@ jobs:
           mkdir -p "${{ github.workspace }}/consumer"
           cd "${{ github.workspace }}/consumer"
           git init -q -b main
+          # Seed a root commit so `baseline create` (run inside the
+          # devcontainer below) can derive the deterministic salt
+          # from `git rev-list --max-parents=0 HEAD`. The pack-smoke
+          # job above already follows this pattern.
+          git config user.email "smoke@example.com"
+          git config user.name "smoke"
           echo '{"name":"dc-smoke","private":true}' > package.json
+          git add package.json
+          git commit -q -m "init"
           npm install --save-dev "${{ steps.pack.outputs.tarball }}"
           ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --yes
           test -f .devcontainer/devcontainer.json
