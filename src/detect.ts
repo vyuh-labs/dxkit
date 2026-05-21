@@ -38,15 +38,6 @@ function globExists(cwd: string, pattern: string): boolean {
   }
 }
 
-function commandExists(cmd: string): boolean {
-  try {
-    execSync(`which ${cmd} 2>/dev/null`, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function extractPythonVersion(cwd: string): string | undefined {
   // Try pyproject.toml requires-python
   const pyproject = readFileOr(cwd, 'pyproject.toml', '');
