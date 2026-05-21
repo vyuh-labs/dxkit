@@ -234,6 +234,8 @@ export async function run(argv: string[]): Promise<void> {
       // setup-branch-protection flags
       branch: { type: 'string' },
       'require-reviews': { type: 'string' },
+      // setup-prebuild flags (branch reused above)
+      regions: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -1679,6 +1681,16 @@ export async function run(argv: string[]): Promise<void> {
       await runSetupBranchProtection(cwd, {
         branch: values.branch as string | undefined,
         requireReviews: requireReviewsRaw ? parseInt(requireReviewsRaw, 10) : undefined,
+        force: !!values.force,
+      });
+      break;
+    }
+
+    case 'setup-prebuild': {
+      const { runSetupPrebuild } = await import('./setup-prebuild');
+      await runSetupPrebuild(cwd, {
+        branch: values.branch as string | undefined,
+        regions: values.regions as string | undefined,
         force: !!values.force,
       });
       break;
