@@ -441,12 +441,23 @@ export async function run(argv: string[]): Promise<void> {
 
       console.log('');
       logger.success('Done! Claude Code now has full project context.');
-      console.log('');
-      logger.dim('  Run `vyuh-dxkit doctor` to verify setup');
-      logger.dim('  Run `vyuh-dxkit update` to re-generate after changes');
+
+      // D150 fix: baseline-create is the most actionable next step
+      // when ship surfaces (hooks / CI / etc.) landed — surface it
+      // prominently rather than buried under a wall of dim hints.
+      // Without a baseline, the hooks + CI workflows fail-fast on
+      // every push ("no baseline found"), making the customer think
+      // dxkit is broken right after they installed it.
       if (shipResults.length > 0) {
-        logger.dim("  Run `vyuh-dxkit baseline create` to capture today's state");
+        console.log(''); // slop-ok
+        logger.info("Next: run `vyuh-dxkit baseline create` to capture today's state.");
+        logger.dim('   (without a baseline, your pre-push hook + CI guardrail have nothing to');
+        logger.dim('    diff against and will fail-fast on the next push)');
       }
+
+      console.log(''); // slop-ok
+      logger.dim('  Other commands: `vyuh-dxkit doctor` (verify), `vyuh-dxkit update` (refresh),');
+      logger.dim('    `vyuh-dxkit upgrade` (move to a newer dxkit version)');
       break;
     }
 
