@@ -651,6 +651,50 @@ if [ -n "$ROGUE_IDENTITY" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# =============================================================================
+# Sprint 4 (2.5.2): dead template-condition detector.
+# =============================================================================
+#
+# `src/constants.ts:getConditions()` computes IF_<NAME> booleans from
+# the resolved config. Each one is meant to gate a template branch
+# (`{{#IF_NAME}}…{{/IF_NAME}}` in src-templates/) or a generator.ts
+# `copyStatic` call. Conditions that compute but have NO consumer are
+# dead code: harmless in behavior, but they accumulate (we found 4
+# dead conditions sitting since 2026-05-19 because typecheck doesn't
+# catch compute-without-consumer — they're type-correct, just useless).
+#
+# This rule extracts every `IF_*:` key from constants.ts and verifies
+# each has at least one consumer in either:
+#   - src-templates/                (mustache {{#IF_NAME}} blocks)
+#   - src/generator.ts              (conditions.IF_NAME programmatic refs)
+#
+# Allowlist: `// arch-check-ok` on the constants.ts line for any
+# intentional ahead-of-template addition.
+DEAD_CONDS=""
+IF_TOKENS=$(grep -E "^\s+IF_[A-Z_]+:" src/constants.ts 2>/dev/null \
+  | grep -v "// arch-check-ok" \
+  | sed -E 's/^\s+(IF_[A-Z_]+):.*/\1/')
+for cond in $IF_TOKENS; do
+  # Mustache section/inverted/standalone in any template file
+  if grep -rq "{{[#^/]*$cond}}" src-templates/ 2>/dev/null; then
+    continue
+  fi
+  # Programmatic consumer in generator.ts
+  if grep -q "conditions\.$cond\b" src/generator.ts 2>/dev/null; then
+    continue
+  fi
+  DEAD_CONDS="$DEAD_CONDS $cond"
+done
+if [ -n "$DEAD_CONDS" ]; then
+  echo "❌ Dead template conditions computed in src/constants.ts but consumed nowhere:"
+  for c in $DEAD_CONDS; do echo "   • $c"; done
+  echo "   → Either add a template consumer ({{#$c}}…{{/$c}} in src-templates/)"
+  echo "     or remove the IF_ entry from getConditions() in src/constants.ts."
+  echo "   → Annotate '// arch-check-ok' on the constants.ts line for intentional"
+  echo "     ahead-of-template additions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
