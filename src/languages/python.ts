@@ -1064,4 +1064,5 @@ export const python: LanguageSupport = {
     // feature only needs to land the python interpreter itself.
     opts: { version: '3.12', installTools: false },
   },
+  devcontainerExtensions: ['ms-python.python', 'ms-python.vscode-pylance'],
 };

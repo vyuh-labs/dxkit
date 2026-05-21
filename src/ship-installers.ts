@@ -15,7 +15,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { makeExecutable } from './files';
 import { detect } from './detect';
-import { buildDevcontainerFeatures } from './languages';
+import { buildDevcontainerExtensions, buildDevcontainerFeatures } from './languages';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -238,17 +238,33 @@ function renderFeaturesBlock(features: Record<string, Record<string, unknown>>):
 }
 
 /**
+ * Render the extensions array as a JSON array, indented to line up
+ * naturally inside the surrounding JSONC. Mirrors renderFeaturesBlock's
+ * shape so the two substitutions produce visually consistent output.
+ */
+function renderExtensionsBlock(extensions: string[]): string {
+  const raw = JSON.stringify(extensions, null, 2);
+  return raw
+    .split('\n')
+    .map((line, i) => (i === 0 ? line : '      ' + line))
+    .join('\n');
+}
+
+/**
  * Read the devcontainer.json template, substitute the
- * `__DXKIT_DEVCONTAINER_FEATURES__` placeholder with the detected
- * stack's features block, and return the rendered text. Pure-ish:
- * one filesystem read, no writes.
+ * `__DXKIT_DEVCONTAINER_FEATURES__` and `__DXKIT_DEVCONTAINER_EXTENSIONS__`
+ * placeholders with the detected stack's per-pack contributions, and
+ * return the rendered text. Pure-ish: one filesystem read, no writes.
  */
 function renderDevcontainerJson(tmplDir: string, cwd: string): string {
   const srcAbs = path.join(tmplDir, 'devcontainer.json');
   const template = fs.readFileSync(srcAbs, 'utf8');
   const stack = detect(cwd);
   const features = buildDevcontainerFeatures(stack.languages);
-  return template.replace('__DXKIT_DEVCONTAINER_FEATURES__', renderFeaturesBlock(features));
+  const extensions = buildDevcontainerExtensions(stack.languages);
+  return template
+    .replace('__DXKIT_DEVCONTAINER_FEATURES__', renderFeaturesBlock(features))
+    .replace('__DXKIT_DEVCONTAINER_EXTENSIONS__', renderExtensionsBlock(extensions));
 }
 
 /**

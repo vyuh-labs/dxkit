@@ -951,4 +951,5 @@ export const go: LanguageSupport = {
     name: 'ghcr.io/devcontainers/features/go:1',
     opts: { version: '1.21' },
   },
+  devcontainerExtensions: ['golang.go'],
 };

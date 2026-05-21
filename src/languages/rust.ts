@@ -897,4 +897,5 @@ export const rust: LanguageSupport = {
     name: 'ghcr.io/devcontainers/features/rust:1',
     opts: { version: 'stable', profile: 'default' },
   },
+  devcontainerExtensions: ['rust-lang.rust-analyzer'],
 };

@@ -341,3 +341,47 @@ export function buildDevcontainerFeatures(
   }
   return features;
 }
+
+/**
+ * Union the VSCode extensions across active language packs and the
+ * always-on dxkit / GitHub baseline. Companion to
+ * `buildDevcontainerFeatures` — features install the toolchain
+ * (compiler / runtime); extensions drop the editor support (syntax,
+ * lint, debug).
+ *
+ * Always-on extensions are anthropic.claude-code (Claude Code agent
+ * surface — the six dxkit-* skills live under it), GitHub Actions +
+ * Pull Requests (workflow + PR review skills target them). Per-pack
+ * extensions come from `LanguageSupport.devcontainerExtensions`.
+ *
+ * Output is order-stable (always-on first, then per-pack in language
+ * registration order) and deduplicated — a pack accidentally listing
+ * an always-on extension, or two packs sharing one, can't generate
+ * a duplicate entry. The renderer relies on stable order so unchanged
+ * stacks produce byte-identical devcontainer.json output.
+ *
+ * Pre-extension the devcontainer.json template hardcoded the extensions
+ * list with every language's extension. Pure-TS repos pulled the go,
+ * rust, csharp, java, kotlin, ruby extensions on every container start
+ * (~6 extensions for stacks that don't use those languages); this
+ * helper trims to only the active packs' editor support.
+ */
+export function buildDevcontainerExtensions(flags: DetectedStack['languages']): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (id: string): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+
+  // Always-on. Order matters here for output stability.
+  add('anthropic.claude-code');
+  add('github.vscode-github-actions');
+  add('github.vscode-pull-request-github');
+
+  for (const lang of activeLanguagesFromFlags(flags)) {
+    for (const ext of lang.devcontainerExtensions ?? []) add(ext);
+  }
+  return out;
+}

@@ -753,4 +753,5 @@ export const ruby: LanguageSupport = {
     name: 'ghcr.io/devcontainers/features/ruby:1',
     opts: { version: '3.3' },
   },
+  devcontainerExtensions: ['rebornix.ruby'],
 };

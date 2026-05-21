@@ -1248,6 +1248,7 @@ export const typescript: LanguageSupport = {
     // Node 22 LTS — matches the smoke workflow's `setup-node@v6` line.
     opts: { version: '22', nvmVersion: 'latest' },
   },
+  devcontainerExtensions: ['dbaeumer.vscode-eslint', 'esbenp.prettier-vscode'],
   // No ruleFile — there is no `.claude/rules/typescript.md`. nextjs.md
   // is a framework rule (not language) and stays hardcoded in
   // generator.ts under `IF_NEXTJS`.
