@@ -257,6 +257,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
     'dxkit-reports',
     'dxkit-action',
     'dxkit-fix',
+    'dxkit-update',
   ];
   const presentSkills = DXKIT_SKILL_NAMES.filter((name) =>
     fs.existsSync(path.join(cwd, '.claude', 'skills', name, 'SKILL.md')),

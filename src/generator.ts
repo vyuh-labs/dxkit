@@ -81,6 +81,11 @@ const DXKIT_SKILLS = [
   // each fixable check. Lands after the doctor pivot adds structured
   // output + fix metadata in 2.5.2.
   'dxkit-fix',
+  // dxkit-update (2.5.2): existing-install upgrade orchestrator.
+  // Consumes `vyuh-dxkit upgrade --plan --json` output and drives
+  // conversational upgrade with version-delta analysis, warnings,
+  // and per-step confirmation.
+  'dxkit-update',
 ] as const;
 
 interface GenerateResult {
