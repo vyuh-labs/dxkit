@@ -86,6 +86,11 @@ const DXKIT_SKILLS = [
   // conversational upgrade with version-delta analysis, warnings,
   // and per-step confirmation.
   'dxkit-update',
+  // dxkit-onboard (2.5.2): fresh-install orchestrator. Walks the
+  // customer through the full first-time setup journey (install,
+  // doctor, fix-gaps, baseline, hooks, branch protection, prebuild).
+  // Dispatches into the other lifecycle skills for sub-decisions.
+  'dxkit-onboard',
 ] as const;
 
 interface GenerateResult {
