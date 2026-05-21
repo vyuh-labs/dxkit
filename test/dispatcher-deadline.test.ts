@@ -101,11 +101,15 @@ describe('CapabilityDispatcher per-provider deadline', () => {
       hangingProvider('c'),
     ]);
     const elapsed = Date.now() - t0;
-    // Generous upper bound — node's setTimeout granularity + WSL2
-    // scheduling jitter make tight bounds flaky. The point is the
-    // dispatch DOES return rather than hanging forever; the actual
-    // wall-clock should be ~deadlineMs, never minutes.
-    expect(elapsed).toBeGreaterThanOrEqual(40);
+    // Generous bounds on both sides — node's setTimeout granularity
+    // (~1-2ms) + WSL2 / CI runner scheduling jitter make tight bounds
+    // flaky. The point is the dispatch DOES wait for the deadline
+    // rather than returning immediately (would be <5ms) AND it returns
+    // rather than hanging forever (would be minutes). The deadline is
+    // 40ms; fast runners can fire setTimeout at 38-39ms, so the lower
+    // bound is 25ms — well clear of "no waiting" while tolerating
+    // timer-granularity variance.
+    expect(elapsed).toBeGreaterThanOrEqual(25);
     expect(elapsed).toBeLessThan(2000);
   });
 
