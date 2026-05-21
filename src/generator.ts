@@ -76,6 +76,11 @@ const DXKIT_SKILLS = [
   'dxkit-hooks',
   'dxkit-reports',
   'dxkit-action',
+  // dxkit-fix (2.5.2): reactive repair surface. Consumes
+  // `vyuh-dxkit doctor --json` output and walks the customer through
+  // each fixable check. Lands after the doctor pivot adds structured
+  // output + fix metadata in 2.5.2.
+  'dxkit-fix',
 ] as const;
 
 interface GenerateResult {
