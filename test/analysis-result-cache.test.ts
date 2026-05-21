@@ -79,7 +79,6 @@ function stubBody(): AnalysisResultBody {
         ruby: false,
       },
       infrastructure: { docker: false, postgres: false, redis: false },
-      tools: { gcloud: false, pulumi: false, infisical: false, ghCli: false },
       projectName: 'fixture',
       projectDescription: '',
       versions: {},

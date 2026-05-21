@@ -337,32 +337,6 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         });
       }
     }
-    if (manifest.config.tools?.gcloud) {
-      const ok = commandAvailable('gcloud');
-      checks.push({
-        label: 'gcloud',
-        ok,
-        tier: 'dx',
-        ...(ok
-          ? {}
-          : {
-              fix: { hint: 'Install the gcloud SDK — manifest declares the dependency.' },
-            }),
-      });
-    }
-    if (manifest.config.tools?.infisical) {
-      const ok = commandAvailable('infisical');
-      checks.push({
-        label: 'infisical',
-        ok,
-        tier: 'dx',
-        ...(ok
-          ? {}
-          : {
-              fix: { hint: 'Install the Infisical CLI — manifest declares the dependency.' },
-            }),
-      });
-    }
   }
 
   return checks;

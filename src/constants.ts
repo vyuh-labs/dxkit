@@ -112,10 +112,6 @@ export function buildConditions(config: ResolvedConfig): Record<string, boolean>
     IF_REDIS: config.infrastructure.redis,
     IF_HAS_SERVICES: config.infrastructure.postgres || config.infrastructure.redis,
     IF_DOCKER: config.infrastructure.docker,
-    IF_GCLOUD: config.tools.gcloud,
-    IF_PULUMI: config.tools.pulumi,
-    IF_INFISICAL: config.tools.infisical,
-    IF_GH_CLI: config.tools.ghCli,
     IF_CLAUDE_CODE: config.claudeCode,
     IF_COVERAGE_ENABLED: parseInt(config.coverageThreshold || DEFAULT_COVERAGE) > 0,
   };

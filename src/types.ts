@@ -65,12 +65,6 @@ export interface DetectedStack {
     postgres: boolean;
     redis: boolean;
   };
-  tools: {
-    gcloud: boolean;
-    pulumi: boolean;
-    infisical: boolean;
-    ghCli: boolean;
-  };
   projectName: string;
   projectDescription: string;
   /**

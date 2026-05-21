@@ -49,16 +49,12 @@ export async function promptForConfig(
     const langs = Object.entries(detected.languages)
       .filter(([, v]) => v)
       .map(([k]) => k);
-    const tools = Object.entries(detected.tools)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
     const infra = Object.entries(detected.infrastructure)
       .filter(([, v]) => v)
       .map(([k]) => k);
 
     if (langs.length) logger.info(`Languages: ${langs.join(', ')}`);
     if (infra.length) logger.info(`Infrastructure: ${infra.join(', ')}`);
-    if (tools.length) logger.info(`Tools: ${tools.join(', ')}`);
     console.log('');
 
     const includeAll = await confirm(rl, 'Include all detected?', true);
