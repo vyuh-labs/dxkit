@@ -236,6 +236,10 @@ export async function run(argv: string[]): Promise<void> {
       'require-reviews': { type: 'string' },
       // setup-prebuild flags (branch reused above)
       regions: { type: 'string' },
+      // upgrade flags
+      target: { type: 'string' },
+      'dry-run': { type: 'boolean', default: false },
+      plan: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -1692,6 +1696,18 @@ export async function run(argv: string[]): Promise<void> {
         branch: values.branch as string | undefined,
         regions: values.regions as string | undefined,
         force: !!values.force,
+      });
+      break;
+    }
+
+    case 'upgrade': {
+      const { runUpgrade } = await import('./upgrade');
+      await runUpgrade(cwd, {
+        target: values.target as string | undefined,
+        yes: !!values.yes,
+        dryRun: !!values['dry-run'],
+        planOnly: !!values.plan,
+        json: !!values.json,
       });
       break;
     }
