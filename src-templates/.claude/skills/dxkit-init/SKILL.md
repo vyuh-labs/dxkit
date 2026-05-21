@@ -66,7 +66,7 @@ Ask the user what they want, then pick the right invocation:
 
 ## Common pitfalls
 
-- **No package.json**: `npm init @vyuhlabs/dxkit` seeds a minimal one. For Python-only / Go-only repos, install dxkit globally instead: `npm install -g @vyuhlabs/dxkit && vyuh-dxkit init --full --yes`.
+- **No package.json**: `npm init @vyuhlabs/dxkit` seeds a minimal one. For Python-only / Go-only repos, install dxkit globally instead: `npm install -g @vyuhlabs/dxkit && npx vyuh-dxkit init --full --yes`.
 - **Existing .claude/ from 2.5.0**: dxkit init is additive — your existing `.claude/` files are preserved. To switch to the new dxkit-specific shape, delete the old `.claude/` dir first, then re-init.
 - **Peer-dep ERESOLVE during `npm install`**: `npm init @vyuhlabs/dxkit` automatically retries with `--legacy-peer-deps`. Manual installs may need that flag.
 - **Brownfield repo with thousands of existing findings**: that's normal — the baseline records them all once. Guardrail only blocks net-new findings.
@@ -77,7 +77,7 @@ A complete install lays down ~15-20 files (down from the 2.5.0 ~73-file scaffold
 
 - `.dxkit/baselines/main.json` (after `baseline create`)
 - `.dxkit-ignore` (starter template)
-- `.vyuh-dxkit.json` (manifest)
+- `.npx vyuh-dxkit.json` (manifest)
 - `.githooks/pre-push`
 - `.github/workflows/dxkit-guardrails.yml`
 - `.github/workflows/dxkit-baseline-refresh.yml`
@@ -89,5 +89,5 @@ A complete install lays down ~15-20 files (down from the 2.5.0 ~73-file scaffold
 - `.claude/settings.json` (narrowed: dxkit-binary permissions only)
 - `AGENTS.md` (project prose context for any agent — Claude, Codex, Cursor, Aider)
 - `CLAUDE.md` (shim pointing at AGENTS.md)
-- `package.json` (postinstall = `vyuh-dxkit hooks activate`)
+- `package.json` (postinstall = `npx vyuh-dxkit hooks activate`)
 - `.gitignore` (additive: `.dxkit/reports/`, `.dxkit/cache/`, `graphify-out/`)

@@ -1,6 +1,6 @@
 ---
 name: dxkit-reports
-description: Run dxkit reports and explain their output. Use when the user asks "run health", "check security", "show me the dashboard", "what does this score mean", or anything about generating / reading dxkit analyzer output. Hands off to dxkit-action for fixing findings.
+description: Run dxkit reports and explain their output, including the consolidated dashboard view. Use when the user asks "run health", "check security", "show me the dashboard", "open the dashboard", "tour the dashboard", "explain the dashboard", "what does this score mean", or anything about generating / interpreting dxkit analyzer output. Always reach for this skill even when the user names a specific subcommand (health, vulnerabilities, dashboard, bom, etc.) — running the command is only half of the value; the skill wraps the output with the right framing. Hands off to dxkit-action for fixing findings.
 ---
 
 # dxkit-reports
@@ -11,15 +11,15 @@ This skill runs dxkit analyzers and reads their output back to the user. It's th
 
 | User asks | Command | Output |
 |---|---|---|
-| "Overall health" / "give me the score" | `vyuh-dxkit health` | 6-dimension score table + top actions per dimension |
-| "Check security" / "find vulns" | `vyuh-dxkit vulnerabilities` | Code-level SAST + dep-vuln + secret findings, grouped by severity |
-| "Test coverage gaps" | `vyuh-dxkit test-gaps` | Source files without matching tests, prioritized by architectural role |
-| "Code quality" | `vyuh-dxkit quality` | Lint findings + duplication + slop score |
-| "Who's been working on what" | `vyuh-dxkit dev-report` | Per-author activity, hot files, churn |
-| "License inventory" | `vyuh-dxkit licenses` | Every dependency's declared license |
-| "Bill of materials" | `vyuh-dxkit bom` | Licenses + dep vulnerabilities joined (15-col XLSX-ready output) |
-| "Run everything" | `vyuh-dxkit report` | Every analyzer in one shot, ~3-5 min |
-| "Show me the dashboard" | `vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html` |
+| "Overall health" / "give me the score" | `npx vyuh-dxkit health` | 6-dimension score table + top actions per dimension |
+| "Check security" / "find vulns" | `npx vyuh-dxkit vulnerabilities` | Code-level SAST + dep-vuln + secret findings, grouped by severity |
+| "Test coverage gaps" | `npx vyuh-dxkit test-gaps` | Source files without matching tests, prioritized by architectural role |
+| "Code quality" | `npx vyuh-dxkit quality` | Lint findings + duplication + slop score |
+| "Who's been working on what" | `npx vyuh-dxkit dev-report` | Per-author activity, hot files, churn |
+| "License inventory" | `npx vyuh-dxkit licenses` | Every dependency's declared license |
+| "Bill of materials" | `npx vyuh-dxkit bom` | Licenses + dep vulnerabilities joined (15-col XLSX-ready output) |
+| "Run everything" | `npx vyuh-dxkit report` | Every analyzer in one shot, ~3-5 min |
+| "Show me the dashboard" | `npx vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html` |
 
 ## Where output lands
 
@@ -56,7 +56,7 @@ Score → rating: A ≥ 80, B ≥ 60, C ≥ 40, D ≥ 20, E < 20. **Cap tiers** 
 ### Quick health check (warm cache)
 
 ```bash
-vyuh-dxkit health
+npx vyuh-dxkit health
 ```
 
 Re-uses cached scanner outputs where possible. ~5-15s on warm cache, ~30-60s cold.
@@ -64,9 +64,9 @@ Re-uses cached scanner outputs where possible. ~5-15s on warm cache, ~30-60s col
 ### Pre-merge audit (thorough)
 
 ```bash
-vyuh-dxkit health --with-coverage   # Runs tests + materializes coverage before scoring
-vyuh-dxkit vulnerabilities          # Always re-runs the deep security scan
-vyuh-dxkit dashboard                 # Renders the latest reports into one HTML view
+npx vyuh-dxkit health --with-coverage   # Runs tests + materializes coverage before scoring
+npx vyuh-dxkit vulnerabilities          # Always re-runs the deep security scan
+npx vyuh-dxkit dashboard                 # Renders the latest reports into one HTML view
 ```
 
 `--with-coverage` is slow (runs your test suite) but switches the Tests dimension from heuristic ("files match a test pattern") to real ("line coverage from your reporter"). Worth it for pre-merge audits.
@@ -74,7 +74,7 @@ vyuh-dxkit dashboard                 # Renders the latest reports into one HTML 
 ### Per-PR scope
 
 ```bash
-vyuh-dxkit guardrail check
+npx vyuh-dxkit guardrail check
 ```
 
 Diffs the current scan vs the baseline. Exit 1 on net-new findings (the same logic the pre-push hook uses).
@@ -82,8 +82,8 @@ Diffs the current scan vs the baseline. Exit 1 on net-new findings (the same log
 ### Failing CI on a threshold
 
 ```bash
-vyuh-dxkit health --fail-on-score=70                 # Exit 1 if overall score < 70
-vyuh-dxkit vulnerabilities --fail-on-severity=high   # Exit 1 if any high-severity finding
+npx vyuh-dxkit health --fail-on-score=70                 # Exit 1 if overall score < 70
+npx vyuh-dxkit vulnerabilities --fail-on-severity=high   # Exit 1 if any high-severity finding
 ```
 
 Use these in CI for hard floors.
@@ -105,7 +105,7 @@ Hand off to the `dxkit-action` skill — that's the workflow for prioritizing + 
 
 ## Troubleshooting
 
-- **"Scanner X unavailable"** → run `vyuh-dxkit tools list` to see status; `vyuh-dxkit tools install` to install missing ones.
+- **"Scanner X unavailable"** → run `npx vyuh-dxkit tools list` to see status; `npx vyuh-dxkit tools install` to install missing ones.
 - **"N/A for this stack"** → applicability-guard fired (e.g., vitest-coverage on a mocha repo). Not a problem; the scanner doesn't apply here.
 - **Report looks stale** → `.dxkit/reports/` is keyed by date. Re-run the analyzer to get a fresh date-stamped file.
 - **Numbers don't match between two reports** → check whether `--with-coverage` was used. Without it, Tests dimension uses heuristic; with it, real coverage. They legitimately differ.
