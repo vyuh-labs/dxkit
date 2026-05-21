@@ -13,7 +13,7 @@ This skill handles the git-hook surface dxkit ships. Use it to install hooks, de
 
 `.githooks/pre-commit` (opt-in via `--with-precommit-hook`) — same guardrail check but on every commit. Slower on large repos (~1-3 min on 500+ file repos). Not in `--full` by default because the wall-clock cost gates adoption.
 
-Both run `vyuh-dxkit guardrail check`. The check exits 1 (blocking) on net-new findings vs. the baseline.
+Both run `npx vyuh-dxkit guardrail check`. The check exits 1 (blocking) on net-new findings vs. the baseline.
 
 ## Installation
 
@@ -36,21 +36,21 @@ Hooks activate by setting `core.hooksPath = .githooks` in the local git config. 
 
 ```bash
 # Either of these works
-vyuh-dxkit hooks activate
+npx vyuh-dxkit hooks activate
 git config core.hooksPath .githooks
 ```
 
-`vyuh-dxkit hooks activate` is idempotent — refuses to clobber a custom hooksPath (husky's `.husky`, lefthook's `.lefthook`, etc.). Run it to confirm the current state.
+`npx vyuh-dxkit hooks activate` is idempotent — refuses to clobber a custom hooksPath (husky's `.husky`, lefthook's `.lefthook`, etc.). Run it to confirm the current state.
 
 ## Troubleshooting "hook didn't fire"
 
 Walk this checklist:
 
 1. **Hook file exists**: `ls -la .githooks/pre-push` — should be executable.
-2. **hooksPath is wired**: `git config --local --get core.hooksPath` should print `.githooks`. If empty or pointing elsewhere, run `vyuh-dxkit hooks activate`.
-3. **dxkit binary is on PATH**: from the repo root, `which vyuh-dxkit` should resolve (either project-local `./node_modules/.bin/vyuh-dxkit` or global). The hook delegates to whichever it finds.
-4. **Baseline exists**: `test -f .dxkit/baselines/main.json` — without a baseline the guardrail has nothing to compare against. Run `vyuh-dxkit baseline create`.
-5. **Run the check by hand**: `vyuh-dxkit guardrail check` from the repo root. Expected: exits 1 on net-new findings (red), 0 on clean diff (green).
+2. **hooksPath is wired**: `git config --local --get core.hooksPath` should print `.githooks`. If empty or pointing elsewhere, run `npx vyuh-dxkit hooks activate`.
+3. **dxkit binary is on PATH**: from the repo root, `which npx vyuh-dxkit` should resolve (either project-local `./node_modules/.bin/vyuh-dxkit` or global). The hook delegates to whichever it finds.
+4. **Baseline exists**: `test -f .dxkit/baselines/main.json` — without a baseline the guardrail has nothing to compare against. Run `npx vyuh-dxkit baseline create`.
+5. **Run the check by hand**: `npx vyuh-dxkit guardrail check` from the repo root. Expected: exits 1 on net-new findings (red), 0 on clean diff (green).
 
 If all five pass and the hook still doesn't fire, the most common cause is a competing hook system. `git config --global --get core.hooksPath` could be set globally to something else.
 
@@ -81,7 +81,7 @@ This skips ALL git hooks (not just dxkit's). After the emergency:
 2. Either fix the regression in a follow-up commit OR
 3. Re-baseline if the regression is intentional and accepted:
    ```bash
-   vyuh-dxkit baseline create --force
+   npx vyuh-dxkit baseline create --force
    git add .dxkit/baselines/main.json
    git commit -m "chore(baseline): accept regression from <ref>"
    ```

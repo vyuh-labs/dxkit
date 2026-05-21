@@ -30,11 +30,11 @@ Each dimension is a 0-100 score with letter grade (A≥80, B≥60, C≥40, D≥2
 | **Maintainability** | Function/file size outliers, deep cyclomatic complexity, god-objects, high orphan-module count, dead imports |
 | **Developer Experience** | Missing `.gitignore` / `.editorconfig` / `package.json` engines pin / devcontainer / hooks / CI workflow |
 
-Run `vyuh-dxkit health` to see all six at once. Each dimension report has a "top actions" list — the changes that would lift the score the most.
+Run `npx vyuh-dxkit health` to see all six at once. Each dimension report has a "top actions" list — the changes that would lift the score the most.
 
 ## The scanner toolchain
 
-dxkit doesn't write parsers — it orchestrates established tools and computes scores. The full list is in `TOOL_DEFS` (or run `vyuh-dxkit tools list`). Key ones:
+dxkit doesn't write parsers — it orchestrates established tools and computes scores. The full list is in `TOOL_DEFS` (or run `npx vyuh-dxkit tools list`). Key ones:
 
 - **gitleaks** — secret scanning (API keys, AWS credentials, GitHub tokens)
 - **semgrep** — multi-language SAST (auto config picks rulesets per active language pack)
@@ -59,10 +59,10 @@ That's why "fix a critical, leave the medium" works — the medium's fingerprint
 Commands:
 
 ```bash
-vyuh-dxkit baseline create               # Capture current state into .dxkit/baselines/main.json
-vyuh-dxkit baseline show                 # Summarize what's recorded
-vyuh-dxkit baseline show --kind secret   # Drill into a specific finding kind
-vyuh-dxkit guardrail check               # Diff current scan vs baseline; exit 1 on net-new
+npx vyuh-dxkit baseline create               # Capture current state into .dxkit/baselines/main.json
+npx vyuh-dxkit baseline show                 # Summarize what's recorded
+npx vyuh-dxkit baseline show --kind secret   # Drill into a specific finding kind
+npx vyuh-dxkit guardrail check               # Diff current scan vs baseline; exit 1 on net-new
 ```
 
 ## Hooks
@@ -76,9 +76,9 @@ Activation is wired via `npm postinstall` so `npm install` after `git clone` set
 
 ## How to learn more
 
-- `vyuh-dxkit <subcommand> --help` — flag reference
-- `vyuh-dxkit baseline show` — what your repo already has recorded
+- `npx vyuh-dxkit <subcommand> --help` — flag reference
+- `npx vyuh-dxkit baseline show` — what your repo already has recorded
 - `.dxkit/reports/` — every analyzer's markdown + JSON output from the last run
-- `vyuh-dxkit dashboard` — single HTML view of every report
+- `npx vyuh-dxkit dashboard` — single HTML view of every report
 
 When the user asks specifically about a scanner or a finding type, point them at the relevant report or run the relevant analyzer command directly.

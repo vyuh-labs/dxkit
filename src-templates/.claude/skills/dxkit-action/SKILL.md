@@ -42,7 +42,7 @@ Skip items where reachability is "no" (graphify can't find a call path) UNLESS t
 # 2. Remove the secret from the file
 # 3. If the secret was committed: `git filter-repo` or BFG to scrub history
 # 4. Re-scan to confirm gitleaks no longer reports it
-vyuh-dxkit vulnerabilities --json | jq '.summary.findings'
+npx vyuh-dxkit vulnerabilities --json | jq '.summary.findings'
 ```
 
 Don't try to redact the secret in place — the git history still has it. Rotation is the only true fix.
@@ -63,7 +63,7 @@ Suppression is `// nosemgrep: <rule-id>` on the offending line. Use sparingly �
 # Find the patched version (osv-scanner / npm-audit / etc. report it)
 npm install <pkg>@<patched-version>
 # Re-run the scan
-vyuh-dxkit vulnerabilities
+npx vyuh-dxkit vulnerabilities
 ```
 
 For peer-dep conflicts: `npm install <pkg>@<patched-version> --legacy-peer-deps` (matches the post-create.sh fallback chain).
@@ -78,7 +78,7 @@ For Python: `pip install --upgrade <pkg>=<patched>` then re-pip-freeze. For Go: 
 # 3. Run the test runner to confirm it passes
 npm test  # or pytest, go test, cargo test, etc.
 # 4. Re-run test-gaps to confirm the file dropped off the list
-vyuh-dxkit test-gaps
+npx vyuh-dxkit test-gaps
 ```
 
 Don't write tests that just import the module — write tests that exercise behavior. Useless tests inflate the count but don't move the dimension.
@@ -99,7 +99,7 @@ After each fix:
 
 ```bash
 # Re-run the SPECIFIC analyzer that flagged the finding
-vyuh-dxkit vulnerabilities  # or quality / test-gaps / health
+npx vyuh-dxkit vulnerabilities  # or quality / test-gaps / health
 ```
 
 The fix is verified when:
@@ -116,7 +116,7 @@ Once a finding is fixed AND verified gone, the workflow depends on what changed:
 | Scenario | Action |
 |---|---|
 | Fix landed via a code change | Commit the code. Baseline is unchanged. Future scans confirm the fix held. |
-| Fix landed via a config change (e.g., new entry in `.dxkit-ignore`) | Re-baseline: `vyuh-dxkit baseline create --force`. Commit both `.dxkit-ignore` and the new baseline. |
+| Fix landed via a config change (e.g., new entry in `.dxkit-ignore`) | Re-baseline: `npx vyuh-dxkit baseline create --force`. Commit both `.dxkit-ignore` and the new baseline. |
 | Finding accepted as known + not blocking | Re-baseline with explicit reason in the commit message. Future scans treat it as pre-existing, not net-new. |
 | Finding is genuinely a false positive | First try suppression on the offending line. If you can't suppress, re-baseline. |
 
@@ -127,7 +127,7 @@ Once a finding is fixed AND verified gone, the workflow depends on what changed:
 After fixing N findings, run the guardrail check before pushing:
 
 ```bash
-vyuh-dxkit guardrail check
+npx vyuh-dxkit guardrail check
 ```
 
 Exit 0 = your fixes didn't introduce any net-new regressions (you only removed/fixed things). Exit 1 = something new appeared; address that before pushing.
