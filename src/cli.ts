@@ -3,7 +3,7 @@ import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig } from './prompts';
-import { runUpdate } from './update';
+import { runUpdate, writeInstallFlags } from './update';
 import { runDoctor } from './doctor';
 import { VERSION } from './constants';
 import * as logger from './logger';
@@ -411,6 +411,20 @@ export async function run(argv: string[]): Promise<void> {
         }
         for (const note of r.notes) logger.info(note);
       }
+
+      // Stamp the install-flag set into the manifest so `vyuh-dxkit
+      // update` knows exactly which surfaces to refresh later instead
+      // of re-deriving from the workspace. Single source of truth for
+      // upgrade-time decisions.
+      writeInstallFlags(cwd, {
+        withDxkitAgents: wantDxkitAgents,
+        withHooks: wantHooks,
+        withPrecommit: wantPrecommitHook,
+        withDevcontainer: wantDevcontainer,
+        withCiGuardrails: wantCi,
+        withBaselineRefresh: wantBaselineRefresh,
+        withPrReview: wantPrReview,
+      });
 
       console.log('');
       logger.info('Manifest written to .vyuh-dxkit.json');
