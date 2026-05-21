@@ -420,12 +420,6 @@ export function detect(cwd: string): DetectedStack {
       postgres: composeContent.includes('postgres'),
       redis: composeContent.includes('redis'),
     },
-    tools: {
-      gcloud: fileExists(cwd, '.gcloud') || commandExists('gcloud'),
-      pulumi: fileExists(cwd, 'Pulumi.yaml') || fileExists(cwd, 'Pulumi.yml'),
-      infisical: fileExists(cwd, '.infisical.json') || commandExists('infisical'),
-      ghCli: commandExists('gh'),
-    },
     projectName: detectProjectName(cwd),
     projectDescription: detectProjectDescription(cwd),
     versions: {

@@ -51,7 +51,6 @@ function fixtureContext(): ProducerContext {
           ruby: false,
         },
         infrastructure: { docker: false, postgres: false, redis: false },
-        tools: { gcloud: false, pulumi: false, infisical: false, ghCli: false },
         framework: undefined,
         testRunner: undefined,
         projectName: '',

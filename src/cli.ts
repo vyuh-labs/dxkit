@@ -270,16 +270,12 @@ export async function run(argv: string[]): Promise<void> {
       const langs = Object.entries(detected.languages)
         .filter(([, v]) => v)
         .map(([k]) => k);
-      const tools = Object.entries(detected.tools)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
 
       if (langs.length === 0) {
         logger.warn('No languages detected. Generating with minimal config.');
       } else {
         logger.success(`Languages: ${langs.join(', ')}`);
       }
-      if (tools.length) logger.success(`Tools: ${tools.join(', ')}`);
       if (detected.framework) logger.success(`Framework: ${detected.framework}`);
       if (detected.testRunner)
         logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);

@@ -750,7 +750,6 @@ function makeFakeConfig(opts: { playbook: boolean; playbookVersion?: string }) {
     projectDescription: '',
     framework: undefined,
     infrastructure: { docker: false, postgres: false, redis: false },
-    tools: { gcloud: false, pulumi: false, infisical: false, ghCli: false },
     requiredTools: [],
     precommit: false,
     qualityChecks: false,
