@@ -437,7 +437,7 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'doctor': {
-      await runDoctor(cwd);
+      await runDoctor(cwd, { json: !!values.json });
       break;
     }
 
