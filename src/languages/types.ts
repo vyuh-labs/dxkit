@@ -358,6 +358,27 @@ export interface LanguageSupport {
   };
 
   /**
+   * VSCode extension IDs to install in the generated devcontainer when
+   * this pack is active. Companion to `devcontainerFeature` — the
+   * feature installs the toolchain (compiler / runtime); the
+   * extension(s) drop the editor support (syntax, lint, debug).
+   *
+   * Mirrors Rule 6 (CLAUDE.md): each pack contributes its own
+   * extensions; the installer unions across active packs only. Pre-
+   * extension the hardcoded extensions list installed every language's
+   * extension on every container (~7 extensions for stacks that don't
+   * use those languages), bloating editor startup and download time on
+   * Codespaces.
+   *
+   * Always-on extensions (anthropic.claude-code, github.vscode-github-
+   * actions, github.vscode-pull-request-github) are declared by the
+   * installer, not per-pack, since they're orthogonal to the language.
+   *
+   * Optional — packs without canonical editor support omit it.
+   */
+  devcontainerExtensions?: string[];
+
+  /**
    * Key under `DetectedStack.versions` where this pack's version lives —
    * AND the lowercase prefix used to derive template-variable + condition
    * names (`NODE_VERSION`, `IF_NODE`). Defaults to `id` when omitted.

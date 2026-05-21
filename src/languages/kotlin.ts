@@ -528,4 +528,5 @@ export const kotlin: LanguageSupport = {
     name: 'ghcr.io/devcontainers/features/java:1',
     opts: { version: '17', installGradle: true },
   },
+  devcontainerExtensions: ['fwcd.kotlin'],
 };

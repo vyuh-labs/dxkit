@@ -1432,4 +1432,5 @@ export const csharp: LanguageSupport = {
     name: 'ghcr.io/devcontainers/features/dotnet:2',
     opts: { version: '8.0' },
   },
+  devcontainerExtensions: ['ms-dotnettools.csharp'],
 };

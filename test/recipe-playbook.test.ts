@@ -49,6 +49,7 @@ import {
   allTlsBypassPatterns,
   activeLanguagesFromFlags,
   activeLanguagesFromStack,
+  buildDevcontainerExtensions,
   buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
@@ -116,6 +117,9 @@ const mockPlaybookPack = {
     name: 'ghcr.io/devcontainers/features/playbook-mock:99',
     opts: { version: '99.0.0', playbookFlag: true },
   },
+  // Distinctive VSCode extension id so the assertion verifies the
+  // synthetic pack's contribution specifically.
+  devcontainerExtensions: ['playbook-vendor.playbook-mock'],
 } as unknown as LanguageSupport;
 
 // ─── Registry mutation ──────────────────────────────────────────────────────
@@ -223,6 +227,37 @@ describe('recipe playbook — synthetic pack', () => {
       version: '99.0.0',
       playbookFlag: true,
     });
+  });
+
+  it('buildDevcontainerExtensions picks up the synthetic pack contribution', () => {
+    // Same activation pattern as the buildDevcontainerFeatures test: only
+    // the synthetic pack is active, so we observe its extension landing
+    // without bleeding real pack extensions into the assertion.
+    const flags = {
+      typescript: false,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const extensions = buildDevcontainerExtensions(flags);
+    // Always-on extensions land regardless of active packs.
+    expect(extensions).toContain('anthropic.claude-code');
+    expect(extensions).toContain('github.vscode-github-actions');
+    expect(extensions).toContain('github.vscode-pull-request-github');
+    // Synthetic-pack contribution flows through without any code change
+    // to installDevcontainer or buildDevcontainerExtensions — same
+    // pack-driven recipe as buildDevcontainerFeatures.
+    expect(extensions).toContain('playbook-vendor.playbook-mock');
+    // Order stability: always-on entries come before per-pack ones.
+    expect(extensions.indexOf('anthropic.claude-code')).toBeLessThan(
+      extensions.indexOf('playbook-vendor.playbook-mock'),
+    );
   });
 
   // D030 (2.4.7): hygiene scope's extension list was hardcoded since
