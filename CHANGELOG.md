@@ -14,6 +14,12 @@ every defect surfaced during the 2026-05-21 guided Codespaces UX
 walkthrough (D145–D156) plus a vestigial-cleanup pass and adds three
 new CLI subcommands + three new lifecycle skills.
 
+Companion release: **`@vyuhlabs/create-dxkit@0.2.0`** ships alongside
+this version, picking up the create-dxkit shim improvements (quieter
+ERESOLVE handling, `--no-audit`, `.npmrc legacy-peer-deps` persistence).
+Tag: `create-dxkit@v0.2.0`. Run `npm init @vyuhlabs/dxkit` to get
+the new combined experience.
+
 Validated end-to-end with two cross-stack walkthroughs on 2026-05-22:
 `vyuhlabs-platform` (python + typescript) and `dpl-studio` (csharp).
 Both stacks: defect closures verified, per-pack devcontainer adapts
