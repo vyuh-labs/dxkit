@@ -37,8 +37,8 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     startLineB: 1,
   },
   'coverage-gap': { id: FP, kind: 'coverage-gap', file: 'src/a.ts', symbol: 'fn' },
-  'test-gap': { id: FP, kind: 'test-gap', file: 'src/a.ts', risk: 'HIGH' },
-  hygiene: { id: FP, kind: 'hygiene', file: 'src/a.ts', line: 1, marker: 'TODO' },
+  'test-gap': { id: FP, kind: 'test-gap', file: 'src/a.ts', risk: 'high' },
+  hygiene: { id: FP, kind: 'hygiene', file: 'src/a.ts', line: 1, marker: 'todo' },
   license: { id: FP, kind: 'license', package: 'lodash', version: '4.0.0', licenseType: 'MIT' },
   'test-file-degradation': {
     id: FP,
