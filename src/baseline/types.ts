@@ -412,7 +412,56 @@ export type BaselineEntry =
   | { id: FindingId; kind: 'stale-file'; file: string; suffix: string }
   | { id: FindingId; kind: 'large-file'; file: string }
   | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string }
-  | { id: FindingId; kind: 'stale-allow'; file: string; line: number; category: string };
+  | { id: FindingId; kind: 'stale-allow'; file: string; line: number; category: string }
+  | SanitizedBaselineEntry;
+
+/**
+ * The full-payload subset of `BaselineEntry` — every variant except
+ * the stripped sanitized shape. Producers emit this shape directly;
+ * sanitization is a write-time transformation, never a producer
+ * concern. Consumers narrowing on `entry.kind` from a `BaselineEntry`
+ * must call `isSanitized` first to reach this shape (or accept the
+ * sanitized variant in the union).
+ */
+export type RichBaselineEntry = Exclude<BaselineEntry, SanitizedBaselineEntry>;
+
+/**
+ * Stripped per-finding entry — identity + kind only, every other
+ * field dropped. Produced by `sanitizeEntry` for baselines written in
+ * sanitized mode (the public-repo / compliance-conscious posture).
+ *
+ * Sanitization preserves the cross-run matching contract: the
+ * fingerprint `id` is unchanged, the matcher's identity-multiset
+ * pass still works at full confidence. What's lost is the location-
+ * pair pass (no `file` / `line` to compare) and the renderer's
+ * ability to surface human-readable locators (`src/auth/oauth.ts:42`)
+ * — they collapse to `<sanitized>` in `baseline show` output.
+ *
+ * The `sanitized: true` discriminant lets exhaustive switches narrow
+ * to either the rich shape or the stripped shape via the
+ * `isSanitized` guard in `./sanitize.ts`. Adding a new finding kind
+ * doesn't require touching this variant — `kind` is the union of all
+ * non-sanitized kinds, propagated automatically.
+ */
+export interface SanitizedBaselineEntry {
+  readonly id: FindingId;
+  readonly kind:
+    | 'secret'
+    | 'code'
+    | 'config'
+    | 'dep-vuln'
+    | 'duplication'
+    | 'coverage-gap'
+    | 'test-gap'
+    | 'hygiene'
+    | 'test-file-degradation'
+    | 'god-file'
+    | 'stale-file'
+    | 'large-file'
+    | 'secret-hmac'
+    | 'stale-allow';
+  readonly sanitized: true;
+}
 
 /**
  * One pairing decision from the matcher. Carries enough context for

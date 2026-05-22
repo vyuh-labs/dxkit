@@ -64,6 +64,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dependency vulnerability tracking is unchanged — `dep-vuln`
   is a separate identity kind on a separate producer and still
   blocks via the guardrail check.
+- **Sanitization machinery for baseline entries.** New pure
+  module `src/baseline/sanitize.ts` introduces a stripped
+  `SanitizedBaselineEntry` variant (`{ id, kind, sanitized: true }`)
+  carrying identity + kind only. The `sanitizeEntry` /
+  `sanitizeFile` pass collapses every rich field; cross-run
+  matching still works at full confidence via the fingerprint
+  multiset pass. Producers now emit the rich
+  `RichBaselineEntry` shape (a `BaselineEntry` excluding the
+  sanitized variant); sanitization is a write-time
+  transformation, never a producer concern. Consumers walking
+  a baseline narrow via the `isSanitized` type guard before
+  switching on `entry.kind`. Write-path wiring + visibility-
+  aware mode selection ship in a follow-up commit.
 
 ### Architectural notes
 

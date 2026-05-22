@@ -24,6 +24,7 @@
 
 import { canonicalRuleFor } from '../analyzers/tools/fingerprint';
 import type { LocatedIdentity } from './git-aware-match';
+import { isSanitized } from './sanitize';
 import type { BaselineEntry } from './types';
 
 /**
@@ -31,8 +32,14 @@ import type { BaselineEntry } from './types';
  * already-computed identity hash; locator fields are populated for
  * the kinds the matcher's location-pair / content-hash passes can
  * use.
+ *
+ * Sanitized entries (`sanitized: true`) carry only identity + kind;
+ * they short-circuit to identity-only locators because the
+ * location-pair pass has no fields to compare. The matcher's
+ * multiset pass still pairs them at full confidence by id.
  */
 export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
+  if (isSanitized(entry)) return { id: entry.id };
   switch (entry.kind) {
     case 'secret':
     case 'code':

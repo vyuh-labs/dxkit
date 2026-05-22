@@ -48,7 +48,7 @@ import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import { identityFor } from '../finding-identity';
-import type { BaselineEntry, StaleAllowIdentityInput } from '../types';
+import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
 
 export interface StaleAllowInput {
   readonly annotations: ReadonlyArray<InlineAllowlistOccurrence>;
@@ -71,12 +71,12 @@ export interface StaleAllowInput {
  * be wrong; surfacing "everything is fine" is also wrong but less
  * actively misleading.
  */
-export function staleAllowToBaselineEntries(input: StaleAllowInput): BaselineEntry[] {
+export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselineEntry[] {
   if (input.annotations.length === 0) return [];
   if (input.aggregate === null) return [];
 
   const covered = buildCoveredLocations(input.aggregate);
-  const out: BaselineEntry[] = [];
+  const out: RichBaselineEntry[] = [];
   for (const occ of input.annotations) {
     const key = locationKey(occ.file, occ.line);
     if (covered.has(key)) continue; // active suppression — not stale
