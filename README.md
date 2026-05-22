@@ -236,6 +236,58 @@ auto-discovered when present, compiled-in defaults otherwise.
 
 ---
 
+## Allowlist: per-finding suppression
+
+The baseline handles codebase-wide brownfield acceptance ("today's
+mess is grandfathered; tomorrow's must be net-new improvement").
+For per-finding decisions — false positives, intentional test
+fixtures, externally-mitigated risks, deliberately deferred work —
+use the [allowlist](docs/commands/allowlist.md).
+
+Five typed categories signal **why** a finding is suppressed:
+
+| Category               | Meaning                                           | Expiry                         |
+| ---------------------- | ------------------------------------------------- | ------------------------------ |
+| `false-positive`       | Scanner is wrong about this finding               | Optional                       |
+| `test-fixture`         | Intentional pattern in fixture / test code        | Optional                       |
+| `mitigated-externally` | Real risk neutralized at runtime (WAF, env, etc.) | Optional                       |
+| `accepted-risk`        | Real risk, team accepts, signed off               | **Required** (default 90 days) |
+| `deferred`             | Real, will fix later, tracked work                | **Required**                   |
+
+Two surfaces. Inline annotation for source-anchored findings:
+
+```python
+api_key = "sk_test_xxxx"  # dxkit-allow:test-fixture reason="placeholder in unit test"
+```
+
+File-level (`.dxkit/allowlist.json`) for cross-file findings or any
+suppression that needs an expiry. New entries appear in the PR-
+comment automation so reviewers see suppressions being introduced
+and can sanity-check the rationale before approving. `audit` /
+`prune` subcommands handle stale + soon-to-expire entries.
+
+**Strict cleanup**: orphaned `dxkit-allow:` annotations become
+`stale-allow` findings on the next scan. dxkit refuses to allowlist
+those — the only remediation is to remove the annotation. This is
+the TypeScript `@ts-expect-error` pattern: tools that surface their
+own stale suppressions force cleanup, preventing the annotation
+graveyard.
+
+```bash
+# The block message from `guardrail check` prints the exact command
+# to paste for any blocked finding — file:line for inline-compatible
+# kinds, --fingerprint for everything else.
+vyuh-dxkit allowlist add src/auth/oauth.ts:42 \
+    --category=test-fixture --reason="placeholder in unit test"
+
+vyuh-dxkit allowlist audit              # find stale + soon-to-expire entries
+```
+
+See [`vyuh-dxkit allowlist`](docs/commands/allowlist.md) for the
+full surface.
+
+---
+
 ## Git-aware identity matching
 
 A regression check is only useful if the matcher can tell _old issue
@@ -458,6 +510,28 @@ dxkit is local-first.
       cross-file refactor detection (3.0)
 
 ---
+
+## Reporting issues
+
+If a scanner is too noisy, a finding is missing, dxkit itself is
+broken, or the docs are unclear, the fastest path to the dxkit team
+is the built-in issue subcommand:
+
+```bash
+vyuh-dxkit issue --type=false-positive \
+    --fingerprint=<id> \
+    --about="the scanner flags my intentional X as a Y"
+
+vyuh-dxkit issue --type=bug --about="vyuh-dxkit doctor crashes on macOS arm64"
+
+vyuh-dxkit issue --type=feature-request --about="add SARIF export"
+```
+
+It opens a pre-filled [GitHub issue](https://github.com/vyuh-labs/dxkit/issues)
+in your browser with dxkit version + platform info already populated.
+Nothing is submitted until you click "Submit" — you review the
+prefill first. See [`vyuh-dxkit issue`](docs/commands/issue.md) for
+the full reference.
 
 ## Contributing
 

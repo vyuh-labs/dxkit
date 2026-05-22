@@ -15,6 +15,21 @@ test-gap discovery — all of them).
 - Long-running migration artifacts you'll clean up later but shouldn't
   count against the current health score
 
+## When NOT to use it
+
+`.dxkit-ignore` is **path-based scoping** — files matched here are
+never scanned, no findings emitted, no scoring impact. That's the
+right tool for "this code isn't ours to maintain."
+
+It is NOT the tool for **per-finding suppression**. If dxkit scans
+a file and emits a specific finding you want to suppress (false
+positive, intentional test fixture, externally mitigated), use the
+[allowlist](../commands/allowlist.md) — it carries a typed category
+
+- reason + (when relevant) expiry, and stays auditable. Ignoring
+  the whole file would also silence any other finding in that file
+  that you DO care about.
+
 ## File location
 
 Place `.dxkit-ignore` at the repo root (where `.git/` lives). DXKit

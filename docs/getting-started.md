@@ -232,7 +232,34 @@ present.
 See [`baseline`](commands/baseline.md) and [`guardrail`](commands/guardrail.md)
 for the full surface.
 
-## 6. What to do when something goes wrong
+## 6. Suppress individual findings
+
+When the guardrail blocks a finding you can't fix today — a false
+positive, an intentional test fixture, a real risk mitigated
+externally — use the [allowlist](commands/allowlist.md). Every
+entry carries a typed category and a required reason:
+
+```bash
+# Inline annotation (for source-anchored findings)
+vyuh-dxkit allowlist add src/auth/oauth.ts:42 \
+    --category=test-fixture \
+    --reason="placeholder in unit test"
+
+# File-level entry (for cross-file findings or accepted-risk / deferred)
+vyuh-dxkit allowlist add \
+    --fingerprint=<id-from-guardrail-output> \
+    --kind=dep-vuln \
+    --category=accepted-risk \
+    --reason="WAF rule mitigates this CVE" \
+    --expires=2026-08-22
+```
+
+The guardrail's block message prints the exact `allowlist add`
+command to paste for every blocked finding — copy-paste rather
+than constructing by hand. Periodic `vyuh-dxkit allowlist audit`
+surfaces stale + soon-to-expire entries.
+
+## 7. What to do when something goes wrong
 
 ```bash
 vyuh-dxkit doctor
@@ -242,10 +269,22 @@ Diagnoses common issues — missing tools, version mismatches, package
 manager misconfig, etc. It's the first stop when a report fails or
 produces no output.
 
+If you've hit a false positive, missing finding, dxkit bug, or docs
+gap, open a pre-filled GitHub issue:
+
+```bash
+vyuh-dxkit issue --type=false-positive --about="..."
+vyuh-dxkit issue --type=bug --about="..."
+```
+
+See [`vyuh-dxkit issue`](commands/issue.md) for full details.
+
 ## What's next
 
 - Per-command pages in [`commands/`](commands/) describe options +
   output shape in detail.
+- [Allowlist reference](commands/allowlist.md) — per-finding
+  suppression with typed categories + expiry.
 - [Exclude noisy paths](configuration/dxkit-ignore.md) from analysis
   with `.dxkit-ignore`.
 - [Language pack detection](configuration/language-packs.md) explains

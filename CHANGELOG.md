@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-finding allowlist** — `vyuh-dxkit allowlist add/list/show/audit/prune`.
+  Typed-category suppression (`false-positive`, `test-fixture`,
+  `mitigated-externally`, `accepted-risk`, `deferred`) with required
+  reason + (where relevant) expiry. Two surfaces: inline
+  `// dxkit-allow:<category> reason="..."` annotations and a
+  file-level `.dxkit/allowlist.json`. `accepted-risk` and `deferred`
+  require expiry (default 90 days). See
+  [docs/commands/allowlist.md](docs/commands/allowlist.md).
+- **Strict stale-annotation detection** — orphaned `dxkit-allow:`
+  annotations (where the underlying finding is now gone) emit a
+  new `stale-allow` baseline kind on the next scan. The
+  TypeScript `@ts-expect-error` pattern, applied to suppressions —
+  forces cleanup, prevents the annotation graveyard. Allowlisting
+  a `stale-allow` finding is forbidden; only remediation is to
+  remove the orphaned comment.
+- **Allowlist activity in PR comments** — the
+  `dxkit-guardrails.yml` workflow's sticky PR comment now includes
+  an "Allowlist activity" section listing every entry added (or
+  removed) on this branch versus the baseline commit. Reviewers
+  see new suppressions being introduced and can sanity-check
+  category + reason + expiry before approving.
+- **`vyuh-dxkit issue`** — pre-filled GitHub Issues for false
+  positives, missing findings, bugs, feature requests, and docs
+  gaps. Nothing submits automatically — the CLI opens the
+  customer's browser at a new-issue URL with env metadata
+  pre-populated, customer reviews + clicks "Submit." See
+  [docs/commands/issue.md](docs/commands/issue.md).
+- **`commentSyntax` on language packs** — each pack declares its
+  line-comment marker (`#` for python/ruby; `//` for
+  typescript/go/rust/csharp/kotlin/java). Drives the inline
+  allowlist-annotation generator across every language uniformly.
+  Recipe-enforced: scaffolder ships an empty placeholder so
+  unfilled packs fail the contract test until populated.
+- Three preemptive architecture rules in `scripts/check-architecture.sh`
+  lock down the allowlist canonical entry points: no `createHash`
+  inside `src/allowlist/`, no direct `allowlist.json` IO outside
+  the canonical loader, no language-comment fallback literals
+  (`?? '//'`) anywhere in the module.
+
+### Architectural notes
+
+- Added `stale-allow` as a new `IdentityKind` (Rule 9 + Rule 10
+  compliant: identityFor case + producer + fixture row +
+  removed from `DEFERRED_KINDS` once the gather pass landed).
+- The hint formatter (block-time guidance for blocked findings)
+  consumes the canonical `BaselineEntry` discriminated union
+  directly — no invented intermediate "BlockingFinding" shape.
+  TypeScript exhaustiveness across 6+ switches guarantees new
+  finding kinds can't ship without matching cases.
+- `dxkit-action` skill extended with the typed-category +
+  surfaces description; SAST recipe redirects from semgrep's
+  `// nosemgrep:` to dxkit's `// dxkit-allow:` (single canonical
+  suppression surface across all scanners).
+
 ## [2.5.2] - 2026-05-22
 
 The "scaffold UX + lifecycle skills + setup automation" release. Closes
