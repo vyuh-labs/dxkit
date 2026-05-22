@@ -45,6 +45,7 @@ import { resolveSalt } from './salt';
 import type { SaltMode } from './salt';
 import type { BaselineEntry } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
+import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -306,6 +307,10 @@ export async function gatherCurrentScan(options: {
   const gitleaksOutcome = gatherGitleaksResult(cwd);
   const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
     gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
+  // Inline `dxkit-allow:` annotations gathered from source so the
+  // stale-allow producer can flag orphans whose underlying findings
+  // are no longer present.
+  const inlineAllowlistAnnotations = gatherInlineAllowlistAnnotations(cwd);
 
   const producerCtx: ProducerContext = {
     cwd,
@@ -315,6 +320,7 @@ export async function gatherCurrentScan(options: {
     testGapsReport,
     hygiene: hygieneMarkers,
     rawSecrets,
+    inlineAllowlistAnnotations,
   };
 
   // Dispatch through the canonical producer registry (CLAUDE.md

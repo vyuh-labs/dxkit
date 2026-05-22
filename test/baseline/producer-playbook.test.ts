@@ -103,6 +103,7 @@ function fixtureContext(): ProducerContext {
       mixedLanguages: false,
     },
     rawSecrets: [],
+    inlineAllowlistAnnotations: [],
   };
 }
 
