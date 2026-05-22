@@ -7,6 +7,22 @@ first report on an existing repo.
 
 Requires Node.js ≥ 18.
 
+**Canonical first install** (collapses install + scaffold into one
+step):
+
+```bash
+npm init @vyuhlabs/dxkit
+```
+
+This installs `@vyuhlabs/dxkit` as a devDependency in your repo,
+runs `vyuh-dxkit init --full --yes`, and lands all nine `dxkit-*`
+agent skills + devcontainer + git hooks + CI workflows. The post-
+install hook also auto-activates `core.hooksPath = .githooks` so
+teammates who clone + `npm install` get hooks wired automatically.
+
+If you want dxkit available as a bare command in your shell (not
+just as a project-local install):
+
 ```bash
 npm install -g @vyuhlabs/dxkit
 ```
@@ -17,16 +33,15 @@ Verify:
 vyuh-dxkit --version
 ```
 
-You can also use it without a global install — `npx` fetches on
-demand:
-
-```bash
-npx @vyuhlabs/dxkit health
-```
-
 **Convention used throughout the docs:** examples use the short
 `vyuh-dxkit <cmd>` form (assumes global install). To run any example
-without installing globally, swap in `npx @vyuhlabs/dxkit <cmd>`.
+without installing globally, swap in `npx vyuh-dxkit <cmd>`.
+
+To upgrade an existing install later:
+
+```bash
+vyuh-dxkit upgrade           # plan + execute the binary + scaffold refresh
+```
 
 ## 2. Install the external tools
 
@@ -142,21 +157,19 @@ This is the full audit (`health` + `vulnerabilities` + `test-gaps` +
 minutes. On large JS-heavy codebases the `jscpd` (duplicate-code)
 phase dominates — expect 20-30 min.
 
-## 5. Wire commit-time guardrails (new in 2.5.0)
+## 5. Wire commit-time guardrails
 
 Once you've seen the reports, the next step for a brownfield repo is
 to lock in today's state as the floor and block any new regressions
 from landing — without forcing a cleanup sprint first.
 
 ```bash
-# Install hooks + devcontainer + GitHub Actions PR-gate + baseline-refresh.
+# Install hooks + devcontainer + GitHub Actions PR-gate + baseline-refresh
+# + nine dxkit-* agent skills + AGENTS.md.
 vyuh-dxkit init --full
 
 # Or pick à la carte:
 vyuh-dxkit init --with-hooks --with-ci
-
-# Activate the hooks (once per clone).
-git config core.hooksPath .githooks
 
 # Capture today's findings as the brownfield anchor.
 vyuh-dxkit baseline create
@@ -164,6 +177,28 @@ vyuh-dxkit baseline create
 # Commit the anchor + workflow files.
 git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
 git commit -m "chore: enable dxkit guardrails"
+```
+
+Hook activation is now automatic on `npm install` via the postinstall
+chain (added in 2.5.1). If you ever need to activate manually (e.g.
+after deleting `node_modules/`):
+
+```bash
+vyuh-dxkit hooks activate    # idempotent; refuses to clobber husky/lefthook
+```
+
+For unbypassable CI enforcement, add the guardrail workflow as a
+required status check on your default branch:
+
+```bash
+vyuh-dxkit setup-branch-protection
+```
+
+If your team uses Codespaces, configure prebuilds so fresh containers
+start in ~30s instead of re-running the full devcontainer build:
+
+```bash
+vyuh-dxkit setup-prebuild
 ```
 
 From this point:
