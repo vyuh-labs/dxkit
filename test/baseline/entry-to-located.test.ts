@@ -70,7 +70,6 @@ describe('entryToLocated', () => {
         startLineA: 1,
         startLineB: 1,
       },
-      { id: 'd3', kind: 'license', package: 'lodash', version: '4.0', licenseType: 'MIT' },
       { id: 'd4', kind: 'test-gap', file: 'src/a.ts', risk: 'high' },
       { id: 'd5', kind: 'large-file', file: 'src/big.ts' },
       { id: 'd6', kind: 'stale-file', file: '.foo.swp', suffix: 'swp' },

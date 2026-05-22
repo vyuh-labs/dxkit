@@ -39,7 +39,6 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
   'coverage-gap': { id: FP, kind: 'coverage-gap', file: 'src/a.ts', symbol: 'fn' },
   'test-gap': { id: FP, kind: 'test-gap', file: 'src/a.ts', risk: 'high' },
   hygiene: { id: FP, kind: 'hygiene', file: 'src/a.ts', line: 1, marker: 'todo' },
-  license: { id: FP, kind: 'license', package: 'lodash', version: '4.0.0', licenseType: 'MIT' },
   'test-file-degradation': {
     id: FP,
     kind: 'test-file-degradation',
@@ -77,10 +76,6 @@ describe('remediationFor', () => {
   it('dep-vuln points at the vulnerabilities CLI', () => {
     expect(remediationFor('dep-vuln')).toContain('npx vyuh-dxkit vulnerabilities');
   });
-
-  it('license prose redirects to inventory artifact', () => {
-    expect(remediationFor('license')).toContain('.dxkit/inventory/licenses.json');
-  });
 });
 
 describe('formatBlockHint — structural invariants', () => {
@@ -94,13 +89,6 @@ describe('formatBlockHint — structural invariants', () => {
         CATEGORIES_BY_KIND[kind],
       );
     }
-  });
-
-  it('license has empty applicableCategories', () => {
-    const hint = formatBlockHint(ENTRIES.license);
-    expect(hint.applicableCategories).toEqual([]);
-    expect(hint.inlineExample).toBeUndefined();
-    expect(hint.fileLevelOnly).toBe(true);
   });
 
   it('stale-allow has empty applicableCategories (self-suppression forbidden)', () => {
@@ -225,8 +213,8 @@ describe('formatBlockHint — CLI command shape', () => {
     }
   });
 
-  it('license cliCommand uses --category=<category> placeholder', () => {
-    const hint = formatBlockHint(ENTRIES.license);
+  it('empty-applicable-categories kind uses --category=<category> placeholder', () => {
+    const hint = formatBlockHint(ENTRIES['stale-allow']);
     expect(hint.cliCommand).toContain('--category=<category>');
   });
 });
@@ -238,8 +226,8 @@ describe('formatBlockHint — fileLevelHint', () => {
     expect(hint.fileLevelHint).toContain('.dxkit/allowlist.json');
   });
 
-  it('absent when no expiring category applies (license has empty list)', () => {
-    const hint = formatBlockHint(ENTRIES.license);
+  it('absent when no expiring category applies (stale-allow has empty list)', () => {
+    const hint = formatBlockHint(ENTRIES['stale-allow']);
     expect(hint.fileLevelHint).toBeUndefined();
   });
 });

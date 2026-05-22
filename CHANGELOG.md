@@ -48,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the canonical loader, no language-comment fallback literals
   (`?? '//'`) anywhere in the module.
 
+### Changed
+
+- **License findings retired from the baseline.** Per-package
+  license attributions no longer flow through the baseline
+  producer registry — they were informational, not regression
+  material, and dominated baselines on real customer repos
+  (~73% of entries). The canonical license inventory now lives
+  solely in `.dxkit/bom.json` (`vyuh-dxkit bom`), which already
+  carries richer per-package data (licenseType, licenseText,
+  sourceUrl, supplier, releaseDate). Lenient migration:
+  baselines written by older dxkit versions still load — the
+  reader silently filters retired `license` entries on the way
+  in (no file rewrite until the next `baseline create --force`).
+  Dependency vulnerability tracking is unchanged — `dep-vuln`
+  is a separate identity kind on a separate producer and still
+  blocks via the guardrail check.
+
 ### Architectural notes
 
 - Added `stale-allow` as a new `IdentityKind` (Rule 9 + Rule 10

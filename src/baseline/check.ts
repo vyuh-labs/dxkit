@@ -25,8 +25,8 @@
  *   5. Run the brownfield policy classifier over every pair.
  *   6. Optionally filter via `--changed-only`: drop pairs whose
  *      locator falls outside the diff. Non-locator pairs (dep-vuln,
- *      license, duplication, etc.) are always kept — their
- *      "semantic" identity doesn't map cleanly to changed lines.
+ *      duplication, etc.) are always kept — their "semantic"
+ *      identity doesn't map cleanly to changed lines.
  *   7. Compose a `GuardrailCheckResult` with a deterministic
  *      blocks/warns verdict so the CLI can pick exit code + render.
  *
@@ -63,8 +63,8 @@ export interface RunGuardrailCheckOptions {
    *  directory (e.g. an artifact downloaded from CI). */
   readonly baselinePath?: string;
   /** When true, drop pairs whose locator falls outside the diff.
-   *  Non-locator findings (dep-vuln, license, duplication, etc.) are
-   *  always kept. */
+   *  Non-locator findings (dep-vuln, duplication, etc.) are always
+   *  kept. */
   readonly changedOnly?: boolean;
   /** Path to a `.dxkit/policy.json` override. The on-disk shape
    *  matches `BrownfieldPolicy` (modulo readonly markers); unknown
@@ -98,8 +98,8 @@ export interface ClassifiedPair {
   readonly line?: number;
   /** True when the anchor entry's line falls inside the diff
    *  between baseline and HEAD. Undefined when the pair has no
-   *  line locator (dep-vuln, license, etc.) or when git history
-   *  isn't reachable. Drives `--changed-only` filtering and the
+   *  line locator (dep-vuln, etc.) or when git history isn't
+   *  reachable. Drives `--changed-only` filtering and the
    *  `newSevereQualityIssueInChangedFiles` / `newUntestedChangedSource`
    *  block rules. */
   readonly overlapsChangedLines?: boolean;
@@ -151,7 +151,6 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     'coverage-gap': 'medium',
     'test-gap': 'medium',
     hygiene: 'low',
-    license: 'low',
     'test-file-degradation': 'medium',
     'god-file': 'medium',
     'stale-file': 'low',
@@ -475,7 +474,6 @@ function locatorFile(entry: BaselineEntry): string | undefined {
     case 'duplication':
       return entry.fileA;
     case 'dep-vuln':
-    case 'license':
     case 'secret-hmac':
       return undefined;
   }
@@ -499,9 +497,9 @@ function locatorLine(entry: BaselineEntry): number | undefined {
 
 /**
  * `--changed-only` filter predicate. Keeps:
- *   - pairs without a line locator (dep-vuln, license, duplication,
- *     etc.) — their identity isn't line-bound, so changed-line
- *     overlap doesn't apply
+ *   - pairs without a line locator (dep-vuln, duplication, etc.) —
+ *     their identity isn't line-bound, so changed-line overlap
+ *     doesn't apply
  *   - prior-side pairs (persisted / relocated / removed) — they
  *     represent existing state, not newly-introduced findings, so
  *     they pass regardless of where they live in the diff

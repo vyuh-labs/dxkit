@@ -52,7 +52,6 @@ describe('allowlist categories', () => {
       'large-file',
       'stale-file',
       'hygiene',
-      'license',
       'stale-allow',
     ];
     for (const k of kinds) {
@@ -71,10 +70,6 @@ describe('allowlist categories', () => {
       // here to keep the linter from flagging an unused binding.
       expect(typeof kind).toBe('string');
     }
-  });
-
-  it('license kind permits zero allowlist categories', () => {
-    expect(CATEGORIES_BY_KIND.license).toEqual([]);
   });
 
   it('stale-allow kind permits zero allowlist categories (self-suppression forbidden)', () => {
@@ -113,7 +108,6 @@ describe('allowlist categories', () => {
         'god-file',
         'large-file',
         'stale-file',
-        'license',
       ] as const) {
         expect(INLINE_COMPATIBLE_KINDS.has(k)).toBe(false);
       }
@@ -169,9 +163,9 @@ describe('allowlist categories', () => {
       expect(isCategoryValidForKind('hygiene', 'test-fixture')).toBe(false);
     });
 
-    it('false for any category against license', () => {
+    it('false for any category against stale-allow', () => {
       for (const cat of ALL_CATEGORIES) {
-        expect(isCategoryValidForKind('license', cat)).toBe(false);
+        expect(isCategoryValidForKind('stale-allow', cat)).toBe(false);
       }
     });
   });

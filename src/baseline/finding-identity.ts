@@ -81,8 +81,6 @@ export function identityFor(
       return computeTestGapIdentity(input.file, input.risk);
     case 'hygiene':
       return computeHygieneIdentity(input.file, input.line, input.marker);
-    case 'license':
-      return computeLicenseIdentity(input.package, input.version, input.licenseType);
     case 'test-file-degradation':
       return computeTestFileDegradationIdentity(input.file, input.status);
     case 'god-file':
@@ -182,22 +180,6 @@ function computeTestGapIdentity(file: string, risk: TestGapRisk): FindingId {
  */
 function computeHygieneIdentity(file: string, line: number, marker: HygieneMarker): FindingId {
   const input = `hygiene\0v1\0${marker}\0${file}\0${lineWindowFor(line)}`;
-  return createHash('sha1').update(input).digest('hex').slice(0, 16);
-}
-
-/**
- * Identity for a package license attribution. Includes the license
- * type so a re-licensing event on the same `(package, version)` pin
- * registers as a fresh finding — compliance teams want to be
- * notified when a transitive dep switches from MIT to GPL even
- * without a version bump.
- */
-function computeLicenseIdentity(
-  packageName: string,
-  version: string,
-  licenseType: string,
-): FindingId {
-  const input = `license\0v1\0${packageName}\0${version}\0${licenseType}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

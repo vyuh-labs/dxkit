@@ -46,7 +46,13 @@
  *     analyzer.
  *   - `hygiene` — TODO / FIXME / HACK / console-log / any-type
  *     occurrences (per-occurrence identity).
- *   - `license` — package license attributions.
+ *
+ * License attributions are NOT a baseline finding kind. They live in
+ * the per-package BoM artifact (`.dxkit/bom.json`) — the canonical
+ * license inventory carried by `vyuh-dxkit bom`. License findings
+ * are informational, not regression material, and dominated the
+ * baseline (~73% of entries on real customer repos) before being
+ * lifted out.
  */
 
 /**
@@ -91,7 +97,6 @@ export type IdentityInput =
   | CoverageGapIdentityInput
   | TestGapIdentityInput
   | HygieneOffenderIdentityInput
-  | LicenseIdentityInput
   | TestFileDegradationIdentityInput
   | GodFileIdentityInput
   | StaleFileIdentityInput
@@ -217,24 +222,6 @@ export interface HygieneOffenderIdentityInput {
   readonly file: string;
   readonly line: number;
   readonly marker: HygieneMarker;
-}
-
-/**
- * Package license attribution. Identity includes the license type so
- * a license change on the same `(package, version)` pin registers
- * as a fresh finding — compliance teams want to know if a dependency
- * re-licenses under a different (perhaps more restrictive) license
- * even when no version bump happened.
- */
-export interface LicenseIdentityInput {
-  readonly kind: 'license';
-  readonly package: string;
-  readonly version: string;
-  /** Canonical SPDX identifier (`'MIT'`, `'Apache-2.0'`, `'GPL-3.0'`,
-   *  `'UNKNOWN'`). Producer is the existing license-aggregation
-   *  pipeline; identity is byte-stable as long as the producer
-   *  reports the SPDX id consistently. */
-  readonly licenseType: string;
 }
 
 /**
@@ -415,7 +402,6 @@ export type BaselineEntry =
        *  baseline commit. */
       contentHash?: string;
     }
-  | { id: FindingId; kind: 'license'; package: string; version: string; licenseType: string }
   | {
       id: FindingId;
       kind: 'test-file-degradation';

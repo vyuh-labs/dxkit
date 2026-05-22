@@ -47,7 +47,6 @@ export const FILTER_KINDS: ReadonlyArray<BaselineEntry['kind']> = Object.freeze(
   'coverage-gap',
   'test-gap',
   'hygiene',
-  'license',
   'test-file-degradation',
   'god-file',
   'stale-file',
@@ -198,8 +197,6 @@ function describeEntry(entry: BaselineEntry): string {
         : `${entry.file}:${entry.lineRange?.[0] ?? '?'}-${entry.lineRange?.[1] ?? '?'}`;
     case 'test-gap':
       return `${entry.file}  [risk: ${entry.risk}]`;
-    case 'license':
-      return `${entry.package}@${entry.version}  [${entry.licenseType}]`;
     case 'test-file-degradation':
       return `${entry.file}  [${entry.status}]`;
     case 'god-file':
