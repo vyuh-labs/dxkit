@@ -113,9 +113,26 @@ export function writeBaselineFile(filePath: string, file: BaselineFile): void {
 }
 
 /**
+ * Identity kinds that this dxkit version no longer recognizes but
+ * that older baseline files may contain. Lenient migration: read
+ * silently drops these so a 2.5.x baseline still loads on a 2.6+
+ * dxkit without forcing a `baseline create --force`. The dropped
+ * kind moves to a separate artifact — `license` → `.dxkit/bom.json`,
+ * the canonical inventory carried by `vyuh-dxkit bom`.
+ */
+const RETIRED_KINDS: ReadonlySet<string> = new Set(['license']);
+
+/**
  * Read + validate a baseline file. Throws when the schema banner is
  * missing or unrecognized — fail fast rather than letting the
  * matcher consume a malformed file and produce wrong verdicts.
+ *
+ * Retired finding kinds (see `RETIRED_KINDS`) are silently filtered
+ * out of `findings` so a baseline written by an older dxkit doesn't
+ * crash the matcher when its identity union no longer contains that
+ * kind. The original file on disk is not modified — only the in-memory
+ * view consumed by the matcher / classifier. A subsequent `baseline
+ * create --force` writes a fresh file without the retired entries.
  */
 export function readBaselineFile(filePath: string): BaselineFile {
   const raw = fs.readFileSync(filePath, 'utf8');
@@ -128,7 +145,7 @@ export function readBaselineFile(filePath: string): BaselineFile {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`baseline file root is not an object: ${filePath}`);
   }
-  const obj = parsed as { schemaVersion?: unknown };
+  const obj = parsed as { schemaVersion?: unknown; findings?: unknown };
   if (obj.schemaVersion !== BASELINE_SCHEMA_VERSION) {
     throw new Error(
       `baseline file schemaVersion is ${JSON.stringify(obj.schemaVersion)}; ` +
@@ -136,5 +153,12 @@ export function readBaselineFile(filePath: string): BaselineFile {
         `(${filePath})`,
     );
   }
-  return parsed as BaselineFile;
+  const file = parsed as BaselineFile & {
+    findings: ReadonlyArray<BaselineEntry & { kind: string }>;
+  };
+  const filteredFindings = file.findings.filter((entry) => !RETIRED_KINDS.has(entry.kind));
+  if (filteredFindings.length === file.findings.length) {
+    return file;
+  }
+  return { ...file, findings: filteredFindings };
 }

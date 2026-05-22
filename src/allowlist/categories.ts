@@ -79,7 +79,6 @@ export const INLINE_COMPATIBLE_CATEGORIES: ReadonlySet<AllowlistCategory> = new 
  *   - `coverage-gap` / `test-gap` / `test-file-degradation`: file or
  *     symbol-range level, not single-line
  *   - `god-file` / `large-file` / `stale-file`: whole-file findings
- *   - `license`: not a code position at all (moved to inventory in 2.6)
  */
 export const INLINE_COMPATIBLE_KINDS: ReadonlySet<IdentityKind> = new Set<IdentityKind>([
   'secret',
@@ -140,13 +139,6 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // TODO / FIXME / HACK / console-log / any-type markers: only
   // accepted-risk or deferred (the marker IS the hygiene issue)
   hygiene: ['accepted-risk', 'deferred'],
-
-  // License: never allowlisted in 2.6+. License findings drop out of
-  // the baseline producer registry and move to the inventory artifact
-  // (`.dxkit/inventory/licenses.json`) — Sprint 2 work. Empty array
-  // here means the CLI rejects allowlist requests for license kinds
-  // with a hint pointing at the inventory artifact.
-  license: [],
 
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale

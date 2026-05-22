@@ -110,4 +110,66 @@ describe('baseline-file', () => {
     writeRaw(p, '[]');
     expect(() => readBaselineFile(p)).toThrow(/not an object/);
   });
+
+  describe('retired-kind migration', () => {
+    it('silently filters license entries written by an older dxkit', () => {
+      const p = pathForBaseline(dir, 'main');
+      writeRaw(
+        p,
+        JSON.stringify({
+          ...sampleFile(),
+          findings: [
+            {
+              id: 'abc123def4567890',
+              kind: 'secret',
+              tool: 'gitleaks',
+              rule: 'generic-api-key',
+              file: 'src/config.ts',
+              line: 42,
+            },
+            {
+              id: 'lic1',
+              kind: 'license',
+              package: 'lodash',
+              version: '4.17.20',
+              licenseType: 'MIT',
+            },
+            {
+              id: 'lic2',
+              kind: 'license',
+              package: 'react',
+              version: '18.0.0',
+              licenseType: 'MIT',
+            },
+          ],
+        }),
+      );
+      const back = readBaselineFile(p);
+      expect(back.findings).toHaveLength(1);
+      expect(back.findings[0].kind).toBe('secret');
+    });
+
+    it('preserves the file on disk (drop is in-memory only)', () => {
+      const p = pathForBaseline(dir, 'main');
+      const raw = JSON.stringify({
+        ...sampleFile(),
+        findings: [
+          { id: 'lic1', kind: 'license', package: 'lodash', version: '4.0', licenseType: 'MIT' },
+        ],
+      });
+      writeRaw(p, raw);
+      readBaselineFile(p);
+      expect(readFileSync(p, 'utf8')).toBe(raw);
+    });
+
+    it('returns the identity-equal file when no retired entries are present', () => {
+      const p = pathForBaseline(dir, 'main');
+      const file = sampleFile({
+        findings: [{ id: 'lf1', kind: 'large-file', file: 'src/big.ts' }],
+      });
+      writeBaselineFile(p, file);
+      const back = readBaselineFile(p);
+      expect(back.findings).toEqual(file.findings);
+    });
+  });
 });

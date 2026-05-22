@@ -16,7 +16,7 @@
  * apply to hygiene markers; the marker IS the canonical name.
  *
  * Kinds without file/line locators (dep-vuln, duplication,
- * coverage-gap, license, test-gap, test-file-degradation, god-file,
+ * coverage-gap, test-gap, test-file-degradation, god-file,
  * stale-file, large-file, secret-hmac) fall through to the matcher's
  * multiset pass — they're paired by exact identity-hash equality,
  * which the matcher already handles without any locator metadata.
@@ -66,7 +66,6 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
     case 'dep-vuln':
     case 'duplication':
     case 'coverage-gap':
-    case 'license':
     case 'test-gap':
     case 'test-file-degradation':
     case 'god-file':

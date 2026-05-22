@@ -52,13 +52,13 @@ describe('renderSummary', () => {
       { id: 'a2', kind: 'large-file', file: 'big2.ts' },
       { id: 'a3', kind: 'large-file', file: 'big3.ts' },
       { id: 'b1', kind: 'stale-file', file: '.foo.swp', suffix: 'swp' },
-      { id: 'c1', kind: 'license', package: 'lodash', version: '4.0', licenseType: 'MIT' },
+      { id: 'c1', kind: 'god-file', file: 'src/sprawl.ts' },
     ]);
     const out = renderSummary(file);
     expect(out).toContain("Baseline 'main'");
     expect(out).toContain('9cac8729');
     expect(out).toContain('Findings: 5 total');
-    // Descending count order: large-file (3) > stale-file (1) = license (1)
+    // Descending count order: large-file (3) > stale-file (1) = god-file (1)
     const largeIdx = out.indexOf('large-file');
     const staleIdx = out.indexOf('stale-file');
     expect(largeIdx).toBeGreaterThan(0);
@@ -124,7 +124,6 @@ describe('renderKind', () => {
         startLineA: 5,
         startLineB: 25,
       },
-      { id: '3', kind: 'license', package: 'foo', version: '1.0', licenseType: 'GPL-3.0' },
       { id: '4', kind: 'test-gap', file: 'svc.ts', risk: 'critical' },
       { id: '5', kind: 'stale-file', file: '.x.bak', suffix: 'bak' },
       {
@@ -137,7 +136,6 @@ describe('renderKind', () => {
     ]);
     expect(renderKind(file, 'dep-vuln')).toContain('lodash@4.0  [GHSA-x]');
     expect(renderKind(file, 'duplication')).toContain('a.ts:5 <-> b.ts:25  (10 lines)');
-    expect(renderKind(file, 'license')).toContain('foo@1.0  [GPL-3.0]');
     expect(renderKind(file, 'test-gap')).toContain('svc.ts  [risk: critical]');
     expect(renderKind(file, 'stale-file')).toContain('.x.bak  [.bak]');
     expect(renderKind(file, 'secret-hmac')).toContain('hmac:deadbeefcafe');
