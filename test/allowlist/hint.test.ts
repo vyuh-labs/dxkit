@@ -180,10 +180,15 @@ describe('formatBlockHint — CLI command shape', () => {
     expect(hint.cliCommand).not.toContain('--fingerprint');
   });
 
-  it('uses file positional + --kind for file-only kind with file', () => {
+  it('uses --fingerprint + --kind for file-only kind even when file is present', () => {
+    // file-only kinds (large-file, etc.) route through the
+    // fingerprint form because the file path alone isn't a complete
+    // identity. The dev still sees the file path in the finding
+    // output preceding the hint.
     const hint = formatBlockHint(ENTRIES['large-file']);
-    expect(hint.cliCommand).toContain('src/big.ts');
+    expect(hint.cliCommand).toContain(`--fingerprint=${FP}`);
     expect(hint.cliCommand).toContain('--kind=large-file');
+    expect(hint.cliCommand).not.toContain('src/big.ts');
   });
 
   it('falls back to --fingerprint when no file (duplication)', () => {

@@ -279,11 +279,17 @@ function buildCliCommand(
   const categoryArg = firstCategory ? `--category=${firstCategory}` : '--category=<category>';
   const loc = entryLocator(entry);
 
+  // Two CLI forms, matching the two paths the `allowlist add` command
+  // accepts. Both are directly executable — no inferred missing args.
+  //
+  //   1. `<file>:<line>` — inline annotation insertion (kind-agnostic,
+  //      grammar-driven). Only chosen when the kind supports inline
+  //      attachment AND the entry carries file + line.
+  //   2. `--fingerprint=<id> --kind=<kind>` — file-level allowlist
+  //      entry. The fingerprint is the identity; the kind is needed
+  //      so the validator can apply per-kind rules.
   if (INLINE_COMPATIBLE_KINDS.has(entry.kind) && loc.file && loc.line !== undefined) {
     return `${ALLOWLIST_ADD_CMD} ${loc.file}:${loc.line} ${categoryArg} ${reasonArg}`;
-  }
-  if (loc.file) {
-    return `${ALLOWLIST_ADD_CMD} ${loc.file} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
   }
   return `${ALLOWLIST_ADD_CMD} --fingerprint=${entry.id} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
 }
