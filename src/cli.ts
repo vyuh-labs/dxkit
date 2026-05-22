@@ -128,6 +128,11 @@ function printUsage(): void {
                                  package.json postinstall by 'init --with-hooks' so every
                                  clone + 'npm install' activates the dxkit hooks
                                  automatically. Safe to run by hand; always exits 0.
+    vyuh-dxkit issue --type=<type> [--about=<text>] [--fingerprint=<id>] [--no-browser]
+                                 Open a pre-filled GitHub Issue against vyuh-labs/dxkit.
+                                 Types: false-positive, missing-finding, bug,
+                                 feature-request, docs. Nothing is submitted until
+                                 you click "Submit" in your browser.
 
   ${logger.bold('Init options:')}
     --dx-only                 Just .claude/ + CLAUDE.md (default)
@@ -249,6 +254,10 @@ export async function run(argv: string[]): Promise<void> {
       'added-by': { type: 'string' },
       mode: { type: 'string' },
       'soon-days': { type: 'string' },
+      // issue flags
+      type: { type: 'string' },
+      about: { type: 'string' },
+      'no-browser': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -1739,6 +1748,17 @@ export async function run(argv: string[]): Promise<void> {
       await runAllowlist(cwd, positionals[1], {
         positionalAfter: positionals[2],
         values: values as Record<string, unknown>,
+      });
+      break;
+    }
+
+    case 'issue': {
+      const { runIssueSubmit } = await import('./issue-cli');
+      await runIssueSubmit(cwd, {
+        type: values.type as string | undefined,
+        fingerprint: values.fingerprint as string | undefined,
+        about: values.about as string | undefined,
+        noBrowser: !!values['no-browser'],
       });
       break;
     }
