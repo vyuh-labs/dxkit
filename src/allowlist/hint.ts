@@ -38,8 +38,20 @@ import * as path from 'path';
 import type { BaselineEntry, FindingSeverity } from '../baseline/types';
 import { LANGUAGES } from '../languages';
 import type { LanguageSupport } from '../languages/types';
-import { CATEGORIES_BY_KIND, INLINE_COMPATIBLE_KINDS, type AllowlistCategory } from './categories';
+import {
+  CATEGORIES_BY_KIND,
+  EXPIRING_CATEGORIES,
+  INLINE_COMPATIBLE_CATEGORIES,
+  INLINE_COMPATIBLE_KINDS,
+  type AllowlistCategory,
+} from './categories';
 import { renderAnnotation } from './inline';
+
+/**
+ * Subcommand string used in every `cliCommand` rendered by this
+ * module. One place to update if the subcommand ever renames.
+ */
+const ALLOWLIST_ADD_CMD = 'npx vyuh-dxkit allowlist add';
 
 export interface BlockHint {
   /** Generic per-kind remediation text. Always present. */
@@ -78,7 +90,9 @@ export interface BlockHint {
  */
 export function formatBlockHint(entry: BaselineEntry, severity?: FindingSeverity): BlockHint {
   const applicableCategories = CATEGORIES_BY_KIND[entry.kind];
-  const inlineCompatibleApplicable = applicableCategories.filter(isInlineCompatibleCategory);
+  const inlineCompatibleApplicable = applicableCategories.filter((c) =>
+    INLINE_COMPATIBLE_CATEGORIES.has(c),
+  );
   const fileLevelOnly =
     !INLINE_COMPATIBLE_KINDS.has(entry.kind) || inlineCompatibleApplicable.length === 0;
 
@@ -229,10 +243,6 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
   }
 }
 
-function isInlineCompatibleCategory(c: AllowlistCategory): boolean {
-  return c === 'false-positive' || c === 'test-fixture' || c === 'mitigated-externally';
-}
-
 /**
  * Look up the language pack matching a file's extension. Reads
  * from the canonical `LANGUAGES` registry — no per-language
@@ -270,20 +280,18 @@ function buildCliCommand(
   const loc = entryLocator(entry);
 
   if (INLINE_COMPATIBLE_KINDS.has(entry.kind) && loc.file && loc.line !== undefined) {
-    return `npx vyuh-dxkit allowlist add ${loc.file}:${loc.line} ${categoryArg} ${reasonArg}`;
+    return `${ALLOWLIST_ADD_CMD} ${loc.file}:${loc.line} ${categoryArg} ${reasonArg}`;
   }
   if (loc.file) {
-    return `npx vyuh-dxkit allowlist add ${loc.file} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
+    return `${ALLOWLIST_ADD_CMD} ${loc.file} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
   }
-  return `npx vyuh-dxkit allowlist add --fingerprint=${entry.id} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
+  return `${ALLOWLIST_ADD_CMD} --fingerprint=${entry.id} --kind=${entry.kind} ${categoryArg} ${reasonArg}`;
 }
 
 function buildFileLevelHint(
   applicableCategories: readonly AllowlistCategory[],
 ): string | undefined {
-  const hasExpiringCategory = applicableCategories.some(
-    (c) => c === 'accepted-risk' || c === 'deferred',
-  );
+  const hasExpiringCategory = applicableCategories.some((c) => EXPIRING_CATEGORIES.has(c));
   if (!hasExpiringCategory) return undefined;
   return (
     'For accepted-risk or deferred suppression (both require an expiry date), ' +
