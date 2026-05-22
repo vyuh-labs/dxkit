@@ -7,6 +7,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-05-22
+
+The "scaffold UX + lifecycle skills + setup automation" release. Closes
+every defect surfaced during the 2026-05-21 guided Codespaces UX
+walkthrough (D145–D156) plus a vestigial-cleanup pass and adds three
+new CLI subcommands + three new lifecycle skills.
+
+Validated end-to-end with two cross-stack walkthroughs on 2026-05-22:
+`vyuhlabs-platform` (python + typescript) and `dpl-studio` (csharp).
+Both stacks: defect closures verified, per-pack devcontainer adapts
+correctly, doctor's new tier-3 surfaces operational gaps with
+actionable fix commands.
+
+### Added
+
+- Three new lifecycle skills under `.claude/skills/`, completing
+  the orthogonal customer-journey trio:
+  - **`dxkit-fix`** — reactive repair. Consumes
+    `vyuh-dxkit doctor --json` output and walks the customer
+    through each fixable check with per-step confirmation.
+  - **`dxkit-update`** — existing-install upgrade orchestrator.
+    Consumes `vyuh-dxkit upgrade --plan --json` and drives a
+    conversational upgrade with version-delta analysis, breaking-
+    change warnings, and per-step confirmation. Hands off to
+    `dxkit-fix` on post-upgrade doctor failures.
+  - **`dxkit-onboard`** — fresh-install orchestrator. Walks the
+    full first-time customer journey end-to-end (install → doctor
+    → fix gaps → baseline → hooks → branch protection → Codespaces
+    prebuild → final verify). Delegates to focused skills for
+    sub-decisions.
+- Three new CLI subcommands:
+  - **`vyuh-dxkit upgrade [--plan [--json] | --yes | --target=X.Y.Z |
+    --dry-run]`** — combined binary + scaffold refresh. `--plan`
+    mode emits structured `upgrade-plan.v1` JSON consumed by the
+    `dxkit-update` skill. Execution mode runs `npm install`
+    + `vyuh-dxkit update` + `vyuh-dxkit doctor` in sequence with
+    a devcontainer-rebuild reminder if applicable.
+  - **`vyuh-dxkit setup-branch-protection [--branch X]
+    [--require-reviews N] [--force]`** — wraps `gh api` to mark
+    `dxkit-guardrails` as a required status check on the default
+    branch. Idempotent merge with existing required-checks list.
+  - **`vyuh-dxkit setup-prebuild [--branch X] [--regions=R1,R2]
+    [--force]`** — wraps `gh api` to configure Codespaces
+    prebuilds. Fresh Codespaces start in ~30s instead of running
+    the full devcontainer build (~7 min after per-stack feature).
+- Doctor third tier — **Operational health**. Six runtime checks
+  (`git hooks active`, `baseline captured`, `vyuh-dxkit on PATH`,
+  `scanner toolchain healthy`, `.npmrc legacy-peer-deps
+  persistence`, `CI guardrails workflow`) each carrying structured
+  fix metadata (hint + command + skill). Plus a new `--json`
+  output mode emitting the `doctor.v1` schema for `dxkit-fix`
+  consumption.
+- `manifest.installFlags` — persists the customer's `init`
+  flag choices in `.vyuh-dxkit.json` so `vyuh-dxkit update`
+  knows exactly which surfaces to refresh. Self-migrates legacy
+  pre-2.5.2 manifests by stamping detected flags back on first
+  update run.
+- Per-pack `LanguageSupport.devcontainerExtensions?` field.
+  Each language pack contributes its VSCode editor extensions;
+  the installer unions across active packs only. Pure-Python
+  Codespaces no longer install Go / Rust / C# / Java / Kotlin /
+  Ruby editor extensions on every container start.
+- Architecture rule (`scripts/check-architecture.sh`) that catches
+  dead `IF_*` template conditions in `constants.ts`. The
+  type-correct compute-without-consumer class of dead code sat
+  for days before the rule landed; rule now blocks new
+  occurrences at pre-commit time.
+- Three new doc pages: `docs/commands/upgrade.md`,
+  `docs/commands/setup-branch-protection.md`,
+  `docs/commands/setup-prebuild.md`.
+
+### Changed
+
+- **`vyuh-dxkit update` actually refreshes everything now.**
+  Pre-this-release, update only re-ran the template generator and
+  silently passed `withDxkitAgents=false`. Customers on 2.5.1 had
+  no path to receive new dxkit-* skills, per-stack devcontainer
+  extensions, doctor pivot, or any other scaffold-side change.
+  `update` now detects which install surfaces the customer
+  originally landed (via `manifest.installFlags` or workspace
+  detection) and re-runs every relevant installer.
+- `vyuh-dxkit doctor` — three-tier framing (Reports + Agent DX +
+  Operational health, was two-tier). Tier 1 + 2 labels +
+  exit-code behavior preserved verbatim; tier 3 is additive.
+- All six existing dxkit-* skill prose files standardized on
+  `npx vyuh-dxkit X` invocations (was a mix of bare + npx forms).
+  Robust to customers whose shell PATH doesn't have dxkit
+  globally installed.
+- Python devcontainer feature switched from `installTools: true`
+  → `false`. The upstream feature's bundled installTools list
+  added ~3 min to every devcontainer build with no dxkit
+  consumer. Saves ~3 min per Codespaces rebuild on python-stack
+  projects.
+- `osv-scanner` install switched from `go install` to GitHub
+  releases binary fetch. Pre-this-release, customers on any
+  non-Go stack silently lost `osv-scanner` (the canonical
+  Tier-2 dep-vuln scanner) because the install command failed
+  without a Go toolchain.
+- `post-create.sh` always runs a global `npm install -g
+  @vyuhlabs/dxkit` in addition to whatever project-local install
+  happened. Without this, `vyuh-dxkit` wasn't on the customer's
+  shell PATH in Codespaces.
+- Init's closing summary surfaces `Next: run vyuh-dxkit
+  baseline create` as a prominent info-level call-to-action
+  immediately after `Done!`, instead of burying it in a dim
+  three-line footer.
+- `create-dxkit` shim: stderr from the first `npm install`
+  attempt is now captured (not streamed) so a peer-dep
+  `ERESOLVE` doesn't print a multi-line error wall before the
+  silent `--legacy-peer-deps` fallback succeeds. `--no-audit`
+  passed to both install attempts so the host project's
+  pre-existing vulnerability count doesn't surface mid-init.
+  Fallback choice persisted to `.npmrc` so the customer's next
+  `npm install <pkg>` doesn't re-hit the same ERESOLVE wall.
+- CI: `actions/cache@v4` on the scanner toolchain
+  (`~/.local/{pipx,bin,share/{detekt,pmd}}`). Saves ~2 min per
+  CI run.
+- Publish workflows (`publish.yml` + `publish-create-dxkit.yml`):
+  verify-shasum poll window 18s → 180s. First-publishes of
+  scoped packages commonly need 30–90s for CDN propagation;
+  the wider window prevents the "publish succeeded but workflow
+  reports failure" mode that bit both 2.5.1 publishes.
+- README, getting-started, docs/README, commands/init.md
+  refreshed to reflect: `npm init @vyuhlabs/dxkit` as canonical
+  first install, 9 lifecycle skills (was 6), postinstall
+  auto-activation of hooks, per-stack devcontainer.
+
+### Removed
+
+- Vestigial `DetectedStack.tools.{gcloud, pulumi, infisical,
+  ghCli}` field. Computed at every detect call since the 2026-
+  05-19 generator simplification removed the `.project.yaml`
+  consumers; nothing referenced them post-cleanup. Doctor's
+  pre-pivot tier-2 `gcloud` + `infisical` availability checks
+  removed alongside (no manifest field to gate on).
+- Six dead `IF_*` template conditions in `constants.ts`:
+  `IF_POSTGRES`, `IF_REDIS`, `IF_HAS_SERVICES`, `IF_DOCKER`,
+  `IF_CLAUDE_CODE`, `IF_COVERAGE_ENABLED`. Computed but no
+  template referenced them; same 2026-05-19 cleanup left them
+  behind. Arch-check rule (above) prevents new occurrences.
+
+### Fixed
+
+- Dispatcher deadline test (`test/dispatcher-deadline.test.ts`):
+  lower-bound assertion 40ms → 25ms. Test was occasionally
+  flaking on fast CI runners where `setTimeout`'s ~1-2ms
+  granularity could fire at 38-39ms.
+
 ## [2.5.1] - 2026-05-20
 
 ### Added
