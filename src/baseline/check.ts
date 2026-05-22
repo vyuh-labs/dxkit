@@ -50,6 +50,7 @@ import { classify, DEFAULT_BROWNFIELD_POLICY } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
+import { computeAllowlistDelta, type AllowlistDelta } from '../allowlist/diff';
 
 export interface RunGuardrailCheckOptions {
   /** Repo root being checked. Caller should pass an absolute path. */
@@ -132,6 +133,12 @@ export interface GuardrailCheckResult {
   /** True when at least one pair warns. Informational; doesn't
    *  affect exit code by itself. */
   readonly warns: boolean;
+  /** Allowlist entries added / removed between the baseline's
+   *  commit SHA and the current working tree. Renderers (the PR
+   *  comment markdown in particular) surface this so reviewers
+   *  see new suppressions being introduced. Absent when the
+   *  baseline SHA wasn't reachable to diff against. */
+  readonly allowlistDelta: AllowlistDelta;
 }
 
 const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSeverity>> =
@@ -280,6 +287,13 @@ export async function runGuardrailCheck(
     if (p.classification.warns) filteredWarns = true;
   }
 
+  // Allowlist delta between the baseline's anchor SHA and the
+  // current working tree. Surfaced in the markdown renderer so
+  // PR reviewers see new suppressions being introduced; absent /
+  // degenerate when the SHA isn't reachable (shallow clone, etc.)
+  // and the renderer treats that as "delta unavailable."
+  const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, baseline.repo.commitSha);
+
   return {
     baselinePath,
     baseline,
@@ -290,6 +304,7 @@ export async function runGuardrailCheck(
     policy,
     blocks: options.changedOnly ? filteredBlocks : blocks,
     warns: options.changedOnly ? filteredWarns : warns,
+    allowlistDelta,
   };
 }
 

@@ -105,6 +105,51 @@ describe('runGuardrailCheck (integration)', () => {
       expect(viaPath.baselinePath).toBe(stashed);
       expect(viaPath.baseline.name).toBe('main');
     }, 300_000);
+
+    it('surfaces allowlist additions in the markdown PR-comment section', async () => {
+      // Baseline-time: no .dxkit/allowlist.json file
+      await createBaseline({ cwd: dir });
+
+      // Add a file-level allowlist entry on the "current" branch
+      // (working tree only — baseline-create won't be re-run).
+      const allowlistDir = join(dir, '.dxkit');
+      execFileSync('mkdir', ['-p', allowlistDir]);
+      writeFileSync(
+        join(allowlistDir, 'allowlist.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 'dxkit-allowlist/v1',
+            mode: 'full',
+            entries: [
+              {
+                fingerprint: 'aaaa111111111111',
+                kind: 'dep-vuln',
+                category: 'accepted-risk',
+                reason: 'WAF rule mitigates the attack vector',
+                addedBy: 'reviewer@example.com',
+                addedAt: '2026-05-22',
+                expiresAt: '2026-08-22',
+              },
+            ],
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      expect(result.allowlistDelta).toBeDefined();
+      expect(result.allowlistDelta.baselineAccessible).toBe(true);
+      expect(result.allowlistDelta.added).toHaveLength(1);
+      expect(result.allowlistDelta.added[0].fingerprint).toBe('aaaa111111111111');
+
+      const md = renderMarkdown(result);
+      expect(md).toContain('### Allowlist activity');
+      expect(md).toContain('Added (1)');
+      expect(md).toContain('aaaa111111111111');
+      expect(md).toContain('accepted-risk');
+      expect(md).toContain('WAF rule mitigates');
+    }, 300_000);
   });
 
   describe('error + policy + drift paths', () => {
