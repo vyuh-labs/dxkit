@@ -29,6 +29,8 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 | [`baseline create`](commands/baseline.md)       | Write per-finding identities to `.dxkit/baselines/<name>.json` |
 | [`baseline show`](commands/baseline.md)         | Pretty-print or filter the on-disk baseline                    |
 | [`guardrail check`](commands/guardrail.md)      | Diff current scan vs. baseline; block on net-new regressions   |
+| [`allowlist add`](commands/allowlist.md)        | Suppress a specific finding (typed category + reason + expiry) |
+| [`allowlist audit`](commands/allowlist.md)      | Surface stale / soon-to-expire / missing-rationale entries     |
 | [`.dxkit/policy.json`](configuration/policy.md) | Tune which classifications block vs. warn                      |
 
 ## What you can run
@@ -58,6 +60,8 @@ Once dxkit + its tools are installed, here's the command surface:
 | [`guardrail check`](commands/guardrail.md)                       | "Block on net-new regressions vs. the baseline"               | 30s-2m                             |
 | [`setup-branch-protection`](commands/setup-branch-protection.md) | "Mark `dxkit-guardrails` as required check on default branch" | < 5 sec                            |
 | [`setup-prebuild`](commands/setup-prebuild.md)                   | "Configure Codespaces prebuild (cold-start ~7 min → ~30s)"    | < 5 sec                            |
+| [`allowlist`](commands/allowlist.md)                             | "Suppress a specific finding with typed reason + expiry"      | < 1 sec                            |
+| [`issue`](commands/issue.md)                                     | "Open a pre-filled GitHub Issue against dxkit"                | < 5 sec                            |
 
 ## Configuration
 
