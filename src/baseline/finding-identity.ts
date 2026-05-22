@@ -93,6 +93,8 @@ export function identityFor(
       return computeLargeFileIdentity(input.file);
     case 'secret-hmac':
       return computeSecretHmacIdentity(input.tool, input.rule, input.hmac);
+    case 'stale-allow':
+      return computeStaleAllowIdentity(input.file, input.line, input.category);
   }
 }
 
@@ -263,6 +265,20 @@ function computeLargeFileIdentity(file: string): FindingId {
 function computeSecretHmacIdentity(tool: string, rule: string, hmac: string): FindingId {
   const canonicalRule = canonicalRuleFor(tool, rule);
   const input = `secret-hmac\0v1\0${canonicalRule}\0${hmac}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
+ * Identity for an orphaned inline allowlist annotation. Line is
+ * bucketed via the canonical 3-line window so small formatter /
+ * unrelated-edit drift doesn't churn identity. Category is part of
+ * identity so reclassifying an annotation (test-fixture →
+ * false-positive on the same source line) registers as a fresh
+ * finding — the new category's appropriateness is a separate
+ * judgment worth surfacing.
+ */
+function computeStaleAllowIdentity(file: string, line: number, category: string): FindingId {
+  const input = `stale-allow\0v1\0${file}\0${lineWindowFor(line)}\0${category}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

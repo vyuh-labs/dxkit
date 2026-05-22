@@ -52,6 +52,17 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
         rule: entry.marker,
         ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
       };
+    case 'stale-allow':
+      // Annotation comments don't have a tool/rule pair — the
+      // "rule" is the annotation's category. Reuse the field so
+      // the matcher's location-pair pass can treat them like other
+      // source-anchored kinds.
+      return {
+        id: entry.id,
+        file: entry.file,
+        line: entry.line,
+        rule: entry.category,
+      };
     case 'dep-vuln':
     case 'duplication':
     case 'coverage-gap':

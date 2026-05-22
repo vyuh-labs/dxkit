@@ -150,6 +150,11 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     'stale-file': 'low',
     'large-file': 'medium',
     'secret-hmac': 'high',
+    // Stale-allow is a self-detected dxkit hygiene finding (orphaned
+    // allowlist annotation). Low severity — it's a maintenance signal,
+    // not an active risk; the underlying suppressed finding is already
+    // gone.
+    'stale-allow': 'low',
   });
 
 /**
