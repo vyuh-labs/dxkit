@@ -583,7 +583,7 @@ for f in $FINGERPRINT_HELPER_ALLOWLIST; do
   ALLOW_FILTER_FP="$ALLOW_FILTER_FP -e ^${f}:"
 done
 
-ROGUE_HASH=$(grep -rnE "createHash[[:space:]]*\(" src/analyzers/ src/baseline/ 2>/dev/null \
+ROGUE_HASH=$(grep -rnE "createHash[[:space:]]*\(" src/analyzers/ src/baseline/ src/allowlist/ 2>/dev/null \
   | grep -v "// fingerprint-helper-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | { [ -n "$ALLOW_FILTER_FP" ] && grep -v $ALLOW_FILTER_FP || cat; })
@@ -593,6 +593,9 @@ if [ -n "$ROGUE_HASH" ]; then
   echo "   → Use computeFingerprint or computeCodeFingerprint from src/analyzers/tools/fingerprint.ts."
   echo "   → For new finding kinds, extend src/baseline/finding-identity.ts:identityFor"
   echo "     with a new IdentityInput discriminant rather than hashing inline."
+  echo "   → The allowlist module CONSUMES fingerprints (string-compares only) —"
+  echo "     it never computes identity. A createHash() inside src/allowlist/ is"
+  echo "     almost certainly a shortcut that should route through identityFor."
   echo "   → Annotate '// fingerprint-helper-ok' for justified non-identity hashing."
   ERRORS=$((ERRORS + 1))
 fi
@@ -692,6 +695,64 @@ if [ -n "$DEAD_CONDS" ]; then
   echo "     or remove the IF_ entry from getConditions() in src/constants.ts."
   echo "   → Annotate '// arch-check-ok' on the constants.ts line for intentional"
   echo "     ahead-of-template additions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
+# Allowlist canonical-entry-point discipline (added 2026-05-22).
+# =============================================================================
+#
+# The allowlist module shipped by `src/allowlist/` has two contracts:
+#
+#   - On-disk IO: `.dxkit/allowlist.json` (committed) and the
+#     gitignored sidecar `.dxkit/allowlist-reasons.local.json` are
+#     read/written ONLY through `loadAllowlist()` / `saveAllowlist()`
+#     in `src/allowlist/file.ts`. Bypassing means schema validation
+#     + sidecar merging gets skipped silently; a customer's
+#     hand-edited file could pass the guardrail with malformed
+#     entries that break later runs.
+#
+#   - Per-language comment syntax: inline annotation generation
+#     reads `LanguageSupport.commentSyntax.lineComment`. A fallback
+#     like `?? '//'` would silently produce wrong-language comments
+#     for a future pack whose declaration is missing — defeating
+#     the whole point of the recipe enforcement layer (the contract
+#     test would catch the missing field, but the fallback would
+#     mask the failure if it sneaks past the test).
+#
+# Both checks are scoped tightly so the rules don't accumulate false
+# positives in unrelated code.
+#
+# Annotate `// allowlist-io-ok` (rule 1) or `// comment-syntax-ok`
+# (rule 2) on the violating line for justified exceptions (today:
+# zero needed).
+
+# Rule 1: no direct allowlist.json IO outside src/allowlist/
+ROGUE_ALLOWLIST_IO=$(grep -rnE "['\"](allowlist\.json|allowlist-reasons\.local\.json)['\"]" src/ 2>/dev/null \
+  | grep -v "^src/allowlist/" \
+  | grep -v "// allowlist-io-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ROGUE_ALLOWLIST_IO" ]; then
+  echo "❌ Allowlist IO bypass: direct allowlist.json reference outside src/allowlist/:"
+  echo "$ROGUE_ALLOWLIST_IO"
+  echo "   → Use loadAllowlist(cwd) / saveAllowlist(cwd, file) from"
+  echo "     src/allowlist/file.ts so schema validation + sidecar merging run."
+  echo "   → Annotate '// allowlist-io-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 2: no comment-marker fallback literals in src/allowlist/
+ROGUE_COMMENT_FALLBACK=$(grep -rnE "(\?\?|\|\|)[[:space:]]*['\"](//|#)['\"]" src/allowlist/ 2>/dev/null \
+  | grep -v "// comment-syntax-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ROGUE_COMMENT_FALLBACK" ]; then
+  echo "❌ Allowlist comment-syntax fallback: hardcoded language literal as default:"
+  echo "$ROGUE_COMMENT_FALLBACK"
+  echo "   → Inline annotation code MUST drive comment markers from"
+  echo "     LanguageSupport.commentSyntax.lineComment, not a hardcoded default."
+  echo "   → If the language has no commentSyntax, return null / throw — never"
+  echo "     fall back to '//' or '#' (defeats the recipe enforcement layer)."
+  echo "   → Annotate '// comment-syntax-ok' for justified exceptions (rare)."
   ERRORS=$((ERRORS + 1))
 fi
 
