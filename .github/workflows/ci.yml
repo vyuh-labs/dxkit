@@ -27,6 +27,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # Cache the toolchain bins/venvs that are otherwise re-installed
+      # on every CI run. pipx tools live under ~/.local/pipx/venvs;
+      # detekt + PMD unzip into ~/.local/share + ~/.local/bin; gitleaks
+      # lands in ~/.local/bin via curl. Keying on os + manual bump
+      # version means cache stays valid until we intentionally rotate
+      # tool versions (bump the `v1` suffix to invalidate). Saves
+      # ~2 min/run, ~$20-100/mo at typical team CI volume.
+      - name: Cache scanner toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/pipx
+            ~/.local/bin
+            ~/.local/share/detekt
+            ~/.local/share/pmd
+          key: dxkit-scanner-toolchain-${{ runner.os }}-v1
+
       - run: pipx install pip-audit # depVulns
       - run: pipx install ruff # lint (Phase 10i.0.2)
       - uses: actions/setup-go@v5

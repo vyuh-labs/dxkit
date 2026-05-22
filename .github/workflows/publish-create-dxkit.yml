@@ -101,11 +101,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public "${{ steps.pack.outputs.tarball }}"
 
+      # Poll loop: up to 60 iterations × 3s = ~180s window. First-publish
+      # of a new scoped package commonly takes 30-90s for the CDN to
+      # propagate; the create-dxkit@0.1.0 publish itself registered as
+      # workflow "failure" on the old 6-iteration / 18s window even
+      # though the publish succeeded. Hence the wider tolerance.
       - name: Verify npm shasum matches local tarball
         run: |
           VERSION=$(node -p "require('./package.json').version")
           REMOTE_SHASUM=""
-          for i in 1 2 3 4 5 6; do
+          for i in $(seq 1 60); do
             REMOTE_SHASUM=$(npm view "@vyuhlabs/create-dxkit@${VERSION}" dist.shasum 2>/dev/null || true)
             if [ -n "$REMOTE_SHASUM" ]; then break; fi
             sleep 3

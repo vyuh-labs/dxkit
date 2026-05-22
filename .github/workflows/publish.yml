@@ -106,11 +106,17 @@ jobs:
       # Post-publish — npm's recorded shasum must equal our local sha1.
       # A mismatch means something replaced the tarball mid-publish or
       # the registry accepted a different file; bail loudly.
+      #
+      # Poll loop: up to 60 iterations × 3s = ~180s window. First-publish
+      # of a new scoped package commonly takes 30-90s for the CDN to
+      # propagate; both 2.5.1 publishes registered as workflow "failure"
+      # on the old 6-iteration / 18s window even though the publish
+      # actually succeeded. Hence the wider tolerance.
       - name: Verify npm shasum matches local tarball
         run: |
           VERSION=$(node -p "require('./package.json').version")
           REMOTE_SHASUM=""
-          for i in 1 2 3 4 5 6; do
+          for i in $(seq 1 60); do
             REMOTE_SHASUM=$(npm view "@vyuhlabs/dxkit@${VERSION}" dist.shasum 2>/dev/null || true)
             if [ -n "$REMOTE_SHASUM" ]; then break; fi
             sleep 3
