@@ -45,6 +45,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { IdentityKind } from '../baseline/producers';
+import type { FindingSeverity } from '../baseline/types';
 import {
   ALL_CATEGORIES,
   isCategoryValidForKind,
@@ -98,7 +99,7 @@ export interface AllowlistEntry {
   /** Severity at which the suppression was acknowledged. Required
    *  when `category` is `accepted-risk` and the finding's severity
    *  is `high` or `critical` — see `validateAllowlistEntry`. */
-  readonly acknowledgedSeverity?: 'low' | 'medium' | 'high' | 'critical';
+  readonly acknowledgedSeverity?: FindingSeverity;
 }
 
 export interface AllowlistFile {
