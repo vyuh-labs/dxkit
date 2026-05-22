@@ -42,7 +42,7 @@ import { computeContentHashFromCommit } from '../content-hash';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import { identityFor } from '../finding-identity';
 import type {
-  BaselineEntry,
+  RichBaselineEntry,
   CodeIdentityInput,
   ConfigIdentityInput,
   DepVulnIdentityInput,
@@ -69,8 +69,8 @@ export interface SecurityProducerOptions {
 export function securityAggregateToBaselineEntries(
   aggregate: SecurityAggregate,
   options: SecurityProducerOptions = {},
-): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
   const stamp = (file: string, line: number): string | undefined => {
     if (!options.cwd || !options.commitSha || line <= 0) return undefined;
     const hash = computeContentHashFromCommit(options.cwd, options.commitSha, file, line);
@@ -146,7 +146,7 @@ export function securityAggregateToBaselineEntries(
       installedVersion: f.installedVersion,
       id: f.id,
     };
-    const entry: BaselineEntry = {
+    const entry: RichBaselineEntry = {
       id: identityFor(input),
       kind: 'dep-vuln',
       package: f.package,

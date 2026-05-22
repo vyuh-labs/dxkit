@@ -16,7 +16,7 @@
  */
 
 import { identityFor } from '../finding-identity';
-import type { BaselineEntry, LargeFileIdentityInput } from '../types';
+import type { RichBaselineEntry, LargeFileIdentityInput } from '../types';
 import type { HealthMetrics } from '../../analyzers/types';
 
 /** Canonical large-file threshold — file is "too large" at strictly
@@ -30,8 +30,8 @@ export const LARGE_FILE_THRESHOLD_LINES = 500;
  * Files with `lines <= threshold` are skipped so the identity set
  * matches the user-facing aggregate count.
  */
-export function largeFilesToBaselineEntries(metrics: HealthMetrics): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+export function largeFilesToBaselineEntries(metrics: HealthMetrics): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
   for (const f of metrics.largestFiles) {
     if (f.lines <= LARGE_FILE_THRESHOLD_LINES) continue;
     const input: LargeFileIdentityInput = { kind: 'large-file', file: f.path };

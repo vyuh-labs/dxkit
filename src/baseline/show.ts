@@ -23,6 +23,7 @@
 
 import * as logger from '../logger';
 import type { BaselineFile } from './baseline-file';
+import { isSanitized } from './sanitize';
 import type { BaselineEntry } from './types';
 
 /**
@@ -178,8 +179,13 @@ function countByKind(
  * Kind-specific fields drive the format so a reader sees the
  * meaningful axis (file:line for source-anchored kinds,
  * package@version+advisory for dep-vulns, etc.).
+ *
+ * Sanitized entries carry only identity + kind; renderer surfaces
+ * `<sanitized>` so the user knows location detail was stripped at
+ * write time. The fingerprint prefix still anchors the row.
  */
 function describeEntry(entry: BaselineEntry): string {
+  if (isSanitized(entry)) return '<sanitized>';
   switch (entry.kind) {
     case 'secret':
     case 'code':

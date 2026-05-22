@@ -54,7 +54,7 @@ import type { GitleaksRawSecret } from '../../analyzers/tools/gitleaks';
 import type { AnalysisResult } from '../../analysis-result';
 import type { TestGapsReport } from '../../analyzers/tests/types';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
-import type { BaselineEntry } from '../types';
+import type { BaselineEntry, RichBaselineEntry } from '../types';
 import { largeFilesToBaselineEntries } from './health';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
 import { rawSecretsToBaselineEntries } from './secret-hmac';
@@ -130,11 +130,12 @@ export interface BaselineProducer {
    *  the union across every producer and asserts it covers every
    *  `IdentityKind` value not in `DEFERRED_KINDS`. */
   readonly contributes: ReadonlyArray<IdentityKind>;
-  /** Build `BaselineEntry`s from the shared context. Producers
+  /** Build `RichBaselineEntry`s from the shared context. Producers
    *  emit ZERO entries when their upstream data is missing
    *  (analyzer didn't run, envelope absent, etc.) — never throw
-   *  for missing inputs. */
-  readonly produce: (ctx: ProducerContext) => BaselineEntry[];
+   *  for missing inputs. Producers always emit the rich shape;
+   *  sanitization is applied at the write boundary, not here. */
+  readonly produce: (ctx: ProducerContext) => RichBaselineEntry[];
 }
 
 /**
@@ -274,8 +275,8 @@ export const PRODUCERS: ReadonlyArray<BaselineProducer> = Object.freeze([
 export function runProducers(
   ctx: ProducerContext,
   producers: ReadonlyArray<BaselineProducer> = PRODUCERS,
-): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
   for (const producer of producers) {
     out.push(...producer.produce(ctx));
   }

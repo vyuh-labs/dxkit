@@ -25,7 +25,7 @@
 
 import { identityFor } from '../finding-identity';
 import type {
-  BaselineEntry,
+  RichBaselineEntry,
   TestFileDegradationIdentityInput,
   TestGapIdentityInput,
 } from '../types';
@@ -39,8 +39,8 @@ import type { TestGapsReport } from '../../analyzers/tests/types';
  * report's iteration order so re-runs against the same scan are
  * byte-stable.
  */
-export function testGapsToBaselineEntries(report: TestGapsReport): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+export function testGapsToBaselineEntries(report: TestGapsReport): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
 
   for (const gap of report.gaps) {
     // Defensive: `gaps` already excludes files with a matching test,
