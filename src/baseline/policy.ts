@@ -23,7 +23,32 @@
  * without re-shaping consumer code.
  */
 
+import type { BaselineMode } from './modes';
 import type { FindingSeverity, FindingStatus, MatchPair, MatchReason } from './types';
+
+/**
+ * Optional `baseline.*` block in `.dxkit/policy.json`. Pins the
+ * mode + (when ref-based) the comparison ref repo-wide so every
+ * developer + every CI job uses the same posture. Both fields are
+ * optional; when absent the resolver in `./modes.ts` falls back to
+ * visibility-derived defaults.
+ *
+ * Schema example:
+ *
+ *   {
+ *     "baseline": {
+ *       "mode": "ref-based",
+ *       "ref": "origin/main"
+ *     }
+ *   }
+ */
+export interface BaselineSection {
+  readonly mode?: BaselineMode;
+  /** Git ref to compare against in `ref-based` mode. When absent,
+   *  the resolver probes `origin/HEAD` and falls back to
+   *  `'origin/main'`. */
+  readonly ref?: string;
+}
 
 /**
  * Per-finding-kind overrides that escalate specific guardrail rules
@@ -90,6 +115,21 @@ export interface BrownfieldPolicy {
    * diff overlap) via `.dxkit/policy.json`.
    */
   readonly addedRequiresChangedLines: ReadonlyArray<string>;
+  /**
+   * Baseline-mode pinning. When absent, the resolver in `./modes.ts`
+   * falls back to visibility-derived defaults
+   * (`'public'` → `ref-based`; `'private'` / `'internal'` /
+   * `'unknown'` → `committed-full`). Customers pin this to lock the
+   * posture across all developers + CI jobs:
+   *
+   *   - `'committed-full'`: rich entries committed (default for
+   *     private repos with small teams).
+   *   - `'committed-sanitized'`: stripped entries committed
+   *     (compliance-conscious private repos).
+   *   - `'ref-based'`: no committed baseline; computed from a git
+   *     ref at check time (default for public repos).
+   */
+  readonly baseline?: BaselineSection;
 }
 
 /**
