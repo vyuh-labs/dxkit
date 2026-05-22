@@ -53,12 +53,14 @@
 import type { GitleaksRawSecret } from '../../analyzers/tools/gitleaks';
 import type { AnalysisResult } from '../../analysis-result';
 import type { TestGapsReport } from '../../analyzers/tests/types';
+import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import type { BaselineEntry } from '../types';
 import { largeFilesToBaselineEntries } from './health';
 import { licensesToBaselineEntries } from './licenses';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
 import { rawSecretsToBaselineEntries } from './secret-hmac';
 import { securityAggregateToBaselineEntries } from './security';
+import { staleAllowToBaselineEntries } from './stale-allow';
 import { testGapsToBaselineEntries } from './tests';
 
 /** Every discriminant value the `BaselineEntry` union takes. Mirror
@@ -111,6 +113,10 @@ export interface ProducerContext {
   /** Raw secrets gitleaks captured (process-only; never written to
    *  disk; consumed by the secret-HMAC producer). */
   readonly rawSecrets: ReadonlyArray<GitleaksRawSecret>;
+  /** Inline `dxkit-allow:` annotations gathered from source files.
+   *  Consumed by the stale-allow producer to detect orphaned
+   *  annotations whose underlying finding is gone. */
+  readonly inlineAllowlistAnnotations: ReadonlyArray<InlineAllowlistOccurrence>;
 }
 
 /**
@@ -173,15 +179,6 @@ export const DEFERRED_KINDS: Readonly<
       'Substitute: test-gap covers file-level untested; new uncovered functions ' +
       'inside an already-tested file remain invisible until Phase 3.5 lands.',
     landingPhase: 'Phase 3.5 (5 packs) / 2.6 (remaining)',
-  },
-  'stale-allow': {
-    reason:
-      'inline allowlist annotation gather pass not yet wired into baseline-create. ' +
-      "The kind exists structurally so identityFor's exhaustive switch and the " +
-      'per-kind tables (CATEGORIES_BY_KIND, hint switches) auto-include it; the ' +
-      'producer ships with the gather pass that scans source files for orphaned ' +
-      '`dxkit-allow:` comments and compares against current findings.',
-    landingPhase: '2.6 / strict-stale-annotation-detection chunk',
   },
 });
 
@@ -248,6 +245,17 @@ const TESTS_PRODUCER: BaselineProducer = {
   },
 };
 
+const STALE_ALLOW_PRODUCER: BaselineProducer = {
+  name: 'stale-allow',
+  contributes: ['stale-allow'],
+  produce(ctx) {
+    return staleAllowToBaselineEntries({
+      annotations: ctx.inlineAllowlistAnnotations,
+      aggregate: ctx.analysisResult.capabilities.securityAggregate ?? null,
+    });
+  },
+};
+
 /**
  * The canonical producer list. Order is preserved in baseline-file
  * output for deterministic diffs; adding a new producer appends
@@ -264,6 +272,7 @@ export const PRODUCERS: ReadonlyArray<BaselineProducer> = Object.freeze([
   HEALTH_PRODUCER,
   LICENSES_PRODUCER,
   TESTS_PRODUCER,
+  STALE_ALLOW_PRODUCER,
 ]);
 
 /**
