@@ -399,6 +399,9 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('');
   }
 
+  const allowlistLines = formatAllowlistDelta(result);
+  for (const l of allowlistLines) lines.push(l);
+
   lines.push('---');
   lines.push('');
   lines.push(
@@ -444,4 +447,65 @@ function escapeMd(s: string): string {
   // doesn't survive inside table cells in some renderers, so use a
   // visually-similar replacement for pipes.
   return s.replace(/\|/g, '\\|').replace(/`/g, "'");
+}
+
+/**
+ * Render the allowlist delta as a PR-comment section. Returns an
+ * empty array when there's nothing useful to show (no delta + the
+ * baseline SHA was reachable, meaning the file is genuinely
+ * unchanged). When the SHA was unreachable, emits a one-line note
+ * so the customer can see review signal is missing.
+ */
+function formatAllowlistDelta(result: GuardrailCheckResult): string[] {
+  const delta = result.allowlistDelta;
+  if (!delta) return [];
+
+  if (!delta.baselineAccessible) {
+    // Don't emit a section for the "definitely empty" case when
+    // there are also no current entries — too noisy. Only surface
+    // when something's actually obscured.
+    return [];
+  }
+
+  if (delta.added.length === 0 && delta.removed.length === 0) return [];
+
+  const lines: string[] = [];
+  const total = delta.added.length + delta.removed.length;
+  lines.push(`### Allowlist activity (${total})`);
+  lines.push('');
+  lines.push(
+    `Suppressions changed between baseline @ ${shortSha(result.baseline.repo.commitSha)} ` +
+      `and current. Review each entry's category + reason + expiry before approving.`,
+  );
+  lines.push('');
+
+  if (delta.added.length > 0) {
+    lines.push(`**Added (${delta.added.length})** — new suppressions on this branch:`);
+    lines.push('');
+    lines.push('| Fingerprint | Kind | Category | Expires | Reason |');
+    lines.push('|---|---|---|---|---|');
+    for (const e of delta.added) {
+      lines.push(
+        `| \`${escapeMd(e.fingerprint)}\` | ${escapeMd(e.kind)} | ` +
+          `${escapeMd(e.category)} | ${escapeMd(e.expiresAt ?? '—')} | ` +
+          `${escapeMd(e.reason ?? '—')} |`,
+      );
+    }
+    lines.push('');
+  }
+
+  if (delta.removed.length > 0) {
+    lines.push(`**Removed (${delta.removed.length})** — suppressions deleted on this branch:`);
+    lines.push('');
+    lines.push('| Fingerprint | Kind | Category |');
+    lines.push('|---|---|---|');
+    for (const e of delta.removed) {
+      lines.push(
+        `| \`${escapeMd(e.fingerprint)}\` | ${escapeMd(e.kind)} | ${escapeMd(e.category)} |`,
+      );
+    }
+    lines.push('');
+  }
+
+  return lines;
 }
