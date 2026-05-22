@@ -240,7 +240,7 @@ export async function run(argv: string[]): Promise<void> {
       target: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       plan: { type: 'boolean', default: false },
-      // allowlist flags (allowlist add | list | show)
+      // allowlist flags (allowlist add | list | show | audit | prune)
       category: { type: 'string' },
       reason: { type: 'string' },
       fingerprint: { type: 'string' },
@@ -248,6 +248,7 @@ export async function run(argv: string[]): Promise<void> {
       'acknowledged-severity': { type: 'string' },
       'added-by': { type: 'string' },
       mode: { type: 'string' },
+      'soon-days': { type: 'string' },
     },
     allowPositionals: true,
     strict: false,

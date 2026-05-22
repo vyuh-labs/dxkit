@@ -6,6 +6,8 @@ import {
   ALLOWLIST_REASONS_SCHEMA_VERSION,
   ALLOWLIST_SCHEMA_VERSION,
   addEntry,
+  auditAllowlist,
+  daysUntilExpiry,
   emptyAllowlistFile,
   findEntry,
   isEntryActive,
@@ -14,6 +16,7 @@ import {
   matchesFinding,
   pathForAllowlist,
   pathForAllowlistReasons,
+  pruneExpired,
   removeEntry,
   saveAllowlist,
   validateAllowlistEntry,
@@ -405,5 +408,152 @@ describe('validateAllowlistFile', () => {
       entries: [baseEntry],
     };
     expect(validateAllowlistFile(file)).toEqual([]);
+  });
+});
+
+describe('daysUntilExpiry', () => {
+  const now = new Date('2026-05-22T00:00:00Z');
+
+  it('returns null for entries without expiresAt', () => {
+    expect(daysUntilExpiry(baseEntry, now)).toBeNull();
+  });
+
+  it('returns 0 on the expiry day itself', () => {
+    expect(daysUntilExpiry({ ...baseEntry, expiresAt: '2026-05-22' }, now)).toBe(0);
+  });
+
+  it('returns positive for future expiry', () => {
+    expect(daysUntilExpiry({ ...baseEntry, expiresAt: '2026-06-05' }, now)).toBe(14);
+  });
+
+  it('returns negative for past expiry', () => {
+    expect(daysUntilExpiry({ ...baseEntry, expiresAt: '2026-05-15' }, now)).toBe(-7);
+  });
+});
+
+describe('auditAllowlist', () => {
+  const now = new Date('2026-05-22T00:00:00Z');
+
+  it('classifies expired entries', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [{ ...baseEntry, fingerprint: 'aaaa111111111111', expiresAt: '2026-05-15' }],
+    };
+    const report = auditAllowlist(file, { now });
+    expect(report.expired).toHaveLength(1);
+    expect(report.expired[0].fingerprint).toBe('aaaa111111111111');
+    expect(report.soonToExpire).toHaveLength(0);
+  });
+
+  it('classifies soon-to-expire entries within default 14-day horizon', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [
+        { ...baseEntry, fingerprint: 'bbbb111111111111', expiresAt: '2026-05-30' }, // 8 days
+        { ...baseEntry, fingerprint: 'cccc111111111111', expiresAt: '2026-06-20' }, // 29 days
+      ],
+    };
+    const report = auditAllowlist(file, { now });
+    expect(report.soonToExpire).toHaveLength(1);
+    expect(report.soonToExpire[0].entry.fingerprint).toBe('bbbb111111111111');
+    expect(report.soonToExpire[0].daysRemaining).toBe(8);
+  });
+
+  it('respects custom soonToExpireDays horizon', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [
+        { ...baseEntry, fingerprint: 'cccc111111111111', expiresAt: '2026-06-20' }, // 29 days
+      ],
+    };
+    const report = auditAllowlist(file, { now, soonToExpireDays: 30 });
+    expect(report.soonToExpire).toHaveLength(1);
+  });
+
+  it('does NOT classify entries on the boundary day (0 days remaining) as expired', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [{ ...baseEntry, expiresAt: '2026-05-22' }],
+    };
+    const report = auditAllowlist(file, { now });
+    expect(report.expired).toHaveLength(0);
+    expect(report.soonToExpire).toHaveLength(1);
+  });
+
+  it('flags entries with empty reason as missingRationale', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [
+        { ...baseEntry, fingerprint: 'aaaa222222222222', reason: '' },
+        { ...baseEntry, fingerprint: 'bbbb222222222222', reason: '   ' },
+        { ...baseEntry, fingerprint: 'cccc222222222222' }, // reason present
+      ],
+    };
+    const report = auditAllowlist(file, { now });
+    expect(report.missingRationale.map((e) => e.fingerprint)).toEqual([
+      'aaaa222222222222',
+      'bbbb222222222222',
+    ]);
+  });
+
+  it('empty file produces empty buckets', () => {
+    const file = emptyAllowlistFile('full');
+    expect(auditAllowlist(file, { now })).toEqual({
+      expired: [],
+      soonToExpire: [],
+      missingRationale: [],
+    });
+  });
+});
+
+describe('pruneExpired', () => {
+  const now = new Date('2026-05-22T00:00:00Z');
+
+  it('removes only expired entries; keeps active + no-expiry', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [
+        { ...baseEntry, fingerprint: 'aaaa111111111111', expiresAt: '2026-05-15' }, // expired
+        { ...baseEntry, fingerprint: 'bbbb111111111111', expiresAt: '2026-08-22' }, // active
+        { ...baseEntry, fingerprint: 'cccc111111111111' }, // no expiry
+      ],
+    };
+    const { kept, removed } = pruneExpired(file, now);
+    expect(removed).toHaveLength(1);
+    expect(removed[0].fingerprint).toBe('aaaa111111111111');
+    expect(kept.entries).toHaveLength(2);
+    expect(kept.entries.map((e) => e.fingerprint)).toEqual([
+      'bbbb111111111111',
+      'cccc111111111111',
+    ]);
+  });
+
+  it('returns the same input file shape with 0 removals when nothing is expired', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'full',
+      entries: [baseEntry],
+    };
+    const { kept, removed } = pruneExpired(file, now);
+    expect(removed).toHaveLength(0);
+    expect(kept.entries).toEqual(file.entries);
+    expect(kept.mode).toBe(file.mode);
+  });
+
+  it('preserves file mode + schemaVersion in returned kept file', () => {
+    const file: AllowlistFile = {
+      schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+      mode: 'sanitized',
+      entries: [{ ...baseEntry, expiresAt: '2026-05-15' }],
+    };
+    const { kept } = pruneExpired(file, now);
+    expect(kept.mode).toBe('sanitized');
+    expect(kept.schemaVersion).toBe(ALLOWLIST_SCHEMA_VERSION);
   });
 });

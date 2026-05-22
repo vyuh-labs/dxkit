@@ -343,6 +343,101 @@ export function isEntryActive(entry: AllowlistEntry, now: Date = new Date()): bo
 }
 
 /**
+ * Days remaining until an entry expires, or `null` when it has no
+ * expiry. Negative values mean already expired by that many days.
+ */
+export function daysUntilExpiry(entry: AllowlistEntry, now: Date = new Date()): number | null {
+  if (!entry.expiresAt) return null;
+  const expiry = new Date(entry.expiresAt + 'T00:00:00Z');
+  const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((expiry.getTime() - today.getTime()) / msPerDay);
+}
+
+/** One entry in a soon-to-expire audit bucket, with the days
+ *  remaining so callers can render time-to-expiry context. */
+export interface SoonToExpire {
+  readonly entry: AllowlistEntry;
+  readonly daysRemaining: number;
+}
+
+/**
+ * Audit report partitioning the file's entries into the three
+ * actionable categories the `vyuh-dxkit allowlist audit` subcommand
+ * surfaces. Pure function — no I/O, no side effects.
+ *
+ * - `expired` — entries past their `expiresAt`. Prune candidates.
+ *   The underlying suppression no longer applies on the next
+ *   guardrail run.
+ * - `soonToExpire` — entries whose `expiresAt` is within
+ *   `soonToExpireDays` (default 14). Customer should review whether
+ *   the deferred work is still in plan and either fix the finding,
+ *   extend the expiry, or remove the entry.
+ * - `missingRationale` — entries with empty / whitespace-only
+ *   reason. In full mode this should never happen (validator
+ *   rejects); in sanitized mode it may occur when the sidecar is
+ *   missing or stale.
+ */
+export interface AuditReport {
+  readonly expired: ReadonlyArray<AllowlistEntry>;
+  readonly soonToExpire: ReadonlyArray<SoonToExpire>;
+  readonly missingRationale: ReadonlyArray<AllowlistEntry>;
+}
+
+export interface AuditOptions {
+  readonly now?: Date;
+  /** Window in days within which `expiresAt` is considered "soon."
+   *  Default 14 — chosen to match a typical sprint cadence. */
+  readonly soonToExpireDays?: number;
+}
+
+export function auditAllowlist(file: AllowlistFile, options: AuditOptions = {}): AuditReport {
+  const now = options.now ?? new Date();
+  const horizon = options.soonToExpireDays ?? 14;
+  const expired: AllowlistEntry[] = [];
+  const soonToExpire: SoonToExpire[] = [];
+  const missingRationale: AllowlistEntry[] = [];
+
+  for (const entry of file.entries) {
+    const days = daysUntilExpiry(entry, now);
+    if (days !== null && days < 0) {
+      expired.push(entry);
+    } else if (days !== null && days <= horizon) {
+      soonToExpire.push({ entry, daysRemaining: days });
+    }
+    if (!entry.reason || entry.reason.trim().length === 0) {
+      // In sanitized mode the reason may legitimately live in the
+      // gitignored sidecar; flag here so the caller can decide
+      // whether to treat it as a real audit item or just an
+      // "unavailable locally" notice.
+      missingRationale.push(entry);
+    }
+  }
+  return { expired, soonToExpire, missingRationale };
+}
+
+/**
+ * Remove expired entries from the file. Returns a new file (immutable)
+ * plus the list of removed entries so the CLI can render what changed.
+ * Pure function — no I/O.
+ */
+export function pruneExpired(
+  file: AllowlistFile,
+  now: Date = new Date(),
+): { kept: AllowlistFile; removed: ReadonlyArray<AllowlistEntry> } {
+  const removed: AllowlistEntry[] = [];
+  const keptEntries: AllowlistEntry[] = [];
+  for (const entry of file.entries) {
+    if (isEntryActive(entry, now)) {
+      keptEntries.push(entry);
+    } else {
+      removed.push(entry);
+    }
+  }
+  return { kept: { ...file, entries: keptEntries }, removed };
+}
+
+/**
  * Validate every entry in the file against the canonical taxonomy
  * + Sprint-0-locked rules. Pure function; returns an array of
  * `ValidationError` rather than throwing so callers can render
