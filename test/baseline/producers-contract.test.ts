@@ -57,6 +57,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'stale-file',
   'large-file',
   'secret-hmac',
+  'stale-allow',
 ];
 
 /** Compile-time exhaustiveness check — adding a new kind to

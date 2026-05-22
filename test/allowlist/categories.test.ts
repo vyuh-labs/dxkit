@@ -53,6 +53,7 @@ describe('allowlist categories', () => {
       'stale-file',
       'hygiene',
       'license',
+      'stale-allow',
     ];
     for (const k of kinds) {
       expect(CATEGORIES_BY_KIND).toHaveProperty(k);
@@ -74,6 +75,10 @@ describe('allowlist categories', () => {
 
   it('license kind permits zero allowlist categories', () => {
     expect(CATEGORIES_BY_KIND.license).toEqual([]);
+  });
+
+  it('stale-allow kind permits zero allowlist categories (self-suppression forbidden)', () => {
+    expect(CATEGORIES_BY_KIND['stale-allow']).toEqual([]);
   });
 
   it('coverage-gap / test-gap / test-file-degradation are accepted-risk + deferred only', () => {

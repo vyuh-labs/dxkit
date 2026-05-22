@@ -593,6 +593,64 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     },
     expected: 'persisted',
   },
+
+  // ─── stale-allow (3) ──────────────────────────────────────────────────
+  {
+    name: 'stale-allow/clean — same file, line, category',
+    prior: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 42,
+      category: 'test-fixture',
+    },
+    current: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 42,
+      category: 'test-fixture',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'stale-allow/line-window absorbs small line drift',
+    // The 3-line window in `lineWindowFor` buckets lines by
+    // floor(line / 3) * 3. Lines 42, 43, 44 all bucket to 42,
+    // so a formatter-driven shift inside the bucket doesn't
+    // churn identity. (Lines that cross a bucket boundary —
+    // 41 → bucket 39, 42 → bucket 42 — DO churn; that's the
+    // window's deliberate granularity.)
+    prior: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 42,
+      category: 'test-fixture',
+    },
+    current: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 44,
+      category: 'test-fixture',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'stale-allow/category-change → identity changes',
+    // Reclassifying an annotation (test-fixture → false-positive
+    // on the same source line) is semantically a different stale-allow.
+    prior: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 42,
+      category: 'test-fixture',
+    },
+    current: {
+      kind: 'stale-allow',
+      file: 'src/auth/oauth.ts',
+      line: 42,
+      category: 'false-positive',
+    },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -731,6 +789,7 @@ const EXPECTED_KINDS = [
   'stale-file',
   'large-file',
   'secret-hmac',
+  'stale-allow',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

@@ -96,7 +96,8 @@ export type IdentityInput =
   | GodFileIdentityInput
   | StaleFileIdentityInput
   | LargeFileIdentityInput
-  | SecretHmacIdentityInput;
+  | SecretHmacIdentityInput
+  | StaleAllowIdentityInput;
 
 /** gitleaks + private-key files + similar secret detectors. */
 export interface SecretIdentityInput {
@@ -330,6 +331,33 @@ export interface SecretHmacIdentityInput {
 }
 
 /**
+ * Orphaned inline allowlist annotation — a `dxkit-allow:<category>`
+ * comment in a source file that matches no current finding. The
+ * developer suppressed something that's since been fixed (or the
+ * scanner stopped flagging), and the annotation should be removed.
+ * TypeScript's `@ts-expect-error` proved this pattern: tools that
+ * surface their own stale suppressions as findings force the dev
+ * to clean up, preventing the annotation graveyard.
+ *
+ * Identity is `(file, lineWindow, category)` — same 3-line window
+ * the code-finding fingerprint uses, so formatter / unrelated-edit
+ * line drift doesn't churn identity. Category is part of identity
+ * because a `# dxkit-allow:test-fixture` becoming
+ * `# dxkit-allow:false-positive` (developer reclassified mid-review)
+ * is a semantically different stale-allow.
+ */
+export interface StaleAllowIdentityInput {
+  readonly kind: 'stale-allow';
+  readonly file: string;
+  readonly line: number;
+  /** The category named in the orphaned annotation. Free-form
+   *  string at identity-input level (the canonical
+   *  `AllowlistCategory` union lives in `src/allowlist/categories.ts`
+   *  to avoid a cross-module import here in the baseline types). */
+  readonly category: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -397,7 +425,8 @@ export type BaselineEntry =
   | { id: FindingId; kind: 'god-file'; file: string }
   | { id: FindingId; kind: 'stale-file'; file: string; suffix: string }
   | { id: FindingId; kind: 'large-file'; file: string }
-  | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string };
+  | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string }
+  | { id: FindingId; kind: 'stale-allow'; file: string; line: number; category: string };
 
 /**
  * One pairing decision from the matcher. Carries enough context for
