@@ -8,7 +8,7 @@ Deterministic code-health analysis for 8 language ecosystems
 **[Getting started](getting-started.md)** — install dxkit, install the
 tools it drives, run your first report.
 
-## Commit-time guardrails (2.5.0)
+## Commit-time guardrails
 
 Capture today's findings as a baseline; every PR after that is diffed
 against the baseline so new regressions block while existing debt is
@@ -16,10 +16,13 @@ allowed to remain. Wire it into pre-push and a GitHub Actions PR-gate
 in one command (pre-commit is opt-in via `--with-precommit-hook`).
 
 ```bash
-vyuh-dxkit init --full          # pre-push + devcontainer + CI + baseline-refresh
+npm init @vyuhlabs/dxkit        # canonical first install (since 2.5.1)
 vyuh-dxkit baseline create      # capture today's state
-git config core.hooksPath .githooks   # activate hooks (per-clone)
 ```
+
+Hook activation is automatic via the postinstall chain (no manual
+`git config core.hooksPath .githooks` step needed). If you ever need
+to re-activate manually: `vyuh-dxkit hooks activate`.
 
 | Command                                         | What it does                                                   |
 | ----------------------------------------------- | -------------------------------------------------------------- |
@@ -32,26 +35,29 @@ git config core.hooksPath .githooks   # activate hooks (per-clone)
 
 Once dxkit + its tools are installed, here's the command surface:
 
-| Command                                          | Question it answers                                       | Typical runtime                    |
-| ------------------------------------------------ | --------------------------------------------------------- | ---------------------------------- |
-| [`health`](commands/health.md)                   | "What's the overall shape of this codebase?"              | 1-4 min                            |
-| [`vulnerabilities`](commands/vulnerabilities.md) | "What security issues are there?"                         | 1-3 min                            |
-| [`test-gaps`](commands/test-gaps.md)             | "Which untested files are riskiest?"                      | 30-90 sec                          |
-| [`quality`](commands/quality.md)                 | "Where's the technical debt + duplication?"               | 1-8 min (jscpd is the long-pole)   |
-| [`dev-report`](commands/dev-report.md)           | "Who's working on what, where are the hot files?"         | 5-30 sec                           |
-| [`licenses`](commands/licenses.md)               | "What licenses are in my dependency tree?"                | 30-60 sec                          |
-| [`bom`](commands/bom.md)                         | "Full dependency × license × CVE × upgrade view"          | 1-3 min                            |
-| [`coverage`](commands/coverage.md)               | "Materialize real line-coverage data"                     | varies (runs your tests)           |
-| [`dashboard`](commands/dashboard.md)             | "Single HTML view of everything I've run"                 | < 5 sec (renders existing reports) |
-| [`report`](commands/report.md)                   | "Run all of the above in one shot"                        | 5-30 min                           |
-| [`tools`](commands/tools.md)                     | "What tools are detected / missing?"                      | < 5 sec                            |
-| [`doctor`](commands/doctor.md)                   | "Why is X not working?"                                   | < 5 sec                            |
-| [`init`](commands/init.md)                       | "Scaffold a new project with dxkit pre-configured"        | 5-30 sec                           |
-| [`update`](commands/update.md)                   | "Re-generate scaffolded files, preserving customizations" | 5-30 sec                           |
-| [`to-xlsx`](commands/to-xlsx.md)                 | "Convert a licenses/bom JSON report to 15-col XLSX"       | < 5 sec                            |
-| [`baseline create`](commands/baseline.md)        | "Capture today's findings as a brownfield anchor"         | 30s-2m                             |
-| [`baseline show`](commands/baseline.md)          | "Inspect/filter the on-disk baseline"                     | < 1 sec                            |
-| [`guardrail check`](commands/guardrail.md)       | "Block on net-new regressions vs. the baseline"           | 30s-2m                             |
+| Command                                                          | Question it answers                                           | Typical runtime                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
+| [`health`](commands/health.md)                                   | "What's the overall shape of this codebase?"                  | 1-4 min                            |
+| [`vulnerabilities`](commands/vulnerabilities.md)                 | "What security issues are there?"                             | 1-3 min                            |
+| [`test-gaps`](commands/test-gaps.md)                             | "Which untested files are riskiest?"                          | 30-90 sec                          |
+| [`quality`](commands/quality.md)                                 | "Where's the technical debt + duplication?"                   | 1-8 min (jscpd is the long-pole)   |
+| [`dev-report`](commands/dev-report.md)                           | "Who's working on what, where are the hot files?"             | 5-30 sec                           |
+| [`licenses`](commands/licenses.md)                               | "What licenses are in my dependency tree?"                    | 30-60 sec                          |
+| [`bom`](commands/bom.md)                                         | "Full dependency × license × CVE × upgrade view"              | 1-3 min                            |
+| [`coverage`](commands/coverage.md)                               | "Materialize real line-coverage data"                         | varies (runs your tests)           |
+| [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                     | < 5 sec (renders existing reports) |
+| [`report`](commands/report.md)                                   | "Run all of the above in one shot"                            | 5-30 min                           |
+| [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                          | < 5 sec                            |
+| [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                       | < 5 sec                            |
+| [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"            | 5-30 sec                           |
+| [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"     | 5-30 sec                           |
+| [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"  | 1-3 min                            |
+| [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"           | < 5 sec                            |
+| [`baseline create`](commands/baseline.md)                        | "Capture today's findings as a brownfield anchor"             | 30s-2m                             |
+| [`baseline show`](commands/baseline.md)                          | "Inspect/filter the on-disk baseline"                         | < 1 sec                            |
+| [`guardrail check`](commands/guardrail.md)                       | "Block on net-new regressions vs. the baseline"               | 30s-2m                             |
+| [`setup-branch-protection`](commands/setup-branch-protection.md) | "Mark `dxkit-guardrails` as required check on default branch" | < 5 sec                            |
+| [`setup-prebuild`](commands/setup-prebuild.md)                   | "Configure Codespaces prebuild (cold-start ~7 min → ~30s)"    | < 5 sec                            |
 
 ## Configuration
 

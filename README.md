@@ -9,7 +9,7 @@ agent DX; one baseline turns on the guardrails.** Works across major
 language stacks, greenfield or brownfield.
 
 ```bash
-npx @vyuhlabs/dxkit@latest init --full
+npm init @vyuhlabs/dxkit
 ```
 
 <p>
@@ -45,28 +45,37 @@ the grading path.
 
 ---
 
-## What `init --full` creates
+## What `npm init @vyuhlabs/dxkit` creates
 
 ```bash
-npx @vyuhlabs/dxkit@latest init --full
+npm init @vyuhlabs/dxkit
 ```
 
-`init --full` lands a coordinated set of pieces:
+This collapses install + scaffold into a single command: it installs
+`@vyuhlabs/dxkit` as a devDep and runs `vyuh-dxkit init --full --yes`.
+The full install lands a coordinated set of pieces:
 
 ```text
-.devcontainer/        Reproducible environment — pinned language
-                      toolchains, dxkit's scanner toolchain auto-
-                      installed, install scripts for AI agent CLIs
-                      (auth stays user-owned).
-.githooks/            pre-push guardrail hook (pre-commit opt-in
-                      via --with-precommit-hook).
+.devcontainer/        Reproducible environment — per-stack pinned
+                      toolchains (only the languages your project
+                      uses), dxkit's scanner toolchain auto-installed,
+                      install scripts for AI agent CLIs (auth stays
+                      user-owned).
+.githooks/            pre-push guardrail hook (pre-commit opt-in via
+                      --with-precommit-hook). Postinstall auto-
+                      activates `core.hooksPath` so teammates who
+                      clone + `npm install` get hooks wired too.
 .github/workflows/    PR-gate workflow + post-merge baseline-refresh
                       workflow (refresh runs only after the PR-gate
                       passes — see "Safety + trust" below).
-agent scaffolding     Entry-point doc, project skills, slash commands,
-                      per-language conventions, and specialized
-                      subagents for the currently supported agent
-                      (broader agent coverage in 2.6).
+AGENTS.md             Open-standard project context file read by
+                      Claude Code, Codex, Cursor, Aider, and any
+                      AGENTS.md-compliant agent.
+CLAUDE.md             Claude Code shim that points at AGENTS.md.
+.claude/skills/       Nine dxkit-* skills covering the full lifecycle:
+                      learn / init / config / hooks / reports /
+                      action / fix / update / onboard. Claude Code
+                      auto-discovers via skill frontmatter.
 .dxkit/               reports, baselines, and (optional) policy.
 .vyuh-dxkit.json      install manifest.
 ```
@@ -74,7 +83,6 @@ agent scaffolding     Entry-point doc, project skills, slash commands,
 After install:
 
 ```bash
-git config core.hooksPath .githooks   # activate the hooks
 vyuh-dxkit baseline create            # capture today's state
 git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
 git commit -m "chore: enable dxkit guardrails"
@@ -108,9 +116,9 @@ rm .githooks/pre-commit              # disable just pre-commit (keep pre-push)
 ## 60-second demo
 
 ```text
-$ npx @vyuhlabs/dxkit@latest init --full
-✓ Created: 73 files
-✓ Git hooks: installed 2 file(s)
+$ npm init @vyuhlabs/dxkit
+✓ Created: 11 files (AGENTS.md, CLAUDE.md, .claude/skills/dxkit-*, ...)
+✓ Git hooks: installed 1 file(s)
 ✓ Devcontainer: installed 3 file(s)
 ✓ CI guardrails workflow: installed 1 file(s)
 ✓ CI baseline-refresh workflow: installed 1 file(s)
@@ -119,8 +127,8 @@ $ vyuh-dxkit baseline create
 ✓ Wrote .dxkit/baselines/main.json — 89 findings (32s)
 ```
 
-Your AI agent has access to dxkit's reports and the bundled
-subagents that init scaffolded. A typical request to the agent:
+Your AI agent has access to dxkit's reports and the nine lifecycle
+skills that init scaffolded. A typical request to the agent:
 
 ```text
 Read the latest dxkit health report. Pick one safe quality
@@ -166,25 +174,36 @@ Summary
 ## Quickstart
 
 ```bash
-# One-shot, no install
-npx @vyuhlabs/dxkit@latest init --full
+# Canonical first install — collapses install + scaffold into one step
+npm init @vyuhlabs/dxkit
 
-# Or install + use repeatedly
+# Or install dxkit globally + scaffold manually
 npm install -g @vyuhlabs/dxkit
 vyuh-dxkit init --full
 vyuh-dxkit baseline create
 vyuh-dxkit guardrail check --changed-only
+
+# Upgrade an existing install later
+vyuh-dxkit upgrade           # plan + execute combined
 ```
 
 À la carte if you only want specific pieces:
 
 ```bash
-vyuh-dxkit init --with-hooks              # just the pre-push hook (default for hooks)
+vyuh-dxkit init --with-dxkit-agents       # just the nine dxkit-* skills + AGENTS.md
+vyuh-dxkit init --with-hooks              # just the pre-push hook
 vyuh-dxkit init --with-precommit-hook     # add the pre-commit hook (opt-in; slow on large repos)
-vyuh-dxkit init --with-devcontainer       # just the devcontainer
+vyuh-dxkit init --with-devcontainer       # just the per-stack devcontainer
 vyuh-dxkit init --with-ci                 # just the PR-gate workflow
 vyuh-dxkit init --with-baseline-refresh   # just the auto-refresh
 vyuh-dxkit init --with-pr-review          # AI PR-review workflow (opt-in, needs API key)
+```
+
+Post-install, two more CLIs polish the safety surface:
+
+```bash
+vyuh-dxkit setup-branch-protection   # mark dxkit-guardrails as required check on default branch
+vyuh-dxkit setup-prebuild            # configure Codespaces prebuild (cold-start ~7 min → ~30s)
 ```
 
 ---
@@ -420,8 +439,9 @@ dxkit is local-first.
 - [x] Git hooks (pre-push default; pre-commit opt-in)
 - [x] GitHub Actions PR-gate + gated baseline-refresh workflows
 - [x] Devcontainer with pinned toolchains
-- [ ] First-class scaffolding for every major coding agent —
-      per-agent skills + entry-point file conventions (2.6)
+- [x] Nine dxkit-\* skills + AGENTS.md (open-standard, read by every
+      AGENTS.md-compliant agent — Claude Code, Codex, Cursor, Aider)
+- [ ] First-class plugin packaging for the Claude Code marketplace + MCP server for cross-agent reach (2.6, decision-pending)
 - [ ] Scoped + incremental scanning — fast pre-commit on monorepos
       (2.6)
 - [ ] Symbol-level coverage gaps across all 8 packs (2.6)
@@ -466,7 +486,7 @@ MIT. See [LICENSE](LICENSE).
 ## Try it
 
 ```bash
-npx @vyuhlabs/dxkit@latest init --full
+npm init @vyuhlabs/dxkit
 ```
 
 If dxkit helps you ship AI-assisted changes more safely, star the

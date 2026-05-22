@@ -1,13 +1,19 @@
 # `vyuh-dxkit init`
 
-> **Run as:** `vyuh-dxkit <cmd>` after `npm install -g @vyuhlabs/dxkit`,
-> or `npx @vyuhlabs/dxkit <cmd>` for one-shot use. Examples on this
-> page use the short form.
+> **Canonical first install:** `npm init @vyuhlabs/dxkit` — collapses
+> install + scaffold into a single command. Falls through to
+> `vyuh-dxkit init --full --yes` internally.
+>
+> **Direct use:** `vyuh-dxkit <cmd>` after `npm install -g @vyuhlabs/dxkit`,
+> or `npx vyuh-dxkit <cmd>` for one-shot use. Examples on this page
+> use the short form.
 
-Install the dxkit agent DX layer in a repository: `CLAUDE.md`,
-`.claude/` (skills, commands, agents, per-language rules), plus —
-optionally — git hooks, devcontainer, CI guardrails, and the post-
-merge baseline-refresh workflow.
+Install the dxkit agent DX layer in a repository: `AGENTS.md` +
+`CLAUDE.md` shim + `.claude/skills/dxkit-*/` (nine lifecycle skills)
+
+- `.claude/rules/` (per-language conventions), plus — optionally —
+  git hooks, per-stack devcontainer, CI guardrails, and the post-merge
+  baseline-refresh workflow.
 
 Works on any codebase, greenfield or brownfield. dxkit is additive:
 existing `.husky/`, `.devcontainer/`, or CI workflows are never
@@ -22,18 +28,19 @@ vyuh-dxkit init [options]
 
 ## Modes
 
-| Mode                  | Effect                                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--dx-only` (default) | Agent DX layer only — `.claude/`, `CLAUDE.md`, `.vyuh-dxkit.json` manifest                             |
-| `--full`              | Agent DX + git hooks + devcontainer + CI guardrails + baseline-refresh (every `--with-*` flag enabled) |
+| Mode                  | Effect                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--dx-only` (default) | Agent DX layer only — `AGENTS.md`, `CLAUDE.md`, `.claude/skills/dxkit-*/`, `.claude/rules/`, `.vyuh-dxkit.json`  |
+| `--full`              | Agent DX + git hooks + per-stack devcontainer + CI guardrails + baseline-refresh (every `--with-*` flag enabled) |
 
 ## Options
 
 | Option                    | Effect                                                                                                                                                                                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--with-hooks`            | Install `.githooks/pre-push` for [guardrail check](guardrail.md). Pre-commit is opt-in (`--with-precommit-hook`) because it re-runs every analyzer on every commit (slow on large repos).                                                                     |
+| `--with-dxkit-agents`     | Install the nine `dxkit-*` skills + `AGENTS.md` + `CLAUDE.md` shim. Default-on under `--full`; opt-in on bare `init`.                                                                                                                                         |
+| `--with-hooks`            | Install `.githooks/pre-push` for [guardrail check](guardrail.md). Hook activation is auto-chained via package.json postinstall — teammates who `npm install` get hooks wired automatically. Pre-commit is opt-in (`--with-precommit-hook`).                   |
 | `--with-precommit-hook`   | Additionally install `.githooks/pre-commit`. Implies `--with-hooks`. Use on small/fast repos where every-commit gating is worth the wait.                                                                                                                     |
-| `--with-devcontainer`     | Install `.devcontainer/` with pinned toolchains + Claude Code & Codex CLIs                                                                                                                                                                                    |
+| `--with-devcontainer`     | Install `.devcontainer/` with per-stack pinned toolchains (only the languages your project uses) + Claude Code & Codex CLIs                                                                                                                                   |
 | `--with-ci`               | Install `.github/workflows/dxkit-guardrails.yml` (PR-gate)                                                                                                                                                                                                    |
 | `--with-baseline-refresh` | Install `.github/workflows/dxkit-baseline-refresh.yml` (post-merge auto-regen)                                                                                                                                                                                |
 | `--with-pr-review`        | Install `.github/workflows/pr-review.yml` — Claude Code reviews each PR and posts a comment. Inert until you set the `ANTHROPIC_API_KEY` repo secret AND `ENABLE_AI_REVIEW=true` repo variable. Not included in `--full` because it requires API-cost opt-in. |
@@ -44,20 +51,20 @@ vyuh-dxkit init [options]
 | `--name <n>`              | Override the project name                                                                                                                                                                                                                                     |
 | `--no-scan`               | Skip the codebase analysis step                                                                                                                                                                                                                               |
 
-`--full` implies `--with-hooks` + `--with-devcontainer` + `--with-ci` + `--with-baseline-refresh`. It does NOT imply `--with-precommit-hook` (slow on large repos) or `--with-pr-review` (needs API-cost opt-in). Combine when you want both: `--full --with-precommit-hook --with-pr-review`.
+`--full` implies `--with-dxkit-agents` + `--with-hooks` + `--with-devcontainer` + `--with-ci` + `--with-baseline-refresh`. It does NOT imply `--with-precommit-hook` (slow on large repos) or `--with-pr-review` (needs API-cost opt-in). Combine when you want both: `--full --with-precommit-hook --with-pr-review`.
 
 ## What it generates (default `--dx-only` mode)
 
 ```
-CLAUDE.md              # entry-point doc loaded by Claude Code at session start
+AGENTS.md              # open-standard project-context file (Claude Code,
+                       # Codex, Cursor, Aider, any AGENTS.md-compliant agent)
+CLAUDE.md              # Claude Code shim that points at AGENTS.md
 .claude/
   settings.json        # tool permissions
-  skills/              # domain context loaded on demand
-  commands/            # slash commands (/health, /quality, /test-gaps, ...)
-  agents/              # active agent specialists (auto-triggered)
-  agents-available/    # dormant agents (opt in via /enable-agent)
+  skills/dxkit-*/      # nine lifecycle skills: learn / init / config /
+                       # hooks / reports / action / fix / update / onboard
   rules/               # per-language coding conventions
-.vyuh-dxkit.json       # install manifest (what was generated, when, evolving flags)
+.vyuh-dxkit.json       # install manifest (config, install flags, evolving file hashes)
 ```
 
 ## `--full` adds
@@ -65,17 +72,24 @@ CLAUDE.md              # entry-point doc loaded by Claude Code at session start
 - `.githooks/pre-push` — full-mode [guardrail](guardrail.md) hook
   (pre-commit available via `--with-precommit-hook`)
 - `.devcontainer/{devcontainer.json,post-create.sh,install-agent-clis.sh}` —
-  pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned)
+  per-stack pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned)
 - `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that
   posts a markdown comment
 - `.github/workflows/dxkit-baseline-refresh.yml` — post-merge
   auto-regen of `.dxkit/baselines/main.json` (gated on PR-gate success)
 
-After `--full` (or any `--with-hooks`):
+After `--full` (or any `--with-hooks`), the postinstall chain auto-
+activates `core.hooksPath`. Capture your first baseline:
 
 ```bash
-git config core.hooksPath .githooks   # activate the hooks, once per clone
 vyuh-dxkit baseline create            # capture today's state as the brownfield anchor
+```
+
+If hook activation didn't fire (e.g. you cloned the repo without
+running `npm install`), trigger it manually:
+
+```bash
+vyuh-dxkit hooks activate
 ```
 
 ## Additive install
