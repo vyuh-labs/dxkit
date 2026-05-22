@@ -28,7 +28,7 @@
  */
 
 import { identityFor } from '../finding-identity';
-import type { BaselineEntry, DuplicationIdentityInput, StaleFileIdentityInput } from '../types';
+import type { RichBaselineEntry, DuplicationIdentityInput, StaleFileIdentityInput } from '../types';
 import type { DuplicationResult } from '../../languages/capabilities/types';
 
 /** Suffix set the hygiene gather flags as stale on-disk artifacts.
@@ -40,9 +40,9 @@ const STALE_SUFFIXES = new Set(['swp', 'swo', 'bak', 'orig', 'tmp', 'log', 'pyc'
 /** Build `duplication` entries from a jscpd-style envelope. */
 export function duplicationToBaselineEntries(
   duplication: DuplicationResult | undefined,
-): BaselineEntry[] {
+): RichBaselineEntry[] {
   if (!duplication) return [];
-  const out: BaselineEntry[] = [];
+  const out: RichBaselineEntry[] = [];
   for (const clone of duplication.topClones) {
     const input: DuplicationIdentityInput = {
       kind: 'duplication',
@@ -70,8 +70,10 @@ export function duplicationToBaselineEntries(
  * Files with a suffix outside the canonical stale set are skipped
  * (defensive — the caller's gather should already have filtered).
  */
-export function staleFilesToBaselineEntries(staleFiles: ReadonlyArray<string>): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+export function staleFilesToBaselineEntries(
+  staleFiles: ReadonlyArray<string>,
+): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
   for (const file of staleFiles) {
     const dot = file.lastIndexOf('.');
     if (dot < 0) continue;

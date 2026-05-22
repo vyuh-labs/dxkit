@@ -43,7 +43,7 @@ import { PRODUCERS, runProducers } from './producers';
 import type { ProducerContext } from './producers';
 import { resolveSalt } from './salt';
 import type { SaltMode } from './salt';
-import type { BaselineEntry } from './types';
+import type { RichBaselineEntry } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
 
@@ -245,7 +245,7 @@ export function clearToolVersionCache(): void {
  * forbids for tool invocation, and the same hazard applies here.
  */
 export interface CurrentScan {
-  readonly findings: ReadonlyArray<BaselineEntry>;
+  readonly findings: ReadonlyArray<RichBaselineEntry>;
   readonly aggregate: SecurityAggregate;
   readonly repoState: BaselineRepoState;
   readonly saltMode: SaltMode;
@@ -327,7 +327,7 @@ export async function gatherCurrentScan(options: {
   // Rule 10). Adding a new identity kind means registering a
   // producer in `src/baseline/producers/index.ts` — never an edit
   // here.
-  const findings: BaselineEntry[] = runProducers(producerCtx, PRODUCERS);
+  const findings: RichBaselineEntry[] = runProducers(producerCtx, PRODUCERS);
 
   const toolNames = new Set<string>();
   if (aggregate.provenance.secrets.tool) toolNames.add(aggregate.provenance.secrets.tool);

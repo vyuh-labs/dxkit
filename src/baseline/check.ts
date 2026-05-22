@@ -48,6 +48,7 @@ import { gitAwareMatch } from './git-aware-match';
 import type { LocatedIdentity } from './git-aware-match';
 import { classify, DEFAULT_BROWNFIELD_POLICY } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
+import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { computeAllowlistDelta, type AllowlistDelta } from '../allowlist/diff';
@@ -458,6 +459,7 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
 }
 
 function locatorFile(entry: BaselineEntry): string | undefined {
+  if (isSanitized(entry)) return undefined;
   switch (entry.kind) {
     case 'secret':
     case 'code':
@@ -480,6 +482,7 @@ function locatorFile(entry: BaselineEntry): string | undefined {
 }
 
 function locatorLine(entry: BaselineEntry): number | undefined {
+  if (isSanitized(entry)) return undefined;
   switch (entry.kind) {
     case 'secret':
     case 'code':

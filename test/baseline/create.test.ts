@@ -9,6 +9,7 @@ import {
   pathForBaseline,
   readBaselineFile,
 } from '../../src/baseline/baseline-file';
+import { isSanitized } from '../../src/baseline/sanitize';
 
 /**
  * Build a small git repo. The body of these tests doesn't care what
@@ -149,11 +150,11 @@ describe('createBaseline (integration)', () => {
     expect(kinds.has('large-file')).toBe(true);
 
     const stale = result.file.findings.find((f) => f.kind === 'stale-file');
-    if (!stale || stale.kind !== 'stale-file') throw new Error('shape');
+    if (!stale || stale.kind !== 'stale-file' || isSanitized(stale)) throw new Error('shape');
     expect(stale.suffix).toBe('bak');
 
     const large = result.file.findings.find((f) => f.kind === 'large-file');
-    if (!large || large.kind !== 'large-file') throw new Error('shape');
+    if (!large || large.kind !== 'large-file' || isSanitized(large)) throw new Error('shape');
     expect(large.file).toBe('huge.ts');
   });
 });

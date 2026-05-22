@@ -35,6 +35,7 @@
  */
 
 import * as path from 'path';
+import { isSanitized } from '../baseline/sanitize';
 import type { BaselineEntry, FindingSeverity } from '../baseline/types';
 import { LANGUAGES } from '../languages';
 import type { LanguageSupport } from '../languages/types';
@@ -219,9 +220,11 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
  *
  * Kinds without a stable file:line locator (`dep-vuln`, `duplication`,
  * `secret-hmac`) return `{}` and route to the `--fingerprint=<id>`
- * CLI form.
+ * CLI form. Sanitized entries also return `{}` — the location was
+ * stripped at write time and can only be addressed by fingerprint.
  */
 function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
+  if (isSanitized(entry)) return {};
   switch (entry.kind) {
     case 'secret':
     case 'code':

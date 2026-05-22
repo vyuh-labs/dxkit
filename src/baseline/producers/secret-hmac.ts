@@ -24,7 +24,7 @@
 import { computeSecretHmac } from '../../analyzers/tools/fingerprint';
 import type { GitleaksRawSecret } from '../../analyzers/tools/gitleaks';
 import { identityFor } from '../finding-identity';
-import type { BaselineEntry, SecretHmacIdentityInput } from '../types';
+import type { RichBaselineEntry, SecretHmacIdentityInput } from '../types';
 
 export interface SecretHmacProducerInput {
   /** Raw secrets from `gatherGitleaksResult(cwd).rawSecrets`. */
@@ -46,8 +46,8 @@ export interface SecretHmacProducerInput {
  * etc.) would add their own producer; the canonical-rule mapping
  * collapses cross-tool overlaps inside `identityFor`.
  */
-export function rawSecretsToBaselineEntries(input: SecretHmacProducerInput): BaselineEntry[] {
-  const out: BaselineEntry[] = [];
+export function rawSecretsToBaselineEntries(input: SecretHmacProducerInput): RichBaselineEntry[] {
+  const out: RichBaselineEntry[] = [];
   // Identity is `(rule, hmac)` — two raw secrets that map to the same
   // `(rule, hmac)` (the same value detected at multiple lines, or by
   // overlapping gitleaks rules pointing at the same canonical kind)
