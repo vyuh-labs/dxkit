@@ -47,15 +47,17 @@ npx vyuh-dxkit vulnerabilities --json | jq '.summary.findings'
 
 Don't try to redact the secret in place — the git history still has it. Rotation is the only true fix.
 
+If the "secret" is actually a placeholder in test code (e.g., `"sk_test_xxxxxxxxxxxx"` with no real credential value), confirm with the developer and allowlist via `dxkit-allow:test-fixture` — see "Allowlisting (when fix is not viable)" below.
+
 ### SAST finding (semgrep)
 
 ```bash
 # 1. Read the finding's rule + line range from the report
 # 2. Open the file, understand why semgrep flagged it
-# 3. Either FIX (preferred) or SUPPRESS (carefully)
+# 3. Either FIX (preferred) or ALLOWLIST (carefully — see below)
 ```
 
-Suppression is `// nosemgrep: <rule-id>` on the offending line. Use sparingly — every suppression is a future maintenance burden. Better: fix the underlying issue.
+If the finding is a true false positive or intentional pattern (test fixture, mitigated externally), suppress via dxkit's allowlist — NOT via semgrep's `// nosemgrep:`. The dxkit allowlist is the canonical surface (single source of truth across every scanner), carries a typed category + reason, and is audit-trackable through `vyuh-dxkit allowlist audit`. See "Allowlisting (when fix is not viable)" below.
 
 ### Dependency vulnerability
 
@@ -69,6 +71,8 @@ npx vyuh-dxkit vulnerabilities
 For peer-dep conflicts: `npm install <pkg>@<patched-version> --legacy-peer-deps` (matches the post-create.sh fallback chain).
 
 For Python: `pip install --upgrade <pkg>=<patched>` then re-pip-freeze. For Go: `go get <pkg>@<patched>` then `go mod tidy`. For Ruby: edit Gemfile, `bundle update <pkg>`. For Rust: `cargo update -p <pkg> --precise <patched>`.
+
+If no patched version exists OR the upgrade breaks other constraints AND the risk is mitigated externally (network policy, WAF, runtime guard), allowlist with `category=mitigated-externally` and a reason describing the mitigation. If the team is accepting the risk while waiting on a fix, `category=accepted-risk` + an expiry tied to the fix deadline.
 
 ### Test gap
 
@@ -93,6 +97,79 @@ Don't write tests that just import the module — write tests that exercise beha
 
 If the finding is a false positive, add `// slop-ok: <reason>` on the offending line (or `# slop-ok` for non-JS).
 
+## Allowlisting (when fix is not viable)
+
+**Fix first.** The allowlist is the SECOND option, not the first. When you reach for it, choose deliberately — every allowlist entry is a future maintenance burden the customer's team will revisit.
+
+Five typed categories signal WHY the suppression is in place:
+
+| Category | Meaning | Where it lives |
+|---|---|---|
+| `false-positive` | Scanner is wrong about this code | Inline annotation OR file-level |
+| `test-fixture` | Intentional pattern in a fixture / test file | Inline annotation OR file-level |
+| `mitigated-externally` | Real risk but neutralized at runtime (WAF, env, etc.) | Inline annotation OR file-level |
+| `accepted-risk` | Real risk, accepted by the team, signed off | File-level only (needs expiry + acknowledged severity) |
+| `deferred` | Real, will fix later, tracked work | File-level only (needs expiry) |
+
+`accepted-risk` and `deferred` require an `expiresAt` date because they describe assertions that should age out — by default the CLI sets 90 days. `false-positive`, `test-fixture`, and `mitigated-externally` describe assertions that don't naturally stale; they may omit expiry.
+
+### The two surfaces
+
+**Inline annotation** is the natural fit for source-anchored findings (secrets, code, config, dep-vuln, hygiene) with an inline-compatible category. The annotation lives next to the line it suppresses:
+
+```python
+api_key = "sk_test_xxxx"  # dxkit-allow:test-fixture reason="placeholder in unit test"
+```
+
+Or, for long source lines, above:
+
+```typescript
+// dxkit-allow:false-positive reason="regex matches intentional placeholder"
+const apiKey = "sk_test_xxxx";
+```
+
+The grammar is uniform across every language; only the comment marker varies (`#` for python/ruby, `//` for typescript/go/rust/csharp/kotlin/java). Don't type it by hand — let dxkit insert it for you (see CLI below).
+
+**File-level allowlist** lives at `.dxkit/allowlist.json` and is the surface for:
+
+- Cross-file or whole-file findings (duplication, coverage-gap, test-gap, god-file, large-file, stale-file)
+- Findings with no stable single-line attachment (dep-vuln, secret-hmac)
+- Any `accepted-risk` or `deferred` suppression regardless of kind
+
+### Add an allowlist entry (canonical path)
+
+Don't hand-edit the annotation comment or the JSON file — let the CLI insert it correctly:
+
+```bash
+# Inline annotation at file:line — for source-anchored findings
+# with an inline-compatible category
+npx vyuh-dxkit allowlist add src/auth/oauth.ts:42 \
+    --category=test-fixture --reason="placeholder in unit test"
+
+# File-level entry — for everything else (kind + fingerprint required;
+# both come straight from the guardrail check's output)
+npx vyuh-dxkit allowlist add --fingerprint=a3f9c0e8b7d2e1f4 \
+    --kind=dep-vuln --category=accepted-risk \
+    --reason="WAF rule X mitigates this CVE" --expires=2026-08-22
+```
+
+The guardrail's block message gives you the exact command to paste for every blocked finding — file path + line for inline-compatible kinds, fingerprint + kind for everything else. Just copy-paste.
+
+### Review what's allowlisted
+
+```bash
+npx vyuh-dxkit allowlist list             # all entries (text)
+npx vyuh-dxkit allowlist show <fingerprint>  # one entry's full detail
+npx vyuh-dxkit allowlist audit            # expired / soon-to-expire / missing-rationale
+npx vyuh-dxkit allowlist prune            # remove expired entries
+```
+
+Run `audit` periodically — `accepted-risk` and `deferred` entries that pass their expiry should either be re-justified (renew expiry) or pruned (remove the entry; the underlying finding will re-flag on the next scan).
+
+### Stale annotations
+
+If the underlying finding is fixed but the inline annotation lingers, the next scan emits a `stale-allow` finding pointing at the orphaned comment. The remediation is always to remove the annotation — dxkit refuses to allowlist a stale-allow finding (allowlisting the warning that an annotation is stale would defeat the entire model).
+
 ## Verification — never skip
 
 After each fix:
@@ -111,14 +188,19 @@ If the finding's still there: the fix didn't work, try again.
 
 ## Baseline decisions
 
-Once a finding is fixed AND verified gone, the workflow depends on what changed:
+Once a finding is processed (fixed, allowlisted, or accepted), the workflow depends on which path you took:
 
 | Scenario | Action |
 |---|---|
-| Fix landed via a code change | Commit the code. Baseline is unchanged. Future scans confirm the fix held. |
+| Fix landed via a code change | Commit the code. Baseline + allowlist are unchanged. Future scans confirm the fix held. |
+| Genuine false positive OR intentional pattern | `vyuh-dxkit allowlist add` with `category=false-positive` or `test-fixture`. Commit the annotation / allowlist file. Baseline is unchanged. |
+| Real risk neutralized externally (WAF, runtime guard) | `vyuh-dxkit allowlist add` with `category=mitigated-externally` + a reason describing the mitigation. Baseline unchanged. |
+| Real risk, accepted by team, won't fix | `vyuh-dxkit allowlist add` with `category=accepted-risk` + `--expires=YYYY-MM-DD` (defaults 90 days). Acknowledged-severity required for high/critical. |
+| Real risk, will fix later (tracked work) | `vyuh-dxkit allowlist add` with `category=deferred` + `--expires=YYYY-MM-DD`. The expiry forces re-review when the deadline passes. |
 | Fix landed via a config change (e.g., new entry in `.dxkit-ignore`) | Re-baseline: `npx vyuh-dxkit baseline create --force`. Commit both `.dxkit-ignore` and the new baseline. |
-| Finding accepted as known + not blocking | Re-baseline with explicit reason in the commit message. Future scans treat it as pre-existing, not net-new. |
-| Finding is genuinely a false positive | First try suppression on the offending line. If you can't suppress, re-baseline. |
+| Brownfield acceptance (the whole CURRENT state is known mess; future regressions must be net-new) | Re-baseline with an explicit reason in the commit message. Reserve this for the deliberate "draw a line here" moment, not per-finding suppression. |
+
+**Prefer the allowlist over re-baselining for per-finding decisions.** The allowlist carries a typed category + reason + (when relevant) expiry; the baseline carries only "this finding was here." Future maintainers reading `vyuh-dxkit allowlist show <fingerprint>` see WHY the suppression is in place; reading the baseline file shows only that the finding existed at capture time. Per-finding decisions belong in the allowlist; codebase-wide brownfield acceptance belongs in the baseline.
 
 **Never** re-baseline a finding silently — the commit message should explain why the regression is accepted. Future maintainers reading `git log .dxkit/baselines/` should see the rationale.
 
@@ -134,17 +216,20 @@ Exit 0 = your fixes didn't introduce any net-new regressions (you only removed/f
 
 ## When fixes get expensive
 
-Sometimes the right call is: don't fix, accept as baseline.
+Sometimes the right call is: don't fix, allowlist (or re-baseline if it's brownfield-wide).
 
 Examples:
-- Legacy code on a deprecation path (sunset > fix)
-- A SAST finding in vendored code you don't maintain
-- A test gap on a one-off script that doesn't merit tests
+- Legacy code on a deprecation path (sunset > fix) → `accepted-risk` with expiry matching the sunset date
+- A SAST finding in vendored code you don't maintain → `mitigated-externally` if the vendor patches separately, else `accepted-risk`
+- A test gap on a one-off script that doesn't merit tests → `accepted-risk`
+- An import line flagged by a scanner that you've reviewed and confirmed safe → `false-positive` inline annotation at the import
 
-In those cases: accept-as-baseline with a commit message explaining the call. dxkit's baseline IS designed to support this — the brownfield contract is "today's mess is acknowledged; tomorrow's must be a real improvement." Use it.
+In those cases: `vyuh-dxkit allowlist add` is the right tool for per-finding decisions (typed reason + expiry where relevant). Reserve "accept as baseline" for the deliberate one-shot brownfield moment ("this entire current state is known mess; today's findings are the new baseline"). The two surfaces complement each other — allowlist for individual judgment calls, baseline for the codebase-wide line in the sand.
 
 ## Hand-offs
 
 - For ignore-file edits as part of a fix → `dxkit-config` skill
 - For hook-related issues during a fix push → `dxkit-hooks` skill
 - For re-running reports between fixes → `dxkit-reports` skill
+- For broken dxkit install (hooks not firing, vyuh-dxkit not on PATH) → `dxkit-fix` skill
+- For allowlist management beyond the per-finding `add` path (auditing existing entries, pruning expired ones, reviewing the team's overall suppression posture) → run `npx vyuh-dxkit allowlist audit` / `list` / `prune` directly; no separate skill yet
