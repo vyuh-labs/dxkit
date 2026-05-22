@@ -695,6 +695,64 @@ if [ -n "$DEAD_CONDS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# =============================================================================
+# Sibling-package release-discipline rule (added 2026-05-22).
+# =============================================================================
+#
+# dxkit ships from a monorepo with sibling packages under `packages/`.
+# Today there's one — `@vyuhlabs/create-dxkit` (the `npm init
+# @vyuhlabs/dxkit` shim). Tomorrow there may be more (MCP server,
+# Claude Code marketplace plugin, etc. per the 2.6 plan).
+#
+# Each sibling publishes independently with its own tag scheme:
+#   - dxkit → `vX.Y.Z` (e.g. v2.5.2) → publish.yml
+#   - create-dxkit → `create-dxkit@vX.Y.Z` (e.g. create-dxkit@v0.2.0)
+#     → publish-create-dxkit.yml
+#
+# Failure mode this rule catches: during a dxkit release-prep PR, the
+# author bumps `package.json` to a new dxkit version but forgets to
+# bump `packages/create-dxkit/package.json` even though create-dxkit
+# code has changed since its last release. The dxkit release ships
+# with a stale create-dxkit on npm; customers running `npm init
+# @vyuhlabs/dxkit` get the old shim. This happened during 2.5.2
+# release-prep — caught manually mid-flight; rule added so the
+# class fix is in place for next time.
+#
+# Detection logic:
+#   1. Determine if we're in dxkit release-prep state — package.json
+#      version differs from the latest `v*` tag.
+#   2. If yes, find the latest `create-dxkit@v*` tag.
+#   3. Diff `packages/create-dxkit/` between that tag and HEAD,
+#      excluding `package.json` itself (we don't care about version
+#      bumps; we care about content changes).
+#   4. If there are content changes AND the on-disk create-dxkit
+#      version still matches the last published one, fail.
+DXKIT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "")
+LAST_DXKIT_TAG_RAW=$(git tag --list 'v*' --sort=-v:refname 2>/dev/null | head -1)
+LAST_DXKIT_VERSION=$(echo "$LAST_DXKIT_TAG_RAW" | sed 's/^v//')
+
+if [ -n "$DXKIT_VERSION" ] && [ -n "$LAST_DXKIT_VERSION" ] && [ "$DXKIT_VERSION" != "$LAST_DXKIT_VERSION" ]; then
+  # Release-prep state: we're tagging a new dxkit version. Check siblings.
+  CREATE_VERSION=$(node -p "require('./packages/create-dxkit/package.json').version" 2>/dev/null || echo "")
+  LAST_CREATE_TAG=$(git tag --list 'create-dxkit@v*' --sort=-v:refname 2>/dev/null | head -1)
+  LAST_CREATE_VERSION=$(echo "$LAST_CREATE_TAG" | sed 's/^create-dxkit@v//')
+
+  if [ -n "$LAST_CREATE_TAG" ] && [ -n "$CREATE_VERSION" ]; then
+    # Diff create-dxkit content (excluding the package.json version field) since its last tag.
+    CREATE_CHANGES=$(git diff --name-only "$LAST_CREATE_TAG"...HEAD -- packages/create-dxkit/ 2>/dev/null | grep -v '^packages/create-dxkit/package\.json$' || true)
+    if [ -n "$CREATE_CHANGES" ] && [ "$CREATE_VERSION" = "$LAST_CREATE_VERSION" ]; then
+      echo "❌ Release-prep state detected (dxkit ${LAST_DXKIT_VERSION} → ${DXKIT_VERSION})"
+      echo "   create-dxkit content has changed since ${LAST_CREATE_TAG}:"
+      echo "$CREATE_CHANGES" | sed 's/^/      /'
+      echo "   But packages/create-dxkit/package.json version is unchanged (${CREATE_VERSION})."
+      echo "   → Bump packages/create-dxkit/package.json before tagging the dxkit release."
+      echo "   → Customers running 'npm init @vyuhlabs/dxkit' will keep getting the old"
+      echo "     shim if this isn't published alongside the dxkit release."
+      ERRORS=$((ERRORS + 1))
+    fi
+  fi
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
