@@ -52,6 +52,21 @@ Exit code: `1` when the policy blocks any pair, `0` otherwise.
 | `uncertain`         | Below every threshold; manual review                                       | warns          |
 
 Customise the block/warn split with [`.dxkit/policy.json`](../configuration/policy.md).
+For **per-finding** suppression (false positives, intentional test
+fixtures, accepted risks), use the [allowlist](./allowlist.md) — the
+guardrail's block message prints the exact `allowlist add` command
+for every blocked finding.
+
+## Markdown output: PR-comment review
+
+`guardrail check --markdown` (used by the `dxkit-guardrails.yml`
+workflow installed by `init --with-ci`) emits a markdown report
+that's posted as a sticky PR comment on every pull request. The
+report now includes an **"Allowlist activity"** section listing
+every allowlist entry added (or removed) on this branch versus the
+baseline commit. Reviewers see new suppressions being introduced —
+typed category, reason, expiry — and can sanity-check the rationale
+before approving.
 
 ## Examples
 

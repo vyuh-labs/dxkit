@@ -9,6 +9,20 @@ check` auto-loads it. The `--policy <path>` flag overrides the
 auto-discovery and points at an explicit file. When no policy is found,
 the compiled-in defaults apply.
 
+## When NOT to use this file
+
+The policy file is for **broad-classification tuning** — "block on
+every `added` finding," "warn on `tooling_drift`," etc. It applies
+to all findings of a given classification.
+
+For **per-finding suppression** — "suppress this specific finding
+because it's a false positive / test fixture / mitigated externally"
+— use the [allowlist](../commands/allowlist.md) instead. The
+allowlist carries a typed category + required reason + (when
+relevant) expiry per entry, and shows up in PR-comment review.
+Per-finding decisions belong in the allowlist; classification-wide
+tuning belongs here.
+
 ## Defaults
 
 ```json
