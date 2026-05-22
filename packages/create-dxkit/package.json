@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/create-dxkit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One-command bootstrap for @vyuhlabs/dxkit. Runs `npm install --save-dev @vyuhlabs/dxkit` then `vyuh-dxkit init`.",
   "license": "MIT",
   "author": "Vyuh Labs",
