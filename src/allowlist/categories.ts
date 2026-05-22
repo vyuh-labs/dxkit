@@ -16,20 +16,22 @@
 
 import type { IdentityKind } from '../baseline/producers';
 
-export type AllowlistCategory =
-  | 'false-positive'
-  | 'test-fixture'
-  | 'mitigated-externally'
-  | 'accepted-risk'
-  | 'deferred';
-
-export const ALL_CATEGORIES: readonly AllowlistCategory[] = [
+/**
+ * Single source of truth for category values. The `AllowlistCategory`
+ * union type is derived from this array via `(typeof ...)[number]`,
+ * so adding a new category means appending one string here and every
+ * type-level check (Record-keyed tables, switch exhaustiveness,
+ * function parameter types) auto-updates. No two-place drift.
+ */
+export const ALL_CATEGORIES = [
   'false-positive',
   'test-fixture',
   'mitigated-externally',
   'accepted-risk',
   'deferred',
-];
+] as const;
+
+export type AllowlistCategory = (typeof ALL_CATEGORIES)[number];
 
 /**
  * Categories that REQUIRE a finite expiry date. The file-level
