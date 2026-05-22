@@ -296,11 +296,15 @@ function isCanonicalCategory(category: string): boolean {
  * the annotation body. Used to distinguish an above-line annotation
  * from a same-line annotation on a different finding's line.
  *
+ * Exported because the gather pass (`src/allowlist/gather.ts`) needs
+ * the same predicate to label per-occurrence `position`. Single
+ * source of truth for the "what counts as standalone" rule.
+ *
  * Example (python):
  *   `    # dxkit-allow:test-fixture reason="..."`   ← standalone
  *   `x = 1  # dxkit-allow:test-fixture reason="..."`  ← NOT standalone
  */
-function isStandaloneAnnotationLine(line: string, lang: LanguageSupport): boolean {
+export function isStandaloneAnnotationLine(line: string, lang: LanguageSupport): boolean {
   const marker = lang.commentSyntax?.lineComment;
   if (!marker) return false;
   const escapedMarker = escapeForRegex(marker);
