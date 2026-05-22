@@ -240,6 +240,14 @@ export async function run(argv: string[]): Promise<void> {
       target: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       plan: { type: 'boolean', default: false },
+      // allowlist flags (allowlist add | list | show)
+      category: { type: 'string' },
+      reason: { type: 'string' },
+      fingerprint: { type: 'string' },
+      expires: { type: 'string' },
+      'acknowledged-severity': { type: 'string' },
+      'added-by': { type: 'string' },
+      mode: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -1719,6 +1727,17 @@ export async function run(argv: string[]): Promise<void> {
         dryRun: !!values['dry-run'],
         planOnly: !!values.plan,
         json: !!values.json,
+      });
+      break;
+    }
+
+    case 'allowlist': {
+      const { runAllowlist } = await import('./allowlist/cli');
+      // positionals[1] = subcommand (add | list | show)
+      // positionals[2] = optional target (file:line for add, fingerprint for show)
+      await runAllowlist(cwd, positionals[1], {
+        positionalAfter: positionals[2],
+        values: values as Record<string, unknown>,
       });
       break;
     }
