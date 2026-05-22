@@ -1147,6 +1147,7 @@ const tsLicensesProvider: LicensesProvider = {
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: [...TS_JS_EXT],
   testFilePatterns: [
     '*.test.ts',

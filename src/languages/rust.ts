@@ -827,6 +827,7 @@ export function parseLcov(raw: string, sourceFile: string, cwd: string): Coverag
 export const rust: LanguageSupport = {
   id: 'rust',
   displayName: 'Rust',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.rs'],
   // Rust convention: tests live in the same file via #[cfg(test)] / #[test],
   // or in a dedicated tests/ directory. Filename patterns cover the latter.

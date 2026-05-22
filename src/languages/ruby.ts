@@ -658,6 +658,7 @@ const rubyDepVulnsProvider: DepVulnsProvider = {
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
+  commentSyntax: { lineComment: '#', blockCommentStart: '=begin', blockCommentEnd: '=end' },
 
   sourceExtensions: ['.rb'],
 
