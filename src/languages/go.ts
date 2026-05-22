@@ -881,6 +881,7 @@ const goLicensesProvider: LicensesProvider = {
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.go'],
   testFilePatterns: ['*_test.go'],
   extraExcludes: ['vendor'],

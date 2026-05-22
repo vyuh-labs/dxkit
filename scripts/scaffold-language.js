@@ -273,6 +273,22 @@ export const ${id}: LanguageSupport = {
   id: '${id}',
   displayName: '${displayName}',
 
+  // TODO(${id}): line-comment syntax used by this language. Drives the
+  // allowlist feature's inline-annotation insertion. Required for any
+  // pack that supports inline allowlists (every pack today).
+  //   Hash-style:    { lineComment: '#' }                 // python, ruby, shell
+  //   Slash-style:   { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' }
+  //                    // typescript, go, rust, csharp, kotlin, java
+  // Block-comment fields are reserved for files where line-comment
+  // syntax is unavailable. Omit if not applicable for this language.
+  //
+  // The placeholder below is intentionally empty so the languages-
+  // contract test FAILS until the contributor fills it in (the
+  // assertion checks lineComment.length > 0). Do not "helpfully"
+  // populate this with a default — that would let an unfilled
+  // placeholder leak past CI.
+  commentSyntax: { lineComment: '' },
+
   // TODO(${id}): list source-file extensions (with leading dot).
   sourceExtensions: [],
 
@@ -698,7 +714,7 @@ const nextSteps = [
   HR,
   '',
   `  1. Implement detect${capitalize(id)}() in src/languages/${id}.ts`,
-  `  2. Populate sourceExtensions, testFilePatterns, tools, cliBinaries, defaultVersion, permissions`,
+  `  2. Populate commentSyntax, sourceExtensions, testFilePatterns, tools, cliBinaries, defaultVersion, permissions`,
   `  3. Add TOOL_DEFS entries for ${id}'s tools in src/analyzers/tools/tool-registry.ts`,
   `  4. Harvest real tool-output bytes per test/fixtures/raw/${id}/HARVEST.md`,
   `     (the C# defect lesson — parsers MUST be unit-tested against real bytes)`,
