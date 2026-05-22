@@ -63,7 +63,15 @@ export const ALLOWLIST_DIR = '.dxkit';
 export const ALLOWLIST_FILENAME = 'allowlist.json';
 export const ALLOWLIST_REASONS_FILENAME = 'allowlist-reasons.local.json';
 
-export type AllowlistMode = 'full' | 'sanitized';
+/**
+ * Single source of truth for mode values. The `AllowlistMode` union
+ * is derived from this array via `(typeof ...)[number]`, so adding
+ * a new mode means appending one string here — the runtime checks
+ * below pick it up via `ALL_MODES.includes(...)` without any
+ * literal-value drift between type and runtime.
+ */
+export const ALL_MODES = ['full', 'sanitized'] as const;
+export type AllowlistMode = (typeof ALL_MODES)[number];
 
 /**
  * One allowlist entry. Two-shape contract:
@@ -187,9 +195,10 @@ export function loadAllowlist(cwd: string): AllowlistFile | null {
         `(${filePath})`,
     );
   }
-  if (obj.mode !== 'full' && obj.mode !== 'sanitized') {
+  if (!isAllowlistMode(obj.mode)) {
     throw new Error(
-      `allowlist file mode is ${JSON.stringify(obj.mode)}; expected 'full' or 'sanitized' (${filePath})`,
+      `allowlist file mode is ${JSON.stringify(obj.mode)}; ` +
+        `expected one of ${JSON.stringify(ALL_MODES)} (${filePath})`,
     );
   }
   if (!Array.isArray(obj.entries)) {
@@ -347,10 +356,10 @@ export function validateAllowlistFile(file: AllowlistFile): ReadonlyArray<Valida
       message: `expected ${JSON.stringify(ALLOWLIST_SCHEMA_VERSION)}, got ${JSON.stringify(file.schemaVersion)}`,
     });
   }
-  if (file.mode !== 'full' && file.mode !== 'sanitized') {
+  if (!isAllowlistMode(file.mode)) {
     errors.push({
       field: 'mode',
-      message: `expected 'full' or 'sanitized', got ${JSON.stringify(file.mode)}`,
+      message: `expected one of ${JSON.stringify(ALL_MODES)}, got ${JSON.stringify(file.mode)}`,
     });
   }
 
@@ -456,6 +465,10 @@ export function validateAllowlistEntry(
 }
 
 // ─── Internals ───────────────────────────────────────────────────────────
+
+function isAllowlistMode(value: unknown): value is AllowlistMode {
+  return typeof value === 'string' && (ALL_MODES as readonly string[]).includes(value);
+}
 
 function writeJsonPretty(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

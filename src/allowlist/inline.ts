@@ -46,6 +46,15 @@ import * as fs from 'fs';
 import type { LanguageSupport } from '../languages/types';
 import { ALL_CATEGORIES, INLINE_COMPATIBLE_CATEGORIES, type AllowlistCategory } from './categories';
 
+/**
+ * Annotation prefix. Single source of truth — every consumer
+ * (renderer, parser, standalone-line detector) reads from here so
+ * changing the convention is a one-line edit.
+ */
+const ANNOTATION_PREFIX = 'dxkit-allow:';
+
+export type AnnotationPosition = 'same-line' | 'above';
+
 export interface InlineAnnotation {
   readonly category: AllowlistCategory;
   /** Free-form rationale. `undefined` when the annotation is
@@ -57,7 +66,7 @@ export interface InlineAnnotation {
 
 export interface AnnotationMatch {
   readonly annotation: InlineAnnotation;
-  readonly position: 'same-line' | 'above';
+  readonly position: AnnotationPosition;
   /** 1-indexed line where the annotation comment LIVES (not the
    *  finding's line — though they're the same for `same-line`). */
   readonly annotationLine: number;
@@ -82,7 +91,7 @@ const DEFAULT_SAME_LINE_THRESHOLD = 60;
  * prepending the language's `lineComment` token.
  */
 function annotationBody(annotation: InlineAnnotation): string {
-  let body = `dxkit-allow:${annotation.category}`;
+  let body = `${ANNOTATION_PREFIX}${annotation.category}`;
   if (annotation.reason !== undefined) {
     body += ` reason="${escapeReason(annotation.reason)}"`;
   }
@@ -124,13 +133,14 @@ export function parseAnnotation(line: string, lang: LanguageSupport): InlineAnno
   const marker = lang.commentSyntax?.lineComment;
   if (!marker) return null;
 
-  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedMarker = escapeForRegex(marker);
+  const escapedPrefix = escapeForRegex(ANNOTATION_PREFIX);
   // The annotation prefix may appear at the start of the line
   // (above-line case) or after at least one whitespace following
   // the source code (same-line case). Trailing whitespace after the
   // prefix is tolerated.
   const re = new RegExp(
-    `(?:^|\\s)${escaped}\\s*dxkit-allow:(\\S+?)(?:\\s+reason="((?:[^"\\\\]|\\\\.)*)")?(?:\\s|$)`,
+    `(?:^|\\s)${escapedMarker}\\s*${escapedPrefix}(\\S+?)(?:\\s+reason="((?:[^"\\\\]|\\\\.)*)")?(?:\\s|$)`,
   );
   const match = re.exec(line);
   if (!match) return null;
@@ -220,7 +230,7 @@ export function insertAnnotation(
   annotation: InlineAnnotation,
   lang: LanguageSupport,
   options: InsertOptions = {},
-): { position: 'same-line' | 'above'; annotationLine: number } {
+): { position: AnnotationPosition; annotationLine: number } {
   if (!INLINE_COMPATIBLE_CATEGORIES.has(annotation.category)) {
     throw new Error(
       `category ${JSON.stringify(annotation.category)} is file-only — ` +
@@ -254,7 +264,7 @@ export function insertAnnotation(
   const targetLine = lines[lineNumber - 1];
   const commentText = `${marker} ${annotationBody(annotation)}`;
 
-  let position: 'same-line' | 'above';
+  let position: AnnotationPosition;
   let resultLine: number;
   if (targetLine.length < threshold) {
     // Same-line: append with two-space separator
@@ -293,9 +303,20 @@ function isCanonicalCategory(category: string): boolean {
 function isStandaloneAnnotationLine(line: string, lang: LanguageSupport): boolean {
   const marker = lang.commentSyntax?.lineComment;
   if (!marker) return false;
-  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^\\s*${escaped}\\s*dxkit-allow:`);
+  const escapedMarker = escapeForRegex(marker);
+  const escapedPrefix = escapeForRegex(ANNOTATION_PREFIX);
+  const re = new RegExp(`^\\s*${escapedMarker}\\s*${escapedPrefix}`);
   return re.test(line);
+}
+
+/**
+ * Escape regex metacharacters in a string so it can be embedded
+ * literally inside a `RegExp` source. Shared helper so the
+ * escape pattern lives in one place — changing it (e.g., to handle
+ * a new metacharacter class) is a one-line edit.
+ */
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function escapeReason(text: string): string {
