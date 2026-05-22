@@ -128,6 +128,18 @@ function printUsage(): void {
                                  package.json postinstall by 'init --with-hooks' so every
                                  clone + 'npm install' activates the dxkit hooks
                                  automatically. Safe to run by hand; always exits 0.
+    vyuh-dxkit allowlist add <file:line> --category=<cat> --reason=<text>
+    vyuh-dxkit allowlist add --fingerprint=<id> --kind=<kind> --category=<cat>
+                             --reason=<text> [--expires=<YYYY-MM-DD>]
+                                 Suppress an individual finding with a typed category
+                                 (false-positive / test-fixture / mitigated-externally /
+                                 accepted-risk / deferred) and required reason. Inline
+                                 form inserts a dxkit-allow: annotation; file-level
+                                 form writes to .dxkit/allowlist.json.
+    vyuh-dxkit allowlist list | show <fingerprint> | audit | prune [--dry-run] [--json]
+                                 Review / audit / clean the allowlist. audit surfaces
+                                 expired + soon-to-expire (within 14 days) + missing-
+                                 rationale entries. prune removes expired entries.
     vyuh-dxkit issue --type=<type> [--about=<text>] [--fingerprint=<id>] [--no-browser]
                                  Open a pre-filled GitHub Issue against vyuh-labs/dxkit.
                                  Types: false-positive, missing-finding, bug,
