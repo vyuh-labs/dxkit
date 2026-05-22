@@ -206,6 +206,13 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'not the right surface. If a dependency license is acceptable for your ' +
         'project, the inventory artifact records it without blocking.'
       );
+    case 'stale-allow':
+      return (
+        'Remove the orphaned `dxkit-allow:` annotation — the finding it ' +
+        'suppressed is no longer present, so the annotation is dead code. ' +
+        'Allowlisting THIS finding is not supported; the only remediation is ' +
+        'to delete the annotation comment.'
+      );
   }
 }
 
@@ -227,6 +234,7 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'code':
     case 'config':
     case 'hygiene':
+    case 'stale-allow':
       return { file: entry.file, line: entry.line };
     case 'coverage-gap':
     case 'test-gap':

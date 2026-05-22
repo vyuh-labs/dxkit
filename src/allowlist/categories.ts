@@ -147,6 +147,15 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // here means the CLI rejects allowlist requests for license kinds
   // with a hint pointing at the inventory artifact.
   license: [],
+
+  // Stale-allow (orphaned inline allowlist annotation): never
+  // allowlisted. The right response is always "remove the stale
+  // annotation" — allowlisting the warning that an annotation is
+  // stale would defeat the entire strict-stale-detection model
+  // (TypeScript's @ts-expect-error pattern). Empty array means the
+  // CLI rejects with a hint pointing at the annotation's source
+  // location.
+  'stale-allow': [],
 };
 
 /**

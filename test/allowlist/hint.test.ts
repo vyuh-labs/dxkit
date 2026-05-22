@@ -49,6 +49,13 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
   'god-file': { id: FP, kind: 'god-file', file: 'src/big.ts' },
   'stale-file': { id: FP, kind: 'stale-file', file: 'src/old.swp', suffix: 'swp' },
   'large-file': { id: FP, kind: 'large-file', file: 'src/big.ts' },
+  'stale-allow': {
+    id: FP,
+    kind: 'stale-allow',
+    file: 'src/auth.ts',
+    line: 42,
+    category: 'test-fixture',
+  },
 };
 
 const ALL_KINDS = Object.keys(ENTRIES) as BaselineEntry['kind'][];
@@ -94,6 +101,14 @@ describe('formatBlockHint — structural invariants', () => {
     expect(hint.applicableCategories).toEqual([]);
     expect(hint.inlineExample).toBeUndefined();
     expect(hint.fileLevelOnly).toBe(true);
+  });
+
+  it('stale-allow has empty applicableCategories (self-suppression forbidden)', () => {
+    const hint = formatBlockHint(ENTRIES['stale-allow']);
+    expect(hint.applicableCategories).toEqual([]);
+    expect(hint.inlineExample).toBeUndefined();
+    expect(hint.fileLevelOnly).toBe(true);
+    expect(hint.remediation).toContain('Remove the orphaned');
   });
 });
 

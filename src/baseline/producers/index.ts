@@ -174,6 +174,15 @@ export const DEFERRED_KINDS: Readonly<
       'inside an already-tested file remain invisible until Phase 3.5 lands.',
     landingPhase: 'Phase 3.5 (5 packs) / 2.6 (remaining)',
   },
+  'stale-allow': {
+    reason:
+      'inline allowlist annotation gather pass not yet wired into baseline-create. ' +
+      "The kind exists structurally so identityFor's exhaustive switch and the " +
+      'per-kind tables (CATEGORIES_BY_KIND, hint switches) auto-include it; the ' +
+      'producer ships with the gather pass that scans source files for orphaned ' +
+      '`dxkit-allow:` comments and compares against current findings.',
+    landingPhase: '2.6 / strict-stale-annotation-detection chunk',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────
