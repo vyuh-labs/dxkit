@@ -973,6 +973,7 @@ const pyLicensesProvider: LicensesProvider = {
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
+  commentSyntax: { lineComment: '#' },
   sourceExtensions: ['.py'],
   testFilePatterns: ['test_*.py', '*_test.py'],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],

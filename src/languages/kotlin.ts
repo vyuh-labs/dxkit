@@ -418,6 +418,7 @@ const kotlinTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
 export const kotlin: LanguageSupport = {
   id: 'kotlin',
   displayName: 'Kotlin (Android)',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
 
   // `.kts` covers both Gradle build scripts and Kotlin scratch files; the
   // dxkit analyzers treat them as first-class source so coverage and lint

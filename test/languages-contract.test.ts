@@ -233,6 +233,33 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     expect(lang.devcontainerFeature!.name).toMatch(/^ghcr\.io\/devcontainers/);
   });
 
+  // 2.6 allowlist feature (Sprint 1): every pack declares its line-comment
+  // syntax so the inline-allowlist annotation generator can render
+  // `<lineComment> dxkit-allow:<category> reason="..."` in the right
+  // form for the file's language. A pack missing `commentSyntax` would
+  // make the inline path silently fall back to `#` (broken in TS/Go/
+  // Rust/C#/Kotlin/Java) or hardcode a default in the allowlist module
+  // (a Rule 6 violation). The scaffolder ships a placeholder; this
+  // assertion enforces that the placeholder gets filled in.
+  it('declares commentSyntax with a non-empty lineComment', () => {
+    expect(
+      lang.commentSyntax,
+      `${lang.id}: missing commentSyntax — allowlist inline annotation insertion ` +
+        `would have no per-language comment form`,
+    ).toBeDefined();
+    expect(typeof lang.commentSyntax!.lineComment).toBe('string');
+    expect(
+      lang.commentSyntax!.lineComment.length,
+      `${lang.id}: commentSyntax.lineComment is empty — fill in the scaffolded ` +
+        `placeholder ('#' for hash-style, '//' for slash-style, etc.)`,
+    ).toBeGreaterThan(0);
+    if (lang.commentSyntax!.blockCommentStart !== undefined) {
+      expect(typeof lang.commentSyntax!.blockCommentStart).toBe('string');
+      expect(typeof lang.commentSyntax!.blockCommentEnd).toBe('string');
+      expect(lang.commentSyntax!.blockCommentEnd!.length).toBeGreaterThan(0);
+    }
+  });
+
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);

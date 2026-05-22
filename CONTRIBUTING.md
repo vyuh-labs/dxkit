@@ -226,6 +226,13 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   `cliBinaries[]` (commands `doctor` checks for), `defaultVersion?`,
   `versionKey?` (lookup key in `DetectedStack['versions']`; defaults
   to `id` — only override for legacy template-name compat)
+- **Allowlist comment syntax** (2.6) — `commentSyntax: { lineComment,
+blockCommentStart?, blockCommentEnd? }`. Drives inline allowlist
+  annotation insertion (`<lineComment> dxkit-allow:<category>
+reason="..."`). Hash-style (`#`) for python, ruby, shell;
+  slash-style (`//` + `/* */`) for typescript, go, rust, csharp,
+  kotlin, java. Without it, the inline-allowlist code path can't
+  render correct comments for this language.
 - **Lint severity** — `mapLintSeverity?(ruleId)` if your linter has
   rule IDs you can tier into critical/high/medium/low
 - **Per-pack pattern registries** (CI-enforced; the contract test

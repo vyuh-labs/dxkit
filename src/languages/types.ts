@@ -379,6 +379,32 @@ export interface LanguageSupport {
   devcontainerExtensions?: string[];
 
   /**
+   * Per-language comment syntax. The allowlist feature uses this to
+   * generate inline annotations
+   * (`// dxkit-allow:<category> reason="..."`) in the right form for
+   * the file's language. Without it, the inline-annotation path
+   * would either hardcode `//` everywhere (broken in Python / Ruby /
+   * shell) or grow a per-language branch in the allowlist module
+   * (a Rule 6 violation).
+   *
+   * `lineComment` is required for any pack that supports allowlist
+   * inline annotations (every pack today). `blockCommentStart` /
+   * `blockCommentEnd` are reserved for future formats where line
+   * comments are unavailable (e.g., HTML/XML config files that
+   * occasionally show up in scanned configs).
+   *
+   * Examples:
+   *   python  / ruby / shell  → `lineComment: '#'`
+   *   typescript / go / rust  → `lineComment: '//'`
+   *   csharp / kotlin / java  → `lineComment: '//'`
+   */
+  commentSyntax?: {
+    lineComment: string;
+    blockCommentStart?: string;
+    blockCommentEnd?: string;
+  };
+
+  /**
    * Key under `DetectedStack.versions` where this pack's version lives —
    * AND the lowercase prefix used to derive template-variable + condition
    * names (`NODE_VERSION`, `IF_NODE`). Defaults to `id` when omitted.

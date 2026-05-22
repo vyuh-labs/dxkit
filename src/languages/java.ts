@@ -412,6 +412,7 @@ const javaDepVulnsProvider: DepVulnsProvider = {
 export const java: LanguageSupport = {
   id: 'java',
   displayName: 'Java',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
 
   sourceExtensions: ['.java'],
 

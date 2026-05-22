@@ -1281,6 +1281,7 @@ const csharpLicensesProvider: LicensesProvider = {
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
+  commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.cs'],
   // Fixes the pattern gap: previously C# tests named `FooTests.cs` were missed
   // because gather.ts only matched *.test.*, *.spec.*, *_test.*, test_*.
