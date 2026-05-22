@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { runAllowlistAdd, runAllowlistList, runAllowlistShow } from '../../src/allowlist/cli';
+import {
+  runAllowlistAdd,
+  runAllowlistAudit,
+  runAllowlistList,
+  runAllowlistPrune,
+  runAllowlistShow,
+} from '../../src/allowlist/cli';
 import {
   ALLOWLIST_SCHEMA_VERSION,
   loadAllowlist,
@@ -437,5 +443,181 @@ describe('saveAllowlist side-effect', () => {
       addedBy: 'a@b.c',
     });
     expect(fs.existsSync(pathForAllowlist(tmp))).toBe(true);
+  });
+});
+
+describe('runAllowlistAudit', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = makeTmpdir();
+  });
+  afterEach(() => {
+    rmrf(tmp);
+  });
+
+  it('no-file: emits empty JSON report on --json', async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed).toEqual({ expired: [], soonToExpire: [], missingRationale: [] });
+    stdoutSpy.mockRestore();
+  });
+
+  it('no-file: prints info message in text mode', async () => {
+    await expect(runAllowlistAudit(tmp, { json: false })).resolves.toBeUndefined();
+  });
+
+  it('finds soon-to-expire entries within the default 14-day window', async () => {
+    // Add an entry that expires tomorrow
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'a3f9c0e8b7d2e1f4',
+      kind: 'dep-vuln',
+      category: 'accepted-risk',
+      reason: 'r',
+      addedBy: 'a@b.c',
+      expires: tomorrow,
+    });
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.soonToExpire).toHaveLength(1);
+    expect(parsed.soonToExpire[0].entry.fingerprint).toBe('a3f9c0e8b7d2e1f4');
+    stdoutSpy.mockRestore();
+  });
+
+  it('respects --soon-days parameter for window', async () => {
+    // Entry expiring in 30 days
+    const farOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'a3f9c0e8b7d2e1f4',
+      kind: 'dep-vuln',
+      category: 'accepted-risk',
+      reason: 'r',
+      addedBy: 'a@b.c',
+      expires: farOut,
+    });
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true, soonToExpireDays: 45 });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.soonToExpire).toHaveLength(1);
+    stdoutSpy.mockRestore();
+  });
+
+  it('prints text report when entries are healthy', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'a3f9c0e8b7d2e1f4',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    await expect(runAllowlistAudit(tmp, { json: false })).resolves.toBeUndefined();
+  });
+});
+
+describe('runAllowlistPrune', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = makeTmpdir();
+  });
+  afterEach(() => {
+    rmrf(tmp);
+  });
+
+  it('no-file: prints info and returns', async () => {
+    await expect(runAllowlistPrune(tmp, {})).resolves.toBeUndefined();
+  });
+
+  it('removes expired entries by default', async () => {
+    // Add an active entry
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'still good',
+      addedBy: 'a@b.c',
+    });
+    // Manually inject an expired entry by editing the file directly via the
+    // canonical IO helpers (mutate then save).
+    const { loadAllowlist, saveAllowlist, addEntry } = await import('../../src/allowlist/file');
+    const file = loadAllowlist(tmp)!;
+    const expired: AllowlistFile = addEntry(file, {
+      fingerprint: 'aaaa111111111111',
+      kind: 'dep-vuln',
+      category: 'accepted-risk',
+      reason: 'expired entry',
+      addedBy: 'a@b.c',
+      addedAt: '2020-01-01',
+      expiresAt: '2020-01-02',
+    });
+    saveAllowlist(tmp, expired);
+
+    await runAllowlistPrune(tmp, {});
+
+    const after = loadAllowlist(tmp)!;
+    expect(after.entries.map((e) => e.fingerprint)).toEqual(['bbbb111111111111']);
+  });
+
+  it('--dry-run does not write but prints what would change', async () => {
+    const { loadAllowlist, saveAllowlist, addEntry } = await import('../../src/allowlist/file');
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    const file = loadAllowlist(tmp)!;
+    saveAllowlist(
+      tmp,
+      addEntry(file, {
+        fingerprint: 'aaaa111111111111',
+        kind: 'dep-vuln',
+        category: 'accepted-risk',
+        reason: 'expired',
+        addedBy: 'a@b.c',
+        addedAt: '2020-01-01',
+        expiresAt: '2020-01-02',
+      }),
+    );
+
+    await runAllowlistPrune(tmp, { dryRun: true });
+
+    const after = loadAllowlist(tmp)!;
+    // Both entries still present after dry-run
+    expect(after.entries).toHaveLength(2);
+  });
+
+  it('--json emits structured envelope', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistPrune(tmp, { json: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed).toMatchObject({
+      dryRun: false,
+      removed: [],
+      keptCount: 1,
+    });
+    stdoutSpy.mockRestore();
+  });
+
+  it('no-op when allowlist has no expired entries', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    await expect(runAllowlistPrune(tmp, {})).resolves.toBeUndefined();
   });
 });

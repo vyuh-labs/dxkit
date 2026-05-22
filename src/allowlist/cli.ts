@@ -53,20 +53,23 @@ import {
   ALLOWLIST_FILENAME,
   ALL_MODES,
   addEntry,
+  auditAllowlist,
   emptyAllowlistFile,
   findEntry,
   loadAllowlist,
   pathForAllowlist,
+  pruneExpired,
   saveAllowlist,
   validateAllowlistEntry,
   type AllowlistEntry,
   type AllowlistFile,
   type AllowlistMode,
+  type AuditReport,
 } from './file';
 import { insertAnnotation } from './inline';
 
 /** Subcommands recognized under `vyuh-dxkit allowlist`. */
-export const ALLOWLIST_SUBCOMMANDS = ['add', 'list', 'show'] as const;
+export const ALLOWLIST_SUBCOMMANDS = ['add', 'list', 'show', 'audit', 'prune'] as const;
 export type AllowlistSubcommand = (typeof ALLOWLIST_SUBCOMMANDS)[number];
 
 export interface AllowlistAddOpts {
@@ -94,6 +97,22 @@ export interface AllowlistShowOpts {
 
 export interface AllowlistListOpts {
   readonly json?: boolean;
+}
+
+export interface AllowlistAuditOpts {
+  readonly json?: boolean;
+  /** Soon-to-expire horizon in days (default 14). */
+  readonly soonToExpireDays?: number;
+}
+
+export interface AllowlistPruneOpts {
+  readonly json?: boolean;
+  /** Don't write; just print what would be removed. */
+  readonly dryRun?: boolean;
+  /** Skip confirmation prompt + write directly. Default behavior
+   *  in Sprint 1 (no interactive prompts in dxkit yet) — the flag
+   *  is accepted for future-proofing. */
+  readonly yes?: boolean;
 }
 
 /**
@@ -137,6 +156,20 @@ export async function runAllowlist(
       return runAllowlistShow(cwd, {
         fingerprint: args.positionalAfter,
         json: !!args.values.json,
+      });
+    case 'audit': {
+      const horizonRaw = args.values['soon-days'] as string | undefined;
+      const horizon = horizonRaw ? parseInt(horizonRaw, 10) : undefined;
+      return runAllowlistAudit(cwd, {
+        json: !!args.values.json,
+        soonToExpireDays: Number.isFinite(horizon) ? horizon : undefined,
+      });
+    }
+    case 'prune':
+      return runAllowlistPrune(cwd, {
+        json: !!args.values.json,
+        dryRun: !!args.values['dry-run'],
+        yes: !!args.values.yes,
       });
   }
 }
@@ -342,6 +375,119 @@ export async function runAllowlistShow(cwd: string, opts: AllowlistShowOpts): Pr
     logger.info(`Acknowledged sev.:  ${entry.acknowledgedSeverity}`);
   }
   if (entry.reason) logger.info(`Reason:             ${entry.reason}`);
+}
+
+// ─── audit ────────────────────────────────────────────────────────────────
+
+export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): Promise<void> {
+  const file = loadAllowlist(cwd);
+  if (!file) {
+    if (opts.json) {
+      process.stdout.write(
+        JSON.stringify(
+          { expired: [], soonToExpire: [], missingRationale: [] } satisfies AuditReport,
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+    logger.info(`No allowlist file at ${pathForAllowlist(cwd)} — nothing to audit.`);
+    return;
+  }
+
+  const report = auditAllowlist(file, { soonToExpireDays: opts.soonToExpireDays });
+
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    return;
+  }
+
+  const total = file.entries.length;
+  const horizon = opts.soonToExpireDays ?? 14;
+  logger.info(
+    `Allowlist audit: ${total} entr${total === 1 ? 'y' : 'ies'} ` +
+      `(mode=${file.mode}); soon-to-expire window=${horizon} days`,
+  );
+
+  if (
+    report.expired.length === 0 &&
+    report.soonToExpire.length === 0 &&
+    report.missingRationale.length === 0
+  ) {
+    logger.success(`No issues found.`);
+    return;
+  }
+
+  if (report.expired.length > 0) {
+    logger.warn(
+      `Expired (${report.expired.length}) — run \`vyuh-dxkit allowlist prune\` to remove:`,
+    );
+    for (const e of report.expired) {
+      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}  expired ${e.expiresAt}`);
+    }
+  }
+
+  if (report.soonToExpire.length > 0) {
+    logger.warn(
+      `Soon to expire (${report.soonToExpire.length}; within ${horizon} days) — review or extend:`,
+    );
+    for (const { entry, daysRemaining } of report.soonToExpire) {
+      logger.info(
+        `  ${entry.fingerprint}  ${entry.kind}/${entry.category}` +
+          `  expires ${entry.expiresAt} (in ${daysRemaining}d)`,
+      );
+    }
+  }
+
+  if (report.missingRationale.length > 0) {
+    logger.warn(
+      `Missing rationale (${report.missingRationale.length}) — ` +
+        `add a reason or sync the gitignored reasons sidecar:`,
+    );
+    for (const e of report.missingRationale) {
+      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}`);
+    }
+  }
+}
+
+// ─── prune ────────────────────────────────────────────────────────────────
+
+export async function runAllowlistPrune(cwd: string, opts: AllowlistPruneOpts): Promise<void> {
+  const file = loadAllowlist(cwd);
+  if (!file) {
+    logger.info(`No allowlist file at ${pathForAllowlist(cwd)} — nothing to prune.`);
+    return;
+  }
+
+  const { kept, removed } = pruneExpired(file);
+
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify({ dryRun: !!opts.dryRun, removed, keptCount: kept.entries.length }, null, 2) +
+        '\n',
+    );
+    if (!opts.dryRun && removed.length > 0) saveAllowlist(cwd, kept);
+    return;
+  }
+
+  if (removed.length === 0) {
+    logger.info(`No expired entries — allowlist is clean.`);
+    return;
+  }
+
+  const verb = opts.dryRun ? 'Would remove' : 'Removing';
+  logger.warn(`${verb} ${removed.length} expired entr${removed.length === 1 ? 'y' : 'ies'}:`);
+  for (const e of removed) {
+    logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}  expired ${e.expiresAt}`);
+  }
+
+  if (opts.dryRun) {
+    logger.info(`(dry-run — no changes written; rerun without --dry-run to apply)`);
+    return;
+  }
+  saveAllowlist(cwd, kept);
+  logger.success(`Pruned ${removed.length} expired entries.`);
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────
