@@ -56,7 +56,6 @@ import type { TestGapsReport } from '../../analyzers/tests/types';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import type { BaselineEntry } from '../types';
 import { largeFilesToBaselineEntries } from './health';
-import { licensesToBaselineEntries } from './licenses';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
 import { rawSecretsToBaselineEntries } from './secret-hmac';
 import { securityAggregateToBaselineEntries } from './security';
@@ -229,14 +228,6 @@ const HEALTH_PRODUCER: BaselineProducer = {
   },
 };
 
-const LICENSES_PRODUCER: BaselineProducer = {
-  name: 'licenses',
-  contributes: ['license'],
-  produce(ctx) {
-    return licensesToBaselineEntries(ctx.analysisResult.capabilities.licenses);
-  },
-};
-
 const TESTS_PRODUCER: BaselineProducer = {
   name: 'tests',
   contributes: ['test-gap', 'test-file-degradation'],
@@ -270,7 +261,6 @@ export const PRODUCERS: ReadonlyArray<BaselineProducer> = Object.freeze([
   SECRET_HMAC_PRODUCER,
   QUALITY_PRODUCER,
   HEALTH_PRODUCER,
-  LICENSES_PRODUCER,
   TESTS_PRODUCER,
   STALE_ALLOW_PRODUCER,
 ]);

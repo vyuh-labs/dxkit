@@ -199,13 +199,6 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'or editor backup files). These should not be tracked in git — add the ' +
         'pattern to `.gitignore` and untrack the file.'
       );
-    case 'license':
-      return (
-        'License findings move to the inventory artifact ' +
-        '(`.dxkit/inventory/licenses.json`) in 2.6+ — allowlist suppression is ' +
-        'not the right surface. If a dependency license is acceptable for your ' +
-        'project, the inventory artifact records it without blocking.'
-      );
     case 'stale-allow':
       return (
         'Remove the orphaned `dxkit-allow:` annotation — the finding it ' +
@@ -225,8 +218,8 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
  * extending this projection.
  *
  * Kinds without a stable file:line locator (`dep-vuln`, `duplication`,
- * `secret-hmac`, `license`) return `{}` and route to the
- * `--fingerprint=<id>` CLI form.
+ * `secret-hmac`) return `{}` and route to the `--fingerprint=<id>`
+ * CLI form.
  */
 function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
   switch (entry.kind) {
@@ -246,7 +239,6 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'secret-hmac':
     case 'dep-vuln':
     case 'duplication':
-    case 'license':
       return {};
   }
 }

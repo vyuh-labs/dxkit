@@ -51,7 +51,6 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'coverage-gap',
   'test-gap',
   'hygiene',
-  'license',
   'test-file-degradation',
   'god-file',
   'stale-file',

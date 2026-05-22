@@ -456,31 +456,6 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     expected: 'changed',
   },
 
-  // ─── license findings (3) ─────────────────────────────────────────────
-  {
-    name: 'license/clean — same package, version, license type',
-    prior: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.0', licenseType: 'MIT' },
-    current: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.0', licenseType: 'MIT' },
-    expected: 'persisted',
-  },
-  {
-    name: 'license/relicensed at same pin — identity changes (compliance regression)',
-    prior: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.0', licenseType: 'MIT' },
-    current: {
-      kind: 'license',
-      package: 'fixture-pkg-a',
-      version: '1.0.0',
-      licenseType: 'GPL-3.0',
-    },
-    expected: 'changed',
-  },
-  {
-    name: 'license/version-bumped — identity changes',
-    prior: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.0', licenseType: 'MIT' },
-    current: { kind: 'license', package: 'fixture-pkg-a', version: '1.0.1', licenseType: 'MIT' },
-    expected: 'changed',
-  },
-
   // ─── test-file-degradation (2) ────────────────────────────────────────
   {
     name: 'test-file-degradation/clean — same file + same status',
@@ -783,7 +758,6 @@ const EXPECTED_KINDS = [
   'coverage-gap',
   'test-gap',
   'hygiene',
-  'license',
   'test-file-degradation',
   'god-file',
   'stale-file',
