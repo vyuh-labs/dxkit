@@ -234,6 +234,34 @@ The classifier distinguishes:
 Customize via [`.dxkit/policy.json`](docs/configuration/policy.md) —
 auto-discovered when present, compiled-in defaults otherwise.
 
+### Baseline modes — public vs private repos
+
+The baseline file is committed to git. On public repos that
+disclosure surface matters: a `committed-full` baseline tells anyone
+reading the repo which file/line each finding lives on, which
+private packages you depend on, and which advisory IDs you're
+sitting on unpatched. dxkit ships three modes:
+
+| Mode                  | On-disk content                                          | Auto-default for |
+| --------------------- | -------------------------------------------------------- | ---------------- |
+| `committed-full`      | Rich entries (file/line/rule/package/advisory)           | private repos    |
+| `committed-sanitized` | Stripped to `{ id, kind }` per finding                   | opt-in           |
+| `ref-based`           | No file — guardrail recomputes prior side from a git ref | public repos     |
+
+`vyuh-dxkit baseline create` auto-picks via
+`gh repo view --json visibility`. Pin the choice repo-wide in
+`.dxkit/policy.json`:
+
+```json
+{ "baseline": { "mode": "ref-based", "ref": "origin/main" } }
+```
+
+The cross-run matching contract (fingerprint identity) is identical
+across all three modes — sanitization only strips human-readable
+locators, it doesn't change which findings pair across runs. See
+[docs/commands/baseline.md](docs/commands/baseline.md#modes) for the
+full trade-off discussion.
+
 ---
 
 ## Allowlist: per-finding suppression

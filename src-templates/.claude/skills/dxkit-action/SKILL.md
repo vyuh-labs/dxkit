@@ -155,6 +155,15 @@ npx vyuh-dxkit allowlist add --fingerprint=a3f9c0e8b7d2e1f4 \
 
 The guardrail's block message gives you the exact command to paste for every blocked finding — file path + line for inline-compatible kinds, fingerprint + kind for everything else. Just copy-paste.
 
+### When the finding only carries an id (sanitized / ref-based baseline)
+
+If you're seeing a blocked finding labelled `<sanitized>` (in `baseline show` output) OR with no `file`/`line` columns in the PR-comment table, the repo's baseline mode is `committed-sanitized` or `ref-based` and the human-readable locator was stripped at write time. Two options:
+
+- **Inspect the finding in the current scan.** The fingerprint pairs against the live scan's output, which is rich (always). Re-run the matching analyzer (`vyuh-dxkit vulnerabilities`, `vyuh-dxkit health`, etc.) and grep the JSON output for the fingerprint — that finding has full file:line context.
+- **Allowlist by fingerprint anyway.** File-level allowlist entries only need fingerprint + kind, both of which the guardrail message still provides. The category + reason apply regardless of whether the locator is visible at baseline time.
+
+The fingerprint contract is preserved across all three modes — `committed-full`, `committed-sanitized`, `ref-based` all produce the same identity bytes for the same finding. Sanitization only strips the human-readable rendering; it doesn't change which findings pair across runs.
+
 ### Review what's allowlisted
 
 ```bash

@@ -172,9 +172,16 @@ vyuh-dxkit init --full
 vyuh-dxkit init --with-hooks --with-ci
 
 # Capture today's findings as the brownfield anchor.
+# dxkit auto-picks the right baseline mode for your repo:
+#   - public repo  → ref-based  (no file written; recomputed from origin/main)
+#   - private repo → committed-full (rich entries in .dxkit/baselines/main.json)
+# See `vyuh-dxkit baseline create --help` and docs/commands/baseline.md
+# for the three modes (committed-full / committed-sanitized / ref-based).
 vyuh-dxkit baseline create
 
 # Commit the anchor + workflow files.
+# (Public repos using ref-based mode skip the baselines/ path — the
+# auto-picker reports which mode it chose so you know what to commit.)
 git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
 git commit -m "chore: enable dxkit guardrails"
 ```
@@ -227,7 +234,9 @@ git config --unset core.hooksPath
 
 Customize what blocks vs. warns by writing a
 [`.dxkit/policy.json`](configuration/policy.md) — auto-discovered when
-present.
+present. The same file pins the baseline mode (`baseline.mode` +
+`baseline.ref`) so every developer + CI run agrees on the same
+on-disk posture.
 
 See [`baseline`](commands/baseline.md) and [`guardrail`](commands/guardrail.md)
 for the full surface.

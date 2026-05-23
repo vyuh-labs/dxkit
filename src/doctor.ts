@@ -4,6 +4,8 @@ import { execSync } from 'child_process';
 import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
+import { resolveBaselineMode } from './baseline/modes';
+import { loadPolicyFromCwd } from './baseline/policy';
 
 /**
  * Three-tier doctor:
@@ -84,6 +86,52 @@ function nodeMajorVersion(): number {
   const raw = process.versions.node;
   const m = raw.match(/^(\d+)/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Wrap `loadPolicyFromCwd` with a swallowing try/catch — doctor
+ * checks must never throw on a malformed policy file (the customer
+ * would be unable to run doctor to discover that very fact). The
+ * "policy unreadable" condition surfaces separately via the
+ * existing scanner-toolchain / hooks checks.
+ */
+function safeLoadPolicy(cwd: string): ReturnType<typeof loadPolicyFromCwd> | null {
+  try {
+    return loadPolicyFromCwd(cwd);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect mode/visibility misalignment when the customer has pinned
+ * `committed-full` on a public repo. Returns null when the pin is
+ * fine. Only fires when the pin came from policy or CLI — auto-
+ * picked modes are always aligned by definition.
+ */
+function detectModeMisalignment(
+  mode: ReturnType<typeof resolveBaselineMode>,
+): { label: string; hint: string; command: string } | null {
+  // We can't read visibility directly here without triggering a
+  // duplicate `gh` probe. Instead we rely on the resolver's audit
+  // trail: when the customer pins `committed-full` AND the
+  // visibility-derived default would have been ref-based, that's
+  // the misalignment we want to flag. The resolver doesn't tell us
+  // what the auto-picker WOULD have chosen, so we re-probe here —
+  // the second probe is cache-warm and free.
+  if (mode.mode !== 'committed-full') return null;
+  // Lazy import so non-baseline doctor runs don't pay the gh probe.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { detectRepoVisibility } = require('./baseline/visibility') as {
+    detectRepoVisibility: (cwd: string) => 'public' | 'private' | 'internal' | 'unknown';
+  };
+  const visibility = detectRepoVisibility(process.cwd());
+  if (visibility !== 'public') return null;
+  return {
+    label: 'baseline mode pinned committed-full on a public repo',
+    hint: 'Public repos auto-pick ref-based for a reason: committed-full leaks file paths + package names + advisory IDs to anyone reading the repo. Switch to ref-based or committed-sanitized in .dxkit/policy.json.',
+    command: 'edit .dxkit/policy.json: set baseline.mode to ref-based or committed-sanitized',
+  };
 }
 
 /**
@@ -371,25 +419,69 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     });
   }
 
-  // 2. Baseline captured. Without a baseline, `guardrail check` fails-
-  // fast on every push. Requires .dxkit/baselines/main.json.
+  // 2. Baseline captured. Without a baseline, `guardrail check`
+  // fails-fast on every push. In `ref-based` mode the file is NOT
+  // expected on disk — the prior side is recomputed from a git ref
+  // — so the check passes when mode is ref-based AND the resolver
+  // can identify the ref.
   if (hasManifest) {
-    const baselinePath = path.join(cwd, '.dxkit', 'baselines', 'main.json');
-    const exists = fs.existsSync(baselinePath);
-    checks.push({
-      label: 'baseline captured (.dxkit/baselines/main.json)',
-      ok: exists,
-      tier: 'operational',
-      ...(exists
-        ? {}
-        : {
-            fix: {
-              hint: "Capture today's state as the brownfield baseline. Existing findings get locked in; only net-new ones block thereafter.",
-              command: 'npx vyuh-dxkit baseline create',
-              skill: 'dxkit-init',
-            },
-          }),
+    const policy = safeLoadPolicy(cwd);
+    const mode = resolveBaselineMode({
+      cwd,
+      policyMode: policy?.baseline?.mode,
+      policyRef: policy?.baseline?.ref,
     });
+    if (mode.mode === 'ref-based') {
+      checks.push({
+        label: `baseline mode: ref-based (ref: ${mode.ref ?? 'origin/main'})`,
+        ok: true,
+        tier: 'operational',
+      });
+    } else {
+      const baselinePath = path.join(cwd, '.dxkit', 'baselines', 'main.json');
+      const exists = fs.existsSync(baselinePath);
+      checks.push({
+        label: `baseline captured (.dxkit/baselines/main.json, mode: ${mode.mode})`,
+        ok: exists,
+        tier: 'operational',
+        ...(exists
+          ? {}
+          : {
+              fix: {
+                hint: "Capture today's state as the brownfield baseline. Existing findings get locked in; only net-new ones block thereafter.",
+                command: 'npx vyuh-dxkit baseline create',
+                skill: 'dxkit-init',
+              },
+            }),
+      });
+    }
+
+    // 2b. Baseline mode aligned with repo visibility. Warns when an
+    // explicit `committed-full` pin is in use on a public repo (the
+    // posture leaks file paths / package names / advisory IDs to
+    // anyone with read access). The auto-picker would have chosen
+    // ref-based; an explicit pin says the customer overrode that on
+    // purpose, so this is informational not failure.
+    if (mode.source === 'policy' || mode.source === 'cli') {
+      const alignmentWarning = detectModeMisalignment(mode);
+      if (alignmentWarning) {
+        checks.push({
+          label: alignmentWarning.label,
+          ok: false,
+          tier: 'operational',
+          fix: {
+            hint: alignmentWarning.hint,
+            command: alignmentWarning.command,
+          },
+        });
+      } else {
+        checks.push({
+          label: `baseline mode aligned with repo visibility`,
+          ok: true,
+          tier: 'operational',
+        });
+      }
+    }
   }
 
   // 3. PATH integrity. The bare `vyuh-dxkit` command must resolve in

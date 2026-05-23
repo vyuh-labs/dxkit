@@ -223,6 +223,16 @@ export interface GuardrailJsonPayload {
     readonly commitSha: string;
     readonly branch: string;
     readonly findingsCount: number;
+    /** Resolved baseline mode (`committed-full` / `committed-
+     *  sanitized` / `ref-based`) + its audit trail. Surfaced so
+     *  agents + dashboards can see WHY the run picked a given
+     *  posture without re-deriving from policy + visibility. */
+    readonly mode: {
+      readonly value: 'committed-full' | 'committed-sanitized' | 'ref-based';
+      readonly source: string;
+      readonly explanation: string;
+      readonly ref?: string;
+    };
   };
   readonly current: {
     readonly commitSha: string;
@@ -287,6 +297,12 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       commitSha: result.baseline.repo.commitSha,
       branch: result.baseline.repo.branch,
       findingsCount: result.baseline.findings.length,
+      mode: {
+        value: result.mode.mode,
+        source: result.mode.source,
+        explanation: result.mode.explanation,
+        ...(result.mode.ref !== undefined ? { ref: result.mode.ref } : {}),
+      },
     },
     current: {
       commitSha: result.current.repoState.commitSha,
@@ -408,12 +424,20 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   lines.push('');
   lines.push(
     `_Baseline_: \`${escapeMd(result.baseline.name)}\` @ ${shortSha(result.baseline.repo.commitSha)} · ` +
+      `_Mode_: \`${escapeMd(result.mode.mode)}\`${formatModeRef(result.mode)} · ` +
       `_Current_: ${shortSha(result.current.repoState.commitSha)} · ` +
       `_Matcher_: ${result.matchResult.gitAware ? 'git-aware' : 'degraded'} · ` +
       `_dxkit_: ${escapeMd(result.current.analysisMeta.dxkitVersion)}`,
   );
 
   return lines.join('\n');
+}
+
+/** Append ` (ref: <ref>)` to the mode label when running ref-based,
+ *  so PR reviewers see WHICH ref the diff anchored to. Empty for
+ *  committed modes. */
+function formatModeRef(mode: GuardrailCheckResult['mode']): string {
+  return mode.mode === 'ref-based' && mode.ref ? ` (ref: \`${escapeMd(mode.ref)}\`)` : '';
 }
 
 function summarySentence(
