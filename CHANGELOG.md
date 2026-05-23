@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-05-23
+
+The "per-finding suppression + public-repo-safe baselines" release.
+Adds the typed-category allowlist surface for false-positive /
+test-fixture / mitigated-externally / accepted-risk / deferred
+suppression with inline + file-level modes; retires license
+findings from the baseline (~73% size drop on real customer repos);
+introduces three baseline modes with visibility-aware defaults so
+public repos no longer leak file paths, package names, and
+advisory IDs through a committed baseline.
+
 ### Added
 
 - **Per-finding allowlist** — `vyuh-dxkit allowlist add/list/show/audit/prune`.
