@@ -1,12 +1,10 @@
 # dxkit
 
-**AI-native developer experience toolkit for any codebase.**
+**AI writes the code. dxkit helps ship it clean.**
 
-Make your existing codebase safe for Claude Code, Codex, and other AI
-coding agents. Equip the agent with repo-native context. Guard every
-commit and PR with deterministic checks. **One command scaffolds the
-agent DX; one baseline turns on the guardrails.** Works across major
-language stacks, greenfield or brownfield.
+_Deterministic guardrails for any codebase. Brownfield-friendly by default._
+
+dxkit scores your codebase deterministically, baselines today's findings, and gates every push against net-new regressions. It ships conversational skills that walk agents (and humans) through fixes. Existing tech debt stays grandfathered. Nothing runs on an LLM. Everything runs locally.
 
 ```bash
 npm init @vyuhlabs/dxkit
@@ -18,98 +16,69 @@ npm init @vyuhlabs/dxkit
   </a>
   <img alt="license" src="https://img.shields.io/github/license/vyuh-labs/dxkit">
   <img alt="deterministic" src="https://img.shields.io/badge/scoring-deterministic-blue">
-  <img alt="local-first" src="https://img.shields.io/badge/local-first-green">
   <img alt="brownfield" src="https://img.shields.io/badge/brownfield-baseline%20guardrails-orange">
-  <img alt="agentic" src="https://img.shields.io/badge/agentic-ready-purple">
+  <img alt="local-first" src="https://img.shields.io/badge/local-first-green">
 </p>
 
 ---
 
 ## The problem
 
-AI coding agents are powerful, but shipping their work safely is hard:
+Codebases drift downward in slow ways that tests do not catch.
 
-- The agent's environment isn't reproducible — different machine,
-  different result.
-- The agent has no project-specific context — your conventions are
-  tribal knowledge it can't access.
-- Strict gates assume a clean codebase. Real codebases have years of
-  debt, and absolute gates either get disabled or block every PR.
-- Most "AI code review" tools rely on another LLM to grade the work —
-  non-deterministic, gameable, and a black box.
-- Bad agent changes silently land because the only enforcement is
-  human attention.
+A typical Friday. Your team ships a fix. CI passes. Review approves. Two weeks later, an auditor finds a new hardcoded secret in the diff, three new untested branches, and a previously-clean file that grew to 800 lines with three TODOs sprinkled in. None of it failed a test, because no test covered those things.
 
-dxkit closes that loop end-to-end, deterministically, with no LLM in
-the grading path.
+Now multiply this by every AI agent your team uses. Agents write more code than humans can review. Some of it is fine. Some of it is slop that looks fine but quietly degrades the codebase.
+
+The conventional fix is "block any new finding via static analysis." That fails on real codebases for a predictable reason:
+
+- Block every finding, and your 5-year-old repo lights up with hundreds of pre-existing issues. The team disables the gate within a week.
+- Block no findings, and the gate is theater. Nothing changes.
+
+You need an objective gate that only fires on what is actually new. That is the gap dxkit fills.
 
 ---
 
-## What `npm init @vyuhlabs/dxkit` creates
+## How dxkit solves it
 
-```bash
-npm init @vyuhlabs/dxkit
-```
+Two ideas working together.
 
-This collapses install + scaffold into a single command: it installs
-`@vyuhlabs/dxkit` as a devDep and runs `vyuh-dxkit init --full --yes`.
-The full install lands a coordinated set of pieces:
+### 1. Capture today's state as a baseline
+
+Before dxkit blocks anything, it snapshots every existing finding in your repo and fingerprints them. The fingerprints survive renames, line shifts from formatter runs, and small unrelated edits. Cross-tool overlaps (gitleaks and semgrep flagging the same line) collapse to one finding.
+
+From this moment forward, the gate only fires on net-new regressions. Your existing debt is grandfathered. The team fixes old issues at their own pace. The gate stays useful because it stays reasonable.
+
+Three modes for the baseline file:
+
+- `committed-full`: rich entries committed to git. Default for private repos.
+- `committed-sanitized`: stripped to fingerprint plus kind. For compliance-conscious teams.
+- `ref-based`: no committed file at all. Prior side recomputed from a git ref via `git worktree add`. Default for public repos. Zero disclosure surface.
+
+### 2. Score the codebase deterministically
+
+dxkit produces a 0 to 100 score across six dimensions: Security, Code Quality, Tests, Documentation, Maintainability, Developer Experience.
+
+The score has four properties:
+
+| Property              | What it means                                                                                                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Deterministic**     | Same code yields the same score every time. No LLM in the grading path. Reproducible across machines, runs, and CI. Auditable.                                                                                         |
+| **Comparable**        | Two codebases of similar quality produce similar scores. Surface tricks do not move the needle. Adding empty comments does not improve Documentation if the code is not actually documented.                           |
+| **Severity-weighted** | A critical security finding moves the score far more than a TODO comment. Penalties are anchored to real-world impact via CVSS for security and ratio thresholds for tests, coverage, file size, and other dimensions. |
+| **Actionable**        | Every deduction names the file, the line, and the recommended fix. Output is structured JSON. Agents and humans read the same thing. The "what to do next" lives in the score itself.                                  |
+
+### What you get from the combination
+
+A score on its own is a number. A baseline on its own grandfathers the past. Together they produce an objective stop signal you can trust.
 
 ```text
-.devcontainer/        Reproducible environment — per-stack pinned
-                      toolchains (only the languages your project
-                      uses), dxkit's scanner toolchain auto-installed,
-                      install scripts for AI agent CLIs (auth stays
-                      user-owned).
-.githooks/            pre-push guardrail hook (pre-commit opt-in via
-                      --with-precommit-hook). Postinstall auto-
-                      activates `core.hooksPath` so teammates who
-                      clone + `npm install` get hooks wired too.
-.github/workflows/    PR-gate workflow + post-merge baseline-refresh
-                      workflow (refresh runs only after the PR-gate
-                      passes — see "Safety + trust" below).
-AGENTS.md             Open-standard project context file read by
-                      Claude Code, Codex, Cursor, Aider, and any
-                      AGENTS.md-compliant agent.
-CLAUDE.md             Claude Code shim that points at AGENTS.md.
-.claude/skills/       Nine dxkit-* skills covering the full lifecycle:
-                      learn / init / config / hooks / reports /
-                      action / fix / update / onboard. Claude Code
-                      auto-discovers via skill frontmatter.
-.dxkit/               reports, baselines, and (optional) policy.
-.vyuh-dxkit.json      install manifest.
+Today:    16/100 E      644 findings, all baselined
+Next PR:  16/100 E      644 persisted, 0 new. Gate passes.
+Bad PR:   14/100 E      644 persisted, 2 new high-severity. Gate blocks.
 ```
 
-After install:
-
-```bash
-vyuh-dxkit baseline create            # capture today's state
-git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
-git commit -m "chore: enable dxkit guardrails"
-```
-
-From this point:
-
-- Every push runs the full guardrail check (pre-commit hook is
-  opt-in via `--with-precommit-hook` — slow on large repos until
-  scoped incremental scanning lands).
-- Every PR is gated by GitHub Actions, which posts a markdown summary
-  as a comment.
-- After the PR-gate workflow passes and the PR merges, the baseline
-  is refreshed so the next PR is gated against the up-to-date state.
-
-Bypass + disable mechanisms:
-
-```bash
-DXKIT_SKIP_HOOKS=1 git push ...      # one-off bypass
-git push --no-verify ...             # standard git bypass
-git config --unset core.hooksPath    # disable all dxkit hooks (per-clone)
-rm .githooks/pre-commit              # disable just pre-commit (keep pre-push)
-```
-
-> **Additive by default.** Existing hooks, devcontainer, or workflows
-> are never destroyed. dxkit detects them and writes sidecar `.dxkit`
-> files with merge instructions. `--force` overrides if you want.
+The score does not lie. The baseline keeps it useful on real codebases. The combination works the same for humans, AI agents, and CI runners. That is the part that scales.
 
 ---
 
@@ -117,282 +86,50 @@ rm .githooks/pre-commit              # disable just pre-commit (keep pre-push)
 
 ```text
 $ npm init @vyuhlabs/dxkit
-✓ Created: 11 files (AGENTS.md, CLAUDE.md, .claude/skills/dxkit-*, ...)
+✓ Created: 14 files
 ✓ Git hooks: installed 1 file(s)
+    .githooks/pre-push
 ✓ Devcontainer: installed 3 file(s)
 ✓ CI guardrails workflow: installed 1 file(s)
-✓ CI baseline-refresh workflow: installed 1 file(s)
+    .github/workflows/dxkit-guardrails.yml
+✓ Done! Claude Code now has full project context.
+→ Next: run `vyuh-dxkit baseline create` to capture today's state.
 
-$ vyuh-dxkit baseline create
-✓ Wrote .dxkit/baselines/main.json — 89 findings (32s)
+$ npx vyuh-dxkit baseline create
+→ Baseline mode=committed-full (auto: visibility not detectable via gh; defaulting to private posture)
+✓ Wrote .dxkit/baselines/main.json — 644 findings, salt: deterministic (208.9s)
+
+$ npx vyuh-dxkit guardrail check
+## Guardrail: PASSED
+No changes from baseline (644 pairs checked).
 ```
 
-Your AI agent has access to dxkit's reports and the nine lifecycle
-skills that init scaffolded. A typical request to the agent:
+Later, an innocent-looking PR slips in a regression. The pre-push hook fires:
 
 ```text
-Read the latest dxkit health report. Pick one safe quality
-improvement. Apply the change. Then run `vyuh-dxkit guardrail check`
-to confirm nothing regressed. Show me what you did.
+$ git push
+[hook] vyuh-dxkit guardrail check
+## Guardrail: BLOCKED
+2 new regressions found.
+
+| Status | Kind | Severity | Location | Reason |
+|---|---|---|---|---|
+| added | secret | high | src/config/secrets.ts:42 | gitleaks/aws-access-key |
+| added | code | medium | src/handlers/exec.ts:17 | semgrep/eval-use |
+
+644 pre-existing findings persisted. Only the new changes blocked you.
+Fix or allowlist with `npx vyuh-dxkit allowlist add ...`
 ```
 
-The agent introduces a change that breaks the guardrail:
-
-```text
-$ vyuh-dxkit guardrail check
-Guardrail BLOCKED — 2 new regressions
-
-Baseline:    .dxkit/baselines/main.json  (89 findings)
-Current:     91 findings · matcher: git-aware
-
-Blocking (2)
-  ADDED [medium] large-file   src/regression.ts
-       no-prior-match: identity fingerprint not present in the baseline
-  ADDED [medium] test-gap     src/regression.ts
-       no-prior-match: identity fingerprint not present in the baseline
-
-Summary
-  Pairs:    91 (blocking: 2, warning: 0, persisted: 89, resolved: 0)
-  Verdict:  BLOCKED
-  Exit:     1
-```
-
-The agent reads the failure, fixes it, and re-runs:
-
-```text
-$ vyuh-dxkit guardrail check
-Guardrail PASSED — 0 new regressions
-
-Summary
-  Pairs:    89 (blocking: 0, warning: 0, persisted: 89, resolved: 0)
-  Verdict:  PASSED
-  Exit:     0
-```
+The 644 pre-existing findings sit quietly. The 2 net-new ones stop the push.
 
 ---
 
-## Quickstart
+## Features
 
-```bash
-# Canonical first install — collapses install + scaffold into one step
-npm init @vyuhlabs/dxkit
+### Eight first-class language packs
 
-# Or install dxkit globally + scaffold manually
-npm install -g @vyuhlabs/dxkit
-vyuh-dxkit init --full
-vyuh-dxkit baseline create
-vyuh-dxkit guardrail check --changed-only
-
-# Upgrade an existing install later
-vyuh-dxkit upgrade           # plan + execute combined
-```
-
-À la carte if you only want specific pieces:
-
-```bash
-vyuh-dxkit init --with-dxkit-agents       # just the nine dxkit-* skills + AGENTS.md
-vyuh-dxkit init --with-hooks              # just the pre-push hook
-vyuh-dxkit init --with-precommit-hook     # add the pre-commit hook (opt-in; slow on large repos)
-vyuh-dxkit init --with-devcontainer       # just the per-stack devcontainer
-vyuh-dxkit init --with-ci                 # just the PR-gate workflow
-vyuh-dxkit init --with-baseline-refresh   # just the auto-refresh
-vyuh-dxkit init --with-pr-review          # AI PR-review workflow (opt-in, needs API key)
-```
-
-Post-install, two more CLIs polish the safety surface:
-
-```bash
-vyuh-dxkit setup-branch-protection   # mark dxkit-guardrails as required check on default branch
-vyuh-dxkit setup-prebuild            # configure Codespaces prebuild (cold-start ~7 min → ~30s)
-```
-
----
-
-## Baseline mode: greenfield to 10-year-old codebases
-
-Real codebases are messy. dxkit doesn't ask whether your repo is
-perfect — it asks whether each change made it worse.
-
-|                  | **Greenfield day 1**                   | **Brownfield (years of debt)**                            |
-| ---------------- | -------------------------------------- | --------------------------------------------------------- |
-| Baseline         | Captured near zero                     | Captures today's debt as the floor                        |
-| Behavior         | Every regression matters from commit 1 | Existing debt is grandfathered; net-new regressions block |
-| Cleanup pressure | Stay clean, easily                     | Improve incrementally; no required cleanup sprint         |
-
-The classifier distinguishes:
-
-| Status              | Meaning                                   | Default    |
-| ------------------- | ----------------------------------------- | ---------- |
-| `added`             | Net-new finding introduced by this change | **blocks** |
-| `relocated`         | Same finding, moved (line drift, rename)  | passes     |
-| `persisted`         | Same finding, same place — pre-existing   | passes     |
-| `removed` / `fixed` | Was there, now gone                       | passes     |
-| `tooling_drift`     | New only because scanner version changed  | warns      |
-| `config_drift`      | New only because dxkit config changed     | warns      |
-| `uncertain`         | Below confidence threshold                | warns      |
-
-Customize via [`.dxkit/policy.json`](docs/configuration/policy.md) —
-auto-discovered when present, compiled-in defaults otherwise.
-
-### Baseline modes — public vs private repos
-
-The baseline file is committed to git. On public repos that
-disclosure surface matters: a `committed-full` baseline tells anyone
-reading the repo which file/line each finding lives on, which
-private packages you depend on, and which advisory IDs you're
-sitting on unpatched. dxkit ships three modes:
-
-| Mode                  | On-disk content                                          | Auto-default for |
-| --------------------- | -------------------------------------------------------- | ---------------- |
-| `committed-full`      | Rich entries (file/line/rule/package/advisory)           | private repos    |
-| `committed-sanitized` | Stripped to `{ id, kind }` per finding                   | opt-in           |
-| `ref-based`           | No file — guardrail recomputes prior side from a git ref | public repos     |
-
-`vyuh-dxkit baseline create` auto-picks via
-`gh repo view --json visibility`. Pin the choice repo-wide in
-`.dxkit/policy.json`:
-
-```json
-{ "baseline": { "mode": "ref-based", "ref": "origin/main" } }
-```
-
-The cross-run matching contract (fingerprint identity) is identical
-across all three modes — sanitization only strips human-readable
-locators, it doesn't change which findings pair across runs. See
-[docs/commands/baseline.md](docs/commands/baseline.md#modes) for the
-full trade-off discussion.
-
----
-
-## Allowlist: per-finding suppression
-
-The baseline handles codebase-wide brownfield acceptance ("today's
-mess is grandfathered; tomorrow's must be net-new improvement").
-For per-finding decisions — false positives, intentional test
-fixtures, externally-mitigated risks, deliberately deferred work —
-use the [allowlist](docs/commands/allowlist.md).
-
-Five typed categories signal **why** a finding is suppressed:
-
-| Category               | Meaning                                           | Expiry                         |
-| ---------------------- | ------------------------------------------------- | ------------------------------ |
-| `false-positive`       | Scanner is wrong about this finding               | Optional                       |
-| `test-fixture`         | Intentional pattern in fixture / test code        | Optional                       |
-| `mitigated-externally` | Real risk neutralized at runtime (WAF, env, etc.) | Optional                       |
-| `accepted-risk`        | Real risk, team accepts, signed off               | **Required** (default 90 days) |
-| `deferred`             | Real, will fix later, tracked work                | **Required**                   |
-
-Two surfaces. Inline annotation for source-anchored findings:
-
-```python
-api_key = "sk_test_xxxx"  # dxkit-allow:test-fixture reason="placeholder in unit test"
-```
-
-File-level (`.dxkit/allowlist.json`) for cross-file findings or any
-suppression that needs an expiry. New entries appear in the PR-
-comment automation so reviewers see suppressions being introduced
-and can sanity-check the rationale before approving. `audit` /
-`prune` subcommands handle stale + soon-to-expire entries.
-
-**Strict cleanup**: orphaned `dxkit-allow:` annotations become
-`stale-allow` findings on the next scan. dxkit refuses to allowlist
-those — the only remediation is to remove the annotation. This is
-the TypeScript `@ts-expect-error` pattern: tools that surface their
-own stale suppressions force cleanup, preventing the annotation
-graveyard.
-
-```bash
-# The block message from `guardrail check` prints the exact command
-# to paste for any blocked finding — file:line for inline-compatible
-# kinds, --fingerprint for everything else.
-vyuh-dxkit allowlist add src/auth/oauth.ts:42 \
-    --category=test-fixture --reason="placeholder in unit test"
-
-vyuh-dxkit allowlist audit              # find stale + soon-to-expire entries
-```
-
-See [`vyuh-dxkit allowlist`](docs/commands/allowlist.md) for the
-full surface.
-
----
-
-## Git-aware identity matching
-
-A regression check is only useful if the matcher can tell _old issue
-that moved_ from _new issue that appeared_. Line numbers alone aren't
-stable — add a 20-line comment block at the top of a file and every
-issue below it "moves."
-
-dxkit uses layered identity, in priority order:
-
-1. **Domain fingerprints** for entities whose identity is intrinsic:
-   - dependency vulnerabilities → `(package, version, advisory-id)`
-   - secrets → `(scanner-rule, fingerprint(value))` so a leaked
-     token recognises itself when moved
-   - licenses → `(package, version, license-type)`
-   - duplicate blocks → normalized content hash
-2. **Location fingerprints** with a 3-line bucket for code findings.
-3. **Git-aware line mapping** across commits, including `-M` file
-   renames and ±2 line fuzz windows.
-4. **Content-hash fallback** when git history isn't reachable
-   (shallow clones, archived snapshots).
-
-Every match pair carries a **confidence in [0, 1]** and structured
-**reasons** (`exact-id`, `git-line-exact`, `git-line-fuzz`,
-`git-rename`, `content-hash`, ...). No LLM in the grading path —
-the matcher and classifier are deterministic over normalized
-analyzer input; the same inputs produce the same classifications.
-
----
-
-## Reproducible environment
-
-Agents need a stable environment to be reliable. `init --with-devcontainer`
-generates a Codespaces-ready setup:
-
-- Pinned language toolchains (Node 22, Python 3.12, Go 1.21, .NET 8,
-  Ruby 3.3, Java 17, Rust stable) layered via standard devcontainer
-  features — small image footprint, fast Codespaces prebuild.
-- `post-create.sh` runs `vyuh-dxkit tools install --yes` to provision
-  the scanner toolchain pinned in dxkit's registry (gitleaks, semgrep,
-  cloc, jscpd, ruff, osv-scanner, and more — language-aware, only the
-  ones your stack needs).
-- Install scripts for the AI coding-agent CLIs you want available
-  inside the container. The scripts only install the binaries — auth
-  remains user-owned and is never baked into the image.
-- Every piece is a regular script you can edit after install.
-
----
-
-## What dxkit analyzes
-
-Beyond the baseline + guardrail surface, dxkit ships deterministic
-analyzers across eight language packs (Python, TypeScript, Go, Rust,
-C#, Kotlin, Java, Ruby), with graceful degradation when a tool isn't
-available for your stack:
-
-| Command           | Question it answers                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `health`          | "What's the overall shape of this codebase?" — 6-dimension score                      |
-| `vulnerabilities` | "What security issues are there?" — secrets, SAST, dependency audit, EPSS/KEV context |
-| `test-gaps`       | "Which untested files are riskiest?"                                                  |
-| `quality`         | "Where's the technical debt + duplication?"                                           |
-| `bom`             | "Full dependency × license × CVE × upgrade view" (license columns: 5 packs today)     |
-| `licenses`        | "What licenses are in my dependency tree?" (TS, Python, Go, Rust, C# today)           |
-| `dev-report`      | "Who's working on what, where are the hot files?"                                     |
-| `dashboard`       | "Single HTML view of everything I've run"                                             |
-| `report`          | Run every analyzer + dashboard in one shot                                            |
-
-Composable aggregate gates apply to every analyzer:
-
-```bash
-vyuh-dxkit health           --fail-on-score 60
-vyuh-dxkit vulnerabilities  --fail-on-severity high
-vyuh-dxkit bom              --fail-on-severity critical
-```
-
-Every `--json` output carries a `schema: 'dxkit.<kind>-report.v1'`
-banner so consumers can version-gate.
+TypeScript / JavaScript, Python, Go, Rust, C# / .NET, Java, Kotlin, Ruby. Each pack ships per-ecosystem analyzers: semgrep rulesets, dep-vuln scanners, license tools, lint adapters. Polyglot repos get unified reports without configuration.
 
 <details>
 <summary><strong>Per-pack capabilities</strong> (click to expand)</summary>
@@ -411,185 +148,179 @@ banner so consumers can version-gate.
 ¹ Rust, C#, Kotlin, Java, and Ruby populate `imports.extracted` but the
 file-level resolver is a no-op. Downstream analyses that need an edge graph
 (reachability, import-graph test-gap credit) degrade to conservative
-defaults for those packs; resolvers are tracked on the roadmap.
+defaults for those packs. Resolvers are tracked on the [roadmap](docs/roadmap.md).
 
-² C# uses `dotnet-format` for formatting violations only. A real severity-
-tiered C# linter (Roslyn analyzers / StyleCop) is roadmap; today every
-C# formatting violation is counted at `low` tier so it doesn't inflate
-the Quality/Slop score.
+² C# uses `dotnet-format` for formatting violations only. A real
+severity-tiered C# linter (Roslyn analyzers or StyleCop) is on the
+roadmap. Today every C# formatting violation is counted at `low` tier
+so it does not inflate the Code Quality score.
 
 </details>
 
+### The matcher
+
+Multi-axis fingerprints (location, domain, content, semantic) pair findings across runs even when files were renamed, lines shifted, tools changed versions, or the branch was force-pushed. When location fails, the matcher falls back to git-aware diff lookup, then content hash, then identity-only multiset match. Every pair carries a confidence score and a reason chain.
+
+### Per-finding suppression
+
+Five typed categories: `false-positive`, `test-fixture`, `mitigated-externally`, `accepted-risk`, `deferred`. Each entry requires a reason. Categories that fade over time require an expiry.
+
+Two surfaces:
+
+- Inline annotations: `// dxkit-allow:test-fixture reason="example placeholder"`
+- File-level: `.dxkit/allowlist.json`, audited via `vyuh-dxkit allowlist audit`
+
+Orphaned annotations become their own findings. The TypeScript `@ts-expect-error` model applied to suppressions. Prevents the graveyard of stale allowlist entries.
+
+### AI-agent integration
+
+dxkit ships nine Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
+
+| Skill                                                                      | What it does                                                            |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `dxkit-onboard`                                                            | Walks a customer through the full first-install journey                 |
+| `dxkit-reports`                                                            | Runs analyzers and explains the output                                  |
+| `dxkit-action`                                                             | Reads a report, prioritizes findings, plans and runs fixes, re-verifies |
+| `dxkit-fix`                                                                | Repairs a broken install from doctor output                             |
+| `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                           |
+
+`AGENTS.md` (the open standard read by Codex, Cursor, Aider, and others) also ships in every install. The skill flows are Claude Code-specific today; the AGENTS.md context is portable.
+
+Why this matters for AI workflows: when an agent fixes a bug, you need an objective signal that says "yes, fixed cleanly" or "fix introduced four new regressions." dxkit's deterministic score plus baseline guardrail produces that signal. The agent reads the same JSON envelope a human reads, runs the verify step itself, and stops when clean.
+
+### Reproducible environments
+
+Per-stack devcontainer with only the languages your project uses. Scanner toolchain auto-installed. Install scripts for AI agent CLIs (auth stays user-owned). Codespaces prebuilds wire via `vyuh-dxkit setup-prebuild` so cold-start drops from ~7 minutes to ~30 seconds.
+
+### Public-repo safe baselines
+
+The `ref-based` mode commits no baseline file. The guardrail check recomputes the prior side at check time from a git ref via `git worktree add`. Zero disclosure surface. File paths, package names, and advisory IDs all stay out of git. Auto-picked for public repos via `gh repo view --json visibility`.
+
 ---
 
-## Why dxkit
+## Quickstart
 
-dxkit doesn't try to replace SonarQube, Snyk, Semgrep, GitHub
-Advanced Security, Trivy, Gitleaks, or OSV-Scanner. It does three
-things they don't:
+```bash
+# Canonical first install
+npm init @vyuhlabs/dxkit
 
-1. **It scaffolds your AI agent.** Most tools find issues; dxkit
-   _also_ writes the project-context layer (entry-point doc, project
-   skills, commands, language-specific rules, specialized subagents)
-   that lets your agent operate on the codebase intelligently.
-2. **It gates at commit time, deterministically.** No LLM in the
-   grading path. The matcher and classifier are deterministic over
-   normalized analyzer input.
-3. **It assumes your repo is messy.** Other tools want clean
-   codebases and block every PR until you fix everything. dxkit
-   captures the floor, grandfathers existing debt, and only blocks
-   regressions introduced from here forward — usable on day-one
-   greenfield and 10-year-old brownfield codebases alike.
+# Capture today's state
+npx vyuh-dxkit baseline create
 
-Built on **open methodology**: ISO/IEC 25010, ISO/IEC 5055, SQALE,
-CVSS v4 (FIRST reference port), CWE taxonomy, OpenSSF Scorecard.
-Scores are evidence-backed and traceable to the findings that
-produced them.
+# Verify the install
+npx vyuh-dxkit doctor
+
+# Commit and ship
+git add . && git commit -m "chore: enable dxkit" && git push
+
+# Optional but recommended
+npx vyuh-dxkit setup-branch-protection   # mark guardrail as required CI check
+npx vyuh-dxkit setup-prebuild            # Codespaces prebuild
+```
+
+À la carte if you only want specific pieces:
+
+```bash
+npx vyuh-dxkit init --with-dxkit-agents       # just the nine Claude skills + AGENTS.md
+npx vyuh-dxkit init --with-hooks              # just the pre-push hook
+npx vyuh-dxkit init --with-precommit-hook     # add pre-commit (slow on large repos)
+npx vyuh-dxkit init --with-devcontainer       # just the per-stack devcontainer
+npx vyuh-dxkit init --with-ci                 # just the PR-gate workflow
+```
+
+---
+
+## What dxkit analyzes
+
+| Dimension            | Tools                                                                                                           | What it catches                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Security             | gitleaks, semgrep, osv-scanner, npm-audit, pip-audit, govulncheck, cargo-audit, dotnet vulnerable, bundle-audit | Secrets, dep vulnerabilities, insecure patterns, TLS bypass   |
+| Code Quality         | cloc, jscpd, graphify, lint adapters                                                                            | File size, duplication, complexity, hygiene markers           |
+| Tests                | coverage adapters per pack, test-file detector                                                                  | Missing tests, degraded tests, coverage gaps                  |
+| Documentation        | doc-comment ratio, README presence                                                                              | Inline doc coverage, project-level docs                       |
+| Maintainability      | graphify call-graph metrics                                                                                     | God files, dead imports, cohesion, communities                |
+| Developer Experience | git hook detection, CI workflow detection, manifest presence                                                    | Pre-push hooks, CI quality gates, environment reproducibility |
+
+Each analyzer reports raw findings. dxkit aggregates, deduplicates across tools, and scores deterministically.
+
+---
+
+## Brownfield vs greenfield
+
+|                  | Greenfield (day 1)                     | Brownfield (years of debt)                        |
+| ---------------- | -------------------------------------- | ------------------------------------------------- |
+| Baseline         | Near-zero on capture                   | Captures today's debt as floor                    |
+| Behavior         | Every regression matters from commit 1 | Existing debt grandfathered; net-new blocks       |
+| Cleanup pressure | Stay clean, easily                     | Improve incrementally; no required cleanup sprint |
+
+The status taxonomy that drives gate decisions:
+
+| Status              | Meaning                                   | Default    |
+| ------------------- | ----------------------------------------- | ---------- |
+| `added`             | Net-new finding introduced by this change | **blocks** |
+| `relocated`         | Same finding, moved (line drift, rename)  | passes     |
+| `persisted`         | Same finding, same place. Pre-existing.   | passes     |
+| `removed` / `fixed` | Was there, now gone                       | passes     |
+| `tooling_drift`     | New because scanner version changed       | warns      |
+| `config_drift`      | New because dxkit config changed          | warns      |
+| `uncertain`         | Below confidence threshold                | warns      |
+
+Customize via [`.dxkit/policy.json`](docs/configuration/policy.md).
+
+---
+
+## Safety and trust
+
+- **Local-first.** Every scan runs on the developer's machine. Nothing leaves the repo. No telemetry. No phone-home.
+- **No LLM in the grading path.** Scores come from deterministic analyzers and arithmetic. Reproducible. Auditable. The only way to improve a score is to write better code.
+- **Sigstore provenance.** Every npm release is signed via OIDC from GitHub Actions. Verify with `npm audit signatures`.
+- **Open source.** MIT licensed. Inspect every score derivation.
 
 ---
 
 ## Real-world validation
 
-The 2.5.0 release was pre-ship audited on three production codebases:
+dxkit ships against pinned production codebases across all eight language packs. Every release runs a cross-stack walkthrough on a polyglot reference repo (TypeScript + Python) and a .NET reference repo before tagging. The cross-stack regression suite is part of CI.
 
-- TypeScript backend
-- TypeScript frontend
-- Large .NET WinForms project
+Recent ship validation (`@vyuhlabs/dxkit@2.6.0`, 2026-05-23):
 
-Across **6,919 baseline findings**, the audit:
-
-- identified four drift classes between aggregate reports and
-  per-finding identity sets
-- brought roughly **3,000 previously untracked findings into
-  guardrail coverage**
-- matched identity-set counts exactly to report aggregates for
-  every finding kind
-
-Details in [`CHANGELOG.md`](CHANGELOG.md#250---2026-05-18).
+- 1904 tests across 110 files
+- License findings dropped 73% on a 600-source-file polyglot codebase after the 2.6 baseline polish
+- New `ref-based` mode verified end-to-end on both reference stacks
 
 ---
 
-## Safety + trust
+## Documentation
 
-dxkit is local-first.
+**Start here**:
 
-- **No SaaS required.** Your code never leaves the machine.
-- **No repo upload.** Analyzers run in-process or shell out to
-  locally-installed scanners; results stay on disk.
-- **Secret values are never written to disk.** dxkit stores a
-  non-reversible fingerprint for matching only — the scanner sees
-  the value once and discards it after hashing.
-- **Agent auth stays user-owned.** Install scripts ship the CLIs;
-  authentication happens in your session and is never baked into
-  the image or stored by dxkit.
-- **CI guardrails are the enforcement layer.** Local hooks provide
-  fast feedback but are bypassable (`git commit --no-verify`); the
-  GitHub Actions PR-gate runs server-side and can be made a required
-  check via branch protection.
-- **Post-merge baseline refresh is gated.** The refresh workflow
-  runs only after the PR-gate workflow succeeds on the merging
-  commit. **Use branch protection to make the PR-gate a required
-  check** so a bypassed merge can't codify a regression into the
-  baseline.
+- [Getting started](docs/getting-started.md): full walkthrough from install to first guardrail check
+- [CHANGELOG](CHANGELOG.md): release notes. Latest is [2.6.0](https://github.com/vyuh-labs/dxkit/releases/tag/v2.6.0)
 
----
+**Depth**:
 
-## Docs
+- [Why dxkit](docs/why-dxkit.md): rationale, comparison vs SonarQube/Snyk/Semgrep/etc., open methodology
+- [Architecture](docs/ARCHITECTURE.md): data flow, the git-aware matcher, fingerprint axes
+- [Scoring methodology](docs/SCORING.md): how each dimension is computed, citations
+- [Roadmap](docs/roadmap.md): shipped vs planned
 
-- [Getting started](docs/getting-started.md)
-- [`baseline` command](docs/commands/baseline.md)
-- [`guardrail` command](docs/commands/guardrail.md)
-- [`.dxkit/policy.json` configuration](docs/configuration/policy.md)
-- [Scoring methodology](docs/SCORING.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [All commands](docs/README.md)
+**Reference**:
+
+- [Command reference](docs/README.md): every subcommand at a glance
+- [`baseline`](docs/commands/baseline.md): capture, show, modes
+- [`guardrail`](docs/commands/guardrail.md): check, classify, render
+- [`allowlist`](docs/commands/allowlist.md): per-finding suppression
+- [`.dxkit/policy.json`](docs/configuration/policy.md): tune what blocks vs warns
+- [Reporting issues](docs/commands/issue.md): `vyuh-dxkit issue --type=...`
 
 ---
-
-## Roadmap
-
-- [x] Local repo analysis (8 language packs)
-- [x] Agent project scaffolding (entry-point doc, skills, commands,
-      conventions, specialized subagents — single-agent today)
-- [x] Optional install scripts for AI coding-agent CLIs in the
-      devcontainer
-- [x] Per-finding fingerprinting + git-aware matching
-- [x] Baseline + guardrail commands
-- [x] Brownfield policy classifier
-- [x] Git hooks (pre-push default; pre-commit opt-in)
-- [x] GitHub Actions PR-gate + gated baseline-refresh workflows
-- [x] Devcontainer with pinned toolchains
-- [x] Nine dxkit-\* skills + AGENTS.md (open-standard, read by every
-      AGENTS.md-compliant agent — Claude Code, Codex, Cursor, Aider)
-- [ ] First-class plugin packaging for the Claude Code marketplace + MCP server for cross-agent reach (2.6, decision-pending)
-- [ ] Scoped + incremental scanning — fast pre-commit on monorepos
-      (2.6)
-- [ ] Symbol-level coverage gaps across all 8 packs (2.6)
-- [ ] SARIF export for GitHub code scanning interop (2.6)
-- [ ] Reachability-aware dep-vuln triage
-- [ ] **Per-pack capability parity** — bring every cell in the
-      capability table to a green tick (2.7 / 3.0):
-  - Import-graph resolvers for Rust, C#, Kotlin, Java, Ruby
-    (so reachability + import-graph test-gap credit work for
-    every pack, not just TS/Python/Go)
-  - Severity-tiered C# linter (Roslyn analyzers or StyleCop)
-  - License providers for Kotlin, Java, Ruby
-- [ ] AI Readiness banner — semantic anchors, function-body hashes,
-      cross-file refactor detection (3.0)
-
----
-
-## Reporting issues
-
-If a scanner is too noisy, a finding is missing, dxkit itself is
-broken, or the docs are unclear, the fastest path to the dxkit team
-is the built-in issue subcommand:
-
-```bash
-vyuh-dxkit issue --type=false-positive \
-    --fingerprint=<id> \
-    --about="the scanner flags my intentional X as a Y"
-
-vyuh-dxkit issue --type=bug --about="vyuh-dxkit doctor crashes on macOS arm64"
-
-vyuh-dxkit issue --type=feature-request --about="add SARIF export"
-```
-
-It opens a pre-filled [GitHub issue](https://github.com/vyuh-labs/dxkit/issues)
-in your browser with dxkit version + platform info already populated.
-Nothing is submitted until you click "Submit" — you review the
-prefill first. See [`vyuh-dxkit issue`](docs/commands/issue.md) for
-the full reference.
 
 ## Contributing
 
-dxkit aims to be the standard agentic-development layer for any
-codebase. We'd love help with:
-
-- Additional language pack support
-- Agent-CLI integrations (the 2.6 work)
-- Monorepo detection
-- Devcontainer templates per stack
-- Custom guardrail policies
-- SARIF output
-- More specialized subagents
-
-Start with the [contributing guide](CONTRIBUTING.md) and
-[good first issues](https://github.com/vyuh-labs/dxkit/labels/good%20first%20issue).
+See [CONTRIBUTING.md](CONTRIBUTING.md). The project follows architectural rules in [CLAUDE.md](CLAUDE.md). Adding a new language pack, a new finding kind, or a new scoring dimension each have one-page recipes.
 
 ---
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
----
-
-## Try it
-
-```bash
-npm init @vyuhlabs/dxkit
-```
-
-If dxkit helps you ship AI-assisted changes more safely, star the
-repo — it helps others find it too.

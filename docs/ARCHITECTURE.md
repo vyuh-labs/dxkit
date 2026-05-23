@@ -184,6 +184,43 @@ which preflights tag/main/version/CI agreement before
 `npm publish --provenance`. See the "Release procedure" section of
 [`CLAUDE.md`](../CLAUDE.md) for the full sequence.
 
+## Git-aware identity matching
+
+A regression check is only useful if the matcher can tell an old issue
+that moved from a new issue that appeared. Line numbers alone are not
+stable. Adding a 20-line comment block at the top of a file shifts
+every issue below it. The matcher has to look through that.
+
+dxkit uses layered identity, in priority order:
+
+1. **Domain fingerprints** for entities whose identity is intrinsic.
+   - Dependency vulnerabilities: `(package, version, advisory-id)`
+   - Secrets via `secret-hmac` kind: HMAC of the secret value, so a
+     leaked token recognises itself when moved between files
+   - Duplicate blocks: normalized content hash of the block
+2. **Location fingerprints** with a 3-line bucket for code,
+   secret, config, and hygiene findings. Bucketing absorbs small
+   formatter or unrelated-edit drift.
+3. **Git-aware line mapping** across commits, including `-M` file
+   renames and a ±2 line fuzz window. When the baseline anchor
+   commit is reachable, this is the primary matching pass for
+   line-anchored kinds.
+4. **Content-hash fallback** when git history is not reachable
+   (shallow clones, archived snapshots, force-pushed bases).
+
+Every match pair carries a confidence in [0, 1] and structured
+reasons (`exact-id`, `git-line-exact`, `git-line-fuzz`,
+`git-rename`, `content-hash`, `multiset-occurrence`). The matcher
+and classifier are deterministic over normalized analyzer input.
+The same inputs produce the same classifications. No LLM in the
+grading path.
+
+The matcher source lives in `src/baseline/git-aware-match.ts`. The
+fingerprint helpers it consumes live in
+`src/analyzers/tools/fingerprint.ts` and
+`src/baseline/finding-identity.ts`. CLAUDE.md Rule 9 forbids inline
+hashing of finding identity outside those canonical files.
+
 ## Where to go next
 
 - **[`CLAUDE.md`](../CLAUDE.md)** — the architectural rules and
