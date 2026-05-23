@@ -113,7 +113,19 @@ Don't auto-execute baseline capture here — step 5 has a values-laden warning t
 
 This is the step with permanent consequences. The baseline records the fingerprint of every finding currently in the repo and tells future scans "these are pre-existing — don't block on them."
 
-Before running `baseline create` on a fresh customer:
+Before running `baseline create` on a fresh customer, ASK about disclosure posture (the baseline file is committed to git):
+
+> **About to capture the first baseline. One quick choice first — which posture fits this repo?**
+>
+> The baseline file lives at `.dxkit/baselines/main.json`. Three modes trade disclosure for diagnostic richness:
+>
+> - **`committed-full`** (default for private repos) — Rich entries with file paths, package names, advisory IDs. Best diagnostic quality. Fine when only your team reads the repo.
+> - **`committed-sanitized`** (compliance-conscious private) — Stripped to fingerprint + kind only. Hides location detail; matching still works. Good when many people have repo read access.
+> - **`ref-based`** (default for public repos) — No baseline file at all. Each guardrail check recomputes the prior side from a git ref (e.g. `origin/main`). Zero disclosure.
+>
+> Auto-pick: run `vyuh-dxkit baseline create` and dxkit picks the right default by probing `gh repo view`. Or pin explicitly via `--mode=<X>` or `.dxkit/policy.json`.
+
+Then the standard "lock-in" warning:
 
 > **About to capture the first baseline.**
 >
@@ -125,12 +137,28 @@ Before running `baseline create` on a fresh customer:
 
 If they want to triage first, hand off to `dxkit-action` — that skill prioritizes findings before baseline lock-in. Come back to step 5 after triage.
 
-If they confirm baseline:
+If they confirm baseline (and they're happy with auto-picked mode):
 
 ```bash
 npx vyuh-dxkit baseline create
-git add .dxkit/baselines/
+git add .dxkit/baselines/   # only if mode wrote a file (committed-*)
 git commit -m "chore: capture dxkit baseline"
+```
+
+If they want to PIN the mode explicitly (so every developer + CI run agrees), write `.dxkit/policy.json`:
+
+```bash
+mkdir -p .dxkit
+cat > .dxkit/policy.json <<'JSON'
+{
+  "baseline": {
+    "mode": "ref-based",
+    "ref": "origin/main"
+  }
+}
+JSON
+git add .dxkit/policy.json
+git commit -m "chore: pin baseline mode in policy.json"
 ```
 
 ### 6. Pre-commit ASK
