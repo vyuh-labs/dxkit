@@ -116,6 +116,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `createBaseline` and `runGuardrailCheck` share one canonical
   loader.
 
+### Discovery surfaces
+
+- **PR-comment markdown** now shows the resolved baseline mode in
+  the sticky footer (`_Mode_: \`ref-based\` (ref: \`origin/main\`)`).
+  Reviewers see WHY a guardrail run picked a given posture.
+- **JSON renderer** carries `baseline.mode = { value, source,
+  explanation, ref? }` so agents + dashboards can read the audit
+  trail without re-deriving it.
+- **`vyuh-dxkit doctor`** has two new operational checks:
+  - "baseline mode: ref-based" / "baseline captured (mode: ...)" —
+    the existing baseline-captured check now understands ref-based
+    mode (where no on-disk file is expected) so the doctor stops
+    reporting a false-negative on public repos.
+  - "baseline mode aligned with repo visibility" — warns when an
+    explicit `committed-full` pin is in use on a public repo (the
+    posture leaks file paths + package names; the auto-picker
+    would have chosen ref-based).
+- **`dxkit-onboard` skill** — step 5 now ASKs about disclosure
+  posture before running `baseline create`, walks customers through
+  the three modes, and offers a one-shot `.dxkit/policy.json` snippet
+  for pinning the choice repo-wide.
+- **`dxkit-action` skill** — new section explains how to act on a
+  blocked finding when the baseline is sanitized / ref-based
+  (locator stripped at write time; re-run the analyzer for full
+  context or allowlist by fingerprint).
+- **README + getting-started.md** — call out the public-repo
+  posture explicitly so customers don't accidentally commit a
+  rich baseline to an open-source repo.
+
 ### Architectural notes
 
 - Added `stale-allow` as a new `IdentityKind` (Rule 9 + Rule 10
