@@ -38,11 +38,14 @@ import {
   writeBaselineFile,
 } from './baseline-file';
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
-import { DEFAULT_BROWNFIELD_POLICY } from './policy';
+import { resolveBaselineMode } from './modes';
+import type { ResolvedMode } from './modes';
+import { DEFAULT_BROWNFIELD_POLICY, loadPolicyFromCwd } from './policy';
 import { PRODUCERS, runProducers } from './producers';
 import type { ProducerContext } from './producers';
 import { resolveSalt } from './salt';
 import type { SaltMode } from './salt';
+import { sanitizeFile } from './sanitize';
 import type { RichBaselineEntry } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
@@ -61,11 +64,27 @@ export interface CreateBaselineOptions {
   readonly force?: boolean;
   /** Forwarded to the underlying analyzer for per-tool timing logs. */
   readonly verbose?: boolean;
+  /** Pre-resolved baseline mode. When supplied, the orchestrator
+   *  skips its own resolution + policy load. Callers wanting
+   *  deterministic behavior (tests, agents) pass this. */
+  readonly resolvedMode?: ResolvedMode;
+  /** Explicit CLI flag value for the mode (`--mode=<X>`). Forwarded
+   *  to `resolveBaselineMode`. Ignored when `resolvedMode` is
+   *  supplied. */
+  readonly cliMode?: ResolvedMode['mode'];
+  /** Explicit CLI flag value for the ref (`--ref=<R>`). Only
+   *  consulted when the resolved mode is `ref-based`. */
+  readonly cliRef?: string;
 }
 
+/** Outcome of `createBaseline`. `path` and `file` are absent when
+ *  mode resolved to `ref-based` — no file is written, and the
+ *  `mode` field carries the audit trail so callers can surface
+ *  WHY nothing landed on disk. */
 export interface CreateBaselineResult {
-  readonly path: string;
-  readonly file: BaselineFile;
+  readonly mode: ResolvedMode;
+  readonly path?: string;
+  readonly file?: BaselineFile;
 }
 
 /** Hash used for baseline-envelope metadata fields (policy, ignore,
@@ -353,15 +372,47 @@ export async function gatherCurrentScan(options: {
 }
 
 /**
- * Run the baseline-create pipeline. Pure-orchestrator: gather the
- * current scan via the shared step, then write it to disk under the
- * given name.
+ * Run the baseline-create pipeline. Pure-orchestrator: resolve
+ * the baseline mode, gather the current scan, then either:
+ *
+ *   - `committed-full` → write rich entries to disk (today's
+ *     behavior).
+ *   - `committed-sanitized` → sanitize every entry, then write.
+ *     The cross-run matching contract is preserved; locator
+ *     fields are stripped.
+ *   - `ref-based` → no file write. The guardrail check will
+ *     recompute the prior side from a git ref instead.
+ *
+ * In all three cases the returned `CreateBaselineResult` carries
+ * `resolvedMode` so callers can log WHY a given mode was picked
+ * (CLI flag / policy file / visibility auto-detect).
  */
 export async function createBaseline(
   options: CreateBaselineOptions,
 ): Promise<CreateBaselineResult> {
   const cwd = path.resolve(options.cwd);
   const name = options.name ?? DEFAULT_BASELINE_NAME;
+  const mode =
+    options.resolvedMode ??
+    (() => {
+      const policy = loadPolicyFromCwd(cwd);
+      return resolveBaselineMode({
+        cwd,
+        cliMode: options.cliMode,
+        cliRef: options.cliRef,
+        policyMode: policy.baseline?.mode,
+        policyRef: policy.baseline?.ref,
+      });
+    })();
+
+  if (mode.mode === 'ref-based') {
+    // Ref-based mode keeps no committed baseline. We still run no
+    // gather here — the guardrail check does it on demand against
+    // the configured ref. Returning the resolved mode lets the CLI
+    // surface a clear "ref-based mode active; no file written" log.
+    return { mode };
+  }
+
   const filePath = pathForBaseline(cwd, name);
   if (!options.force && fs.existsSync(filePath)) {
     throw new Error(
@@ -372,7 +423,7 @@ export async function createBaseline(
 
   const scan = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
-  const file: BaselineFile = {
+  const richFile: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     name,
     createdAt: new Date().toISOString(),
@@ -383,6 +434,7 @@ export async function createBaseline(
     findings: scan.findings,
   };
 
+  const file = mode.mode === 'committed-sanitized' ? sanitizeFile(richFile) : richFile;
   writeBaselineFile(filePath, file);
-  return { path: filePath, file };
+  return { mode, path: filePath, file };
 }

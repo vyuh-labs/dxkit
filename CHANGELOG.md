@@ -78,6 +78,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switching on `entry.kind`. Write-path wiring + visibility-
   aware mode selection ship in a follow-up commit.
 
+### Added
+
+- **Three baseline modes with visibility-aware defaults.**
+  `committed-full` (today's behavior, rich entries), `committed-
+  sanitized` (stripped per-entry payload via the sanitization
+  pass), and `ref-based` (no committed file; guardrail check
+  recomputes the prior side from a git ref via `git worktree
+  add`). The mode is picked by a single resolver
+  (`src/baseline/modes.ts`) with precedence: CLI flag →
+  `.dxkit/policy.json:baseline.mode` → visibility-derived default
+  (public repos auto-pick `ref-based`; everything else picks
+  `committed-full`). `committed-sanitized` is never auto-picked
+  — it's the explicit opt-in for compliance-conscious private
+  repos.
+- `vyuh-dxkit baseline create [--mode <m>] [--ref <r>]` and
+  `vyuh-dxkit guardrail check [--mode <m>] [--ref <r>]` — flags
+  override `policy.json` for one-off runs.
+- `gh repo view --json visibility` probe + per-process cache
+  in `src/baseline/visibility.ts`. Every failure path returns
+  `'unknown'`; the resolver treats unknown as private to avoid
+  surprise sanitization when `gh auth` lapses.
+- Ref-based gather mechanics in `src/baseline/ref-baseline.ts` —
+  `withRefWorktree(opts, fn)` is the reusable primitive; tears
+  down the worktree on success + failure. Mirrors file-mode
+  `.dxkit/salt` into the worktree so secret-HMAC entries pair
+  across cwd + worktree.
+
+### Architectural notes
+
+- New CLAUDE.md rule 11: baseline mode resolution flows through
+  `resolveBaselineMode`. Two arch-check rules lock the contract:
+  no `gh repo view --json visibility` outside
+  `src/baseline/visibility.ts`; no `git worktree add` / `remove`
+  outside `src/baseline/ref-baseline.ts`.
+- `resolvePolicy` lifted from `check.ts` to `policy.ts` so
+  `createBaseline` and `runGuardrailCheck` share one canonical
+  loader.
+
 ### Architectural notes
 
 - Added `stale-allow` as a new `IdentityKind` (Rule 9 + Rule 10

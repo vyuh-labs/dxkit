@@ -345,6 +345,48 @@ Three rules:
    `recipe-playbook.test.ts` for language packs (CLAUDE.md
    Rule 6).
 
+### 11. Baseline mode resolution flows through one canonical resolver
+
+The baseline mode (`committed-full` | `committed-sanitized` |
+`ref-based`) decides three things at once: whether to write a
+baseline file, whether to strip entries via `sanitizeFile`, and
+whether the guardrail check loads its prior side from disk or
+re-gathers from a git ref. Mode picking lives in a single
+function — `resolveBaselineMode` in `src/baseline/modes.ts` —
+with two adjacent helpers locked to the same module:
+
+- **Visibility detection** (`gh repo view --json visibility`) is
+  confined to `src/baseline/visibility.ts`. Other call sites ask
+  the resolver, not re-shell to `gh`. Lets every consumer benefit
+  from the per-process visibility cache and stops the "different
+  modules pick different defaults" drift class before it starts.
+- **Ref-based gather** (`git worktree add` / `worktree remove`)
+  is confined to `src/baseline/ref-baseline.ts`. Other consumers
+  go through `withRefWorktree(opts, fn)` or `gatherFromRef(opts)`
+  — the temp-dir + cleanup + salt-mirroring dance lives in one
+  place so future "do something at a git ref" features compose
+  on the same primitive.
+
+Precedence inside the resolver (locked in 2.6 Sprint 0):
+
+1. `--mode` / `--ref` CLI flag
+2. `.dxkit/policy.json:baseline.mode` / `baseline.ref`
+3. Visibility-derived default: `'public'` → `ref-based`;
+   `'private'` / `'internal'` / `'unknown'` → `committed-full`.
+   `committed-sanitized` is never auto-picked — it's the explicit
+   opt-in for compliance-conscious private repos.
+
+#### Mode-resolution enforcement
+
+Two rules in `scripts/check-architecture.sh` (pre-commit + CI):
+
+1. No `gh repo view --json visibility` calls outside
+   `src/baseline/visibility.ts`. Annotate
+   `// visibility-probe-ok` for justified exceptions.
+2. No `git worktree add` / `git worktree remove` outside
+   `src/baseline/ref-baseline.ts`. Annotate `// ref-worktree-ok`
+   for justified exceptions.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

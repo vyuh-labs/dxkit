@@ -111,8 +111,11 @@ function printUsage(): void {
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
     vyuh-dxkit baseline create [path] [--name <name>] [--force]
+                               [--mode=<mode>] [--ref=<ref>]
                                  Capture per-finding identities to .dxkit/baselines/<name>.json
-                                 (read later by guardrail check to gate new regressions)
+                                 (read later by guardrail check to gate new regressions).
+                                 --mode=committed-full|committed-sanitized|ref-based picks
+                                 the on-disk posture; default auto-selects from repo visibility.
     vyuh-dxkit baseline show [path] [--name <n>] [--baseline <path>]
                              [--kind <kind>] [--json]
                                  Pretty-print the on-disk baseline. Default: summary +
@@ -120,9 +123,11 @@ function printUsage(): void {
                                  emits a schema-banner-wrapped payload.
     vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
                                [--changed-only] [--policy <path>]
+                               [--mode=<mode>] [--ref=<ref>]
                                [--json | --markdown]
                                  Diff current scan against the named baseline; block on net-new
                                  regressions per brownfield policy. Exit code 1 when blocked.
+                                 --mode/--ref mirror baseline create (override policy.json).
     vyuh-dxkit hooks activate [path]
                                  Idempotently set core.hooksPath = .githooks. Wired into
                                  package.json postinstall by 'init --with-hooks' so every
@@ -265,6 +270,7 @@ export async function run(argv: string[]): Promise<void> {
       'acknowledged-severity': { type: 'string' },
       'added-by': { type: 'string' },
       mode: { type: 'string' },
+      ref: { type: 'string' },
       'soon-days': { type: 'string' },
       // issue flags
       type: { type: 'string' },
@@ -1609,21 +1615,41 @@ export async function run(argv: string[]): Promise<void> {
       if (subCommand === 'create') {
         const targetPath = resolveRepoPath(positionals[2]);
         const { createBaseline } = await import('./baseline/create');
+        const { parseBaselineMode } = await import('./baseline/modes');
         logger.header('vyuh-dxkit baseline create');
         logger.info(`Capturing baseline for ${targetPath}...`);
         const startTime = Date.now();
+        const cliModeRaw = values.mode as string | undefined;
+        const cliMode = cliModeRaw !== undefined ? parseBaselineMode(cliModeRaw) : undefined;
+        if (cliModeRaw !== undefined && cliMode === null) {
+          logger.fail(
+            `Unknown --mode value: ${cliModeRaw}. ` +
+              `Expected one of: committed-full, committed-sanitized, ref-based.`,
+          );
+          process.exit(1);
+        }
         try {
           const result = await createBaseline({
             cwd: targetPath,
             name: values.name as string | undefined,
             force: !!values.force,
             verbose: !!values.verbose,
+            cliMode: cliMode ?? undefined,
+            cliRef: values.ref as string | undefined,
           });
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-          const rel = path.relative(targetPath, result.path);
-          logger.success(
-            `Wrote ${rel} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
-          );
+          logger.info(`Baseline ${result.mode.explanation}`);
+          if (result.mode.mode === 'ref-based') {
+            logger.success(
+              `Ref-based mode: no file written. Guardrail check will compare against ${result.mode.ref} on demand (${elapsed}s)`,
+            );
+          } else if (result.path && result.file) {
+            const rel = path.relative(targetPath, result.path);
+            const tag = result.mode.mode === 'committed-sanitized' ? ' (sanitized)' : '';
+            logger.success(
+              `Wrote ${rel}${tag} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
+            );
+          }
         } catch (err) {
           logger.fail((err as Error).message);
           process.exit(1);
@@ -1691,6 +1717,16 @@ export async function run(argv: string[]): Promise<void> {
       const { runGuardrailCheck } = await import('./baseline/check');
       const { renderConsole, renderJson, renderMarkdown } =
         await import('./baseline/check-renderers');
+      const { parseBaselineMode } = await import('./baseline/modes');
+      const cliModeRaw = values.mode as string | undefined;
+      const cliMode = cliModeRaw !== undefined ? parseBaselineMode(cliModeRaw) : undefined;
+      if (cliModeRaw !== undefined && cliMode === null) {
+        logger.fail(
+          `Unknown --mode value: ${cliModeRaw}. ` +
+            `Expected one of: committed-full, committed-sanitized, ref-based.`,
+        );
+        process.exit(1);
+      }
       if (!values.json) logger.header('vyuh-dxkit guardrail check');
       if (!values.json) logger.info(`Checking ${targetPath} against baseline...`);
       const startTime = Date.now();
@@ -1702,7 +1738,10 @@ export async function run(argv: string[]): Promise<void> {
           changedOnly: !!values['changed-only'],
           policyPath: values.policy as string | undefined,
           verbose: !!values.verbose,
+          cliMode: cliMode ?? undefined,
+          cliRef: values.ref as string | undefined,
         });
+        if (!values.json) logger.info(`Baseline ${result.mode.explanation}`);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
           await emitJson(renderJson(result));
