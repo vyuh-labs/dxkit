@@ -41,13 +41,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
-import { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } from './baseline-file';
+import {
+  BASELINE_SCHEMA_VERSION,
+  DEFAULT_BASELINE_NAME,
+  pathForBaseline,
+  readBaselineFile,
+} from './baseline-file';
 import type { BaselineFile } from './baseline-file';
 import { entriesToLocated } from './entry-to-located';
 import { gitAwareMatch } from './git-aware-match';
 import type { LocatedIdentity } from './git-aware-match';
-import { classify, DEFAULT_BROWNFIELD_POLICY } from './policy';
+import { resolveBaselineMode } from './modes';
+import type { ResolvedMode } from './modes';
+import { classify, resolvePolicy } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
+import { gatherFromRef } from './ref-baseline';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
@@ -76,6 +84,17 @@ export interface RunGuardrailCheckOptions {
   readonly policyPath?: string;
   /** Forwarded to the underlying analyzers for per-tool timing logs. */
   readonly verbose?: boolean;
+  /** Pre-resolved baseline mode. When supplied, the orchestrator
+   *  skips its own resolution. Callers wanting deterministic
+   *  behavior (tests, agents) pass this. */
+  readonly resolvedMode?: ResolvedMode;
+  /** Explicit CLI flag value for the mode (`--mode=<X>`). Forwarded
+   *  to `resolveBaselineMode`. Ignored when `resolvedMode` is
+   *  supplied. */
+  readonly cliMode?: ResolvedMode['mode'];
+  /** Explicit CLI flag value for the ref (`--ref=<R>`). Only
+   *  consulted when the resolved mode is `ref-based`. */
+  readonly cliRef?: string;
 }
 
 /**
@@ -121,7 +140,14 @@ export interface EnvelopeDrift {
 }
 
 export interface GuardrailCheckResult {
-  readonly baselinePath: string;
+  /** Pre-resolved baseline mode (which path produced `baseline`).
+   *  Carries the audit trail (CLI / policy / auto-detect) so the
+   *  CLI surface can log WHY the mode was picked. */
+  readonly mode: ResolvedMode;
+  /** On-disk path of the baseline file, or undefined when mode is
+   *  `ref-based` (the prior side was computed from a git ref, not
+   *  read from a committed file). */
+  readonly baselinePath?: string;
   readonly baseline: BaselineFile;
   readonly current: CurrentScan;
   readonly matchResult: MatchResult;
@@ -173,16 +199,23 @@ export async function runGuardrailCheck(
   options: RunGuardrailCheckOptions,
 ): Promise<GuardrailCheckResult> {
   const cwd = path.resolve(options.cwd);
-  const baselinePath =
-    options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
-  if (!fs.existsSync(baselinePath)) {
-    throw new Error(
-      `baseline file not found: ${baselinePath}. ` +
-        `Run \`vyuh-dxkit baseline create\` first to capture today's state.`,
-    );
-  }
-  const baseline = readBaselineFile(baselinePath);
   const policy = resolvePolicy(options.policyPath, cwd);
+  const mode =
+    options.resolvedMode ??
+    resolveBaselineMode({
+      cwd,
+      cliMode: options.cliMode,
+      cliRef: options.cliRef,
+      policyMode: policy.baseline?.mode,
+      policyRef: policy.baseline?.ref,
+    });
+
+  // Load the prior side. Committed modes read from the baseline
+  // file on disk; ref-based mode recomputes prior state by checking
+  // out a git ref into a temporary worktree. Both paths produce a
+  // `BaselineFile`-shaped value so the matcher / classifier
+  // downstream stay mode-agnostic.
+  const { baseline, baselinePath } = await loadPriorSide(cwd, mode, options);
 
   const current = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
@@ -295,7 +328,8 @@ export async function runGuardrailCheck(
   const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, baseline.repo.commitSha);
 
   return {
-    baselinePath,
+    mode,
+    ...(baselinePath !== undefined ? { baselinePath } : {}),
     baseline,
     current,
     matchResult,
@@ -308,53 +342,8 @@ export async function runGuardrailCheck(
   };
 }
 
-/** Conventional location for a per-repo brownfield policy. Loaded
- *  automatically when present; can be overridden with `--policy`. */
-const DEFAULT_POLICY_FILENAME = path.join('.dxkit', 'policy.json');
-
-function resolvePolicy(policyPath: string | undefined, cwd: string): BrownfieldPolicy {
-  // Resolution order:
-  //   1. `--policy <path>` flag (explicit; errors if unreadable)
-  //   2. `<cwd>/.dxkit/policy.json` (conventional; silently skipped
-  //      when absent so consumers without a policy use the defaults)
-  //   3. DEFAULT_BROWNFIELD_POLICY (compiled-in defaults)
-  let resolvedPath: string | undefined = policyPath;
-  if (!resolvedPath) {
-    const conventional = path.join(cwd, DEFAULT_POLICY_FILENAME);
-    if (fs.existsSync(conventional)) resolvedPath = conventional;
-  }
-  if (!resolvedPath) return DEFAULT_BROWNFIELD_POLICY;
-  let raw: string;
-  try {
-    raw = fs.readFileSync(resolvedPath, 'utf8');
-  } catch (err) {
-    throw new Error(`policy file not readable: ${resolvedPath} (${(err as Error).message})`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`policy file is not valid JSON: ${resolvedPath} (${(err as Error).message})`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`policy file root is not an object: ${resolvedPath}`);
-  }
-  // Shallow merge over the default. Per-field overrides win; unknown
-  // fields are preserved (the classifier reads only the fields it
-  // knows so unknowns are harmless).
-  const obj = parsed as Partial<BrownfieldPolicy>;
-  return {
-    ...DEFAULT_BROWNFIELD_POLICY,
-    ...obj,
-    confidence: { ...DEFAULT_BROWNFIELD_POLICY.confidence, ...(obj.confidence ?? {}) },
-    blockRules: { ...DEFAULT_BROWNFIELD_POLICY.blockRules, ...(obj.blockRules ?? {}) },
-    block: obj.block ?? DEFAULT_BROWNFIELD_POLICY.block,
-    warn: obj.warn ?? DEFAULT_BROWNFIELD_POLICY.warn,
-    addedRequiresChangedLines:
-      obj.addedRequiresChangedLines ?? DEFAULT_BROWNFIELD_POLICY.addedRequiresChangedLines,
-    mode: 'brownfield',
-  };
-}
+// `resolvePolicy` moved to `./policy.ts` so `createBaseline` and
+// `runGuardrailCheck` share one canonical loader.
 
 function indexById(entries: ReadonlyArray<BaselineEntry>): Map<FindingId, BaselineEntry> {
   const out = new Map<FindingId, BaselineEntry>();
@@ -571,4 +560,59 @@ function readChangedLineSet(
     for (let i = 0; i < newCount; i++) out.add(newStart + i);
   }
   return out;
+}
+
+/**
+ * Load the prior side of the guardrail diff. Dispatches on
+ * `mode.mode`:
+ *
+ *   - `committed-full` / `committed-sanitized` → read the on-disk
+ *     baseline file. The path is `options.baselinePath` when
+ *     supplied, otherwise the conventional
+ *     `.dxkit/baselines/<name>.json`.
+ *   - `ref-based` → run the full gather pipeline against a git
+ *     worktree of `mode.ref`, then project the resulting
+ *     `CurrentScan` into a synthetic `BaselineFile`. The matcher
+ *     downstream doesn't care which path produced the value.
+ *
+ * The synthetic `BaselineFile` for ref-based mode carries the ref-
+ * scan's envelope unchanged — including its `repo.commitSha`,
+ * `tools`, `analysis` hashes, and `saltMode`. That's exactly what
+ * the matcher needs to compute git-aware diffs + envelope drift
+ * against the current scan.
+ */
+async function loadPriorSide(
+  cwd: string,
+  mode: ResolvedMode,
+  options: RunGuardrailCheckOptions,
+): Promise<{ baseline: BaselineFile; baselinePath?: string }> {
+  if (mode.mode !== 'ref-based') {
+    const baselinePath =
+      options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
+    if (!fs.existsSync(baselinePath)) {
+      throw new Error(
+        `baseline file not found: ${baselinePath}. ` +
+          `Run \`vyuh-dxkit baseline create\` first to capture today's state.`,
+      );
+    }
+    return { baseline: readBaselineFile(baselinePath), baselinePath };
+  }
+
+  if (!mode.ref) {
+    // Defensive: the resolver always populates `ref` for ref-based
+    // mode. A missing ref here would be a programming error.
+    throw new Error('ref-based baseline mode requires a resolved ref; got undefined.');
+  }
+  const refScan = await gatherFromRef({ cwd, ref: mode.ref, verbose: options.verbose });
+  const baseline: BaselineFile = {
+    schemaVersion: BASELINE_SCHEMA_VERSION,
+    name: options.name ?? DEFAULT_BASELINE_NAME,
+    createdAt: new Date().toISOString(),
+    repo: refScan.repoState,
+    analysis: refScan.analysisMeta,
+    tools: refScan.tools,
+    saltMode: refScan.saltMode,
+    findings: refScan.findings,
+  };
+  return { baseline };
 }

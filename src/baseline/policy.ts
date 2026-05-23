@@ -23,6 +23,8 @@
  * without re-shaping consumer code.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { BaselineMode } from './modes';
 import type { FindingSeverity, FindingStatus, MatchPair, MatchReason } from './types';
 
@@ -374,4 +376,68 @@ export function classifyAll(
   contextFor: (pair: MatchPair) => ClassifyContext = () => ({}),
 ): ReadonlyArray<ClassifyResult> {
   return pairs.map((pair) => classify(pair, policy, contextFor(pair)));
+}
+
+/** Conventional location for a per-repo brownfield policy. Loaded
+ *  automatically by `resolvePolicy` when present. */
+export const DEFAULT_POLICY_FILENAME = path.join('.dxkit', 'policy.json');
+
+/**
+ * Load a brownfield policy with the three-step resolution order
+ * shared by `createBaseline` and `runGuardrailCheck`:
+ *
+ *   1. `policyPath` (explicit `--policy <p>` flag). Errors if the
+ *      path is supplied but unreadable / malformed.
+ *   2. `<cwd>/.dxkit/policy.json` (conventional). Silently skipped
+ *      when absent so consumers without a policy get the defaults.
+ *   3. `DEFAULT_BROWNFIELD_POLICY` (compiled-in fallback).
+ *
+ * Customer fields shallow-merge over the default. The
+ * `confidence` / `blockRules` blocks deep-merge by key. Unknown
+ * fields are preserved — the classifier ignores what it doesn't
+ * know, so forward-compatible policy files don't break old dxkit.
+ */
+export function resolvePolicy(policyPath: string | undefined, cwd: string): BrownfieldPolicy {
+  let resolvedPath: string | undefined = policyPath;
+  if (!resolvedPath) {
+    const conventional = path.join(cwd, DEFAULT_POLICY_FILENAME);
+    if (fs.existsSync(conventional)) resolvedPath = conventional;
+  }
+  if (!resolvedPath) return DEFAULT_BROWNFIELD_POLICY;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(resolvedPath, 'utf8');
+  } catch (err) {
+    throw new Error(`policy file not readable: ${resolvedPath} (${(err as Error).message})`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`policy file is not valid JSON: ${resolvedPath} (${(err as Error).message})`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`policy file root is not an object: ${resolvedPath}`);
+  }
+  const obj = parsed as Partial<BrownfieldPolicy>;
+  return {
+    ...DEFAULT_BROWNFIELD_POLICY,
+    ...obj,
+    confidence: { ...DEFAULT_BROWNFIELD_POLICY.confidence, ...(obj.confidence ?? {}) },
+    blockRules: { ...DEFAULT_BROWNFIELD_POLICY.blockRules, ...(obj.blockRules ?? {}) },
+    block: obj.block ?? DEFAULT_BROWNFIELD_POLICY.block,
+    warn: obj.warn ?? DEFAULT_BROWNFIELD_POLICY.warn,
+    addedRequiresChangedLines:
+      obj.addedRequiresChangedLines ?? DEFAULT_BROWNFIELD_POLICY.addedRequiresChangedLines,
+    mode: 'brownfield',
+  };
+}
+
+/**
+ * Convenience wrapper for callers that don't take a `--policy`
+ * override (e.g., `createBaseline`). Loads the conventional file if
+ * present; returns defaults otherwise.
+ */
+export function loadPolicyFromCwd(cwd: string): BrownfieldPolicy {
+  return resolvePolicy(undefined, cwd);
 }
