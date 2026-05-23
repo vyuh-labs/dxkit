@@ -655,6 +655,46 @@ if [ -n "$ROGUE_IDENTITY" ]; then
 fi
 
 # =============================================================================
+# Sprint 2 (2.6): baseline mode resolution discipline.
+# =============================================================================
+#
+# Baseline mode (`committed-full` | `committed-sanitized` | `ref-based`)
+# is picked by exactly one function: `resolveBaselineMode` in
+# `src/baseline/modes.ts`. Two adjacent rules keep the contract from
+# drifting:
+#
+#   - Visibility probing (`gh repo view --json visibility`) lives only
+#     in `src/baseline/visibility.ts`. Other call sites should ask the
+#     resolver, not re-shell to `gh`.
+#   - `git worktree` mechanics for ref-based gather live only in
+#     `src/baseline/ref-baseline.ts`. Other consumers go through
+#     `withRefWorktree` / `gatherFromRef`.
+ROGUE_VISIBILITY=$(grep -rnE 'gh repo view[^"]*visibility' src/ 2>/dev/null \
+  | grep -v "// visibility-probe-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/baseline/visibility.ts:")
+if [ -n "$ROGUE_VISIBILITY" ]; then
+  echo "❌ Baseline mode rule violation: gh visibility probe outside src/baseline/visibility.ts:"
+  echo "$ROGUE_VISIBILITY"
+  echo "   → Call detectRepoVisibility() from src/baseline/visibility.ts, or go through"
+  echo "     resolveBaselineMode() in src/baseline/modes.ts."
+  echo "   → Annotate '// visibility-probe-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+ROGUE_WORKTREE=$(grep -rnE "git[[:space:]]+worktree[[:space:]]+(add|remove)" src/ 2>/dev/null \
+  | grep -v "// ref-worktree-ok" \
+  | grep -v -E ':[[:space:]]*\*' \
+  | grep -v "^src/baseline/ref-baseline.ts:")
+if [ -n "$ROGUE_WORKTREE" ]; then
+  echo "❌ Baseline mode rule violation: 'git worktree' command outside src/baseline/ref-baseline.ts:"
+  echo "$ROGUE_WORKTREE"
+  echo "   → Use withRefWorktree() / gatherFromRef() from src/baseline/ref-baseline.ts."
+  echo "   → Annotate '// ref-worktree-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Sprint 4 (2.5.2): dead template-condition detector.
 # =============================================================================
 #

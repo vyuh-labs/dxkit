@@ -215,7 +215,9 @@ export interface GuardrailJsonPayload {
     readonly exitCode: 0 | 1;
   };
   readonly baseline: {
-    readonly path: string;
+    /** Absent when the run used `ref-based` mode (no on-disk
+     *  baseline file). */
+    readonly path?: string;
     readonly name: string;
     readonly createdAt: string;
     readonly commitSha: string;
@@ -279,7 +281,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     schema: GUARDRAIL_JSON_SCHEMA,
     verdict: { blocks: result.blocks, warns: result.warns, exitCode: result.blocks ? 1 : 0 },
     baseline: {
-      path: result.baselinePath,
+      ...(result.baselinePath !== undefined ? { path: result.baselinePath } : {}),
       name: result.baseline.name,
       createdAt: result.baseline.createdAt,
       commitSha: result.baseline.repo.commitSha,

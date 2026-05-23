@@ -13,6 +13,7 @@ decide what is a net-new regression vs. pre-existing debt.
 
 ```bash
 vyuh-dxkit baseline create [path] [--name <name>] [--force]
+                                  [--mode <mode>] [--ref <ref>]
 vyuh-dxkit baseline show   [path] [--name <name>] [--baseline <path>]
                                   [--kind <kind>] [--json]
 ```
@@ -20,15 +21,70 @@ vyuh-dxkit baseline show   [path] [--name <name>] [--baseline <path>]
 ## `baseline create`
 
 Runs every analyzer, fingerprints each finding via the canonical
-identity helpers, and writes
-`.dxkit/baselines/<name>.json` (default `<name>` is `main`).
+identity helpers, and writes `.dxkit/baselines/<name>.json` (default
+`<name>` is `main`) — unless `--mode=ref-based`, in which case no
+file is written and the guardrail check recomputes the prior side
+from a git ref on demand.
 
-| Option       | Effect                                                                                         |
-| ------------ | ---------------------------------------------------------------------------------------------- |
-| `path`       | Repo root to scan. Defaults to `.`                                                             |
-| `--name <n>` | Baseline name. Multiple baselines can coexist (e.g. `main`, `release-2025-q4`). Default `main` |
-| `--force`    | Overwrite an existing baseline file rather than erroring out                                   |
-| `--verbose`  | Print per-tool timing to stderr                                                                |
+| Option       | Effect                                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `path`       | Repo root to scan. Defaults to `.`                                                                        |
+| `--name <n>` | Baseline name. Multiple baselines can coexist (e.g. `main`, `release-2025-q4`). Default `main`            |
+| `--force`    | Overwrite an existing baseline file rather than erroring out                                              |
+| `--mode <m>` | Baseline posture: `committed-full`, `committed-sanitized`, or `ref-based`. See "Modes" below              |
+| `--ref <r>`  | Baseline ref for `--mode=ref-based`. Default: `origin/HEAD` (probed via git), falls back to `origin/main` |
+| `--verbose`  | Print per-tool timing to stderr                                                                           |
+
+### Modes
+
+The baseline file is committed to git. On public repos that
+disclosure surface matters — file paths + rule names + private
+package names + advisory IDs all leak useful intel. Three modes
+let you pick the disclosure posture:
+
+| Mode                  | On-disk content                                             | Default for     |
+| --------------------- | ----------------------------------------------------------- | --------------- |
+| `committed-full`      | Rich per-finding entries (today's behavior)                 | private repos   |
+| `committed-sanitized` | Stripped entries (`{ id, kind, sanitized: true }`)          | explicit opt-in |
+| `ref-based`           | No file. Guardrail check computes prior side from a git ref | public repos    |
+
+**Auto-picker precedence**:
+
+1. `--mode <X>` CLI flag wins.
+2. `.dxkit/policy.json` → `baseline.mode` (and `baseline.ref`).
+3. Visibility-derived default — `gh repo view --json visibility`:
+   - `public` → `ref-based`
+   - `private` / `internal` / `unknown` → `committed-full`
+
+`committed-sanitized` is never auto-picked. It's the explicit
+opt-in for compliance-conscious private repos where broad internal
+read access makes location disclosures material. The cross-run
+matching contract (fingerprint identity) is identical across all
+three modes — sanitization only strips human-readable locators, it
+doesn't change which findings pair across runs.
+
+**Pin the mode in `.dxkit/policy.json`**:
+
+```json
+{
+  "baseline": {
+    "mode": "ref-based",
+    "ref": "origin/main"
+  }
+}
+```
+
+**Ref-based mode notes**:
+
+- Requires `git fetch` history reaching `<ref>`. Shallow CI clones
+  need `fetch-depth: 0` in the checkout step.
+- Salt resolution stays consistent across the cwd + worktree for
+  env-var and deterministic salt modes. File-mode salt is copied
+  into the worktree so secret-HMAC matching works.
+- `node_modules` (and equivalents) aren't checked out — dep-vuln
+  scanners that read installed packages directly may report
+  degraded coverage. Lockfile-driven scanners (the dxkit default)
+  survive the gap.
 
 What lands in the file:
 

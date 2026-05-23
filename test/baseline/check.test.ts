@@ -100,6 +100,7 @@ describe('runGuardrailCheck (integration)', () => {
 
       // Explicit --baseline path override.
       const stashed = join(dir, 'stashed-baseline.json');
+      if (!created.path) throw new Error('expected committed-mode baseline');
       writeFileSync(stashed, readFileSync(created.path));
       const viaPath = await runGuardrailCheck({ cwd: dir, baselinePath: stashed });
       expect(viaPath.baselinePath).toBe(stashed);

@@ -59,6 +59,31 @@ tuning belongs here.
 | `confidence`                | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`.                                                                     |
 | `blockRules`                | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.                                                                            |
 | `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn). |
+| `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                          |
+
+## Baseline mode pinning
+
+The optional `baseline` block pins the on-disk posture used by
+`baseline create` + `guardrail check` so every developer + CI job
+agrees on the same shape. When absent, the resolver falls back to
+visibility-derived defaults (`gh repo view --json visibility` →
+`public` picks `ref-based`; everything else picks `committed-full`).
+
+```json
+{
+  "baseline": {
+    "mode": "ref-based",
+    "ref": "origin/main"
+  }
+}
+```
+
+| Field  | Type     | Effect                                                                                                                                      |
+| ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode` | `string` | `committed-full`, `committed-sanitized`, or `ref-based`. See [baseline modes](../commands/baseline.md#modes) for the disclosure trade-offs. |
+| `ref`  | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
+
+CLI `--mode` / `--ref` flags override the policy fields.
 
 ## Finding statuses
 
