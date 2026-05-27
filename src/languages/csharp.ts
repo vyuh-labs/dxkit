@@ -1315,6 +1315,11 @@ export const csharp: LanguageSupport = {
 
   // D027 (2.4.7): C# uses XML-doc triple-slash comments above
   // public APIs. Pre-D027 the generic doc-comment heuristic
+  exportDetection: {
+    reliability: 'full',
+    strategy: '`public` access modifier on type and member declarations',
+  },
+
   // matched JSDoc `/**` only, so the .NET WinForms benchmark's 3,234 .cs files
   // contributed zero to docCommentFiles even though many carry
   // `/// <summary>` blocks. POSIX class `[[:space:]]` for cross-

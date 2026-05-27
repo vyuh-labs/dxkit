@@ -435,6 +435,12 @@ export const kotlin: LanguageSupport = {
   // `out` = IntelliJ IDE build output.
   extraExcludes: ['build', '.gradle', 'out'],
 
+  exportDetection: {
+    reliability: 'full',
+    strategy:
+      'Public-by-default modifier semantics (no `private` / `internal` / `protected` keyword)',
+  },
+
   // D027 (2.4.7): KDoc uses the JSDoc-style `/**` block opener.
   docCommentPatterns: ['/\\*\\*'],
 
