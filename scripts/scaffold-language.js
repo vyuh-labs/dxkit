@@ -316,6 +316,25 @@ export const ${id}: LanguageSupport = {
   // capabilities: { depVulns, lint, coverage, imports, testFramework, licenses }
   capabilities: {},
 
+  // TODO(${id}): exported-symbol detection reliability for the graphify
+  // symbol-extension pipeline. Drives the per-node \`exported\` field in
+  // .dxkit/reports/graph.json + the explore CLI's api-surface query +
+  // the dashboard viz's "exported only" filter.
+  //   'full'        — top-level + member exports detected reliably
+  //                   (TS export keyword, Go capitalization, Rust pub,
+  //                    C# / Java / Kotlin public modifier)
+  //   'partial'     — top-level reliable, member-level imperfect
+  //                   (Python __all__ + public-name heuristic)
+  //   'unreliable'  — static analysis cannot answer reliably
+  //                   (Ruby metaprogramming defeats AST analysis)
+  // The strategy string is a single-line human-readable description
+  // surfaced when consumers explain exclusion or partial coverage.
+  // Detection itself lives in src/analyzers/tools/graphify-graph.ts.
+  exportDetection: {
+    reliability: 'unreliable',
+    strategy: 'TODO(${id}): describe how exported symbols are detected for this language',
+  },
+
   // ─── LP-recipe metadata (populate every field) ─────────────────────────
 
   // Bash permission entries for .claude/settings.json. Cover the test/build/
