@@ -978,6 +978,12 @@ export const python: LanguageSupport = {
   testFilePatterns: ['test_*.py', '*_test.py'],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],
 
+  exportDetection: {
+    reliability: 'partial',
+    strategy:
+      '`__all__` list when present, else public-name heuristic (identifier without leading underscore)',
+  },
+
   // D027 (2.4.7): Python module/class/function docstrings use either
   // triple-double or triple-single quotes. Match the docstring opener
   // at the start of a (possibly indented) line.

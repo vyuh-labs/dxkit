@@ -424,6 +424,11 @@ export const java: LanguageSupport = {
   // out). Universal exclusions live in src/analyzers/tools/exclusions.ts.
   extraExcludes: ['target', 'build', '.gradle', 'out'],
 
+  exportDetection: {
+    reliability: 'full',
+    strategy: '`public` access modifier on type and member declarations',
+  },
+
   // D027 (2.4.7): Javadoc uses the `/**` block opener.
   docCommentPatterns: ['/\\*\\*'],
 

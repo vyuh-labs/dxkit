@@ -893,6 +893,11 @@ export const go: LanguageSupport = {
   // standard library + idiomatic projects.
   docCommentPatterns: ['^// [A-Z]'],
 
+  exportDetection: {
+    reliability: 'full',
+    strategy: 'Capitalized first letter on top-level identifiers (Go idiomatic export convention)',
+  },
+
   // D034 (2.4.7): `tls.Config{InsecureSkipVerify: true}` is the
   // canonical Go pattern for disabling cert verification — applied
   // to `http.Transport.TLSClientConfig`, gRPC `credentials.NewTLS`,

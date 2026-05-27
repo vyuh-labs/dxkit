@@ -1001,7 +1001,7 @@ function splitTsLicenseCheckerKey(key: string): { package: string; version: stri
  * available (so the dispatcher skips the pack cleanly rather than
  * emitting an empty envelope). License-text is inlined by reading the
  * `licenseFile` path on disk — the customer's existing workflow does
- * the same thing (see `license-generation.sh` in vyuhlabs-platform).
+ * the same thing.
  */
 async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcome> {
   if (!fileExists(cwd, 'package.json')) {
@@ -1164,6 +1164,12 @@ export const typescript: LanguageSupport = {
     '*.spec.cjs',
   ],
   extraExcludes: ['node_modules', 'dist', '.next', '.turbo', 'coverage', '.cache'],
+
+  exportDetection: {
+    reliability: 'full',
+    strategy:
+      'TypeScript `export` keyword on top-level declarations + named `export { ... }` re-export blocks',
+  },
 
   // D027 (2.4.7): JSDoc / TSDoc block comments are the conventional
   // documentation marker. Per-pack pattern replaces the pre-D027

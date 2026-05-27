@@ -122,6 +122,39 @@ export function allTlsBypassPatterns(): string[] {
 }
 
 /**
+ * Per-pack exported-symbol detection declarations, with pack identity
+ * preserved. Unlike the pattern-union helpers above, consumers need to
+ * know which pack contributes which reliability + strategy — the
+ * api-surface CLI uses this to print "Excluded: ruby pack (reason: ...)"
+ * notes, and the dashboard viz uses it to disable the "exported only"
+ * filter for nodes from unreliable packs.
+ *
+ * Scope mirrors `allTlsBypassPatterns`: union across all packs (active
+ * + inactive). Returns one entry per pack that declares the field;
+ * packs with no declaration are omitted. Consumers treat omitted packs
+ * as effectively `'unreliable'` (per the field's declared semantics).
+ */
+export interface ExportDetectionDeclaration {
+  pack: LanguageId;
+  reliability: 'full' | 'partial' | 'unreliable';
+  strategy: string;
+}
+
+export function allExportDetectionDeclarations(): ExportDetectionDeclaration[] {
+  return LANGUAGES.flatMap((l) =>
+    l.exportDetection
+      ? [
+          {
+            pack: l.id,
+            reliability: l.exportDetection.reliability,
+            strategy: l.exportDetection.strategy,
+          },
+        ]
+      : [],
+  );
+}
+
+/**
  * Cloc language names declared by every pack, deduplicated. D073
  * (2.4.7): consumed by `gatherClocMetrics` to filter cloc's per-
  * language summary + `totalLines` aggregation down to "actual source
