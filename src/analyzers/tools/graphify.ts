@@ -24,6 +24,7 @@ import { getPythonExcludeFilter } from './exclusions';
 import { toProjectRelative } from './paths';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { StructuralResult } from '../../languages/capabilities/types';
+import { GRAPH_REPORT_PATH, type GraphJson } from '../../explore/types';
 
 interface GraphifyResult {
   functionCount: number;
@@ -37,6 +38,7 @@ interface GraphifyResult {
   deadImportCount: number;
   commentedCodeRatio: number;
   sourceFilesInGraph: number;
+  graph?: GraphJson;
 }
 
 /** Build the graphify Python script with cwd-specific exclusions baked in. */
@@ -127,6 +129,130 @@ def _is_excluded(f):
         return True
     return False
 
+
+# ── Per-language symbol-level enrichment ─────────────────────────────────────
+# 2.7 Sprint 1: extract per-node line numbers + exported flags so the
+# graph JSON downstream consumers (explore CLI api-surface query, dashboard
+# viz "exported only" filter, future 2.8 reachability) can answer "is this
+# symbol part of the public API?" The reliability tier is per-pack (see
+# LanguageSupport.exportDetection in src/languages/types.ts) — packs
+# declared 'unreliable' (today: ruby) get \`exported: absent\` per the
+# schema's "absent = unknown" convention. Tiers 'full' and 'partial' are
+# checked here via line-scan against per-extension patterns.
+
+import re as _re
+
+# Maps file extension → (pack-id, reliability-tier). Mirrors
+# LanguageSupport.exportDetection declarations across the 8 packs. Ruby
+# (.rb) is intentionally absent because the pack declares
+# 'unreliable' — nodes from .rb files inherit \`exported: absent\`.
+_EXT_TO_PACK = {
+    '.ts': 'typescript', '.tsx': 'typescript', '.js': 'typescript',
+    '.jsx': 'typescript', '.mjs': 'typescript', '.cjs': 'typescript',
+    '.py': 'python',
+    '.go': 'go',
+    '.rs': 'rust',
+    '.cs': 'csharp',
+    '.kt': 'kotlin', '.kts': 'kotlin',
+    '.java': 'java',
+    '.rb': 'ruby',
+}
+
+# Reliability tier per pack (mirrors LanguageSupport declarations).
+# Used to skip line-scan for unreliable packs entirely.
+_PACK_RELIABILITY = {
+    'typescript': 'full', 'python': 'partial', 'go': 'full',
+    'rust': 'full', 'csharp': 'full', 'kotlin': 'full',
+    'java': 'full', 'ruby': 'unreliable',
+}
+
+# File-line cache so each source file is read at most once during
+# the per-node enrichment pass. ~5MB for a 600-file repo; acceptable
+# for a one-shot CLI invocation.
+_FILE_LINES = {}
+
+def _get_source_line(file_path, line_no):
+    if file_path not in _FILE_LINES:
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as fh:
+                _FILE_LINES[file_path] = fh.readlines()
+        except OSError:
+            _FILE_LINES[file_path] = []
+    lines = _FILE_LINES[file_path]
+    if 1 <= line_no <= len(lines):
+        return lines[line_no - 1].rstrip('\\n').rstrip('\\r')
+    return ''
+
+def _ext_of(source_file):
+    if not source_file:
+        return ''
+    i = source_file.rfind('.')
+    return source_file[i:].lower() if i >= 0 else ''
+
+def _detect_exported(source_file, line_no, name):
+    """Return True / False / None per the GraphNode.exported semantics.
+    None = absent (we don't know; pack is 'unreliable' or detection failed).
+    """
+    ext = _ext_of(source_file)
+    pack = _EXT_TO_PACK.get(ext)
+    if not pack:
+        return None
+    if _PACK_RELIABILITY.get(pack) == 'unreliable':
+        return None
+    line = _get_source_line(source_file, line_no) if line_no else ''
+    if pack == 'typescript':
+        # TypeScript / JavaScript: line starts with \`export\` keyword
+        # (covers \`export function\`, \`export class\`, \`export default\`,
+        # \`export const\`, \`export { foo }\`, \`export * from ...\`).
+        return bool(_re.match(r'^\\s*export\\b', line))
+    if pack == 'python':
+        # Public-name heuristic. \`__all__\` lookup would be stricter
+        # but requires module-level state; v1 ships the simpler form.
+        # Names starting with \`_\` are conventionally private.
+        return bool(name) and not name.startswith('_')
+    if pack == 'go':
+        # Identifier starts with uppercase = exported (idiomatic Go).
+        return bool(name) and name[0:1].isupper()
+    if pack == 'rust':
+        # \`pub fn\`, \`pub struct\`, \`pub(crate) fn\`, \`pub(super) fn\`
+        return bool(_re.match(r'^\\s*pub(\\s|\\()', line))
+    if pack == 'csharp':
+        # \`public\` modifier somewhere in the declaration line
+        return bool(_re.search(r'\\bpublic\\b', line))
+    if pack == 'kotlin':
+        # Kotlin: public-by-default unless an explicit narrower modifier
+        return not bool(_re.search(r'\\b(private|internal|protected)\\b', line))
+    if pack == 'java':
+        # \`public\` modifier somewhere in the declaration line
+        return bool(_re.search(r'\\bpublic\\b', line))
+    return None
+
+def _parse_line_no(node_attrs):
+    """Graphify stores source_location as \`L<line>\` (string) or sometimes the
+    raw number. Return int line or 0 when absent/malformed."""
+    loc = node_attrs.get('source_location')
+    if loc is None:
+        return 0
+    if isinstance(loc, int):
+        return loc
+    s = str(loc)
+    if s.startswith('L'):
+        s = s[1:]
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return 0
+
+def _strip_paren_suffix(label):
+    """\`createUser()\` → \`createUser\`, \`UserRepository.findById()\` → \`findById\`."""
+    if not label:
+        return ''
+    s = label.rstrip(')').rstrip('(')
+    # Method labels are \`Class.method\` — keep only the right-hand side.
+    if '.' in s:
+        s = s.rsplit('.', 1)[1]
+    return s
+
 all_files = collect_files(target)
 files = [f for f in all_files if not _is_excluded(f)]
 if not files:
@@ -195,6 +321,227 @@ total_src = len(source_files_set)
 empty_files = total_src - len(files_with_nodes)
 commented_ratio = empty_files / total_src if total_src > 0 else 0.0
 
+
+# ── Build the full graph artifact ────────────────────────────────────────────
+# 2.7 Sprint 1: emit nodes / edges / communities / symbolIndex alongside
+# the aggregate metrics. Consumers (explore CLI, dashboard viz, future
+# 2.8 context CLI + reachability) read this via src/explore/load.ts.
+# Schema contract documented in tmp/2.7-graph-json-schema.md.
+
+# Determine class membership: a module-shaped node is a CLASS if it has
+# outbound 'method' edges to other nodes (it's the owner). A function-
+# shaped node ("()" in label) is a METHOD if it has inbound 'method'
+# edges from a class node; otherwise it's a free FUNCTION.
+_class_owners = set()
+_method_members = set()
+for u, v, data in G.edges(data=True):
+    if data.get("relation") == "method":
+        _class_owners.add(u)
+        _method_members.add(v)
+
+def _node_kind(nid, attrs):
+    label = attrs.get('label', '')
+    is_callable = '()' in label
+    if is_callable:
+        return 'method' if nid in _method_members else 'function'
+    return 'class' if nid in _class_owners else 'module'
+
+# Make node sourceFile paths project-relative (graphify emits absolute
+# paths derived from \`target = sys.argv[1]\`). Mirrors the existing
+# maxFunctionsFilePath path-normalization at the TS layer.
+def _rel(p):
+    if not p:
+        return ''
+    s = str(p).replace(os.sep, '/')
+    t = str(target).replace(os.sep, '/').rstrip('/')
+    if s.startswith(t + '/'):
+        return s[len(t) + 1:]
+    if s == t:
+        return ''
+    return s
+
+# Assign stable in-run ids: n0, n1, n2, ... in extraction order. The
+# graphify-internal id strings (long underscored slugs) work but bloat
+# the JSON by ~20 bytes per node; the n<idx> shortening saves ~50KB on
+# a 13k-node repo. IDs are NOT stable across runs (per schema doc).
+_id_remap = {}
+graph_nodes = []
+for idx, (nid, attrs) in enumerate(nodes):
+    short_id = f'n{idx}'
+    _id_remap[nid] = short_id
+    line_no = _parse_line_no(attrs)
+    rel_source = _rel(attrs.get('source_file', ''))
+    label = attrs.get('label', '')
+    name = _strip_paren_suffix(label)
+    kind = _node_kind(nid, attrs)
+    node_obj = {
+        'id': short_id,
+        'kind': kind,
+        'label': label,
+        'sourceFile': rel_source,
+    }
+    if line_no:
+        node_obj['line'] = line_no
+    # Export detection only meaningful for symbol-bearing kinds
+    # (functions, classes, methods). Module-level "is this file
+    # exported?" isn't a useful question — exclude.
+    if kind in ('function', 'class', 'method'):
+        # Resolve to absolute path for the file-line cache (we read
+        # the raw source content; the cache key is the actual path
+        # on disk, not the project-relative form).
+        abs_source = attrs.get('source_file', '')
+        exported = _detect_exported(abs_source, line_no, name)
+        if exported is not None:
+            node_obj['exported'] = exported
+    graph_nodes.append(node_obj)
+
+# Edges remapped to short ids. Drop self-loops and edges where either
+# endpoint was filtered out (defensive — graphify shouldn't produce them
+# but be tolerant). Graphify emits both 'imports' (broad form: \`import X\`)
+# and 'imports_from' (\`from X import Y\` / \`import {Y} from X\`); both
+# carry the same semantic for our schema ("A imports from B"). Merge
+# both into the canonical 'imports_from' edge relation. The 'contains'
+# and 'inherits' relations graphify also produces are intentionally
+# dropped — 'contains' duplicates the file/symbol-membership info
+# already encoded in nodes' sourceFile field, and 'inherits' is
+# class-inheritance which isn't yet a first-class schema relation.
+graph_edges = []
+for u, v, data in G.edges(data=True):
+    if u not in _id_remap or v not in _id_remap:
+        continue
+    graphify_relation = data.get('relation', '')
+    if graphify_relation == 'calls':
+        relation = 'calls'
+    elif graphify_relation in ('imports', 'imports_from'):
+        relation = 'imports_from'
+    elif graphify_relation == 'method':
+        relation = 'method'
+    else:
+        continue
+    edge_obj = {
+        'from': _id_remap[u],
+        'to': _id_remap[v],
+        'relation': relation,
+    }
+    graph_edges.append(edge_obj)
+
+# Communities: for each cluster compute dominantSourceDir + dominantPack.
+# dominantSourceDir = most common ancestor directory (the longest
+# leading-segment path that >= 40% of members share); empty string when
+# no clear dominant. dominantPack = most common pack id among member
+# files' extensions; empty when no dominant pack.
+def _ancestor_dir(rel_path):
+    if not rel_path or '/' not in rel_path:
+        return ''
+    return rel_path.rsplit('/', 1)[0] + '/'
+
+graph_communities = []
+# Graphify's cluster() returns dict[community_id: list[node_id]].
+# Iterate via .items(); the community_id is the actual cluster
+# identifier (used to look up cohesion in scores), members is the
+# node-id list.
+_node_attrs_by_id = dict(nodes)
+for cidx, member_list in communities.items():
+    member_ids = sorted(_id_remap.get(n, '') for n in member_list if n in _id_remap)
+    member_ids = [m for m in member_ids if m]
+    if not member_ids:
+        continue
+    # Per-member source files (project-relative)
+    member_files = []
+    for nid in member_list:
+        if nid in _id_remap:
+            sf = _rel(_node_attrs_by_id.get(nid, {}).get('source_file', ''))
+            if sf:
+                member_files.append(sf)
+    # Dominant directory: longest common ancestor that >= 40% of
+    # members share (or empty if no clear winner).
+    dir_counter = Counter(_ancestor_dir(f) for f in member_files)
+    dir_counter.pop('', None)
+    dominant_dir = ''
+    if dir_counter:
+        top_dir, top_count = dir_counter.most_common(1)[0]
+        if top_count / len(member_files) >= 0.4:
+            dominant_dir = top_dir
+    # Dominant pack
+    pack_counter = Counter()
+    for f in member_files:
+        pk = _EXT_TO_PACK.get(_ext_of(f))
+        if pk:
+            pack_counter[pk] += 1
+    dominant_pack = ''
+    if pack_counter:
+        top_pack, top_pack_count = pack_counter.most_common(1)[0]
+        if top_pack_count / max(1, len(member_files)) >= 0.5:
+            dominant_pack = top_pack
+    cohesion = float(scores.get(cidx, 0.0)) if scores else 0.0
+    graph_communities.append({
+        'id': cidx,
+        'nodeIds': member_ids,
+        'cohesion': round(cohesion, 3),
+        'dominantSourceDir': dominant_dir,
+        'dominantPack': dominant_pack,
+    })
+
+# Symbol index: lowercased label (without trailing ()) → list of nodeIds.
+_symbol_index = {}
+for node_obj in graph_nodes:
+    key = _strip_paren_suffix(node_obj['label']).lower()
+    if not key:
+        continue
+    _symbol_index.setdefault(key, []).append(node_obj['id'])
+
+# Active-pack detection: derive from extensions seen in source files.
+_packs_seen = sorted({_EXT_TO_PACK[e] for e in (_ext_of(_rel(d.get('source_file', '')))
+                                                  for _, d in nodes)
+                       if e in _EXT_TO_PACK})
+
+# Size-budget enforcement. Hard cap 50MB serialized. If we exceed,
+# drop method edges first (densest class — structural noise, doesn't
+# affect call-graph queries).
+import datetime as _dt
+_meta = {
+    'tool': 'graphify',
+    'graphifyVersion': '',  # filled by TS-side post-parse (read from graphifyy package version)
+    'dxkitVersion': '',     # filled by TS-side post-parse (read from package.json)
+    'generatedAt': _dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'sourceFilesInGraph': total_src,
+    'excludedFileCount': len(all_files) - len(files),
+    'packs': _packs_seen,
+    'truncated': False,
+    'truncatedReason': '',
+}
+
+_graph_payload = {
+    'schemaVersion': 1,
+    'meta': _meta,
+    'nodes': graph_nodes,
+    'edges': graph_edges,
+    'communities': graph_communities,
+    'symbolIndex': _symbol_index,
+}
+
+# Cheap pre-check on size: serialize once, measure, drop method edges
+# if over the cap, re-serialize. The 50MB cap matches the schema
+# contract; 10MB soft target is informational only (no enforcement).
+_BYTES_HARD_CAP = 50 * 1024 * 1024
+
+def _serialize(payload):
+    return json.dumps(payload, separators=(',', ':'))
+
+_graph_json = _serialize(_graph_payload)
+if len(_graph_json.encode('utf-8')) > _BYTES_HARD_CAP:
+    # Drop method edges first; they're structural (class-owns-method),
+    # not behavioral. Call + import edges carry the actionable info.
+    pre_count = len(_graph_payload['edges'])
+    _graph_payload['edges'] = [e for e in _graph_payload['edges']
+                               if e['relation'] != 'method']
+    post_count = len(_graph_payload['edges'])
+    _meta['truncated'] = True
+    _meta['truncatedReason'] = (
+        f"dropped {pre_count - post_count} method edges to fit under "
+        f"the 50MB hard cap"
+    )
+
 # Clean up temp cache
 import shutil
 shutil.rmtree(str(_cache_dir), ignore_errors=True)
@@ -213,6 +560,7 @@ print(json.dumps({
     "deadImportCount": len(dead),
     "commentedCodeRatio": round(commented_ratio, 3),
     "sourceFilesInGraph": total_src,
+    "graph": _graph_payload,
 }))
 `;
 }
@@ -230,34 +578,121 @@ export type StructuralGatherOutcome =
   | { kind: 'unavailable'; reason: string };
 
 /**
- * Per-cwd memoization of the graphify outcome. Graphify is the heaviest
- * external tool dxkit shells out to (~10-60s depending on repo size);
- * memoizing ensures the Layer 2 reshape path + the capability
- * dispatcher's `graphifyProvider` share one invocation per analyzer run.
- *
- * Same constraints as the gitleaks cache: module-scoped, no automatic
- * invalidation, safe for the one-shot CLI shape.
+ * Graph-artifact outcome for the explore CLI / dashboard viz / future
+ * graph consumers. Sibling to `StructuralGatherOutcome` but carries
+ * the full `GraphJson` instead of the aggregate envelope. Both
+ * outcomes are populated from a single Python invocation; consumers
+ * pick the slice they need.
  */
-const graphifyOutcomeCache = new Map<string, StructuralGatherOutcome>();
+export type GraphGatherOutcome =
+  | { kind: 'success'; graph: GraphJson }
+  | { kind: 'unavailable'; reason: string };
 
 /**
- * Single source of truth for the graphify subprocess invocation.
- * Consumed by `graphifyProvider` (capability dispatcher) and by the
- * Layer 2 legacy reshape in `tools/parallel.ts` — both paths share the
- * memoized per-cwd outcome so graphify shells out at most once per
- * analyzer run.
+ * Per-cwd memoization. Graphify is the heaviest external tool dxkit
+ * shells out to (~10-60s depending on repo size); the two outcomes
+ * share one Python invocation, populated atomically via the run
+ * promise cache below.
+ *
+ * Module-scoped, no automatic invalidation, safe for the one-shot
+ * CLI shape (same constraints as the gitleaks cache).
+ */
+const aggregatesCache = new Map<string, StructuralGatherOutcome>();
+const graphCache = new Map<string, GraphGatherOutcome>();
+
+/**
+ * Run-coalescing promise cache. Concurrent callers (e.g. the parallel
+ * capability dispatcher AND a CLI subcommand both kicking off graphify
+ * gather) share a single in-flight Python invocation instead of racing
+ * to start their own. Without this, on first-access the cache check
+ * returns empty for both callers, both fire the Python subprocess,
+ * and the second one's result silently overwrites the first.
+ */
+const runPromises = new Map<string, Promise<void>>();
+
+/**
+ * Aggregate-metrics outcome — the existing API. Consumed by
+ * `graphifyProvider` (capability dispatcher) + the Layer 2 legacy
+ * reshape in `tools/parallel.ts`. Signature unchanged from pre-2.7.
  */
 export async function gatherGraphifyResult(cwd: string): Promise<StructuralGatherOutcome> {
-  const cached = graphifyOutcomeCache.get(cwd);
-  if (cached) return cached;
-  const outcome = await computeGraphifyOutcome(cwd);
-  graphifyOutcomeCache.set(cwd, outcome);
+  await runGraphifyOnce(cwd);
+  // runGraphifyOnce guarantees the cache is populated on completion;
+  // the `!` is safe.
+  return aggregatesCache.get(cwd)!;
+}
+
+/**
+ * Graph-artifact outcome — new in 2.7. Consumed by the explore CLI's
+ * `loadGraph` path (via the `.dxkit/reports/graph.json` write), by
+ * direct in-memory consumers that want the graph without a disk
+ * roundtrip, and by future 2.8 context-CLI + reachability gathers.
+ *
+ * Shares one Python invocation with `gatherGraphifyResult` per the
+ * runPromises cache — concurrent calls coalesce; sequential calls
+ * read from memoized caches.
+ *
+ * Side effect: when the gather succeeds AND `opts.writeToDisk` is
+ * truthy (default), the graph is written to
+ * `.dxkit/reports/graph.json`. Set `writeToDisk: false` for one-shot
+ * in-memory consumers (tests, ephemeral CLI flows) that don't want
+ * the file-system side effect. The write is idempotent — repeated
+ * calls overwrite atomically.
+ */
+export async function gatherGraphifyGraph(
+  cwd: string,
+  opts: { writeToDisk?: boolean } = {},
+): Promise<GraphGatherOutcome> {
+  await runGraphifyOnce(cwd);
+  const outcome = graphCache.get(cwd)!;
+  const shouldWrite = opts.writeToDisk !== false;
+  if (shouldWrite && outcome.kind === 'success') {
+    writeGraphArtifact(cwd, outcome.graph);
+  }
   return outcome;
 }
 
-async function computeGraphifyOutcome(cwd: string): Promise<StructuralGatherOutcome> {
+/**
+ * Persist the graph JSON to its canonical disk location. Failures
+ * are swallowed with a warning to stderr — graph.json is a
+ * convenience artifact, not load-bearing for any analyzer flow that
+ * could fail because of a missing report file.
+ */
+function writeGraphArtifact(cwd: string, graph: GraphJson): void {
+  const absPath = path.join(cwd, GRAPH_REPORT_PATH);
+  try {
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, JSON.stringify(graph));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`dxkit: failed to write ${GRAPH_REPORT_PATH}: ${msg}\n`);
+  }
+}
+
+async function runGraphifyOnce(cwd: string): Promise<void> {
+  // Fast path: both caches already populated → nothing to do.
+  if (aggregatesCache.has(cwd) && graphCache.has(cwd)) return;
+  let p = runPromises.get(cwd);
+  if (!p) {
+    p = computeAndCache(cwd).finally(() => {
+      // Drop the promise once it settles so a future cache-miss
+      // (e.g. after manual cache eviction in tests) can re-run.
+      // The aggregate + graph caches remain authoritative.
+      runPromises.delete(cwd);
+    });
+    runPromises.set(cwd, p);
+  }
+  return p;
+}
+
+async function computeAndCache(cwd: string): Promise<void> {
   const pythonCmd = findPython(cwd);
-  if (!pythonCmd) return { kind: 'unavailable', reason: 'not installed' };
+  if (!pythonCmd) {
+    const reason = 'not installed';
+    aggregatesCache.set(cwd, { kind: 'unavailable', reason });
+    graphCache.set(cwd, { kind: 'unavailable', reason });
+    return;
+  }
 
   // Per-run tempdir via mkdtempSync — unique random suffix eliminates
   // the `Date.now()` collision risk when two dxkit processes fire
@@ -290,26 +725,27 @@ async function computeGraphifyOutcome(cwd: string): Promise<StructuralGatherOutc
   const stderrCapture = outcome.stderr.trim();
 
   if (!output) {
+    let reason: string;
     if (outcome.timedOut) {
-      return {
-        kind: 'unavailable',
-        reason: 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)',
-      };
+      reason = 'timed out at 300s (try narrowing scan scope via .dxkit-ignore)';
+    } else {
+      // Surface the first meaningful stderr line so the customer can
+      // see what broke (tree-sitter parse error, Python ImportError,
+      // OOM kill, etc.). Truncate aggressively — toolsUnavailable[]
+      // entries shouldn't carry multi-line tracebacks.
+      const firstStderrLine = stderrCapture
+        .split('\n')
+        .find((l) => l.trim().length > 0)
+        ?.trim();
+      reason = firstStderrLine
+        ? `failed: ${firstStderrLine.length > 200 ? firstStderrLine.slice(0, 197) + '...' : firstStderrLine}`
+        : outcome.code !== 0 && outcome.code !== null
+          ? `failed with exit code ${outcome.code} (no stderr captured — likely killed by the OS, e.g. OOM)`
+          : 'failed to run (no stderr captured)';
     }
-    // Surface the first meaningful stderr line so the customer can
-    // see what broke (tree-sitter parse error, Python ImportError,
-    // OOM kill, etc.). Truncate aggressively — toolsUnavailable[]
-    // entries shouldn't carry multi-line tracebacks.
-    const firstStderrLine = stderrCapture
-      .split('\n')
-      .find((l) => l.trim().length > 0)
-      ?.trim();
-    const reason = firstStderrLine
-      ? `failed: ${firstStderrLine.length > 200 ? firstStderrLine.slice(0, 197) + '...' : firstStderrLine}`
-      : outcome.code !== 0 && outcome.code !== null
-        ? `failed with exit code ${outcome.code} (no stderr captured — likely killed by the OS, e.g. OOM)`
-        : 'failed to run (no stderr captured)';
-    return { kind: 'unavailable', reason };
+    aggregatesCache.set(cwd, { kind: 'unavailable', reason });
+    graphCache.set(cwd, { kind: 'unavailable', reason });
+    return;
   }
 
   // Graphify prints progress to stdout before the JSON — extract only the JSON line.
@@ -317,17 +753,72 @@ async function computeGraphifyOutcome(cwd: string): Promise<StructuralGatherOutc
     .split('\n')
     .filter((l) => l.startsWith('{'))
     .pop();
-  if (!jsonLine) return { kind: 'unavailable', reason: 'no JSON output' };
+  if (!jsonLine) {
+    const reason = 'no JSON output';
+    aggregatesCache.set(cwd, { kind: 'unavailable', reason });
+    graphCache.set(cwd, { kind: 'unavailable', reason });
+    return;
+  }
 
   let data: GraphifyResult & { error?: string };
   try {
     data = JSON.parse(jsonLine) as GraphifyResult & { error?: string };
   } catch {
-    return { kind: 'unavailable', reason: 'parse error' };
+    const reason = 'parse error';
+    aggregatesCache.set(cwd, { kind: 'unavailable', reason });
+    graphCache.set(cwd, { kind: 'unavailable', reason });
+    return;
   }
-  if (data.error) return { kind: 'unavailable', reason: data.error };
+  if (data.error) {
+    const reason = data.error;
+    aggregatesCache.set(cwd, { kind: 'unavailable', reason });
+    graphCache.set(cwd, { kind: 'unavailable', reason });
+    return;
+  }
 
-  return { kind: 'success', envelope: buildGraphifyEnvelope(data, cwd) };
+  // Populate the aggregates cache (existing behavior).
+  aggregatesCache.set(cwd, { kind: 'success', envelope: buildGraphifyEnvelope(data, cwd) });
+
+  // Populate the graph cache. Backfill the dxkitVersion in meta;
+  // graphifyVersion left empty in v1 (Python-side version probe
+  // declined to keep the script self-contained). Consumers tolerate
+  // empty version strings.
+  if (data.graph) {
+    const dxkitVersion = readDxkitVersion();
+    const enrichedGraph: GraphJson = {
+      ...data.graph,
+      meta: {
+        ...data.graph.meta,
+        dxkitVersion,
+      },
+    };
+    graphCache.set(cwd, { kind: 'success', graph: enrichedGraph });
+  } else {
+    // Aggregates parsed but graph field missing — old script output
+    // or a malformed JSON. Surface as graph-unavailable so the
+    // existing aggregates path keeps working.
+    graphCache.set(cwd, {
+      kind: 'unavailable',
+      reason: 'graph field missing from script output (older script?)',
+    });
+  }
+}
+
+/**
+ * Read the dxkit version string from the package.json bundled into
+ * the installed package. Resolved at runtime via a relative path from
+ * this module's directory; works for both `npm install -g` and local
+ * `npm link` flows. Returns 'unknown' on any failure (caller tolerates).
+ */
+function readDxkitVersion(): string {
+  try {
+    // dist/analyzers/tools/graphify.js → ../../../package.json
+    const pkgPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { version?: string };
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
