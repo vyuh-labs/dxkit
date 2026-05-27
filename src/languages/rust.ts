@@ -834,6 +834,11 @@ export const rust: LanguageSupport = {
   testFilePatterns: ['*_test.rs', 'tests/*.rs'],
   extraExcludes: ['target'],
 
+  exportDetection: {
+    reliability: 'full',
+    strategy: '`pub`, `pub(crate)`, `pub(super)` visibility modifiers on items',
+  },
+
   // D027 (2.4.7): rustdoc uses outer (`///`) and inner (`//!`)
   // doc-comment markers. Both at the start of a (possibly indented)
   // line.

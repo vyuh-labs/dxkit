@@ -672,6 +672,12 @@ export const ruby: LanguageSupport = {
 
   extraExcludes: ['vendor/bundle', '.bundle', 'coverage', 'tmp', 'log'],
 
+  exportDetection: {
+    reliability: 'unreliable',
+    strategy:
+      'Static detection unreliable — Ruby metaprogramming (`define_method`, `method_missing`, monkey-patching) defeats AST analysis',
+  },
+
   // D027 (2.4.7): YARD documentation convention uses `##` block
   // comments (distinguished from regular `#` line comments). Plain
   // `#` would over-match every commented-out line; `##` is the
