@@ -23,7 +23,7 @@
 import { HealthMetrics } from '../types';
 import { gatherClocMetrics } from './cloc';
 import { gatherGitleaksResult } from './gitleaks';
-import { gatherGraphifyResult } from './graphify';
+import { gatherGraphifyGraph, gatherGraphifyResult } from './graphify';
 
 export async function gatherLayer2Parallel(
   cwd: string,
@@ -52,6 +52,14 @@ export async function gatherLayer2Parallel(
   } else {
     toolsUnavailable.push(`graphify (${graphify.reason})`);
   }
+
+  // Trigger the graph.json side-effect write. Shares the Python
+  // invocation with gatherGraphifyResult above via the promise-
+  // coalesced cache — no second shell-out. The disk write powers
+  // the explore CLI (Sprint 2) + dashboard viz (Sprint 3) + future
+  // 2.8 context CLI + reachability flows, all of which read from
+  // .dxkit/reports/graph.json via the canonical loader.
+  await gatherGraphifyGraph(cwd);
 
   return {
     sourceFiles: clocPartial.sourceFiles,
