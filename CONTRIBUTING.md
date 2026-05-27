@@ -261,6 +261,17 @@ reason="..."`). Hash-style (`#`) for python, ruby, shell;
 install`, `cargo update`, `go get`, edit-pom for Maven,
     edit-Gemfile for Bundler. Required when the pack declares a
     `depVulns` capability.
+  - `exportDetection?` (2.7) — declares this pack's reliability for
+    detecting which symbols are exported / public. Drives the
+    `exported` flag on per-node entries in `.dxkit/reports/graph.json`
+    - the `vyuh-dxkit explore api-surface` query + the dashboard viz
+      "exported only" filter. Three reliability tiers: `'full'` (TS
+      `export`, Go capitalization, Rust `pub`, C# / Java / Kotlin
+      `public`), `'partial'` (Python `__all__` + public-name
+      heuristic), `'unreliable'` (Ruby metaprogramming defeats static
+      analysis — api-surface excludes the pack with an explanatory
+      note). Detection itself lives in
+      `src/analyzers/tools/graphify-graph.ts` (Python script).
 
 #### Recipe enforcement (runs in pre-commit + CI)
 
