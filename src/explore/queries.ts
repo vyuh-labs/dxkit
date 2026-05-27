@@ -47,11 +47,103 @@ export function nodesInFile(graph: Graph, sourceFile: string): GraphNode[] {
   return [...(graph.nodesByFile.get(sourceFile) ?? [])];
 }
 
-// ─── High-level queries (Sprint 2 fills bodies) ──────────────────────────────
+// ─── High-level queries ──────────────────────────────────────────────────────
 
-// Sprint 2 implements: entryPointsQuery, hotFilesQuery, fileSummaryQuery,
-// featureQuery, communitiesQuery, apiSurfaceQuery.
-//
-// The skeleton stays minimal — Sprint 1 only needs the file to exist so
-// Rule 12 has a canonical target to lock onto. Real implementations
-// arrive with the CLI subcommands.
+/**
+ * One row of `vyuh-dxkit explore hot-files` output. A "hot" file is
+ * one many other files depend on (high total in-degree across all the
+ * symbols it declares + inbound imports to the file's module node).
+ *
+ * - `callsIn`: count of `calls` edges terminating at any symbol in
+ *   the file (summed across the file's function / class / method
+ *   nodes)
+ * - `importsIn`: count of `imports_from` edges terminating at the
+ *   file's module node
+ * - `callsOut`: count of `calls` edges originating from any symbol
+ *   in the file
+ * - `communityId` / `communityLabel`: the community the file's
+ *   module node belongs to, when one exists; label is the
+ *   community's dominantSourceDir for a quick visual anchor
+ */
+export interface HotFileResult {
+  sourceFile: string;
+  callsIn: number;
+  importsIn: number;
+  callsOut: number;
+  communityId?: number;
+  communityLabel?: string;
+}
+
+/**
+ * Top-N files by total in-degree (callers + importers). The
+ * "centrality" proxy — files many other files depend on. Useful as
+ * a "what's the foundational layer of this repo?" answer.
+ *
+ * Files are derived from the union of `sourceFile` across all nodes;
+ * the per-file aggregation traverses each node's inbound/outbound
+ * edges. Limit defaults to 20 per the Sprint 0 spec.
+ */
+export function hotFilesQuery(graph: Graph, limit = 20): HotFileResult[] {
+  const perFile = new Map<string, { callsIn: number; callsOut: number; nodes: GraphNode[] }>();
+
+  for (const node of graph.nodes) {
+    if (!node.sourceFile) continue;
+    let agg = perFile.get(node.sourceFile);
+    if (!agg) {
+      agg = { callsIn: 0, callsOut: 0, nodes: [] };
+      perFile.set(node.sourceFile, agg);
+    }
+    agg.nodes.push(node);
+    for (const e of graph.edgesToNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') agg.callsIn++;
+    }
+    for (const e of graph.edgesFromNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') agg.callsOut++;
+    }
+  }
+
+  // Imports-in: count edges into the FILE's module node. Module
+  // nodes have `kind === 'module'` and their `sourceFile` IS the
+  // file path. Aggregate to the file by matching on that.
+  const importsInByFile = new Map<string, number>();
+  for (const node of graph.nodes) {
+    if (node.kind !== 'module' || !node.sourceFile) continue;
+    let count = 0;
+    for (const e of graph.edgesToNode.get(node.id) ?? []) {
+      if (e.relation === 'imports_from') count++;
+    }
+    importsInByFile.set(node.sourceFile, (importsInByFile.get(node.sourceFile) ?? 0) + count);
+  }
+
+  const results: HotFileResult[] = [];
+  for (const [sourceFile, agg] of perFile) {
+    const importsIn = importsInByFile.get(sourceFile) ?? 0;
+    // Pick a community via any of the file's nodes — module node
+    // first if present, else any symbol's community.
+    const moduleNode = agg.nodes.find((n) => n.kind === 'module');
+    const sampleNode = moduleNode ?? agg.nodes[0];
+    const community = sampleNode ? graph.communityByNode.get(sampleNode.id) : undefined;
+    results.push({
+      sourceFile,
+      callsIn: agg.callsIn,
+      importsIn,
+      callsOut: agg.callsOut,
+      communityId: community?.id,
+      communityLabel: community?.dominantSourceDir || undefined,
+    });
+  }
+
+  // Rank by total in-degree (calls + imports). Ties broken by
+  // alphabetical source file path for stable output.
+  results.sort((a, b) => {
+    const ai = a.callsIn + a.importsIn;
+    const bi = b.callsIn + b.importsIn;
+    if (bi !== ai) return bi - ai;
+    return a.sourceFile.localeCompare(b.sourceFile);
+  });
+
+  return results.slice(0, limit);
+}
+
+// Sprint 2 will add: entryPointsQuery, fileSummaryQuery, featureQuery,
+// communitiesQuery, apiSurfaceQuery as each subcommand lands.
