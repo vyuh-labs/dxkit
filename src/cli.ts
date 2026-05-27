@@ -107,6 +107,8 @@ function printUsage(): void {
     vyuh-dxkit coverage [path]   Run per-pack test-with-coverage (side-effecting; materializes the coverage artifact health/test-gaps read)
     vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
     vyuh-dxkit report [path]     Run every analyzer + dashboard in one shot (full audit)
+    vyuh-dxkit explore <sub>     Repo exploration via the graphify artifact (Sprint 2: hot-files;
+                                 entry-points / file / feature / communities / api-surface coming)
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -276,6 +278,10 @@ export async function run(argv: string[]): Promise<void> {
       type: { type: 'string' },
       about: { type: 'string' },
       'no-browser': { type: 'boolean', default: false },
+      // explore flags
+      limit: { type: 'string' },
+      refresh: { type: 'boolean', default: false },
+      substring: { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -1810,6 +1816,20 @@ export async function run(argv: string[]): Promise<void> {
         fingerprint: values.fingerprint as string | undefined,
         about: values.about as string | undefined,
         noBrowser: !!values['no-browser'],
+      });
+      break;
+    }
+
+    case 'explore': {
+      const { runExplore } = await import('./explore-cli');
+      // positionals[0] is 'explore'; positionals[1..] are the
+      // explore subcommand name + any subcommand args.
+      await runExplore(cwd, positionals.slice(1), {
+        json: !!values.json,
+        limit: values.limit as string | undefined,
+        refresh: !!values.refresh,
+        substring: !!values.substring,
+        filter: values.filter as string | undefined,
       });
       break;
     }
