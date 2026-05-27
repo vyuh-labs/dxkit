@@ -12,7 +12,17 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { callersOf, calleesOf, nodesInFile } from '../../src/explore/queries';
+import {
+  apiSurfaceQuery,
+  callersOf,
+  calleesOf,
+  communitiesQuery,
+  entryPointsQuery,
+  featureQuery,
+  fileSummaryQuery,
+  hotFilesQuery,
+  nodesInFile,
+} from '../../src/explore/queries';
 import type {
   Community,
   Graph,
@@ -164,5 +174,319 @@ describe('nodesInFile', () => {
     result.pop();
     // Subsequent query returns the original two entries.
     expect(nodesInFile(G, 'src/a.ts')).toHaveLength(2);
+  });
+});
+
+// ─── High-level queries (Sprint 2) ────────────────────────────────────────
+
+describe('hotFilesQuery', () => {
+  it('ranks files by total in-degree (calls + imports)', () => {
+    const results = hotFilesQuery(G, 10);
+    // src/c.ts: callsIn=2 (helper + main), importsIn=0, total=2
+    // src/b.ts: callsIn=1 (main), importsIn=1 (a imports b), total=2
+    // src/a.ts: total=0
+    // src/b.ts and src/c.ts tie at total=2; alphabetical break → b.ts first.
+    const top2 = results
+      .slice(0, 2)
+      .map((r) => r.sourceFile)
+      .sort();
+    expect(top2).toEqual(['src/b.ts', 'src/c.ts']);
+    const cResult = results.find((r) => r.sourceFile === 'src/c.ts');
+    expect(cResult?.callsIn).toBe(2);
+  });
+
+  it('honors the limit', () => {
+    expect(hotFilesQuery(G, 2)).toHaveLength(2);
+    expect(hotFilesQuery(G, 1)).toHaveLength(1);
+  });
+
+  it('returns ALL files when limit exceeds graph size', () => {
+    expect(hotFilesQuery(G, 100)).toHaveLength(3);
+  });
+});
+
+describe('communitiesQuery', () => {
+  it('returns empty array when no communities', () => {
+    // G has no communities populated.
+    expect(communitiesQuery(G, 8)).toEqual([]);
+  });
+
+  it('honors the limit', () => {
+    // Build a graph with 2 synthetic communities patched in via
+    // `as unknown as` cast (the canonical Graph has readonly fields;
+    // the cast is intentional for test-only fixture construction).
+    const base = makeGraph(NODES, EDGES);
+    const communities = [
+      {
+        id: 0,
+        nodeIds: ['n0', 'n1'],
+        cohesion: 0.9,
+        dominantSourceDir: 'src/',
+        dominantPack: 'typescript',
+      },
+      {
+        id: 1,
+        nodeIds: ['n2', 'n3'],
+        cohesion: 0.8,
+        dominantSourceDir: 'src/',
+        dominantPack: 'typescript',
+      },
+    ];
+    const gWithCommunities = {
+      ...base,
+      communities,
+      communityById: new Map(communities.map((c) => [c.id, c])),
+    } as unknown as Graph;
+    expect(communitiesQuery(gWithCommunities, 1)).toHaveLength(1);
+    expect(communitiesQuery(gWithCommunities, 5)).toHaveLength(2);
+  });
+});
+
+describe('fileSummaryQuery', () => {
+  it('returns found: false for a file not in the graph', () => {
+    const result = fileSummaryQuery(G, 'src/missing.ts');
+    expect(result.found).toBe(false);
+    expect(result.symbols).toEqual([]);
+  });
+
+  it('summarizes symbols + callers + callees for a known file', () => {
+    const result = fileSummaryQuery(G, 'src/c.ts');
+    expect(result.found).toBe(true);
+    expect(result.symbols.map((s) => s.label).sort()).toEqual(['logger()']);
+    // logger() has 2 callers (helper from b.ts, main from a.ts)
+    expect(result.callerFiles.map((c) => c.sourceFile).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  it('preserves the exported flag from the node', () => {
+    const nodes: GraphNode[] = [
+      { id: 'm0', kind: 'module', label: 'src/x.ts', sourceFile: 'src/x.ts' },
+      {
+        id: 'f0',
+        kind: 'function',
+        label: 'foo()',
+        sourceFile: 'src/x.ts',
+        line: 1,
+        exported: true,
+      },
+      {
+        id: 'f1',
+        kind: 'function',
+        label: 'bar()',
+        sourceFile: 'src/x.ts',
+        line: 2,
+        exported: false,
+      },
+    ];
+    const g = makeGraph(nodes, []);
+    const result = fileSummaryQuery(g, 'src/x.ts');
+    const exportedSymbols = result.symbols.filter((s) => s.exported === true);
+    expect(exportedSymbols.map((s) => s.label)).toEqual(['foo()']);
+  });
+});
+
+describe('entryPointsQuery', () => {
+  it('returns empty when no patterns supplied', () => {
+    expect(entryPointsQuery(G, [], [])).toEqual([]);
+  });
+
+  it('matches nodes by sourceFile path against primaryPaths', () => {
+    const nodes: GraphNode[] = [
+      {
+        id: 'm0',
+        kind: 'module',
+        label: 'src/controllers/users.ts',
+        sourceFile: 'src/controllers/users.ts',
+      },
+      {
+        id: 'f0',
+        kind: 'function',
+        label: 'createUser()',
+        sourceFile: 'src/controllers/users.ts',
+        line: 5,
+      },
+      {
+        id: 'm1',
+        kind: 'module',
+        label: 'src/utils/helpers.ts',
+        sourceFile: 'src/utils/helpers.ts',
+      },
+      {
+        id: 'f1',
+        kind: 'function',
+        label: 'isValid()',
+        sourceFile: 'src/utils/helpers.ts',
+        line: 1,
+      },
+    ];
+    const edges: GraphEdge[] = [
+      { from: 'f0', to: 'f1', relation: 'calls' }, // createUser calls isValid (gives createUser callsOut=1)
+    ];
+    const g = makeGraph(nodes, edges);
+    const results = entryPointsQuery(g, ['/controllers/'], [], 10);
+    expect(results.map((r) => r.symbol)).toEqual(['createUser()']);
+    expect(results[0].componentType).toBe('controllers');
+    expect(results[0].pack).toBe('typescript');
+  });
+
+  it('filters out symbols with zero call out-degree', () => {
+    const nodes: GraphNode[] = [
+      {
+        id: 'm0',
+        kind: 'module',
+        label: 'src/controllers/users.ts',
+        sourceFile: 'src/controllers/users.ts',
+      },
+      // Function in controllers/ but no outbound calls — not an entry point
+      {
+        id: 'f0',
+        kind: 'function',
+        label: 'unused()',
+        sourceFile: 'src/controllers/users.ts',
+        line: 5,
+      },
+    ];
+    const g = makeGraph(nodes, []);
+    expect(entryPointsQuery(g, ['/controllers/'], [])).toEqual([]);
+  });
+});
+
+describe('apiSurfaceQuery', () => {
+  it('returns exported symbols with zero internal callers', () => {
+    const nodes: GraphNode[] = [
+      { id: 'm0', kind: 'module', label: 'src/index.ts', sourceFile: 'src/index.ts' },
+      {
+        id: 'f0',
+        kind: 'function',
+        label: 'publicApi()',
+        sourceFile: 'src/index.ts',
+        line: 1,
+        exported: true,
+      },
+      {
+        id: 'f1',
+        kind: 'function',
+        label: 'usedInternally()',
+        sourceFile: 'src/index.ts',
+        line: 5,
+        exported: true,
+      },
+      {
+        id: 'f2',
+        kind: 'function',
+        label: 'private()',
+        sourceFile: 'src/index.ts',
+        line: 10,
+        exported: false,
+      },
+    ];
+    const edges: GraphEdge[] = [
+      { from: 'f0', to: 'f1', relation: 'calls' }, // publicApi calls usedInternally → usedInternally has a caller
+    ];
+    const g = makeGraph(nodes, edges);
+    const results = apiSurfaceQuery(g, [], 10);
+    expect(results.map((r) => r.symbol)).toEqual(['publicApi()']);
+  });
+
+  it('skips packs in the packsExcluded list', () => {
+    const nodes: GraphNode[] = [
+      {
+        id: 'f0',
+        kind: 'function',
+        label: 'foo()',
+        sourceFile: 'src/foo.ts',
+        line: 1,
+        exported: true,
+      },
+      {
+        id: 'f1',
+        kind: 'function',
+        label: 'bar()',
+        sourceFile: 'src/bar.rb',
+        line: 1,
+        exported: true,
+      },
+    ];
+    const g = makeGraph(nodes, []);
+    const results = apiSurfaceQuery(g, ['ruby'], 10);
+    expect(results.map((r) => r.symbol)).toEqual(['foo()']);
+  });
+
+  it('ignores symbols where exported is absent (unknown)', () => {
+    const nodes: GraphNode[] = [
+      { id: 'f0', kind: 'function', label: 'foo()', sourceFile: 'src/foo.ts', line: 1 }, // no exported flag
+      {
+        id: 'f1',
+        kind: 'function',
+        label: 'bar()',
+        sourceFile: 'src/bar.ts',
+        line: 1,
+        exported: true,
+      },
+    ];
+    const g = makeGraph(nodes, []);
+    const results = apiSurfaceQuery(g, [], 10);
+    expect(results.map((r) => r.symbol)).toEqual(['bar()']);
+  });
+});
+
+describe('featureQuery', () => {
+  const featureNodes: GraphNode[] = [
+    { id: 'm0', kind: 'module', label: 'src/connectors.ts', sourceFile: 'src/connectors.ts' },
+    { id: 'c0', kind: 'class', label: 'Connector', sourceFile: 'src/connectors.ts', line: 1 },
+    {
+      id: 'f0',
+      kind: 'function',
+      label: 'createConnector()',
+      sourceFile: 'src/connectors.ts',
+      line: 5,
+    },
+    { id: 'f1', kind: 'function', label: 'unrelated()', sourceFile: 'src/other.ts', line: 1 },
+  ];
+  const featureEdges: GraphEdge[] = [
+    { from: 'f0', to: 'c0', relation: 'calls' }, // createConnector references Connector
+  ];
+  const baseFeatureGraph = makeGraph(featureNodes, featureEdges);
+  // Patch in a symbol index via cast (test-only fixture construction;
+  // the canonical Graph has readonly fields).
+  const featureGraph = {
+    ...baseFeatureGraph,
+    symbolIndex: {
+      connector: ['c0'],
+      createconnector: ['f0'],
+      unrelated: ['f1'],
+    },
+  } as unknown as Graph;
+
+  it('returns exact match via symbolIndex', () => {
+    const result = featureQuery(featureGraph, 'connector');
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.suggestions).toEqual([]);
+  });
+
+  it('expands via substring when --substring opt-in', () => {
+    const result = featureQuery(featureGraph, 'conn', { substring: true });
+    // 'conn' substring matches 'connector' + 'createconnector'
+    expect(result.results.length).toBeGreaterThan(0);
+  });
+
+  it('skips substring expansion by default', () => {
+    const result = featureQuery(featureGraph, 'conn');
+    // 'conn' has no exact symbolIndex key, no edit-distance match → suggestions
+    expect(result.results).toEqual([]);
+  });
+
+  it('returns edit-distance + substring suggestions on zero hits', () => {
+    const result = featureQuery(featureGraph, 'connectoq'); // typo of "connector"
+    expect(result.results).toEqual([]);
+    // Substring 'connectoq' has no substring matches but levenshtein
+    // distance to 'connector' is 1 → should suggest 'connector'.
+    expect(result.suggestions.map((s) => s.key)).toContain('connector');
+  });
+
+  it('populates centralEntryPoint as the highest-in-degree seed', () => {
+    // c0 has 1 caller (f0). f0 has 0 callers.
+    const result = featureQuery(featureGraph, 'connector');
+    expect(result.centralEntryPoint?.symbol).toBe('Connector');
+    expect(result.centralEntryPoint?.calledFrom).toBe(1);
   });
 });
