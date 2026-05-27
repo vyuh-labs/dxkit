@@ -797,6 +797,90 @@ if [ -n "$ROGUE_COMMENT_FALLBACK" ]; then
 fi
 
 # =============================================================================
+# Rule 12: Repo-explore graph queries flow through canonical entry points
+# (added 2026-05-26 with the 2.7 graph foundation).
+# =============================================================================
+#
+# Every consumer of the graphify graph artifact at
+# `.dxkit/reports/graph.json` reads via `src/explore/load.ts:loadGraph(cwd)`.
+# Every graph traversal — caller / callee lookup, community expansion,
+# hot-file ranking, feature-keyword expansion — lives in
+# `src/explore/queries.ts`. CLI subcommands, the dashboard viz adapter,
+# and future graph consumers (2.8 context CLI, 2.8 reachability) MUST
+# import from these two files rather than re-implementing.
+#
+# Four bans enforced below:
+#   1. loadGraph() outside src/explore/{load,queries}.ts and the
+#      allowed consumer set
+#   2. Direct JSON.parse(...graph.json...) outside the canonical loader
+#   3. NetworkX-style traversal (graph.neighbors / predecessors /
+#      successors) outside src/explore/queries.ts and the Python gather
+#      template in src/analyzers/tools/graphify.ts
+#   4. Re-implementation of canonical query helpers (function
+#      findCallers / findCallees / expandCommunity / hotFiles) outside
+#      src/explore/queries.ts
+#
+# Annotate `// rule12-explore-query-ok: <reason>` for justified
+# exceptions (today: zero needed outside the canonical files).
+
+# Rule 12.1: loadGraph() outside the allowed callers
+ROGUE_LOAD_GRAPH=$(grep -rnE 'loadGraph\(' src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/explore/' \
+  | grep -v '^src/dashboard/' \
+  | grep -v '^src/explore-cli\.ts:' \
+  | grep -v 'rule12-explore-query-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_LOAD_GRAPH" ]; then
+  echo "❌ Rule 12 violation: loadGraph() called outside canonical consumers:"
+  echo "$ROGUE_LOAD_GRAPH"
+  echo "   → Allowed callers: src/explore/, src/dashboard/, src/explore-cli.ts."
+  echo "   → Annotate '// rule12-explore-query-ok: <reason>' for justified exceptions."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 12.2: direct JSON.parse of graph.json outside the canonical loader
+ROGUE_GRAPH_PARSE=$(grep -rnE 'JSON\.parse\([^)]*graph\.json' src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/explore/load\.ts:' \
+  | grep -v 'rule12-explore-query-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_GRAPH_PARSE" ]; then
+  echo "❌ Rule 12 violation: direct JSON.parse of graph.json outside canonical loader:"
+  echo "$ROGUE_GRAPH_PARSE"
+  echo "   → Route through loadGraph(cwd) from src/explore/load.ts so the schema-"
+  echo "     version migration + structural validation runs."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 12.3: NetworkX-style traversal outside the canonical query module.
+# The Python gather template in graphify.ts is also allowed (it owns the
+# graph extraction; G.neighbors / G.edges / G.number_of_* there are
+# producer-side calls, not consumer-side traversal).
+ROGUE_GRAPH_TRAVERSAL=$(grep -rnE '(graph|G)\.(neighbors|predecessors|successors)\(' src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/explore/queries\.ts:' \
+  | grep -v '^src/analyzers/tools/graphify\.ts:' \
+  | grep -v 'rule12-explore-query-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_GRAPH_TRAVERSAL" ]; then
+  echo "❌ Rule 12 violation: graph traversal primitives outside canonical query module:"
+  echo "$ROGUE_GRAPH_TRAVERSAL"
+  echo "   → All graph traversal lives in src/explore/queries.ts. Add a typed query"
+  echo "     function there + import it; never call .neighbors() etc. directly."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# Rule 12.4: re-implementing canonical query helpers outside queries.ts
+ROGUE_QUERY_REIMPL=$(grep -rnE 'function (findCallers|findCallees|expandCommunity|hotFiles)\(' src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/explore/queries\.ts:' \
+  | grep -v 'rule12-explore-query-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_QUERY_REIMPL" ]; then
+  echo "❌ Rule 12 violation: re-implementing canonical query helpers outside queries.ts:"
+  echo "$ROGUE_QUERY_REIMPL"
+  echo "   → Extend src/explore/queries.ts; consumers import from there."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Sibling-package release-discipline rule (added 2026-05-22).
 # =============================================================================
 #
