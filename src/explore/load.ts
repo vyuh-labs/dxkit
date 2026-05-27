@@ -86,7 +86,7 @@ export function loadGraph(cwd: string): Graph {
 }
 
 function validateAndUpgrade(absPath: string, raw: unknown): GraphJson {
-  if (typeof raw !== 'object' || raw === null) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new GraphCorruptError(absPath, 'top-level value is not an object');
   }
   const obj = raw as Record<string, unknown>;
