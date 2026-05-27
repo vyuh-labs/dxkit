@@ -34,8 +34,10 @@ import {
   GraphSchemaVersionError,
   loadGraph,
 } from './explore/load';
+import { runApiSurface } from './explore/cli/api-surface';
 import { runCommunities } from './explore/cli/communities';
 import { runEntryPoints } from './explore/cli/entry-points';
+import { runFeature } from './explore/cli/feature';
 import { runFile } from './explore/cli/file';
 import { runHotFiles } from './explore/cli/hot-files';
 import type { Graph } from './explore/types';
@@ -91,9 +93,13 @@ export async function runExplore(
       runEntryPoints(graph, positionals.slice(1), values, cwd);
       return;
 
-    // Other subcommands land here as Sprint 2 progresses:
-    // case 'feature':       runFeature(graph, ...); return;
-    // case 'api-surface':   runApiSurface(graph, ...); return;
+    case 'api-surface':
+      runApiSurface(graph, positionals.slice(1), values);
+      return;
+
+    case 'feature':
+      runFeature(graph, positionals.slice(1), values);
+      return;
 
     case 'help':
     case '--help':

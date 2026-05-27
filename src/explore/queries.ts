@@ -15,7 +15,7 @@
  */
 
 import type { DetectedStack } from '../types';
-import type { Graph, GraphNode } from './types';
+import type { Community, Graph, GraphNode } from './types';
 
 // ─── Low-level primitives ────────────────────────────────────────────────────
 
@@ -497,5 +497,335 @@ function packFromExt(sourceFile: string): string {
 // pulling DetectedStack from src/types.ts directly.
 export type LanguageFlags = DetectedStack['languages'];
 
-// Sprint 2 will add: featureQuery, apiSurfaceQuery as each
-// subcommand lands.
+/**
+ * One row of `vyuh-dxkit explore api-surface` output. An "API surface"
+ * symbol is one that the language pack identifies as exported AND has
+ * zero internal callers (no other file in the graph calls into it).
+ *
+ * Typically this set falls into three buckets:
+ *   - Genuine public API (library entry points, named exports)
+ *   - CLI entry points (legitimately not internally imported)
+ *   - Dead exports (false positives surfaced honestly)
+ *
+ * The consumer should verify before treating any as dead code.
+ */
+export interface ApiSurfaceResult {
+  sourceFile: string;
+  line?: number;
+  symbol: string;
+  kind: 'function' | 'class' | 'method' | 'module';
+  pack: string;
+}
+
+/**
+ * Find exported symbols with zero internal callers. `packsExcluded`
+ * lists pack ids whose `exportDetection.reliability === 'unreliable'`
+ * — those packs' nodes are skipped because we can't trust their
+ * `exported` flag (today: ruby). The consumer surfaces the exclusion
+ * as a note in its output.
+ */
+export function apiSurfaceQuery(
+  graph: Graph,
+  packsExcluded: ReadonlyArray<string>,
+  limit = 25,
+): ApiSurfaceResult[] {
+  const excluded = new Set(packsExcluded);
+  const results: ApiSurfaceResult[] = [];
+
+  for (const node of graph.nodes) {
+    if (node.kind === 'module') continue;
+    if (node.exported !== true) continue; // absent or false → skip
+    const pack = packFromExt(node.sourceFile);
+    if (excluded.has(pack)) continue;
+
+    // Zero internal callers — check inbound calls edges. Note: the
+    // calls in-degree includes potential graphify same-name conflicts
+    // (run() at one site can attract calls meant for run() at another),
+    // so this is a "best effort" — but consumers know that's the limit.
+    let hasCaller = false;
+    for (const e of graph.edgesToNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') {
+        hasCaller = true;
+        break;
+      }
+    }
+    if (hasCaller) continue;
+
+    results.push({
+      sourceFile: node.sourceFile,
+      line: node.line,
+      symbol: node.label,
+      kind: node.kind,
+      pack,
+    });
+  }
+
+  // Sort by sourceFile asc (groups by file naturally) then line asc.
+  results.sort((a, b) => a.sourceFile.localeCompare(b.sourceFile) || (a.line ?? 0) - (b.line ?? 0));
+
+  return results.slice(0, limit);
+}
+
+/**
+ * Options for `featureQuery`. `substring` enables the noisier
+ * keyword-substring expansion (off by default per Sprint 0 spec —
+ * false-positive prone for short keywords).
+ */
+export interface FeatureQueryOpts {
+  substring?: boolean;
+  limit?: number;
+}
+
+/**
+ * A clustering of symbols that look like they implement one feature.
+ * The community membership is the structural backbone — symbols in
+ * the same community are tightly coupled by definition. The role
+ * label comes from the community's dominantPack/dominantSourceDir
+ * + per-pack vocabulary when available.
+ */
+export interface FeatureCluster {
+  clusterId: number;
+  communityId?: number;
+  role: string;
+  dominantSourceDir: string;
+  files: string[];
+  keySymbols: string[];
+  seedHits: number;
+}
+
+/**
+ * Full result of a feature query. `results` is non-empty when at
+ * least one symbol matched the keyword; `suggestions` is populated
+ * only when `results` is empty (edit-distance ≤2 against the
+ * symbolIndex keys, top-3). `centralEntryPoint` names the highest
+ * call-in-degree node across all clusters when results were found
+ * — the natural "if you only look at one file, look here" anchor.
+ */
+export interface FeatureResult {
+  results: FeatureCluster[];
+  suggestions: Array<{ key: string; hits: number }>;
+  centralEntryPoint?: {
+    sourceFile: string;
+    line?: number;
+    symbol: string;
+    calledFrom: number;
+  };
+}
+
+/**
+ * The marquee query — "where is feature X implemented?" Three-stage
+ * resolution:
+ *
+ *   1. Direct symbolIndex lookup (case-insensitive, exact match on
+ *      the stripped name)
+ *   2. Substring expansion (opt-in via opts.substring) — scans every
+ *      node's label for substring match
+ *   3. Structural expansion — for each seed, gather community
+ *      membership + immediate callers + callees, group by community
+ *
+ * On zero hits, computes edit-distance suggestions against the
+ * symbolIndex keys so the caller can prompt the user with "did you
+ * mean..."
+ */
+export function featureQuery(
+  graph: Graph,
+  keyword: string,
+  opts: FeatureQueryOpts = {},
+): FeatureResult {
+  const limit = opts.limit ?? 50;
+  const kw = keyword.toLowerCase().trim();
+  if (!kw) {
+    return { results: [], suggestions: [] };
+  }
+
+  // Stage 1: direct symbolIndex match.
+  const seedIds = new Set<string>(graph.symbolIndex[kw] ?? []);
+
+  // Stage 2: optional substring expansion. Iterate symbolIndex keys
+  // (smaller than nodes) for the substring scan, then collect their
+  // node ids.
+  if (opts.substring) {
+    for (const [key, ids] of Object.entries(graph.symbolIndex)) {
+      if (key.includes(kw)) {
+        for (const id of ids) seedIds.add(id);
+      }
+    }
+  }
+
+  if (seedIds.size === 0) {
+    // "Did you mean" — two flavors, merged:
+    //   1. Substring matches (symbols whose name CONTAINS the keyword)
+    //      — the common case, since users rarely guess exact long
+    //      symbol names like "gatherGraphifyResult" when they ask
+    //      "where is graphify?"
+    //   2. Edit-distance suggestions (Levenshtein ≤2) — catches
+    //      typos like "graphfiy" → "graphify"-prefixed symbols
+    // Substring is only tried for keywords of length >= 3 (anything
+    // shorter generates too many false positives).
+    const suggestions: Array<{ key: string; hits: number }> = [];
+    const seen = new Set<string>();
+    if (kw.length >= 3) {
+      for (const key of Object.keys(graph.symbolIndex)) {
+        if (key.includes(kw)) {
+          suggestions.push({ key, hits: graph.symbolIndex[key].length });
+          seen.add(key);
+        }
+      }
+    }
+    for (const key of Object.keys(graph.symbolIndex)) {
+      if (seen.has(key)) continue;
+      const d = levenshtein(kw, key);
+      if (d <= 2) {
+        suggestions.push({ key, hits: graph.symbolIndex[key].length });
+      }
+    }
+    suggestions.sort((a, b) => b.hits - a.hits || a.key.localeCompare(b.key));
+    return { results: [], suggestions: suggestions.slice(0, 5) };
+  }
+
+  // Stage 3: structural expansion. For each seed, gather its
+  // community + direct callers/callees. Group expanded set by
+  // community id.
+  const expandedByComm = new Map<number, Set<string>>();
+  const unclusteredExpansion = new Set<string>();
+
+  for (const seedId of seedIds) {
+    const community = graph.communityByNode.get(seedId);
+    const bucket = community
+      ? (expandedByComm.get(community.id) ?? new Set<string>())
+      : unclusteredExpansion;
+    bucket.add(seedId);
+
+    // Direct callers (1 hop)
+    for (const e of graph.edgesToNode.get(seedId) ?? []) {
+      if (e.relation === 'calls') bucket.add(e.from);
+    }
+    // Direct callees (1 hop)
+    for (const e of graph.edgesFromNode.get(seedId) ?? []) {
+      if (e.relation === 'calls') bucket.add(e.to);
+    }
+
+    if (community) expandedByComm.set(community.id, bucket);
+  }
+
+  // Build cluster objects, ranked by seed count then size.
+  const clusters: FeatureCluster[] = [];
+  let clusterIdx = 0;
+
+  const buildCluster = (
+    nodeIds: Iterable<string>,
+    community: Community | undefined,
+  ): FeatureCluster => {
+    const files = new Set<string>();
+    const keySymbols = new Set<string>();
+    let seedHits = 0;
+    for (const nid of nodeIds) {
+      const node = graph.nodeById.get(nid);
+      if (!node) continue;
+      if (node.sourceFile) files.add(node.sourceFile);
+      if (seedIds.has(nid)) {
+        seedHits++;
+        // Promote seed nodes to keySymbols list.
+        const stripped = stripParens(node.label);
+        if (stripped) keySymbols.add(stripped);
+      }
+    }
+    // Top-8 key symbols by alpha for stable output.
+    const keySymbolsList = [...keySymbols].sort().slice(0, 8);
+    const filesList = [...files].sort();
+    const role = roleLabel(community);
+    return {
+      clusterId: clusterIdx++,
+      communityId: community?.id,
+      role,
+      dominantSourceDir: community?.dominantSourceDir ?? '',
+      files: filesList,
+      keySymbols: keySymbolsList,
+      seedHits,
+    };
+  };
+
+  for (const [commId, ids] of expandedByComm) {
+    const community = graph.communityById.get(commId);
+    clusters.push(buildCluster(ids, community));
+  }
+  if (unclusteredExpansion.size > 0) {
+    clusters.push(buildCluster(unclusteredExpansion, undefined));
+  }
+
+  // Rank clusters by seedHits desc, then size desc, then community id asc.
+  clusters.sort(
+    (a, b) =>
+      b.seedHits - a.seedHits ||
+      b.files.length - a.files.length ||
+      (a.communityId ?? 9999) - (b.communityId ?? 9999),
+  );
+
+  const limitedClusters = clusters.slice(0, limit);
+
+  // Central entry point: across all seed ids, the one with the
+  // highest call in-degree globally.
+  let centralId: string | undefined;
+  let centralCount = 0;
+  for (const seedId of seedIds) {
+    let inDeg = 0;
+    for (const e of graph.edgesToNode.get(seedId) ?? []) {
+      if (e.relation === 'calls') inDeg++;
+    }
+    if (inDeg > centralCount) {
+      centralCount = inDeg;
+      centralId = seedId;
+    }
+  }
+  let centralEntryPoint: FeatureResult['centralEntryPoint'];
+  if (centralId && centralCount > 0) {
+    const n = graph.nodeById.get(centralId);
+    if (n) {
+      centralEntryPoint = {
+        sourceFile: n.sourceFile,
+        line: n.line,
+        symbol: n.label,
+        calledFrom: centralCount,
+      };
+    }
+  }
+
+  return { results: limitedClusters, suggestions: [], centralEntryPoint };
+}
+
+function roleLabel(community: Community | undefined): string {
+  if (!community) return 'unclustered';
+  if (community.dominantSourceDir) return community.dominantSourceDir;
+  return `community-${community.id}`;
+}
+
+function stripParens(label: string): string {
+  if (!label) return '';
+  let s = label.replace(/\(\)$/, '');
+  if (s.includes('.')) s = s.split('.').pop() ?? s;
+  return s;
+}
+
+/**
+ * Iterative Levenshtein with O(min(a, b)) memory. Fast enough for
+ * the suggestions scan (a few hundred symbolIndex keys × ≤20 chars).
+ */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const long = a.length >= b.length ? a : b;
+  const short = a.length >= b.length ? b : a;
+  let prev = new Array<number>(short.length + 1);
+  let curr = new Array<number>(short.length + 1);
+  for (let i = 0; i <= short.length; i++) prev[i] = i;
+  for (let i = 1; i <= long.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= short.length; j++) {
+      const cost = long[i - 1] === short[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[short.length];
+}
