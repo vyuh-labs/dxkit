@@ -20,6 +20,7 @@ import {
   entryPointsQuery,
   featureQuery,
   fileSummaryQuery,
+  findingContextQuery,
   hotFilesQuery,
   nodesInFile,
 } from '../../src/explore/queries';
@@ -32,7 +33,7 @@ import type {
   SymbolIndex,
 } from '../../src/explore/types';
 
-function makeGraph(nodes: GraphNode[], edges: GraphEdge[]): Graph {
+function makeGraph(nodes: GraphNode[], edges: GraphEdge[], communities: Community[] = []): Graph {
   const nodeById = new Map<string, GraphNode>();
   for (const n of nodes) nodeById.set(n.id, n);
 
@@ -56,6 +57,10 @@ function makeGraph(nodes: GraphNode[], edges: GraphEdge[]): Graph {
 
   const communityById = new Map<number, Community>();
   const communityByNode = new Map<string, Community>();
+  for (const c of communities) {
+    communityById.set(c.id, c);
+    for (const nid of c.nodeIds) communityByNode.set(nid, c);
+  }
 
   const json: GraphJson = {
     schemaVersion: 1,
@@ -72,7 +77,7 @@ function makeGraph(nodes: GraphNode[], edges: GraphEdge[]): Graph {
     },
     nodes,
     edges,
-    communities: [],
+    communities,
     symbolIndex: {} as SymbolIndex,
   };
 
@@ -488,5 +493,103 @@ describe('featureQuery', () => {
     const result = featureQuery(featureGraph, 'connector');
     expect(result.centralEntryPoint?.symbol).toBe('Connector');
     expect(result.centralEntryPoint?.calledFrom).toBe(1);
+  });
+});
+
+describe('findingContextQuery', () => {
+  // Fixture: src/svc/auth.ts declares login() @10 and validate() @30.
+  // Two other files call into auth.ts:
+  //   src/api/routes.ts (n10 handler) -> login()  [1 call]
+  //   src/api/admin.ts  (n12 adminFn) -> login() + validate()  [2 calls]
+  // Community 0 (dominantSourceDir 'src/svc/') owns the auth.ts nodes.
+  const FC_NODES: GraphNode[] = [
+    { id: 'a0', kind: 'module', label: 'src/svc/auth.ts', sourceFile: 'src/svc/auth.ts' },
+    { id: 'a1', kind: 'function', label: 'login()', sourceFile: 'src/svc/auth.ts', line: 10 },
+    { id: 'a2', kind: 'function', label: 'validate()', sourceFile: 'src/svc/auth.ts', line: 30 },
+    { id: 'r0', kind: 'module', label: 'src/api/routes.ts', sourceFile: 'src/api/routes.ts' },
+    { id: 'r1', kind: 'function', label: 'handler()', sourceFile: 'src/api/routes.ts', line: 4 },
+    { id: 'm0', kind: 'module', label: 'src/api/admin.ts', sourceFile: 'src/api/admin.ts' },
+    { id: 'm1', kind: 'function', label: 'adminFn()', sourceFile: 'src/api/admin.ts', line: 7 },
+  ];
+  const FC_EDGES: GraphEdge[] = [
+    { from: 'a0', to: 'a1', relation: 'method' },
+    { from: 'a0', to: 'a2', relation: 'method' },
+    { from: 'r1', to: 'a1', relation: 'calls' }, // routes.handler -> login
+    { from: 'm1', to: 'a1', relation: 'calls' }, // admin.adminFn -> login
+    { from: 'm1', to: 'a2', relation: 'calls' }, // admin.adminFn -> validate
+  ];
+  const FC_COMMUNITIES: Community[] = [
+    {
+      id: 0,
+      nodeIds: ['a0', 'a1', 'a2'],
+      cohesion: 0.9,
+      dominantSourceDir: 'src/svc/',
+      dominantPack: 'typescript',
+    },
+  ];
+  const FC = makeGraph(FC_NODES, FC_EDGES, FC_COMMUNITIES);
+
+  it('returns found:false for a file not in the graph (graceful degradation)', () => {
+    const ctx = findingContextQuery(FC, 'src/nowhere.ts', 12);
+    expect(ctx.found).toBe(false);
+    expect(ctx.blastRadius).toEqual({ callerFiles: 0, callers: 0, topCallerFiles: [] });
+    expect(ctx.enclosingSymbol).toBeUndefined();
+  });
+
+  it('computes file-level blast radius (unique caller files + total caller calls)', () => {
+    const ctx = findingContextQuery(FC, 'src/svc/auth.ts', 12);
+    expect(ctx.found).toBe(true);
+    // routes.ts + admin.ts both call into auth.ts symbols → 2 caller files.
+    expect(ctx.blastRadius.callerFiles).toBe(2);
+    // 3 call edges land on auth.ts symbols (routes->login, admin->login, admin->validate).
+    expect(ctx.blastRadius.callers).toBe(3);
+    expect(ctx.blastRadius.topCallerFiles).toContain('src/api/routes.ts');
+    expect(ctx.blastRadius.topCallerFiles).toContain('src/api/admin.ts');
+  });
+
+  it('resolves the community role from the dominant source dir', () => {
+    const ctx = findingContextQuery(FC, 'src/svc/auth.ts', 12);
+    expect(ctx.community).toEqual({ id: 0, role: 'src/svc/' });
+  });
+
+  it('maps a line to the nearest enclosing declaration at-or-above it', () => {
+    // Line 12 sits below login()@10, above validate()@30 → login().
+    expect(findingContextQuery(FC, 'src/svc/auth.ts', 12).enclosingSymbol).toEqual({
+      symbol: 'login',
+      line: 10,
+    });
+    // Line 35 sits below validate()@30 → validate().
+    expect(findingContextQuery(FC, 'src/svc/auth.ts', 35).enclosingSymbol).toEqual({
+      symbol: 'validate',
+      line: 30,
+    });
+    // Exactly on the declaration line counts as inside it.
+    expect(findingContextQuery(FC, 'src/svc/auth.ts', 10).enclosingSymbol?.symbol).toBe('login');
+  });
+
+  it('omits enclosingSymbol when no declaration sits at-or-above the line', () => {
+    // Line 5 is above login()@10 (the earliest symbol) → no enclosing decl.
+    expect(findingContextQuery(FC, 'src/svc/auth.ts', 5).enclosingSymbol).toBeUndefined();
+  });
+
+  it('omits enclosingSymbol when no line is supplied (file-level finding)', () => {
+    const ctx = findingContextQuery(FC, 'src/svc/auth.ts');
+    expect(ctx.found).toBe(true);
+    expect(ctx.enclosingSymbol).toBeUndefined();
+    // Blast radius is still computed for file-level findings.
+    expect(ctx.blastRadius.callerFiles).toBe(2);
+  });
+
+  it('labels an unclustered file (no community) honestly', () => {
+    const ctx = findingContextQuery(FC, 'src/api/routes.ts');
+    expect(ctx.found).toBe(true);
+    expect(ctx.community).toEqual({ role: 'unclustered' });
+  });
+
+  it('caps topCallerFiles to the requested count', () => {
+    const ctx = findingContextQuery(FC, 'src/svc/auth.ts', undefined, { topCallerFiles: 1 });
+    expect(ctx.blastRadius.topCallerFiles).toHaveLength(1);
+    // Full count is preserved even when the sample is capped.
+    expect(ctx.blastRadius.callerFiles).toBe(2);
   });
 });
