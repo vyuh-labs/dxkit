@@ -55,6 +55,25 @@ function buildSettingsJson(config: ResolvedConfig): string {
           allow: perms,
           deny: [],
         },
+        // PreToolUse hook on code-search tools: injects a slim graph
+        // subgraph as additional context so the agent needs fewer
+        // follow-up whole-file reads (the navigation-layer token win).
+        // ADDITIVE + FAIL-OPEN by construction — `context-hook` only
+        // ever adds context and silently no-ops when graph.json is
+        // absent/stale, so the search tool always works normally.
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: 'Grep|Glob',
+              hooks: [
+                {
+                  type: 'command',
+                  command: 'npx vyuh-dxkit context-hook',
+                },
+              ],
+            },
+          ],
+        },
       },
       null,
       2,
