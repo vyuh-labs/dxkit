@@ -107,8 +107,10 @@ function printUsage(): void {
     vyuh-dxkit coverage [path]   Run per-pack test-with-coverage (side-effecting; materializes the coverage artifact health/test-gaps read)
     vyuh-dxkit dashboard [path]  Render .dxkit/reports/ into a single HTML dashboard
     vyuh-dxkit report [path]     Run every analyzer + dashboard in one shot (full audit)
-    vyuh-dxkit explore <sub>     Repo exploration via the graphify artifact (Sprint 2: hot-files;
-                                 entry-points / file / feature / communities / api-surface coming)
+    vyuh-dxkit explore <sub>     Repo exploration via the graphify artifact
+                                 (hot-files / entry-points / file / feature / communities / api-surface / context)
+    vyuh-dxkit context <query>   Slim structural slice for a query — token-efficient
+                                 codebase context for LLMs (--budget / --depth / --substring / --json)
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
