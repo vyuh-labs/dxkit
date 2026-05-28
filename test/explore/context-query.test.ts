@@ -236,7 +236,7 @@ describe('contextQuery — blast radius', () => {
 });
 
 describe('contextQuery — community grouping', () => {
-  it('groups the selection by community, ranked by symbol count', () => {
+  it('groups the selection by community', () => {
     const r = contextQuery(G, 'main');
     expect(r.byCommunity.length).toBeGreaterThanOrEqual(1);
     // comm 0 (src/) holds main + helper; comm 1 (src/c.ts) holds logger.
@@ -245,6 +245,19 @@ describe('contextQuery — community grouping', () => {
     const comm1 = r.byCommunity.find((g) => g.communityId === 1);
     expect(comm1?.symbols).toEqual(['logger']);
     expect(comm1?.role).toBe('src/c.ts');
+  });
+
+  it('ranks the seed-containing community FIRST, even when another is bigger', () => {
+    // Query logger(): seed lands in comm 1 (1 symbol); the BFS pulls
+    // its callers main + helper into comm 0 (2 symbols). Size-sorting
+    // alone would put comm 0 first and bury the seed — seed-first
+    // ordering must surface comm 1 at the top.
+    const r = contextQuery(G, 'logger');
+    expect(r.byCommunity[0].communityId).toBe(1);
+    expect(r.byCommunity[0].symbols).toContain('logger');
+    // comm 0 is larger but seedless → ranks second.
+    expect(r.byCommunity[1].communityId).toBe(0);
+    expect(r.byCommunity[1].symbols.length).toBeGreaterThan(r.byCommunity[0].symbols.length);
   });
 });
 
