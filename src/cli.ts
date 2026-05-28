@@ -96,6 +96,7 @@ function printUsage(): void {
   ${logger.bold('Usage:')}
     vyuh-dxkit init [options]    Install dxkit agent DX in this repo
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
+    vyuh-dxkit version           Print dxkit, Node, and platform versions
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis
     vyuh-dxkit vulnerabilities [path]  Run deep security scan
@@ -205,6 +206,28 @@ function printUsage(): void {
     npx vyuh-dxkit init --detect --stealth  # Local-only, not committed
     npx vyuh-dxkit update                # Re-generate from manifest
 `);
+}
+
+export interface VersionInfoInput {
+  readonly dxkitVersion: string;
+  readonly nodeVersion: string;
+  readonly platform: string;
+  readonly arch: string;
+}
+
+export function formatVersionInfo(
+  input: VersionInfoInput = {
+    dxkitVersion: VERSION,
+    nodeVersion: process.version,
+    platform: process.platform,
+    arch: process.arch,
+  },
+): string {
+  return [
+    `vyuh-dxkit ${input.dxkitVersion}`,
+    `node ${input.nodeVersion}`,
+    `${input.platform} ${input.arch}`,
+  ].join('\n');
 }
 
 export async function run(argv: string[]): Promise<void> {
@@ -499,6 +522,11 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'update': {
       await runUpdate(cwd, !!values.force, !!values.rescan);
+      break;
+    }
+
+    case 'version': {
+      console.log(formatVersionInfo());
       break;
     }
 
