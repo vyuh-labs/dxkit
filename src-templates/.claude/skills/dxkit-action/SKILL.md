@@ -11,7 +11,7 @@ This skill takes a dxkit report and drives the fix loop with the user. Reach for
 
 ```
 [1] Read the report          → understand what's flagged
-[2] Prioritize               → severity + reachability + cost
+[2] Prioritize               → severity + reachability + blast radius + cost
 [3] Plan                     → ordered list of edits
 [4] Execute                  → fix one finding at a time
 [5] Verify                   → re-run the analyzer, confirm score moved
@@ -19,6 +19,14 @@ This skill takes a dxkit report and drives the fix loop with the user. Reach for
 ```
 
 Don't skip [5]. Re-running the analyzer is the only way to confirm the fix landed correctly.
+
+For the richest input, read the **detailed** report with graph context attached:
+
+```bash
+npx vyuh-dxkit vulnerabilities --detailed --graph-context   # or test-gaps / quality
+```
+
+`--graph-context` adds a "Graph context" column (the module a finding lives in + its blast radius — how many files call into it) so you can plan the fix without separately discovering structure. It's a structural HINT, not ground truth — read "Graph context" below for how to use it safely.
 
 ## Priority order
 
@@ -32,6 +40,18 @@ Walk findings in this order (highest to lowest):
 6. **LOW** anything (often defer to backlog).
 
 Skip items where reachability is "no" (graphify can't find a call path) UNLESS the finding is a secret leak (those don't depend on reachability).
+
+## Graph context (structural blast radius)
+
+When the report was generated with `--graph-context`, each finding carries a "Graph context" cell: the module/role it belongs to and its **blast radius** (`role · N caller files`) — how many other files call into the finding's file. Use it to sharpen prioritization and planning, under three hard rules.
+
+**1. Additive only — it never overrides severity or reachability.** Blast radius is a tie-breaker between findings of similar severity, not a re-ranking of the priority list above. Among two HIGH findings, fix the one with the larger blast radius first (more depends on it). A LOW finding never jumps a HIGH one because its blast radius is bigger.
+
+**2. A blank or zero blast radius is NOT "safe to change".** The cell reads `blast radius n/a (call graph)` for languages whose call graph the analyzer can't resolve (C# is the known case — cross-assembly references aren't followed, so heavily-used files look like they have zero callers). Treat n/a — and even a literal `0 caller files` — as **unknown**, never as evidence the file is safe to edit freely. When blast radius is n/a, fall back to the module/role label (that part is reliable) and verify callers the normal way (grep / read) before a risky edit. Do **not** deprioritize a real finding just because its blast radius is empty.
+
+**3. Confirm the symbol before you act on it.** The context may name an enclosing symbol (the function the finding sits in). It's a best-effort guess (the graph stores declaration lines, not end lines), so open the file and confirm the finding is actually inside that symbol before editing or writing a test against it.
+
+Used within those rules, the win is concrete: a high blast radius tells you which caller files to re-check and re-test in step [5] after the fix, and the module label orients you fast. Same-name symbols can inflate the count — a suspiciously huge number is usually conflation, not reality.
 
 ## Common fix recipes
 
