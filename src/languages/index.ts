@@ -31,6 +31,29 @@ export function detectActiveLanguages(cwd: string): LanguageSupport[] {
 }
 
 /**
+ * Map a source-file path to its owning language pack by extension,
+ * using each pack's declared `sourceExtensions` (pack-driven per
+ * CLAUDE.md Rule 6 — no hardcoded ext→lang table). Returns undefined
+ * for files no registered pack claims. Longest-extension-wins so a
+ * compound extension (e.g. a future `.d.ts`) beats a shorter one.
+ */
+export function languageForFile(filePath: string): LanguageSupport | undefined {
+  const lower = filePath.toLowerCase();
+  let best: LanguageSupport | undefined;
+  let bestLen = -1;
+  for (const lang of LANGUAGES) {
+    for (const ext of lang.sourceExtensions) {
+      const e = ext.toLowerCase();
+      if (lower.endsWith(e) && e.length > bestLen) {
+        best = lang;
+        bestLen = e.length;
+      }
+    }
+  }
+  return best;
+}
+
+/**
  * Map a `DetectedStack` (or `ResolvedConfig`, which extends it) to the
  * set of `LanguageSupport` packs that are active for the project.
  * Pack-driven via `DetectedStack.languages` keyed on `LanguageId` —

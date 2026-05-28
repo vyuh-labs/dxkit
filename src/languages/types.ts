@@ -184,6 +184,26 @@ export interface LanguageSupport {
   };
 
   /**
+   * How much to trust graphify's `calls`-edge extraction for this
+   * language — i.e. whether a node's caller count (its "blast radius")
+   * is meaningful. graphify resolves calls by tree-sitter name-matching
+   * within the project; that works for languages whose call targets are
+   * locally resolvable, but breaks where resolution needs cross-module
+   * type information the extractor doesn't have.
+   *
+   * The motivating case is C#: graphify can't follow `using` directives
+   * across assemblies, so most `.cs` files look like orphans (zero
+   * callers) even when heavily used. A consumer that reads "0 callers"
+   * as "safe to change" would be actively misled — so blast radius must
+   * be suppressed (not shown as 0) for `'unreliable'` packs.
+   *
+   * Optional — absent is treated as `'full'` (graphify's name-matching
+   * resolves call targets within the project for this language; same-
+   * name conflation still applies everywhere, but a 0 means 0).
+   */
+  callGraphReliability?: 'full' | 'partial' | 'unreliable';
+
+  /**
    * D027 (2.4.7): grep -E regex strings identifying lines that
    * contain a documentation comment in this language. The union of
    * every active pack's patterns drives `docCommentFiles` in
