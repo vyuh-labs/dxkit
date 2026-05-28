@@ -187,16 +187,23 @@ vyuh-dxkit explore <subcommand> [args] [flags]
 
 Subcommands:
   hot-files                Files most depended on (top by call in-degree)
-  entry-points             Route handlers / controllers / forms (coming)
-  file <path>              Symbols + callers/callees for one file (coming)
-  feature <keyword>        Where is feature X implemented? (coming)
-  communities              Natural-module clusters (coming)
-  api-surface              Exported symbols with no internal callers (coming)
+  entry-points             Route handlers / controllers / forms
+  file <path>              Symbols + callers/callees for one file
+  feature <keyword>        Where is feature X implemented?
+  communities              Natural-module clusters
+  api-surface              Exported symbols with no internal callers
+  context <query>          Slim structural slice for a query (token-reduction;
+                           also available as the top-level 'vyuh-dxkit context')
 
 Flags (all subcommands):
   --json                   Emit structured JSON envelope
   --limit N                Cap result count (per-subcommand defaults)
   --refresh                Force-regenerate graph.json before query
+
+context-only flags:
+  --budget N               Token ceiling on the slice (default 2000)
+  --depth N                Hard ceiling on call-graph hops (default: budget-bounded)
+  --substring              Broaden keyword matching to substrings
 
 Reads from .dxkit/reports/graph.json. Run \`vyuh-dxkit health\` first
 to generate the artifact.
