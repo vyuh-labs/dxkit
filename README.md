@@ -188,6 +188,16 @@ dxkit ships nine Claude Code skills under `.claude/skills/dxkit-*`. They wrap th
 
 Why this matters for AI workflows: when an agent fixes a bug, you need an objective signal that says "yes, fixed cleanly" or "fix introduced four new regressions." dxkit's deterministic score plus baseline guardrail produces that signal. The agent reads the same JSON envelope a human reads, runs the verify step itself, and stops when clean.
 
+### Code-graph context — fix issues at reduced token cost
+
+dxkit builds a deterministic code graph of your repo — symbols, call edges, and clustered modules — via graphify (the `graphifyy` Python package). The point isn't the graph; it's what an agent does with it. Instead of discovering structure by repeatedly grepping and reading whole files, a coding agent gets the relevant slice handed to it:
+
+- **`vyuh-dxkit context <query>`** (and an opt-in PreToolUse hook) feed an agent a slim structural map — the relevant symbols, where they live, and what calls them — so it navigates by graph rather than by re-reading files. That's the same work at a fraction of the tokens.
+- **`--graph-context`** attaches each finding's blast radius (which files call into it) and its module straight into the detailed report, so the `dxkit-action` fix skill plans the change — and knows which callers to re-test — without separately rediscovering structure.
+- **`vyuh-dxkit explore`** and a dashboard graph tab let humans ask the same graph what the repo does, where a feature lives, and which files are load-bearing.
+
+It's an additive, fail-open hint layer: when the graph is missing — or a language's call edges can't be resolved — every command behaves exactly as before. Reliable on TypeScript / Python / Go; where the call graph can't be resolved (C#), blast radius is suppressed rather than faked, so a "no callers" reading is never mistaken for "safe to change."
+
 ### Reproducible environments
 
 Per-stack devcontainer with only the languages your project uses. Scanner toolchain auto-installed. Install scripts for AI agent CLIs (auth stays user-owned). Codespaces prebuilds wire via `vyuh-dxkit setup-prebuild` so cold-start drops from ~7 minutes to ~30 seconds.
