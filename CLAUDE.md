@@ -387,6 +387,51 @@ Two rules in `scripts/check-architecture.sh` (pre-commit + CI):
    `src/baseline/ref-baseline.ts`. Annotate `// ref-worktree-ok`
    for justified exceptions.
 
+### 12. Repo-explore graph access flows through two canonical entry points
+
+Everything that reads the code graph at `.dxkit/reports/graph.json`
+(the explore CLI subcommands, the dashboard graph adapter, the
+per-finding enrichment adapter, the context CLI + PreToolUse hook, and
+future graph consumers like reachability) goes through exactly two
+modules:
+
+- **Load** via `src/explore/load.ts:loadGraph(cwd)` (or its fail-open
+  sibling `tryLoadGraph`) — the only place that may `JSON.parse` the
+  artifact. It validates the wire format, handles schema-version
+  migration, and builds the convenience indices.
+- **Query** via `src/explore/queries.ts` — every graph traversal
+  (callers/callees, file summaries, communities, the budget-bounded
+  `contextQuery`, the per-finding `findingContextQuery`) is a pure
+  function here. Consumers import these; they never re-walk
+  `edgesFromNode` / `edgesToNode` themselves.
+
+Higher-level adapters compose the two: `src/explore/finding-context.ts`
+loads once and maps findings to `findingContextQuery` results;
+analyzers receive the pre-built context and never touch the graph
+(graph reliability per language comes from `LanguageSupport.callGraphReliability`,
+not a hardcoded table — Rule 6).
+
+**Bad**: `loadGraph()` in `src/cli.ts` or an analyzer; `JSON.parse(...graph.json)`
+anywhere but `load.ts`; iterating `graph.edgesToNode` inside a CLI
+subcommand; a second Levenshtein/BFS helper outside `queries.ts`.
+
+**Good**: a CLI subcommand calls `buildFindingContextMap(cwd, ...)` or a
+`queries.ts` function; the dashboard adapter imports `loadGraph` +
+query helpers.
+
+#### Graph-access enforcement
+
+Four rules in `scripts/check-architecture.sh` (pre-commit + CI):
+
+1. `loadGraph(` only in `src/explore/`, `src/dashboard/`,
+   `src/explore-cli.ts`.
+2. No direct `JSON.parse` of `graph.json` outside
+   `src/explore/load.ts`.
+3. No graph-traversal primitives (predecessor/successor edge walks)
+   outside `src/explore/queries.ts`.
+4. No re-implementation of canonical query helpers outside
+   `src/explore/queries.ts` — extend it and import.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local
