@@ -1022,6 +1022,15 @@ export interface FindingContext {
   community?: { id?: number; role: string };
   blastRadius: { callerFiles: number; callers: number; topCallerFiles: string[] };
   /**
+   * Trust level of `blastRadius` for this file's language, stamped by
+   * the enrichment adapter (not the pure query — `queries.ts` stays
+   * independent of the language registry). `'unreliable'` means
+   * graphify can't resolve this language's call edges (today: C#
+   * cross-assembly `using`), so a 0 here is NOT evidence of "no callers"
+   * and the renderer suppresses the number. Absent ⇒ treated as `'full'`.
+   */
+  callGraphReliability?: 'full' | 'partial' | 'unreliable';
+  /**
    * Best-effort symbol the finding sits inside: the declaration
    * nearest at-or-above `line`. Absent when no `line` was given or the
    * file declares no symbol at-or-above the line. Graph nodes carry
