@@ -45,6 +45,30 @@ async function emitJson(payload: unknown): Promise<void> {
 }
 
 /**
+ * Build per-finding graph context for the detailed reports when the
+ * run passed `--graph-context`. Fail-open: returns undefined when the
+ * flag is off OR the graph can't be loaded, so detailed reports render
+ * exactly as they do today. Logs a one-line coverage note so the user
+ * sees how much of the report got enriched (and why, when it didn't).
+ */
+async function buildGraphContextIfRequested(
+  enabled: boolean,
+  cwd: string,
+  locations: ReadonlyArray<{ file: string; line?: number }>,
+) {
+  if (!enabled) return undefined;
+  const { buildFindingContextMap } = await import('./explore/finding-context');
+  const gc = buildFindingContextMap(cwd, locations);
+  if (!gc) {
+    logger.dim('--graph-context: no graph.json found (run `health` first) — skipped.');
+    return undefined;
+  }
+  const enriched = Object.keys(gc.contexts).length;
+  logger.dim(`--graph-context: attached to ${enriched}/${locations.length} finding location(s).`);
+  return gc;
+}
+
+/**
  * Apply `--fail-on-score` to a higher-is-better score. Exits with
  * code 1 + a logged reason when the gate fires. Skips when the user
  * didn't pass the flag. Centralized so every analyzer that supports
@@ -189,6 +213,9 @@ function printUsage(): void {
     --verbose         Print per-tool timing to stderr
     --no-save         Skip writing the markdown report file
     --detailed        Also write <name>-detailed.md + .json with evidence + ranked actions
+    --graph-context   Vulnerabilities/test-gaps/quality: attach per-finding graph context
+                      (module + blast radius) to the detailed report. Needs a graph.json
+                      (run health first); fail-open — skipped silently if absent.
     --xlsx            Licenses/bom: also write 15-col BOM XLSX
     --since           Dev-report: start date (YYYY-MM-DD)
     --filter          Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
@@ -287,6 +314,8 @@ export async function run(argv: string[]): Promise<void> {
       // context flags
       budget: { type: 'string' },
       depth: { type: 'string' },
+      // graph-context enrichment for detailed reports (vuln/test-gaps/quality)
+      'graph-context': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -753,7 +782,12 @@ export async function run(argv: string[]): Promise<void> {
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
         const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
           await import('./analyzers/security/detailed');
-        const securityDetailed = buildSecurityDetailed(report);
+        const graphContext = await buildGraphContextIfRequested(
+          !!values['graph-context'],
+          targetPath,
+          report.findings.map((f) => ({ file: f.file, line: f.line })),
+        );
+        const securityDetailed = buildSecurityDetailed(report, graphContext);
         const securityDetailedJsonPath = path.join(
           reportDir,
           `vulnerability-scan-${date}-detailed.json`,
@@ -869,7 +903,12 @@ export async function run(argv: string[]): Promise<void> {
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
         const { buildTestGapsDetailed, formatTestGapsDetailedMarkdown } =
           await import('./analyzers/tests/detailed');
-        const testGapsDetailed = buildTestGapsDetailed(report);
+        const testGapsGraphContext = await buildGraphContextIfRequested(
+          !!values['graph-context'],
+          targetPath,
+          report.gaps.map((g) => ({ file: g.path })),
+        );
+        const testGapsDetailed = buildTestGapsDetailed(report, testGapsGraphContext);
         const testGapsDetailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
         const testGapsDetailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
         fs.writeFileSync(
@@ -969,7 +1008,14 @@ export async function run(argv: string[]): Promise<void> {
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
         const { buildQualityDetailed, formatQualityDetailedMarkdown } =
           await import('./analyzers/quality/detailed');
-        const qualityDetailed = buildQualityDetailed(report);
+        const qualityGraphContext = await buildGraphContextIfRequested(
+          !!values['graph-context'],
+          targetPath,
+          [...(report.metrics.topConsoleFiles ?? []), ...(report.metrics.topTodoFiles ?? [])].map(
+            (f) => ({ file: f.file }),
+          ),
+        );
+        const qualityDetailed = buildQualityDetailed(report, qualityGraphContext);
         const qualityDetailedJsonPath = path.join(
           reportDir,
           `quality-review-${date}-detailed.json`,

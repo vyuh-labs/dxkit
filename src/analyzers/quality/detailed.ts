@@ -10,15 +10,30 @@ import { buildSlopActions } from './actions';
 import { qualityMetricsToScoreInput } from './index';
 import { QUALITY_SCORING_SPEC, evaluateSpec } from '../../scoring';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import {
+  formatGraphContextCell,
+  graphContextProvenanceLine,
+  locationKey,
+  type DetailedGraphContext,
+} from '../../explore/finding-context';
 
 export interface QualityDetailedReport extends QualityReport {
   /** Schema version for agent consumers. Bump on breaking shape changes. */
   schemaVersion: string;
   /** Ranked remediation actions with simulated score deltas. */
   actions: Array<RankedAction<QualityMetrics>>;
+  /**
+   * Per-offender-file graph context (module + blast radius), keyed by
+   * file path. Present only when `--graph-context` ran AND a graph
+   * loaded.
+   */
+  graphContext?: DetailedGraphContext;
 }
 
-export function buildQualityDetailed(report: QualityReport): QualityDetailedReport {
+export function buildQualityDetailed(
+  report: QualityReport,
+  graphContext?: DetailedGraphContext,
+): QualityDetailedReport {
   const actions = rank(buildSlopActions(report.metrics), report.metrics, (m) =>
     evaluateSpec(QUALITY_SCORING_SPEC, qualityMetricsToScoreInput(m)),
   );
@@ -26,6 +41,7 @@ export function buildQualityDetailed(report: QualityReport): QualityDetailedRepo
     ...report,
     schemaVersion: '11',
     actions,
+    ...(graphContext ? { graphContext } : {}),
   };
 }
 
@@ -107,22 +123,56 @@ export function formatQualityDetailedMarkdown(
     L.push('');
   }
 
-  // Top offenders
+  // Top offenders — enriched with graph context (module + blast radius)
+  // when --graph-context ran, so a reader sees how central each
+  // offender file is before deciding to touch it.
+  const gc = detailed.graphContext;
+  let provenancePrinted = false;
+  const offenderProvenance = () => {
+    if (gc && !provenancePrinted) {
+      L.push(graphContextProvenanceLine(gc));
+      L.push('');
+      provenancePrinted = true;
+    }
+  };
+
   if (m.topConsoleFiles && m.topConsoleFiles.length > 0) {
     L.push('## Files with Most Console Statements');
     L.push('');
-    L.push('| File | Count |');
-    L.push('|------|------:|');
-    for (const f of m.topConsoleFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
+    offenderProvenance();
+    if (gc) {
+      L.push('| File | Count | Graph context |');
+      L.push('|------|------:|----------------|');
+      for (const f of m.topConsoleFiles) {
+        L.push(
+          `| \`${f.file}\` | ${f.count} | ${formatGraphContextCell(gc.contexts[locationKey(f.file)])} |`,
+        );
+      }
+    } else {
+      L.push('| File | Count |');
+      L.push('|------|------:|');
+      for (const f of m.topConsoleFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
+    }
     L.push('');
   }
 
   if (m.topTodoFiles && m.topTodoFiles.length > 0) {
     L.push('## Files with Most TODO/FIXME/HACK');
     L.push('');
-    L.push('| File | Count |');
-    L.push('|------|------:|');
-    for (const f of m.topTodoFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
+    offenderProvenance();
+    if (gc) {
+      L.push('| File | Count | Graph context |');
+      L.push('|------|------:|----------------|');
+      for (const f of m.topTodoFiles) {
+        L.push(
+          `| \`${f.file}\` | ${f.count} | ${formatGraphContextCell(gc.contexts[locationKey(f.file)])} |`,
+        );
+      }
+    } else {
+      L.push('| File | Count |');
+      L.push('|------|------:|');
+      for (const f of m.topTodoFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
+    }
     L.push('');
   }
 
