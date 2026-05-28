@@ -6,14 +6,29 @@ import { RankedAction, rank } from '../remediation';
 import { buildTestGapsActions, countsFromReport } from './actions';
 import { TestGapsCounts, scoreTestGapsCounts } from './scoring';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import {
+  formatGraphContextCell,
+  graphContextProvenanceLine,
+  locationKey,
+  type DetailedGraphContext,
+} from '../../explore/finding-context';
 
 export interface TestGapsDetailedReport extends TestGapsReport {
   schemaVersion: string;
   coverageScore: number;
   actions: Array<RankedAction<TestGapsCounts>>;
+  /**
+   * Per-gap graph context (module + blast radius), keyed by file path.
+   * A high-blast-radius untested file is higher-stakes than a leaf.
+   * Present only when `--graph-context` ran AND a graph loaded.
+   */
+  graphContext?: DetailedGraphContext;
 }
 
-export function buildTestGapsDetailed(report: TestGapsReport): TestGapsDetailedReport {
+export function buildTestGapsDetailed(
+  report: TestGapsReport,
+  graphContext?: DetailedGraphContext,
+): TestGapsDetailedReport {
   const counts = countsFromReport(report);
   const actions = rank(buildTestGapsActions(report), counts, scoreTestGapsCounts);
   return {
@@ -21,6 +36,7 @@ export function buildTestGapsDetailed(report: TestGapsReport): TestGapsDetailedR
     schemaVersion: '11',
     coverageScore: scoreTestGapsCounts(counts).score,
     actions,
+    ...(graphContext ? { graphContext } : {}),
   };
 }
 
@@ -99,6 +115,11 @@ export function formatTestGapsDetailedMarkdown(
   // Gaps inventory by risk tier
   L.push('## All Gaps by Risk Tier');
   L.push('');
+  const gc = detailed.graphContext;
+  if (gc) {
+    L.push(graphContextProvenanceLine(gc));
+    L.push('');
+  }
   const sorted: SourceFile[] = [...detailed.gaps].sort(
     (a, b) => TIER_ORDER[a.risk] - TIER_ORDER[b.risk] || b.lines - a.lines,
   );
@@ -115,12 +136,22 @@ export function formatTestGapsDetailedMarkdown(
     if (items.length === 0) continue;
     L.push(`### ${tier.toUpperCase()} (${items.length})`);
     L.push('');
-    L.push('| File | Type | Lines |');
-    L.push('|------|------|------:|');
-    for (const g of items.slice(0, 50)) {
-      L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} |`);
+    if (gc) {
+      L.push('| File | Type | Lines | Graph context |');
+      L.push('|------|------|------:|----------------|');
+      for (const g of items.slice(0, 50)) {
+        const ctx = gc.contexts[locationKey(g.path)];
+        L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} | ${formatGraphContextCell(ctx)} |`);
+      }
+      if (items.length > 50) L.push(`| … and ${items.length - 50} more | | | |`);
+    } else {
+      L.push('| File | Type | Lines |');
+      L.push('|------|------|------:|');
+      for (const g of items.slice(0, 50)) {
+        L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} |`);
+      }
+      if (items.length > 50) L.push(`| … and ${items.length - 50} more | | |`);
     }
-    if (items.length > 50) L.push(`| … and ${items.length - 50} more | | |`);
     L.push('');
   }
   L.push('---');
