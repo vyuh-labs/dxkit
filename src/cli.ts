@@ -1855,6 +1855,15 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'context-hook': {
+      // Internal — the Claude Code PreToolUse hook body. Reads the tool
+      // call on stdin, injects a slim graph subgraph as additionalContext.
+      // Fail-open: never blocks the tool, silent no-op on any problem.
+      const { runContextHook } = await import('./explore/context-hook');
+      await runContextHook(cwd);
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       printUsage();

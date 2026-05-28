@@ -96,6 +96,16 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
     expect(parsed).toHaveProperty('permissions');
   });
 
+  it('wires the fail-open context-hook as a Grep|Glob PreToolUse hook', () => {
+    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const preToolUse = parsed.hooks?.PreToolUse ?? [];
+    const entry = preToolUse.find((h: { matcher?: string }) => h.matcher === 'Grep|Glob');
+    expect(entry).toBeDefined();
+    const cmd = entry.hooks?.[0]?.command ?? '';
+    expect(cmd).toContain('vyuh-dxkit context-hook');
+  });
+
   it('writes all 6 dxkit-* skills under .claude/skills/', () => {
     const expected = [
       'dxkit-learn',
