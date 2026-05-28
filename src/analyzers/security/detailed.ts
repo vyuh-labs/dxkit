@@ -7,14 +7,29 @@ import { RankedAction, rank } from '../remediation';
 import { buildSecurityActions, countsFromReport } from './actions';
 import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../../scoring';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import {
+  formatGraphContextCell,
+  graphContextProvenanceLine,
+  locationKey,
+  type DetailedGraphContext,
+} from '../../explore/finding-context';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
   securityScore: number;
   actions: Array<RankedAction<SecurityScoreInput>>;
+  /**
+   * Per-finding graph context (module + blast radius), keyed by
+   * `file:line`. Present only when the run passed `--graph-context`
+   * AND a graph.json was loadable; absent otherwise (fail-open).
+   */
+  graphContext?: DetailedGraphContext;
 }
 
-export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedReport {
+export function buildSecurityDetailed(
+  report: SecurityReport,
+  graphContext?: DetailedGraphContext,
+): SecurityDetailedReport {
   const input = countsFromReport(report);
   const scoreFromInput = (i: SecurityScoreInput) => evaluateSpec(SECURITY_SCORING_SPEC, i);
   const actions = rank(buildSecurityActions(report), input, scoreFromInput);
@@ -25,6 +40,7 @@ export function buildSecurityDetailed(report: SecurityReport): SecurityDetailedR
     schemaVersion: '13',
     securityScore: scoreFromInput(input).score,
     actions,
+    ...(graphContext ? { graphContext } : {}),
   };
 }
 
@@ -122,6 +138,18 @@ export function formatSecurityDetailedMarkdown(
   );
   if (sorted.length === 0) {
     L.push('No code findings.');
+  } else if (detailed.graphContext) {
+    const gc = detailed.graphContext;
+    L.push(graphContextProvenanceLine(gc));
+    L.push('');
+    L.push('| Severity | Rule | File:Line | Tool | CWE | Graph context |');
+    L.push('|----------|------|-----------|------|-----|----------------|');
+    for (const f of sorted) {
+      const ctx = gc.contexts[locationKey(f.file, f.line)];
+      L.push(
+        `| ${f.severity.toUpperCase()} | \`${f.rule}\` | \`${f.file}${f.line ? ':' + f.line : ''}\` | ${f.tool} | ${f.cwe || '—'} | ${formatGraphContextCell(ctx)} |`,
+      );
+    }
   } else {
     L.push('| Severity | Rule | File:Line | Tool | CWE |');
     L.push('|----------|------|-----------|------|-----|');

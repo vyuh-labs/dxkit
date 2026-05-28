@@ -47,6 +47,7 @@ import {
 import { SecurityReport } from '../src/analyzers/security/types';
 import { QualityReport, QualityMetrics } from '../src/analyzers/quality/types';
 import { TestGapsReport } from '../src/analyzers/tests/types';
+import type { DetailedGraphContext } from '../src/explore/finding-context';
 import { CapabilityReport, HealthReport, HealthMetrics } from '../src/analyzers/types';
 import { ScoreInput } from '../src/analyzers/types';
 import { DevReport } from '../src/analyzers/developer/types';
@@ -563,5 +564,83 @@ describe('developer/detailed', () => {
     const d = buildDevDetailed(devReport());
     const md = formatDevDetailedMarkdown(d, '1.0');
     expect(md.length).toBeGreaterThan(50);
+  });
+});
+
+// ── Sprint 3.6: --graph-context enrichment in detailed reports ──────────────
+//
+// The builders take an optional DetailedGraphContext; when present, the
+// renderers add a "Graph context" column to the inventory/offender tables
+// and a provenance line. When absent, output is byte-identical to before
+// (covered by the existing describe blocks above).
+
+describe('graph-context enrichment (Sprint 3.6)', () => {
+  const gc = (contexts: DetailedGraphContext['contexts']): DetailedGraphContext => ({
+    generatedAt: '2026-05-28T00:00:00Z',
+    truncated: false,
+    contexts,
+  });
+
+  it('security: builder stores graphContext only when provided', () => {
+    expect(buildSecurityDetailed(securityReport()).graphContext).toBeUndefined();
+    const d = buildSecurityDetailed(securityReport(), gc({}));
+    expect(d.graphContext).toBeDefined();
+  });
+
+  it('security: renders the Graph context column + cell for an enriched finding', () => {
+    const ctx = gc({
+      'src/parser.ts:100': {
+        found: true,
+        sourceFile: 'src/parser.ts',
+        community: { id: 1, role: 'src/parsers/' },
+        blastRadius: { callerFiles: 4, callers: 9, topCallerFiles: [] },
+      },
+    });
+    const md = formatSecurityDetailedMarkdown(buildSecurityDetailed(securityReport(), ctx), '1.0');
+    expect(md).toContain('| Severity | Rule | File:Line | Tool | CWE | Graph context |');
+    expect(md).toContain('src/parsers/ · 4 caller files');
+    expect(md).toContain('.dxkit/reports/graph.json'); // provenance line
+    // A finding with no matching context cell shows a dash, not a crash.
+    expect(md).toContain('| — |');
+  });
+
+  it('security: omits the column entirely when no graphContext', () => {
+    const md = formatSecurityDetailedMarkdown(buildSecurityDetailed(securityReport()), '1.0');
+    expect(md).toContain('| Severity | Rule | File:Line | Tool | CWE |');
+    expect(md).not.toContain('Graph context');
+  });
+
+  it('test-gaps: renders the column keyed by file path (no line)', () => {
+    const ctx = gc({
+      'src/auth.ts': {
+        found: true,
+        sourceFile: 'src/auth.ts',
+        community: { id: 0, role: 'src/' },
+        blastRadius: { callerFiles: 7, callers: 20, topCallerFiles: [] },
+      },
+    });
+    const md = formatTestGapsDetailedMarkdown(buildTestGapsDetailed(testGapsReport(), ctx), '1.0');
+    expect(md).toContain('| File | Type | Lines | Graph context |');
+    expect(md).toContain('src/ · 7 caller files');
+  });
+
+  it('quality: renders the column on offender tables keyed by file', () => {
+    const report = qualityReport({
+      metrics: qualityMetrics({
+        topConsoleFiles: [{ file: 'src/x.ts', count: 10 }],
+        topTodoFiles: [{ file: 'src/y.ts', count: 5 }],
+      }),
+    });
+    const ctx = gc({
+      'src/x.ts': {
+        found: true,
+        sourceFile: 'src/x.ts',
+        community: { id: 2, role: 'src/ui/' },
+        blastRadius: { callerFiles: 1, callers: 1, topCallerFiles: [] },
+      },
+    });
+    const md = formatQualityDetailedMarkdown(buildQualityDetailed(report, ctx), '1.0');
+    expect(md).toContain('| File | Count | Graph context |');
+    expect(md).toContain('src/ui/ · 1 caller file');
   });
 });
