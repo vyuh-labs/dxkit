@@ -36,6 +36,7 @@ import {
 } from './explore/load';
 import { runApiSurface } from './explore/cli/api-surface';
 import { runCommunities } from './explore/cli/communities';
+import { runContext } from './explore/cli/context';
 import { runEntryPoints } from './explore/cli/entry-points';
 import { runFeature } from './explore/cli/feature';
 import { runFile } from './explore/cli/file';
@@ -48,6 +49,10 @@ export interface ExploreCliValues {
   refresh?: boolean;
   substring?: boolean;
   filter?: string;
+  /** `context` only — token ceiling on the rendered subgraph. */
+  budget?: string;
+  /** `context` only — optional hard ceiling on BFS hop depth. */
+  depth?: string;
 }
 
 /**
@@ -99,6 +104,10 @@ export async function runExplore(
 
     case 'feature':
       runFeature(graph, positionals.slice(1), values);
+      return;
+
+    case 'context':
+      runContext(graph, positionals.slice(1), values);
       return;
 
     case 'help':
