@@ -33,11 +33,12 @@ vyuh-dxkit quality [path] [options]
 
 ## Options
 
-| Option       | Effect                                                                                 |
-| ------------ | -------------------------------------------------------------------------------------- |
-| `--detailed` | Write detailed report (top-10 duplicate clones, top hygiene offenders, slop breakdown) |
-| `--json`     | Stdout JSON                                                                            |
-| `--no-save`  | Skip files                                                                             |
+| Option            | Effect                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `--detailed`      | Write detailed report (top-10 duplicate clones, top hygiene offenders, slop breakdown)                             |
+| `--json`          | Stdout JSON                                                                                                        |
+| `--no-save`       | Skip files                                                                                                         |
+| `--graph-context` | Attach each offender file's module + blast radius to the detailed report (fail-open — see [`context`](context.md)) |
 
 ## Output
 

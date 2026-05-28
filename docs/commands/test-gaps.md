@@ -15,12 +15,13 @@ vyuh-dxkit test-gaps [path] [options]
 
 ## Options
 
-| Option            | Effect                                                                           |
-| ----------------- | -------------------------------------------------------------------------------- |
-| `--detailed`      | Write detailed report (every untested file with classification rationale)        |
-| `--with-coverage` | Materialize real coverage data before scoring (Istanbul, coverage.py, JaCoCo, …) |
-| `--json`          | Stdout JSON                                                                      |
-| `--no-save`       | Skip files                                                                       |
+| Option            | Effect                                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`      | Write detailed report (every untested file with classification rationale)                                                                                         |
+| `--with-coverage` | Materialize real coverage data before scoring (Istanbul, coverage.py, JaCoCo, …)                                                                                  |
+| `--json`          | Stdout JSON                                                                                                                                                       |
+| `--no-save`       | Skip files                                                                                                                                                        |
+| `--graph-context` | Attach each gap file's module + blast radius to the detailed report (a high-blast-radius untested file is higher-stakes; fail-open — see [`context`](context.md)) |
 
 ## How it ranks
 
