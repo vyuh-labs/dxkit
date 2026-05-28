@@ -1330,6 +1330,13 @@ export const csharp: LanguageSupport = {
     strategy: '`public` access modifier on type and member declarations',
   },
 
+  // graphify can't resolve `using`-directive call targets across
+  // assemblies, so most .cs files surface zero callers even when
+  // heavily depended upon. Blast radius is therefore not trustworthy
+  // for C#: consumers suppress the caller count rather than let a false
+  // "0 callers" read as "safe to change".
+  callGraphReliability: 'unreliable',
+
   // matched JSDoc `/**` only, so the .NET WinForms benchmark's 3,234 .cs files
   // contributed zero to docCommentFiles even though many carry
   // `/// <summary>` blocks. POSIX class `[[:space:]]` for cross-

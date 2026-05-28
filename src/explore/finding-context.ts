@@ -19,6 +19,7 @@
 
 import { tryLoadGraph } from './load';
 import { findingContextQuery, type FindingContext } from './queries';
+import { languageForFile } from '../languages';
 
 /** A finding's location — the enrichment key. `line` optional (file-level findings). */
 export interface FindingLocation {
@@ -81,7 +82,12 @@ export function buildFindingContextMap(
       topCallerFiles: opts.topCallerFiles,
     });
     enriched++;
-    if (ctx.found) contexts[key] = ctx;
+    if (!ctx.found) continue;
+    // Stamp the file's call-graph reliability (Rule 6: the fact comes
+    // from the language pack, not a hardcoded table here). Only record
+    // the non-default values to keep the payload lean — absent ⇒ 'full'.
+    const rel = languageForFile(loc.file)?.callGraphReliability;
+    contexts[key] = rel && rel !== 'full' ? { ...ctx, callGraphReliability: rel } : ctx;
   }
 
   return {
@@ -99,6 +105,13 @@ export function buildFindingContextMap(
 export function formatGraphContextCell(ctx: FindingContext | undefined): string {
   if (!ctx || !ctx.found) return '—';
   const role = ctx.community?.role ?? 'unclustered';
+  // For languages graphify can't resolve call edges for (C#), the
+  // caller count is untrustworthy — suppress it rather than print a
+  // misleading "0 caller files" (which a fixing agent could read as
+  // "safe to change"). The module/role label is still reliable.
+  if (ctx.callGraphReliability === 'unreliable') {
+    return `${role} · blast radius n/a (call graph)`;
+  }
   const n = ctx.blastRadius.callerFiles;
   return `${role} · ${n} caller file${n === 1 ? '' : 's'}`;
 }
@@ -111,5 +124,5 @@ export function formatGraphContextCell(ctx: FindingContext | undefined): string 
 export function graphContextProvenanceLine(gc: DetailedGraphContext): string {
   const date = gc.generatedAt.slice(0, 10);
   const stale = gc.truncated ? ' (graph truncated — coverage partial)' : '';
-  return `_Graph context column from \`.dxkit/reports/graph.json\` (generated ${date}${stale}) — structural hint; blast radius is file-level and same-name symbols may conflate call edges._`;
+  return `_Graph context column from \`.dxkit/reports/graph.json\` (generated ${date}${stale}) — structural hint; blast radius is file-level, same-name symbols may conflate call edges, and it reads \`n/a\` for languages whose call graph graphify can't resolve (a blank is not "0 callers"/"safe to change")._`;
 }

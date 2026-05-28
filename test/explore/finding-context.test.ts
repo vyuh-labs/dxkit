@@ -60,6 +60,10 @@ const fixtureGraph = () => ({
     { id: 'r1', kind: 'function', label: 'handler()', sourceFile: 'src/api/routes.ts', line: 4 },
     { id: 'm0', kind: 'module', label: 'src/api/admin.ts', sourceFile: 'src/api/admin.ts' },
     { id: 'm1', kind: 'function', label: 'adminFn()', sourceFile: 'src/api/admin.ts', line: 7 },
+    // A C# file — graphify's call graph is unreliable for .cs, so its
+    // blast radius must be suppressed even though it's in the graph.
+    { id: 'c0', kind: 'module', label: 'src/Svc/Auth.cs', sourceFile: 'src/Svc/Auth.cs' },
+    { id: 'c1', kind: 'method', label: 'Login()', sourceFile: 'src/Svc/Auth.cs', line: 10 },
   ],
   edges: [
     { from: 'a0', to: 'a1', relation: 'method' },
@@ -67,6 +71,7 @@ const fixtureGraph = () => ({
     { from: 'r1', to: 'a1', relation: 'calls' },
     { from: 'm1', to: 'a1', relation: 'calls' },
     { from: 'm1', to: 'a2', relation: 'calls' },
+    { from: 'c0', to: 'c1', relation: 'method' },
   ],
   communities: [
     {
@@ -132,6 +137,21 @@ describe('buildFindingContextMap', () => {
     expect(Object.keys(gc!.contexts)).toHaveLength(1);
   });
 
+  it('stamps callGraphReliability=unreliable for a C# finding (real language registry)', () => {
+    writeGraphFixture(fixtureGraph());
+    const gc = buildFindingContextMap(tmpDir, [{ file: 'src/Svc/Auth.cs', line: 12 }]);
+    const ctx = gc!.contexts['src/Svc/Auth.cs:12'];
+    expect(ctx.found).toBe(true);
+    expect(ctx.callGraphReliability).toBe('unreliable');
+  });
+
+  it('does NOT stamp reliability for a reliable-language (TS) finding', () => {
+    writeGraphFixture(fixtureGraph());
+    const gc = buildFindingContextMap(tmpDir, [{ file: 'src/svc/auth.ts', line: 12 }]);
+    // Absent ⇒ treated as 'full' by consumers; kept off the payload to stay lean.
+    expect(gc!.contexts['src/svc/auth.ts:12'].callGraphReliability).toBeUndefined();
+  });
+
   it('budget-caps enrichment at maxFindings unique locations', () => {
     writeGraphFixture(fixtureGraph());
     const gc = buildFindingContextMap(
@@ -178,6 +198,18 @@ describe('formatGraphContextCell', () => {
         blastRadius: { callerFiles: 0, callers: 0, topCallerFiles: [] },
       }),
     ).toBe('—');
+  });
+
+  it('suppresses the caller count for unreliable call graphs (never shows "0 caller files")', () => {
+    const cell = formatGraphContextCell({
+      found: true,
+      sourceFile: 'src/Svc/Auth.cs',
+      community: { id: 3, role: 'src/Svc/' },
+      blastRadius: { callerFiles: 0, callers: 0, topCallerFiles: [] },
+      callGraphReliability: 'unreliable',
+    });
+    expect(cell).toBe('src/Svc/ · blast radius n/a (call graph)');
+    expect(cell).not.toContain('caller file');
   });
 });
 
