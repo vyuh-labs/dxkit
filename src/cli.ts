@@ -282,6 +282,9 @@ export async function run(argv: string[]): Promise<void> {
       limit: { type: 'string' },
       refresh: { type: 'boolean', default: false },
       substring: { type: 'boolean', default: false },
+      // context flags
+      budget: { type: 'string' },
+      depth: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -1830,6 +1833,24 @@ export async function run(argv: string[]): Promise<void> {
         refresh: !!values.refresh,
         substring: !!values.substring,
         filter: values.filter as string | undefined,
+        budget: values.budget as string | undefined,
+        depth: values.depth as string | undefined,
+      });
+      break;
+    }
+
+    case 'context': {
+      // Top-level alias for `explore context` — the token-reduction
+      // surface gets first-class billing. positionals[0] is 'context';
+      // positionals[1..] are the query + args. Routes through the
+      // explore dispatcher so graph loading + --refresh are shared.
+      const { runExplore } = await import('./explore-cli');
+      await runExplore(cwd, ['context', ...positionals.slice(1)], {
+        json: !!values.json,
+        refresh: !!values.refresh,
+        substring: !!values.substring,
+        budget: values.budget as string | undefined,
+        depth: values.depth as string | undefined,
       });
       break;
     }
