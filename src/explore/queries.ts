@@ -638,49 +638,11 @@ export function featureQuery(
     return { results: [], suggestions: [] };
   }
 
-  // Stage 1: direct symbolIndex match.
-  const seedIds = new Set<string>(graph.symbolIndex[kw] ?? []);
-
-  // Stage 2: optional substring expansion. Iterate symbolIndex keys
-  // (smaller than nodes) for the substring scan, then collect their
-  // node ids.
-  if (opts.substring) {
-    for (const [key, ids] of Object.entries(graph.symbolIndex)) {
-      if (key.includes(kw)) {
-        for (const id of ids) seedIds.add(id);
-      }
-    }
-  }
+  // Stage 1 + 2: direct symbolIndex match + optional substring expansion.
+  const seedIds = findSeedIds(graph, kw, opts.substring ?? false);
 
   if (seedIds.size === 0) {
-    // "Did you mean" — two flavors, merged:
-    //   1. Substring matches (symbols whose name CONTAINS the keyword)
-    //      — the common case, since users rarely guess exact long
-    //      symbol names like "gatherGraphifyResult" when they ask
-    //      "where is graphify?"
-    //   2. Edit-distance suggestions (Levenshtein ≤2) — catches
-    //      typos like "graphfiy" → "graphify"-prefixed symbols
-    // Substring is only tried for keywords of length >= 3 (anything
-    // shorter generates too many false positives).
-    const suggestions: Array<{ key: string; hits: number }> = [];
-    const seen = new Set<string>();
-    if (kw.length >= 3) {
-      for (const key of Object.keys(graph.symbolIndex)) {
-        if (key.includes(kw)) {
-          suggestions.push({ key, hits: graph.symbolIndex[key].length });
-          seen.add(key);
-        }
-      }
-    }
-    for (const key of Object.keys(graph.symbolIndex)) {
-      if (seen.has(key)) continue;
-      const d = levenshtein(kw, key);
-      if (d <= 2) {
-        suggestions.push({ key, hits: graph.symbolIndex[key].length });
-      }
-    }
-    suggestions.sort((a, b) => b.hits - a.hits || a.key.localeCompare(b.key));
-    return { results: [], suggestions: suggestions.slice(0, 5) };
+    return { results: [], suggestions: suggestionsFor(graph, kw) };
   }
 
   // Stage 3: structural expansion. For each seed, gather its
@@ -793,6 +755,234 @@ export function featureQuery(
   return { results: limitedClusters, suggestions: [], centralEntryPoint };
 }
 
+// ─── Context query (token-budgeted subgraph for LLM injection) ───────────────
+
+/**
+ * Options for `contextQuery`. `budget` is the soft token ceiling on
+ * the rendered output (BFS stops adding nodes once the running
+ * estimate would exceed it). `tokensPerNode` is the per-symbol render
+ * cost estimate the budget math uses — tuned to roughly match one
+ * markdown line like "- `foo()` src/a.ts:42 (5 in / 3 out)". `maxDepth`
+ * is an optional HARD ceiling on BFS hops for power users; default is
+ * budget-bounded only (adaptive depth).
+ */
+export interface ContextQueryOpts {
+  substring?: boolean;
+  budget?: number;
+  tokensPerNode?: number;
+  maxDepth?: number;
+}
+
+/** One symbol in the budget-bounded selection. */
+export interface ContextNode {
+  id: string;
+  symbol: string;
+  sourceFile: string;
+  line?: number;
+  kind: GraphNode['kind'];
+  /** 0 = seed (matched the query), 1 = direct neighbor, 2 = … */
+  hop: number;
+  callsIn: number;
+  callsOut: number;
+}
+
+/** Community grouping of the selection, for orientation. */
+export interface ContextCommunityGroup {
+  communityId?: number;
+  role: string;
+  files: string[];
+  symbols: string[];
+}
+
+/**
+ * Result of a context query — a slim, ranked, budget-bounded subgraph
+ * built for injection into an LLM's context window (or a human's
+ * terminal). The formatter (`src/explore/format.ts`) turns this into
+ * markdown / JSON; this function owns only the graph work + budget
+ * math (Rule 12).
+ *
+ * `selection` is BFS-ordered: seeds first (hop 0), then their direct
+ * neighbors (hop 1), then hop 2, … — so the most relevant symbols
+ * survive when the budget truncates the tail. `anchor` is the
+ * highest call-in-degree seed ("if you read one thing, read this").
+ * `blastRadius` counts unique callers of the SEEDS (the symbols a
+ * change would touch). `suggestions` is populated only when nothing
+ * matched (the did-you-mean path). `truncated` + `omittedCount`
+ * drive the formatter's honest "+N more …" footer.
+ */
+export interface ContextResult {
+  query: string;
+  matched: boolean;
+  anchor?: { sourceFile: string; line?: number; symbol: string; calledFrom: number };
+  selection: ContextNode[];
+  byCommunity: ContextCommunityGroup[];
+  blastRadius: { callers: number; callerFiles: number };
+  truncated: boolean;
+  omittedCount: number;
+  estimatedTokens: number;
+  budget: number;
+  suggestions: Array<{ key: string; hits: number }>;
+}
+
+/**
+ * The marquee token-reduction primitive — "give me just the relevant
+ * structural slice for this query." Resolves seeds the same way
+ * `featureQuery` does (shared `findSeedIds`), then expands breadth-
+ * first through `calls` edges, stopping when the running token
+ * estimate fills the budget (or an optional `maxDepth` ceiling is
+ * reached). Adaptive depth falls out for free: a hot symbol's
+ * immediate neighbors fill the budget at hop 1, while a cold symbol's
+ * sparse neighborhood leaves room to reach hop 2+.
+ *
+ * Pure: no I/O, no formatting. Same `Graph` in → same `ContextResult`
+ * out.
+ */
+export function contextQuery(
+  graph: Graph,
+  keyword: string,
+  opts: ContextQueryOpts = {},
+): ContextResult {
+  const budget = opts.budget ?? 2000;
+  const tokensPerNode = opts.tokensPerNode ?? 15;
+  const maxDepth = opts.maxDepth ?? Infinity;
+  const kw = keyword.toLowerCase().trim();
+
+  const empty: ContextResult = {
+    query: keyword,
+    matched: false,
+    selection: [],
+    byCommunity: [],
+    blastRadius: { callers: 0, callerFiles: 0 },
+    truncated: false,
+    omittedCount: 0,
+    estimatedTokens: 0,
+    budget,
+    suggestions: [],
+  };
+
+  if (!kw) return empty;
+
+  const seedIds = findSeedIds(graph, kw, opts.substring ?? false);
+  if (seedIds.size === 0) {
+    return { ...empty, suggestions: suggestionsFor(graph, kw) };
+  }
+
+  // Budget-bounded BFS over `calls` edges. The queue carries (id, hop);
+  // seeds enter at hop 0. We add a node to the selection only if its
+  // estimated render cost still fits the budget; the first node that
+  // would overflow flips `truncated` and we drain the remaining queue
+  // into `omittedCount` (a lower bound — honest "+N more").
+  const selection: ContextNode[] = [];
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; hop: number }> = [];
+  for (const id of seedIds) queue.push({ id, hop: 0 });
+
+  let estimatedTokens = 0;
+  let truncated = false;
+  let omittedCount = 0;
+
+  while (queue.length > 0) {
+    const { id, hop } = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+
+    const node = graph.nodeById.get(id);
+    if (!node || node.kind === 'module') continue;
+
+    if (estimatedTokens + tokensPerNode > budget) {
+      // Budget exhausted — this node + everything still queued is omitted.
+      truncated = true;
+      omittedCount++;
+      continue;
+    }
+
+    const callers = callersOf(graph, id);
+    const callees = calleesOf(graph, id);
+    selection.push({
+      id,
+      symbol: stripParens(node.label),
+      sourceFile: node.sourceFile,
+      line: node.line,
+      kind: node.kind,
+      hop,
+      callsIn: callers.length,
+      callsOut: callees.length,
+    });
+    estimatedTokens += tokensPerNode;
+
+    if (hop < maxDepth) {
+      for (const n of callers) if (!visited.has(n.id)) queue.push({ id: n.id, hop: hop + 1 });
+      for (const n of callees) if (!visited.has(n.id)) queue.push({ id: n.id, hop: hop + 1 });
+    }
+  }
+
+  // Anchor: highest call-in-degree seed (the "start here" symbol).
+  let anchor: ContextResult['anchor'];
+  let anchorCount = -1;
+  for (const seedId of seedIds) {
+    const node = graph.nodeById.get(seedId);
+    if (!node) continue;
+    const inDeg = callersOf(graph, seedId).length;
+    if (inDeg > anchorCount) {
+      anchorCount = inDeg;
+      anchor = {
+        sourceFile: node.sourceFile,
+        line: node.line,
+        symbol: stripParens(node.label),
+        calledFrom: inDeg,
+      };
+    }
+  }
+
+  // Blast radius: unique callers of the SEEDS + distinct caller files
+  // (the surface a change to the matched symbols would touch).
+  const callerIds = new Set<string>();
+  const callerFiles = new Set<string>();
+  for (const seedId of seedIds) {
+    for (const caller of callersOf(graph, seedId)) {
+      callerIds.add(caller.id);
+      if (caller.sourceFile) callerFiles.add(caller.sourceFile);
+    }
+  }
+
+  // Group the selection by community for orientation.
+  const groupsByComm = new Map<number | undefined, ContextCommunityGroup>();
+  for (const sel of selection) {
+    const community = graph.communityByNode.get(sel.id);
+    const key = community?.id;
+    let group = groupsByComm.get(key);
+    if (!group) {
+      group = {
+        communityId: community?.id,
+        role: roleLabel(community),
+        files: [],
+        symbols: [],
+      };
+      groupsByComm.set(key, group);
+    }
+    if (sel.sourceFile && !group.files.includes(sel.sourceFile)) group.files.push(sel.sourceFile);
+    group.symbols.push(sel.symbol);
+  }
+  const byCommunity = [...groupsByComm.values()].sort(
+    (a, b) =>
+      b.symbols.length - a.symbols.length || (a.communityId ?? 9999) - (b.communityId ?? 9999),
+  );
+
+  return {
+    query: keyword,
+    matched: true,
+    anchor,
+    selection,
+    byCommunity,
+    blastRadius: { callers: callerIds.size, callerFiles: callerFiles.size },
+    truncated,
+    omittedCount,
+    estimatedTokens,
+    budget,
+    suggestions: [],
+  };
+}
+
 function roleLabel(community: Community | undefined): string {
   if (!community) return 'unclustered';
   if (community.dominantSourceDir) return community.dominantSourceDir;
@@ -828,4 +1018,53 @@ function levenshtein(a: string, b: string): number {
     [prev, curr] = [curr, prev];
   }
   return prev[short.length];
+}
+
+/**
+ * Resolve seed node ids for a (lowercased, trimmed) keyword. Stage 1
+ * is an exact symbolIndex hit; stage 2 (opt-in) adds substring
+ * matches across the index keys. Shared by `featureQuery` and
+ * `contextQuery` so the two surfaces match identically — one source
+ * of truth for "what does this keyword resolve to" (Rule 2).
+ */
+function findSeedIds(graph: Graph, kw: string, substring: boolean): Set<string> {
+  const seedIds = new Set<string>(graph.symbolIndex[kw] ?? []);
+  if (substring) {
+    for (const [key, ids] of Object.entries(graph.symbolIndex)) {
+      if (key.includes(kw)) {
+        for (const id of ids) seedIds.add(id);
+      }
+    }
+  }
+  return seedIds;
+}
+
+/**
+ * "Did you mean" suggestions for a keyword that matched no symbols.
+ * Two merged flavors: substring matches (symbols whose name CONTAINS
+ * the keyword — the common case, since users rarely type exact long
+ * symbol names) and Levenshtein ≤2 typo candidates. Substring is only
+ * tried for keywords of length ≥ 3 (shorter generates too many false
+ * positives). Top-5 by hit count. Shared by `featureQuery` +
+ * `contextQuery`.
+ */
+function suggestionsFor(graph: Graph, kw: string): Array<{ key: string; hits: number }> {
+  const suggestions: Array<{ key: string; hits: number }> = [];
+  const seen = new Set<string>();
+  if (kw.length >= 3) {
+    for (const key of Object.keys(graph.symbolIndex)) {
+      if (key.includes(kw)) {
+        suggestions.push({ key, hits: graph.symbolIndex[key].length });
+        seen.add(key);
+      }
+    }
+  }
+  for (const key of Object.keys(graph.symbolIndex)) {
+    if (seen.has(key)) continue;
+    if (levenshtein(kw, key) <= 2) {
+      suggestions.push({ key, hits: graph.symbolIndex[key].length });
+    }
+  }
+  suggestions.sort((a, b) => b.hits - a.hits || a.key.localeCompare(b.key));
+  return suggestions.slice(0, 5);
 }
