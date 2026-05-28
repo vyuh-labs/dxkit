@@ -27,11 +27,12 @@ vyuh-dxkit vuln [path]  # alias
 
 ## Options
 
-| Option       | Effect                           |
-| ------------ | -------------------------------- |
-| `--detailed` | Write the detailed report + JSON |
-| `--json`     | Stdout JSON                      |
-| `--no-save`  | Skip writing files               |
+| Option            | Effect                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`      | Write the detailed report + JSON                                                                                            |
+| `--json`          | Stdout JSON                                                                                                                 |
+| `--no-save`       | Skip writing files                                                                                                          |
+| `--graph-context` | Attach each finding's module + blast radius to the detailed report (needs a graph; fail-open — see [`context`](context.md)) |
 
 ## Output
 
