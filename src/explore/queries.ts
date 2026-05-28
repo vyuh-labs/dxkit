@@ -945,8 +945,13 @@ export function contextQuery(
     }
   }
 
-  // Group the selection by community for orientation.
-  const groupsByComm = new Map<number | undefined, ContextCommunityGroup>();
+  // Group the selection by community for orientation. Communities
+  // containing a SEED (hop-0) symbol rank first — the reader cares
+  // most about where the matched symbols live, not the biggest
+  // incidental cluster the BFS fanned into. (graphify often lumps
+  // much of a repo into one mega-community; sorting purely by size
+  // would bury the seed under that grab-bag.)
+  const groupsByComm = new Map<number | undefined, ContextCommunityGroup & { hasSeed: boolean }>();
   for (const sel of selection) {
     const community = graph.communityByNode.get(sel.id);
     const key = community?.id;
@@ -957,16 +962,22 @@ export function contextQuery(
         role: roleLabel(community),
         files: [],
         symbols: [],
+        hasSeed: false,
       };
       groupsByComm.set(key, group);
     }
     if (sel.sourceFile && !group.files.includes(sel.sourceFile)) group.files.push(sel.sourceFile);
     group.symbols.push(sel.symbol);
+    if (sel.hop === 0) group.hasSeed = true;
   }
-  const byCommunity = [...groupsByComm.values()].sort(
-    (a, b) =>
-      b.symbols.length - a.symbols.length || (a.communityId ?? 9999) - (b.communityId ?? 9999),
-  );
+  const byCommunity: ContextCommunityGroup[] = [...groupsByComm.values()]
+    .sort(
+      (a, b) =>
+        Number(b.hasSeed) - Number(a.hasSeed) ||
+        b.symbols.length - a.symbols.length ||
+        (a.communityId ?? 9999) - (b.communityId ?? 9999),
+    )
+    .map(({ hasSeed: _hasSeed, ...group }) => group);
 
   return {
     query: keyword,
