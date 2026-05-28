@@ -24,6 +24,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getReportDate } from '../tools/report-date';
+import { GRAPH_TAB_CSS, renderGraphTab } from '../../dashboard/graph-tab';
 
 /** Known report stems → display config. Order here = sidebar order. */
 const REPORT_STEMS: Array<{
@@ -53,6 +54,19 @@ const REPORT_STEMS: Array<{
   { key: 'licenses', stem: 'licenses', icon: '📜', label: 'Licenses', color: '#39d2c0' },
   { key: 'bom', stem: 'bom', icon: '📦', label: 'Bill of Materials', color: '#39d2c0' },
 ];
+
+/**
+ * Graph tab nav config. Always rendered (even when graph data is
+ * missing — the tab's empty-state explains the regeneration command),
+ * so the feature is discoverable without prior knowledge.
+ */
+const GRAPH_NAV_CONFIG = {
+  key: 'graph',
+  reportKey: 'graph',
+  icon: '🗺️',
+  label: 'Graph',
+  color: '#58a6ff',
+};
 
 export interface DashboardOptions {
   /** Where to read markdown reports from. Default: `<cwd>/.dxkit/reports`. */
@@ -322,6 +336,17 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   const overviewBadge = healthScore !== null ? `${healthScore}/100 (${healthGrade ?? '?'})` : '';
   const generationDate = getReportDate();
 
+  // Graph viz tab. The renderer is best-effort — missing graph
+  // artifact + missing vendor bundle each surface a distinct
+  // empty-state inside the tab without blocking the rest of the
+  // dashboard. Rule 12 compliance lives inside renderGraphTab itself
+  // (it routes through loadGraph for the existence check).
+  const graphTab = renderGraphTab({ cwd });
+  navEntries.push({
+    ...GRAPH_NAV_CONFIG,
+    badge: graphTab.navBadge,
+  });
+
   const html = renderHtml({
     projectName,
     generationDate,
@@ -349,6 +374,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     criticalIssuesTotal,
     reports,
     navEntries,
+    graphTabHtml: graphTab.html,
   });
 
   return {
@@ -477,6 +503,12 @@ interface RenderArgs {
     color: string;
     badge: string;
   }>;
+  /**
+   * Pre-rendered HTML for the Graph viz tab pane (either the
+   * iframe-srcdoc embed of graphify's `graph.html` or an empty-state
+   * card). Spliced into the dashboard body by `renderHtml`.
+   */
+  graphTabHtml: string;
 }
 
 function renderHtml(a: RenderArgs): string {
@@ -609,6 +641,7 @@ function renderHtml(a: RenderArgs): string {
     ::-webkit-scrollbar-thumb:hover { background: var(--border); }
     .main-inner { animation: fadeIn 0.2s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    ${GRAPH_TAB_CSS}
   </style>
 </head>
 <body>
@@ -737,6 +770,8 @@ function renderHtml(a: RenderArgs): string {
     </div>
   </main>
 
+  ${a.graphTabHtml}
+
   <script id="reports-data" type="application/json">${reportsJson.replace(/</g, '\\u003c')}</script>
   <script id="nav-data" type="application/json">${navJson.replace(/</g, '\\u003c')}</script>
   <script>
@@ -744,6 +779,8 @@ function renderHtml(a: RenderArgs): string {
     const navEntries = JSON.parse(document.getElementById('nav-data').textContent);
     const nav = document.getElementById('nav');
     const content = document.getElementById('content');
+    const mainEl = document.querySelector('.main');
+    const graphPane = document.getElementById('graph-tab-pane');
     const overviewHtml = document.getElementById('overview-content').outerHTML;
 
     navEntries.forEach((cfg) => {
@@ -758,11 +795,19 @@ function renderHtml(a: RenderArgs): string {
       document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
       const btn = document.querySelector('[data-target="' + target + '"]');
       if (btn) btn.classList.add('active');
-      if (target === 'overview') {
-        content.innerHTML = overviewHtml;
-      } else if (reports[target]) {
-        const md = typeof marked !== 'undefined' ? marked.parse(reports[target]) : '<pre>' + reports[target].replace(/</g, '&lt;') + '</pre>';
-        content.innerHTML = '<div class="main-inner" style="animation:fadeIn 0.2s ease">' + md + '</div>';
+
+      if (target === 'graph') {
+        if (mainEl) mainEl.style.display = 'none';
+        if (graphPane) graphPane.style.display = 'flex';
+      } else {
+        if (graphPane) graphPane.style.display = 'none';
+        if (mainEl) mainEl.style.display = '';
+        if (target === 'overview') {
+          content.innerHTML = overviewHtml;
+        } else if (reports[target]) {
+          const md = typeof marked !== 'undefined' ? marked.parse(reports[target]) : '<pre>' + reports[target].replace(/</g, '&lt;') + '</pre>';
+          content.innerHTML = '<div class="main-inner" style="animation:fadeIn 0.2s ease">' + md + '</div>';
+        }
       }
       document.querySelector('.sidebar').classList.remove('open');
     }
