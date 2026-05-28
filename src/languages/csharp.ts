@@ -822,14 +822,13 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
  * `.csproj` or `.sln` file. Used as the depVulns gather preflight —
  * `dotnet list package --vulnerable` needs a project file in scope.
  *
- * Depth 5 mirrors `csharp.detect()`'s recursive walk (D024 / 2.4.7):
- * enterprise layouts like the .NET WinForms benchmark nest .csproj under
- * `Code/Source/Dev/Core/<Module>/`. Pre-D035, this was a depth-1
- * custom walk; symmetrical with detect()'s old depth-3 limit until
- * D024 broke the symmetry. The Sprint A validation
- * (2026-05-12) surfaced the inconsistency — D025c's tool-registry
- * probe was unreachable from `Code/Source/` because this preflight
- * rejected before reaching it. See D035 in tmp/known-defects.md.
+ * Depth 5 mirrors `csharp.detect()`'s recursive walk: deeply-nested
+ * enterprise layouts nest .csproj several levels down, e.g.
+ * `app/modules/Core/<Module>/`. An earlier depth-1 custom walk left
+ * the deeper project files unreachable — the tool-registry probe
+ * couldn't see a .csproj because this preflight rejected before
+ * descending far enough. The depth-5 walk restores symmetry with
+ * detect().
  */
 function hasCsharpProject(cwd: string): boolean {
   return (
@@ -1305,6 +1304,17 @@ export const csharp: LanguageSupport = {
     '*.generated.cs',
     '*.AssemblyInfo.cs',
     '*.AssemblyAttributes.cs',
+    // Plain `AssemblyInfo.cs` (no prefix) is the canonical .NET
+    // Framework per-project file Visual Studio writes into
+    // `Properties/AssemblyInfo.cs`. It carries the `[assembly: ...]`
+    // attributes (Version, Title, GUID) — boilerplate per project,
+    // not human-authored business logic. The `*.AssemblyInfo.cs`
+    // glob above only matches prefixed variants
+    // (`MyProject.AssemblyInfo.cs`) emitted by some custom build
+    // scripts; the unprefixed form covers vanilla VS projects.
+    // The .NET WinForms benchmark had 38 such files post 2.7 fix
+    // (Properties/AssemblyInfo.cs inside each .csproj subtree).
+    'AssemblyInfo.cs',
     // WCF "Connected Services" auto-generated proxy classes
     // (svcutil.exe / Add Service Reference). The .NET WinForms
     // benchmark's `Reference.cs` was 42,370 lines of WCF proxy. Other tools'
@@ -1388,9 +1398,9 @@ export const csharp: LanguageSupport = {
   clocLanguageNames: ['C#'],
 
   detect(cwd) {
-    // Depth 5 covers enterprise .NET layouts like
-    // `Code/Source/Dev/Core/<Module>/<Module>.csproj` (D024).
-    // Lower limits silently miss these from the repo root.
+    // Depth 5 covers deeply-nested enterprise .NET layouts like
+    // `app/modules/Core/<Module>/<Module>.csproj`. Lower limits
+    // silently miss these from the repo root.
     return (
       dirHasMatching(cwd, /\.(sln|csproj)$/) ||
       walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0
