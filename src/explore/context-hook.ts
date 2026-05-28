@@ -19,7 +19,7 @@
  */
 
 import { contextQuery, type ContextResult } from './queries';
-import { loadGraph } from './load';
+import { tryLoadGraph } from './load';
 import type { Graph } from './types';
 
 /** Stingier than the manual CLI's 2000 — the hook fires on every grep. */
@@ -119,15 +119,6 @@ export function formatHookContext(result: ContextResult, graph: Graph): string {
   }
 
   return lines.join('\n');
-}
-
-/** Load the graph, swallowing every error into undefined (fail-open). */
-function tryLoadGraph(cwd: string): Graph | undefined {
-  try {
-    return loadGraph(cwd);
-  } catch {
-    return undefined;
-  }
 }
 
 /** Read all of stdin as a string. Resolves '' if stdin is a TTY/empty. */

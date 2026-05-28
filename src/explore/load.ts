@@ -85,6 +85,21 @@ export function loadGraph(cwd: string): Graph {
   return indexGraph(json);
 }
 
+/**
+ * Fail-open variant of {@link loadGraph}: returns undefined on ANY
+ * error (missing file, parse failure, schema mismatch) instead of
+ * throwing. For additive, never-block consumers — the PreToolUse
+ * context hook and the finding-enrichment pass — where a missing or
+ * stale graph must degrade to "no context", never an error.
+ */
+export function tryLoadGraph(cwd: string): Graph | undefined {
+  try {
+    return loadGraph(cwd);
+  } catch {
+    return undefined;
+  }
+}
+
 function validateAndUpgrade(absPath: string, raw: unknown): GraphJson {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new GraphCorruptError(absPath, 'top-level value is not an object');
