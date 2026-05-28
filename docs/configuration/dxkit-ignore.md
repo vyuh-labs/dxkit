@@ -49,7 +49,7 @@ generated/
 old-vendor/
 
 # Multi-segment path: anchored to the repo
-Dev/Addons/SAPB1/
+app/vendor/generated/
 public/build/
 
 # Glob: matches anywhere

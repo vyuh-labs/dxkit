@@ -48,6 +48,8 @@ Once dxkit + its tools are installed, here's the command surface:
 | [`bom`](commands/bom.md)                                         | "Full dependency × license × CVE × upgrade view"              | 1-3 min                            |
 | [`coverage`](commands/coverage.md)                               | "Materialize real line-coverage data"                         | varies (runs your tests)           |
 | [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                     | < 5 sec (renders existing reports) |
+| [`explore`](commands/explore.md)                                 | "What does this repo do / where does X live?"                 | < 5 sec (queries the graph)        |
+| [`context`](commands/context.md)                                 | "Token-budgeted structural slice for an LLM"                  | < 5 sec (queries the graph)        |
 | [`report`](commands/report.md)                                   | "Run all of the above in one shot"                            | 5-30 min                           |
 | [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                          | < 5 sec                            |
 | [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                       | < 5 sec                            |
