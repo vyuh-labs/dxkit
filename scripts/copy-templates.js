@@ -16,10 +16,27 @@ const TEMPLATE_DEST = path.join(PKG_ROOT, 'templates');
 
 // Resource files loaded via __dirname at runtime — must be copied alongside
 // their .ts counterparts into dist/.
+//
+// vis-network ships inline with the dashboard graph viz so the embedded
+// graphify viewer works offline (graphify's upstream HTML pulls
+// vis-network from unpkg.com; we replace that script tag with the local
+// bundle at render time). Same pattern as default-exclusions.gitignore
+// — a runtime-loaded resource that ships in dist/.
 const RESOURCE_FILES = [
   {
     src: path.join(PKG_ROOT, 'src', 'analyzers', 'tools', 'default-exclusions.gitignore'),
     dest: path.join(PKG_ROOT, 'dist', 'analyzers', 'tools', 'default-exclusions.gitignore'),
+  },
+  {
+    src: path.join(
+      PKG_ROOT,
+      'node_modules',
+      'vis-network',
+      'standalone',
+      'umd',
+      'vis-network.min.js',
+    ),
+    dest: path.join(PKG_ROOT, 'dist', 'dashboard', 'vendor', 'vis-network.min.js'),
   },
 ];
 

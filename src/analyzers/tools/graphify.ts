@@ -74,7 +74,7 @@ target = Path(sys.argv[1])
 
 # Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
 # segment matching skips the file). EXCLUDE_PATHS holds multi-segment
-# relative paths from .dxkit-ignore (e.g. 'Dev/Addons/VendorAddon/SAPB1')
+# relative paths from .dxkit-ignore (e.g. 'app/modules/plugins/VendorPlugin')
 # and matches via substring on the file's relpath. EXCLUDE_FILE_GLOBS
 # carries basename-glob patterns from bundled defaults + .gitignore
 # ('*.min.js', '*.bundle.js', '*.chunk.js', '*.generated.ts', '*.d.ts')
@@ -541,6 +541,98 @@ if len(_graph_json.encode('utf-8')) > _BYTES_HARD_CAP:
         f"dropped {pre_count - post_count} method edges to fit under "
         f"the 50MB hard cap"
     )
+
+# Render the interactive viewer alongside graph.json so the dashboard
+# Graph tab can embed it. graphify ships its own vis.js-based renderer
+# (graphify.export.to_html). Two emission paths:
+#
+#   - Full graph (G.number_of_nodes() <= MAX_NODES_FOR_VIZ = 5000):
+#     pass the original G + communities. The viewer renders every
+#     symbol; the user can zoom + drill.
+#
+#   - Aggregated community view (G > MAX_NODES_FOR_VIZ): build a
+#     networkx super-graph whose nodes ARE the communities. Sized by
+#     member count via graphify member_counts parameter. Inter-
+#     community edges aggregated to weighted edges. This lets a
+#     customer-scale repo still get a meaningful "what does this
+#     codebase look like" viz instead of a dead empty-state.
+#
+# Either way failures are non-fatal: the dashboard surfaces a clear
+# empty-state when graph.html isn't on disk.
+try:
+    from graphify.export import to_html as _to_html, MAX_NODES_FOR_VIZ as _MAX_VIZ
+    import networkx as _nx
+    _html_dir = target / '.dxkit' / 'reports'
+    _html_dir.mkdir(parents=True, exist_ok=True)
+    _html_path = _html_dir / 'graph.html'
+
+    if G.number_of_nodes() <= _MAX_VIZ:
+        _labels = {
+            c['id']: (c.get('dominantSourceDir') or f"community-{c['id']}")
+            for c in graph_communities
+        }
+        _to_html(G, communities, str(_html_path), community_labels=_labels)
+        _viz_mode = 'full'
+    else:
+        # Aggregated community super-graph.
+        _node_to_comm = {}
+        for _cid, _members in communities.items():
+            for _nid in _members:
+                _node_to_comm[_nid] = _cid
+
+        _G_agg = _nx.DiGraph()
+        _member_counts = {}
+        _labels = {}
+        for _c in graph_communities:
+            _cid = _c['id']
+            _label = _c.get('dominantSourceDir') or f"community-{_cid}"
+            # vis.js node attrs: label drives display; file_type is
+            # surfaced in graphify's sidebar so we set a sentinel
+            # value the dashboard can grep on.
+            _G_agg.add_node(_cid, label=_label, source_file='', file_type='community')
+            _member_counts[_cid] = len(_c['nodeIds'])
+            _labels[_cid] = _label
+
+        # Cross-community edge aggregation. Counter keyed on
+        # (smaller_id, larger_id) for undirected aggregation; we then
+        # add a directed edge in one canonical direction so vis.js
+        # has a definite source/target. The viewer doesn't show
+        # arrows on these (they're community connections, not calls).
+        from collections import Counter as _CommCounter
+        _edge_w = _CommCounter()
+        for _u, _v, _ in G.edges(data=True):
+            _cu = _node_to_comm.get(_u)
+            _cv = _node_to_comm.get(_v)
+            if _cu is None or _cv is None or _cu == _cv:
+                continue
+            _key = (_cu, _cv) if _cu < _cv else (_cv, _cu)
+            _edge_w[_key] += 1
+        for (_a, _b), _w in _edge_w.items():
+            _G_agg.add_edge(_a, _b, relation='inter_community', occurrences=_w)
+
+        # to_html requires a communities dict; one-element groups
+        # treat each aggregated node as its own community so each
+        # community keeps a distinct color in graphify's palette.
+        _agg_groups = {_cid: [_cid] for _cid in communities}
+
+        _to_html(
+            _G_agg, _agg_groups, str(_html_path),
+            community_labels=_labels, member_counts=_member_counts,
+        )
+        _viz_mode = 'aggregated'
+
+    # Sidecar so the dashboard renderer can label the view honestly.
+    # JSON is tiny (~120B); avoids parsing graph.json twice from TS.
+    _meta_path = _html_dir / 'graph.html.meta.json'
+    _meta_path.write_text(json.dumps({
+        'mode': _viz_mode,
+        'totalNodes': G.number_of_nodes(),
+        'totalEdges': G.number_of_edges(),
+        'communities': len(communities),
+        'aggregatedNodeCount': len(communities) if _viz_mode == 'aggregated' else None,
+    }))
+except Exception as _html_err:
+    sys.stderr.write(f"dxkit: graph.html not generated ({_html_err})\\n")
 
 # Clean up temp cache
 import shutil
