@@ -123,7 +123,7 @@ export interface BomReport {
      *  (filter=top-level)." */
     unfilteredTotalPackages: number;
     /** Cwd-relative paths of every project root discovered under the
-     *  scan target (e.g. `["."]` or `[".", "userserver"]`). Sorted,
+     *  scan target (e.g. `["."]` or `[".", "api-server"]`). Sorted,
      *  distinct. Always at least `["."]` so consumers can treat it
      *  uniformly. Informational only — the package universe comes
      *  from the canonical cached license inventory regardless of how

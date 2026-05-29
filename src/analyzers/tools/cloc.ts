@@ -18,10 +18,10 @@ const SKIP_KEYS = new Set(['header', 'SUM']);
 /** Gather metrics from cloc --json. */
 export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   // --timeout 0 disables per-file timeout (suppresses warning that breaks JSON parse)
-  // D055 (2.4.7): getClocExcludeFlags emits BOTH `--exclude-dir` (basenames)
+  // getClocExcludeFlags emits BOTH `--exclude-dir` (basenames)
   // AND `--fullpath --not-match-d` (Perl regex on full path) so multi-segment
-  // `.dxkit-ignore` entries like `Dev/Addons/VendorAddon/SAPB1/` exclude the
-  // correct subtree instead of every dir named `Dev`.
+  // `.dxkit-ignore` entries like `app/vendor/generated/` exclude the
+  // correct subtree instead of every dir named `app`.
   const excludeFlags = getClocExcludeFlags(cwd);
   const flags = `--json --timeout 0 ${excludeFlags}`;
 
