@@ -38,9 +38,9 @@ describe('looksVendored', () => {
   });
 
   it('flags SAP B1 / OData proxy classes (WinForms SAP-integration case)', () => {
-    expect(looksVendored('Code/Source/Dev/Addons/VendorAddon/SAPB1/Admission/AADM.cs')).toBe(true);
-    expect(looksVendored('Code/Source/Dev/Addons/VendorAddon/SAPByD/Services/Sales.cs')).toBe(true);
-    expect(looksVendored('Code/Source/Generated/OData/Customer.cs')).toBe(true);
+    expect(looksVendored('app/vendor/sapb1/billing/Invoice.cs')).toBe(true);
+    expect(looksVendored('app/vendor/sapbyd/services/Sales.cs')).toBe(true);
+    expect(looksVendored('app/generated/odata/Customer.cs')).toBe(true);
   });
 
   it('flags connected-services / proto-generated conventions', () => {

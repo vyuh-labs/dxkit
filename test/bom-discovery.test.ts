@@ -32,10 +32,10 @@ describe('discoverProjectRoots', () => {
 
   it('finds nested sub-projects', () => {
     write('package.json');
-    write('userserver/package.json');
+    write('api-server/package.json');
     write('tools/cli/package.json');
     const roots = discoverProjectRoots(tmp);
-    expect(roots).toEqual([tmp, path.join(tmp, 'tools/cli'), path.join(tmp, 'userserver')].sort());
+    expect(roots).toEqual([tmp, path.join(tmp, 'tools/cli'), path.join(tmp, 'api-server')].sort());
   });
 
   it('skips node_modules entirely', () => {

@@ -82,11 +82,10 @@ interface OsvFixPatch {
  * cleanly). On dxkit's own repo this caused subsequent dxkit subcommand
  * invocations to crash with `Cannot find module 'hosted-git-info'`
  * because osv-scanner's reinstall left an incomplete tree. On
- * vyuhlabs-platform (835MB node_modules) the reinstall happened to
- * succeed but still mutated state silently — a 5-month-old data-mutation
- * bug shipped since 2.4.0 / Phase 10h.6 and only caught now because
- * 2.4.5 pre-ship regression ran reports back-to-back on dxkit's own repo
- * and tripped the chain.
+ * a large reference repo (~800MB node_modules) the reinstall happened to
+ * succeed but still mutated state silently — a long-standing data-mutation
+ * bug shipped since 2.4.0 and only caught when a pre-ship regression ran
+ * reports back-to-back on dxkit's own repo and tripped the chain.
  *
  * Mitigation: we copy `package.json` + `package-lock.json` to a fresh
  * temp dir, run osv-scanner there, and discard the temp dir afterward.

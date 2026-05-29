@@ -57,10 +57,9 @@ const SUSPECT_VENDORED_TOKENS = [
   '/cesium/',
   '/map/js/',
   '/map/lib/',
-  // SAP Business One / ByDesign SDK proxy classes. Reverse-engineered
-  // from the ERP data model — property-bag DTOs with hundreds of
-  // classes and zero method bodies, indistinguishable from human
-  // code by extension alone. Project-team doesn't author them.
+  // SAP Business One / ByDesign SDK proxy classes — generated/vendored
+  // property-bag DTOs with hundreds of classes and zero method bodies,
+  // indistinguishable from hand-written code by extension alone.
   '/sapb1/',
   '/sapbyd/',
   '/odata/',

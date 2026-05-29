@@ -110,11 +110,11 @@ describe('getJscpdIgnorePatterns', () => {
   it('emits multi-segment sourcePaths as `**/<path>/**`', () => {
     fs.writeFileSync(
       path.join(tmp, '.dxkit-ignore'),
-      'Code/Source/Dev/Addons/VendorAddon/SAPB1/\n',
+      'app/modules/plugins/VendorPlugin/ErpConnector/\n',
     );
     clearExclusionsCache();
     const patterns = getJscpdIgnorePatterns(tmp);
-    expect(patterns).toContain('**/Code/Source/Dev/Addons/VendorAddon/SAPB1/**');
+    expect(patterns).toContain('**/app/modules/plugins/VendorPlugin/ErpConnector/**');
   });
 
   it('emits file-globs as `**/<glob>`', () => {

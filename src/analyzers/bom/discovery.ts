@@ -2,11 +2,10 @@
  * Project-root discovery for nested BOM aggregation.
  *
  * `vyuh-dxkit bom <path>` historically scanned `<path>` as a single
- * project root. Repos like `vyuhlabs-platform/` (root devtools +
- * `userserver/` product) fell through the cracks — the scanner saw
+ * project root. Monorepos with root devtools plus a product
+ * subdirectory fell through the cracks — the scanner saw
  * only whichever `package.json`/lockfile lived at `<path>`, missing
- * every sibling or nested sub-project. See D001a in the internal
- * defect log for the incident write-up.
+ * every sibling or nested sub-project.
  *
  * This module walks the filesystem starting at cwd and returns every
  * directory that looks like an independent project root (i.e. has any

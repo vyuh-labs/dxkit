@@ -499,14 +499,14 @@ describe('mergeAssetParses (D003 — multi-project merge)', () => {
   });
 });
 
-// D035 (2.4.7) — depVulns gather preflight depth parity with detect().
+// depVulns gather preflight depth parity with detect().
 //
-// Pre-D035, `hasCsharpProject` used a depth-1 walk while detect() (post-
-// D024) walked depth 5. The .NET WinForms benchmark's `Code/Source/Dev/Core/<Module>/
-// <Module>.csproj` layout produced Stack: csharp at the top level but
+// `hasCsharpProject` once used a depth-1 walk while detect() walked
+// depth 5. A deeply-nested layout like `app/src/modules/Core/<Module>/
+// <Module>.csproj` produced Stack: csharp at the top level but
 // "Unavailable: dep-audit" at the gather level — because the preflight
-// rejected the deep-cwd before reaching D025c's dotnet probe. Post-D035
-// the two depths agree.
+// rejected the deep cwd before reaching the dotnet probe. The two
+// depths now agree.
 //
 // We don't test `hasCsharpProject` directly (it's private). Instead we
 // assert the observable contract: if detect() says "this IS a csharp
