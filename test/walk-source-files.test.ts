@@ -135,14 +135,14 @@ describe('walkSourceFiles — exclusion (.gitignore + .dxkit-ignore + defaults)'
   });
 
   it('honours .dxkit-ignore multi-segment path', () => {
-    write('.dxkit-ignore', 'Dev/Addons/SAPB1/\n');
+    write('.dxkit-ignore', 'app/vendor/generated/\n');
     write('src/a.ts');
-    write('Dev/Addons/SAPB1/wrapped.ts');
-    write('Dev/Other/keep.ts');
+    write('app/vendor/generated/wrapped.ts');
+    write('app/other/keep.ts');
     const out = walkSourceFiles(tmp);
     expect(out).toContain('src/a.ts');
-    expect(out).toContain('Dev/Other/keep.ts');
-    expect(out).not.toContain('Dev/Addons/SAPB1/wrapped.ts');
+    expect(out).toContain('app/other/keep.ts');
+    expect(out).not.toContain('app/vendor/generated/wrapped.ts');
   });
 
   it('honours file-pattern globs from .gitignore (e.g. *.min.js)', () => {

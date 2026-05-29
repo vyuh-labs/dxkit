@@ -25,10 +25,10 @@
  *   Microsoft-recommended non-sudo install) got dotnet discovered.
  *   That fix was necessary but not sufficient: `dotnet list package
  *   --vulnerable` still requires an explicit `.csproj`/`.sln` in cwd,
- *   and the .NET WinForms benchmark's
- *   `Code/Source/Dev/Core/<Module>/<Module>.csproj` layout puts the
- *   project files 3 levels deeper than the natural
- *   `dxkit vulnerabilities Code/Source/` cwd.
+ *   and a deeply-nested .NET layout like
+ *   `app/src/modules/Core/<Module>/<Module>.csproj` puts the
+ *   project files several levels deeper than the natural
+ *   `dxkit vulnerabilities app/src/` cwd.
  *
  *   D025f sidesteps the dotnet CLI entirely. We walk every `.csproj`
  *   reachable from cwd (depth 5, matching csharp.detect()), parse

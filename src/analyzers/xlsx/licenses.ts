@@ -1,18 +1,18 @@
 /**
  * XLSX converter — licenses report.
  *
- * Produces the 15-column spreadsheet format the customer uses today as
- * their BOM artifact (Phase 10h benchmark: userserver-dependencies2.xlsx
- * "platform" tab). Header text is byte-identical to the reference sheet,
+ * Produces the 15-column spreadsheet format common to enterprise BOM
+ * artifacts (a per-row dependency listing with license + version
+ * columns). Header text is byte-identical to the reference sheet,
  * including the quirky `"Component  Name"` double-space and
  * `"Component version "` trailing-space.
  *
  * Drop-in replacement: a reviewer who previously received the hand-built
  * sheet can open a dxkit-generated one and see the same column layout,
- * now with up to 10 columns mechanically populated (vs the customer's
- * current 7). The remaining 5 columns are either vulnerability-derived
- * (11, 12, 13 — filled by `vyuh-dxkit bom`, Phase 10h.3) or human
- * workflow state (5, 14).
+ * now with up to 10 columns mechanically populated (vs the 7 a
+ * hand-built sheet typically fills). The remaining 5 columns are either
+ * vulnerability-derived (11, 12, 13 — filled by `vyuh-dxkit bom`) or
+ * human workflow state (5, 14).
  *
  * Status column (5) auto-fills with `"Reported YYYY-MM-DD"` from
  * `report.analyzedAt` — a freshness stamp the reviewer overwrites when
