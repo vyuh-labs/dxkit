@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-05-29
+
+The "Repo Explore" release. dxkit now builds a deterministic code graph
+of your repo and exposes it three ways: a CLI to query structure, an
+interactive graph in the dashboard, and per-finding blast radius in
+detailed reports. The throughline is helping a coding agent fix findings
+by navigating structure instead of re-reading whole files.
+
+### Added
+
+- **`vyuh-dxkit explore`** with six subcommands (`entry-points`,
+  `hot-files`, `communities`, `file`, `feature`, `api-surface`) for
+  asking the code graph what the repo does, where a feature lives, which
+  files are load-bearing, and what the public API surface is.
+- **`vyuh-dxkit context <query>`** returns a token-budgeted structural
+  slice for a query (an anchor symbol, its relevant neighbors, and the
+  blast radius), plus a fail-open Claude Code PreToolUse hook that feeds
+  it on Grep/Glob so agents need fewer follow-up whole-file reads.
+  Auto-installed with `--with-dxkit-agents`.
+- **Interactive Graph tab** in `vyuh-dxkit dashboard`, embedding
+  graphify's code-graph viewer with the renderer bundled to work
+  offline. Large repos render a community-aggregated view.
+- **`--graph-context`** on `vulnerabilities`, `test-gaps`, and `quality`
+  attaches each finding's module and blast radius (which files call into
+  it) to the detailed report, so a fixing agent gets the structural map
+  per finding without a separate lookup.
+- **Per-language call-graph reliability.** Where the call graph cannot be
+  resolved (C#, which cannot follow `using` across assemblies), blast
+  radius reads "n/a" rather than a misleading "0 callers", so it is never
+  mistaken for "safe to change".
+- **`dxkit-action`** now folds blast radius into prioritization as an
+  additive signal, and the generated `AGENTS.md` documents the new
+  commands.
+
+### Changed
+
+- `vyuh-dxkit health` writes the code graph to
+  `.dxkit/reports/graph.json` as a side effect, so a single run
+  populates the artifact the explore, context, dashboard, and
+  graph-context surfaces read.
+
 ## [2.6.0] - 2026-05-23
 
 The "per-finding suppression + public-repo-safe baselines" release.
@@ -185,7 +226,7 @@ Tag: `create-dxkit@v0.2.0`. Run `npm init @vyuhlabs/dxkit` to get
 the new combined experience.
 
 Validated end-to-end with two cross-stack walkthroughs on 2026-05-22:
-`vyuhlabs-platform` (python + typescript) and `dpl-studio` (csharp).
+a polyglot Python+TypeScript reference repo and a .NET reference repo.
 Both stacks: defect closures verified, per-pack devcontainer adapts
 correctly, doctor's new tier-3 surfaces operational gaps with
 actionable fix commands.
@@ -1621,9 +1662,9 @@ Four pieces shipped together:
 The post-shipment audit's master bug + its direct cascade:
 
 - **D055** — `.dxkit-ignore` multi-segment paths flatten to basenames
-  in cloc / graphify / grep. `Dev/Addons/VendorAddon/SAPB1/` silently
-  became `{Dev, Addons, VendorAddon, SAPB1}` — cloc then excluded every
-  directory named `Dev` in the tree, killing 90% of source visibility.
+  in cloc / graphify / grep. `app/vendor/generated/` silently
+  became `{app, vendor, generated}`, so cloc then excluded every
+  directory named `app` in the tree, killing 90% of source visibility.
   Fix: `getClocExcludeFlags` emits `--exclude-dir` (basenames) PLUS
   `--fullpath --not-match-d` (Perl regex on full path).
   `getPythonExcludeFilter` emits both a basename set AND a multi-
@@ -1825,7 +1866,7 @@ discipline.
   (osv-scanner reads Gemfile.lock directly, no `bundle env`/`bundle
   show` introspection ladder). Stays accepted-deferred.
 - **D017** (NEW) — `dxkit bom <large-project> > file.json` produces
-  0-byte output intermittently on vyuhlabs-platform (1700+ deps).
+  0-byte output intermittently on a large reference repo (1700+ deps).
   EXIT=0, no error. Workaround: pipe through `cat`. Hypothesis:
   Node stdout buffer doesn't drain before process exit when output
   is large + stdout is a regular file. NOT a 2.4.6 ship blocker —
@@ -1835,7 +1876,7 @@ discipline.
 ### Pre-ship regression — clean
 
 Sequential dxkit reports captured against dxkit-on-dxkit and
-vyuhlabs-platform; 12 reports each diffed against the 2.4.5-fixed
+a large reference repo; 12 reports each diffed against the 2.4.5-fixed
 baseline. Zero code regressions detected. All deltas explained:
 
 - dxkit/test-gaps 16 → 32 — better data (Istanbul vs import-graph
@@ -1887,7 +1928,7 @@ at every commit in the 10-commit branch.
      `typescript`, etc.). `unfilteredTotalPackages` 22 → 353. The
      analyzed project's own deps were missing from BoM whenever the
      bug hit. Most repos that resolve peer-deps cleanly under
-     `--legacy-peer-deps` weren't affected (vyuhlabs-platform's BoM
+     `--legacy-peer-deps` weren't affected (the reference repo's BoM
      stayed correct at 145 packages); repos with subtle peer-dep
      issues silently lost root-dep enumeration.
 
@@ -2756,7 +2797,7 @@ unchanged — consumers can re-derive trivially if needed.
 - 715 tests passing (+18 pm-signals cases: license class mapping,
   compound expressions, staleness thresholds, effort semver deltas).
 - Typecheck + lint + format + architecture + pre-push CI-mirror gate clean.
-- vyuhlabs-platform smoke: all 4 sheets render correctly, exec summary
+- reference-repo smoke: all 4 sheets render correctly, exec summary
   surfaces 3 ship-blockers + 9 sprint-risk findings + pm2 flagged
   copyleft-strong, `@loopback/rest` surfaces as highest-leverage upgrade
   (27 transitive advisories, worst CRITICAL).
@@ -2764,7 +2805,7 @@ unchanged — consumers can re-derive trivially if needed.
 ## [2.3.1] - 2026-04-24
 
 Patch release fixing three install-robustness issues reported on a
-real vyuhlabs-platform install:
+real reference-repo install:
 
 ### Fixed
 
@@ -2810,7 +2851,7 @@ real vyuhlabs-platform install:
   Warnings only, no functional impact; would require either switching
   xlsx libraries (breaking) or upstream archiver modernization.
 
-### Validation on vyuhlabs-platform/userserver
+### Validation on the polyglot reference repo
 
 - `vyuh-dxkit tools` reports 12/13 tools found (vitest-coverage
   correctly listed as missing since lb-mocha is in use)
@@ -2883,7 +2924,7 @@ merge → tag → CI-publishes without deviation.
   unions the roots each package was found in; `isTopLevel`
   OR-merges; vulns dedup on `(id, package, installedVersion)`.
   Closes **D001a** — `bom platform/` previously missed
-  `platform/userserver/` entirely. Side-benefit: naturally
+  the product subdirectory entirely. Side-benefit: naturally
   addresses **D003** (C# multi-project) since each `.csproj`
   becomes its own root. (10h.5.0b)
 
@@ -3000,7 +3041,7 @@ bump required.
 - **TypeScript pack** — BFS over `package-lock.json` (v2/v3) from
   each root `dependencies` / `devDependencies` entry. Pure parser
   `buildTsTopLevelDepIndex` unit-tested; benchmark on
-  `vyuhlabs-platform`: 71/71 findings attributed across 31 vulnerable
+  reference repo: 71/71 findings attributed across 31 vulnerable
   packages, `@loopback/cli` rollup = 29 advisories (matches Snyk UI).
 
 - **Python pack** — BFS over `pip show` graph from packages with empty
@@ -3066,7 +3107,7 @@ bump required.
   `obj/project.assets.json`. Findings still emit; `topLevelDep` stays
   unset.
 
-- Release validated against `vyuhlabs-platform` TypeScript benchmark.
+- Release validated against the TypeScript reference benchmark.
   Python/Go/Rust/C# packs exercised via fixture-based unit tests
   (+53 new tests across the 4 non-TS language test files); real-world
   validation lands with 2.3.0's cross-ecosystem benchmark fixtures.
