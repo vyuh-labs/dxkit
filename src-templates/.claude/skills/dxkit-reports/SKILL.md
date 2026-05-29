@@ -19,7 +19,9 @@ This skill runs dxkit analyzers and reads their output back to the user. It's th
 | "License inventory" | `npx vyuh-dxkit licenses` | Every dependency's declared license |
 | "Bill of materials" | `npx vyuh-dxkit bom` | Licenses + dep vulnerabilities joined (15-col XLSX-ready output) |
 | "Run everything" | `npx vyuh-dxkit report` | Every analyzer in one shot, ~3-5 min |
-| "Show me the dashboard" | `npx vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html` |
+| "Show me the dashboard" | `npx vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html`, incl. an interactive **Graph** tab (code structure) |
+| "What does this repo do / where is X" | `npx vyuh-dxkit explore <sub>` | Query the code graph: entry-points / hot-files / communities / file / feature / api-surface |
+| "Token-efficient context for a query" | `npx vyuh-dxkit context <query>` | Slim structural slice for an LLM (also a fix-time hint via `--graph-context`) |
 
 ## Where output lands
 
