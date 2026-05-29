@@ -32,14 +32,21 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 - [x] Devcontainer with pinned per-stack toolchains
 - [x] Optional install scripts for AI agent CLIs
 
-## Next release: 2.7
+### Repo explore + graph context (2.7)
 
-### Graphify pair (deferred from 2.6)
+- [x] `vyuh-dxkit explore` for querying the code graph (entry-points, hot-files, communities, file, feature, api-surface)
+- [x] `vyuh-dxkit context <query>` for a token-budgeted structural slice, plus a fail-open PreToolUse hook that feeds it to coding agents automatically
+- [x] Interactive Graph tab in the dashboard (graphify's viewer, bundled to work offline)
+- [x] `--graph-context` on vulnerabilities, test-gaps, and quality, attaching each finding's module and blast radius to the detailed report (suppressed where a language's call graph cannot be resolved, so a "no callers" reading is never mistaken for "safe to change")
+
+## Next release: 2.8
+
+### Graphify pair (deferred from 2.7)
 
 - [ ] `vyuh-dxkit context <file:line>` command that returns a curated AST chunk under a token budget. Replaces "agent ingests 15k-line file" with "agent ingests 500 focused lines."
 - [ ] Reachability Tier-1 for dep-vuln triage. Lifts severity based on whether customer code actually calls the vulnerable surface.
 
-Both build on the same graphify-symbols extension foundation.
+Both build on the graph foundation that 2.7 shipped.
 
 ### Cross-agent reach (decision pending)
 
