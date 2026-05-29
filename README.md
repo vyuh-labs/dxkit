@@ -6,6 +6,10 @@ _Deterministic guardrails for any codebase. Brownfield-friendly by default._
 
 dxkit scores your codebase deterministically, baselines today's findings, and gates every push against net-new regressions. It ships conversational skills that walk agents (and humans) through fixes. Existing tech debt stays grandfathered. Nothing runs on an LLM. Everything runs locally.
 
+<p align="center">
+  <img src=".github/assets/guardrail-demo.gif" width="760" alt="A git push blocked by the dxkit pre-push guardrail: 2 net-new regressions block the push while 644 pre-existing findings stay grandfathered." />
+</p>
+
 ```bash
 npm init @vyuhlabs/dxkit
 ```
