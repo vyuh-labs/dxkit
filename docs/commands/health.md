@@ -51,6 +51,12 @@ Two files are written by default:
 - `.dxkit/reports/health-audit-<date>-detailed.json` — machine
   readable
 
+`health` also writes `.dxkit/reports/graph.json` as a side effect (the
+code graph graphify builds for the Maintainability dimension). That
+artifact powers [`explore`](explore.md), [`context`](context.md), the
+dashboard Graph tab, and the `--graph-context` finding enrichment — so
+running `health` once is the simplest way to populate the graph.
+
 ## Reading the short report
 
 ```markdown
