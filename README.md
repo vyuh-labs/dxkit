@@ -45,7 +45,7 @@ You need an objective gate that only fires on what is actually new. That is the 
 
 ## How dxkit solves it
 
-Two ideas working together.
+Three ideas working together.
 
 ### 1. Capture today's state as a baseline
 
@@ -72,6 +72,10 @@ The score has four properties:
 | **Severity-weighted** | A critical security finding moves the score far more than a TODO comment. Penalties are anchored to real-world impact via CVSS for security and ratio thresholds for tests, coverage, file size, and other dimensions. |
 | **Actionable**        | Every deduction names the file, the line, and the recommended fix. Output is structured JSON. Agents and humans read the same thing. The "what to do next" lives in the score itself.                                  |
 
+### 3. Fix findings at reduced token cost
+
+Detection is only half the job. dxkit builds a deterministic code graph of the repo (its symbols, call edges, and clustered modules), so fixing is cheap too. A coding agent works from that structure ("what calls this? what breaks if I change it?") instead of re-reading whole files, and every finding in a detailed report already carries its blast radius: the files that depend on it. The `dxkit-action` skill runs the fix, re-scores, and confirms the gate clears. Same result, far fewer tokens.
+
 ### What you get from the combination
 
 A score on its own is a number. A baseline on its own grandfathers the past. Together they produce an objective stop signal you can trust.
@@ -82,7 +86,7 @@ Next PR:  16/100 E      644 persisted, 0 new. Gate passes.
 Bad PR:   14/100 E      644 persisted, 2 new high-severity. Gate blocks.
 ```
 
-The score does not lie. The baseline keeps it useful on real codebases. The combination works the same for humans, AI agents, and CI runners. That is the part that scales.
+The score does not lie. The baseline keeps it useful on real codebases. The combination works the same for humans, AI agents, and CI runners. That is the part that scales. And once the gate fires, the code graph makes acting on it cheap: agents fix from the structure rather than reading file after file.
 
 ---
 
@@ -192,15 +196,15 @@ dxkit ships nine Claude Code skills under `.claude/skills/dxkit-*`. They wrap th
 
 Why this matters for AI workflows: when an agent fixes a bug, you need an objective signal that says "yes, fixed cleanly" or "fix introduced four new regressions." dxkit's deterministic score plus baseline guardrail produces that signal. The agent reads the same JSON envelope a human reads, runs the verify step itself, and stops when clean.
 
-### Code-graph context — fix issues at reduced token cost
+### Code-graph context: fix at reduced token cost
 
-dxkit builds a deterministic code graph of your repo — symbols, call edges, and clustered modules — via graphify (the `graphifyy` Python package). The point isn't the graph; it's what an agent does with it. Instead of discovering structure by repeatedly grepping and reading whole files, a coding agent gets the relevant slice handed to it:
+dxkit builds a deterministic code graph of your repo (its symbols, call edges, and clustered modules) using graphify (the `graphifyy` Python package). What matters is what an agent does with it. Instead of discovering structure by grepping around and reading whole files, the agent gets just the relevant slice:
 
-- **`vyuh-dxkit context <query>`** (and an opt-in PreToolUse hook) feed an agent a slim structural map — the relevant symbols, where they live, and what calls them — so it navigates by graph rather than by re-reading files. That's the same work at a fraction of the tokens.
-- **`--graph-context`** attaches each finding's blast radius (which files call into it) and its module straight into the detailed report, so the `dxkit-action` fix skill plans the change — and knows which callers to re-test — without separately rediscovering structure.
+- **`vyuh-dxkit context <query>`** (and an opt-in PreToolUse hook) hand an agent a slim structural map: the relevant symbols, where they live, and what calls them. It navigates by the graph instead of re-reading files, which is the same work at a fraction of the tokens.
+- **`--graph-context`** writes each finding's module and blast radius (which files call into it) straight into the detailed report, so the `dxkit-action` fix skill can plan the change, and know which callers to re-test, without rediscovering structure first.
 - **`vyuh-dxkit explore`** and a dashboard graph tab let humans ask the same graph what the repo does, where a feature lives, and which files are load-bearing.
 
-It's an additive, fail-open hint layer: when the graph is missing — or a language's call edges can't be resolved — every command behaves exactly as before. Reliable on TypeScript / Python / Go; where the call graph can't be resolved (C#), blast radius is suppressed rather than faked, so a "no callers" reading is never mistaken for "safe to change."
+This is an additive, fail-open layer. When the graph is missing, or a language's call edges can't be resolved, every command behaves exactly as it did before. It's reliable on TypeScript, Python, and Go. Where the call graph can't be resolved (C#), blast radius is suppressed rather than faked, so a "no callers" reading is never mistaken for "safe to change."
 
 ### Reproducible environments
 
