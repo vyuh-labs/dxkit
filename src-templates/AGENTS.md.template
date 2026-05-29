@@ -114,11 +114,18 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 | Test coverage gaps | `npx vyuh-dxkit test-gaps` |
 | Code quality + slop | `npx vyuh-dxkit quality` |
 | Bill of materials | `npx vyuh-dxkit bom` |
-| Dashboard (HTML) | `npx vyuh-dxkit dashboard` |
+| Dashboard (HTML, incl. interactive Graph tab) | `npx vyuh-dxkit dashboard` |
+| What does this repo do / where does X live | `npx vyuh-dxkit explore <sub>` |
+| Token-efficient structural context for a query | `npx vyuh-dxkit context <query>` |
 | Guardrail check (baseline diff) | `npx vyuh-dxkit guardrail check` |
 | Doctor (verify setup) | `npx vyuh-dxkit doctor` |
 
 The pre-push hook runs `guardrail check` automatically — blocks net-new regressions before they leave your machine.
+
+When fixing findings, run the detailed report with `--graph-context`
+(e.g. `npx vyuh-dxkit vulnerabilities --detailed --graph-context`) — it
+attaches each finding's module + blast radius so you can navigate by the
+code graph instead of repeated whole-file reads.
 
 ## Security rules — never violate
 
