@@ -1,0 +1,71 @@
+name: Windows detection
+
+# Cross-platform tool detection (PATH walk + PATHEXT, temp-file handling,
+# install-shell selection) can only be validated on a real Windows
+# runner. This job is deliberately NARROW so it does not slow down every
+# PR: it runs only when detection-critical files change, or on manual
+# dispatch. Normal PRs (docs, language packs, scoring, …) never trigger
+# it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/analyzers/tools/runner.ts'
+      - 'src/analyzers/tools/tool-registry.ts'
+      - 'src/analyzers/tools/tools-config.ts'
+      - 'src/analyzers/tools/gitleaks.ts'
+      - 'src/analyzers/tools/semgrep.ts'
+      - 'src/analyzers/tools/jscpd.ts'
+      - 'src/doctor.ts'
+      - 'src/baseline/coverage.ts'
+      - 'src/baseline/create.ts'
+      - 'test/cross-platform-detect.test.ts'
+      - 'test/baseline-coverage.test.ts'
+      - '.github/workflows/windows-detection.yml'
+  pull_request:
+    paths:
+      - 'src/analyzers/tools/runner.ts'
+      - 'src/analyzers/tools/tool-registry.ts'
+      - 'src/analyzers/tools/tools-config.ts'
+      - 'src/analyzers/tools/gitleaks.ts'
+      - 'src/analyzers/tools/semgrep.ts'
+      - 'src/analyzers/tools/jscpd.ts'
+      - 'src/doctor.ts'
+      - 'src/baseline/coverage.ts'
+      - 'src/baseline/create.ts'
+      - 'test/cross-platform-detect.test.ts'
+      - 'test/baseline-coverage.test.ts'
+      - '.github/workflows/windows-detection.yml'
+
+jobs:
+  detect:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+
+      # The detection + coverage unit tests run platform-real here:
+      # their `win32` branches exercise the actual PATHEXT walk and the
+      # case-insensitive Windows filesystem, which a Linux runner can't.
+      - name: Detection + coverage unit tests
+        run: npx vitest run test/cross-platform-detect.test.ts test/baseline-coverage.test.ts
+
+      # Smoke: git + node are installed on the runner, so doctor must
+      # report git as a PASS. Pre-fix the POSIX-only `which` probe made
+      # git/node/npm read as missing here — this asserts the regression
+      # stays closed. dxkit's bin entry is dist/index.js.
+      - name: doctor detects git on Windows
+        shell: pwsh
+        run: |
+          $out = node dist/index.js doctor 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match '✗\s*git') {
+            Write-Error 'doctor reports git as MISSING on Windows despite it being installed (detection regression)'
+            exit 1
+          }

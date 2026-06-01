@@ -83,6 +83,16 @@ Driven by doctor's tier 3 (operational health) — these are the canonical repai
 | `CI guardrails workflow` missing | `npx vyuh-dxkit init --with-ci --yes` | Adds the dxkit-guardrails.yml workflow. Idempotent. |
 | Agent DX tier failures (manifest missing, AGENTS.md missing, .claude/* missing) | `npx vyuh-dxkit init --full --yes` or `npx vyuh-dxkit update` | Init for fresh installs; update for refreshes. |
 
+### Tool reported missing but the customer says it IS installed
+
+If doctor flags a tool (git, dotnet, node, npm, a scanner) as missing but the customer insists it's installed, it's almost always a detection gap — the binary lives somewhere dxkit doesn't probe (common on Windows / locked-down corporate machines). Don't tell them to reinstall. Instead:
+
+1. Find where it actually lives: `where <tool>` (Windows) / `which <tool>` (POSIX).
+2. Add that directory to `.dxkit/tools.json` `probePaths` (hand off to **dxkit-config**, which documents the file).
+3. Re-run `npx vyuh-dxkit doctor` to confirm it now resolves.
+
+This matters: an undetected scanner means `baseline create` silently captured ZERO findings for that tool's category — re-baseline (`baseline create --force`) once detection is fixed.
+
 ## Capturing the FIRST baseline — be deliberate
 
 Of all the fixes, `baseline create` is the only one with permanent consequences. The baseline records the fingerprint of every finding currently in the repo and tells future scans "these are pre-existing — don't block on them."
