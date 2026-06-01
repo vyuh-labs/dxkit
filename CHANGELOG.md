@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-05-31
+
+Windows compatibility. Tool detection, the scanner toolchain, and source
+enumeration now work on native Windows (cmd.exe / PowerShell), not only
+on POSIX shells. Previously a Windows user could capture a baseline that
+silently omitted whole finding categories because the underlying tools
+were never detected or run; dxkit now detects them correctly and, when
+something genuinely can't run, says so instead of recording an empty
+result as clean.
+
+### Fixed
+
+- **Cross-platform tool detection.** Binary resolution now walks `PATH`
+  in pure Node, honoring `%PATHEXT%` on Windows, instead of shelling out
+  to `which`. Previously every external tool — and even `git`, `node`,
+  and `dotnet` — was reported missing on Windows even when installed,
+  which `doctor` now reflects accurately.
+- **Scanners run on Windows.** gitleaks, semgrep, and jscpd write their
+  reports under the OS temp directory and gitleaks is invoked without a
+  shell, so a path with spaces or a non-POSIX shell no longer produces
+  an empty result.
+- **Source enumeration is shell-free.** Per-language import discovery,
+  the directory count, README/manifest reads, and the developer-
+  experience probes use in-process file walkers instead of
+  `find` / `ls` / `wc` / `cat`, which returned nothing on Windows.
+- **Graph context on Windows.** The graphify interpreter is resolved via
+  the platform venv layout (`Scripts\python.exe` vs `bin/python`), so
+  `explore`, `context`, and `--graph-context` work once graphify is
+  installed.
+- **`tools install` on Windows** selects an available shell rather than
+  assuming `/bin/bash`.
+
+### Added
+
+- **Baseline coverage signal.** `baseline create` warns when an expected
+  scanner isn't available — prompting to install or continue
+  interactively, and requiring `--allow-incomplete` in non-interactive
+  runs rather than silently writing a partial baseline (`--force`
+  implies this opt-in, so the shipped baseline-refresh workflow keeps
+  working). The baseline file now records which scanners were available
+  at capture time, and `guardrail check` surfaces when that availability
+  has since changed.
+- **Configurable tool locations.** A `.dxkit/tools.json` with
+  `probePaths` and `installDir` lets dxkit find tools in non-standard
+  locations and install them where you choose — useful on locked-down or
+  corporate-managed machines. Documented in the `dxkit-config` skill.
+- **Windows CI job** that validates detection on a real Windows runner,
+  triggered only when detection-relevant files change.
+
 ## [2.7.0] - 2026-05-29
 
 The "Repo Explore" release. dxkit now builds a deterministic code graph
