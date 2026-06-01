@@ -29,7 +29,10 @@ import { gatherHygieneMarkers } from '../analyzers/quality/gather';
 import { analyzeTestGaps } from '../analyzers/tests';
 import { gatherGitleaksResult } from '../analyzers/tools/gitleaks';
 import type { GitleaksRawSecret } from '../analyzers/tools/gitleaks';
-import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
+import { checkAllTools, findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
+import { detect } from '../detect';
+import { coverageFromToolStatuses } from './coverage';
+import type { ScanCoverage } from './coverage';
 import { VERSION as DXKIT_VERSION } from '../constants';
 import {
   BASELINE_SCHEMA_VERSION,
@@ -270,6 +273,9 @@ export interface CurrentScan {
   readonly saltMode: SaltMode;
   /** Per-tool name → version map for the run that just completed. */
   readonly tools: Readonly<Record<string, string>>;
+  /** Scanner availability snapshot for the run — which finding-
+   *  contributing tools were detected vs missing on this machine. */
+  readonly coverage: ScanCoverage;
   /** Envelope metadata for the run. `toolchainHash` is already
    *  resolved from `tools`. */
   readonly analysisMeta: BaselineAnalysisMeta;
@@ -360,15 +366,34 @@ export async function gatherCurrentScan(options: {
     toolchainHash: hashContent(JSON.stringify(tools)),
   };
 
+  // Scanner availability for the active stack. Recorded on the baseline
+  // so a later guardrail check can detect when a category was never
+  // scanned (tool missing) rather than scanned-and-clean.
+  const coverage = coverageFromToolStatuses(checkAllTools(analysisResult.stack.languages, cwd));
+
   return {
     findings,
     aggregate,
     repoState,
     saltMode,
     tools,
+    coverage,
     analysisMeta,
     producerCtx,
   };
+}
+
+/**
+ * Scanner-availability snapshot for `cwd`, independent of a full scan.
+ *
+ * Cheap pre-flight used by the CLI to warn — before paying for the
+ * gather — when finding-contributing scanners are missing on this
+ * machine, so a developer isn't surprised by a silently-incomplete
+ * baseline. Detects the stack and probes each required tool.
+ */
+export function gatherScanCoverage(cwd: string): ScanCoverage {
+  const resolved = path.resolve(cwd);
+  return coverageFromToolStatuses(checkAllTools(detect(resolved).languages, resolved));
 }
 
 /**
@@ -431,6 +456,7 @@ export async function createBaseline(
     analysis: scan.analysisMeta,
     tools: scan.tools,
     saltMode: scan.saltMode,
+    coverage: scan.coverage,
     findings: scan.findings,
   };
 

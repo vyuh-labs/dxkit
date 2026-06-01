@@ -316,6 +316,8 @@ export async function run(argv: string[]): Promise<void> {
       depth: { type: 'string' },
       // graph-context enrichment for detailed reports (vuln/test-gaps/quality)
       'graph-context': { type: 'boolean', default: false },
+      // baseline create: proceed despite missing scanners (CI/non-interactive)
+      'allow-incomplete': { type: 'boolean', default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -1671,9 +1673,51 @@ export async function run(argv: string[]): Promise<void> {
       const subCommand = positionals[1];
       if (subCommand === 'create') {
         const targetPath = resolveRepoPath(positionals[2]);
-        const { createBaseline } = await import('./baseline/create');
+        const { createBaseline, gatherScanCoverage } = await import('./baseline/create');
         const { parseBaselineMode } = await import('./baseline/modes');
+        const { missingScanners } = await import('./baseline/coverage');
         logger.header('vyuh-dxkit baseline create');
+
+        // Pre-flight scanner check. A baseline captured with scanners
+        // missing silently omits those finding categories — and the
+        // developer has no way to tell an incomplete capture from a
+        // clean one. Warn loudly; in an interactive shell offer to stop
+        // and install first, and in CI refuse unless --allow-incomplete
+        // makes the choice explicit.
+        const missing = missingScanners(gatherScanCoverage(targetPath));
+        if (missing.length > 0) {
+          logger.warn(
+            `${missing.length} scanner(s) not detected: ${missing.map((m) => m.tool).join(', ')}`,
+          );
+          logger.dim('  Findings in these categories will NOT be captured in the baseline.');
+          logger.dim(
+            '  Install with `npx vyuh-dxkit tools install`, or if a tool IS installed but',
+          );
+          logger.dim(
+            '  not detected, point dxkit at it via .dxkit/tools.json (ask Claude: "fix dxkit").',
+          );
+          const proceedAnyway = !!values.yes || !!values['allow-incomplete'];
+          const interactive = !!process.stdin.isTTY && !!process.stdout.isTTY;
+          if (!proceedAnyway && interactive) {
+            const readline = await import('node:readline/promises');
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+            const answer = (await rl.question('  Capture an INCOMPLETE baseline anyway? [y/N]: '))
+              .trim()
+              .toLowerCase();
+            rl.close();
+            if (!answer.startsWith('y')) {
+              logger.info('Aborted. Install the missing scanners, then re-run `baseline create`.');
+              process.exit(1);
+            }
+          } else if (!proceedAnyway) {
+            logger.fail(
+              'Refusing to write an incomplete baseline non-interactively. ' +
+                'Re-run with --allow-incomplete to proceed, or install the missing scanners.',
+            );
+            process.exit(1);
+          }
+        }
+
         logger.info(`Capturing baseline for ${targetPath}...`);
         const startTime = Date.now();
         const cliModeRaw = values.mode as string | undefined;
