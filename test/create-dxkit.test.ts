@@ -25,6 +25,8 @@ const shim = require('../packages/create-dxkit/index.js') as {
     fsMod?: typeof fs,
     pathMod?: typeof path,
   ) => { changed: boolean; reason: string };
+  extractNpmLogPath: (text: string | null | undefined) => string | null;
+  formatInstallFailure: (opts?: { stderrChunks?: string[] }) => string;
 };
 
 let tmp: string;
@@ -129,6 +131,83 @@ describe('persistLegacyPeerDeps', () => {
     const npmrc = fs.readFileSync(path.join(tmp, '.npmrc'), 'utf-8');
     // Both settings on separate lines.
     expect(npmrc).toBe('fund=false\nlegacy-peer-deps=true\n');
+  });
+});
+
+describe('extractNpmLogPath', () => {
+  it('returns null for empty / nullish input', () => {
+    expect(shim.extractNpmLogPath('')).toBeNull();
+    expect(shim.extractNpmLogPath(null)).toBeNull();
+    expect(shim.extractNpmLogPath(undefined)).toBeNull();
+  });
+
+  it('extracts the modern `npm error` debug-log path', () => {
+    const out = [
+      'npm error code ERESOLVE',
+      'npm error A complete log of this run can be found in: /home/u/.npm/_logs/2026-06-01T06_08_06_595Z-debug-0.log',
+    ].join('\n');
+    expect(shim.extractNpmLogPath(out)).toBe(
+      '/home/u/.npm/_logs/2026-06-01T06_08_06_595Z-debug-0.log',
+    );
+  });
+
+  it('extracts a Windows-style debug-log path', () => {
+    const out =
+      'npm error A complete log of this run can be found in: C:\\Users\\R\\AppData\\Local\\npm-cache\\_logs\\2026-06-01T06_08_06_595Z-debug-0.log';
+    expect(shim.extractNpmLogPath(out)).toBe(
+      'C:\\Users\\R\\AppData\\Local\\npm-cache\\_logs\\2026-06-01T06_08_06_595Z-debug-0.log',
+    );
+  });
+
+  it('returns the LAST path when multiple are present (npm prints the pointer last)', () => {
+    const out = [
+      'A complete log of this run can be found in: /first/debug-0.log',
+      'A complete log of this run can be found in: /second/debug-0.log',
+    ].join('\n');
+    expect(shim.extractNpmLogPath(out)).toBe('/second/debug-0.log');
+  });
+
+  it('returns null when no pointer line is present', () => {
+    expect(shim.extractNpmLogPath('npm error code ERESOLVE\nnpm error something')).toBeNull();
+  });
+});
+
+describe('formatInstallFailure', () => {
+  it('never says "above" and always offers the npx-init escape hatch', () => {
+    const msg = shim.formatInstallFailure({ stderrChunks: [] });
+    expect(msg).not.toMatch(/error above/i);
+    expect(msg).toContain('npx vyuh-dxkit init --full --yes');
+  });
+
+  it('surfaces captured npm stderr when present', () => {
+    const msg = shim.formatInstallFailure({
+      stderrChunks: ['npm error code ERESOLVE\nnpm error peer react@18 wanted', ''],
+    });
+    expect(msg).toContain('npm reported:');
+    expect(msg).toContain('ERESOLVE');
+  });
+
+  it('points at the npm debug log when the pointer is in stderr', () => {
+    const msg = shim.formatInstallFailure({
+      stderrChunks: [
+        'npm error A complete log of this run can be found in: C:\\Users\\R\\npm-cache\\_logs\\x-debug-0.log',
+      ],
+    });
+    expect(msg).toContain('Full npm error log: C:\\Users\\R\\npm-cache\\_logs\\x-debug-0.log');
+  });
+
+  it('falls back to a generic log hint when no path was captured', () => {
+    const msg = shim.formatInstallFailure({ stderrChunks: [''] });
+    expect(msg).toMatch(/debug log/i);
+    expect(msg).not.toContain('Full npm error log:');
+  });
+
+  it('combines stderr from both attempts', () => {
+    const msg = shim.formatInstallFailure({
+      stderrChunks: ['ATTEMPT_ONE_ERR', 'ATTEMPT_TWO_ERR'],
+    });
+    expect(msg).toContain('ATTEMPT_ONE_ERR');
+    expect(msg).toContain('ATTEMPT_TWO_ERR');
   });
 });
 

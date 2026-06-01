@@ -93,7 +93,85 @@ function persistLegacyPeerDeps(cwd, fsMod = fs, pathMod = path) {
   return { changed: true, reason: existing ? 'appended' : 'created' };
 }
 
-module.exports = { resolveInitArgs, ensurePackageJson, npmBin, npxBin, persistLegacyPeerDeps };
+/**
+ * Extract npm's "complete log of this run" debug-log path from captured
+ * npm output. Modern npm routes ERESOLVE / registry / auth detail to a
+ * `_logs/*-debug-0.log` file and emits only a one-line pointer to
+ * stderr — so this path is where the real failure cause lives. Matches
+ * both the new `npm error ...` and legacy `npm ERR! ...` prefixes, and
+ * tolerates Windows paths.
+ *
+ * Returns the last match (npm prints the pointer last) or null.
+ */
+function extractNpmLogPath(text) {
+  if (!text) return null;
+  const re = /complete log of this run can be found in:\s*(.+)$/gim;
+  let match;
+  let last = null;
+  while ((match = re.exec(text)) !== null) {
+    last = match[1].trim();
+  }
+  return last;
+}
+
+/**
+ * Build the failure message shown when BOTH install attempts fail.
+ *
+ * Pure + exported so its content is unit-testable. The screenshotted
+ * customer failure showed "Resolve the npm error above" with nothing
+ * above — because the captured stderr was empty (npm put the detail in
+ * its log file). This message never claims the error is "above": it
+ * surfaces whatever stderr we captured, ALWAYS points at the npm debug
+ * log when one is named, and offers the npx-init escape hatch that
+ * doesn't need a successful `npm install` at all.
+ *
+ * @param {{ stderrChunks?: string[] }} opts
+ */
+function formatInstallFailure(opts = {}) {
+  const stderrChunks = (opts.stderrChunks || []).filter((s) => s && s.length > 0);
+  const lines = [];
+
+  const combined = stderrChunks.join('\n');
+  if (combined.length > 0) {
+    lines.push('npm reported:');
+    lines.push(combined.trimEnd());
+    lines.push('');
+  }
+
+  const logPath = extractNpmLogPath(combined);
+  if (logPath) {
+    lines.push(`Full npm error log: ${logPath}`);
+  } else {
+    lines.push(
+      'npm wrote the failure detail to its debug log — see the ' +
+        '"complete log of this run" path npm printed above, under ' +
+        'your npm cache `_logs/` directory.',
+    );
+  }
+  lines.push('');
+  lines.push('Could not install @vyuhlabs/dxkit. Common causes:');
+  lines.push('  • a private-registry auth or proxy issue (check the log above),');
+  lines.push("  • an unresolved peer-dep conflict in this folder's package.json,");
+  lines.push('  • running in a wrapper directory rather than your actual project.');
+  lines.push('');
+  lines.push('You do NOT need this install to use dxkit. From your project root run:');
+  lines.push('  npx vyuh-dxkit init --full --yes');
+  lines.push(
+    'That scaffolds dxkit directly (the same step this bootstrap runs after ' +
+      'install) without adding it to package.json.',
+  );
+  return lines.join('\n');
+}
+
+module.exports = {
+  resolveInitArgs,
+  ensurePackageJson,
+  npmBin,
+  npxBin,
+  persistLegacyPeerDeps,
+  extractNpmLogPath,
+  formatInstallFailure,
+};
 
 // ── Entry point ─────────────────────────────────────────────────────
 
@@ -133,27 +211,33 @@ if (require.main === module) {
   const attempt1 = runCaptureStderr(npmBin(), INSTALL_BASE);
   let rc = attempt1.status;
   let usedLegacy = false;
+  let attempt2 = null;
 
   if (rc !== 0) {
     console.log('Peer-dep conflict detected. Retrying with --legacy-peer-deps...'); // slop-ok
-    // Attempt 2: stream stderr so the customer sees real progress on the
-    // actual download (this is the slow leg). If attempt 2 ALSO fails,
-    // we'll surface attempt 1's captured stderr below for diagnostics.
-    rc = run(npmBin(), [...INSTALL_BASE, '--legacy-peer-deps']);
+    // Attempt 2: capture stderr too. The earlier version inherited
+    // stderr here, so when this leg failed its npm error was never
+    // captured and the customer saw "Resolve the npm error above" with
+    // nothing above (D158). Capturing lets us surface the real cause —
+    // including the npm debug-log path, where modern npm puts ERESOLVE /
+    // registry / auth detail.
+    attempt2 = runCaptureStderr(npmBin(), [...INSTALL_BASE, '--legacy-peer-deps']);
+    rc = attempt2.status;
     usedLegacy = true;
   }
 
   if (rc !== 0) {
-    // Both attempts failed. Surface attempt 1's stderr now — that's the
-    // diagnostic information the customer needs to fix the underlying
-    // peer-dep conflict (since --legacy-peer-deps couldn't recover).
-    if (attempt1.stderr && attempt1.stderr.length > 0) {
-      process.stderr.write('\nFirst-attempt npm error (for diagnostics):\n');
-      process.stderr.write(attempt1.stderr);
-    }
-    const failMsg =
-      'Could not install @vyuhlabs/dxkit. Resolve the npm error above (try clearing your npm cache or fixing peer-dep conflicts in package.json), then re-run.';
-    console.error(failMsg); // slop-ok: zero-dep shim has no logger module to delegate to
+    // Both attempts failed. Surface every captured stderr + the npm
+    // debug-log path, and offer the npx-init escape hatch that needs no
+    // successful `npm install`. See `formatInstallFailure`.
+    const toStr = (b) => (b ? b.toString() : '');
+    process.stderr.write(
+      '\n' +
+        formatInstallFailure({
+          stderrChunks: [toStr(attempt1.stderr), attempt2 ? toStr(attempt2.stderr) : ''],
+        }) +
+        '\n',
+    );
     process.exit(rc ?? 1);
   }
 
