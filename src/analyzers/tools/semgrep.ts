@@ -13,6 +13,8 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { detectActiveLanguages } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { CodePatternFinding, CodePatternsResult } from '../../languages/capabilities/types';
@@ -132,7 +134,7 @@ export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGath
   const rulesets = collectRulesets(cwd);
   if (rulesets.length === 0) return { kind: 'unavailable', reason: 'no rulesets' };
 
-  const reportPath = `/tmp/dxkit-semgrep-${Date.now()}.json`;
+  const reportPath = path.join(os.tmpdir(), `dxkit-semgrep-${Date.now()}.json`);
   const args = ['scan'];
   for (const r of rulesets) args.push('--config', r);
   args.push('--json', '--quiet', '--output', reportPath);

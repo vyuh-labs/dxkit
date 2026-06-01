@@ -106,7 +106,7 @@ function readScaffoldVersion(cwd: string): string | null {
 
 function readBinaryVersion(cwd: string): string | null {
   try {
-    const out = execSync('npx --no-install vyuh-dxkit --version 2>/dev/null', {
+    const out = execSync('npx --no-install vyuh-dxkit --version', {
       cwd,
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf-8',
@@ -119,7 +119,7 @@ function readBinaryVersion(cwd: string): string | null {
 
 function readLatestPublished(): string {
   try {
-    const out = execSync('npm view @vyuhlabs/dxkit version 2>/dev/null', {
+    const out = execSync('npm view @vyuhlabs/dxkit version', {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf-8',
       timeout: 15000,

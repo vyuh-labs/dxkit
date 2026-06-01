@@ -27,6 +27,7 @@ import {
   TOOL_DEFS,
   findTool,
   getInstallCommand,
+  getInstallEnv,
   checkAllTools,
   buildRequiredTools,
   ToolStatus,
@@ -187,13 +188,22 @@ async function confirm(rl: readline.Interface, question: string): Promise<boolea
   return answer.trim().toLowerCase().startsWith('y');
 }
 
-function runInstallCmd(cmd: string): { success: boolean; message: string } {
+function runInstallCmd(
+  cmd: string,
+  envOverlay?: Record<string, string>,
+): { success: boolean; message: string } {
   try {
-    // Use bash -c so multi-command scripts (with &&, ||, ;) work
+    // Pick a shell that exists on the platform. On POSIX use bash so
+    // multi-command scripts (`&&`, `||`, `;`) work; on Windows omit the
+    // option so Node uses the default cmd.exe (the hardcoded `/bin/bash`
+    // path doesn't exist there, which made every `tools install` fail
+    // outright).
+    const shell = process.platform === 'win32' ? undefined : '/bin/bash';
     execSync(cmd, {
-      shell: '/bin/bash',
+      shell,
       stdio: ['inherit', 'inherit', 'inherit'],
       timeout: 600000, // 10 min for downloads
+      env: envOverlay ? { ...process.env, ...envOverlay } : process.env,
     });
     return { success: true, message: 'installed' };
   } catch (err: unknown) {
@@ -306,7 +316,7 @@ async function runInstall(
 
       console.log('');
       logger.info(`Running: ${cmd}`);
-      const result = runInstallCmd(cmd);
+      const result = runInstallCmd(cmd, getInstallEnv(targetPath));
       if (result.success) {
         // Verify install worked. An install command can legitimately
         // exit 0 without producing the binary — e.g. the vitest-coverage
