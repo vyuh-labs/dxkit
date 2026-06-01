@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -110,10 +110,10 @@ function hasPyFile(cwd: string): boolean {
  */
 function buildPipAuditCommand(cwd: string, pipAuditPath: string): string | null {
   if (fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py')) {
-    return `${pipAuditPath} . --format json 2>/dev/null`;
+    return `${pipAuditPath} . --format json`;
   }
   if (fileExists(cwd, 'requirements.txt')) {
-    return `${pipAuditPath} -r requirements.txt --format json 2>/dev/null`;
+    return `${pipAuditPath} -r requirements.txt --format json`;
   }
   return null;
 }
@@ -314,7 +314,7 @@ export function parseCoveragePy(raw: string, sourceFile: string, cwd: string): C
 function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
   const venvPython = findPyProjectVenvPython(cwd);
   if (venvPython) {
-    const listRaw = run(`${venvPython} -m pip list --format=json 2>/dev/null`, cwd, 60000);
+    const listRaw = run(`${venvPython} -m pip list --format=json`, cwd, 60000);
     if (listRaw) {
       try {
         const list = JSON.parse(listRaw) as Array<{ name?: string }>;
@@ -323,11 +323,7 @@ function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
           // pip show accepts multiple package names in one call; stays
           // well under shell arg-length limits for realistic envs
           // (O(100) pkgs).
-          const showRaw = run(
-            `${venvPython} -m pip show ${names.join(' ')} 2>/dev/null`,
-            cwd,
-            60000,
-          );
+          const showRaw = run(`${venvPython} -m pip show ${names.join(' ')}`, cwd, 60000);
           if (showRaw) return buildPyTopLevelDepIndex(parsePipShowOutput(showRaw));
         }
       } catch {
@@ -542,7 +538,7 @@ function gatherPyLintResult(cwd: string): LintGatherOutcome {
     return { kind: 'unavailable', reason: 'not installed' };
   }
 
-  const raw = run(`${ruff.path} check . --output-format json 2>/dev/null`, cwd, 60000);
+  const raw = run(`${ruff.path} check . --output-format json`, cwd, 60000);
   const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
   if (!raw) {
     // Empty output = ruff ran and found nothing, matching prior behavior.
@@ -710,20 +706,22 @@ export function resolvePyImportRaw(fromFile: string, spec: string, cwd: string):
 /**
  * Enumerate .py source files under cwd and pre-compute the pack's
  * per-file imports + resolved edges. Shares enumeration strategy with
- * the typescript pack (find + getFindExcludeFlags).
+ * the typescript pack (the cross-platform `walkSourceFiles` walker).
+ * `includeTests` + `includeAutogen` keep the file set identical to the
+ * prior `find -name "*.py"` enumeration, which filtered neither.
  */
 function gatherPyImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.py" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.py'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
   const edges = new Map<string, ReadonlySet<string>>();
 
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -769,8 +767,13 @@ function gatherPyTestFrameworkResult(cwd: string): TestFrameworkResult | null {
   if (hasPytestConfigFile) return { schemaVersion: 1, tool: 'python', name: 'pytest' };
 
   if (fileExists(cwd, 'pyproject.toml')) {
-    const pyproject = run('cat pyproject.toml 2>/dev/null', cwd);
-    if (pyproject?.includes('[tool.pytest')) {
+    let pyproject = '';
+    try {
+      pyproject = fs.readFileSync(path.join(cwd, 'pyproject.toml'), 'utf-8');
+    } catch {
+      /* unreadable — treat as no signal */
+    }
+    if (pyproject.includes('[tool.pytest')) {
       return { schemaVersion: 1, tool: 'python', name: 'pytest' };
     }
   }
@@ -858,14 +861,14 @@ export function findPyProjectVenvPython(cwd: string): string | null {
 
   // 3. External poetry venv. `poetry env info --path` returns the
   // active env's root directory on stdout or nothing if no env.
-  const poetryPath = run('poetry env info --path 2>/dev/null', cwd, 10000).trim();
+  const poetryPath = run('poetry env info --path', cwd, 10000).trim();
   if (poetryPath) {
     const p = venvRootToPython(poetryPath);
     if (p) return p;
   }
 
   // 4. External pipenv venv.
-  const pipenvPath = run('pipenv --venv 2>/dev/null', cwd, 10000).trim();
+  const pipenvPath = run('pipenv --venv', cwd, 10000).trim();
   if (pipenvPath) {
     const p = venvRootToPython(pipenvPath);
     if (p) return p;
@@ -909,7 +912,7 @@ function gatherPyLicensesResult(cwd: string): LicensesGatherOutcome {
   }
 
   const raw = run(
-    `${status.path} --python ${venvPython} --format=json --with-license-file --no-license-path --with-description --with-urls --with-authors 2>/dev/null`,
+    `${status.path} --python ${venvPython} --format=json --with-license-file --no-license-path --with-description --with-urls --with-authors`,
     cwd,
     120000,
   );

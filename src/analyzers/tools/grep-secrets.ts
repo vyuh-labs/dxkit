@@ -68,10 +68,7 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   const raw: SecretFinding[] = [];
   for (const sp of PATTERNS) {
     // Single-quoted pattern + -E for extended regex. Per the feedback memory.
-    const output = run(
-      `grep -rnE '${sp.pattern}' ${includeFlags} ${excludes} . 2>/dev/null | head -50`,
-      cwd,
-    );
+    const output = run(`grep -rnE '${sp.pattern}' ${includeFlags} ${excludes} . | head -50`, cwd);
     if (!output) continue;
     for (const line of output.split('\n').filter((l) => l.trim())) {
       // Format: ./relative/path:lineno:matched-text

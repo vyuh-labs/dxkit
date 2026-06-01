@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1 } from '../analyzers/tools/coverage';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import {
   classifyOsvSeverity,
   enrichOsv,
@@ -262,7 +262,7 @@ export function buildGoTopLevelDepIndex(
  * toolchain-less environments (e.g. containerized CI lacking go).
  */
 function loadGoTopLevelDepIndex(cwd: string): Map<string, string[]> {
-  const graphRaw = run('go mod graph 2>/dev/null', cwd, 60000);
+  const graphRaw = run('go mod graph', cwd, 60000);
   if (!graphRaw) return new Map();
   let directDeps: string[] = [];
   try {
@@ -299,7 +299,7 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
     return { kind: 'unavailable', reason: 'govulncheck not installed' };
   }
 
-  const raw = run(`${vuln.path} -json ./... 2>/dev/null`, cwd, 120000);
+  const raw = run(`${vuln.path} -json ./...`, cwd, 120000);
   if (!raw) return { kind: 'unavailable', reason: 'govulncheck produced no output' };
 
   try {
@@ -464,7 +464,7 @@ function gatherGoLintResult(cwd: string): LintGatherOutcome {
     return { kind: 'unavailable', reason: 'not installed' };
   }
 
-  const raw = run(`${lint.path} run --out-format json ./... 2>/dev/null`, cwd, 120000);
+  const raw = run(`${lint.path} run --out-format json ./...`, cwd, 120000);
   const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
   if (!raw) {
     // Empty output = golangci-lint ran with no issues. Matches prior behavior.
@@ -685,17 +685,17 @@ export function resolveGoImportRaw(_fromFile: string, spec: string, cwd: string)
  * as the legacy path.
  */
 function gatherGoImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.go" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.go'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
   const edges = new Map<string, ReadonlySet<string>>();
 
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -817,10 +817,10 @@ function gatherGoLicensesResult(cwd: string): LicensesGatherOutcome {
     return { kind: 'unavailable', reason: 'go-licenses not installed' };
   }
 
-  const csvRaw = run(`${status.path} report . 2>/dev/null`, cwd, 180000);
+  const csvRaw = run(`${status.path} report .`, cwd, 180000);
   if (!csvRaw) return { kind: 'unavailable', reason: 'go-licenses produced no output' };
 
-  const listRaw = run('go list -m -json all 2>/dev/null', cwd, 60000);
+  const listRaw = run('go list -m -json all', cwd, 60000);
   const versions = new Map<string, string>();
   if (listRaw) {
     for (const mod of parseGoListModuleStream(listRaw)) {

@@ -239,6 +239,45 @@ if [ -n "$G_V4_7_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# G_v4_13 (Windows-compat class-fix): no POSIX file-enumeration shell-outs.
+#
+# What this prevents:
+#   `find . -type f -name '*.cs'`, `find . -type d`, `ls a b c`,
+#   `wc -l README`, `cat file` inside a run()/execSync()/countLines()/
+#   runJSON()/runExitCode() command string. These return EMPTY on Windows
+#   (cmd.exe has no `find`/`ls`/`wc`/`cat`), so source enumeration, the
+#   directory-count metric, and the DX-config probes silently produced
+#   zero — a baseline captured on Windows omitted whole finding
+#   categories with no signal. This is the regex the G_v4_7 comment block
+#   always SAID it wanted (find-enumeration) but only ever enforced for
+#   recursive grep.
+#
+# Canonical replacement (all pure-Node, cross-platform):
+#   - source enumeration → walkSourceFiles (extensions + includeTests/
+#     includeAutogen to match a prior `find -name`)
+#   - manifest/path discovery → walkPaths
+#   - directory count → countDirectories
+#   - file existence/count → fs.existsSync / fileExists
+#   (all in src/analyzers/tools/walk-source-files.ts + walk-paths.ts)
+#
+# `git ls-files` / `git rev-parse` etc. are NOT matched (git is
+# cross-platform and the command starts with `git`, not find/ls/wc/cat).
+# Annotate '// posix-enum-ok' for a justified exception.
+posix_enum_re="(run|execSync|countLines|runJSON|runExitCode)\\((\`|'|\")[[:space:]]*(find|ls|wc|cat)[[:space:]]| -type [dfl]([[:space:]]|\b)"
+G_V4_13_VIOLATIONS=$(grep -rnE "$posix_enum_re" src/ 2>/dev/null \
+  | grep -v "// posix-enum-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v -e '^src/analyzers/tools/walk-source-files.ts:')
+if [ -n "$G_V4_13_VIOLATIONS" ]; then
+  echo "❌ G_v4_13 violation: POSIX file-enumeration shell-out (breaks on Windows):"
+  echo "$G_V4_13_VIOLATIONS"
+  echo "   → Replace with walkSourceFiles / walkPaths / countDirectories / fs"
+  echo "     (src/analyzers/tools/walk-source-files.ts). cmd.exe has no find/ls/wc/cat,"
+  echo "     so these return empty on Windows and silently zero the metric."
+  echo "   → Annotate '// posix-enum-ok' if your case genuinely needs the shell-out (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # G_v4_8 (2.4.7 Phase C): security finding aggregation lives in ONE place.
 #
 # What this prevents:

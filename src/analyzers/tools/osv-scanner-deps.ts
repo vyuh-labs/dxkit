@@ -205,11 +205,7 @@ export async function gatherOsvScannerDepVulnsResult(
     return { kind: 'unavailable', reason: 'osv-scanner not installed' };
   }
 
-  const raw = run(
-    `${scanner.path} scan source --lockfile ${manifest} --format json 2>/dev/null`,
-    cwd,
-    180000,
-  );
+  const raw = run(`${scanner.path} scan source --lockfile ${manifest} --format json`, cwd, 180000);
   if (!raw) return { kind: 'unavailable', reason: 'osv-scanner produced no output' };
 
   const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem, packId);

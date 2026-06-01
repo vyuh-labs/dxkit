@@ -7,8 +7,7 @@
 import { HealthMetrics } from '../types';
 import type { DetectedStack } from '../../types';
 import { run, countLines, fileExists } from './runner';
-import { getFindExcludeFlags } from './exclusions';
-import { walkSourceFiles, countLineMatches } from './walk-source-files';
+import { walkSourceFiles, countLineMatches, countDirectories } from './walk-source-files';
 import { gatherDebugStatements } from './debug-statements';
 import {
   allDocCommentPatterns,
@@ -20,6 +19,13 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 
+/** Count how many of `relPaths` exist under `root`. Cross-platform
+ *  replacement for `ls a b c` existence-count shell-outs (the prior
+ *  `ls` form returned 0 on Windows). */
+function countExisting(root: string, relPaths: string[]): number {
+  return relPaths.filter((rel) => fs.existsSync(path.join(root, rel))).length;
+}
+
 // D055/D056/D072 (2.4.7): every per-source-file metric (rawSourceFiles,
 // wc-l walk, jsConsoleCount, anyTypeCount, evalCount, docCommentFiles,
 // tlsDisabledCount, testFiles) routes through walkSourceFiles +
@@ -28,10 +34,10 @@ import * as path from 'path';
 // construction: ONE walker, ONE counter, files pruned at the
 // directory boundary so we never read minified .min.js into memory.
 //
-// `EXCLUDE = getFindExcludeFlags(cwd)` is retained below for find
-// commands that count NON-source artifacts (controllers, models,
-// directories, ciConfigCount) — those legitimately walk path
-// patterns the walker doesn't model.
+// All file discovery + counting routes through pure-Node helpers
+// (walkSourceFiles / countDirectories / countExisting / fs), never a
+// POSIX `find`/`ls`/`wc` shell-out — so the metrics compute identically
+// on Windows.
 
 /**
  * Resolve the git toplevel for `cwd`. D026 (2.4.7): cross-cutting repo
@@ -48,7 +54,7 @@ import * as path from 'path';
  * working — they just don't get the toplevel-scoped improvement.
  */
 function resolveGitToplevel(cwd: string): string {
-  const top = run('git rev-parse --show-toplevel 2>/dev/null', cwd).trim();
+  const top = run('git rev-parse --show-toplevel', cwd).trim();
   return top.length > 0 ? top : cwd;
 }
 
@@ -81,7 +87,6 @@ export function gatherGenericMetrics(
   cwd: string,
   languageFlags?: DetectedStack['languages'],
 ): Partial<HealthMetrics> {
-  const EXCLUDE = getFindExcludeFlags(cwd);
   // D026 (2.4.7): repo-level artifacts probed from git toplevel; code-
   // level metrics (source-file counts, hygiene grep, semgrep) stay
   // scoped to `cwd` so analyzing a subdirectory still measures that
@@ -161,8 +166,15 @@ export function gatherGenericMetrics(
   // ─── Documentation ────────────────────────────────────────────────────────
   // D026 (2.4.7): probe from repo root, not from cwd.
   const readmeExists = fileExists(repoRoot, 'README.md', 'readme.md');
-  const readmeLines =
-    parseInt(run("wc -l README.md 2>/dev/null | awk '{print $1}'", repoRoot)) || 0;
+  // Newline count matches the prior `wc -l README.md` exactly, read
+  // cross-platform via fs rather than a POSIX `wc | awk` pipe.
+  let readmeLines = 0;
+  try {
+    const md = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf-8');
+    readmeLines = (md.match(/\n/g) || []).length;
+  } catch {
+    /* no README.md at repoRoot — leave at 0 */
+  }
   // D027 (2.4.7): doc-comment regex + include flags derive from the
   // language pack registry. countLineMatches mode='files' returns the
   // file count. NO skipComments here — we explicitly WANT comment lines.
@@ -194,11 +206,12 @@ export function gatherGenericMetrics(
     skipComments: true,
   }).lines;
 
-  const privateKeyFiles = countLines(
-    `find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE} 2>/dev/null`,
-    cwd,
-  );
-  const envFilesInGit = countLines('git ls-files .env .env.* 2>/dev/null', cwd);
+  const privateKeyFiles = walkSourceFiles(cwd, {
+    extensions: ['.key', '.pem'],
+    includeTests: true,
+    includeAutogen: true,
+  }).length;
+  const envFilesInGit = countLines('git ls-files .env .env.*', cwd);
   // D034 (2.4.7): TLS-bypass detection derives from the pack registry.
   // D074 (2.4.7): skipComments closes the "vuln-scan rendered a
   // `// NODE_TLS_REJECT_UNAUTHORIZED=0` comment as a HIGH finding"
@@ -244,21 +257,33 @@ export function gatherGenericMetrics(
     if (matchesAny(anchored, routePaths)) routeHandlerFiles++;
     if (matchesAny(anchored, modelPaths)) models++;
   }
-  const directories = countLines(`find . -type d ${EXCLUDE} 2>/dev/null`, cwd);
+  const directories = countDirectories(cwd);
 
   // ─── Developer Experience (repo-root scoped) ──────────────────────────────
-  const ciConfigCount = countLines(
-    'find .github/workflows -name "*.yml" -o -name "*.yaml" 2>/dev/null; ls .gitlab-ci.yml Jenkinsfile .circleci/config.yml 2>/dev/null',
-    repoRoot,
-  );
-  const dockerConfigCount = countLines(
-    'ls Dockerfile docker-compose.yml docker-compose.yaml .devcontainer/devcontainer.json 2>/dev/null',
-    repoRoot,
-  );
-  const precommitConfigCount = countLines(
-    'ls -d .husky .pre-commit-config.yaml .git/hooks/pre-commit 2>/dev/null',
-    repoRoot,
-  );
+  // Cross-platform existence/count checks via fs, replacing POSIX
+  // `find`/`ls` shell-outs (which returned 0 on Windows).
+  let workflowFileCount = 0;
+  try {
+    workflowFileCount = fs
+      .readdirSync(path.join(repoRoot, '.github', 'workflows'))
+      .filter((n) => n.endsWith('.yml') || n.endsWith('.yaml')).length;
+  } catch {
+    /* no .github/workflows dir */
+  }
+  const ciConfigCount =
+    workflowFileCount +
+    countExisting(repoRoot, ['.gitlab-ci.yml', 'Jenkinsfile', '.circleci/config.yml']);
+  const dockerConfigCount = countExisting(repoRoot, [
+    'Dockerfile',
+    'docker-compose.yml',
+    'docker-compose.yaml',
+    '.devcontainer/devcontainer.json',
+  ]);
+  const precommitConfigCount = countExisting(repoRoot, [
+    '.husky',
+    '.pre-commit-config.yaml',
+    '.git/hooks/pre-commit',
+  ]);
   const makefileExists = fileExists(repoRoot, 'Makefile', 'justfile', 'Taskfile.yml');
   const envExampleExists = fileExists(repoRoot, '.env.example', '.env.sample', '.env.template');
   const coverageConfigExists = fileExists(

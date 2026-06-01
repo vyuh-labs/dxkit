@@ -68,8 +68,17 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   const findings: SecurityFinding[] = [];
   const EXCLUDE = getFindExcludeFlags(cwd, false); // don't exclude source paths for security scanning
 
-  // Private key / cert files on disk
-  const keyFiles = run(`find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE} 2>/dev/null`, cwd);
+  // Private key / cert files on disk.
+  // NOTE: still a POSIX `find` (returns empty on Windows). Deliberately
+  // NOT ported to walkSourceFiles yet: this scan deliberately uses the
+  // broad `getFindExcludeFlags(cwd, false)` exclusion set (dirs only, NOT
+  // .dxkit-ignore sourcePaths) so keys hidden in otherwise-ignored paths
+  // are still flagged, and the walker can't yet express "dirs-only"
+  // exclusions — porting would silently narrow a security scan. The
+  // primary secret detector (gitleaks) IS cross-platform after the
+  // detection fix, so the Windows gap here is a supplementary
+  // file-presence heuristic, not the main secrets path.
+  const keyFiles = run(`find . \\( -name "*.key" -o -name "*.pem" \\) ${EXCLUDE}`, cwd); // posix-enum-ok: see note above; needs a walker excludeSourcePaths option first
   if (keyFiles) {
     for (const f of keyFiles.split('\n').filter((l) => l.trim())) {
       findings.push({
@@ -86,7 +95,7 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
   }
 
   // .env tracked in git
-  const envFiles = run('git ls-files .env .env.* 2>/dev/null', cwd);
+  const envFiles = run('git ls-files .env .env.*', cwd);
   if (envFiles) {
     for (const f of envFiles.split('\n').filter((l) => l.trim())) {
       findings.push({

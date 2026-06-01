@@ -36,6 +36,17 @@ import {
 } from '../../languages';
 import type { LanguageId } from '../../types';
 
+// NOTE on the module cycle: language packs import this module for
+// `walkSourceFiles`, and the languages registry (`../../languages`)
+// imports the packs — so when a single pack is the entry module (a unit
+// test importing one pack), the registry captures that pack
+// half-initialized and its `LANGUAGES` slot is `undefined`. The packs
+// guard against this by ALWAYS passing explicit `extensions` +
+// `includeTests` + `includeAutogen`, so `resolveOpts` below makes ZERO
+// registry calls on the pack path and never reads the holed array. The
+// registry-defaulting paths (no extensions / filter tests) are only
+// reached by index-rooted callers, where `LANGUAGES` is fully built.
+
 // ─── walkSourceFiles ────────────────────────────────────────────────────────
 
 export interface WalkOpts {
@@ -102,6 +113,9 @@ export function walkSourceFiles(cwd: string, opts: WalkOpts = {}): string[] {
 
 function resolveOpts(opts: WalkOpts): ResolvedOpts {
   // Precedence: explicit `extensions` > pack-scoped extensions > all packs.
+  // Registry calls are made ONLY when the caller leaves a default to
+  // fill — see the module-cycle note above for why the pack path must
+  // never touch the registry.
   let exts: string[];
   if (opts.extensions) {
     exts = opts.extensions;
@@ -110,13 +124,19 @@ function resolveOpts(opts: WalkOpts): ResolvedOpts {
   } else {
     exts = allSourceExtensions();
   }
+  const includeTests = opts.includeTests ?? false;
+  const includeAutogen = opts.includeAutogen ?? false;
   return {
     extensions: new Set(exts.map((e) => (e.startsWith('.') ? e : `.${e}`))),
-    includeTests: opts.includeTests ?? false,
-    includeAutogen: opts.includeAutogen ?? false,
+    includeTests,
+    includeAutogen,
     respectIgnore: opts.respectIgnore ?? true,
-    autogenBasenamePatterns: opts.includeAutogen ? [] : allAutogenSourcePatterns(),
-    testFilePatterns: splitTestPatterns(allTestFilePatterns()),
+    // Only resolve autogen / test patterns from the registry when they
+    // will actually be used as a filter (i.e. when NOT including them).
+    autogenBasenamePatterns: includeAutogen ? [] : allAutogenSourcePatterns(),
+    testFilePatterns: includeTests
+      ? { nameOnly: [], pathAnchored: [] }
+      : splitTestPatterns(allTestFilePatterns()),
   };
 }
 
@@ -242,6 +262,40 @@ function splitTestPatterns(patterns: string[]): {
     else nameOnly.push(p);
   }
   return { nameOnly, pathAnchored };
+}
+
+/**
+ * Count directories under `cwd`, mirroring `find . -type d ${getFindExcludeFlags(cwd)}`:
+ * the root counts as 1, plus every descendant directory not pruned by
+ * the centralized exclusion set (`isExcludedPath`). Cross-platform,
+ * pure-Node replacement for the POSIX `find -type d` shell-out — which
+ * returned 0 on Windows (no `find`), zeroing the directory-count metric.
+ */
+export function countDirectories(cwd: string): number {
+  let count = 0;
+  const visit = (relDir: string): void => {
+    count++; // this directory (root included, matching `find .`)
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(relDir ? path.join(cwd, relDir) : cwd, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const rel = relDir ? `${relDir}/${ent.name}` : ent.name;
+      if (isExcludedPath(cwd, rel)) {
+        // `find -not -path "*/X/*"` still emits the excluded directory
+        // ENTRY (only its contents are filtered out), so count it once
+        // but do not descend — matches the prior shell behavior exactly.
+        count++;
+        continue;
+      }
+      visit(rel);
+    }
+  };
+  visit('');
+  return count;
 }
 
 // ─── countLineMatches ───────────────────────────────────────────────────────
