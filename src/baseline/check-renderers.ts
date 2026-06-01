@@ -195,6 +195,19 @@ function formatDrift(drift: EnvelopeDrift): string[] {
       `tool drift: ${d.tool} ${d.baselineVersion ?? '(absent)'} → ${d.currentVersion ?? '(absent)'}`,
     );
   }
+  for (const d of drift.coverageDrift) {
+    if (!d.baselineAvailable && d.currentAvailable) {
+      out.push(
+        `coverage drift: ${d.tool} was NOT available when the baseline was captured ` +
+          `but is now — that category was never baselined, so its findings may surface as new`,
+      );
+    } else if (d.baselineAvailable && !d.currentAvailable) {
+      out.push(
+        `coverage drift: ${d.tool} was available at baseline but is missing now — ` +
+          `this check can't re-verify that category`,
+      );
+    }
+  }
   return out;
 }
 

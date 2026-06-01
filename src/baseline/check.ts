@@ -48,6 +48,8 @@ import {
   readBaselineFile,
 } from './baseline-file';
 import type { BaselineFile } from './baseline-file';
+import { diffCoverage } from './coverage';
+import type { CoverageDrift } from './coverage';
 import { entriesToLocated } from './entry-to-located';
 import { gitAwareMatch } from './git-aware-match';
 import type { LocatedIdentity } from './git-aware-match';
@@ -137,6 +139,12 @@ export interface EnvelopeDrift {
     readonly baselineVersion: string | undefined;
     readonly currentVersion: string | undefined;
   }>;
+  /** Scanners whose availability flipped between baseline capture and
+   *  this check. A tool missing at baseline but present now means the
+   *  baseline never covered that category — its findings surface as new
+   *  rather than pre-existing. Empty when coverage agrees (or when the
+   *  baseline predates the coverage record). */
+  readonly coverageDrift: ReadonlyArray<CoverageDrift>;
 }
 
 export interface GuardrailCheckResult {
@@ -444,6 +452,7 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
     configHashChanged: baseline.analysis.configHash !== current.analysisMeta.configHash,
     dxkitVersionChanged: baseline.analysis.dxkitVersion !== current.analysisMeta.dxkitVersion,
     toolVersionDiffs,
+    coverageDrift: diffCoverage(baseline.coverage, current.coverage),
   };
 }
 

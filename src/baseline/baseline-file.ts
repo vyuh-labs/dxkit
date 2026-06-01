@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { BaselineEntry } from './types';
 import type { SaltMode } from './salt';
+import type { ScanCoverage } from './coverage';
 
 /** Banner stamped on every baseline file. Bump when the on-disk
  *  shape changes incompatibly so readers can refuse old / new files
@@ -89,6 +90,13 @@ export interface BaselineFile {
    *  `secret-hmac` entries are present so the value is stable
    *  across runs that add the first HMAC entry. */
   readonly saltMode: SaltMode;
+  /** Which scanners were available when this baseline was captured.
+   *  Lets a later guardrail check tell "scanned and clean" apart from
+   *  "never scanned because the tool was missing." Optional: baselines
+   *  written before this field existed simply omit it, and the matcher
+   *  treats a missing record as "no coverage info to diff against"
+   *  rather than erroring. */
+  readonly coverage?: ScanCoverage;
   /** Per-finding entries. Multiset — duplicates allowed (an
    *  identity appearing twice means two distinct occurrences). */
   readonly findings: ReadonlyArray<BaselineEntry>;
