@@ -15,6 +15,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { LANGUAGES, allAutogenSourcePatterns } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
@@ -111,7 +112,7 @@ export async function gatherJscpdResult(cwd: string): Promise<DuplicationGatherO
   const status = findTool(TOOL_DEFS.jscpd, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
-  const reportDir = `/tmp/dxkit-jscpd-${Date.now()}`;
+  const reportDir = path.join(os.tmpdir(), `dxkit-jscpd-${Date.now()}`);
   const pattern = buildJscpdPattern();
   // jscpd's `--ignore` receives the union of:
   //

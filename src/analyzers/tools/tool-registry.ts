@@ -13,11 +13,13 @@
  * - `src/analyzers/tools/*.ts` -- tool-specific modules call `findTool()`
  * - `devstack` package -- reads `requiredTools` to package devcontainers
  */
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { activeLanguagesFromFlags } from '../../languages';
+import { resolveInDirs, resolveOnPath } from './runner';
+import { loadToolsConfig } from './tools-config';
 import { DetectedStack, ToolRequirement } from '../../types';
 
 /**
@@ -57,7 +59,7 @@ const LEGACY_TOOLS_VENV = '/tmp/graphify-venv';
  * up on the next run.
  */
 const PIPX_BOOTSTRAP =
-  'command -v pipx >/dev/null 2>&1 || { python3 -m pip install --user pipx 2>/dev/null || python3 -m pip install --user --break-system-packages pipx; } && export PATH="$HOME/.local/bin:$PATH"';
+  'command -v pipx >/dev/null 2>&1 || { python3 -m pip install --user pipx || python3 -m pip install --user --break-system-packages pipx; } && export PATH="$HOME/.local/bin:$PATH"';
 
 export interface ToolDefinition extends ToolRequirement {
   /** Binary name(s) to look for in PATH. First match wins. */
@@ -137,6 +139,26 @@ function getSystemPaths(): string[] {
   if (process.env.GOPATH) {
     paths.push(path.join(process.env.GOPATH, 'bin'));
   }
+  // Windows install locations that aren't always on PATH. The
+  // PATHEXT-aware PATH walk in `resolveOnPath` covers anything on PATH;
+  // these are the fallback dirs common installers drop binaries into
+  // without amending the user's PATH (npm global, dotnet, cargo, go).
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA;
+    const localAppData = process.env.LOCALAPPDATA;
+    const programFiles = process.env.ProgramFiles;
+    if (appData) paths.push(path.join(appData, 'npm')); // npm -g shims
+    if (localAppData) paths.push(path.join(localAppData, 'Microsoft', 'WindowsApps'));
+    if (programFiles) {
+      paths.push(path.join(programFiles, 'dotnet'));
+      paths.push(path.join(programFiles, 'Git', 'cmd'));
+    }
+    paths.push(path.join(home, '.dotnet')); // dotnet-install.ps1 default
+    // Windows venvs put binaries under `Scripts`, not `bin` — mirror the
+    // two POSIX venv `bin` entries above for the dxkit shared tools venv.
+    paths.push(path.join(TOOLS_VENV, 'Scripts'));
+    paths.push(path.join(LEGACY_TOOLS_VENV, 'Scripts'));
+  }
   return paths;
 }
 
@@ -153,15 +175,18 @@ function quickRun(cmd: string): string {
   }
 }
 
-/** Check if a binary name is available via `which`. */
+/** Resolve a binary name against PATH (cross-platform; honors PATHEXT
+ *  on Windows). Delegates to the canonical pure-Node resolver. */
 function findInPath(binary: string): string | null {
-  const result = quickRun(`which ${binary} 2>/dev/null`);
-  return result || null;
+  return resolveOnPath(binary);
 }
 
-/** Check if brew has installed a tool (macOS/Linux). */
+/** Check if brew has installed a tool (macOS/Linux). `stdio: 'pipe'`
+ *  in `quickRun` already discards stderr, so no shell redirect is
+ *  needed (a `2>/dev/null` here would write a stray `nul` file on
+ *  Windows). */
 function findInBrew(binary: string): string | null {
-  const brewPrefix = quickRun('brew --prefix 2>/dev/null');
+  const brewPrefix = quickRun('brew --prefix');
   if (!brewPrefix) return null;
   const candidate = path.join(brewPrefix, 'bin', binary);
   return fs.existsSync(candidate) ? candidate : null;
@@ -169,11 +194,19 @@ function findInBrew(binary: string): string | null {
 
 /** Check if npm -g has installed a package with this binary. */
 function findInNpmGlobal(binary: string): string | null {
-  const npmBin = quickRun('npm bin -g 2>/dev/null') || quickRun('npm prefix -g 2>/dev/null');
+  const npmBin = quickRun('npm bin -g') || quickRun('npm prefix -g');
   if (!npmBin) return null;
+  // npm's global prefix holds binaries directly on Windows
+  // (`<prefix>\<bin>.cmd`) and under `bin/` on POSIX. Probe both, with
+  // PATHEXT-aware extensions on Windows.
   const candidates = [path.join(npmBin, binary), path.join(npmBin, 'bin', binary)];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
+    if (process.platform === 'win32') {
+      for (const ext of ['.cmd', '.exe', '.bat']) {
+        if (fs.existsSync(c + ext)) return c + ext;
+      }
+    }
   }
   return null;
 }
@@ -204,12 +237,12 @@ function getGemBinPaths(): string[] {
   const candidates: string[] = [];
   // System gem bin (matches the active Ruby — apt, brew, rbenv all
   // resolve correctly via `gem env`).
-  const sysBin = quickRun('gem env executable_directory 2>/dev/null');
+  const sysBin = quickRun('gem env executable_directory');
   if (sysBin) candidates.push(sysBin);
   // User-install gem bin (`gem install --user-install <gem>` lands
   // here; matches `Gem.user_dir + "/bin"` — the dxkit-preferred install
   // mode since it doesn't need sudo).
-  const userBin = quickRun(`ruby -e 'puts Gem.user_dir + "/bin"' 2>/dev/null`);
+  const userBin = quickRun(`ruby -e 'puts Gem.user_dir + "/bin"'`);
   if (userBin) candidates.push(userBin);
   _gemBinPathsCache = candidates;
   return candidates;
@@ -224,14 +257,12 @@ function findInGemBin(binary: string): string | null {
   return null;
 }
 
-/** Check system probe paths. */
+/** Check system probe paths (PATHEXT-aware on Windows). `extraProbes`
+ *  carries per-tool probe dirs plus any user-configured `probePaths`
+ *  from `.dxkit/tools.json`. */
 function findInProbePaths(binary: string, extraProbes: string[] = []): string | null {
   const allPaths = [...getSystemPaths(), ...extraProbes];
-  for (const p of allPaths) {
-    const candidate = path.join(p, binary);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
+  return resolveInDirs(binary, allPaths);
 }
 
 /** Check project-local node_modules/.bin/ for language tools. */
@@ -255,24 +286,48 @@ function findNodePackage(pkg: string, cwd: string): string | null {
  * binary to probe.
  */
 function findGemPackage(pkg: string): string | null {
-  const result = quickRun(`gem list -i ${pkg} 2>/dev/null`);
+  const result = quickRun(`gem list -i ${pkg}`);
   return result === 'true' ? pkg : null;
+}
+
+/**
+ * Resolve the python interpreter inside a venv root, honoring the
+ * platform's venv layout: POSIX venvs put it at `<root>/bin/python`,
+ * Windows venvs at `<root>\Scripts\python.exe`. `python3` doesn't exist
+ * inside a Windows venv, so we only look for `python(.exe)` there.
+ */
+function venvPython(venvRoot: string): string {
+  return process.platform === 'win32'
+    ? path.join(venvRoot, 'Scripts', 'python.exe')
+    : path.join(venvRoot, 'bin', 'python');
 }
 
 /** Special-case: check if graphify Python module is importable. */
 function findGraphifyPython(cwd: string): string | null {
+  // Bare interpreter names to resolve against PATH. Windows installs
+  // typically expose `python` and the `py` launcher (not `python3`);
+  // POSIX exposes `python3`. PATHEXT resolution in `findInPath` matches
+  // `python.exe` from a bare `python`.
+  const pathInterpreters =
+    process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
   const pythonCandidates = [
-    `${TOOLS_VENV}/bin/python`, // current (10f.2+)
-    `${LEGACY_TOOLS_VENV}/bin/python`, // legacy
-    `${os.homedir()}/.local/bin/python3`,
-    'python3',
+    venvPython(TOOLS_VENV), // current (10f.2+); platform-correct venv layout
+    venvPython(LEGACY_TOOLS_VENV), // legacy
+    ...(process.platform === 'win32' ? [] : [`${os.homedir()}/.local/bin/python3`]),
+    ...pathInterpreters,
   ];
   for (const py of pythonCandidates) {
-    // Resolve 'python3' via which first
-    const resolved = py === 'python3' ? findInPath('python3') : py;
-    if (!resolved || !fs.existsSync(resolved.replace('${HOME}', os.homedir()))) continue;
+    // Bare interpreter names resolve against PATH (cross-platform,
+    // PATHEXT-aware); explicit paths are used as-is.
+    const resolved = pathInterpreters.includes(py) ? findInPath(py) : py;
+    if (!resolved || !fs.existsSync(resolved)) continue;
     try {
-      const check = execSync(`${resolved} -c "import graphify; print('ok')" 2>/dev/null`, {
+      // No-shell invocation: pass the interpreter path + args array so a
+      // path containing spaces or backslashes (`C:\Program Files\...`)
+      // needs no quoting. `stdio: 'pipe'` discards stderr without a
+      // POSIX `2>/dev/null` redirect (which writes a stray `nul` file on
+      // Windows).
+      const check = execFileSync(resolved, ['-c', "import graphify; print('ok')"], {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 5000,
@@ -391,8 +446,11 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
     const gemResult = findInGemBin(binary);
     if (gemResult) return makeStatus(def, gemResult, 'probe');
 
-    // 5. System probe paths (includes cargo/go/graphify venv)
-    const probeResult = findInProbePaths(binary, def.probePaths);
+    // 5. System probe paths (includes cargo/go/graphify venv) plus any
+    //    user-configured `.dxkit/tools.json:probePaths` — lets dxkit find
+    //    tools installed into a non-standard / corp-managed directory.
+    const userProbePaths = loadToolsConfig(cwd || process.cwd()).probePaths;
+    const probeResult = findInProbePaths(binary, [...(def.probePaths ?? []), ...userProbePaths]);
     if (probeResult) {
       let source: ToolStatus['source'] = 'probe';
       if (probeResult.includes('/.cargo/')) source = 'cargo';
@@ -437,6 +495,34 @@ export function getInstallCommand(def: ToolDefinition): string {
   return def.install;
 }
 
+/**
+ * Environment overlay that redirects an install into the user's
+ * configured `.dxkit/tools.json:installDir`. Empty when no install dir
+ * is set. We set every ecosystem's bin-dir variable at once — each is a
+ * no-op for the ecosystems an install doesn't touch — rather than
+ * parsing the install command to guess which package manager runs:
+ *
+ *   - `PIPX_BIN_DIR`       → pipx-installed app binaries
+ *   - `npm_config_prefix`  → npm -g (binaries under `<prefix>/bin`)
+ *   - `CARGO_INSTALL_ROOT` → cargo install (binaries under `<root>/bin`)
+ *   - `GOBIN`              → go install
+ *
+ * Passed as an `env` overlay to the install subprocess, so it works
+ * identically on POSIX and Windows without shell-specific `VAR=val`
+ * prefixing. `loadToolsConfig` already adds both `installDir` and
+ * `installDir/bin` to the probe set, so the result is discoverable.
+ */
+export function getInstallEnv(cwd: string): Record<string, string> {
+  const { installDir } = loadToolsConfig(cwd);
+  if (!installDir) return {};
+  return {
+    PIPX_BIN_DIR: installDir,
+    npm_config_prefix: installDir,
+    CARGO_INSTALL_ROOT: installDir,
+    GOBIN: installDir,
+  };
+}
+
 // =============================================================================
 // Tool definitions
 // =============================================================================
@@ -450,7 +536,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'all',
     layer: 'universal',
     binaries: ['cloc'],
-    versionCheck: 'cloc --version 2>/dev/null',
+    versionCheck: 'cloc --version',
     installCommands: {
       // Create isolated npm workspace at ~/.local/share/dxkit, symlink to ~/.local/bin
       macos:
@@ -469,7 +555,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'universal',
     binaries: ['gitleaks'],
     probePaths: ['/tmp'],
-    versionCheck: 'gitleaks version 2>/dev/null',
+    versionCheck: 'gitleaks version',
     installCommands: {
       macos: 'brew install gitleaks',
       // Install to ~/.local/bin (user path, no sudo)
@@ -488,7 +574,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     binaries: ['graphify'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck:
-      'python3 -c "import graphify; print(\'installed\')" 2>/dev/null || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')" 2>/dev/null',
+      'python3 -c "import graphify; print(\'installed\')" || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')"',
     installCommands: {
       macos:
         'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q graphifyy',
@@ -505,7 +591,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'all',
     layer: 'universal',
     binaries: ['jscpd'],
-    versionCheck: 'jscpd --version 2>/dev/null',
+    versionCheck: 'jscpd --version',
     installCommands: {
       macos:
         'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
@@ -523,7 +609,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'universal',
     binaries: ['semgrep'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
-    versionCheck: 'semgrep --version 2>/dev/null',
+    versionCheck: 'semgrep --version',
     installCommands: {
       macos: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
       linux: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
@@ -542,7 +628,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // for missing tools in this scope, not "vyuh-dxkit tools install".
     installScope: 'project-local',
     binaries: ['eslint', 'lb-eslint'],
-    versionCheck: 'npx eslint --version 2>/dev/null',
+    versionCheck: 'npx eslint --version',
     installCommands: {
       macos: 'npm install --save-dev eslint',
       linux: 'npm install --save-dev eslint',
@@ -557,7 +643,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'node',
     layer: 'language',
     binaries: ['npm'],
-    versionCheck: 'npm --version 2>/dev/null',
+    versionCheck: 'npm --version',
     installCommands: {
       macos: 'builtin',
       linux: 'builtin',
@@ -579,7 +665,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // install lands) is already in getSystemPaths(), so no explicit
     // probe needed there.
     probePaths: [path.join(os.homedir(), 'go', 'bin')],
-    versionCheck: 'osv-scanner --version 2>/dev/null',
+    versionCheck: 'osv-scanner --version',
     // Install via GitHub releases binary (mirrors the gitleaks pattern):
     // the prior `go install` path silently failed on every customer
     // container without a Go toolchain (the majority of stacks — Node,
@@ -612,7 +698,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'node',
     layer: 'language',
     binaries: ['license-checker-rseidelsohn'],
-    versionCheck: 'license-checker-rseidelsohn --version 2>/dev/null',
+    versionCheck: 'license-checker-rseidelsohn --version',
     installCommands: {
       macos:
         'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
@@ -630,7 +716,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['ruff'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
-    versionCheck: 'ruff --version 2>/dev/null',
+    versionCheck: 'ruff --version',
     installCommands: {
       macos: `${PIPX_BOOTSTRAP} && pipx install ruff`,
       linux: `${PIPX_BOOTSTRAP} && pipx install ruff`,
@@ -646,7 +732,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['pip-audit'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
-    versionCheck: 'pip-audit --version 2>/dev/null',
+    versionCheck: 'pip-audit --version',
     installCommands: {
       macos: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
       linux: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
@@ -662,7 +748,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['pip-licenses'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
-    versionCheck: 'pip-licenses --version 2>/dev/null',
+    versionCheck: 'pip-licenses --version',
     installCommands: {
       macos: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
       linux: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
@@ -677,7 +763,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'go',
     layer: 'language',
     binaries: ['golangci-lint'],
-    versionCheck: 'golangci-lint --version 2>/dev/null',
+    versionCheck: 'golangci-lint --version',
     installCommands: {
       macos: 'brew install golangci-lint',
       linux: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest',
@@ -692,7 +778,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'go',
     layer: 'language',
     binaries: ['govulncheck'],
-    versionCheck: 'govulncheck -version 2>/dev/null',
+    versionCheck: 'govulncheck -version',
     installCommands: {
       macos: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
       linux: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
@@ -707,7 +793,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'go',
     layer: 'language',
     binaries: ['go-licenses'],
-    versionCheck: 'go-licenses --help 2>/dev/null | head -1',
+    versionCheck: 'go-licenses --help | head -1',
     installCommands: {
       macos: 'go install github.com/google/go-licenses@latest',
       linux: 'go install github.com/google/go-licenses@latest',
@@ -722,7 +808,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'rust',
     layer: 'language',
     binaries: ['cargo-clippy'],
-    versionCheck: 'cargo clippy --version 2>/dev/null',
+    versionCheck: 'cargo clippy --version',
     installCommands: {
       macos: 'rustup component add clippy',
       linux: 'rustup component add clippy',
@@ -737,7 +823,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'rust',
     layer: 'language',
     binaries: ['cargo-audit'],
-    versionCheck: 'cargo audit --version 2>/dev/null',
+    versionCheck: 'cargo audit --version',
     installCommands: {
       macos: 'cargo install cargo-audit',
       linux: 'cargo install cargo-audit',
@@ -752,7 +838,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'rust',
     layer: 'language',
     binaries: ['cargo-license'],
-    versionCheck: 'cargo license --version 2>/dev/null',
+    versionCheck: 'cargo license --version',
     installCommands: {
       macos: 'cargo install cargo-license',
       linux: 'cargo install cargo-license',
@@ -767,7 +853,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'csharp',
     layer: 'language',
     binaries: ['dotnet'],
-    versionCheck: 'dotnet --version 2>/dev/null',
+    versionCheck: 'dotnet --version',
     installCommands: {
       macos: 'brew install dotnet-sdk',
       linux: 'apt install dotnet-sdk-8.0',
@@ -788,7 +874,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // probe silently missed `nuget-license` even when installed at
     // its canonical `dotnet tool install --global` location.
     probePaths: [path.join(os.homedir(), '.dotnet', 'tools')],
-    versionCheck: 'nuget-license --version 2>/dev/null',
+    versionCheck: 'nuget-license --version',
     installCommands: {
       macos: 'dotnet tool install --global nuget-license',
       linux: 'dotnet tool install --global nuget-license',
@@ -803,7 +889,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'java',
     layer: 'language',
     binaries: ['pmd'],
-    versionCheck: 'pmd --version 2>/dev/null',
+    versionCheck: 'pmd --version',
     // PMD 7.x ships a single zip on GitHub Releases. Linux install
     // mirrors the detekt + gitleaks pattern: download to ~/.local/share,
     // symlink the entrypoint script (zip ships it as `bin/pmd`) into
@@ -830,7 +916,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // installs both `detekt` and `detekt-cli` as the same wrapper, so
     // listing both keeps detection working across install methods.
     binaries: ['detekt', 'detekt-cli'],
-    versionCheck: 'detekt --version 2>/dev/null || detekt-cli --version 2>/dev/null',
+    versionCheck: 'detekt --version || detekt-cli --version',
     // detekt-cli ships as a single zip on GitHub Releases. Linux install
     // mirrors the gitleaks pattern: download to ~/.local/share, symlink
     // the entrypoint script (zip ships it as `bin/detekt-cli`) into
@@ -889,7 +975,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'rust',
     layer: 'language',
     binaries: ['cargo-llvm-cov'],
-    versionCheck: 'cargo llvm-cov --version 2>/dev/null',
+    versionCheck: 'cargo llvm-cov --version',
     installCommands: {
       macos: 'cargo install cargo-llvm-cov',
       linux: 'cargo install cargo-llvm-cov',
@@ -905,7 +991,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['coverage'],
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
-    versionCheck: 'coverage --version 2>/dev/null',
+    versionCheck: 'coverage --version',
     installCommands: {
       macos: `${PIPX_BOOTSTRAP} && pipx install coverage`,
       linux: `${PIPX_BOOTSTRAP} && pipx install coverage`,
@@ -920,7 +1006,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     for: 'ruby',
     layer: 'language',
     binaries: ['rubocop'],
-    versionCheck: 'rubocop --version 2>/dev/null',
+    versionCheck: 'rubocop --version',
     installCommands: {
       macos: 'gem install --user-install rubocop',
       linux: 'gem install --user-install rubocop',
@@ -941,7 +1027,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: [],
     gemPackage: 'simplecov',
-    versionCheck: 'ruby -e "require \'simplecov\'; puts SimpleCov::VERSION" 2>/dev/null',
+    versionCheck: 'ruby -e "require \'simplecov\'; puts SimpleCov::VERSION"',
     installCommands: {
       macos: 'gem install --user-install simplecov',
       linux: 'gem install --user-install simplecov',

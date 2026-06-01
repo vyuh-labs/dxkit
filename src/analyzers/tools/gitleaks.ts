@@ -9,7 +9,9 @@
  * invocation per analyzer run.
  */
 import * as fs from 'fs';
-import { run } from './runner';
+import * as os from 'os';
+import * as path from 'path';
+import { runFileSync } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
 import { toProjectRelative } from './paths';
@@ -97,9 +99,27 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
   if (!gitleaksCmd) return { kind: 'unavailable', reason: 'not installed' };
 
   // Run gitleaks with JSON report (--no-git scans files, not git history).
-  const reportPath = `/tmp/dxkit-gitleaks-${Date.now()}.json`;
-  run(
-    `${gitleaksCmd} detect --source '${cwd}' --report-format json --report-path '${reportPath}' --no-git --exit-code 0 2>/dev/null`,
+  // Invoked via `runFileSync` (no shell) with an args array so the
+  // source path and report path need no quoting — single-quoted shell
+  // strings + `2>/dev/null` are POSIX-only and silently produced no
+  // report under Windows' cmd.exe. The temp report lives under
+  // `os.tmpdir()` rather than a hardcoded `/tmp`, which doesn't exist
+  // on Windows.
+  const reportPath = path.join(os.tmpdir(), `dxkit-gitleaks-${Date.now()}.json`);
+  runFileSync(
+    gitleaksCmd,
+    [
+      'detect',
+      '--source',
+      cwd,
+      '--report-format',
+      'json',
+      '--report-path',
+      reportPath,
+      '--no-git',
+      '--exit-code',
+      '0',
+    ],
     cwd,
     120000,
   );
@@ -116,7 +136,12 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
   } catch {
     reportRaw = '';
   }
-  run(`rm -f '${reportPath}'`, cwd);
+  // Best-effort cleanup; failure is non-fatal (the OS reaps tmpdir).
+  try {
+    fs.unlinkSync(reportPath);
+  } catch {
+    /* file already gone or never written — fine */
+  }
 
   if (!reportRaw) return { kind: 'unavailable', reason: 'no output' };
 

@@ -1,7 +1,7 @@
 /**
  * Tool runner utilities -- safe command execution and output parsing.
  */
-import { execSync, spawn } from 'child_process';
+import { execFileSync, execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -83,6 +83,36 @@ export function run(cmd: string, cwd: string, timeoutMs = 30000): string {
   }
 }
 
+/**
+ * Run a binary directly (NO shell) and return stdout, or '' on failure.
+ *
+ * Synchronous sibling of `runDetached` for single-binary tools that must
+ * stay on a synchronous call path (e.g. the memoized `gatherGitleaksResult`).
+ * Because there's no shell, there are no cross-platform quoting hazards:
+ * pass the resolved binary path plus an args array and Node hands them to
+ * the OS verbatim. This is the portable replacement for building a shell
+ * string with single-quotes + `2>/dev/null` — both of which are POSIX-only
+ * and break under Windows' cmd.exe (single-quotes don't quote; the
+ * redirect writes a stray `nul` file instead of discarding stderr).
+ */
+export function runFileSync(file: string, args: string[], cwd: string, timeoutMs = 30000): string {
+  try {
+    return execFileSync(file, args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim();
+  } catch (err: unknown) {
+    // Mirror `run()`'s graceful degradation: some tools write valid
+    // output to stdout even on non-zero exit.
+    const e = err as { stdout?: string };
+    if (e.stdout && typeof e.stdout === 'string') return e.stdout.trim();
+    return '';
+  }
+}
+
 /** Run a command and return the exit code. */
 export function runExitCode(cmd: string, cwd: string, timeoutMs = 60000): number {
   try {
@@ -116,9 +146,82 @@ export function countLines(cmd: string, cwd: string): number {
   return output.split('\n').filter((l) => l.trim()).length;
 }
 
-/** Check if a command is available. */
-export function commandExists(cmd: string, cwd: string): boolean {
-  return run(`which ${cmd} 2>/dev/null`, cwd) !== '';
+/**
+ * Candidate filename extensions to try for a bare binary name when
+ * resolving it against PATH.
+ *
+ * On POSIX the binary name is used verbatim (`['']`). On Windows an
+ * executable is named `git.exe` / `npm.cmd` / `dotnet.exe`, and the
+ * shell finds it by appending each entry of `%PATHEXT%`. We replicate
+ * that here so a pure-Node PATH walk matches the same files the OS
+ * would. If the caller already passed an extension (`foo.exe`), we
+ * don't append more.
+ */
+function pathExtensions(binary: string): string[] {
+  if (process.platform !== 'win32') return [''];
+  if (path.extname(binary)) return [''];
+  const pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+  const exts = pathext
+    .split(';')
+    .map((e) => e.trim())
+    .filter(Boolean);
+  // Try the bare name first (some tools ship extension-less shims),
+  // then each PATHEXT candidate.
+  return ['', ...exts];
+}
+
+/** True when `p` exists, is a regular file, and (on POSIX) is executable. */
+function isExecutableFile(p: string): boolean {
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile()) return false;
+    // Windows has no executable bit; presence + PATHEXT match is enough.
+    if (process.platform === 'win32') return true;
+    fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cross-platform "where is this binary on PATH?" resolver. Returns the
+ * absolute path of the first match, or null.
+ *
+ * Pure-Node: walks `process.env.PATH` entries and checks each candidate
+ * with `fs`, honoring `%PATHEXT%` on Windows. This replaces the prior
+ * `which <binary> 2>/dev/null` shell probe, which silently
+ * false-negatived EVERY tool on Windows — cmd.exe has no `which` (it's
+ * `where`), and `2>/dev/null` is a POSIX redirect that writes a stray
+ * `nul` file rather than discarding stderr. The shell probe is also
+ * unnecessary: PATH resolution is a filesystem walk that Node can do
+ * directly, with no subprocess to spawn.
+ */
+export function resolveOnPath(binary: string): string | null {
+  const pathVar = process.env.PATH ?? process.env.Path ?? '';
+  const dirs = pathVar.split(path.delimiter).filter(Boolean);
+  return resolveInDirs(binary, dirs);
+}
+
+/** Resolve `binary` against an explicit list of directories, honoring
+ *  `%PATHEXT%` on Windows. Returns the first matching absolute path, or
+ *  null. Used for system probe dirs and user-configured tool paths so
+ *  they match `git.exe` / `tool.cmd` on Windows the same way a PATH
+ *  walk does. */
+export function resolveInDirs(binary: string, dirs: string[]): string | null {
+  const exts = pathExtensions(binary);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, binary + ext);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Check if a command is available on PATH (cross-platform). */
+export function commandExists(cmd: string, _cwd?: string): boolean {
+  return resolveOnPath(cmd) !== null;
 }
 
 /** Check if a file exists relative to cwd. */

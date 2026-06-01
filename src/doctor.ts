@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { commandExists } from './analyzers/tools/runner';
 import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
@@ -74,12 +75,11 @@ export interface DoctorReport {
 }
 
 function commandAvailable(cmd: string): boolean {
-  try {
-    execSync(`which ${cmd} 2>/dev/null`, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
+  // Cross-platform PATH resolution (honors %PATHEXT% on Windows). The
+  // prior `which <cmd> 2>/dev/null` shell probe false-negatived every
+  // command on Windows — cmd.exe has no `which`, so git/node/npm/dotnet
+  // all read as "missing" even when installed.
+  return commandExists(cmd);
 }
 
 function nodeMajorVersion(): number {
