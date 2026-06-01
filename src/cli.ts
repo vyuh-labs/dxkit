@@ -1696,7 +1696,14 @@ export async function run(argv: string[]): Promise<void> {
           logger.dim(
             '  not detected, point dxkit at it via .dxkit/tools.json (ask Claude: "fix dxkit").',
           );
-          const proceedAnyway = !!values.yes || !!values['allow-incomplete'];
+          // `--force` is an explicit "overwrite, non-interactive, I know
+          // what I'm doing" signal — and the shipped baseline-refresh
+          // workflow runs `baseline create --force` right after
+          // `tools install`, so treating --force as opt-in keeps that
+          // automation working across the 2.7.1 upgrade (the warning
+          // still prints). `--yes` / `--allow-incomplete` are the
+          // explicit opt-ins for non-forced runs.
+          const proceedAnyway = !!values.force || !!values.yes || !!values['allow-incomplete'];
           const interactive = !!process.stdin.isTTY && !!process.stdout.isTTY;
           if (!proceedAnyway && interactive) {
             const readline = await import('node:readline/promises');

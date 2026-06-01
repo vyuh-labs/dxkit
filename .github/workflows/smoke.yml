@@ -177,7 +177,12 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/dxkit-smoke
-          ./node_modules/.bin/vyuh-dxkit baseline create
+          # This smoke job validates baseline MECHANICS in a bare runner
+          # without the scanner toolchain installed, so `baseline create`
+          # would (correctly) refuse to write an incomplete baseline
+          # non-interactively. --allow-incomplete opts in: we're testing
+          # the file gets written + the guardrail diffs it, not coverage.
+          ./node_modules/.bin/vyuh-dxkit baseline create --allow-incomplete
           test -f .dxkit/baselines/main.json
 
       - name: Inject a regression + assert guardrail blocks
@@ -308,5 +313,8 @@ jobs:
             command -v claude || echo "WARN: claude CLI not on PATH"
             command -v codex  || echo "WARN: codex  CLI not on PATH"
             echo "==> Smoke: baseline create inside container"
-            "$DXKIT" baseline create
+            # --allow-incomplete: the devcontainer installs the toolchain,
+            # but pass it defensively so a single tool that didn't install
+            # doesn't fail the smoke on the new incomplete-baseline gate.
+            "$DXKIT" baseline create --allow-incomplete
             test -f .dxkit/baselines/main.json
