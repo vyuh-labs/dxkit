@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### create-dxkit 0.2.1
+
+- **Surfaces the real npm error when bootstrap install fails.** When
+  `npm init @vyuhlabs/dxkit` couldn't install `@vyuhlabs/dxkit` (both the
+  strict and `--legacy-peer-deps` attempts), the shim previously printed
+  "Resolve the npm error above" with nothing above — npm routes the
+  actual ERESOLVE / registry / auth detail to a debug-log file, and the
+  retry attempt's stderr wasn't captured. The shim now captures stderr
+  from both attempts, always prints the npm debug-log path, lists the
+  common causes (private-registry auth, peer-dep conflict, wrong
+  directory), and points at `npx vyuh-dxkit init --full --yes` as a
+  direct path that needs no successful `npm install`.
+
 ## [2.7.1] - 2026-05-31
 
 Windows compatibility. Tool detection, the scanner toolchain, and source
