@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -101,15 +101,15 @@ export function extractJavaImportsRaw(content: string): string[] {
  * kotlin/rust pack choice.
  */
 function gatherJavaImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.java" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.java'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -289,7 +289,7 @@ function gatherJavaLintResult(cwd: string): LintGatherOutcome {
   if (!pmd.available || !pmd.path) {
     return { kind: 'unavailable', reason: 'not installed' };
   }
-  const cmd = `${pmd.path} check -d . -R rulesets/java/quickstart.xml -f json 2>/dev/null`;
+  const cmd = `${pmd.path} check -d . -R rulesets/java/quickstart.xml -f json`;
   const raw = run(cmd, cwd, 120000);
   if (!raw) return { kind: 'unavailable', reason: 'no pmd output' };
   const counts = parsePmdOutput(raw);

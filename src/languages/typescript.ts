@@ -4,7 +4,7 @@ import * as path from 'path';
 import hostedGitInfo from 'hosted-git-info';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
 import { resolveCvssScores } from '../analyzers/tools/osv';
 import {
@@ -575,7 +575,7 @@ function gatherTsLintResult(cwd: string): LintGatherOutcome {
   );
 
   const binToCheck = hasEslint ? `./${eslintPath}` : `./${lbEslintPath}`;
-  const versionOutput = run(`${binToCheck} --version 2>/dev/null`, cwd);
+  const versionOutput = run(`${binToCheck} --version`, cwd);
   const majorMatch = versionOutput.match(/v?(\d+)/);
   const major = majorMatch ? parseInt(majorMatch[1]) : 0;
 
@@ -592,7 +592,7 @@ function gatherTsLintResult(cwd: string): LintGatherOutcome {
   const bins = hasLbEslint ? [`./${lbEslintPath}`, `./${eslintPath}`] : [`./${eslintPath}`];
   for (const bin of bins) {
     if (!fileExists(cwd, bin.replace('./', ''))) continue;
-    const result = runJSON<EslintFileResult[]>(`${bin} . --format json 2>/dev/null`, cwd, 120000);
+    const result = runJSON<EslintFileResult[]>(`${bin} . --format json`, cwd, 120000);
     if (result && Array.isArray(result)) {
       const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
       for (const file of result) {
@@ -826,27 +826,27 @@ const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
 
 /**
  * Enumerate TS/JS source files under cwd and pre-compute the pack's
- * per-file imports (raw specifiers) and resolved edges. `find` is the
- * enumerator to stay consistent with `gatherSourceFiles`; exclusions
- * come from the project's `.gitignore` + `.dxkit-ignore` via the
- * shared `getFindExcludeFlags` helper.
+ * per-file imports (raw specifiers) and resolved edges. Uses the
+ * cross-platform `walkSourceFiles` walker; `includeTests` +
+ * `includeAutogen` keep the file set identical to the prior
+ * `find \( -name "*.ts" … \)` enumeration, which filtered neither.
+ * Exclusions come from `.gitignore` + `.dxkit-ignore` via the walker.
  *
  * Returns null when the repo has no TS/JS source, so the dispatcher
  * can skip this provider cleanly on pure Python/Go/Rust/C# trees.
  */
 function gatherTsImportsResult(cwd: string): ImportsResult | null {
-  const exts = TS_JS_EXT.map((e) => `-name "*${e}"`).join(' -o ');
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f \\( ${exts} \\) ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: TS_JS_EXT,
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
   const edges = new Map<string, ReadonlySet<string>>();
 
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -891,7 +891,7 @@ const tsImportsProvider: CapabilityProvider<ImportsResult> = {
  */
 function gatherTsTestFrameworkResult(cwd: string): TestFrameworkResult | null {
   const testScript = run(
-    "node -e \"const p=require('./package.json'); console.log(p.scripts?.test || '')\" 2>/dev/null", // slop-ok
+    "node -e \"const p=require('./package.json'); console.log(p.scripts?.test || '')\"", // slop-ok
     cwd,
   );
   if (!testScript || testScript === 'echo "Error: no test specified" && exit 1') return null;
@@ -1029,7 +1029,7 @@ async function gatherTsLicensesResult(cwd: string): Promise<LicensesGatherOutcom
     return { kind: 'unavailable', reason: 'license-checker-rseidelsohn not installed' };
   }
 
-  const raw = run(`${status.path} --json --excludePrivatePackages 2>/dev/null`, cwd, 120000);
+  const raw = run(`${status.path} --json --excludePrivatePackages`, cwd, 120000);
   if (!raw) return { kind: 'unavailable', reason: 'license-checker produced no output' };
 
   let data: Record<string, LicenseCheckerEntry>;

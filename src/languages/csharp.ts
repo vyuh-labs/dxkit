@@ -3,7 +3,6 @@ import * as os from 'os';
 import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
 import {
   buildNugetAdhocLockfile,
   parseCsprojPackageReferences,
@@ -15,6 +14,7 @@ import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -580,7 +580,7 @@ async function gatherDirectPackageReferenceFallback(
   try {
     fs.writeFileSync(adhocPath, buildNugetAdhocLockfile(entries));
     const raw = run(
-      `${scanner.path} scan source --lockfile=${adhocPath} --format json 2>/dev/null`,
+      `${scanner.path} scan source --lockfile=${adhocPath} --format json`,
       cwd,
       180000,
     );
@@ -648,7 +648,7 @@ async function runDotnetVulnerablePath(cwd: string): Promise<DepVulnGatherOutcom
   }
 
   const vulnRaw = run(
-    `${dotnet.path} list package --vulnerable --include-transitive --format json 2>/dev/null`,
+    `${dotnet.path} list package --vulnerable --include-transitive --format json`,
     cwd,
     120000,
   );
@@ -863,7 +863,7 @@ function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
     return { kind: 'unavailable', reason: 'not installed' };
   }
 
-  const exitCode = runExitCode('dotnet format --verify-no-changes 2>/dev/null', cwd, 120000);
+  const exitCode = runExitCode('dotnet format --verify-no-changes', cwd, 120000);
   let violations = 0;
   if (exitCode !== 0) {
     const raw = run('dotnet format --verify-no-changes 2>&1', cwd, 120000);
@@ -993,16 +993,16 @@ export function extractCsharpImportsRaw(content: string): string[] {
  * deterministically), so `edges` is always empty.
  */
 function gatherCsharpImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.cs" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.cs'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
 
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -1040,11 +1040,20 @@ function gatherCsharpTestFrameworkResult(cwd: string): TestFrameworkResult | nul
     fileExists(cwd, '*.csproj') || walkPaths(cwd, { extensions: ['.csproj'] }).length > 0;
   if (!hasCsproj) return null;
 
-  const csproj = run(
-    "find . -name '*.csproj' -exec grep -l 'xunit\\|nunit\\|MSTest' {} \\; 2>/dev/null | head -1",
-    cwd,
-  );
-  if (!csproj) return null;
+  // Scan each .csproj for a known test-runner package reference. Reads
+  // files directly via the cross-platform walker rather than shelling
+  // out to `find … -exec grep | head` (POSIX-only).
+  // Case-sensitive to match the prior `grep 'xunit\|nunit\|MSTest'`
+  // exactly (no behavior change bundled into the refactor).
+  const runnerPattern = /xunit|nunit|MSTest/;
+  const hasRunner = walkPaths(cwd, { extensions: ['.csproj'] }).some((rel) => {
+    try {
+      return runnerPattern.test(fs.readFileSync(path.join(cwd, rel), 'utf-8'));
+    } catch {
+      return false;
+    }
+  });
+  if (!hasRunner) return null;
   return { schemaVersion: 1, tool: 'csharp', name: 'dotnet-test' };
 }
 
@@ -1193,7 +1202,7 @@ function gatherCsharpLicensesResult(cwd: string): LicensesGatherOutcome {
     return { kind: 'unavailable', reason: 'nuget-license not installed' };
   }
 
-  const raw = run(`${status.path} -i "${input}" -o JsonPretty 2>/dev/null`, cwd, 180000);
+  const raw = run(`${status.path} -i "${input}" -o JsonPretty`, cwd, 180000);
   if (!raw) {
     // D031-2 extended (2.4.7): nuget-license commonly produces no
     // output when `dotnet restore` hasn't been run (no

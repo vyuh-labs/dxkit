@@ -40,11 +40,7 @@ export function gatherContributors(cwd: string, since: string): ContributorStats
   // mailbox (e.g. someone committing as "Jane D" from a laptop and
   // "Jane-Doe-Corp" from a corp VPN under the same address). git
   // shortlog -sne emits `  <count>\t<name> <<email>>`.
-  const shortlog = run(
-    `git shortlog -sne --no-merges --since='${since}' HEAD 2>/dev/null`,
-    cwd,
-    30000,
-  );
+  const shortlog = run(`git shortlog -sne --no-merges --since='${since}' HEAD`, cwd, 30000);
   if (!shortlog) return [];
 
   interface RawAuthor {
@@ -120,7 +116,7 @@ export function gatherContributors(cwd: string, since: string): ContributorStats
 
   // Get lines added/removed per author via numstat
   const numstat = run(
-    `git log --numstat --format='AUTHOR:%aN' --since='${since}' --no-merges HEAD 2>/dev/null`,
+    `git log --numstat --format='AUTHOR:%aN' --since='${since}' --no-merges HEAD`,
     cwd,
     60000,
   );
@@ -146,11 +142,7 @@ export function gatherContributors(cwd: string, since: string): ContributorStats
   // Get merge commit count per author. Merge-only contributors (no
   // non-merge commits) won't appear in shortlog so they need their
   // own cluster. Use name+email from %aE so the cluster key matches.
-  const mergeLog = run(
-    `git log --format='%aN<<<%aE' --merges --since='${since}' HEAD 2>/dev/null`,
-    cwd,
-    30000,
-  );
+  const mergeLog = run(`git log --format='%aN<<<%aE' --merges --since='${since}' HEAD`, cwd, 30000);
   if (mergeLog) {
     for (const entry of mergeLog.split('\n').filter((l) => l.trim())) {
       const [name, email] = entry.split('<<<');
@@ -214,11 +206,7 @@ const CONVENTIONAL_RE =
 const VAGUE_RE = /^(update|fix|change|wip|tmp|test|minor|misc|stuff|cleanup|tweaks?)$/i;
 
 export function gatherCommitQuality(cwd: string, since: string): CommitQuality {
-  const messages = run(
-    `git log --format='%s' --no-merges --since='${since}' HEAD 2>/dev/null`,
-    cwd,
-    30000,
-  );
+  const messages = run(`git log --format='%s' --no-merges --since='${since}' HEAD`, cwd, 30000);
   if (!messages)
     return { conventional: 0, descriptive: 0, vague: 0, total: 0, conventionalPercent: 0 };
 
@@ -252,7 +240,7 @@ export function gatherHotFiles(cwd: string, since: string, top = 15): HotFile[] 
   // generated files (designer.cs, .pb.go, etc.). Without overscan we
   // could lose real hot files behind autogen noise.
   const raw = run(
-    `git log --name-only --format='' --since='${since}' --no-merges HEAD 2>/dev/null | sort | uniq -c | sort -rn | head -${top * 4}`,
+    `git log --name-only --format='' --since='${since}' --no-merges HEAD | sort | uniq -c | sort -rn | head -${top * 4}`,
     cwd,
     30000,
   );
@@ -300,7 +288,7 @@ function matchesBasenameGlob(pat: string, base: string): boolean {
 // ─── Weekly velocity ────────────────────────────────────────────────────────
 
 export function gatherVelocity(cwd: string, since: string): WeeklyVelocity[] {
-  const raw = run(`git log --format='%aI' --since='${since}' HEAD 2>/dev/null`, cwd, 30000);
+  const raw = run(`git log --format='%aI' --since='${since}' HEAD`, cwd, 30000);
   if (!raw) return [];
 
   const weekCounts = new Map<string, number>();
@@ -362,11 +350,7 @@ function* weeksInRange(start: string, end: string): Generator<string> {
 const VAGUE_RE_EXPORT = /^(update|fix|change|wip|tmp|test|minor|misc|stuff|cleanup|tweaks?)$/i;
 
 export function gatherVagueCommitExamples(cwd: string, since: string, limit = 15): string[] {
-  const messages = run(
-    `git log --format='%s' --no-merges --since='${since}' HEAD 2>/dev/null`,
-    cwd,
-    30000,
-  );
+  const messages = run(`git log --format='%s' --no-merges --since='${since}' HEAD`, cwd, 30000);
   if (!messages) return [];
   const vague: string[] = [];
   for (const msg of messages.split('\n').filter((l) => l.trim())) {
@@ -385,11 +369,7 @@ export function gatherSummary(
   cwd: string,
   since: string,
 ): { totalCommits: number; mergeCommits: number } {
-  const total = parseInt(
-    run(`git rev-list --count --since='${since}' HEAD 2>/dev/null`, cwd) || '0',
-  );
-  const merges = parseInt(
-    run(`git rev-list --count --merges --since='${since}' HEAD 2>/dev/null`, cwd) || '0',
-  );
+  const total = parseInt(run(`git rev-list --count --since='${since}' HEAD`, cwd) || '0');
+  const merges = parseInt(run(`git rev-list --count --merges --since='${since}' HEAD`, cwd) || '0');
   return { totalCommits: total, mergeCommits: merges };
 }

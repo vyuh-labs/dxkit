@@ -192,18 +192,18 @@ export function gatherHygieneMarkers(cwd: string): {
 } {
   // Stale files: vim swap, backup, temp files tracked in git
   const staleRaw = run(
-    `git ls-files '*.swp' '*.swo' '*.bak' '*.orig' '*.tmp' '*.log' '*.pyc' 2>/dev/null`,
+    `git ls-files '*.swp' '*.swo' '*.bak' '*.orig' '*.tmp' '*.log' '*.pyc'`,
     cwd,
   );
   const staleFiles = staleRaw ? staleRaw.split('\n').filter((l) => l.trim()) : [];
 
   // Mixed languages: .js files alongside .ts in same source directories (not config files at root)
   const jsInSrc = run(
-    "find . -path '*/src/*.js' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -name '*.min.js' 2>/dev/null | head -5",
+    "find . -path '*/src/*.js' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -name '*.min.js' | head -5",
     cwd,
   );
   const tsInSrc = run(
-    "find . -path '*/src/*.ts' -not -path '*/node_modules/*' -not -path '*/dist/*' 2>/dev/null | head -1",
+    "find . -path '*/src/*.ts' -not -path '*/node_modules/*' -not -path '*/dist/*' | head -1",
     cwd,
   );
   const mixedLanguages = !!(jsInSrc && tsInSrc);

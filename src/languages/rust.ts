@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import type { Coverage, FileCoverage } from '../analyzers/tools/coverage';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { parseCoberturaXml } from './csharp';
 import { parseCvssV3BaseScore, resolveCvssScores, scoreToTier } from '../analyzers/tools/osv';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -397,7 +397,7 @@ export function buildRustTopLevelDepIndex(raw: string): Map<string, string[]> {
  * command fails — topLevelDep stays unattributed rather than blocking.
  */
 function loadRustTopLevelDepIndex(cwd: string): Map<string, string[]> {
-  const raw = run('cargo metadata --format-version 1 2>/dev/null', cwd, 60000);
+  const raw = run('cargo metadata --format-version 1', cwd, 60000);
   if (!raw) return new Map();
   return buildRustTopLevelDepIndex(raw);
 }
@@ -425,7 +425,7 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
     return { kind: 'unavailable', reason: 'cargo-audit not installed' };
   }
 
-  const raw = run(`${audit.path} audit --json 2>/dev/null`, cwd, 60000);
+  const raw = run(`${audit.path} audit --json`, cwd, 60000);
   if (!raw) return { kind: 'unavailable', reason: 'cargo-audit produced no output' };
 
   const parsed = parseCargoAuditOutput(raw);
@@ -495,7 +495,7 @@ function gatherRustLintResult(cwd: string): LintGatherOutcome {
     return { kind: 'unavailable', reason: 'not installed' };
   }
 
-  const raw = run('cargo clippy --message-format json 2>/dev/null', cwd, 120000);
+  const raw = run('cargo clippy --message-format json', cwd, 120000);
   const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
 
   for (const line of raw.split('\n')) {
@@ -635,16 +635,16 @@ export function extractRustImportsRaw(content: string): string[] {
  * consumers that want package-level import analysis.
  */
 function gatherRustImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.rs" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.rs'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
 
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -722,7 +722,7 @@ function gatherRustLicensesResult(cwd: string): LicensesGatherOutcome {
     return { kind: 'unavailable', reason: 'cargo-license not installed' };
   }
 
-  const raw = run(`${status.path} --json 2>/dev/null`, cwd, 120000);
+  const raw = run(`${status.path} --json`, cwd, 120000);
   if (!raw) return { kind: 'unavailable', reason: 'cargo-license produced no output' };
 
   let data: CargoLicenseEntry[];

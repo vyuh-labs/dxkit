@@ -5,7 +5,7 @@ import * as path from 'path';
 import { gatherJaCoCoCoverageResult } from '../analyzers/tools/jacoco';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { walkPaths } from '../analyzers/tools/walk-paths';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -156,7 +156,7 @@ function gatherKotlinLintResult(cwd: string): LintGatherOutcome {
   // race on the same path.
   const tmpFile = path.join(os.tmpdir(), `dxkit-detekt-${process.pid}-${Date.now()}.xml`);
   try {
-    run(`${detekt.path} --input . --report xml:${tmpFile} 2>/dev/null`, cwd, 120000);
+    run(`${detekt.path} --input . --report xml:${tmpFile}`, cwd, 120000);
     let raw: string;
     try {
       raw = fs.readFileSync(tmpFile, 'utf-8');
@@ -331,18 +331,15 @@ export function extractKotlinImportsRaw(content: string): string[] {
  * downstream consumers need it. Mirrors the rust pack's choice.
  */
 function gatherKotlinImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(
-    `find . -type f \\( -name "*.kt" -o -name "*.kts" \\) ${excludes} 2>/dev/null`,
-    cwd,
-  );
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.kt', '.kts'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');

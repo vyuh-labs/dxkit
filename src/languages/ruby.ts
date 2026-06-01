@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { walkPaths } from '../analyzers/tools/walk-paths';
-import { getFindExcludeFlags } from '../analyzers/tools/exclusions';
+import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
@@ -99,15 +99,15 @@ export function extractRubyImportsRaw(content: string): string[] {
  * need it.
  */
 function gatherRubyImportsResult(cwd: string): ImportsResult | null {
-  const excludes = getFindExcludeFlags(cwd);
-  const raw = run(`find . -type f -name "*.rb" ${excludes} 2>/dev/null`, cwd);
-  if (!raw) return null;
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.rb'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  if (files.length === 0) return null;
 
   const extracted = new Map<string, ReadonlyArray<string>>();
-  for (const line of raw.split('\n')) {
-    const p = line.trim();
-    if (!p) continue;
-    const rel = p.replace(/^\.\//, '');
+  for (const rel of files) {
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
@@ -180,15 +180,21 @@ function gatherRubyTestFrameworkResult(cwd: string): TestFrameworkResult | null 
   }
 
   // Glob-count fallback: no Gemfile (or Gemfile mentions no known runner).
-  // Run two cheap finds and pick the framework whose convention dominates.
-  const excludes = getFindExcludeFlags(cwd);
-  const specCount = run(`find . -type f -name "*_spec.rb" ${excludes} 2>/dev/null | wc -l`, cwd);
-  const testCount = run(
-    `find . -type f \\( -name "*_test.rb" -o -name "test_*.rb" \\) ${excludes} 2>/dev/null | wc -l`,
-    cwd,
-  );
-  const specs = parseInt(specCount, 10) || 0;
-  const tests = parseInt(testCount, 10) || 0;
+  // Count test-file conventions via the cross-platform walker and pick
+  // the framework whose convention dominates. `includeTests` is required
+  // — these ARE test files.
+  const rbFiles = walkSourceFiles(cwd, {
+    extensions: ['.rb'],
+    includeTests: true,
+    includeAutogen: true,
+  });
+  let specs = 0;
+  let tests = 0;
+  for (const rel of rbFiles) {
+    const base = path.basename(rel);
+    if (/_spec\.rb$/.test(base)) specs++;
+    else if (/_test\.rb$/.test(base) || /^test_.*\.rb$/.test(base)) tests++;
+  }
   if (specs === 0 && tests === 0) return null;
   return {
     schemaVersion: 1,
@@ -304,7 +310,7 @@ function gatherRubyLintResult(cwd: string): LintGatherOutcome {
   if (!rubocop.available || !rubocop.path) {
     return { kind: 'unavailable', reason: 'not installed' };
   }
-  const raw = run(`${rubocop.path} --format json . 2>/dev/null`, cwd, 120000);
+  const raw = run(`${rubocop.path} --format json .`, cwd, 120000);
   if (!raw) {
     return { kind: 'unavailable', reason: 'no rubocop output' };
   }

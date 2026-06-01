@@ -26,10 +26,10 @@ export function gatherClocMetrics(cwd: string): Partial<HealthMetrics> {
   const flags = `--json --timeout 0 ${excludeFlags}`;
 
   // Try system cloc first (faster), then npx as fallback
-  const result = runJSON<ClocOutput>(`cloc . ${flags} 2>/dev/null`, cwd, 180000);
+  const result = runJSON<ClocOutput>(`cloc . ${flags}`, cwd, 180000);
 
   if (!result || !result.SUM) {
-    const fallback = runJSON<ClocOutput>(`npx cloc . ${flags} 2>/dev/null`, cwd, 180000);
+    const fallback = runJSON<ClocOutput>(`npx cloc . ${flags}`, cwd, 180000);
     if (!fallback || !fallback.SUM) {
       return { toolsUnavailable: ['cloc'] };
     }
