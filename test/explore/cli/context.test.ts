@@ -6,7 +6,10 @@
  * framing, seed marker, per-community cap, honest truncation footer.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { runContext } from '../../../src/explore/cli/context';
 import type {
   Community,
@@ -115,44 +118,94 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('runContext — markdown', () => {
   it('renders the header + anchor line', () => {
-    const out = captureStdout(() => runContext(G, ['logger'], {}));
+    const out = captureStdout(() => runContext(G, ['logger'], {}, '.'));
     expect(out).toContain('## Context — `logger`');
     expect(out).toContain('**Start here:**');
     expect(out).toContain('`logger`');
   });
 
   it('renders the blast-radius line for a called symbol', () => {
-    const out = captureStdout(() => runContext(G, ['logger'], {}));
+    const out = captureStdout(() => runContext(G, ['logger'], {}, '.'));
     // logger has 2 callers across 2 files.
     expect(out).toMatch(/\*\*Blast radius:\*\* changing.*2 callers across 2 files/);
   });
 
   it('frames an uncalled symbol as an entry point / public API', () => {
-    const out = captureStdout(() => runContext(G, ['main'], {}));
+    const out = captureStdout(() => runContext(G, ['main'], {}, '.'));
     expect(out).toContain('no internal callers');
   });
 
   it('marks the seed symbol with a [seed] tag', () => {
-    const out = captureStdout(() => runContext(G, ['main'], {}));
+    const out = captureStdout(() => runContext(G, ['main'], {}, '.'));
     expect(out).toMatch(/`main`.*_\[seed\]_/);
   });
 
   it('shows the honest truncation footer when the budget overflows', () => {
     const out = captureStdout(
-      () => runContext(G, ['main'], { budget: '15' }), // ~1 node fits
+      () => runContext(G, ['main'], { budget: '15' }, '.'), // ~1 node fits
     );
     expect(out).toMatch(/\+\d+ more symbols? omitted to fit the 15-token budget/);
   });
 
   it('includes the same-name conflation caveat', () => {
-    const out = captureStdout(() => runContext(G, ['main'], {}));
+    const out = captureStdout(() => runContext(G, ['main'], {}, '.'));
     expect(out).toContain('conflates same-name symbols');
+  });
+});
+
+describe('runContext — file:line routing', () => {
+  // src/a.ts: module n0 + main() @5. Give it real source on disk so the
+  // slice can be read. The graph fixture G already places main() at line 5.
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ctx-'));
+    fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
+    const lines = Array.from({ length: 12 }, (_, i) => `// line ${i + 1}`);
+    lines[4] = 'function main() {'; // line 5 (1-based)
+    lines[6] = '  return helper();'; // line 7
+    fs.writeFileSync(path.join(tmp, 'src/a.ts'), lines.join('\n'));
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  it('renders the enclosing symbol + a line-numbered source chunk', () => {
+    const out = captureStdout(() => runContext(G, ['src/a.ts:7'], {}, tmp));
+    expect(out).toContain('## Context — `src/a.ts:7`');
+    expect(out).toContain('**Enclosing symbol:** `main`');
+    expect(out).toContain('return helper();');
+    // Line-numbered fence — line 7 prefixed with its number.
+    expect(out).toMatch(/7 {2}\s*return helper\(\)/);
+  });
+
+  it('emits a JSON envelope carrying the chunk + structural context', () => {
+    const out = captureStdout(() => runContext(G, ['src/a.ts:7'], { json: true }, tmp));
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('context');
+    expect(parsed.args).toMatchObject({ file: 'src/a.ts', line: 7 });
+    expect(parsed.results.enclosingSymbol.symbol).toBe('main');
+    expect(Array.isArray(parsed.results.chunk.lines)).toBe(true);
+  });
+
+  it('falls back to a centered window for a file absent from the graph', () => {
+    fs.writeFileSync(path.join(tmp, 'src/other.ts'), 'a\nb\nc\nd\ne\n');
+    const out = captureStdout(() => runContext(G, ['src/other.ts:3'], {}, tmp));
+    expect(out).toContain('file not in the code graph');
+    expect(out).toContain('c'); // the requested line is shown
+  });
+
+  it('exits non-zero with a clear message when the file cannot be read', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('exit');
+    }) as never);
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    expect(() => runContext(G, ['src/nope.ts:3'], {}, tmp)).toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(String(err.mock.calls[0]?.[0])).toContain('Cannot read src/nope.ts');
   });
 });
 
 describe('runContext — no match', () => {
   it('prints did-you-mean suggestions for a typo', () => {
-    const out = captureStdout(() => runContext(G, ['mian'], {}));
+    const out = captureStdout(() => runContext(G, ['mian'], {}, '.'));
     expect(out).toContain('No symbols matched');
     expect(out).toContain('`main`');
   });
@@ -160,7 +213,7 @@ describe('runContext — no match', () => {
 
 describe('runContext — json', () => {
   it('emits the stable envelope with command=context', () => {
-    const out = captureStdout(() => runContext(G, ['logger'], { json: true }));
+    const out = captureStdout(() => runContext(G, ['logger'], { json: true }, '.'));
     const parsed = JSON.parse(out);
     expect(parsed.command).toBe('context');
     expect(parsed.args.query).toBe('logger');
@@ -171,7 +224,7 @@ describe('runContext — json', () => {
 
   it('carries the budget + substring args in the envelope', () => {
     const out = captureStdout(() =>
-      runContext(G, ['log'], { json: true, substring: true, budget: '500' }),
+      runContext(G, ['log'], { json: true, substring: true, budget: '500' }, '.'),
     );
     const parsed = JSON.parse(out);
     expect(parsed.args.budget).toBe(500);

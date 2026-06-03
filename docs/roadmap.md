@@ -43,7 +43,7 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 
 ### Graphify pair (deferred from 2.7)
 
-- [ ] `vyuh-dxkit context <file:line>` command that returns a curated AST chunk under a token budget. Replaces "agent ingests 15k-line file" with "agent ingests 500 focused lines."
+- [x] `vyuh-dxkit context <file:line>` command that returns a curated source chunk under a token budget, centered on the requested line, plus the enclosing symbol's callers/callees and blast radius. Replaces "agent ingests 15k-line file" with "agent ingests 500 focused lines."
 - [ ] Reachability Tier-1 for dep-vuln triage. Lifts severity based on whether customer code actually calls the vulnerable surface.
 
 Both build on the graph foundation that 2.7 shipped.
