@@ -110,6 +110,12 @@ const DXKIT_SKILLS = [
   // doctor, fix-gaps, baseline, hooks, branch protection, prebuild).
   // Dispatches into the other lifecycle skills for sub-decisions.
   'dxkit-onboard',
+  // dxkit-feature: forward-development orchestrator. Orients via the
+  // code graph (context / explore) to find where a new feature plugs
+  // in and what it touches, then runs the analyzers + guardrail on the
+  // change so net-new development doesn't ship a regression. The
+  // proactive counterpart to dxkit-action's reactive fix loop.
+  'dxkit-feature',
 ] as const;
 
 interface GenerateResult {

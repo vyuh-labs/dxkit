@@ -106,7 +106,7 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
     expect(cmd).toContain('vyuh-dxkit context-hook');
   });
 
-  it('writes all 6 dxkit-* skills under .claude/skills/', () => {
+  it('writes all dxkit-* skills under .claude/skills/', () => {
     const expected = [
       'dxkit-learn',
       'dxkit-init',
@@ -114,6 +114,10 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
       'dxkit-hooks',
       'dxkit-reports',
       'dxkit-action',
+      'dxkit-fix',
+      'dxkit-update',
+      'dxkit-onboard',
+      'dxkit-feature',
     ];
     for (const name of expected) {
       const skillPath = path.join(tmpDir, '.claude', 'skills', name, 'SKILL.md');

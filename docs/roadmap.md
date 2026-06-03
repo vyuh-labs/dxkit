@@ -48,11 +48,15 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 
 Both build on the graph foundation that 2.7 shipped.
 
+### Forward-development skill
+
+- [ ] `dxkit-feature` skill — drives net-new development the way `dxkit-action` drives fixes: orient via the code graph (`context` / `explore`) to find where a feature plugs in and what it touches, then run the analyzers + `guardrail check` on the change so the feature doesn't ship a regression. Degrades gracefully to grep + read when no graph is present; verification never depends on the graph.
+
+## Future
+
 ### Cross-agent reach (decision pending)
 
 - [ ] MCP server repackaging so Codex, Cursor, Aider, and other MCP-capable agents can invoke dxkit flows via their built-in MCP support. Decision pending customer signal on non-Claude-Code agent usage.
-
-## Future
 
 ### Per-pack capability parity
 
