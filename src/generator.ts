@@ -116,6 +116,12 @@ const DXKIT_SKILLS = [
   // change so net-new development doesn't ship a regression. The
   // proactive counterpart to dxkit-action's reactive fix loop.
   'dxkit-feature',
+  // dxkit-docs: documentation generator. Reads the Documentation
+  // dimension's gaps, orients on the real code via the graph, and
+  // writes grounded README / docstrings / API + architecture docs —
+  // re-running the slop check so generated prose doesn't trade
+  // Documentation score for Quality score.
+  'dxkit-docs',
 ] as const;
 
 interface GenerateResult {

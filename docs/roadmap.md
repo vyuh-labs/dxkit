@@ -48,9 +48,10 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 
 Both build on the graph foundation that 2.7 shipped.
 
-### Forward-development skill
+### Agent skills
 
-- [ ] `dxkit-feature` skill — drives net-new development the way `dxkit-action` drives fixes: orient via the code graph (`context` / `explore`) to find where a feature plugs in and what it touches, then run the analyzers + `guardrail check` on the change so the feature doesn't ship a regression. Degrades gracefully to grep + read when no graph is present; verification never depends on the graph.
+- [x] `dxkit-feature` skill — drives net-new development the way `dxkit-action` drives fixes: orient via the code graph (`context` / `explore`) to find where a feature plugs in and what it touches, then run the analyzers + `guardrail check` on the change so the feature doesn't ship a regression. Degrades gracefully to grep + read when no graph is present; verification never depends on the graph.
+- [ ] `dxkit-docs` skill — generates the documentation a repo is missing: reads the Documentation dimension's gaps, orients on the real code via the graph, then writes a grounded README / docstrings / API + architecture docs and re-runs the slop check so generated prose doesn't trade Documentation score for Quality score.
 
 ## Future
 
