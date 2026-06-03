@@ -107,7 +107,7 @@ export async function runExplore(
       return;
 
     case 'context':
-      runContext(graph, positionals.slice(1), values);
+      runContext(graph, positionals.slice(1), values, cwd);
       return;
 
     case 'help':
@@ -194,6 +194,8 @@ Subcommands:
   api-surface              Exported symbols with no internal callers
   context <query>          Slim structural slice for a query (token-reduction;
                            also available as the top-level 'vyuh-dxkit context')
+  context <file:line>      Focused source chunk around a location + its callers
+                           /callees (read ~the enclosing symbol, not the file)
 
 Flags (all subcommands):
   --json                   Emit structured JSON envelope
@@ -201,9 +203,9 @@ Flags (all subcommands):
   --refresh                Force-regenerate graph.json before query
 
 context-only flags:
-  --budget N               Token ceiling on the slice (default 2000)
-  --depth N                Hard ceiling on call-graph hops (default: budget-bounded)
-  --substring              Broaden keyword matching to substrings
+  --budget N               Token ceiling on the slice / source chunk (default 2000)
+  --depth N                Hard ceiling on call-graph hops (query form; default: budget-bounded)
+  --substring              Broaden keyword matching to substrings (query form)
 
 Reads from .dxkit/reports/graph.json. Run \`vyuh-dxkit health\` first
 to generate the artifact.

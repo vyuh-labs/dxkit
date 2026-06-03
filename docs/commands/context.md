@@ -15,11 +15,14 @@ you're about to change.
 ## Usage
 
 ```bash
-vyuh-dxkit context <query> [--budget N] [--depth N] [--substring] [--json]
+vyuh-dxkit context <query>      [--budget N] [--depth N] [--substring] [--json]
+vyuh-dxkit context <file:line>  [--budget N] [--json]
 ```
 
-`vyuh-dxkit context <query>` is a top-level alias for
-`vyuh-dxkit explore context <query>`.
+`vyuh-dxkit context …` is a top-level alias for
+`vyuh-dxkit explore context …`. The argument shape selects the mode:
+a `path:line` resolves to the **location** surface (below); anything
+else is a **keyword query**.
 
 ## What it returns
 
@@ -38,9 +41,43 @@ query:
 On no match it returns "did you mean" suggestions instead of an empty
 result.
 
+## Locating by `file:line`
+
+```bash
+vyuh-dxkit context src/payments/checkout.ts:142
+```
+
+Given a location, `context` returns the **focused source chunk around
+that line** — roughly the enclosing symbol rather than the whole file —
+plus its structural neighborhood:
+
+- **Enclosing symbol** — the declaration nearest at-or-above the line,
+  with its in/out call counts. A heuristic: graph nodes carry only a
+  declaration line (no end line), so the symbol boundary is
+  declaration-to-next-declaration — confirm it before editing.
+- **Source chunk** — the actual lines, read from disk and line-numbered,
+  carved to `--budget` and **centered on the requested line** (so the
+  line you asked about is always shown, even when the symbol is larger
+  than the budget). A `Showing lines X–Y of the N-line span` note appears
+  when the budget truncated the window.
+- **Module + blast radius** — the community the file belongs to and how
+  many caller files a change would touch (suppressed as `n/a` for
+  languages whose call graph can't be resolved — never read a blank as
+  "0 callers").
+- **Callers / callees** — the symbols that reach this one and the ones it
+  calls out to.
+
+This is the "agent ingests 500 focused lines, not the 15k-line file"
+surface. It degrades in layers: a file absent from the graph still
+returns a centered raw-line window (no structural context); an
+unreadable path exits non-zero with a clear message.
+
+`--budget` bounds the source chunk; `--depth` / `--substring` apply only
+to the keyword form.
+
 ## Flags
 
-- `--budget N` — soft token ceiling on the rendered slice (default 2000). Lower it for tighter context windows.
+- `--budget N` — soft token ceiling on the rendered slice / source chunk (default 2000). Lower it for tighter context windows.
 - `--depth N` — hard cap on BFS hops (default: budget-bounded, adaptive — a hot symbol fills the budget at hop 1, a cold one reaches further).
 - `--substring` — match symbols whose name _contains_ the query, not just exact matches (broader, noisier).
 - `--json` — machine-readable envelope for scripts and hooks.
