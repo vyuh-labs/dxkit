@@ -44,14 +44,19 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 ### Graphify pair (deferred from 2.7)
 
 - [x] `vyuh-dxkit context <file:line>` command that returns a curated source chunk under a token budget, centered on the requested line, plus the enclosing symbol's callers/callees and blast radius. Replaces "agent ingests 15k-line file" with "agent ingests 500 focused lines."
-- [ ] Reachability Tier-1 for dep-vuln triage. Lifts severity based on whether customer code actually calls the vulnerable surface.
+- [x] Package-level reachability for dep-vuln triage. Marks a finding `reachable` when its package is imported anywhere in source; the flag feeds the composite risk score. (Refinements pending — see below.)
 
 Both build on the graph foundation that 2.7 shipped.
 
 ### Agent skills
 
 - [x] `dxkit-feature` skill — drives net-new development the way `dxkit-action` drives fixes: orient via the code graph (`context` / `explore`) to find where a feature plugs in and what it touches, then run the analyzers + `guardrail check` on the change so the feature doesn't ship a regression. Degrades gracefully to grep + read when no graph is present; verification never depends on the graph.
-- [ ] `dxkit-docs` skill — generates the documentation a repo is missing: reads the Documentation dimension's gaps, orients on the real code via the graph, then writes a grounded README / docstrings / API + architecture docs and re-runs the slop check so generated prose doesn't trade Documentation score for Quality score.
+- [x] `dxkit-docs` skill — generates the documentation a repo is missing: reads the Documentation dimension's gaps, orients on the real code via the graph, then writes a grounded README / docstrings / API + architecture docs and re-runs the slop check so generated prose doesn't trade Documentation score for Quality score.
+
+### Reachability refinements (pending)
+
+- [ ] Per-ecosystem reliability gating: only mark a finding `reachable: false` when its language pack resolves imports reliably (TS / Python / Go). For packs whose import resolution is unreliable (C# namespaces ≠ package names, etc.), leave `reachable` unset rather than risk a false "unreachable" that hides a real vuln.
+- [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders).
 
 ## Future
 
