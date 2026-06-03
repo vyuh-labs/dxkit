@@ -8,6 +8,7 @@ import {
   parseProjectAssetsJson,
   buildCsharpTopLevelDepIndex,
   mergeAssetParses,
+  findRealPackagesLockFiles,
 } from '../src/languages/csharp';
 
 // Fixture JSONs mirror the dotnet list package --vulnerable --format json
@@ -554,5 +555,47 @@ describe('csharp depVulns preflight parity with detect() (D035)', () => {
     expect(csharp.detect(tmp)).toBe(false);
     const result = await csharp.capabilities!.depVulns!.gather(tmp);
     expect(result).toBeNull();
+  });
+});
+
+describe('findRealPackagesLockFiles (transitive lockfile discovery)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-nuget-lock-'));
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const csproj = '<Project Sdk="Microsoft.NET.Sdk"></Project>';
+
+  it('finds a committed packages.lock.json next to a .csproj', () => {
+    fs.writeFileSync(path.join(tmp, 'App.csproj'), csproj);
+    fs.writeFileSync(path.join(tmp, 'packages.lock.json'), '{"version":1,"dependencies":{}}');
+    const found = findRealPackagesLockFiles(tmp);
+    expect(found).toHaveLength(1);
+    expect(found[0].endsWith('packages.lock.json')).toBe(true);
+  });
+
+  it('returns empty when a .csproj has no adjacent lock file (falls back to direct path)', () => {
+    fs.writeFileSync(path.join(tmp, 'App.csproj'), csproj);
+    expect(findRealPackagesLockFiles(tmp)).toEqual([]);
+  });
+
+  it('discovers one lock file per project in a multi-project layout', () => {
+    for (const proj of ['DataStore', 'DataEngine', 'ConnectorUtils']) {
+      const dir = path.join(tmp, proj);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${proj}.csproj`), csproj);
+      fs.writeFileSync(path.join(dir, 'packages.lock.json'), '{"version":1,"dependencies":{}}');
+    }
+    expect(findRealPackagesLockFiles(tmp)).toHaveLength(3);
+  });
+
+  it('only counts lock files that sit next to a project file', () => {
+    // A stray lock file with no adjacent .csproj is not discovered.
+    fs.writeFileSync(path.join(tmp, 'App.csproj'), csproj);
+    const orphan = path.join(tmp, 'unrelated');
+    fs.mkdirSync(orphan, { recursive: true });
+    fs.writeFileSync(path.join(orphan, 'packages.lock.json'), '{"version":1,"dependencies":{}}');
+    expect(findRealPackagesLockFiles(tmp)).toEqual([]);
   });
 });
