@@ -20,6 +20,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory), and points at `npx vyuh-dxkit init --full --yes` as a
   direct path that needs no successful `npm install`.
 
+## [2.8.0] - 2026-06-03
+
+Graph-context navigation, two new agent skills, and broader secret +
+.NET dependency coverage.
+
+### Added
+
+- **`vyuh-dxkit context <file:line>`.** Given a source location, returns
+  the focused source chunk around it — roughly the enclosing symbol
+  rather than the whole file — plus its structural neighborhood (module,
+  blast radius, callers/callees). The chunk is read from disk, carved to
+  a token budget, and centered on the requested line so the line you
+  asked about is always shown. Degrades in layers: a file absent from the
+  graph still returns a centered raw-line window; an unreadable path
+  exits with a clear message. The keyword form `context <query>` is
+  unchanged.
+- **`dxkit-feature` skill.** Drives net-new development the way
+  `dxkit-action` drives fixes: orient via the code graph to find where a
+  feature plugs in and what it touches, build following existing
+  patterns, then run the analyzers + `guardrail check` on the change so
+  the feature doesn't ship a regression. Degrades to grep + read when no
+  graph is present.
+- **`dxkit-docs` skill.** Generates the documentation a repo is missing —
+  reads the Documentation dimension's gaps, orients on the real code via
+  the graph, then writes a grounded README / docstrings / API +
+  architecture docs and re-runs the slop check so generated prose doesn't
+  trade Documentation score for Quality score.
+
+### Fixed
+
+- **Hardcoded passwords are detected even when gitleaks is installed.**
+  gitleaks is keyed to known token formats (AWS / GitHub / Stripe /
+  private keys) and deliberately skips generic credential assignments
+  like `password = "..."`. The pattern scanner already had a
+  hardcoded-password rule but returned nothing whenever gitleaks was
+  present, on a false "strict superset" assumption — so a plain
+  hardcoded password sailed through the guardrail. The pattern scanner
+  now complements gitleaks: generic keyword-assignment patterns
+  (password / api-key / secret / token = a quoted literal,
+  case-insensitive) always run, while branded token shapes stay
+  gitleaks-only to avoid double-counting. The scan also moved off POSIX
+  `grep` onto the in-process source walker, so it works on Windows.
+- **Transitive .NET dependency vulnerabilities are found from committed
+  lock files.** When a repo commits NuGet `packages.lock.json` files but
+  the scanning machine lacked the .NET SDK, a vulnerable transitive
+  dependency could go unreported: the osv path synthesized a lock file
+  from each project's direct `<PackageReference>` entries only and never
+  read the repo's real lock file (which carries the full resolved
+  transitive tree). osv now scans the committed `packages.lock.json`
+  files directly — full transitive coverage with no SDK or restore
+  required — falling back to the direct-reference synthesis only when no
+  lock file is committed.
+
+### Changed
+
+- Package-level dependency reachability (the `reachable` flag feeding the
+  composite risk score) is documented as shipped on the roadmap, with the
+  remaining refinements (per-ecosystem reliability gating, reachable-first
+  report framing) split out as pending.
+
 ## [2.7.1] - 2026-05-31
 
 Windows compatibility. Tool detection, the scanner toolchain, and source
