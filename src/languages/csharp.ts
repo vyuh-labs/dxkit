@@ -629,6 +629,76 @@ async function gatherDirectPackageReferenceFallback(
 }
 
 /**
+ * Discover the repo's COMMITTED `packages.lock.json` files. NuGet writes
+ * one next to each project (`<ProjectDir>/packages.lock.json`) when lock
+ * files are enabled (`RestorePackagesWithLockFile` / CI restore), and it
+ * records the FULL resolved transitive tree with pinned versions — the
+ * exact input osv-scanner needs for transitive coverage. Anchored to the
+ * `.csproj` discovery so it shares the canonical depth-unlimited walker.
+ */
+export function findRealPackagesLockFiles(cwd: string): string[] {
+  const out: string[] = [];
+  for (const csproj of findAllCsprojFiles(cwd)) {
+    const lock = path.join(path.dirname(csproj), 'packages.lock.json');
+    if (fs.existsSync(lock)) out.push(lock);
+  }
+  return out;
+}
+
+/**
+ * Scan the repo's real `packages.lock.json` files with osv-scanner. This
+ * is the TRANSITIVE-capable osv path: unlike the direct-PackageReference
+ * fallback (which synthesizes a lockfile from `.csproj` direct refs and
+ * therefore can't see transitive deps), a committed lock file already
+ * carries the entire resolved tree, so osv-scanner surfaces vulnerable
+ * transitive packages (e.g. a CVE in `Azure.Identity` reached through
+ * `Microsoft.Data.SqlClient`) without needing `dotnet` installed or a
+ * `dotnet restore` to have run.
+ *
+ * osv-scanner detects NuGet by the literal filename `packages.lock.json`,
+ * so the real files are passed straight through `--lockfile=`.
+ */
+async function gatherRealLockfilePath(
+  cwd: string,
+  lockfiles: string[],
+): Promise<DepVulnGatherOutcome> {
+  const scanner = findTool(TOOL_DEFS['osv-scanner'], cwd);
+  if (!scanner.available || !scanner.path) {
+    return {
+      kind: 'unavailable',
+      reason: `osv-scanner unavailable for packages.lock.json transitive scan (${lockfiles.length} lock files found)`,
+    };
+  }
+
+  const lockfileFlags = lockfiles.map((f) => `--lockfile=${f}`).join(' ');
+  const raw = run(`${scanner.path} scan source ${lockfileFlags} --format json`, cwd, 180000);
+  if (!raw) {
+    return {
+      kind: 'unavailable',
+      reason: `osv-scanner produced no output on ${lockfiles.length} packages.lock.json file(s)`,
+    };
+  }
+
+  const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, 'NuGet', 'csharp');
+  if (findings.length > 0) {
+    const resolved = await resolveCvssScores(vulnsForCvss);
+    for (const f of findings) {
+      const score = resolved.get(f.id);
+      if (score !== null && score !== undefined) f.cvssScore = score;
+    }
+  }
+
+  const envelope: DepVulnResult = {
+    schemaVersion: 1,
+    tool: 'osv-scanner-nuget-lockfile',
+    enrichment: 'osv.dev',
+    counts,
+    findings,
+  };
+  return { kind: 'success', envelope };
+}
+
+/**
  * Run `dotnet list package --vulnerable --include-transitive` on cwd
  * and return a DepVulnGatherOutcome. The "primary" half of the
  * always-merge G_v4_9 strategy. Pulled out of
@@ -717,10 +787,14 @@ async function runDotnetVulnerablePath(cwd: string): Promise<DepVulnGatherOutcom
  *   surfaces transitive vulns via NuGet's own resolution when
  *   `dotnet restore` has been run.
  *
- *   **osv-scanner-nuget-direct path**: parses every `.csproj` for
- *   direct PackageReferences, writes an adhoc `packages.lock.json`,
- *   runs osv-scanner. Covers ~80% of typical .NET CVE surface
- *   (direct refs only — no transitive resolution).
+ *   **osv path**: prefers the repo's COMMITTED `packages.lock.json`
+ *   files (`osv-scanner-nuget-lockfile`) — these carry the full
+ *   resolved transitive tree, so osv surfaces vulnerable transitive
+ *   deps (e.g. `Azure.Identity` reached through `Microsoft.Data.SqlClient`)
+ *   with no `dotnet`/restore required. When no lock file is committed it
+ *   falls back to `osv-scanner-nuget-direct`: parse every `.csproj` for
+ *   direct PackageReferences, write an adhoc `packages.lock.json`, run
+ *   osv-scanner (direct refs only — no transitive resolution).
  *
  *   Findings union, fingerprint-deduped at (package, installedVersion,
  *   id). Envelope counts recomputed from the merged set. Both tool
@@ -736,11 +810,21 @@ async function gatherCsharpDepVulnsResult(cwd: string): Promise<DepVulnGatherOut
     return { kind: 'no-manifest', reason: 'no .csproj or .sln found within depth 5' };
   }
 
-  // Run both tools in parallel. Each returns a DepVulnGatherOutcome;
-  // we merge whatever succeeds.
+  // Run the dotnet path and the osv path in parallel; merge whatever
+  // succeeds. The osv half prefers the repo's COMMITTED
+  // `packages.lock.json` files (full transitive tree, no `dotnet`
+  // required) and only falls back to the direct-PackageReference
+  // synthesis when no lock file is committed — so a repo that uses lock
+  // files gets transitive coverage from osv even when `dotnet` is absent
+  // (the case that silently dropped vulnerable transitive deps before).
+  const realLockfiles = findRealPackagesLockFiles(cwd);
+  const osvHalf =
+    realLockfiles.length > 0
+      ? gatherRealLockfilePath(cwd, realLockfiles)
+      : gatherDirectPackageReferenceFallback(cwd, 'G_v4_9 always-merge');
   const [primaryOutcome, fallbackOutcome] = await Promise.all([
     runDotnetVulnerablePath(cwd),
-    gatherDirectPackageReferenceFallback(cwd, 'G_v4_9 always-merge'),
+    osvHalf,
   ]);
 
   // Pick the better outcome when both fail to succeed.
