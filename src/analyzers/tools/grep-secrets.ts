@@ -1,87 +1,111 @@
 /**
- * Grep-based secret scanner — the 7-pattern fallback that runs when
- * gitleaks is unavailable. Re-registered under `GLOBAL_CAPABILITIES.secrets`
- * in Phase 10e.C.7.5 after `generic.ts`'s legacy Layer-0 equivalent was
- * deleted alongside the capability-owned `HealthMetrics.secretDetails`.
+ * Pattern-based secret scanner that COMPLEMENTS gitleaks.
  *
- * When gitleaks IS available, this provider returns null — gitleaks's
- * 800+ rules are a strict superset, and running both would double-count
- * overlapping matches (AWS keys, GitHub tokens, Anthropic keys). The
- * SECRETS descriptor aggregate unions findings, so a null from this
- * provider simply yields to gitleaks. That mirrors pre-C.7 behavior
- * exactly: gitleaks dominates when installed, grep carries the signal
- * when it isn't.
+ * gitleaks is keyed to known token *formats* (AWS / GitHub / Stripe /
+ * private keys) — it is excellent at those and deliberately does NOT
+ * flag generic hardcoded credentials like `password = "hunter2"`,
+ * because a naive entropy rule floods every codebase with false
+ * positives. Verified empirically: gitleaks reports zero on
+ * `password = "..."` / `api_key = "..."` assignments.
+ *
+ * That leaves a real gap: a developer who hardcodes a plain password
+ * sails through the guardrail. This provider closes it. The patterns
+ * split into two classes:
+ *
+ *   - GENERIC keyword-assignment secrets (`password`/`secret`/`token` =
+ *     a quoted literal). gitleaks misses these, so they run ALWAYS —
+ *     they are the complement of gitleaks coverage, not a fallback.
+ *   - BRANDED token shapes (AWS keys, GitHub PATs, private keys).
+ *     gitleaks covers these with higher precision, so they run ONLY
+ *     when gitleaks is absent — full standalone fallback, no
+ *     double-counting when both scanners are present.
+ *
+ * Scanning is in-process via the canonical `walkSourceFiles` walker
+ * (not POSIX `grep -r`, which is unavailable on Windows and overflows
+ * maxBuffer on large repos). Findings flow through the same SECRETS
+ * capability + fingerprint + baseline path as gitleaks, so a hardcoded
+ * password gates a push exactly like a leaked AWS key.
  */
+import * as fs from 'fs';
 import * as path from 'path';
-import { run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
-import { getGrepExcludeDirFlags, isExcludedPath } from './exclusions';
-import { toProjectRelative } from './paths';
 import { applySuppressions, loadSuppressions } from './suppressions';
-import { allSourceExtensions } from '../../languages';
+import { walkSourceFiles } from './walk-source-files';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
-interface GrepPattern {
-  pattern: string;
+interface SecretPattern {
+  regex: RegExp;
   rule: string;
 }
 
 /**
- * Seven patterns that catch the most common hardcoded-secret shapes.
- * Mirrors the set that lived in `generic.ts` pre-C.7, with identical
- * rule IDs so downstream reports stay stable.
+ * Generic keyword-to-quoted-literal assignments. Case-insensitive; the
+ * trailing `["'][^"']{3,}` anchor requires an actual quoted value of at
+ * least 3 chars, which is what separates a real hardcoded secret from a
+ * config read (`password = config.get("x")` — value isn't a literal),
+ * a comparison (`if password ==`), or an empty placeholder
+ * (`password = ""`). These run on every scan — gitleaks does not.
  */
-const PATTERNS: GrepPattern[] = [
-  { pattern: 'password[[:space:]]*[:=]', rule: 'hardcoded-password' },
-  { pattern: 'api[_-]?key[[:space:]]*[:=]', rule: 'hardcoded-api-key' },
-  { pattern: 'secret[[:space:]]*[:=]', rule: 'hardcoded-secret' },
-  { pattern: 'BEGIN.*PRIVATE KEY', rule: 'private-key-in-source' },
-  { pattern: 'AKIA[0-9A-Z]{16}', rule: 'aws-access-key' },
-  { pattern: 'ghp_[a-zA-Z0-9]{36}', rule: 'github-token' },
-  { pattern: 'sk-ant-[a-zA-Z0-9]', rule: 'anthropic-api-key' },
+const GENERIC_PATTERNS: SecretPattern[] = [
+  { regex: /password\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-password' },
+  { regex: /(?:api[_-]?key|apikey)\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-api-key' },
+  { regex: /(?:secret|token|passwd|pwd)\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-secret' },
+];
+
+/**
+ * Branded / structured token shapes. gitleaks detects these with higher
+ * precision (and fewer false positives), so they only run as a
+ * standalone fallback when gitleaks is unavailable.
+ */
+const BRANDED_PATTERNS: SecretPattern[] = [
+  { regex: /BEGIN.*PRIVATE KEY/, rule: 'private-key-in-source' },
+  { regex: /AKIA[0-9A-Z]{16}/, rule: 'aws-access-key' },
+  { regex: /ghp_[a-zA-Z0-9]{36}/, rule: 'github-token' },
+  { regex: /sk-ant-[a-zA-Z0-9]/, rule: 'anthropic-api-key' },
 ];
 
 function severityFor(rule: string): SecretFinding['severity'] {
   return rule.includes('private-key') || rule.includes('password') ? 'critical' : 'high';
 }
 
-/** Scan source files for the fallback patterns. Returns null when gitleaks is installed. */
+/**
+ * Scan source files for hardcoded secrets gitleaks doesn't cover (plus
+ * the branded fallback set when gitleaks is absent). Never returns null:
+ * the generic patterns always contribute, so this provider runs on every
+ * analysis rather than yielding wholesale to gitleaks.
+ */
 export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
-  // Yield to gitleaks — superset coverage, no point running both. When
-  // gitleaks is absent `findTool` returns `available: false` and we proceed
-  // with the fallback scan.
   const gitleaks = findTool(TOOL_DEFS.gitleaks, cwd);
-  if (gitleaks.available) return null;
+  // Generic keyword-assignment patterns always run (gitleaks misses
+  // them). Branded patterns only when gitleaks is absent (it covers them
+  // better, and running both would double-count the same AWS key).
+  const patterns = gitleaks.available
+    ? GENERIC_PATTERNS
+    : [...GENERIC_PATTERNS, ...BRANDED_PATTERNS];
 
-  const excludes = getGrepExcludeDirFlags(cwd);
-  // Pack-driven include flags (Phase 10i.0-LP.3). Replaces the prior
-  // hardcoded `.ts/.tsx/.js/.py/.go` set with all packs'
-  // `sourceExtensions`. Behavior expansion: `.cs` and `.rs` files are
-  // now scanned for secrets when gitleaks is unavailable. The legacy
-  // hardcoded set was a subset oversight — gitleaks (the primary
-  // scanner) covers all file types, so the fallback should too.
-  const includeFlags = allSourceExtensions()
-    .map((e) => `--include='*${e}'`)
-    .join(' ');
+  // Canonical walker: project-relative source paths with the resolved
+  // exclusion set already applied. includeTests so a password hardcoded
+  // in a test still surfaces (a real fixture is allowlisted as
+  // `test-fixture`, not silently ignored).
+  const files = walkSourceFiles(cwd, { includeTests: true, includeAutogen: true });
 
   const raw: SecretFinding[] = [];
-  for (const sp of PATTERNS) {
-    // Single-quoted pattern + -E for extended regex. Per the feedback memory.
-    const output = run(`grep -rnE '${sp.pattern}' ${includeFlags} ${excludes} . | head -50`, cwd);
-    if (!output) continue;
-    for (const line of output.split('\n').filter((l) => l.trim())) {
-      // Format: ./relative/path:lineno:matched-text
-      const match = line.match(/^\.\/(.+?):(\d+):/);
-      if (!match) continue;
-      const file = toProjectRelative(cwd, path.join(cwd, match[1]));
-      if (isExcludedPath(cwd, file)) continue;
-      raw.push({
-        file,
-        line: parseInt(match[2], 10),
-        rule: sp.rule,
-        severity: severityFor(sp.rule),
-      });
+  for (const rel of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      for (const sp of patterns) {
+        if (sp.regex.test(lines[i])) {
+          raw.push({ file: rel, line: i + 1, rule: sp.rule, severity: severityFor(sp.rule) });
+          break; // at most one finding per line
+        }
+      }
     }
   }
 

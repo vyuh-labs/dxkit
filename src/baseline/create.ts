@@ -355,9 +355,23 @@ export async function gatherCurrentScan(options: {
   const findings: RichBaselineEntry[] = runProducers(producerCtx, PRODUCERS);
 
   const toolNames = new Set<string>();
-  if (aggregate.provenance.secrets.tool) toolNames.add(aggregate.provenance.secrets.tool);
-  if (aggregate.provenance.codePatterns.tool) toolNames.add(aggregate.provenance.codePatterns.tool);
-  if (aggregate.provenance.depVulns.tool) toolNames.add(aggregate.provenance.depVulns.tool);
+  // A capability's provenance `tool` is a `uniqueJoin(', ')` of every
+  // provider that contributed — e.g. secrets is `'gitleaks, grep-secrets'`
+  // when both run. Split it back into individual names so each resolves
+  // its own version (gitleaks → semver; grep-secrets → in-process tag)
+  // rather than recording the joined string as one unversioned tool.
+  const addTools = (joined: string | null | undefined) => {
+    if (!joined) return;
+    for (const name of joined
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      toolNames.add(name);
+    }
+  };
+  addTools(aggregate.provenance.secrets.tool);
+  addTools(aggregate.provenance.codePatterns.tool);
+  addTools(aggregate.provenance.depVulns.tool);
   if (aggregate.provenance.tlsBypass.ran) toolNames.add('tls-bypass-registry');
   const tools = buildToolsMap([...toolNames].sort(), cwd);
 
