@@ -26,6 +26,7 @@ import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
 import { codeqlQuerySuiteFor, codeqlDbCreateArgs, codeqlAnalyzeArgs } from '../src/ingest/codeql';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
+import { readDeepSastConfig } from '../src/ingest/config';
 import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
 import type { DetectedStack } from '../src/types';
 
@@ -338,6 +339,45 @@ describe('codeql helpers', () => {
     } finally {
       if (prev === undefined) delete process.env.DXKIT_CODEQL;
       else process.env.DXKIT_CODEQL = prev;
+    }
+  });
+});
+
+// ─── deep-SAST config ─────────────────────────────────────────────────────────
+
+describe('readDeepSastConfig', () => {
+  it('returns {} when no manifest exists (fail-open)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cfg-none-'));
+    try {
+      expect(readDeepSastConfig(dir)).toEqual({});
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the deepSast block from .vyuh-dxkit.json', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cfg-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '.vyuh-dxkit.json'),
+        JSON.stringify({ deepSast: { engine: 'snyk-code', snyk: { orgId: 'o', projectId: 'p' } } }),
+      );
+      expect(readDeepSastConfig(dir)).toEqual({
+        engine: 'snyk-code',
+        snyk: { orgId: 'o', projectId: 'p' },
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns {} on malformed JSON', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cfg-bad-'));
+    try {
+      fs.writeFileSync(path.join(dir, '.vyuh-dxkit.json'), '{ not json');
+      expect(readDeepSastConfig(dir)).toEqual({});
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

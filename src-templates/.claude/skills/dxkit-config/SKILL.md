@@ -109,6 +109,29 @@ Each finding-kind has `block` (exit 1) and `warn` (log only) lists. Adjust to yo
 
 Run `npx vyuh-dxkit guardrail check --policy=.dxkit/policy.json` to test the new policy. If no `policy.json` exists, dxkit uses the built-in defaults.
 
+## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
+
+dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:
+
+```jsonc
+// .vyuh-dxkit.json
+{
+  "deepSast": {
+    "engine": "snyk-code",            // or "codeql" (OSS / GitHub Advanced Security only)
+    "snyk": { "orgId": "…", "projectId": "…" }   // from the Snyk UI; NOT the token
+  }
+}
+```
+
+This file is committed and safe — the `SNYK_TOKEN` is **never** stored here; it lives only in the environment (locally) or as a CI secret. CLI flags (`--org`/`--project`) always override config.
+
+How it ties into the rest of the config surface:
+- **Hooks / CI** (see the `dxkit-hooks` skill): the pre-push hook + PR gate enforce against the committed `.dxkit/external/<engine>.json` snapshot — they never run the heavy engine. The engine runs in a separate CI refresh job (or on demand) that re-ingests and commits the snapshot.
+- **What blocks a PR**: ingested findings are code findings, so `.dxkit/policy.json` severity rules apply to them exactly as to native findings.
+- **Excluding noise**: `.dxkit-ignore` paths apply to ingested findings too (a finding in an ignored path is dropped).
+
+To set this up end to end (token, first ingest, baseline, refresh job), hand off to the **dxkit-ingest** skill.
+
 ## Pointing dxkit at a custom tool directory (`.dxkit/tools.json`)
 
 By default dxkit finds scanner binaries (gitleaks, semgrep, jscpd, osv-scanner, cloc, …) on `PATH` and in the usual per-ecosystem locations (npm global, pipx `~/.local/bin`, cargo, go, brew). When tools live somewhere else — a corp-managed directory, a project-local toolbox, or a locked-down Windows box where you can't write to the default locations — declare it here:

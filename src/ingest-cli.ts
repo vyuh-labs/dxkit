@@ -18,6 +18,7 @@ import * as logger from './logger';
 import { parseSarif } from './ingest/sarif';
 import { fetchSnykCodeFindings } from './ingest/snyk-api';
 import { runCodeql, type CodeqlTarget } from './ingest/codeql';
+import { readDeepSastConfig } from './ingest/config';
 import { writeSnapshot } from './ingest/snapshot';
 import { detectActiveLanguages } from './languages/index';
 import type { SourceEngine, ExternalFinding } from './ingest/types';
@@ -116,10 +117,16 @@ async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const orgId = opts.org;
-  const projectId = opts.project;
+  // Flags override persisted config (`.vyuh-dxkit.json:deepSast.snyk`),
+  // so the customer can configure org/project once and run `ingest
+  // --from-snyk` with no flags thereafter.
+  const cfg = readDeepSastConfig(cwd);
+  const orgId = opts.org ?? cfg.snyk?.orgId;
+  const projectId = opts.project ?? cfg.snyk?.projectId;
   if (!orgId || !projectId) {
-    logger.warn('--org <id> and --project <id> are required for --from-snyk.');
+    logger.warn('Snyk org + project are required for --from-snyk.');
+    logger.dim('  Pass --org <id> --project <id>, or set them once in .vyuh-dxkit.json:');
+    logger.dim('    { "deepSast": { "snyk": { "orgId": "…", "projectId": "…" } } }');
     logger.dim(
       '  Find them in the Snyk UI (Settings → Org ID; the project page URL → project ID).',
     );

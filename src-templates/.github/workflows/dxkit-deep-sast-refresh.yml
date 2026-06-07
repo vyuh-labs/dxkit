@@ -1,0 +1,80 @@
+name: dxkit deep-SAST refresh
+
+# Periodically re-ingest interprocedural SAST findings (Snyk Code) into
+# `.dxkit/external/` and commit the snapshot. The committed snapshot is
+# what the pre-push hook and the PR guardrail enforce against, so this
+# job is the ONE place the external engine's token is needed — every
+# developer and CI run reads the snapshot without it.
+#
+# Setup (one-time, by an admin):
+#   1. Add a repository (or organization) secret `SNYK_TOKEN`
+#      (Settings → Secrets and variables → Actions). The token is never
+#      committed — it lives only here.
+#   2. Set the project in `.vyuh-dxkit.json`:
+#        { "deepSast": { "snyk": { "orgId": "…", "projectId": "…" } } }
+#
+# Reading the Snyk API does NOT consume the org's Snyk Code test quota.
+# The auto-commit carries `[skip ci]` so it doesn't re-trigger CI.
+#
+# This runs ON DEMAND only — trigger it from the Actions tab (Run
+# workflow). To also refresh on a schedule, uncomment the `schedule:`
+# block below.
+
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: '0 6 * * 1' # weekly, Monday 06:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dxkit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Ingest Snyk Code findings (quota-free read)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -z "${SNYK_TOKEN}" ]; then
+            echo "SNYK_TOKEN secret is not set — skipping deep-SAST refresh."
+            echo "Add it under Settings → Secrets and variables → Actions to enable."
+            exit 0
+          fi
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          # org/project come from .vyuh-dxkit.json:deepSast.snyk
+          "${DXKIT}" ingest --from-snyk
+
+      - name: Commit and push refreshed snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- .dxkit/external/; then
+            echo "Ingested snapshot unchanged — nothing to commit."
+            exit 0
+          fi
+          git add .dxkit/external/
+          git commit -m "chore(deep-sast): refresh ingested findings [skip ci]"
+          git push
