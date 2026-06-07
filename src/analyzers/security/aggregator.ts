@@ -127,6 +127,12 @@ export interface DedupCollision {
 export interface AggregateProvenance {
   secrets: { tool: string | null; ran: boolean };
   codePatterns: { tool: string | null; ran: boolean };
+  /** Ingested external-engine provenance. `tools` is the set of
+   *  engines whose findings were ingested this run (e.g. `['codeql']`,
+   *  `['snyk-code']`); `ran` is true when ingestion contributed. Always
+   *  populated by `buildSecurityAggregate`; optional in the type only so
+   *  pre-existing test mocks needn't be rewritten. */
+  external?: { tools: string[]; ran: boolean };
   tlsBypass: { ran: boolean; patternCount: number };
   fileFindings: { ran: boolean };
   depVulns: { tool: string | null; available: boolean; unavailableReason: string };
@@ -236,6 +242,14 @@ export interface SecurityAggregateInput {
   secrets: { findings: SecurityFinding[]; toolUsed: string | null };
   fileFindings: SecurityFinding[];
   codePatterns: { findings: SecurityFinding[]; toolUsed: string | null };
+  /** Findings ingested from external interprocedural-SAST engines
+   *  (Snyk Code, CodeQL, …) via `src/ingest`. Already mapped to
+   *  `SecurityFinding` with the engine as the `tool`. They join the
+   *  same code-side dedup pipeline as native findings, so a Snyk and a
+   *  semgrep finding on the same line collapse to one `CodeFinding`.
+   *  Optional: absent (or empty) yields output identical to a run with
+   *  no ingestion configured. */
+  external?: { findings: SecurityFinding[]; toolsUsed: string[] };
   tlsBypass: SecurityFinding[];
   /** Pattern count from `allTlsBypassPatterns()` — drives the
    *  `provenance.tlsBypass.ran` flag (ran=false when no patterns were
@@ -277,6 +291,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     ...input.secrets.findings,
     ...input.fileFindings,
     ...input.codePatterns.findings,
+    ...(input.external?.findings ?? []),
     ...input.tlsBypass,
   ];
 
@@ -454,6 +469,10 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     codePatterns: {
       tool: input.codePatterns.toolUsed,
       ran: input.codePatterns.toolUsed !== null,
+    },
+    external: {
+      tools: input.external?.toolsUsed ?? [],
+      ran: (input.external?.toolsUsed.length ?? 0) > 0,
     },
     tlsBypass: {
       // ran=true means the registry walk happened (patterns existed).

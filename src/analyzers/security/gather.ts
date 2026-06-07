@@ -17,6 +17,8 @@ import { resolveAliases } from '../tools/osv';
 import { buildReachablePackageSet, markReachable } from '../tools/reachability';
 import { scoreFindings } from '../tools/risk-score';
 import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
+import { externalToSecurityFindings } from '../../ingest/normalize';
+import { readAllSnapshots, snapshotEngines } from '../../ingest/snapshot';
 import { getFindExcludeFlags } from '../tools/exclusions';
 import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-source-files';
 import * as path from 'path';
@@ -566,10 +568,17 @@ export async function buildSecurityAggregateForHealth(
       }))
     : [];
 
+  // Ingested external-engine findings (Snyk Code / CodeQL / SARIF) read
+  // from committed `.dxkit/external/` snapshots. Absent → empty → the
+  // aggregate is byte-identical to a run with no ingestion configured.
+  const externalFindings = externalToSecurityFindings(readAllSnapshots(cwd));
+  const externalEngines = snapshotEngines(cwd);
+
   return buildSecurityAggregate({
     secrets: { findings: secretFindings, toolUsed: secrets?.tool ?? null },
     fileFindings,
     codePatterns: { findings: codeFindings, toolUsed: codePatterns?.tool ?? null },
+    external: { findings: externalFindings, toolsUsed: externalEngines },
     tlsBypass,
     tlsBypassPatternCount: allTlsBypassPatterns().length,
     depVulns: {
