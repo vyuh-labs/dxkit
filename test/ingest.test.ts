@@ -23,6 +23,7 @@ import { parseSarif } from '../src/ingest/sarif';
 import { snykIssueToFinding } from '../src/ingest/snyk-api';
 import { externalToSecurityFindings } from '../src/ingest/normalize';
 import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/snapshot';
+import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
 
 // ─── SARIF ──────────────────────────────────────────────────────────────────
 
@@ -209,6 +210,49 @@ describe('externalToSecurityFindings', () => {
     });
     // No fingerprint field — that is assigned downstream by the aggregator.
     expect('fingerprint' in sf[0]).toBe(false);
+  });
+});
+
+// ─── engine resolver ─────────────────────────────────────────────────────────
+
+describe('resolveDeepSastEngine', () => {
+  const pub = () => 'public' as const;
+  const priv = () => 'private' as const;
+
+  it('honors an explicit engine flag (snyk-code, no consent)', () => {
+    const d = resolveDeepSastEngine({ cwd: '.', engineFlag: 'snyk-code', visibilityProbe: priv });
+    expect(d.engine).toBe('snyk-code');
+    expect(d.source).toBe('flag');
+    expect(d.requiresConsent).toBe(false);
+  });
+
+  it('requires consent for explicit codeql on a non-public repo', () => {
+    const d = resolveDeepSastEngine({ cwd: '.', engineFlag: 'codeql', visibilityProbe: priv });
+    expect(d.engine).toBe('codeql');
+    expect(d.requiresConsent).toBe(true);
+    expect(d.licenseNote).toMatch(/GitHub Advanced Security/);
+  });
+
+  it('prefers ingesting Snyk when configured (license-safe, no consent)', () => {
+    const d = resolveDeepSastEngine({ cwd: '.', snykConfigured: true, visibilityProbe: priv });
+    expect(d.engine).toBe('snyk-code');
+    expect(d.source).toBe('snyk-configured');
+    expect(d.requiresConsent).toBe(false);
+  });
+
+  it('defaults a public repo to CodeQL with no consent', () => {
+    const d = resolveDeepSastEngine({ cwd: '.', visibilityProbe: pub });
+    expect(d.engine).toBe('codeql');
+    expect(d.source).toBe('visibility-public');
+    expect(d.requiresConsent).toBe(false);
+  });
+
+  it('gates a private repo behind consent', () => {
+    const d = resolveDeepSastEngine({ cwd: '.', visibilityProbe: priv });
+    expect(d.engine).toBe('codeql');
+    expect(d.source).toBe('visibility-private');
+    expect(d.requiresConsent).toBe(true);
+    expect(d.licenseNote).toBeTruthy();
   });
 });
 

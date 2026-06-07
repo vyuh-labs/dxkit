@@ -79,6 +79,15 @@ If the "secret" is actually a placeholder in test code (e.g., `"sk_test_xxxxxxxx
 
 If the finding is a true false positive or intentional pattern (test fixture, mitigated externally), suppress via dxkit's allowlist — NOT via semgrep's `// nosemgrep:`. The dxkit allowlist is the canonical surface (single source of truth across every scanner), carries a typed category + reason, and is audit-trackable through `vyuh-dxkit allowlist audit`. See "Allowlisting (when fix is not viable)" below.
 
+### Ingested SAST finding (Snyk Code / CodeQL)
+
+Interprocedural findings ingested from an external engine (`tool: snyk-code` / `codeql`, brought in via the `dxkit-ingest` skill) appear in the report exactly like native code findings — same fingerprint, same allowlist, same baseline. Fix them the same way, with two differences that make them easier, not harder:
+
+- **They're taint findings, so trace the flow, don't just patch the sink.** The title names a source→sink path (e.g. "file data flows to an HTTP response"). Fixing only the flagged line often misses the real fix — sanitize/validate at the boundary the taint enters, then confirm the path is broken.
+- **Lean on `--graph-context`.** Run `npx vyuh-dxkit vulnerabilities --detailed --graph-context` so each ingested finding carries its enclosing symbol + blast radius (caller files). This is context the source engine's own autofix doesn't have: it tells you which callers to re-test after the fix and whether the change is high-blast-radius. Use it to plan the fix and to scope step [5] verification.
+
+Verify by re-running the engine (re-ingest) — a graph-only or semgrep re-run won't confirm an interprocedural fix landed.
+
 ### Dependency vulnerability
 
 ```bash

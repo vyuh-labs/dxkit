@@ -122,6 +122,12 @@ const DXKIT_SKILLS = [
   // re-running the slop check so generated prose doesn't trade
   // Documentation score for Quality score.
   'dxkit-docs',
+  // dxkit-ingest: brings an external interprocedural-SAST engine's
+  // findings (Snyk Code, CodeQL, any SARIF) into dxkit so they're
+  // fingerprinted, baselined, guardrailed, graph-linked, and fixable
+  // by dxkit-action. License-aware engine selection; quota-free Snyk
+  // read; committed snapshot so the token is needed only at ingest time.
+  'dxkit-ingest',
 ] as const;
 
 interface GenerateResult {
