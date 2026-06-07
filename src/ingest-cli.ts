@@ -17,12 +17,15 @@ import * as fs from 'fs';
 import * as logger from './logger';
 import { parseSarif } from './ingest/sarif';
 import { fetchSnykCodeFindings } from './ingest/snyk-api';
+import { runCodeql, type CodeqlTarget } from './ingest/codeql';
 import { writeSnapshot } from './ingest/snapshot';
+import { detectActiveLanguages } from './languages/index';
 import type { SourceEngine, ExternalFinding } from './ingest/types';
 
 export interface IngestOptions {
   sarif?: string;
   fromSnyk?: boolean;
+  codeql?: boolean;
   /** Override engine label for `--sarif` (else inferred from the file). */
   engine?: string;
   /** Snyk identifiers (CLI flags override config / env). */
@@ -41,15 +44,52 @@ export async function runIngest(cwd: string, opts: IngestOptions): Promise<void>
     await ingestFromSnyk(cwd, opts);
     return;
   }
+  if (opts.codeql) {
+    await ingestFromCodeql(cwd, opts);
+    return;
+  }
   if (opts.sarif) {
     ingestFromSarif(cwd, opts);
     return;
   }
-  logger.warn('Nothing to ingest. Pass --sarif <file> or --from-snyk.');
+  logger.warn('Nothing to ingest. Pass --sarif <file>, --from-snyk, or --codeql.');
   logger.dim('  Examples:');
   logger.dim('    vyuh-dxkit ingest --sarif results.sarif');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --org <id> --project <id>');
+  logger.dim('    vyuh-dxkit ingest --codeql        # OSS / GitHub Advanced Security only');
   process.exitCode = 1;
+}
+
+async function ingestFromCodeql(cwd: string, opts: IngestOptions): Promise<void> {
+  // CodeQL languages come from the active packs' recipe (Rule 6), so a
+  // new pack auto-extends what gets scanned. JS+TS collapse to one
+  // `javascript` DB.
+  const targets: CodeqlTarget[] = [];
+  const seen = new Set<string>();
+  for (const pack of detectActiveLanguages(cwd)) {
+    const lang = pack.deepSast?.codeqlLanguage;
+    if (lang && !seen.has(lang)) {
+      seen.add(lang);
+      targets.push({ language: lang, querySuite: pack.deepSast?.codeqlQuerySuite });
+    }
+  }
+  if (targets.length === 0) {
+    logger.warn('No active language pack has a CodeQL extractor for this repo.');
+    process.exitCode = 1;
+    return;
+  }
+  logger.info(
+    `Running CodeQL for: ${targets.map((t) => t.language).join(', ')} (this can take many minutes)…`,
+  );
+  let findings: ExternalFinding[];
+  try {
+    findings = await runCodeql({ cwd, targets, onLog: (m) => logger.dim(`  ${m}`) });
+  } catch (err) {
+    logger.warn(`CodeQL run failed: ${(err as Error).message}`);
+    process.exitCode = 1;
+    return;
+  }
+  writeAndReport(cwd, 'codeql', findings, opts);
 }
 
 function ingestFromSarif(cwd: string, opts: IngestOptions): void {

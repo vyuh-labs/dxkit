@@ -1034,6 +1034,37 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'gem install --user-install simplecov',
     },
   },
+  codeql: {
+    name: 'codeql',
+    description: 'Interprocedural SAST engine (deep-SAST, opt-in)',
+    install: 'see installCommands (downloads the CodeQL bundle)',
+    check: 'codeql version',
+    for: 'all',
+    layer: 'optional',
+    binaries: ['codeql'],
+    probePaths: [`${path.join(os.homedir(), '.cache', 'dxkit', 'codeql')}`],
+    versionCheck: 'codeql version --format=terse',
+    // Opt-in deep-SAST engine: ~1GB download, minutes-long runs, and
+    // license-gated for private repos (GitHub Advanced Security). Kept
+    // OUT of the default toolchain — reports `n/a` until a caller opts
+    // in (`ingest --codeql` / `tools install codeql` set DXKIT_CODEQL),
+    // so a normal `tools install` never pulls it. Detection still flows
+    // through findTool/the registry per Rule 1 once opted in.
+    applicabilityGuard: (_cwd: string): string | null =>
+      process.env.DXKIT_CODEQL === '1'
+        ? null
+        : 'opt-in deep-SAST engine — run `vyuh-dxkit ingest --codeql` or `tools install codeql`',
+    installCommands: {
+      // Download the CodeQL bundle (CLI + precompiled query packs) into
+      // the dxkit cache and symlink the launcher onto the user path.
+      macos:
+        'mkdir -p "$HOME/.cache/dxkit" && curl -sSfL https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-osx64.tar.gz | tar xz -C "$HOME/.cache/dxkit" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
+      linux:
+        'mkdir -p "$HOME/.cache/dxkit" && curl -sSfL https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-linux64.tar.gz | tar xz -C "$HOME/.cache/dxkit" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
+      windows:
+        'powershell -Command "New-Item -ItemType Directory -Force $HOME/.cache/dxkit; Invoke-WebRequest -Uri https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-win64.tar.gz -OutFile $env:TEMP/codeql.tar.gz; tar xz -C $HOME/.cache/dxkit -f $env:TEMP/codeql.tar.gz"',
+    },
+  },
 };
 
 // =============================================================================
