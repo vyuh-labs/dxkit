@@ -432,6 +432,51 @@ Four rules in `scripts/check-architecture.sh` (pre-commit + CI):
 4. No re-implementation of canonical query helpers outside
    `src/explore/queries.ts` — extend it and import.
 
+### 13. External-engine findings flow through the canonical ingest module
+
+dxkit's bundled SAST (community semgrep) is intraprocedural. The
+interprocedural taint class — path traversal, information exposure,
+SSRF, injection — is covered by external engines (Snyk Code, CodeQL,
+Semgrep Pro, or any SARIF-emitting tool). dxkit does not re-detect that
+class; it **ingests** those findings and makes them first-class. Every
+ingested finding MUST enter through `src/ingest/` so it inherits the one
+fingerprint scheme, cross-tool dedup, baseline, guardrail, report
+rendering, and graph linking that native findings get — never a parallel
+pipeline.
+
+- **Parse** SARIF only via `src/ingest/sarif.ts:parseSarif`. It is the
+  single SARIF reader; every engine (CodeQL / Snyk export / Semgrep Pro
+  / Bearer) funnels through it.
+- **Persist** ingested findings only via
+  `src/ingest/snapshot.ts` (`.dxkit/external/<engine>.json`). The
+  committed snapshot is why an engine token is needed only at ingest
+  time (one CI refresh job), not by every developer.
+- **Normalize** to `SecurityFinding` only via
+  `src/ingest/normalize.ts:externalToSecurityFindings`. Identity is NOT
+  computed here — the security aggregator owns fingerprinting + dedup
+  for every code finding (Rule 9), so ingested + native findings share
+  one identity contract.
+- **Select** the engine via
+  `src/ingest/engine-resolver.ts:resolveDeepSastEngine` — the
+  license-aware resolver (mirror of Rule 11). It never runs CodeQL on a
+  non-public repo without `requiresConsent`.
+- **Declare** per-language engine support via
+  `LanguageSupport.deepSast` (Rule 6); consumers read the union through
+  `activeDeepSast` / `codeqlLanguagesFromFlags` /
+  `anyActivePackSupportsSnykCode` — never a per-language branch.
+
+#### Ingestion enforcement
+
+Two rules in `scripts/check-architecture.sh` (pre-commit + CI), plus
+Rule 9's `createHash` ban covering ingested identity:
+
+1. No `physicalLocation` SARIF walk outside `src/ingest/sarif.ts`
+   (the smoking-gun shape of a hand-rolled SARIF parser). Annotate
+   `// ingest-sarif-ok` for a justified exception.
+2. No `.dxkit/external/` snapshot access outside
+   `src/ingest/snapshot.ts`. Annotate `// ingest-snapshot-ok` for a
+   justified exception.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

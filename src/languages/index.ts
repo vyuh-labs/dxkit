@@ -1,5 +1,5 @@
 import type { DetectedStack } from '../types';
-import type { ArchitecturalShape, LanguageId, LanguageSupport } from './types';
+import type { ArchitecturalShape, DeepSastSupport, LanguageId, LanguageSupport } from './types';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -81,6 +81,42 @@ export function activeLanguagesFromFlags(flags: DetectedStack['languages']): Lan
  */
 export function allSourceExtensions(): string[] {
   return [...new Set(LANGUAGES.flatMap((l) => l.sourceExtensions))];
+}
+
+/**
+ * The active packs that declare interprocedural deep-SAST support,
+ * paired with their declaration (Rule 6). The engine resolver, the
+ * CodeQL runner, and the `tools install` applicability guard read the
+ * union here instead of branching on language id — so adding a pack (or
+ * an engine field) auto-extends every consumer.
+ */
+export function activeDeepSast(
+  flags: DetectedStack['languages'],
+): Array<{ id: LanguageId; deepSast: DeepSastSupport }> {
+  return activeLanguagesFromFlags(flags)
+    .filter((l) => l.deepSast)
+    .map((l) => ({ id: l.id, deepSast: l.deepSast as DeepSastSupport }));
+}
+
+/**
+ * Distinct CodeQL language ids needed to scan the active stack,
+ * deduplicated (JS+TS collapse to one `javascript`). Empty when no
+ * active pack has a CodeQL extractor — the runner then has nothing to do.
+ */
+export function codeqlLanguagesFromFlags(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(
+      activeDeepSast(flags)
+        .map((d) => d.deepSast.codeqlLanguage)
+        .filter((l): l is string => !!l),
+    ),
+  ];
+}
+
+/** True when any active pack expects Snyk Code coverage — gates whether
+ *  `ingest --from-snyk` is worth offering for this stack. */
+export function anyActivePackSupportsSnykCode(flags: DetectedStack['languages']): boolean {
+  return activeDeepSast(flags).some((d) => d.deepSast.snykCode === true);
 }
 
 /**

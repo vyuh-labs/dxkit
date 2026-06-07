@@ -1046,6 +1046,8 @@ export const python: LanguageSupport = {
 
   tools: ['ruff', 'pip-audit', 'coverage-py', 'pip-licenses'],
   semgrepRulesets: ['p/python'],
+  // CodeQL `python` extractor (no build); Snyk Code supports Python.
+  deepSast: { codeqlLanguage: 'python', snykCode: true },
 
   capabilities: {
     depVulns: pyDepVulnsProvider,

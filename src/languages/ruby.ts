@@ -738,6 +738,8 @@ export const ruby: LanguageSupport = {
   tools: ['osv-scanner', 'rubocop', 'simplecov'],
 
   semgrepRulesets: ['p/ruby'],
+  // CodeQL `ruby` extractor (no build); Snyk Code supports Ruby.
+  deepSast: { codeqlLanguage: 'ruby', snykCode: true },
 
   capabilities: {
     imports: rubyImportsProvider,

@@ -501,6 +501,14 @@ export const kotlin: LanguageSupport = {
   // Semgrep's Kotlin ruleset (`p/kotlin`) is sparse compared to Python/JS
   // — skipping for now until coverage matures, mirroring the csharp pack.
   semgrepRulesets: [],
+  // Kotlin uses CodeQL's `java` extractor (needs a build) and is beta
+  // there; Snyk Code supports Kotlin.
+  deepSast: {
+    codeqlLanguage: 'java',
+    codeqlBuildRequired: true,
+    codeqlBeta: true,
+    snykCode: true,
+  },
 
   capabilities: {
     depVulns: kotlinDepVulnsProvider,

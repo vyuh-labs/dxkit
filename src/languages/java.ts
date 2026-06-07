@@ -483,6 +483,8 @@ export const java: LanguageSupport = {
 
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
+  // CodeQL `java` extractor needs a build; Snyk Code supports Java.
+  deepSast: { codeqlLanguage: 'java', codeqlBuildRequired: true, snykCode: true },
 
   capabilities: {
     imports: javaImportsProvider,

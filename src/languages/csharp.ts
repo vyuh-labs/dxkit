@@ -1514,6 +1514,8 @@ export const csharp: LanguageSupport = {
   tools: ['dotnet-format', 'nuget-license', 'osv-scanner'],
   // p/csharp semgrep ruleset is sparse — skip until it matures.
   semgrepRulesets: [],
+  // CodeQL `csharp` extractor needs a build; Snyk Code supports C#.
+  deepSast: { codeqlLanguage: 'csharp', codeqlBuildRequired: true, snykCode: true },
 
   capabilities: {
     depVulns: csharpDepVulnsProvider,
