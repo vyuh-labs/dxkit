@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deep SAST — engine-agnostic interprocedural findings (2.9)
+
+dxkit's bundled SAST (community semgrep) is intraprocedural and misses the
+cross-function taint class — path traversal, information exposure, SSRF,
+injection — that interprocedural engines (Snyk Code, CodeQL) catch. 2.9 makes
+dxkit ingest any such engine's findings and treat them as first-class, rather
+than try to re-detect that class. dxkit becomes the governance + agentic-fix
+layer on top of any detector, grounded in the repo's own code graph.
+
+- **`vyuh-dxkit ingest`** brings external SAST findings into dxkit:
+  - `--from-snyk --org <id> --project <id>` reads a project's Snyk Code
+    findings via the REST API (set `SNYK_TOKEN`). It reads stored results, so
+    it does **not** consume the org's Snyk Code test quota.
+  - `--sarif <file>` ingests SARIF 2.1.0 from any engine (CodeQL, a Snyk
+    export, Semgrep Pro, Bearer).
+  - `--codeql` runs CodeQL on demand for the active languages (open-source /
+    GitHub Advanced Security only).
+- Ingested findings are written to a committed `.dxkit/external/<engine>.json`
+  snapshot and enter the security pipeline as first-class code findings:
+  fingerprinted + deduped against native findings, recorded in the baseline,
+  enforced by the guardrail, rendered in the vulnerability report, and
+  graph-linked under `--graph-context` (blast radius + callers for the fix
+  loop). The engine token is needed only at ingest time — every developer and
+  CI run reads the committed snapshot.
+- Persist the engine + Snyk project in `.vyuh-dxkit.json:deepSast` so
+  `ingest --from-snyk` needs no flags after first setup.
+- `--with-deep-sast-refresh` installs an on-demand CI workflow
+  (`workflow_dispatch`) that re-ingests and commits the snapshot — the one
+  place the token is used. No-ops without the `SNYK_TOKEN` secret.
+- New `dxkit-ingest` skill; `dxkit-action` and `dxkit-config` updated. CodeQL
+  and Snyk support is declared per language pack; CodeQL is a guarded, opt-in
+  tool kept out of the default toolchain.
+
+Upgrading: after `npm install --save-dev @vyuhlabs/dxkit@latest` +
+`npx vyuh-dxkit update`, run `npx vyuh-dxkit ingest --from-snyk` (or
+`--codeql`) to bring your interprocedural findings into dxkit, then
+`npx vyuh-dxkit baseline create --force` to anchor them. The `dxkit-ingest`
+skill walks through token setup and the license-aware engine choice.
+
 ### create-dxkit 0.2.1
 
 - **Surfaces the real npm error when bootstrap install fails.** When

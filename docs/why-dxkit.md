@@ -23,7 +23,7 @@ It also matters for compliance. Every deduction in the score is traceable to a s
 Most static analysis tools find issues and stop there. dxkit also writes the project-context layer that lets an AI agent operate intelligently on the codebase:
 
 - `AGENTS.md` (open standard, read by Claude Code, Codex, Cursor, Aider)
-- Nine `dxkit-*` conversational skills for Claude Code that wrap the CLI into read, act, verify loops
+- Twelve `dxkit-*` conversational skills for Claude Code that wrap the CLI into read, act, verify loops
 - Per-stack devcontainer with the toolchain pre-installed
 - A guardrail check that emits structured JSON the agent can self-verify against
 
@@ -44,11 +44,21 @@ dxkit is built on open methodology. Every scoring decision references a public s
 
 Scores are evidence-backed and traceable to the findings that produced them. See [`docs/SCORING.md`](SCORING.md) for the per-dimension methodology and citations.
 
+## 4. It orchestrates any detection engine — it doesn't compete with them
+
+dxkit's bundled SAST is intraprocedural and won't match a proprietary interprocedural engine like Snyk Code or CodeQL on taint findings (path traversal, information exposure, SSRF, injection). dxkit's answer isn't to out-detect them — it's to **ingest** whatever engine you can run and own the layer on top:
+
+- **Engine-agnostic.** `vyuh-dxkit ingest` takes Snyk Code (a quota-free REST read), CodeQL, or any SARIF, and makes those findings first-class — fingerprinted, deduped against native findings, baselined, and guardrailed.
+- **Grounded in your code graph.** Ingested findings get blast radius + callers attached (`--graph-context`), so a fix targets the taint's source boundary and re-tests the right callers. That's context the source engine's own autofix doesn't have.
+- **In your repo, in your loop.** Detection runs where it's licensed (your Snyk for private repos; CodeQL for open source / GHAS); enforcement and the agentic fix loop run locally. No lock-in to one vendor's platform.
+
+Snyk and CodeQL _detect_; dxkit makes their output enforceable and fixable.
+
 ## What dxkit is not
 
 - It is not a SaaS. Every scan runs locally. Nothing leaves the repo.
 - It is not an LLM-graded code review tool. There is no LLM in the grading path.
-- It is not a replacement for the underlying scanners. It runs gitleaks, semgrep, osv-scanner, jscpd, cloc, graphify, and per-ecosystem dep tools. It aggregates, deduplicates, and scores their output.
+- It is not a replacement for the underlying scanners. It runs gitleaks, semgrep, osv-scanner, jscpd, cloc, graphify, and per-ecosystem dep tools — and ingests interprocedural engines (Snyk Code, CodeQL) on top. It aggregates, deduplicates, and scores their output.
 - It is not a one-size-fits-all gate. Three baseline modes (`committed-full`, `committed-sanitized`, `ref-based`) match different repo postures. Five typed allowlist categories handle per-finding exceptions. The brownfield policy is fully tunable via `.dxkit/policy.json`.
 
 ## See also

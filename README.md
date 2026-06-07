@@ -182,15 +182,16 @@ Orphaned annotations become their own findings. The TypeScript `@ts-expect-error
 
 ### AI-agent integration
 
-dxkit ships nine Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
+dxkit ships twelve Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
 
-| Skill                                                                      | What it does                                                            |
-| -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `dxkit-onboard`                                                            | Walks a customer through the full first-install journey                 |
-| `dxkit-reports`                                                            | Runs analyzers and explains the output                                  |
-| `dxkit-action`                                                             | Reads a report, prioritizes findings, plans and runs fixes, re-verifies |
-| `dxkit-fix`                                                                | Repairs a broken install from doctor output                             |
-| `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                           |
+| Skill                                                                                                     | What it does                                                            |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `dxkit-onboard`                                                                                           | Walks a customer through the full first-install journey                 |
+| `dxkit-reports`                                                                                           | Runs analyzers and explains the output                                  |
+| `dxkit-action`                                                                                            | Reads a report, prioritizes findings, plans and runs fixes, re-verifies |
+| `dxkit-ingest`                                                                                            | Brings external SAST findings (Snyk Code, CodeQL, SARIF) into dxkit     |
+| `dxkit-fix`                                                                                               | Repairs a broken install from doctor output                             |
+| `dxkit-feature`, `dxkit-docs`, `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                           |
 
 `AGENTS.md` (the open standard read by Codex, Cursor, Aider, and others) also ships in every install. The skill flows are Claude Code-specific today; the AGENTS.md context is portable.
 
@@ -205,6 +206,16 @@ dxkit builds a deterministic code graph of your repo (its symbols, call edges, a
 - **`vyuh-dxkit explore`** and a dashboard graph tab let humans ask the same graph what the repo does, where a feature lives, and which files are load-bearing.
 
 This is an additive, fail-open layer. When the graph is missing, or a language's call edges can't be resolved, every command behaves exactly as it did before. It's reliable on TypeScript, Python, and Go. Where the call graph can't be resolved (C#), blast radius is suppressed rather than faked, so a "no callers" reading is never mistaken for "safe to change."
+
+### Deep SAST: interprocedural findings from any engine
+
+dxkit's bundled SAST (community semgrep) is intraprocedural — it can't follow tainted data across function boundaries, so it misses the path-traversal / information-exposure / SSRF / injection class that an interprocedural engine like Snyk Code or CodeQL catches. dxkit doesn't try to re-detect that class; it **ingests** it and makes it first-class.
+
+- **`vyuh-dxkit ingest --from-snyk`** reads your Snyk Code findings via the REST API (no Snyk test quota consumed — it reads stored results). **`--sarif <file>`** ingests SARIF from any engine; **`--codeql`** runs CodeQL on demand (open-source / GitHub Advanced Security).
+- Ingested findings enter the same pipeline as native ones: fingerprinted and deduped, written to the baseline, enforced by the guardrail, and graph-linked under `--graph-context` so the `dxkit-action` fix loop sees blast radius + callers — context the source engine's own autofix doesn't have.
+- The findings live in a committed `.dxkit/external/` snapshot, so the engine token is needed only at ingest time (ideally one on-demand CI job) — every developer and CI run reads the snapshot without it.
+
+dxkit isn't competing with the detection engine — it's the governance + agentic-fix layer on top of whichever one you can run. The `dxkit-ingest` skill walks through setup and picks the engine license-aware (your own Snyk for private repos; CodeQL for open source / GHAS).
 
 ### Reproducible environments
 
@@ -239,7 +250,7 @@ npx vyuh-dxkit setup-prebuild            # Codespaces prebuild
 À la carte if you only want specific pieces:
 
 ```bash
-npx vyuh-dxkit init --with-dxkit-agents       # just the nine Claude skills + AGENTS.md
+npx vyuh-dxkit init --with-dxkit-agents       # just the twelve Claude skills + AGENTS.md
 npx vyuh-dxkit init --with-hooks              # just the pre-push hook
 npx vyuh-dxkit init --with-precommit-hook     # add pre-commit (slow on large repos)
 npx vyuh-dxkit init --with-devcontainer       # just the per-stack devcontainer
