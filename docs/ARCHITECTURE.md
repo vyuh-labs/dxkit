@@ -135,6 +135,38 @@ splits the resulting `toolsUnavailable` list into "Tools not
 installed" vs "Tools that failed at runtime" so users can act on the
 right thing.
 
+## Deep-SAST ingestion (`src/ingest/`)
+
+dxkit's bundled SAST is intraprocedural; the interprocedural taint class
+comes from external engines (Snyk Code, CodeQL, any SARIF tool) ingested
+through one canonical module. The pipeline is deliberately
+engine-agnostic — engines are _producers_, and nothing downstream
+branches on which one ran:
+
+```
+engine → ExternalFinding (normalize) → SecurityFinding
+       → security aggregate (fingerprint + cross-tool dedup, owned by
+         the aggregator) → baseline / guardrail / report / graph-context
+```
+
+- **Parse** SARIF only in [`sarif.ts`](../src/ingest/sarif.ts); **read Snyk**
+  only in [`snyk-api.ts`](../src/ingest/snyk-api.ts) (a quota-free REST
+  read); **run CodeQL** only in [`codeql.ts`](../src/ingest/codeql.ts).
+- **Persist** to a committed `.dxkit/external/<engine>.json` snapshot via
+  [`snapshot.ts`](../src/ingest/snapshot.ts), so the engine token is needed
+  only at ingest time — every later scan reads the snapshot.
+- **Select** the engine via
+  [`engine-resolver.ts`](../src/ingest/engine-resolver.ts) (license-aware:
+  Snyk for private repos, CodeQL for OSS/GHAS with consent).
+- Per-language engine support is declared by each pack
+  (`LanguageSupport.deepSast`) and CodeQL is a guarded, opt-in tool in the
+  registry — kept out of the default toolchain.
+
+CLAUDE.md **Rule 13** + two arch-gate greps keep this path canonical:
+SARIF parsing and snapshot access can't leak outside `src/ingest/`, and
+ingested findings get identity from the aggregator (Rule 9), never a
+parallel hash.
+
 ## The AnalysisResult cache
 
 Every analyzer command builds (or reads) a cached

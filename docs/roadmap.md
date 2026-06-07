@@ -28,7 +28,7 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 ### Agent integration
 
 - [x] `AGENTS.md` (open standard, read by Claude Code, Codex, Cursor, Aider)
-- [x] Nine `dxkit-*` Claude Code skills for the read, act, verify loop
+- [x] Twelve `dxkit-*` Claude Code skills for the read, act, verify loop
 - [x] Devcontainer with pinned per-stack toolchains
 - [x] Optional install scripts for AI agent CLIs
 
@@ -67,43 +67,43 @@ detection engines; it makes their output enforceable and fixable.
 ### Engine-agnostic ingestion
 
 - [ ] Normalized external-finding ingestion: one pipeline for findings from
-  Snyk Code, CodeQL, Semgrep Pro, or any SARIF-emitting tool. Findings enter
-  through a single normalize layer, receive identity from the canonical
-  fingerprint helpers, and flow into the same aggregate → baseline → guardrail
-  → report → graph-context path as native findings (no engine-specific
-  branches downstream).
+      Snyk Code, CodeQL, Semgrep Pro, or any SARIF-emitting tool. Findings enter
+      through a single normalize layer, receive identity from the canonical
+      fingerprint helpers, and flow into the same aggregate → baseline → guardrail
+      → report → graph-context path as native findings (no engine-specific
+      branches downstream).
 - [ ] `vyuh-dxkit ingest` (`--from-snyk` / `--sarif <file>` / `--codeql`),
-  writing a sanitized snapshot under `.dxkit/external/` that is committed so
-  every developer and CI run reads it without needing an engine token.
+      writing a sanitized snapshot under `.dxkit/external/` that is committed so
+      every developer and CI run reads it without needing an engine token.
 
 ### Snyk Code ingestion (works on the free tier)
 
 - [ ] Snyk REST API reader — pulls a project's already-computed Code findings
-  using a `SNYK_TOKEN`, consuming no Snyk test quota (it reads stored results,
-  it does not re-scan). An admin adds the token once as a CI secret; a refresh
-  workflow commits the snapshot so all users benefit without a local token.
+      using a `SNYK_TOKEN`, consuming no Snyk test quota (it reads stored results,
+      it does not re-scan). An admin adds the token once as a CI secret; a refresh
+      workflow commits the snapshot so all users benefit without a local token.
 
 ### CodeQL on-demand (open-source / GitHub Advanced Security)
 
 - [ ] CodeQL runner that builds a database and runs the per-language security
-  suite on demand (CI / pre-release, not the hook path), emitting SARIF into
-  the same ingestion pipeline. License-gated: free for open-source repos and
-  for private repos under GitHub Advanced Security; dxkit detects repo
-  visibility and prompts for consent before running on private code.
+      suite on demand (CI / pre-release, not the hook path), emitting SARIF into
+      the same ingestion pipeline. License-gated: free for open-source repos and
+      for private repos under GitHub Advanced Security; dxkit detects repo
+      visibility and prompts for consent before running on private code.
 
 ### Recipe + selection + governance
 
 - [ ] Per-pack engine declaration in `LanguageSupport` (which engines apply to
-  a language, CodeQL query suite, whether a build is required) so adding a
-  language or engine extends the recipe rather than branching analyzer code.
+      a language, CodeQL query suite, whether a build is required) so adding a
+      language or engine extends the recipe rather than branching analyzer code.
 - [ ] License-aware engine resolver that picks the engine from repo visibility,
-  GitHub Advanced Security availability, and token presence — the same
-  canonical-resolver pattern the baseline modes use.
+      GitHub Advanced Security availability, and token presence — the same
+      canonical-resolver pattern the baseline modes use.
 - [ ] Ingested findings linked to the code graph (`--graph-context`) so the
-  agent fix loop sees blast radius and callers for an external engine's
-  findings, then verifies the fix by re-running the analyzer and tests.
+      agent fix loop sees blast radius and callers for an external engine's
+      findings, then verifies the fix by re-running the analyzer and tests.
 - [ ] `dxkit-ingest` skill (token setup, pull, refresh, license guidance) and
-  `dxkit-action` updated to triage and fix ingested + graph-linked findings.
+      `dxkit-action` updated to triage and fix ingested + graph-linked findings.
 
 ### Reachability refinements (carried from 2.8)
 
