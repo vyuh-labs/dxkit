@@ -24,6 +24,7 @@ import {
   installDevcontainer,
   installCiGuardrails,
   installCiBaselineRefresh,
+  installCiDeepSastRefresh,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -193,6 +194,7 @@ function printUsage(): void {
     --with-ci                 Install .github/workflows/dxkit-guardrails.yml
                               (PR-gate that posts a markdown summary comment)
     --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
+    --with-deep-sast-refresh  Install .github/workflows/dxkit-deep-sast-refresh.yml (Snyk/CodeQL ingest; opt-in)
     --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
     --detect                  Auto-detect stack, minimal prompts
@@ -283,6 +285,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-dxkit-agents': { type: 'boolean', default: false },
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
+      'with-deep-sast-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // setup-branch-protection flags
       branch: { type: 'string' },
@@ -466,6 +469,15 @@ export async function run(argv: string[]): Promise<void> {
         shipResults.push({
           label: 'AI PR-review workflow',
           result: installPrReview(cwd, { force: !!values.force }),
+        });
+      }
+      // Opt-in even under --full: the workflow is inert without a
+      // SNYK_TOKEN secret + deepSast config, so shipping it by default
+      // just clutters the Actions tab (same rationale as pr-review).
+      if (values['with-deep-sast-refresh']) {
+        shipResults.push({
+          label: 'CI deep-SAST refresh workflow',
+          result: installCiDeepSastRefresh(cwd, { force: !!values.force }),
         });
       }
 

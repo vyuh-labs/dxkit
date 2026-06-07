@@ -398,6 +398,17 @@ export function installCiBaselineRefresh(cwd: string, opts: InstallerOpts = {}):
   return result;
 }
 
+export function installCiDeepSastRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = installWorkflow(cwd, 'dxkit-deep-sast-refresh.yml', opts);
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'deep-SAST refresh workflow installed. To activate: add a SNYK_TOKEN Actions secret and ' +
+        'set deepSast.snyk.{orgId,projectId} in .vyuh-dxkit.json. Without the secret it no-ops.',
+    );
+  }
+  return result;
+}
+
 /**
  * AI PR-review workflow installer. Writes
  * `.github/workflows/pr-review.yml` — a workflow that runs Claude
