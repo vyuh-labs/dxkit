@@ -24,6 +24,22 @@ import { snykIssueToFinding } from '../src/ingest/snyk-api';
 import { externalToSecurityFindings } from '../src/ingest/normalize';
 import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/snapshot';
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
+import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
+import type { DetectedStack } from '../src/types';
+
+function flags(over: Partial<DetectedStack['languages']>): DetectedStack['languages'] {
+  return {
+    typescript: false,
+    python: false,
+    go: false,
+    rust: false,
+    csharp: false,
+    kotlin: false,
+    java: false,
+    ruby: false,
+    ...over,
+  };
+}
 
 // ─── SARIF ──────────────────────────────────────────────────────────────────
 
@@ -253,6 +269,29 @@ describe('resolveDeepSastEngine', () => {
     expect(d.source).toBe('visibility-private');
     expect(d.requiresConsent).toBe(true);
     expect(d.licenseNote).toBeTruthy();
+  });
+});
+
+// ─── recipe (per-pack deepSast) ───────────────────────────────────────────────
+
+describe('deepSast recipe helpers', () => {
+  it('unions CodeQL languages across active packs, collapsing JS+TS', () => {
+    expect(codeqlLanguagesFromFlags(flags({ typescript: true, python: true })).sort()).toEqual([
+      'javascript',
+      'python',
+    ]);
+    // TS alone resolves to the single `javascript` extractor.
+    expect(codeqlLanguagesFromFlags(flags({ typescript: true }))).toEqual(['javascript']);
+  });
+
+  it('maps compiled packs to their CodeQL extractor (kotlin → java)', () => {
+    expect(codeqlLanguagesFromFlags(flags({ kotlin: true }))).toEqual(['java']);
+  });
+
+  it('reports Snyk Code support per active stack', () => {
+    expect(anyActivePackSupportsSnykCode(flags({ typescript: true }))).toBe(true);
+    // Rust has no Snyk Code support declared.
+    expect(anyActivePackSupportsSnykCode(flags({ rust: true }))).toBe(false);
   });
 });
 

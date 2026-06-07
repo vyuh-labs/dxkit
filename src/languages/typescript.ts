@@ -1237,6 +1237,9 @@ export const typescript: LanguageSupport = {
 
   tools: ['eslint', 'npm-audit', 'osv-scanner', 'vitest-coverage', 'license-checker-rseidelsohn'],
   semgrepRulesets: ['p/javascript', 'p/typescript'],
+  // CodeQL's `javascript` extractor covers both JS and TS in one DB,
+  // no build needed. Snyk Code supports JS/TS.
+  deepSast: { codeqlLanguage: 'javascript', snykCode: true },
 
   capabilities: {
     depVulns: tsDepVulnsProvider,

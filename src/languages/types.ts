@@ -110,6 +110,32 @@ export interface ArchitecturalShape {
 }
 
 /**
+ * Per-pack interprocedural deep-SAST engine support. Declared by each
+ * language pack (Rule 6) and consumed through the registry helpers in
+ * `src/languages/index.ts`; the cross-cutting ingest/resolver code never
+ * branches on language id.
+ */
+export interface DeepSastSupport {
+  /** CodeQL language id for this pack (as `codeql resolve languages`
+   *  reports). undefined ⇒ CodeQL has no extractor here. JavaScript and
+   *  TypeScript share the single `javascript` extractor. */
+  codeqlLanguage?: string;
+  /** CodeQL query suite; defaults to the language's security-extended
+   *  suite when omitted. */
+  codeqlQuerySuite?: string;
+  /** CodeQL DB creation requires building the project (compiled
+   *  languages: Java/Kotlin/C#/Go). Source extractors (JS/TS, Python,
+   *  Ruby) leave this false. */
+  codeqlBuildRequired?: boolean;
+  /** CodeQL extractor maturity is beta for this pack (Kotlin via the
+   *  java extractor; Rust) — surfaced so callers can warn. */
+  codeqlBeta?: boolean;
+  /** Snyk Code (SAST) supports this language, so `ingest --from-snyk`
+   *  is expected to return findings for it. */
+  snykCode?: boolean;
+}
+
+/**
  * Everything dxkit needs to know about a language lives in one implementation
  * of this interface. See `src/languages/index.ts` for the registry.
  *
@@ -339,6 +365,22 @@ export interface LanguageSupport {
 
   tools: string[];
   semgrepRulesets: string[];
+
+  /**
+   * Interprocedural deep-SAST engine support for this pack.
+   *
+   * dxkit's bundled semgrep tier is intraprocedural; the interprocedural
+   * taint class is covered by external engines (CodeQL, Snyk Code) run
+   * or ingested via `src/ingest`. This is the single place a language's
+   * deep-SAST facts live (Rule 6): the engine resolver, the CodeQL
+   * runner, and the `tools install` applicability guard read it through
+   * the registry helpers — never a per-language branch.
+   *
+   * Optional: a pack with no interprocedural engine support omits it,
+   * and consumers see the empty union (falling back to the bundled
+   * intraprocedural tier).
+   */
+  deepSast?: DeepSastSupport;
 
   /**
    * Tier a lint rule code into a severity bucket. Accepts `string | null |

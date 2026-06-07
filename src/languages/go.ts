@@ -937,6 +937,8 @@ export const go: LanguageSupport = {
 
   tools: ['golangci-lint', 'govulncheck', 'go-licenses'],
   semgrepRulesets: ['p/gosec'],
+  // CodeQL `go` extractor needs a build (autobuild); Snyk Code supports Go.
+  deepSast: { codeqlLanguage: 'go', codeqlBuildRequired: true, snykCode: true },
 
   capabilities: {
     depVulns: goDepVulnsProvider,

@@ -977,6 +977,45 @@ if [ -n "$DXKIT_VERSION" ] && [ -n "$LAST_DXKIT_VERSION" ] && [ "$DXKIT_VERSION"
   fi
 fi
 
+# ─── Rule 13: external-findings ingestion flows through src/ingest ──────────
+#
+# External-engine findings (Snyk Code, CodeQL, any SARIF) must enter dxkit
+# only through the canonical ingest module, so they inherit the one
+# fingerprint scheme, dedup, baseline, and graph linking instead of a
+# parallel pipeline:
+#   - SARIF is parsed only by src/ingest/sarif.ts (the `physicalLocation`
+#     walk is the smoking-gun shape of a hand-rolled SARIF parser).
+#   - `.dxkit/external/` snapshots are read/written only by
+#     src/ingest/snapshot.ts.
+# Identity for ingested findings comes from the aggregator (Rule 9), not a
+# local hash — already enforced by the createHash rule.
+
+# 13a: no second SARIF parser (physicalLocation outside src/ingest/sarif.ts).
+RULE13_SARIF=$(grep -rnE "physicalLocation" src/ 2>/dev/null \
+  | grep -v "^src/ingest/sarif.ts:" \
+  | grep -v "// ingest-sarif-ok")
+if [ -n "$RULE13_SARIF" ]; then
+  echo "❌ Rule 13 violation: SARIF parsed outside src/ingest/sarif.ts:"
+  echo "$RULE13_SARIF"
+  echo "   → Use parseSarif() from src/ingest/sarif.ts; don't hand-roll a SARIF walk."
+  echo "   → Annotate '// ingest-sarif-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 13b: no snapshot access outside src/ingest/snapshot.ts.
+RULE13_SNAP=$(grep -rnE "\.dxkit/external|'\.dxkit',[[:space:]]*'external'" src/ 2>/dev/null \
+  | grep -v "^src/ingest/snapshot.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v 'logger\.' \
+  | grep -v "// ingest-snapshot-ok")
+if [ -n "$RULE13_SNAP" ]; then
+  echo "❌ Rule 13 violation: .dxkit/external snapshot accessed outside src/ingest/snapshot.ts:"
+  echo "$RULE13_SNAP"
+  echo "   → Use readAllSnapshots()/writeSnapshot() from src/ingest/snapshot.ts."
+  echo "   → Annotate '// ingest-snapshot-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

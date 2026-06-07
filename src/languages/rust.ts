@@ -883,6 +883,9 @@ export const rust: LanguageSupport = {
   tools: ['clippy', 'cargo-audit', 'cargo-llvm-cov', 'cargo-license'],
   // No dedicated semgrep Rust ruleset; covered by p/security-audit.
   semgrepRulesets: [],
+  // CodeQL `rust` extractor is beta (no build). Snyk Code has no Rust
+  // support today, so leave snykCode unset.
+  deepSast: { codeqlLanguage: 'rust', codeqlBeta: true },
 
   capabilities: {
     depVulns: rustDepVulnsProvider,
