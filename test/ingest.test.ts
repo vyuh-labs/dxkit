@@ -24,6 +24,8 @@ import { snykIssueToFinding } from '../src/ingest/snyk-api';
 import { externalToSecurityFindings } from '../src/ingest/normalize';
 import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/snapshot';
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
+import { codeqlQuerySuiteFor, codeqlDbCreateArgs, codeqlAnalyzeArgs } from '../src/ingest/codeql';
+import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
 import type { DetectedStack } from '../src/types';
 
@@ -292,6 +294,51 @@ describe('deepSast recipe helpers', () => {
     expect(anyActivePackSupportsSnykCode(flags({ typescript: true }))).toBe(true);
     // Rust has no Snyk Code support declared.
     expect(anyActivePackSupportsSnykCode(flags({ rust: true }))).toBe(false);
+  });
+});
+
+// ─── CodeQL runner helpers + registry guard ──────────────────────────────────
+
+describe('codeql helpers', () => {
+  it('builds the default security-extended suite and honors an override', () => {
+    expect(codeqlQuerySuiteFor('javascript')).toBe(
+      'codeql/javascript-queries:codeql-suites/javascript-security-extended.qls',
+    );
+    expect(codeqlQuerySuiteFor('python', 'my/suite.qls')).toBe('my/suite.qls');
+  });
+
+  it('builds DB-create and analyze argv (no shell)', () => {
+    expect(codeqlDbCreateArgs('javascript', '/tmp/db', '/repo')).toEqual([
+      'database',
+      'create',
+      '/tmp/db',
+      '--language=javascript',
+      '--source-root=/repo',
+      '--overwrite',
+    ]);
+    expect(codeqlAnalyzeArgs('/tmp/db', 'suite.qls', '/tmp/o.sarif')).toEqual([
+      'database',
+      'analyze',
+      '/tmp/db',
+      'suite.qls',
+      '--format=sarifv2.1.0',
+      '--output=/tmp/o.sarif',
+      '--threads=0',
+    ]);
+  });
+
+  it('gates the registry codeql entry behind the opt-in env flag', () => {
+    const guard = TOOL_DEFS.codeql.applicabilityGuard!;
+    const prev = process.env.DXKIT_CODEQL;
+    try {
+      delete process.env.DXKIT_CODEQL;
+      expect(guard('.')).toBeTruthy(); // n/a by default (kept out of default toolchain)
+      process.env.DXKIT_CODEQL = '1';
+      expect(guard('.')).toBeNull(); // applicable once opted in
+    } finally {
+      if (prev === undefined) delete process.env.DXKIT_CODEQL;
+      else process.env.DXKIT_CODEQL = prev;
+    }
   });
 });
 
