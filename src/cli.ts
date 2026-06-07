@@ -316,6 +316,12 @@ export async function run(argv: string[]): Promise<void> {
       depth: { type: 'string' },
       // graph-context enrichment for detailed reports (vuln/test-gaps/quality)
       'graph-context': { type: 'boolean', default: false },
+      // ingest flags (external SAST engines → .dxkit/external snapshots)
+      sarif: { type: 'string' },
+      'from-snyk': { type: 'boolean', default: false },
+      engine: { type: 'string' },
+      org: { type: 'string' },
+      project: { type: 'string' },
       // baseline create: proceed despite missing scanners (CI/non-interactive)
       'allow-incomplete': { type: 'boolean', default: false },
     },
@@ -1907,6 +1913,32 @@ export async function run(argv: string[]): Promise<void> {
       await runAllowlist(cwd, positionals[1], {
         positionalAfter: positionals[2],
         values: values as Record<string, unknown>,
+      });
+      break;
+    }
+
+    case 'ingest': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { runIngest } = await import('./ingest-cli');
+      const { execSync } = await import('child_process');
+      let commitSha: string | undefined;
+      try {
+        commitSha = execSync('git rev-parse HEAD', {
+          cwd: targetPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'ignore'],
+        }).trim();
+      } catch {
+        commitSha = undefined;
+      }
+      await runIngest(targetPath, {
+        sarif: values.sarif as string | undefined,
+        fromSnyk: !!values['from-snyk'],
+        engine: values.engine as string | undefined,
+        org: values.org as string | undefined,
+        project: values.project as string | undefined,
+        generatedAt: new Date().toISOString(),
+        commitSha,
       });
       break;
     }
