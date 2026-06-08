@@ -97,6 +97,12 @@ export interface CodeFinding extends SecurityFinding {
   fingerprint: string;
   canonicalRule: string;
   producedBy: string[];
+  /** Fingerprints of the cross-tool / neighbor-bucket / CWE-bridge
+   *  findings that collapsed into this one, when their own fingerprint
+   *  differed from `fingerprint`. Present only when such a merge fired.
+   *  Lets a suppression keyed on a contributing fingerprint still match
+   *  the merged finding (robust matching against dedup nondeterminism). */
+  absorbedFingerprints?: string[];
 }
 
 /**
@@ -310,6 +316,13 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     tool: string;
     producedBy: Set<string>;
     raws: Array<{ tool: string; rule: string; line: number; severity: Severity }>;
+    /** Natural fingerprints of findings that merged into this group but
+     *  whose own fingerprint differs from the representative — i.e. the
+     *  cross-tool / neighbor-bucket / CWE-bridge merges. A suppression
+     *  keyed on any of these (e.g. allowlisted from a run where a
+     *  different tool was the representative) still matches the merged
+     *  finding, so dedup nondeterminism between runs can't orphan it. */
+    absorbedFingerprints: Set<string>;
   };
   const groups = new Map<string, Group>();
 
@@ -376,6 +389,13 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         line: f.line,
         severity: f.severity,
       });
+      // Record the merged finding's own fingerprint when it differs
+      // from the representative — that's the identity a suppression
+      // might have been keyed on in a run where the merge landed the
+      // other way around.
+      if (naturalFingerprint !== existing.fingerprint) {
+        existing.absorbedFingerprints.add(naturalFingerprint);
+      }
       // Prefer the lower line number as the canonical line — semgrep
       // typically reports the declaration (earlier line) while
       // registry-grep reports the assignment; the declaration is the
@@ -408,6 +428,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
             severity: f.severity,
           },
         ],
+        absorbedFingerprints: new Set(),
       });
     }
     // Index this finding's CWE + location → its group, so a later
@@ -437,6 +458,9 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       fingerprint: g.fingerprint,
       canonicalRule: g.canonicalRule,
       producedBy: [...g.producedBy].sort(),
+      ...(g.absorbedFingerprints.size > 0
+        ? { absorbedFingerprints: [...g.absorbedFingerprints].sort() }
+        : {}),
     };
 
     if (g.category === 'secret') {
