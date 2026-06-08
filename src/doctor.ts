@@ -7,6 +7,7 @@ import { activeLanguagesFromStack } from './languages';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { loadAllowlist, auditAllowlist } from './allowlist/file';
 
 /**
  * Three-tier doctor:
@@ -98,6 +99,19 @@ function nodeMajorVersion(): number {
 function safeLoadPolicy(cwd: string): ReturnType<typeof loadPolicyFromCwd> | null {
   try {
     return loadPolicyFromCwd(cwd);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wrap `loadAllowlist` with a swallowing try/catch — a malformed
+ * allowlist file must not break doctor. Returns null on absence or
+ * parse failure; the expiry check simply doesn't emit in that case.
+ */
+function safeLoadAllowlist(cwd: string): ReturnType<typeof loadAllowlist> {
+  try {
+    return loadAllowlist(cwd);
   } catch {
     return null;
   }
@@ -652,6 +666,46 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
             },
           }),
     });
+  }
+
+  // 7. Allowlist suppression hygiene. An expired entry no longer
+  // suppresses — its finding re-blocks the guardrail — and an entry
+  // nearing expiry needs a decision before it lapses. Surface both so
+  // a reviewed-and-accepted finding doesn't silently turn back into a
+  // blocker mid-sprint. Only emits when an allowlist actually exists.
+  const allowlistFile = safeLoadAllowlist(cwd);
+  if (allowlistFile && allowlistFile.entries.length > 0) {
+    const audit = auditAllowlist(allowlistFile);
+    if (audit.expired.length > 0) {
+      checks.push({
+        label: `allowlist suppressions (${audit.expired.length} expired — findings now re-block)`,
+        ok: false,
+        tier: 'operational',
+        fix: {
+          hint: 'Expired allowlist entries no longer suppress, so their findings block again. Prune the ones you no longer need, or re-add with a fresh expiry the ones still being worked.',
+          command: 'npx vyuh-dxkit allowlist prune',
+          skill: 'dxkit-fix',
+        },
+      });
+    } else if (audit.soonToExpire.length > 0) {
+      const soonest = Math.min(...audit.soonToExpire.map((s) => s.daysRemaining));
+      checks.push({
+        label: `allowlist suppressions (${audit.soonToExpire.length} expiring soon, next in ${soonest}d)`,
+        ok: false,
+        tier: 'operational',
+        fix: {
+          hint: 'Allowlist entries are nearing expiry. Fix the underlying finding, extend the window, or let it lapse so the finding re-blocks.',
+          command: 'npx vyuh-dxkit allowlist audit',
+          skill: 'dxkit-fix',
+        },
+      });
+    } else {
+      checks.push({
+        label: 'allowlist suppressions current',
+        ok: true,
+        tier: 'operational',
+      });
+    }
   }
 
   return checks;
