@@ -1034,6 +1034,30 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'gem install --user-install simplecov',
     },
   },
+  snyk: {
+    name: 'snyk',
+    description: 'Snyk CLI — Snyk Code (SAST) test, free-tier deep-SAST path (opt-in)',
+    install: 'npm install -g snyk',
+    check: 'snyk --version',
+    for: 'all',
+    layer: 'optional',
+    binaries: ['snyk'],
+    versionCheck: 'snyk --version',
+    // Opt-in deep-SAST engine. Reports `n/a` until a caller opts in
+    // (`ingest --from-snyk` falls back to the CLI / `tools install snyk`
+    // set DXKIT_SNYK_CLI), so a normal `tools install` never pulls it.
+    // Detection + install still flow through findTool/the registry per
+    // Rule 1 once opted in.
+    applicabilityGuard: (_cwd: string): string | null =>
+      process.env.DXKIT_SNYK_CLI === '1'
+        ? null
+        : 'opt-in deep-SAST engine — run `vyuh-dxkit ingest --from-snyk` or `tools install snyk`',
+    installCommands: {
+      macos: 'npm install -g snyk',
+      linux: 'npm install -g snyk',
+      windows: 'npm install -g snyk',
+    },
+  },
   codeql: {
     name: 'codeql',
     description: 'Interprocedural SAST engine (deep-SAST, opt-in)',

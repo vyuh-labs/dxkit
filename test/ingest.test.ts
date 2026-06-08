@@ -25,6 +25,7 @@ import { externalToSecurityFindings } from '../src/ingest/normalize';
 import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/snapshot';
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
 import { codeqlQuerySuiteFor, codeqlDbCreateArgs, codeqlAnalyzeArgs } from '../src/ingest/codeql';
+import { snykCodeTestArgs } from '../src/ingest/snyk-cli';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { readDeepSastConfig } from '../src/ingest/config';
 import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
@@ -390,6 +391,38 @@ describe('readDeepSastConfig', () => {
       expect(readDeepSastConfig(dir)).toEqual({});
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── Snyk CLI runner helpers + registry guard ─────────────────────────────────
+
+describe('snyk-cli helpers', () => {
+  it('builds `snyk code test` argv, with and without --org', () => {
+    expect(snykCodeTestArgs('org-123', '/tmp/o.sarif')).toEqual([
+      'code',
+      'test',
+      '--sarif-file-output=/tmp/o.sarif',
+      '--org=org-123',
+    ]);
+    expect(snykCodeTestArgs(undefined, '/tmp/o.sarif')).toEqual([
+      'code',
+      'test',
+      '--sarif-file-output=/tmp/o.sarif',
+    ]);
+  });
+
+  it('gates the registry snyk entry behind the opt-in env flag', () => {
+    const guard = TOOL_DEFS.snyk.applicabilityGuard!;
+    const prev = process.env.DXKIT_SNYK_CLI;
+    try {
+      delete process.env.DXKIT_SNYK_CLI;
+      expect(guard('.')).toBeTruthy(); // n/a by default
+      process.env.DXKIT_SNYK_CLI = '1';
+      expect(guard('.')).toBeNull(); // applicable once opted in
+    } finally {
+      if (prev === undefined) delete process.env.DXKIT_SNYK_CLI;
+      else process.env.DXKIT_SNYK_CLI = prev;
     }
   });
 });
