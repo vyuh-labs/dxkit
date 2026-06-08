@@ -11,8 +11,10 @@ import {
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
+  installDxkitDevDependency,
   detectDefaultBranch,
 } from '../src/ship-installers';
+import { VERSION } from '../src/constants';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
@@ -511,6 +513,82 @@ describe('installHooksPostinstall', () => {
       JSON.stringify({ name: 'demo' }, null, 2) + '\n',
     );
     installHooksPostinstall(tmp);
+    const written = fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8');
+    expect(written.endsWith('\n')).toBe(true);
+  });
+});
+
+describe('installDxkitDevDependency', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-devdep-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('skips cleanly when no package.json exists (non-Node repo)', () => {
+    const result = installDxkitDevDependency(tmp);
+    expect(result.installed).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(result.notes).toEqual([]);
+  });
+
+  it('adds dxkit to devDependencies pinned to the running version', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'demo' }, null, 2));
+    const result = installDxkitDevDependency(tmp);
+    expect(result.installed).toContain('package.json (devDependencies)');
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.devDependencies['@vyuhlabs/dxkit']).toBe(`^${VERSION}`);
+  });
+
+  it('preserves an existing devDependencies block + other deps', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo', devDependencies: { vitest: '^3.0.0' } }, null, 2),
+    );
+    installDxkitDevDependency(tmp);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.devDependencies.vitest).toBe('^3.0.0');
+    expect(pkg.devDependencies['@vyuhlabs/dxkit']).toBe(`^${VERSION}`);
+  });
+
+  it('skips when dxkit is already in devDependencies (preserves the consumer pin)', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo', devDependencies: { '@vyuhlabs/dxkit': '2.5.0' } }, null, 2),
+    );
+    const result = installDxkitDevDependency(tmp);
+    expect(result.skipped).toContain('package.json (devDependencies)');
+    expect(result.installed).toEqual([]);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.devDependencies['@vyuhlabs/dxkit']).toBe('2.5.0');
+  });
+
+  it('skips when dxkit is in (runtime) dependencies — never moves or duplicates it', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo', dependencies: { '@vyuhlabs/dxkit': '2.5.0' } }, null, 2),
+    );
+    const result = installDxkitDevDependency(tmp);
+    expect(result.skipped).toContain('package.json (devDependencies)');
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    expect(pkg.devDependencies).toBeUndefined();
+  });
+
+  it('handles a malformed package.json without crashing', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{ not valid json');
+    const result = installDxkitDevDependency(tmp);
+    expect(result.installed).toEqual([]);
+    expect(result.notes.some((n) => n.includes('not valid JSON'))).toBe(true);
+  });
+
+  it('preserves trailing newline on the original package.json', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ name: 'demo' }, null, 2) + '\n',
+    );
+    installDxkitDevDependency(tmp);
     const written = fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8');
     expect(written.endsWith('\n')).toBe(true);
   });
