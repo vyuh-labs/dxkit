@@ -554,10 +554,20 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
     return result;
   }
   if (existing && existing.trim().length > 0) {
-    // Don't auto-chain — too risky. Surface a clear note instead.
+    // Chain after the existing command. `vyuh-dxkit hooks activate` is
+    // exit-0-safe by design, so `&&`-appending preserves the existing
+    // script's exit semantics (a real failure there still fails the
+    // install) while ensuring hooks activate on every clone. Without
+    // this, the common case of an existing postinstall (patch-package,
+    // a husky bootstrap, etc.) silently leaves the pre-push guardrail
+    // inactive — exactly the gap that lets pushes bypass the check.
+    pkg.scripts = { ...(pkg.scripts ?? {}), postinstall: `${existing} && ${POSTINSTALL_CMD}` };
+    const trailing = raw.endsWith('\n') ? '\n' : '';
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailing, 'utf-8');
+    result.installed.push('package.json (postinstall)');
     result.notes.push(
-      `Existing package.json scripts.postinstall preserved. To auto-activate dxkit hooks on every clone, ` +
-        `chain by hand: \`"postinstall": "${existing} && ${POSTINSTALL_CMD}"\`.`,
+      `Chained \`${POSTINSTALL_CMD}\` after your existing postinstall so dxkit hooks activate ` +
+        `on every clone. It exits 0, so your script's result is unaffected.`,
     );
     return result;
   }
