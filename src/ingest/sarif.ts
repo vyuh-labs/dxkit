@@ -47,6 +47,12 @@ interface SarifResult {
       region?: { startLine?: number };
     };
   }>;
+  /** SARIF 2.1.0 suppression state. A result an engine has dismissed —
+   *  Snyk Code via the Snyk UI / API, CodeQL via a dismissed alert,
+   *  Semgrep Pro via a triage action — carries one or more suppression
+   *  entries. `status` defaults to `accepted` when absent (per spec);
+   *  `underReview` / `rejected` mean the dismissal is not in effect. */
+  suppressions?: Array<{ kind?: string; status?: string; justification?: string }>;
 }
 
 interface SarifRun {
@@ -96,6 +102,24 @@ function cweFromRule(rule: SarifRule | undefined): string {
     if (n) return n;
   }
   return '';
+}
+
+/**
+ * Whether a SARIF result has been dismissed upstream. True when it
+ * carries at least one suppression whose status is `accepted` — SARIF
+ * treats an absent `status` as `accepted`, while `underReview` and
+ * `rejected` mean the suppression is NOT yet (or no longer) in effect.
+ *
+ * Honoring this keeps dxkit's ingest in sync with the engine's own
+ * ignore state: a finding a developer dismissed in Snyk / CodeQL does
+ * not re-surface here as a fresh active finding. The decision was
+ * already reviewed in the engine that owns it, so dxkit drops it rather
+ * than re-litigating it.
+ */
+function isResultSuppressed(res: SarifResult): boolean {
+  const s = res.suppressions;
+  if (!Array.isArray(s) || s.length === 0) return false;
+  return s.some((entry) => entry.status === undefined || entry.status === 'accepted');
 }
 
 /** Resolve four-tier severity. Prefer numeric `security-severity`
@@ -155,6 +179,10 @@ export function parseSarif(raw: string, engine?: SourceEngine): ExternalFinding[
     }
 
     for (const res of run.results || []) {
+      // Honor the engine's own dismissal — a finding suppressed in Snyk
+      // / CodeQL / Semgrep Pro must not re-surface in dxkit.
+      if (isResultSuppressed(res)) continue;
+
       const ruleId = res.ruleId || res.rule?.id;
       // Rule can be referenced by id or by index into the (flattened) list.
       let rule: SarifRule | undefined = ruleId ? rulesById.get(ruleId) : undefined;

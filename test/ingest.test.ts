@@ -131,6 +131,64 @@ describe('parseSarif', () => {
     expect(parseSarif(raw)).toHaveLength(0);
   });
 
+  it('honors upstream suppression — drops a result dismissed in the engine', () => {
+    // A finding the developer dismissed in Snyk / CodeQL carries a
+    // SARIF `suppressions` entry. dxkit must not re-surface it.
+    const suppressed = sarifWith(
+      [
+        {
+          ruleId: 'r',
+          locations: [loc('a.ts', 1)],
+          suppressions: [{ kind: 'external', justification: 'reviewed, not exploitable' }],
+        },
+      ],
+      [{ id: 'r' }],
+    );
+    expect(parseSarif(suppressed)).toHaveLength(0);
+
+    // status defaults to `accepted` when absent (SARIF spec) — also dropped.
+    const acceptedStatus = sarifWith(
+      [{ ruleId: 'r', locations: [loc('a.ts', 1)], suppressions: [{ status: 'accepted' }] }],
+      [{ id: 'r' }],
+    );
+    expect(parseSarif(acceptedStatus)).toHaveLength(0);
+  });
+
+  it('does NOT drop results whose suppression is underReview or rejected', () => {
+    // A proposed-but-not-accepted dismissal is not in effect; the
+    // finding is still active and must be ingested.
+    for (const status of ['underReview', 'rejected']) {
+      const raw = sarifWith(
+        [{ ruleId: 'r', locations: [loc('a.ts', 1)], suppressions: [{ status }] }],
+        [{ id: 'r' }],
+      );
+      expect(parseSarif(raw)).toHaveLength(1);
+    }
+    // An empty suppressions array is not a suppression either.
+    const emptyArr = sarifWith(
+      [{ ruleId: 'r', locations: [loc('a.ts', 1)], suppressions: [] }],
+      [{ id: 'r' }],
+    );
+    expect(parseSarif(emptyArr)).toHaveLength(1);
+  });
+
+  it('drops only the suppressed result in a mixed run', () => {
+    const raw = sarifWith(
+      [
+        { ruleId: 'r', locations: [loc('active.ts', 1)] },
+        {
+          ruleId: 'r',
+          locations: [loc('dismissed.ts', 2)],
+          suppressions: [{ status: 'accepted' }],
+        },
+      ],
+      [{ id: 'r' }],
+    );
+    const out = parseSarif(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0].file).toBe('active.ts');
+  });
+
   it('auto-detects engine from driver name and honors an override', () => {
     const raw = sarifWith(
       [{ ruleId: 'r', locations: [loc('a.ts', 1)] }],
