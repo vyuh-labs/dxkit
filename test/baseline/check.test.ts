@@ -151,6 +151,81 @@ describe('runGuardrailCheck (integration)', () => {
       expect(md).toContain('accepted-risk');
       expect(md).toContain('WAF rule mitigates');
     }, 300_000);
+
+    it('an active allowlist entry waives a net-new blocking finding from the verdict', async () => {
+      // The expiry + kind-guard branches are unit-tested in
+      // `allowlist-suppression.test.ts` (pure, instant). This case
+      // proves the END-TO-END wiring: a real blocking finding's
+      // verdict flips from block → pass once it's allowlisted.
+      await createBaseline({ cwd: dir });
+
+      // Introduce a net-new stale `.bak` — the quality producer flags
+      // it as a `stale-file` finding with status `added`, which the
+      // default brownfield policy blocks.
+      writeFileSync(join(dir, 'leftover.bak'), 'old\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'drop a .bak'], { cwd: dir });
+
+      const findStale = (r: Awaited<ReturnType<typeof runGuardrailCheck>>) =>
+        r.pairs.find((p) => p.kind === 'stale-file' && p.classification.status === 'added');
+
+      // Step A — no allowlist: the finding blocks and carries no
+      // suppression.
+      const before = await runGuardrailCheck({ cwd: dir });
+      const staleBefore = findStale(before);
+      expect(staleBefore).toBeDefined();
+      expect(staleBefore?.classification.blocks).toBe(true);
+      expect(staleBefore?.suppressedByAllowlist).toBeUndefined();
+      expect(before.blocks).toBe(true);
+      const fp = staleBefore?.pair.currentId;
+      expect(fp).toBeTruthy();
+
+      // Step B — active (non-expiring) entry: the classifier still
+      // says "would block," but an active allowlist match waives the
+      // verdict. The pair records WHY.
+      const dxkitDir = join(dir, '.dxkit');
+      execFileSync('mkdir', ['-p', dxkitDir]);
+      writeFileSync(
+        join(dxkitDir, 'allowlist.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 'dxkit-allowlist/v1',
+            mode: 'full',
+            entries: [
+              {
+                fingerprint: fp,
+                kind: 'stale-file',
+                category: 'false-positive',
+                reason: 'reviewed — generated build artifact, not source debt',
+                addedBy: 'reviewer@example.com',
+                addedAt: '2026-05-01',
+              },
+            ],
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      const suppressed = await runGuardrailCheck({ cwd: dir });
+      const staleSupp = findStale(suppressed);
+      expect(staleSupp?.classification.blocks).toBe(true);
+      expect(staleSupp?.suppressedByAllowlist?.category).toBe('false-positive');
+      expect(staleSupp?.suppressedByAllowlist?.fingerprint).toBe(fp);
+      expect(suppressed.blocks).toBe(false);
+
+      // Renderers surface the suppression in its own bucket — verdict
+      // PASSED, zero live blocks, but the finding stays visible.
+      const consoleOut = renderConsole(suppressed);
+      expect(consoleOut).toContain('Guardrail PASSED');
+      expect(consoleOut).toContain('Suppressed by allowlist (1)');
+      const jsonOut = renderJson(suppressed);
+      expect(jsonOut.verdict.blocks).toBe(false);
+      expect(jsonOut.summary.blocking).toBe(0);
+      expect(jsonOut.summary.suppressed).toBe(1);
+      const mdOut = renderMarkdown(suppressed);
+      expect(mdOut).toContain('## Guardrail: PASSED');
+      expect(mdOut).toContain('Suppressed by allowlist (1)');
+    }, 300_000);
   });
 
   describe('error + policy + drift paths', () => {
