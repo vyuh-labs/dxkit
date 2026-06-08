@@ -10,18 +10,35 @@ name: dxkit deep-SAST refresh
 #   1. Add a repository (or organization) secret `SNYK_TOKEN`
 #      (Settings → Secrets and variables → Actions). The token is never
 #      committed — it lives only here.
-#   2. Set the project in `.vyuh-dxkit.json`:
+#   2. Set the org/project in `.vyuh-dxkit.json`:
 #        { "deepSast": { "snyk": { "orgId": "…", "projectId": "…" } } }
 #
-# Reading the Snyk API does NOT consume the org's Snyk Code test quota.
+# Two read methods (pick via the `method` input when running on demand):
+#   - api (default): read stored findings over the Snyk REST API. Does NOT
+#     consume the org's Snyk Code test quota — but REST API access is an
+#     Enterprise-tier entitlement. On other plans the read 403s and dxkit
+#     auto-falls-back to the CLI method below.
+#   - cli: run `snyk code test` on the checkout (Snyk Code *product*
+#     entitlement, which free/team plans include). Costs one Snyk Code
+#     test from the quota per run. Needs only the org (no project id).
+#
 # The auto-commit carries `[skip ci]` so it doesn't re-trigger CI.
 #
 # This runs ON DEMAND only — trigger it from the Actions tab (Run
 # workflow). To also refresh on a schedule, uncomment the `schedule:`
-# block below.
+# block below; scheduled runs use the default method (`api`, which
+# auto-falls-back to the CLI on non-Enterprise plans).
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      method:
+        description: 'Read method: api (quota-free, Enterprise) or cli (one test/run, free-tier)'
+        type: choice
+        default: api
+        options:
+          - api
+          - cli
   # schedule:
   #   - cron: '0 6 * * 1' # weekly, Monday 06:00 UTC
 
@@ -50,9 +67,10 @@ jobs:
             npm install -g @vyuhlabs/dxkit
           fi
 
-      - name: Ingest Snyk Code findings (quota-free read)
+      - name: Ingest Snyk Code findings
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          METHOD: ${{ github.event.inputs.method || 'api' }}
         run: |
           if [ -z "${SNYK_TOKEN}" ]; then
             echo "SNYK_TOKEN secret is not set — skipping deep-SAST refresh."
@@ -64,8 +82,14 @@ jobs:
           else
             DXKIT=vyuh-dxkit
           fi
-          # org/project come from .vyuh-dxkit.json:deepSast.snyk
-          "${DXKIT}" ingest --from-snyk
+          # org/project come from .vyuh-dxkit.json:deepSast.snyk. The api
+          # method auto-falls-back to the CLI on plans without REST access;
+          # the cli method forces `snyk code test` (one test from quota).
+          if [ "${METHOD}" = "cli" ]; then
+            "${DXKIT}" ingest --from-snyk --snyk-cli
+          else
+            "${DXKIT}" ingest --from-snyk
+          fi
 
       - name: Commit and push refreshed snapshot
         run: |

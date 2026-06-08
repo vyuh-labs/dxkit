@@ -26,6 +26,7 @@ import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
 import { codeqlQuerySuiteFor, codeqlDbCreateArgs, codeqlAnalyzeArgs } from '../src/ingest/codeql';
 import { snykCodeTestArgs } from '../src/ingest/snyk-cli';
+import { isNotEntitled } from '../src/ingest-cli';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { readDeepSastConfig } from '../src/ingest/config';
 import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
@@ -424,6 +425,16 @@ describe('snyk-cli helpers', () => {
       if (prev === undefined) delete process.env.DXKIT_SNYK_CLI;
       else process.env.DXKIT_SNYK_CLI = prev;
     }
+  });
+
+  it('classifies a REST not-entitled failure so it falls back to the CLI', () => {
+    // 403, the literal Snyk phrasing, and the generic "api access" all
+    // trigger the CLI fallback; ordinary failures do not.
+    expect(isNotEntitled('Snyk API 403 Forbidden: …')).toBe(true);
+    expect(isNotEntitled('… not entitled for api access')).toBe(true);
+    expect(isNotEntitled('Your plan does not include API access')).toBe(true);
+    expect(isNotEntitled('Snyk API 500 Internal Server Error')).toBe(false);
+    expect(isNotEntitled('fetch failed: ETIMEDOUT')).toBe(false);
   });
 });
 

@@ -322,6 +322,7 @@ export async function run(argv: string[]): Promise<void> {
       // ingest flags (external SAST engines → .dxkit/external snapshots)
       sarif: { type: 'string' },
       'from-snyk': { type: 'boolean', default: false },
+      'snyk-cli': { type: 'boolean', default: false },
       codeql: { type: 'boolean', default: false },
       engine: { type: 'string' },
       org: { type: 'string' },
@@ -1947,6 +1948,7 @@ export async function run(argv: string[]): Promise<void> {
       await runIngest(targetPath, {
         sarif: values.sarif as string | undefined,
         fromSnyk: !!values['from-snyk'],
+        snykCli: !!values['snyk-cli'],
         codeql: !!values.codeql,
         engine: values.engine as string | undefined,
         org: values.org as string | undefined,

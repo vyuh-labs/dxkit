@@ -6,7 +6,10 @@
  *   --sarif <file>   parse a SARIF 2.1.0 file from ANY engine (CodeQL,
  *                    Snyk Code export, Semgrep Pro, Bearer, …)
  *   --from-snyk      read a project's Code findings from the Snyk REST
- *                    API (quota-free) using SNYK_TOKEN + org/project
+ *                    API (quota-free) using SNYK_TOKEN + org/project.
+ *                    On plans without REST API access (Enterprise-only)
+ *                    this auto-falls-back to `snyk code test`; pass
+ *                    --snyk-cli to force that path and skip the REST try.
  *
  * Either way the result is written to `.dxkit/external/<engine>.json`,
  * a committed snapshot every later scan reads — so the token is needed
@@ -17,6 +20,7 @@ import * as fs from 'fs';
 import * as logger from './logger';
 import { parseSarif } from './ingest/sarif';
 import { fetchSnykCodeFindings } from './ingest/snyk-api';
+import { runSnykCodeTest } from './ingest/snyk-cli';
 import { runCodeql, type CodeqlTarget } from './ingest/codeql';
 import { readDeepSastConfig } from './ingest/config';
 import { writeSnapshot } from './ingest/snapshot';
@@ -27,6 +31,10 @@ export interface IngestOptions {
   sarif?: string;
   fromSnyk?: boolean;
   codeql?: boolean;
+  /** Force the `snyk code test` CLI path, skipping the REST attempt. The
+   *  REST API is an Enterprise-only entitlement; free/team plans must use
+   *  the CLI (which costs one Snyk Code test from the quota). */
+  snykCli?: boolean;
   /** Override engine label for `--sarif` (else inferred from the file). */
   engine?: string;
   /** Snyk identifiers (CLI flags override config / env). */
@@ -57,6 +65,7 @@ export async function runIngest(cwd: string, opts: IngestOptions): Promise<void>
   logger.dim('  Examples:');
   logger.dim('    vyuh-dxkit ingest --sarif results.sarif');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --org <id> --project <id>');
+  logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --snyk-cli  # free/team plans');
   logger.dim('    vyuh-dxkit ingest --codeql        # OSS / GitHub Advanced Security only');
   process.exitCode = 1;
 }
@@ -110,26 +119,48 @@ function ingestFromSarif(cwd: string, opts: IngestOptions): void {
   writeAndReport(cwd, engine, findings, opts);
 }
 
+/** A REST failure that means "this plan can't read the API" — Enterprise-
+ *  only entitlement. We fall back to the CLI (Snyk Code product) path. */
+export function isNotEntitled(message: string): boolean {
+  return /\b403\b/.test(message) || /not entitled/i.test(message) || /api access/i.test(message);
+}
+
 async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
   const token = process.env.SNYK_TOKEN;
   if (!token) {
-    logger.warn('SNYK_TOKEN is not set. Export it (or add it as a CI secret) and retry.');
+    logger.warn('SNYK_TOKEN is not set.');
+    logger.dim(
+      '  dxkit reads SNYK_TOKEN from the environment — it does NOT auto-load a .env file.',
+    );
+    logger.dim('  Export it (`export SNYK_TOKEN=…`) or add it as a CI secret, then retry.');
     process.exitCode = 1;
     return;
   }
-  // Flags override persisted config (`.vyuh-dxkit.json:deepSast.snyk`),
-  // so the customer can configure org/project once and run `ingest
-  // --from-snyk` with no flags thereafter.
+  // Org/project resolve flag → persisted config (`.vyuh-dxkit.json:
+  // deepSast.snyk`) → environment, so a sourced shell or configured repo
+  // can run `ingest --from-snyk` with no flags. (dxkit does not read .env;
+  // export the vars or set CI secrets.)
   const cfg = readDeepSastConfig(cwd);
-  const orgId = opts.org ?? cfg.snyk?.orgId;
-  const projectId = opts.project ?? cfg.snyk?.projectId;
+  const orgId = opts.org ?? cfg.snyk?.orgId ?? process.env.SNYK_ORG_ID;
+  const projectId = opts.project ?? cfg.snyk?.projectId ?? process.env.SNYK_PROJECT_ID;
+
+  // Forced CLI path (free/team plans): skip the REST attempt entirely. The
+  // CLI tests the local checkout, so it needs only the org (to scope the
+  // entitlement), not a project id.
+  if (opts.snykCli) {
+    await ingestViaSnykCli(cwd, opts, orgId);
+    return;
+  }
+
   if (!orgId || !projectId) {
-    logger.warn('Snyk org + project are required for --from-snyk.');
-    logger.dim('  Pass --org <id> --project <id>, or set them once in .vyuh-dxkit.json:');
+    logger.warn('Snyk org + project are required to read findings via the REST API.');
+    logger.dim('  Pass --org <id> --project <id>, set them once in .vyuh-dxkit.json:');
     logger.dim('    { "deepSast": { "snyk": { "orgId": "…", "projectId": "…" } } }');
+    logger.dim('  or export SNYK_ORG_ID / SNYK_PROJECT_ID in your environment.');
     logger.dim(
       '  Find them in the Snyk UI (Settings → Org ID; the project page URL → project ID).',
     );
+    logger.dim('  On free/team plans (no REST API access) use --snyk-cli to run a Snyk Code test.');
     process.exitCode = 1;
     return;
   }
@@ -143,7 +174,35 @@ async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
       apiBase: process.env.SNYK_API,
     });
   } catch (err) {
-    logger.warn(`Snyk read failed: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    // REST API access is an Enterprise feature; on other plans the read
+    // 403s. Fall back to `snyk code test` (Snyk Code product entitlement,
+    // which free includes) so one command works on every plan.
+    if (isNotEntitled(message)) {
+      logger.warn('Snyk REST API access is not available on this plan (an Enterprise feature).');
+      logger.dim('  Falling back to `snyk code test` (Snyk Code product, uses one test quota)…');
+      await ingestViaSnykCli(cwd, opts, orgId);
+      return;
+    }
+    logger.warn(`Snyk read failed: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
+  writeAndReport(cwd, 'snyk-code', findings, opts);
+}
+
+/** Run `snyk code test` on the local checkout and snapshot the findings.
+ *  Used both as the explicit `--snyk-cli` path and as the REST fallback. */
+async function ingestViaSnykCli(
+  cwd: string,
+  opts: IngestOptions,
+  orgId: string | undefined,
+): Promise<void> {
+  let findings: ExternalFinding[];
+  try {
+    findings = await runSnykCodeTest({ cwd, org: orgId, onLog: (m) => logger.dim(`  ${m}`) });
+  } catch (err) {
+    logger.warn(`Snyk Code test failed: ${(err as Error).message}`);
     process.exitCode = 1;
     return;
   }
