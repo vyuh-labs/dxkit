@@ -12,7 +12,43 @@
  * or `git` is missing, log a dim notice and return cleanly.
  */
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as logger from './logger';
+
+/**
+ * Ensure every file in `.githooks/` carries the executable bit. Git
+ * SILENTLY IGNORES a hook that isn't executable (it only prints an
+ * advice hint), so a hook committed as mode 100644, or checked out on
+ * a filesystem that drops the bit, produces a hooksPath that's "set"
+ * but a guardrail that never fires. Because activation runs on every
+ * clone via the postinstall, chmod-ing here is the self-heal: each
+ * `npm install` restores the bit regardless of how the file arrived.
+ * Best-effort — a chmod failure (e.g. Windows, where executability is
+ * carried in the git index instead) must never abort activation.
+ */
+function ensureHooksExecutable(cwd: string): void {
+  const hooksDir = path.join(cwd, '.githooks');
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(hooksDir);
+  } catch {
+    return; // no .githooks dir — nothing to do
+  }
+  for (const name of entries) {
+    const file = path.join(hooksDir, name);
+    try {
+      const st = fs.statSync(file);
+      if (!st.isFile()) continue;
+      // Mirror read bits into execute (0o755-style) without clobbering
+      // existing perms: add execute wherever read is already granted.
+      const withExec = st.mode | 0o111;
+      if (withExec !== st.mode) fs.chmodSync(file, withExec);
+    } catch {
+      /* best-effort per file */
+    }
+  }
+}
 
 export interface ActivateHooksResult {
   /** True when `core.hooksPath` was set during this call. */
@@ -54,6 +90,11 @@ export function activateHooks(cwd: string): ActivateHooksResult {
     if (msg.includes('ENOENT')) return { activated: false, reason: 'git-missing' };
     return { activated: false, reason: 'not-a-git-repo' };
   }
+
+  // Restore the executable bit on every activation — a non-executable
+  // hook is silently ignored by git, so this runs regardless of the
+  // hooksPath outcome below (including the steady-state re-run path).
+  ensureHooksExecutable(cwd);
 
   // Read the current value (if any). `git config --get` exits 1 when
   // the key is unset — that's the happy path for a fresh clone.

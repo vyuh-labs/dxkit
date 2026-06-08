@@ -155,6 +155,22 @@ function readHooksPath(cwd: string): string | null {
 }
 
 /**
+ * Whether a hook file carries the executable bit. Git silently ignores
+ * a non-executable hook, so this is a hard prerequisite for the hook to
+ * fire. On Windows the bit isn't a meaningful filesystem attribute (git
+ * tracks executability in the index), so we treat it as satisfied there
+ * rather than false-flag every Windows checkout.
+ */
+function hookIsExecutable(hookFile: string): boolean {
+  if (process.platform === 'win32') return true;
+  try {
+    return (fs.statSync(hookFile).mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Whether `@vyuhlabs/dxkit` is declared in the consumer's package.json
  * (either dependency bucket). The hooks + CI guardrail resolve a
  * project-local `./node_modules/.bin/vyuh-dxkit` first; without the dep
@@ -421,14 +437,21 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
 function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] {
   const checks: CheckResult[] = [];
 
-  // 1. Hooks active. `git config core.hooksPath` should be `.githooks`
-  // when dxkit's pre-push protection is active. Empty → init's auto-
-  // activation didn't fire (most commonly because the repo's existing
-  // postinstall script preserved priority).
+  // 1. Hooks active. Two independent conditions must BOTH hold for the
+  // pre-push guardrail to actually fire: `core.hooksPath` set to
+  // `.githooks` AND the hook file carrying the executable bit. Git
+  // SILENTLY IGNORES a non-executable hook (advice hint only), so a
+  // hook committed as mode 100644 — or checked out on a filesystem
+  // that drops the bit — produces a hooksPath that's "set" but a
+  // guardrail that never runs. Checking only hooksPath would report a
+  // false green on exactly that broken state.
   const hooksPath = readHooksPath(cwd);
-  const hookFileExists = fs.existsSync(path.join(cwd, '.githooks', 'pre-push'));
+  const hookFile = path.join(cwd, '.githooks', 'pre-push');
+  const hookFileExists = fs.existsSync(hookFile);
   if (hookFileExists) {
-    const active = hooksPath === '.githooks';
+    const hooksPathSet = hooksPath === '.githooks';
+    const executable = hookIsExecutable(hookFile);
+    const active = hooksPathSet && executable;
     checks.push({
       label: 'git hooks active (core.hooksPath = .githooks)',
       ok: active,
@@ -437,7 +460,12 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         ? {}
         : {
             fix: {
-              hint: 'Activate the pre-push hook so dxkit guards regressions before push.',
+              // Tailor the hint to which condition failed; both are
+              // repaired by re-running activate (it sets hooksPath AND
+              // restores the executable bit).
+              hint: !hooksPathSet
+                ? 'Activate the pre-push hook so dxkit guards regressions before push.'
+                : 'The pre-push hook is wired but not executable, so git silently ignores it — no guardrail runs. Re-activate to restore the executable bit.',
               command: 'npx vyuh-dxkit hooks activate',
               skill: 'dxkit-hooks',
             },
