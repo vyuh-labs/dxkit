@@ -94,6 +94,16 @@ If any step fails, **stop**. Don't continue with downstream steps. Surface:
 - Which step failed + its stderr
 - Suggested recovery: "Run `npx vyuh-dxkit doctor` to see current state, or invoke the `dxkit-fix` skill to walk through repair."
 
+**Peer-dep ERESOLVE on the binary install.** The most common failure on a
+brownfield Node repo: `npm install @vyuhlabs/dxkit@<version>` aborts with
+`npm error code ERESOLVE` from a conflict in the project's *own* existing
+dependency tree (not dxkit's). It's a pre-existing conflict the upgrade
+merely surfaces. Recovery: retry the same command with `--legacy-peer-deps`
+(npm's own error message also suggests this), then persist the choice so
+future installs don't re-hit it: `echo "legacy-peer-deps=true" >> .npmrc`.
+After it succeeds, continue the loop. (`doctor` flags a missing `.npmrc`
+persistence as its own operational check.)
+
 ### 6. Verify with doctor
 
 If all steps succeeded, run `npx vyuh-dxkit doctor` and report. If doctor surfaces operational issues post-upgrade (e.g. `summary.fixable[]` not empty), **hand off to dxkit-fix** — say "Upgrade complete, but doctor surfaced N gaps. Walking through dxkit-fix to close them."

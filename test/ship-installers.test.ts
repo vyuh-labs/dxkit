@@ -487,17 +487,33 @@ describe('installHooksPostinstall', () => {
     expect(result.installed).toEqual([]);
   });
 
-  it('leaves existing custom postinstall in place + emits a chain note', () => {
+  it('chains after an existing custom postinstall (exit-0-safe activate)', () => {
     fs.writeFileSync(
       path.join(tmp, 'package.json'),
       JSON.stringify({ name: 'demo', scripts: { postinstall: 'husky install' } }, null, 2),
     );
     const result = installHooksPostinstall(tmp);
-    expect(result.installed).toEqual([]);
-    expect(result.notes.some((n) => n.includes('postinstall preserved'))).toBe(true);
+    expect(result.installed).toContain('package.json (postinstall)');
     const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
-    // Original script untouched.
-    expect(pkg.scripts.postinstall).toBe('husky install');
+    // Existing command preserved, our activation appended with &&.
+    expect(pkg.scripts.postinstall).toBe('husky install && vyuh-dxkit hooks activate');
+  });
+
+  it('is idempotent on a previously-chained postinstall', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify(
+        { name: 'demo', scripts: { postinstall: 'husky install && vyuh-dxkit hooks activate' } },
+        null,
+        2,
+      ),
+    );
+    const result = installHooksPostinstall(tmp);
+    expect(result.skipped).toContain('package.json (postinstall)');
+    expect(result.installed).toEqual([]);
+    const pkg = JSON.parse(fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8'));
+    // No double-append.
+    expect(pkg.scripts.postinstall).toBe('husky install && vyuh-dxkit hooks activate');
   });
 
   it('handles a malformed package.json without crashing', () => {
