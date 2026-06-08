@@ -89,6 +89,18 @@ describe('parseSarif', () => {
     });
   });
 
+  it('reads CWE from Snyk-style properties.cwe (not just CodeQL tags)', () => {
+    // Snyk Code SARIF encodes CWE in properties.cwe: ["CWE-94"], with
+    // tags carrying only category labels. Regression for the live-data
+    // gap where CWEs came through empty.
+    const raw = sarifWith(
+      [{ ruleId: 'CodeInjection', locations: [loc('a.ts', 1)] }],
+      [{ id: 'CodeInjection', properties: { tags: ['javascript', 'Security'], cwe: ['CWE-94'] } }],
+      'SnykCode',
+    );
+    expect(parseSarif(raw)[0].cwe).toBe('CWE-94');
+  });
+
   it('maps security-severity bands to four tiers', () => {
     const band = (score: string) =>
       parseSarif(
