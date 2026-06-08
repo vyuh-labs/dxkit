@@ -299,6 +299,18 @@ function isWorkingTreeDirty(cwd: string): boolean {
       const m = /^\?\? (.+)$/.exec(line);
       if (!m) return true;
       const segments = stripTrailingSlash(m[1]).split('/');
+      // `.dxkit/external/` holds ingested external-engine findings
+      // (Snyk Code, CodeQL). Unlike dxkit's self-populated outputs
+      // (cache/, reports/, dashboard/), these are a gather INPUT — they
+      // add findings to the aggregate — so a new/changed snapshot MUST
+      // invalidate the cache. Without this, `ingest` followed by
+      // `vulnerabilities` / `health` / `baseline` silently reuses a
+      // pre-ingest cache and the ingested findings never surface.
+      // Handles nesting (a monorepo's `Code/.dxkit/external/`).
+      const isExternalSnapshot = segments.some(
+        (seg, i) => seg === '.dxkit' && segments[i + 1] === 'external',
+      );
+      if (isExternalSnapshot) return true;
       return !segments.some((seg) => seg === '.dxkit' || seg === '.dxkit-ignore');
     });
     return lines.length > 0;

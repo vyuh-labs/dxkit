@@ -455,6 +455,41 @@ describe('resolveProvenance (real git)', () => {
     expect(provenance.workingTreeDirty).toBe(false);
   });
 
+  it('reports dirty when an ingested .dxkit/external snapshot is present', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    // `.dxkit/external/` holds ingested external-engine findings — a
+    // gather INPUT, unlike `.dxkit/cache`/`reports` outputs. A new
+    // snapshot must flip the tree dirty so the cache rebuilds and the
+    // ingested findings actually reach the report/baseline.
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'cache'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.dxkit', 'cache', 'analysis-result-abc.json'), '{}');
+    fs.mkdirSync(path.join(tmp, '.dxkit', 'external'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.dxkit', 'external', 'snyk-code.json'), '{"findings":[]}');
+
+    expect(resolveProvenance(tmp).workingTreeDirty).toBe(true);
+  });
+
+  it('reports dirty for a nested .dxkit/external snapshot too', () => {
+    execSync('git init -q', { cwd: tmp });
+    execSync('git config user.email test@example.com', { cwd: tmp });
+    execSync('git config user.name test', { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, 'file.txt'), 'hello');
+    execSync('git add . && git commit -q -m init', { cwd: tmp });
+
+    fs.mkdirSync(path.join(tmp, 'Code', 'Source', '.dxkit', 'external'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, 'Code', 'Source', '.dxkit', 'external', 'codeql.json'),
+      '{"findings":[]}',
+    );
+
+    expect(resolveProvenance(tmp).workingTreeDirty).toBe(true);
+  });
+
   it('ignores nested .dxkit/ directories at any depth', () => {
     execSync('git init -q', { cwd: tmp });
     execSync('git config user.email test@example.com', { cwd: tmp });
