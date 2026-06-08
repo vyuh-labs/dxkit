@@ -235,6 +235,158 @@ describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {
   });
 });
 
+describe('buildSecurityAggregate — cross-tool dedup of ingested + native findings', () => {
+  it('collapses the native + Snyk Code RCE at the same site via the canonical map', () => {
+    const input = emptyInput();
+    input.codePatterns = {
+      toolUsed: 'semgrep',
+      findings: [
+        makeFinding({
+          rule: 'require-request',
+          tool: 'semgrep',
+          file: 'src/server.ts',
+          line: 810,
+          cwe: '',
+          severity: 'high',
+        }),
+      ],
+    };
+    input.external = {
+      toolsUsed: ['snyk-code'],
+      findings: [
+        makeFinding({
+          rule: 'javascript/CodeInjection',
+          tool: 'snyk-code',
+          file: 'src/server.ts',
+          line: 810,
+          cwe: 'CWE-94',
+          severity: 'high',
+        }),
+      ],
+    };
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+    expect(agg.findingsByCategory.code[0].producedBy).toEqual(['semgrep', 'snyk-code']);
+    expect(agg.findingsByCategory.code[0].canonicalRule).toBe('canonical:code-injection');
+  });
+
+  it('collapses Snyk InsecureTLSConfig with registry TLS bypass despite different CWEs (via map)', () => {
+    const input = emptyInput();
+    input.tlsBypass = [
+      makeFinding({
+        rule: 'tls-validation-disabled',
+        tool: 'tls-bypass-registry',
+        file: 'src/controllers/sites.controller.ts',
+        line: 389,
+        cwe: 'CWE-295',
+        severity: 'high',
+      }),
+    ];
+    input.external = {
+      toolsUsed: ['snyk-code'],
+      findings: [
+        makeFinding({
+          rule: 'javascript/InsecureTLSConfig',
+          tool: 'snyk-code',
+          file: 'src/controllers/sites.controller.ts',
+          line: 389,
+          cwe: 'CWE-327', // different from the registry's CWE-295
+          severity: 'high',
+        }),
+      ],
+    };
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+    expect(agg.findingsByCategory.code[0].canonicalRule).toBe('canonical:tls-bypass');
+  });
+
+  it('CWE fallback: collapses unmapped cross-tool rules that share a CWE + location', () => {
+    const input = emptyInput();
+    input.codePatterns = {
+      toolUsed: 'semgrep',
+      findings: [
+        makeFinding({
+          rule: 'some-native-sqli',
+          tool: 'semgrep',
+          file: 'src/db.ts',
+          line: 100,
+          cwe: 'CWE-89',
+        }),
+      ],
+    };
+    input.external = {
+      toolsUsed: ['snyk-code'],
+      findings: [
+        makeFinding({
+          rule: 'javascript/Sqli',
+          tool: 'snyk-code',
+          file: 'src/db.ts',
+          line: 101, // within the line window
+          cwe: 'CWE-89',
+        }),
+      ],
+    };
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+    expect(agg.findingsByCategory.code[0].producedBy).toEqual(['semgrep', 'snyk-code']);
+  });
+
+  it('CWE fallback does NOT collapse same-tool distinct findings sharing a CWE', () => {
+    const input = emptyInput();
+    input.external = {
+      toolsUsed: ['snyk-code'],
+      findings: [
+        makeFinding({
+          rule: 'javascript/RuleA',
+          tool: 'snyk-code',
+          file: 'src/x.ts',
+          line: 10,
+          cwe: 'CWE-79',
+        }),
+        makeFinding({
+          rule: 'javascript/RuleB',
+          tool: 'snyk-code',
+          file: 'src/x.ts',
+          line: 11,
+          cwe: 'CWE-79',
+        }),
+      ],
+    };
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(2);
+  });
+
+  it('CWE fallback does NOT collapse cross-tool findings with different CWEs', () => {
+    const input = emptyInput();
+    input.codePatterns = {
+      toolUsed: 'semgrep',
+      findings: [
+        makeFinding({
+          rule: 'native-xss',
+          tool: 'semgrep',
+          file: 'src/y.ts',
+          line: 50,
+          cwe: 'CWE-79',
+        }),
+      ],
+    };
+    input.external = {
+      toolsUsed: ['snyk-code'],
+      findings: [
+        makeFinding({
+          rule: 'javascript/Ssrf',
+          tool: 'snyk-code',
+          file: 'src/y.ts',
+          line: 50,
+          cwe: 'CWE-918',
+        }),
+      ],
+    };
+    const agg = buildSecurityAggregate(input);
+    expect(agg.findingsByCategory.code).toHaveLength(2);
+  });
+});
+
 describe('buildSecurityAggregate — D086 health/vuln-scan parity', () => {
   it('produces ONE code-finding count surface both consumers read from', () => {
     // The D086 root cause was two separate aggregation paths:
