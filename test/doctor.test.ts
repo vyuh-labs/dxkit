@@ -204,6 +204,65 @@ describe('doctor: operational health (tier 3)', () => {
     }
   });
 
+  const writeAllowlist = (dir: string, entries: unknown[]) => {
+    fs.mkdirSync(path.join(dir, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.dxkit', 'allowlist.json'),
+      JSON.stringify({ schemaVersion: 'dxkit-allowlist/v1', mode: 'full', entries }, null, 2),
+    );
+  };
+
+  it('flags expired allowlist entries — the suppressed finding re-blocks', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-allow-expired-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      writeAllowlist(tmp, [
+        {
+          fingerprint: 'a1a1a1a1a1a1a1a1',
+          kind: 'code',
+          category: 'accepted-risk',
+          reason: 'temporary acceptance, now lapsed',
+          addedBy: 'r@example.com',
+          addedAt: '2020-01-01',
+          expiresAt: '2020-02-01',
+        },
+      ]);
+      const r = runDoctor(tmp);
+      expect(r.stdout).toContain('allowlist suppressions');
+      expect(r.stdout).toContain('expired');
+      expect(r.stdout).toContain('npx vyuh-dxkit allowlist prune');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('flags allowlist entries expiring soon before they lapse', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-allow-soon-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      // Compute a date 5 days out so the test is stable regardless of
+      // the wall-clock date it runs on (doctor uses the real `now`).
+      const soon = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      writeAllowlist(tmp, [
+        {
+          fingerprint: 'b2b2b2b2b2b2b2b2',
+          kind: 'code',
+          category: 'deferred',
+          reason: 'fix scheduled next sprint',
+          addedBy: 'r@example.com',
+          addedAt: '2026-05-01',
+          expiresAt: soon,
+        },
+      ]);
+      const r = runDoctor(tmp);
+      expect(r.stdout).toContain('allowlist suppressions');
+      expect(r.stdout).toContain('expiring soon');
+      expect(r.stdout).toContain('npx vyuh-dxkit allowlist audit');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   // A hook wired into core.hooksPath but left non-executable is silently
   // ignored by git — doctor must NOT report a false green here.
   it.skipIf(process.platform === 'win32')(

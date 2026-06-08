@@ -99,6 +99,58 @@ repos), the file carries only `fingerprint + kind + category`; the
 human-readable reason + addedBy live in a gitignored sidecar
 (`.dxkit/allowlist-reasons.local.json`).
 
+## How a suppression affects the guardrail verdict
+
+An **active** allowlist entry waives a matching finding from the
+guardrail verdict: a finding that would otherwise block the PR passes
+instead. The finding is not hidden — the guardrail report lists it
+under a **"Suppressed by allowlist"** section (console, JSON, and the
+PR comment), showing its category and expiry so reviewers still see
+what was accepted. It simply no longer fails the check.
+
+Matching is by the finding's fingerprint **and** kind. When dxkit
+collapses the same weakness reported by two engines into one finding,
+a suppression keyed on either engine's fingerprint still applies — so
+adding or removing a scanner between runs can't silently orphan an
+existing acceptance.
+
+This is the difference from the baseline. A
+[`baseline`](./baseline.md) accepts your **whole existing codebase**
+at a point in time (everything present is "pre-existing debt"). The
+allowlist accepts **one specific finding** — including a brand-new one
+that lands outside the baseline — with a typed reason and, where
+required, an expiry. Use the baseline for "don't block me on the
+mountain of existing issues," and the allowlist for "this particular
+finding is reviewed and accepted."
+
+## Expiry lifecycle
+
+An entry with an `expiresAt` date suppresses its finding **only while
+it's active** — up to and including the expiry date:
+
+1. **Active** — the finding is waived from the verdict. The entry
+   shows in the guardrail report's suppressed section.
+2. **Nearing expiry** — within the audit window (default 14 days),
+   `allowlist audit` lists it under _soon to expire_, and
+   [`vyuh-dxkit doctor`](./doctor.md) raises an
+   **"allowlist suppressions expiring soon"** check so the deadline
+   doesn't sneak up mid-sprint.
+3. **Expired** — the entry stops suppressing. **The underlying finding
+   re-blocks the guardrail on the next run.** `doctor` flags expired
+   entries; `allowlist audit` lists them; `allowlist prune` removes
+   them.
+
+`accepted-risk` and `deferred` always carry an expiry (90-day default)
+because they're assertions that should age out and be re-reviewed.
+`false-positive`, `test-fixture`, and `mitigated-externally` may carry
+one but don't have to — a true false positive doesn't expire.
+
+When an entry expires, you have three honest choices: **fix** the
+finding, **re-add** the entry with a fresh expiry (re-review), or let
+it lapse and accept that the finding blocks again. There's no fourth
+"suppress forever without revisiting" option for the time-boxed
+categories — that's the point.
+
 ## Subcommands
 
 ### `add` — create a new suppression
