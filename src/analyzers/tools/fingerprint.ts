@@ -94,10 +94,20 @@ export function collectFingerprints(findings: ReadonlyArray<DepVulnFinding>): st
  * default. Never accidentally collapses unrelated findings.
  */
 export const CANONICAL_RULE_MAP: ReadonlyMap<string, string> = new Map<string, string>([
-  // TLS / certificate validation bypass
+  // TLS / certificate validation bypass. An ingested engine reports the
+  // same insecure-TLS construct under its own rule (Snyk classes it as
+  // CWE-327 where the registry grep classes it CWE-295), so the CWE
+  // fallback can't bridge them — they're mapped explicitly here.
   ['tls-bypass-registry:tls-validation-disabled', 'canonical:tls-bypass'],
   ['semgrep:bypass-tls-verification', 'canonical:tls-bypass'],
   ['semgrep:nodejsscan.node_tls_reject_unauthorized', 'canonical:tls-bypass'],
+  ['snyk-code:javascript/InsecureTLSConfig', 'canonical:tls-bypass'],
+
+  // Code injection / dynamic require of request-derived input. The
+  // bundled scanner and an interprocedural engine both reach the same
+  // sink under different rule names.
+  ['semgrep:require-request', 'canonical:code-injection'],
+  ['snyk-code:javascript/CodeInjection', 'canonical:code-injection'],
 
   // Private-key file on disk — find + gitleaks may both surface
   ['find:private-key-file', 'canonical:private-key-on-disk'],

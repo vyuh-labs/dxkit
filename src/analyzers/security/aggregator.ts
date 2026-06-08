@@ -57,7 +57,7 @@
 
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { Severity, FindingCategory, SecurityFinding } from './types';
-import { canonicalRuleFor, computeCodeFingerprint } from '../tools/fingerprint';
+import { canonicalRuleFor, computeCodeFingerprint, lineWindowFor } from '../tools/fingerprint';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
 
@@ -313,6 +313,18 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
   };
   const groups = new Map<string, Group>();
 
+  // Cross-tool CWE index: `cwe \0 file \0 lineWindow` → the fingerprint of
+  // the group occupying that spot. Lets two engines that flag the same
+  // weakness at the same place under DIFFERENT rule names (so the
+  // canonical-rule map doesn't bridge them) still collapse — provided
+  // they agree on the CWE. Only ever bridges across tools; a single
+  // tool's own findings are governed by the canonical-rule path above,
+  // so this never collapses findings one tool intentionally reported
+  // separately.
+  const byCweLoc = new Map<string, string>();
+  const cweLocKey = (cwe: string, file: string, line: number): string =>
+    `${cwe}\0${file}\0${lineWindowFor(line)}`;
+
   for (const f of rawCodeFindings) {
     const canonicalRule = canonicalRuleFor(f.tool, f.rule);
     const naturalFingerprint = computeCodeFingerprint(canonicalRule, f.file, f.line);
@@ -335,6 +347,22 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         if (candidate) {
           existing = candidate;
           fingerprint = neighborFingerprint;
+          break;
+        }
+      }
+    }
+    // Cross-tool CWE fallback. Still no match and this finding has a CWE?
+    // Join a group another tool already opened at the same file +
+    // line-window with the same CWE. Gated to a DIFFERENT tool so one
+    // tool's distinct same-CWE findings are never collapsed (those stay
+    // governed by the canonical-rule path above).
+    if (!existing && f.cwe) {
+      for (const offset of [0, -3, 3]) {
+        const fp = byCweLoc.get(cweLocKey(f.cwe, f.file, f.line + offset));
+        const candidate = fp ? groups.get(fp) : undefined;
+        if (candidate && !candidate.producedBy.has(f.tool)) {
+          existing = candidate;
+          fingerprint = candidate.fingerprint;
           break;
         }
       }
@@ -382,6 +410,9 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         ],
       });
     }
+    // Index this finding's CWE + location → its group, so a later
+    // finding from another tool sharing the CWE can collapse into it.
+    if (f.cwe) byCweLoc.set(cweLocKey(f.cwe, f.file, f.line), fingerprint);
   }
 
   const codeFindingsByCategory: Record<'secret' | 'code' | 'config', CodeFinding[]> = {
