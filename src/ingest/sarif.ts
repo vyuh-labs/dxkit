@@ -29,6 +29,9 @@ interface SarifRule {
     'security-severity'?: string | number;
     'problem.severity'?: string;
     tags?: string[];
+    /** Snyk Code SARIF puts CWE(s) in a dedicated array here
+     *  (e.g. `["CWE-94"]`), not in `tags` like CodeQL does. */
+    cwe?: string[];
   };
   shortDescription?: { text?: string };
 }
@@ -69,14 +72,28 @@ function engineFromDriver(name: string | undefined): SourceEngine {
   return 'sarif';
 }
 
-/** `external/cwe/cwe-022` (or `CWE-022`) → `CWE-22`. Returns '' when no
- *  CWE tag is present. Leading zeros are stripped so the id matches the
- *  canonical `CWE-<n>` form used elsewhere in dxkit. */
-function cweFromTags(tags: string[] | undefined): string {
-  if (!tags) return '';
-  for (const tag of tags) {
-    const m = /cwe[-/_]?(\d+)/i.exec(tag);
-    if (m) return `CWE-${parseInt(m[1], 10)}`;
+/** Normalize any CWE-ish string to canonical `CWE-<n>` (leading zeros
+ *  stripped), or '' when none present. */
+function normalizeCwe(s: string | undefined): string {
+  if (!s) return '';
+  const m = /cwe[-/_]?(\d+)/i.exec(s);
+  return m ? `CWE-${parseInt(m[1], 10)}` : '';
+}
+
+/** Resolve the CWE for a rule across engine conventions:
+ *  Snyk Code uses `properties.cwe: ["CWE-94"]`; CodeQL uses
+ *  `properties.tags: ["external/cwe/cwe-094"]`. Checks both. */
+function cweFromRule(rule: SarifRule | undefined): string {
+  const direct = rule?.properties?.cwe;
+  if (Array.isArray(direct)) {
+    for (const c of direct) {
+      const n = normalizeCwe(c);
+      if (n) return n;
+    }
+  }
+  for (const tag of rule?.properties?.tags ?? []) {
+    const n = normalizeCwe(tag);
+    if (n) return n;
   }
   return '';
 }
@@ -154,7 +171,7 @@ export function parseSarif(raw: string, engine?: SourceEngine): ExternalFinding[
         engine: resolvedEngine,
         severity: resolveSeverity(rule, res.level),
         category: 'code',
-        cwe: cweFromTags(rule?.properties?.tags),
+        cwe: cweFromRule(rule),
         rule: ruleId || rule?.name || 'unknown',
         title: res.message?.text || rule?.shortDescription?.text || ruleId || 'SAST finding',
         file,
