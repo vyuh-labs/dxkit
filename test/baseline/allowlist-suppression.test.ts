@@ -14,10 +14,15 @@ import type { IdentityKind } from '../../src/baseline/producers';
 
 const FP = 'abcd1234abcd1234';
 
-// The resolver only reads `id` + `kind` off the anchor entry, so a
-// minimal stand-in is sufficient and keeps the fixtures readable.
-function anchor(id: string, kind: IdentityKind): BaselineEntry {
-  return { id, kind } as unknown as BaselineEntry;
+// The resolver reads `id`, `kind`, and (for the rich secret/code/config
+// variants) `absorbedFingerprints` off the anchor entry, so a minimal
+// stand-in is sufficient and keeps the fixtures readable.
+function anchor(id: string, kind: IdentityKind, absorbedFingerprints?: string[]): BaselineEntry {
+  return {
+    id,
+    kind,
+    ...(absorbedFingerprints ? { absorbedFingerprints } : {}),
+  } as unknown as BaselineEntry;
 }
 
 function fileWith(entry: AllowlistEntry): AllowlistFile {
@@ -105,5 +110,42 @@ describe('allowlistSuppressionFor', () => {
       addedAt: '2026-05-01',
     });
     expect(allowlistSuppressionFor(file, anchor(FP, 'code'), NOW)).toBeUndefined();
+  });
+
+  it('robust match: suppresses on an absorbed (contributing) fingerprint, not just the representative', () => {
+    // The allowlist was keyed on a contributing fingerprint from a run
+    // where a different engine was the representative. The merged
+    // finding now surfaces under `FP`, but carries `ABSORBED` in its
+    // absorbed set — the suppression must still apply.
+    const ABSORBED = '1111222233334444';
+    const file = fileWith({
+      fingerprint: ABSORBED,
+      kind: 'code',
+      category: 'accepted-risk',
+      reason: 'reviewed under the other engine’s fingerprint',
+      addedBy: 'r@example.com',
+      addedAt: '2026-05-01',
+      expiresAt: '2026-09-01',
+    });
+    const out = allowlistSuppressionFor(file, anchor(FP, 'code', [ABSORBED]), NOW);
+    expect(out).toEqual({
+      fingerprint: ABSORBED,
+      category: 'accepted-risk',
+      expiresAt: '2026-09-01',
+    });
+  });
+
+  it('robust match still honors the kind guard on the absorbed fingerprint', () => {
+    const ABSORBED = '1111222233334444';
+    const file = fileWith({
+      fingerprint: ABSORBED,
+      kind: 'dep-vuln',
+      category: 'accepted-risk',
+      reason: 'wrong kind',
+      addedBy: 'r@example.com',
+      addedAt: '2026-05-01',
+      expiresAt: '2099-01-01',
+    });
+    expect(allowlistSuppressionFor(file, anchor(FP, 'code', [ABSORBED]), NOW)).toBeUndefined();
   });
 });

@@ -571,29 +571,57 @@ function pairBlocks(p: ClassifiedPair): boolean {
 
 /**
  * Resolve the active allowlist suppression for an anchor finding, or
- * `undefined` when none applies. Matches by fingerprint (`entry.id`)
- * AND kind — the fingerprint alone is identity, but pinning kind too
- * rules out a cross-kind hash collision waiving the wrong finding.
- * Expired entries return `undefined` so the finding re-blocks once its
- * window lapses.
+ * `undefined` when none applies. Matches by fingerprint AND kind — the
+ * fingerprint alone is identity, but pinning kind too rules out a
+ * cross-kind hash collision waiving the wrong finding. Expired entries
+ * are skipped so the finding re-blocks once its window lapses.
  *
- * Exported for unit testing: the expiry + kind-guard branches are
- * exercised directly here so the (expensive) integration test only has
- * to prove the verdict wiring flips.
+ * Robust matching: the candidate fingerprints are the finding's
+ * representative id PLUS any `absorbedFingerprints` the aggregator
+ * recorded when it collapsed a cross-tool / neighbor-bucket / CWE-bridge
+ * finding into this one. A suppression keyed on a contributing
+ * fingerprint (e.g. allowlisted from a run where a different engine was
+ * the representative) still matches the merged finding, so dedup
+ * nondeterminism between runs can't silently orphan it.
+ *
+ * Exported for unit testing: the expiry, kind-guard, and absorbed-
+ * fingerprint branches are exercised directly here so the (expensive)
+ * integration test only has to prove the verdict wiring flips.
  */
 export function allowlistSuppressionFor(
   allowlist: AllowlistFile,
   anchorEntry: BaselineEntry,
   now: Date,
 ): AllowlistSuppression | undefined {
-  const entry = findEntry(allowlist, anchorEntry.id);
-  if (!entry || entry.kind !== anchorEntry.kind) return undefined;
-  if (!isEntryActive(entry, now)) return undefined;
-  return {
-    fingerprint: entry.fingerprint,
-    category: entry.category,
-    ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
-  };
+  for (const fp of candidateFingerprints(anchorEntry)) {
+    const entry = findEntry(allowlist, fp);
+    if (!entry || entry.kind !== anchorEntry.kind) continue;
+    if (!isEntryActive(entry, now)) continue;
+    return {
+      fingerprint: entry.fingerprint,
+      category: entry.category,
+      ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Fingerprints an allowlist entry may match against for one finding:
+ * the representative `id` first (most direct), then any absorbed
+ * contributing fingerprints. Absorbed fingerprints live only on the
+ * rich secret/code/config variant — a sanitized entry carries id only.
+ */
+function candidateFingerprints(entry: BaselineEntry): string[] {
+  if (isSanitized(entry)) return [entry.id];
+  if (
+    (entry.kind === 'secret' || entry.kind === 'code' || entry.kind === 'config') &&
+    entry.absorbedFingerprints &&
+    entry.absorbedFingerprints.length > 0
+  ) {
+    return [entry.id, ...entry.absorbedFingerprints];
+  }
+  return [entry.id];
 }
 
 function keepUnderChangedOnly(p: ClassifiedPair): boolean {

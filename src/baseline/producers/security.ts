@@ -94,6 +94,9 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(contentHash !== undefined ? { contentHash } : {}),
+      ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
+        ? { absorbedFingerprints: f.absorbedFingerprints }
+        : {}),
     });
   }
 
@@ -114,6 +117,9 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(contentHash !== undefined ? { contentHash } : {}),
+      ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
+        ? { absorbedFingerprints: f.absorbedFingerprints }
+        : {}),
     });
   }
 
@@ -136,6 +142,9 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(contentHash !== undefined ? { contentHash } : {}),
+      ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
+        ? { absorbedFingerprints: f.absorbedFingerprints }
+        : {}),
     });
   }
 

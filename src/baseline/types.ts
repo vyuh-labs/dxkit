@@ -366,6 +366,13 @@ export type BaselineEntry =
        *  context survives but line shifts past the fuzz window). Absent
        *  when the producer couldn't read the file. */
       contentHash?: string;
+      /** Fingerprints of cross-tool / neighbor-bucket / CWE-bridge
+       *  findings that the aggregator collapsed into this one. Carried
+       *  so an allowlist entry keyed on a contributing fingerprint still
+       *  suppresses the merged finding — robust matching against dedup
+       *  nondeterminism between runs. Present only when such a merge
+       *  fired. */
+      absorbedFingerprints?: readonly string[];
     }
   | {
       id: FindingId;

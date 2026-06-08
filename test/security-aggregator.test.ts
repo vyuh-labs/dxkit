@@ -27,6 +27,7 @@ import {
   type SecurityAggregateInput,
   type SecurityFinding,
 } from '../src/analyzers/security/aggregator';
+import { canonicalRuleFor, computeCodeFingerprint } from '../src/analyzers/tools/fingerprint';
 import type { DepVulnFinding } from '../src/languages/capabilities/types';
 
 function makeFinding(overrides: Partial<SecurityFinding>): SecurityFinding {
@@ -329,6 +330,18 @@ describe('buildSecurityAggregate — cross-tool dedup of ingested + native findi
     const agg = buildSecurityAggregate(input);
     expect(agg.findingsByCategory.code).toHaveLength(1);
     expect(agg.findingsByCategory.code[0].producedBy).toEqual(['semgrep', 'snyk-code']);
+
+    // Robust matching: the merged finding records the absorbed engine's
+    // own fingerprint so a suppression keyed on it still matches even
+    // though the representative is now the other engine.
+    const merged = agg.findingsByCategory.code[0];
+    const snykNaturalFp = computeCodeFingerprint(
+      canonicalRuleFor('snyk-code', 'javascript/Sqli'),
+      'src/db.ts',
+      101,
+    );
+    expect(merged.fingerprint).not.toBe(snykNaturalFp);
+    expect(merged.absorbedFingerprints).toEqual([snykNaturalFp]);
   });
 
   it('CWE fallback does NOT collapse same-tool distinct findings sharing a CWE', () => {
