@@ -7,6 +7,7 @@ import {
   installCiBaselineRefresh,
   installCiGuardrails,
   installDevcontainer,
+  installDxkitDevDependency,
   installHooks,
   installHooksPostinstall,
   installIgnoreFiles,
@@ -204,6 +205,14 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   }
   if (flags.withCiGuardrails) {
     mergeShipResult(aggregate, installCiGuardrails(cwd, { force }));
+  }
+  // Self-heal a missing project-local devDependency on upgrade. Pre-fix
+  // installs wired hooks/CI without declaring the package, so they fall
+  // back to a stale global. This adds it when absent (idempotent — skips
+  // when already declared, so a customer's pin is never repinned here;
+  // the actual version bump is `npm install @latest`, npm's job).
+  if (flags.withHooks || flags.withCiGuardrails) {
+    mergeShipResult(aggregate, installDxkitDevDependency(cwd, { force }));
   }
   if (flags.withBaselineRefresh) {
     mergeShipResult(aggregate, installCiBaselineRefresh(cwd, { force }));
