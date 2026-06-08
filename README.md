@@ -211,7 +211,7 @@ This is an additive, fail-open layer. When the graph is missing, or a language's
 
 dxkit's bundled SAST (community semgrep) is intraprocedural — it can't follow tainted data across function boundaries, so it misses the path-traversal / information-exposure / SSRF / injection class that an interprocedural engine like Snyk Code or CodeQL catches. dxkit doesn't try to re-detect that class; it **ingests** it and makes it first-class.
 
-- **`vyuh-dxkit ingest --from-snyk`** reads your Snyk Code findings via the REST API (no Snyk test quota consumed — it reads stored results). **`--sarif <file>`** ingests SARIF from any engine; **`--codeql`** runs CodeQL on demand (open-source / GitHub Advanced Security).
+- **`vyuh-dxkit ingest --from-snyk`** brings in your Snyk Code findings and works on every Snyk plan: it reads the REST API quota-free where you have it (Enterprise), and on Free/Team plans automatically falls back to `snyk code test` (one test per run). **`--sarif <file>`** ingests SARIF from any engine; **`--codeql`** runs CodeQL on demand (open-source / GitHub Advanced Security).
 - Ingested findings enter the same pipeline as native ones: fingerprinted and deduped, written to the baseline, enforced by the guardrail, and graph-linked under `--graph-context` so the `dxkit-action` fix loop sees blast radius + callers — context the source engine's own autofix doesn't have.
 - The findings live in a committed `.dxkit/external/` snapshot, so the engine token is needed only at ingest time (ideally one on-demand CI job) — every developer and CI run reads the snapshot without it.
 

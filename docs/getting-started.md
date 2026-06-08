@@ -290,6 +290,14 @@ See [`vyuh-dxkit issue`](commands/issue.md) for full details.
 
 ## What's next
 
+- **Deep SAST** — dxkit's bundled scanner is intraprocedural and misses
+  cross-function taint (path traversal, SSRF, injection). Bring in an
+  interprocedural engine's findings with `npx vyuh-dxkit ingest`:
+  `--from-snyk` (works on every Snyk plan — quota-free REST where you have
+  it, an automatic `snyk code test` fallback on free/team), `--sarif <file>`
+  (any SARIF engine), or `--codeql` (open-source / GHAS). Ingested findings
+  are fingerprinted, baselined, guardrailed, and graph-linked like native
+  ones. The `dxkit-ingest` skill walks through token setup.
 - Per-command pages in [`commands/`](commands/) describe options +
   output shape in detail.
 - [Allowlist reference](commands/allowlist.md) — per-finding

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-06-08
+
 ### Deep SAST — engine-agnostic interprocedural findings (2.9)
 
 dxkit's bundled SAST (community semgrep) is intraprocedural and misses the
@@ -17,9 +19,14 @@ than try to re-detect that class. dxkit becomes the governance + agentic-fix
 layer on top of any detector, grounded in the repo's own code graph.
 
 - **`vyuh-dxkit ingest`** brings external SAST findings into dxkit:
-  - `--from-snyk --org <id> --project <id>` reads a project's Snyk Code
-    findings via the REST API (set `SNYK_TOKEN`). It reads stored results, so
-    it does **not** consume the org's Snyk Code test quota.
+  - `--from-snyk` brings in a project's Snyk Code findings and works on **every
+    Snyk plan**. It reads the REST API quota-free where available (an
+    Enterprise entitlement); on Free/Team plans the read returns 403 and dxkit
+    automatically falls back to `snyk code test` (the Snyk Code product, which
+    free includes — one test per run). `--snyk-cli` forces the CLI path. Set
+    `SNYK_TOKEN`; org/project resolve from the flag, then `.vyuh-dxkit.json`,
+    then the environment (`SNYK_ORG_ID` / `SNYK_PROJECT_ID`). dxkit reads these
+    from the environment and does **not** auto-load a `.env` file.
   - `--sarif <file>` ingests SARIF 2.1.0 from any engine (CodeQL, a Snyk
     export, Semgrep Pro, Bearer).
   - `--codeql` runs CodeQL on demand for the active languages (open-source /
@@ -35,16 +42,42 @@ layer on top of any detector, grounded in the repo's own code graph.
   `ingest --from-snyk` needs no flags after first setup.
 - `--with-deep-sast-refresh` installs an on-demand CI workflow
   (`workflow_dispatch`) that re-ingests and commits the snapshot — the one
-  place the token is used. No-ops without the `SNYK_TOKEN` secret.
+  place the token is used. A `method` input selects `api` (Enterprise,
+  quota-free) or `cli` (free/team, one test per run); `api` auto-falls-back to
+  the CLI. No-ops without the `SNYK_TOKEN` secret.
 - New `dxkit-ingest` skill; `dxkit-action` and `dxkit-config` updated. CodeQL
   and Snyk support is declared per language pack; CodeQL is a guarded, opt-in
   tool kept out of the default toolchain.
+
+### Guardrail reliability — the pre-push hook actually fires
+
+A guardrail only protects a repo if the hook runs and resolves the right
+dxkit. Hardening for brownfield repos, found by exercising the full install
+path on a real project:
+
+- **`init` / `update` declare `@vyuhlabs/dxkit` in `devDependencies`** (pinned
+  to the installed version) whenever hooks or CI are installed. The hook and CI
+  workflow resolve `./node_modules/.bin/vyuh-dxkit` before any global, so a
+  project that wired them but never declared the package silently ran a stale
+  global — or failed on a fresh CI runner. `doctor` gains a matching check.
+- **A non-executable hook is no longer a silent no-op.** Git ignores a hook
+  that lacks the executable bit (a hook committed as mode 100644, or checked
+  out on a filesystem that drops it), so pushes sailed through with no check
+  while `doctor` reported a false green. `hooks activate` now restores the bit
+  on every run (self-healing on every clone via the postinstall), and `doctor`
+  verifies executability, not just `core.hooksPath`.
+- **Hook activation chains after an existing `postinstall`** (patch-package, a
+  husky bootstrap) with `&&` instead of bailing with a note, so the pre-push
+  guardrail activates even on repos that already script their install.
 
 Upgrading: after `npm install --save-dev @vyuhlabs/dxkit@latest` +
 `npx vyuh-dxkit update`, run `npx vyuh-dxkit ingest --from-snyk` (or
 `--codeql`) to bring your interprocedural findings into dxkit, then
 `npx vyuh-dxkit baseline create --force` to anchor them. The `dxkit-ingest`
-skill walks through token setup and the license-aware engine choice.
+skill walks through token setup and the license-aware engine choice. On a
+brownfield repo the binary install may hit a peer-dep `ERESOLVE` from your own
+dependency tree — retry with `--legacy-peer-deps` (the `dxkit-update` skill
+walks through it).
 
 ### create-dxkit 0.2.1
 
