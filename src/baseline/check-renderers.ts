@@ -30,6 +30,26 @@ import type { ClassifiedPair, EnvelopeDrift, GuardrailCheckResult } from './chec
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 
+// ─── Shared verdict predicates ────────────────────────────────────────────
+
+/**
+ * Whether a pair was accepted by an active allowlist entry. Such a
+ * pair would otherwise block, so it carries `classification.blocks ===
+ * true`; the verdict already excludes it (see `pairBlocks` in
+ * `check.ts`). The renderers mirror that here so a suppressed finding
+ * is surfaced in its own bucket — never silently dropped, never
+ * miscounted as a live regression.
+ */
+function isAllowlistSuppressed(p: ClassifiedPair): boolean {
+  return p.suppressedByAllowlist !== undefined;
+}
+
+/** Whether a pair contributes a live BLOCK to the verdict — blocking
+ *  per the classifier AND not waived by an active allowlist entry. */
+function isBlocking(p: ClassifiedPair): boolean {
+  return p.classification.blocks && p.suppressedByAllowlist === undefined;
+}
+
 // ─── Console renderer ─────────────────────────────────────────────────────
 
 /**
@@ -73,7 +93,8 @@ export function renderConsole(result: GuardrailCheckResult): string {
 
   // Group + render pairs by verdict bucket. Buckets ordered so the
   // most actionable surfaces first.
-  const blocking = result.pairs.filter((p) => p.classification.blocks);
+  const blocking = result.pairs.filter(isBlocking);
+  const suppressed = result.pairs.filter(isAllowlistSuppressed);
   const warning = result.pairs.filter((p) => !p.classification.blocks && p.classification.warns);
   const persisted = result.pairs.filter(
     (p) =>
@@ -86,6 +107,11 @@ export function renderConsole(result: GuardrailCheckResult): string {
   if (blocking.length > 0) {
     lines.push(logger.bold(`Blocking (${blocking.length})`));
     for (const p of blocking) lines.push(...formatPairLines(p, '  '));
+    lines.push('');
+  }
+  if (suppressed.length > 0) {
+    lines.push(logger.bold(`Suppressed by allowlist (${suppressed.length})`));
+    for (const p of suppressed) lines.push(...formatPairLines(p, '  '));
     lines.push('');
   }
   if (warning.length > 0) {
@@ -104,6 +130,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   lines.push(logger.bold('Summary'));
   lines.push(
     `  Pairs:       ${result.pairs.length} (blocking: ${blocking.length}, ` +
+      `suppressed: ${suppressed.length}, ` +
       `warning: ${warning.length}, persisted: ${persisted.length}, ` +
       `resolved: ${removed.length})`,
   );
@@ -122,7 +149,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
 
 function verdictBanner(result: GuardrailCheckResult): string {
   if (result.blocks) {
-    const count = result.pairs.filter((p) => p.classification.blocks).length;
+    const count = result.pairs.filter(isBlocking).length;
     return logger.bold(`Guardrail BLOCKED — ${count} new regression${count === 1 ? '' : 's'}`);
   }
   if (result.warns) {
@@ -144,6 +171,14 @@ function formatPairLines(p: ClassifiedPair, indent: string): string[] {
   );
   for (const r of p.classification.reasons) {
     out.push(`${indent}  · ${r.code}: ${r.detail}`);
+  }
+  if (p.suppressedByAllowlist) {
+    const exp = p.suppressedByAllowlist.expiresAt
+      ? `, expires ${p.suppressedByAllowlist.expiresAt}`
+      : '';
+    out.push(
+      `${indent}  · allowlisted: ${p.suppressedByAllowlist.category}${exp} (waived from the verdict)`,
+    );
   }
   return out;
 }
@@ -267,6 +302,9 @@ export interface GuardrailJsonPayload {
   readonly summary: {
     readonly pairs: number;
     readonly blocking: number;
+    /** Pairs the classifier would block but an active allowlist entry
+     *  waived. Excluded from `blocking`; surfaced for review. */
+    readonly suppressed: number;
     readonly warning: number;
     readonly persisted: number;
     readonly resolved: number;
@@ -283,12 +321,22 @@ export interface GuardrailJsonPayload {
     readonly file?: string;
     readonly line?: number;
     readonly overlapsChangedLines?: boolean;
+    /** Present when an active allowlist entry waived this pair from the
+     *  verdict. `blocks` stays true (the classifier's view); consumers
+     *  deciding pass/fail must treat a pair with this field as
+     *  non-blocking — mirror of the top-level `verdict`. */
+    readonly suppressedByAllowlist?: {
+      readonly fingerprint: string;
+      readonly category: string;
+      readonly expiresAt?: string;
+    };
     readonly reasons: ReadonlyArray<MatchReason>;
   }>;
 }
 
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
-  const blocking = result.pairs.filter((p) => p.classification.blocks).length;
+  const blocking = result.pairs.filter(isBlocking).length;
+  const suppressed = result.pairs.filter(isAllowlistSuppressed).length;
   const warning = result.pairs.filter(
     (p) => !p.classification.blocks && p.classification.warns,
   ).length;
@@ -339,6 +387,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     summary: {
       pairs: result.pairs.length,
       blocking,
+      suppressed,
       warning,
       persisted,
       resolved,
@@ -356,6 +405,9 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       ...(p.line !== undefined ? { line: p.line } : {}),
       ...(p.overlapsChangedLines !== undefined
         ? { overlapsChangedLines: p.overlapsChangedLines }
+        : {}),
+      ...(p.suppressedByAllowlist !== undefined
+        ? { suppressedByAllowlist: p.suppressedByAllowlist }
         : {}),
       reasons: p.classification.reasons,
     })),
@@ -377,7 +429,8 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
  */
 export function renderMarkdown(result: GuardrailCheckResult): string {
   const lines: string[] = [];
-  const blocking = result.pairs.filter((p) => p.classification.blocks);
+  const blocking = result.pairs.filter(isBlocking);
+  const suppressed = result.pairs.filter(isAllowlistSuppressed);
   const warning = result.pairs.filter((p) => !p.classification.blocks && p.classification.warns);
   const resolved = result.pairs.filter((p) => p.classification.status === 'removed');
 
@@ -393,6 +446,30 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('| Status | Kind | Severity | Location | Reason |');
     lines.push('|---|---|---|---|---|');
     for (const p of blocking) lines.push(markdownPairRow(p));
+    lines.push('');
+  }
+
+  if (suppressed.length > 0) {
+    lines.push('<details>');
+    lines.push(`<summary>Suppressed by allowlist (${suppressed.length})</summary>`);
+    lines.push('');
+    lines.push(
+      'These findings would block, but an active allowlist entry accepted them. ' +
+        'Review the category + expiry before approving.',
+    );
+    lines.push('');
+    lines.push('| Status | Kind | Severity | Location | Category | Expires |');
+    lines.push('|---|---|---|---|---|---|');
+    for (const p of suppressed) {
+      const s = p.suppressedByAllowlist;
+      lines.push(
+        `| ${escapeMd(statusLabel(p.classification.status))} | ${escapeMd(p.kind)} | ` +
+          `${escapeMd(p.severity ?? '—')} | ${escapeMd(locatorProse(p) || '—')} | ` +
+          `${escapeMd(s?.category ?? '—')} | ${escapeMd(s?.expiresAt ?? '—')} |`,
+      );
+    }
+    lines.push('');
+    lines.push('</details>');
     lines.push('');
   }
 

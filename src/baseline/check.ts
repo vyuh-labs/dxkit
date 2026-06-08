@@ -62,6 +62,9 @@ import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { computeAllowlistDelta, type AllowlistDelta } from '../allowlist/diff';
+import { findEntry, isEntryActive, loadAllowlist } from '../allowlist/file';
+import type { AllowlistFile } from '../allowlist/file';
+import type { AllowlistCategory } from '../allowlist/categories';
 
 export interface RunGuardrailCheckOptions {
   /** Repo root being checked. Caller should pass an absolute path. */
@@ -125,6 +128,27 @@ export interface ClassifiedPair {
    *  `newSevereQualityIssueInChangedFiles` / `newUntestedChangedSource`
    *  block rules. */
   readonly overlapsChangedLines?: boolean;
+  /** Present when an active (unexpired) allowlist entry matches this
+   *  finding's fingerprint AND the classifier would otherwise block.
+   *  The block is waived; this field records WHY so renderers can
+   *  show the reviewed-and-accepted rationale instead of silently
+   *  dropping the finding. Expired entries never populate this — the
+   *  finding re-blocks and the stale entry is surfaced for pruning. */
+  readonly suppressedByAllowlist?: AllowlistSuppression;
+}
+
+/**
+ * Why a would-block finding didn't block: an active allowlist entry
+ * accepted it. Carries the audit fields a reviewer needs to judge the
+ * suppression at a glance (category + expiry), keyed by the matched
+ * fingerprint.
+ */
+export interface AllowlistSuppression {
+  readonly fingerprint: string;
+  readonly category: AllowlistCategory;
+  /** ISO `YYYY-MM-DD` expiry when the entry carries one; absent for
+   *  non-expiring categories. */
+  readonly expiresAt?: string;
 }
 
 export interface EnvelopeDrift {
@@ -264,6 +288,14 @@ export async function runGuardrailCheck(
     return cached;
   };
 
+  // Load the per-finding allowlist once. An active (unexpired) entry
+  // whose fingerprint matches a would-block finding waives the block —
+  // this is what makes "I reviewed and accepted this finding" actually
+  // suppress a net-new regression, not just annotate it. Null when no
+  // allowlist file is present (the common case).
+  const allowlist = loadAllowlist(cwd);
+  const now = new Date();
+
   const classifiedPairs: ClassifiedPair[] = [];
   let blocks = false;
   let warns = false;
@@ -301,7 +333,19 @@ export async function runGuardrailCheck(
     };
 
     const classification = classify(pair, policy, context);
-    if (classification.blocks) blocks = true;
+
+    // Allowlist suppression: only consulted when the classifier would
+    // block. An active entry matching this finding's fingerprint (and
+    // kind, to rule out an astronomically-unlikely cross-kind hash
+    // collision) waives the block. Expired entries are skipped here so
+    // the finding re-blocks the moment its accepted-risk window lapses.
+    const suppressedByAllowlist =
+      classification.blocks && allowlist
+        ? allowlistSuppressionFor(allowlist, anchorEntry, now)
+        : undefined;
+
+    const effectiveBlocks = classification.blocks && suppressedByAllowlist === undefined;
+    if (effectiveBlocks) blocks = true;
     if (classification.warns) warns = true;
 
     classifiedPairs.push({
@@ -312,6 +356,7 @@ export async function runGuardrailCheck(
       ...(file !== undefined ? { file } : {}),
       ...(line !== undefined ? { line } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
+      ...(suppressedByAllowlist !== undefined ? { suppressedByAllowlist } : {}),
     });
   }
 
@@ -321,10 +366,12 @@ export async function runGuardrailCheck(
 
   // Re-derive the verdict after filtering — a --changed-only run
   // shouldn't be blocked by a pair that the filter just dropped.
+  // `pairBlocks` folds in allowlist suppression so a suppressed pair
+  // never contributes to the verdict here either.
   let filteredBlocks = false;
   let filteredWarns = false;
   for (const p of filteredPairs) {
-    if (p.classification.blocks) filteredBlocks = true;
+    if (pairBlocks(p)) filteredBlocks = true;
     if (p.classification.warns) filteredWarns = true;
   }
 
@@ -511,6 +558,44 @@ function locatorLine(entry: BaselineEntry): number | undefined {
  * changed line. That's the exact scope a pre-commit / pre-push hook
  * wants — "only flag what this developer just touched."
  */
+/**
+ * Whether a classified pair contributes a BLOCK to the verdict. Folds
+ * the classifier's verdict together with allowlist suppression: a pair
+ * the classifier would block but an active allowlist entry accepted
+ * does not block. Single chokepoint so the main verdict and the
+ * post-`--changed-only` re-derivation can't drift.
+ */
+function pairBlocks(p: ClassifiedPair): boolean {
+  return p.classification.blocks && p.suppressedByAllowlist === undefined;
+}
+
+/**
+ * Resolve the active allowlist suppression for an anchor finding, or
+ * `undefined` when none applies. Matches by fingerprint (`entry.id`)
+ * AND kind — the fingerprint alone is identity, but pinning kind too
+ * rules out a cross-kind hash collision waiving the wrong finding.
+ * Expired entries return `undefined` so the finding re-blocks once its
+ * window lapses.
+ *
+ * Exported for unit testing: the expiry + kind-guard branches are
+ * exercised directly here so the (expensive) integration test only has
+ * to prove the verdict wiring flips.
+ */
+export function allowlistSuppressionFor(
+  allowlist: AllowlistFile,
+  anchorEntry: BaselineEntry,
+  now: Date,
+): AllowlistSuppression | undefined {
+  const entry = findEntry(allowlist, anchorEntry.id);
+  if (!entry || entry.kind !== anchorEntry.kind) return undefined;
+  if (!isEntryActive(entry, now)) return undefined;
+  return {
+    fingerprint: entry.fingerprint,
+    category: entry.category,
+    ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
+  };
+}
+
 function keepUnderChangedOnly(p: ClassifiedPair): boolean {
   if (p.file === undefined || p.line === undefined) return true;
   const isNewSide =
