@@ -155,6 +155,30 @@ function readHooksPath(cwd: string): string | null {
 }
 
 /**
+ * Whether `@vyuhlabs/dxkit` is declared in the consumer's package.json
+ * (either dependency bucket). The hooks + CI guardrail resolve a
+ * project-local `./node_modules/.bin/vyuh-dxkit` first; without the dep
+ * declared they silently fall back to a global (possibly stale) install
+ * or fail on a fresh CI runner. Returns null when there's no
+ * package.json (non-Node repo — the global/npx path is expected).
+ */
+function dxkitDeclaredAsDep(cwd: string): boolean | null {
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return Boolean(
+      pkg.dependencies?.['@vyuhlabs/dxkit'] || pkg.devDependencies?.['@vyuhlabs/dxkit'],
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Count failing scanner-tool installs by reading the cached
  * dxkit-tools-status sentinel that `vyuh-dxkit tools install --yes`
  * writes. We avoid re-running `tools list` here because it spawns
@@ -418,6 +442,34 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
               skill: 'dxkit-hooks',
             },
           }),
+    });
+  }
+
+  // 1b. dxkit declared as a project dependency. The hooks + CI guardrail
+  // resolve `./node_modules/.bin/vyuh-dxkit` before any global, so a repo
+  // that wires those surfaces but doesn't declare the dep runs whatever
+  // stale global is on PATH (or fails on a fresh CI runner). Only flag
+  // when a guardrail surface is actually present — a bare Node repo with
+  // no hook/CI has nothing to resolve.
+  const guardrailSurfacePresent =
+    hookFileExists || fs.existsSync(path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'));
+  const declared = dxkitDeclaredAsDep(cwd);
+  if (guardrailSurfacePresent && declared === false) {
+    checks.push({
+      label: 'dxkit in package.json devDependencies',
+      ok: false,
+      tier: 'operational',
+      fix: {
+        hint: 'Declare dxkit as a project-local devDependency so the hooks + CI guardrail run a pinned version instead of a global (or missing) one.',
+        command: 'npm install --save-dev @vyuhlabs/dxkit',
+        skill: 'dxkit-fix',
+      },
+    });
+  } else if (guardrailSurfacePresent && declared === true) {
+    checks.push({
+      label: 'dxkit in package.json devDependencies',
+      ok: true,
+      tier: 'operational',
     });
   }
 

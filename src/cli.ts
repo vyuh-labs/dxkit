@@ -28,6 +28,7 @@ import {
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
+  installDxkitDevDependency,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
 import * as fs from 'fs';
@@ -479,6 +480,18 @@ export async function run(argv: string[]): Promise<void> {
         shipResults.push({
           label: 'CI deep-SAST refresh workflow',
           result: installCiDeepSastRefresh(cwd, { force: !!values.force }),
+        });
+      }
+
+      // dxkit must resolve project-locally for the hooks + CI guardrail
+      // to run a pinned version (both prefer ./node_modules/.bin over a
+      // global). Add it to devDependencies whenever a surface that
+      // invokes it is installed. No-ops for non-Node repos and when the
+      // consumer already declares the dep.
+      if (wantHooks || wantCi) {
+        shipResults.push({
+          label: 'dxkit devDependency',
+          result: installDxkitDevDependency(cwd, { force: !!values.force }),
         });
       }
 

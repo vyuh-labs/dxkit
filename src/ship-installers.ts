@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import { makeExecutable } from './files';
 import { detect } from './detect';
 import { buildDevcontainerExtensions, buildDevcontainerFeatures } from './languages';
+import { VERSION } from './constants';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -571,6 +572,78 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
   result.notes.push(
     'Wired `vyuh-dxkit hooks activate` into package.json postinstall — every clone + `npm install` ' +
       'will activate `core.hooksPath = .githooks` automatically. (Manual one-time activation no longer needed.)',
+  );
+  return result;
+}
+
+const DXKIT_PACKAGE = '@vyuhlabs/dxkit';
+
+/**
+ * Ensure `@vyuhlabs/dxkit` is in the consumer's package.json
+ * devDependencies, pinned to the version that ran init.
+ *
+ * The git hooks AND the CI guardrail workflow both resolve
+ * `./node_modules/.bin/vyuh-dxkit` first and only fall back to a global
+ * install. Without a project-local devDep they silently run whatever
+ * stale global happens to be on PATH — or fail outright on a fresh CI
+ * runner where no global exists. Pinning the dep makes the guardrail
+ * version-locked to the project, which is the whole point of the
+ * local-first resolution (and the only way CI can re-read a baseline +
+ * external snapshots produced by this version).
+ *
+ * Conflict policy (mirrors the rest of the ship surface):
+ *   - No package.json → skip (non-Node repo; uses the global/npx path).
+ *   - Already in dependencies OR devDependencies → skip, preserving the
+ *     consumer's chosen spec (never repin or downgrade).
+ *   - Otherwise → add `^X.Y.Z` to devDependencies and note that the
+ *     consumer must run `npm install` to provision it.
+ */
+export function installDxkitDevDependency(
+  cwd: string,
+  _opts: InstallerOpts = {},
+): ShipInstallResult {
+  const result = emptyResult();
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) return result;
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(pkgPath, 'utf-8');
+  } catch {
+    return result;
+  }
+
+  type DepMap = Record<string, string>;
+  type PackageJson = { dependencies?: DepMap; devDependencies?: DepMap } & Record<string, unknown>;
+  let pkg: PackageJson;
+  try {
+    pkg = JSON.parse(raw) as PackageJson;
+  } catch {
+    result.notes.push(
+      `Skipped dxkit devDependency wire-up: ${path.relative(cwd, pkgPath)} is not valid JSON.`,
+    );
+    return result;
+  }
+
+  if (pkg.dependencies?.[DXKIT_PACKAGE] || pkg.devDependencies?.[DXKIT_PACKAGE]) {
+    result.skipped.push('package.json (devDependencies)');
+    return result;
+  }
+
+  // Pin to the running version's minor range so hooks/CI stay on a
+  // version that understands this project's baseline + snapshots, while
+  // still picking up patch + minor fixes. A bare `latest` is the
+  // fallback when the version is unreadable (broken install reports
+  // '0.0.0').
+  const spec = VERSION && VERSION !== '0.0.0' ? `^${VERSION}` : 'latest';
+  pkg.devDependencies = { ...(pkg.devDependencies ?? {}), [DXKIT_PACKAGE]: spec };
+
+  const trailingNewline = raw.endsWith('\n') ? '\n' : '';
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailingNewline, 'utf-8');
+  result.installed.push('package.json (devDependencies)');
+  result.notes.push(
+    `Added ${DXKIT_PACKAGE}@${spec} to devDependencies — run \`npm install\` to provision it so the ` +
+      `git hooks + CI guardrail resolve a project-local dxkit instead of a global (or missing) one.`,
   );
   return result;
 }

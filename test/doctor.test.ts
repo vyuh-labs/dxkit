@@ -169,6 +169,40 @@ describe('doctor: operational health (tier 3)', () => {
     expect(r.stdout).toContain('Suggested fixes');
     expect(r.stdout).toContain('dxkit-fix skill');
   });
+
+  it('flags dxkit-not-a-devDependency when a hook exists but package.json omits it', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-devdep-missing-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'demo' }, null, 2));
+      fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.githooks', 'pre-push'), '#!/bin/sh\n');
+      const r = runDoctor(tmp);
+      expect(r.stdout).toContain('dxkit in package.json devDependencies');
+      expect(r.stdout).toContain('npm install --save-dev @vyuhlabs/dxkit');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('passes the devDependency check when dxkit is declared', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-devdep-present-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      fs.writeFileSync(
+        path.join(tmp, 'package.json'),
+        JSON.stringify({ name: 'demo', devDependencies: { '@vyuhlabs/dxkit': '^2.9.0' } }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.githooks', 'pre-push'), '#!/bin/sh\n');
+      const r = runDoctor(tmp);
+      // Check present and not in the fixes list for this label.
+      expect(r.stdout).toContain('dxkit in package.json devDependencies');
+      expect(r.stdout).not.toContain('npm install --save-dev @vyuhlabs/dxkit');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('doctor --json: structured output', () => {
