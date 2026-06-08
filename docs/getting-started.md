@@ -297,7 +297,10 @@ See [`vyuh-dxkit issue`](commands/issue.md) for full details.
   it, an automatic `snyk code test` fallback on free/team), `--sarif <file>`
   (any SARIF engine), or `--codeql` (open-source / GHAS). Ingested findings
   are fingerprinted, baselined, guardrailed, and graph-linked like native
-  ones. The `dxkit-ingest` skill walks through token setup.
+  ones — and stay in sync with the source engine: a finding you dismissed
+  upstream (its SARIF `suppressions`) doesn't re-surface, and `.dxkit-ignore`
+  path exclusions apply to ingested findings the same as native ones. The
+  `dxkit-ingest` skill walks through token setup.
 - Per-command pages in [`commands/`](commands/) describe options +
   output shape in detail.
 - [Allowlist reference](commands/allowlist.md) — per-finding

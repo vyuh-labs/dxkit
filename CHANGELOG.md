@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-06-08
+
+### Cross-tool dedup + allowlist suppression + ignore sync
+
+A follow-up to 2.9's ingestion: when two engines flag the same weakness, count
+it once; make the allowlist actually suppress; and keep ignores in sync across
+the tools dxkit ingests from.
+
+- **Cross-tool dedup.** Two engines that flag one weakness at one site under
+  different rule names no longer double-count. The aggregator collapses them via
+  a canonical-rule map and a CWE-at-the-same-location bridge (only ever across
+  different tools), keeping the higher severity and recording every contributing
+  tool.
+- **The allowlist now suppresses findings from the guardrail verdict.**
+  Previously it was audit-only (category / reason / expiry + a PR-comment delta)
+  while the baseline was the sole suppressor — a reviewed-and-accepted finding
+  that landed outside the baseline still blocked. An active, unexpired allowlist
+  entry now waives a matching finding from the verdict; expired entries stop
+  suppressing, so the finding re-blocks the moment its window lapses. Suppressed
+  findings surface in their own report section (console / JSON / markdown) —
+  visible for review, never silently dropped, never counted as a live
+  regression.
+- **Robust matching across dedup.** A suppression keyed on a contributing
+  fingerprint still matches the merged finding, so dedup nondeterminism between
+  runs (which engine is present, line wobble) can't silently orphan an
+  acceptance.
+- **Allowlist expiry surfaced.** `vyuh-dxkit doctor` flags expired allowlist
+  entries (their findings re-block) and entries expiring within the audit
+  window. The allowlist docs gain a verdict-behavior + expiry-lifecycle section.
+- **Ignore sync across tools.**
+  - dxkit honors a SARIF result's own `suppressions`: a finding dismissed
+    upstream (Snyk Code, CodeQL, Semgrep Pro) no longer re-surfaces here.
+  - Ingested findings pass through the same `.dxkit-ignore` path exclusions as
+    native findings — an external engine that scans vendored / generated /
+    fixture code no longer leaks findings dxkit would never raise itself.
+
+### Upgrading from 2.9.0 — re-baseline + re-point the allowlist
+
+Cross-tool dedup changes the fingerprints of merged findings, so a baseline or
+allowlist captured on 2.9.0 partially goes stale:
+
+1. **Re-baseline:** `vyuh-dxkit baseline create --force`. (On a real polyglot
+   repo, most findings keep their fingerprint; only the cross-tool merges
+   change.)
+2. **Re-point the allowlist:** run `vyuh-dxkit allowlist audit` to find entries
+   that no longer match a finding, then re-add them against the fresh
+   fingerprints from the guardrail output (`vyuh-dxkit allowlist prune` clears
+   the stale ones). Robust matching prevents _future_ run-to-run orphaning but
+   cannot bridge this one-time fingerprint change, so the re-point is manual.
+
 ## [2.9.0] - 2026-06-08
 
 ### Deep SAST — engine-agnostic interprocedural findings (2.9)
