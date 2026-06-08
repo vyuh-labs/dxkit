@@ -203,6 +203,49 @@ describe('doctor: operational health (tier 3)', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  // A hook wired into core.hooksPath but left non-executable is silently
+  // ignored by git — doctor must NOT report a false green here.
+  it.skipIf(process.platform === 'win32')(
+    'flags a wired-but-non-executable hook instead of a false green',
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-hook-nonexec-'));
+      try {
+        execSync('git init -q', { cwd: tmp });
+        execSync('git config --local core.hooksPath .githooks', { cwd: tmp });
+        fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
+        const hook = path.join(tmp, '.githooks', 'pre-push');
+        fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n');
+        fs.chmodSync(hook, 0o644); // wired but not executable
+        const r = runDoctor(tmp);
+        expect(r.stdout).toContain('git hooks active');
+        expect(r.stdout).toContain('not executable');
+        expect(r.stdout).toContain('npx vyuh-dxkit hooks activate');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'passes the hooks check when wired AND executable',
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-hook-exec-'));
+      try {
+        execSync('git init -q', { cwd: tmp });
+        execSync('git config --local core.hooksPath .githooks', { cwd: tmp });
+        fs.mkdirSync(path.join(tmp, '.githooks'), { recursive: true });
+        const hook = path.join(tmp, '.githooks', 'pre-push');
+        fs.writeFileSync(hook, '#!/bin/sh\nexit 0\n');
+        fs.chmodSync(hook, 0o755);
+        const r = runDoctor(tmp);
+        expect(r.stdout).toContain('git hooks active');
+        expect(r.stdout).not.toContain('not executable');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('doctor --json: structured output', () => {
