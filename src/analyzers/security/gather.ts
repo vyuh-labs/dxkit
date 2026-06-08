@@ -19,7 +19,7 @@ import { scoreFindings } from '../tools/risk-score';
 import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { externalToSecurityFindings } from '../../ingest/normalize';
 import { readAllSnapshots, snapshotEngines } from '../../ingest/snapshot';
-import { getFindExcludeFlags } from '../tools/exclusions';
+import { getFindExcludeFlags, isExcludedPath } from '../tools/exclusions';
 import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-source-files';
 import * as path from 'path';
 import { SecurityFinding, DepVulnSummary, Severity } from './types';
@@ -571,7 +571,16 @@ export async function buildSecurityAggregateForHealth(
   // Ingested external-engine findings (Snyk Code / CodeQL / SARIF) read
   // from committed `.dxkit/external/` snapshots. Absent → empty → the
   // aggregate is byte-identical to a run with no ingestion configured.
-  const externalFindings = externalToSecurityFindings(readAllSnapshots(cwd));
+  //
+  // Path exclusions apply to ingested findings too: an external engine
+  // may scan a wider tree than dxkit (vendored code, generated output,
+  // test fixtures). Filtering here through the one canonical exclusion
+  // check keeps `.dxkit-ignore` authoritative over ingested findings the
+  // same way it already is over native ones — a finding dxkit would
+  // never raise in an excluded path doesn't sneak in via ingestion.
+  const externalFindings = externalToSecurityFindings(readAllSnapshots(cwd)).filter(
+    (f) => !isExcludedPath(cwd, f.file),
+  );
   const externalEngines = snapshotEngines(cwd);
 
   return buildSecurityAggregate({

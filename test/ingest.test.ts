@@ -29,6 +29,7 @@ import { snykCodeTestArgs } from '../src/ingest/snyk-cli';
 import { isNotEntitled } from '../src/ingest-cli';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { readDeepSastConfig } from '../src/ingest/config';
+import { isExcludedPath, clearExclusionsCache } from '../src/analyzers/tools/exclusions';
 import { codeqlLanguagesFromFlags, anyActivePackSupportsSnykCode } from '../src/languages/index';
 import type { DetectedStack } from '../src/types';
 
@@ -532,6 +533,45 @@ describe('snapshot round-trip', () => {
       expect(readAllSnapshots(dir)).toEqual([]);
       expect(snapshotEngines(dir)).toEqual([]);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ingested findings respect path exclusions (.dxkit-ignore sync)', () => {
+  it('drops ingested findings in excluded paths, keeps in-scope ones', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ingest-exclude-'));
+    try {
+      clearExclusionsCache();
+      // A custom user exclusion the external engine doesn't know about.
+      fs.writeFileSync(path.join(dir, '.dxkit-ignore'), 'third_party_snyk_only/\n');
+      const f = (file: string) => ({
+        engine: 'snyk-code' as const,
+        severity: 'high' as const,
+        category: 'code' as const,
+        cwe: 'CWE-94',
+        rule: 'r',
+        title: 't',
+        file,
+        line: 5,
+      });
+      writeSnapshot(dir, {
+        schemaVersion: 1,
+        engine: 'snyk-code',
+        generatedAt: '2026-01-01T00:00:00Z',
+        findings: [
+          f('third_party_snyk_only/lib.js'), // custom .dxkit-ignore exclusion
+          f('node_modules/pkg/index.js'), // default exclusion
+          f('src/app.ts'), // in scope
+        ],
+      });
+      // Exactly the filter gather.ts applies at read time.
+      const kept = externalToSecurityFindings(readAllSnapshots(dir)).filter(
+        (x) => !isExcludedPath(dir, x.file),
+      );
+      expect(kept.map((x) => x.file)).toEqual(['src/app.ts']);
+    } finally {
+      clearExclusionsCache();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
