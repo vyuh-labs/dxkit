@@ -22,21 +22,37 @@ Run the resolver's logic before ingesting:
 
 **Never run CodeQL against a non-public repo without confirming the user has GitHub Advanced Security.** dxkit prompts for this; honor it.
 
-## Path A — ingest Snyk Code (quota-free, works on the free tier)
-
-The findings already exist in the customer's Snyk project (the Snyk UI is a view over them). Read them via the API — do NOT re-scan (that burns their capped Code-test quota).
+## Path A — ingest Snyk Code
 
 ```bash
-# Token: a free personal API token from Snyk → Account settings → API token.
+# Token: a Snyk API token from Snyk → Account settings → API token.
+# dxkit reads it from the ENVIRONMENT — it does NOT auto-load a .env file.
 export SNYK_TOKEN=...        # in CI, add this once as a repo/org Actions secret
-# org id: Snyk → Settings → Organization ID
-# project id: the project page URL in the Snyk UI
+# org/project resolve from the flag, then .vyuh-dxkit.json, then the
+# environment (SNYK_ORG_ID / SNYK_PROJECT_ID) — so an exported shell needs
+# no flags. The project id is the project page URL in the Snyk UI.
 npx vyuh-dxkit ingest --from-snyk --org <org-id> --project <project-id>
 ```
 
-This writes `.dxkit/external/snyk-code.json`. **Commit it** — every developer and CI run then reads the findings WITHOUT needing the token; only whoever runs `ingest` (ideally one CI refresh job) needs it.
+`--from-snyk` works on **every Snyk plan**, two ways:
 
-If the read fails with an auth error, the token scheme may differ for the tenant — surface the exact API error to the user rather than guessing.
+- **REST API (quota-free)** — reads stored findings without consuming the
+  org's Snyk Code test quota. But REST API access is a **Snyk Enterprise**
+  entitlement; on Free/Team plans the read returns 403.
+- **CLI fallback (free/team)** — on that 403 dxkit automatically falls back to
+  `snyk code test` (the Snyk Code *product* entitlement that free includes),
+  which writes SARIF dxkit ingests. This **does** cost one Snyk Code test from
+  the quota per run, and only needs the org (no project id). Pass `--snyk-cli`
+  to force this path and skip the REST attempt. dxkit installs the Snyk CLI on
+  demand if it's missing.
+
+So on a free-tier customer, `--from-snyk` "just works" — it tries REST, hits
+403, and runs the CLI test. Either way it writes `.dxkit/external/snyk-code.json`.
+**Commit it** — every developer and CI run then reads the findings WITHOUT a
+token; only whoever runs `ingest` (ideally one CI refresh job) needs it.
+
+If `SNYK_TOKEN` is unset, dxkit says so explicitly — `export` it (or set the CI
+secret); it will not read a `.env` file for you.
 
 ## Path B — ingest a SARIF file (any engine)
 
@@ -74,7 +90,7 @@ Ingested findings flow through the same aggregate as native findings, so they ap
 
 ## Keeping it fresh (CI)
 
-Add a scheduled refresh (mirrors `dxkit-baseline-refresh`): a CI job with the `SNYK_TOKEN` secret runs `ingest --from-snyk` and commits the updated snapshot. The ingested findings are a point-in-time snapshot of the engine's last scan — re-ingest after the engine re-scans.
+Add a scheduled refresh (mirrors `dxkit-baseline-refresh`): a CI job with the `SNYK_TOKEN` secret runs `ingest --from-snyk` and commits the updated snapshot. The bundled `--with-deep-sast-refresh` workflow (`workflow_dispatch`) does exactly this; its `method` input picks `api` (Enterprise, quota-free) or `cli` (free/team, one test per run). The ingested findings are a point-in-time snapshot of the engine's last scan — re-ingest after the engine re-scans.
 
 ## Hand-offs
 

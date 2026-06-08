@@ -51,7 +51,7 @@ Both build on the graph foundation that 2.7 shipped.
 - [x] `dxkit-feature` skill — drives net-new development the way `dxkit-action` drives fixes: orient via the code graph (`context` / `explore`) to find where a feature plugs in and what it touches, then run the analyzers + `guardrail check` on the change so the feature doesn't ship a regression. Degrades gracefully to grep + read when no graph is present; verification never depends on the graph.
 - [x] `dxkit-docs` skill — generates the documentation a repo is missing: reads the Documentation dimension's gaps, orients on the real code via the graph, then writes a grounded README / docstrings / API + architecture docs and re-runs the slop check so generated prose doesn't trade Documentation score for Quality score.
 
-## Next release: 2.9 — Deep SAST (engine-agnostic interprocedural findings)
+## Shipped in 2.9 — Deep SAST (engine-agnostic interprocedural findings)
 
 dxkit's bundled SAST (community semgrep) is intraprocedural: it cannot follow
 taint across function boundaries, so it misses the interprocedural class of
@@ -66,26 +66,27 @@ detection engines; it makes their output enforceable and fixable.
 
 ### Engine-agnostic ingestion
 
-- [ ] Normalized external-finding ingestion: one pipeline for findings from
+- [x] Normalized external-finding ingestion: one pipeline for findings from
       Snyk Code, CodeQL, Semgrep Pro, or any SARIF-emitting tool. Findings enter
       through a single normalize layer, receive identity from the canonical
       fingerprint helpers, and flow into the same aggregate → baseline → guardrail
       → report → graph-context path as native findings (no engine-specific
       branches downstream).
-- [ ] `vyuh-dxkit ingest` (`--from-snyk` / `--sarif <file>` / `--codeql`),
+- [x] `vyuh-dxkit ingest` (`--from-snyk` / `--sarif <file>` / `--codeql`),
       writing a sanitized snapshot under `.dxkit/external/` that is committed so
       every developer and CI run reads it without needing an engine token.
 
 ### Snyk Code ingestion (works on the free tier)
 
-- [ ] Snyk REST API reader — pulls a project's already-computed Code findings
-      using a `SNYK_TOKEN`, consuming no Snyk test quota (it reads stored results,
-      it does not re-scan). An admin adds the token once as a CI secret; a refresh
-      workflow commits the snapshot so all users benefit without a local token.
+- [x] Snyk Code reader on every plan — the REST API reads already-computed
+      findings quota-free where available (Enterprise); on Free/Team plans it
+      automatically falls back to `snyk code test` (one test per run). Either way
+      a `SNYK_TOKEN` is added once as a CI secret and a refresh workflow commits
+      the snapshot so all users benefit without a local token.
 
 ### CodeQL on-demand (open-source / GitHub Advanced Security)
 
-- [ ] CodeQL runner that builds a database and runs the per-language security
+- [x] CodeQL runner that builds a database and runs the per-language security
       suite on demand (CI / pre-release, not the hook path), emitting SARIF into
       the same ingestion pipeline. License-gated: free for open-source repos and
       for private repos under GitHub Advanced Security; dxkit detects repo
@@ -93,19 +94,26 @@ detection engines; it makes their output enforceable and fixable.
 
 ### Recipe + selection + governance
 
-- [ ] Per-pack engine declaration in `LanguageSupport` (which engines apply to
+- [x] Per-pack engine declaration in `LanguageSupport` (which engines apply to
       a language, CodeQL query suite, whether a build is required) so adding a
       language or engine extends the recipe rather than branching analyzer code.
-- [ ] License-aware engine resolver that picks the engine from repo visibility,
+- [x] License-aware engine resolver that picks the engine from repo visibility,
       GitHub Advanced Security availability, and token presence — the same
       canonical-resolver pattern the baseline modes use.
-- [ ] Ingested findings linked to the code graph (`--graph-context`) so the
+- [x] Ingested findings linked to the code graph (`--graph-context`) so the
       agent fix loop sees blast radius and callers for an external engine's
       findings, then verifies the fix by re-running the analyzer and tests.
-- [ ] `dxkit-ingest` skill (token setup, pull, refresh, license guidance) and
+- [x] `dxkit-ingest` skill (token setup, pull, refresh, license guidance) and
       `dxkit-action` updated to triage and fix ingested + graph-linked findings.
 
-### Reachability refinements (carried from 2.8)
+Also in 2.9 — hardening that makes the guardrail actually fire on brownfield
+repos: `init`/`update` declare `@vyuhlabs/dxkit` as a devDependency so hooks +
+CI resolve a pinned local binary (not a stale global); `hooks activate`
+restores the hook's executable bit (git silently ignores a non-executable
+hook) and `doctor` verifies it; hook activation chains after an existing
+`postinstall`.
+
+## Next release — Reachability refinements (carried from 2.8)
 
 - [ ] Per-ecosystem reliability gating: only mark a finding `reachable: false` when its language pack resolves imports reliably (TS / Python / Go). For packs whose import resolution is unreliable (C# namespaces ≠ package names, etc.), leave `reachable` unset rather than risk a false "unreachable" that hides a real vuln.
 - [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders).
