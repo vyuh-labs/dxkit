@@ -12,6 +12,11 @@ import {
   locationKey,
   type DetailedGraphContext,
 } from '../../explore/finding-context';
+import {
+  formatAttributionCell,
+  attributionProvenanceLine,
+  type DetailedAttribution,
+} from '../../attribution/attribute';
 
 export interface TestGapsDetailedReport extends TestGapsReport {
   schemaVersion: string;
@@ -23,11 +28,15 @@ export interface TestGapsDetailedReport extends TestGapsReport {
    * Present only when `--graph-context` ran AND a graph loaded.
    */
   graphContext?: DetailedGraphContext;
+  /** Per-gap "who to ask" (file owner), keyed by file path. Present only
+   *  when the run passed `--attribute`. */
+  attribution?: DetailedAttribution;
 }
 
 export function buildTestGapsDetailed(
   report: TestGapsReport,
   graphContext?: DetailedGraphContext,
+  attribution?: DetailedAttribution,
 ): TestGapsDetailedReport {
   const counts = countsFromReport(report);
   // When a graph is present, re-rank the gap worklist by blast radius so
@@ -44,6 +53,7 @@ export function buildTestGapsDetailed(
     coverageScore: scoreTestGapsCounts(counts).score,
     actions,
     ...(graphContext ? { graphContext } : {}),
+    ...(attribution ? { attribution } : {}),
   };
 }
 
@@ -123,10 +133,10 @@ export function formatTestGapsDetailedMarkdown(
   L.push('## All Gaps by Risk Tier');
   L.push('');
   const gc = detailed.graphContext;
-  if (gc) {
-    L.push(graphContextProvenanceLine(gc));
-    L.push('');
-  }
+  const attr = detailed.attribution;
+  if (gc) L.push(graphContextProvenanceLine(gc));
+  if (attr) L.push(attributionProvenanceLine());
+  if (gc || attr) L.push('');
   // Within a tier, prefer higher blast radius (most-depended-on first)
   // when the graph stamped it, falling back to LOC. Mirrors the worklist
   // ranking so the table and the actions agree on ordering.
@@ -149,21 +159,24 @@ export function formatTestGapsDetailedMarkdown(
     if (items.length === 0) continue;
     L.push(`### ${tier.toUpperCase()} (${items.length})`);
     L.push('');
-    if (gc) {
-      L.push('| File | Type | Lines | Graph context |');
-      L.push('|------|------|------:|----------------|');
-      for (const g of items.slice(0, 50)) {
-        const ctx = gc.contexts[locationKey(g.path)];
-        L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} | ${formatGraphContextCell(ctx)} |`);
-      }
-      if (items.length > 50) L.push(`| … and ${items.length - 50} more | | | |`);
-    } else {
-      L.push('| File | Type | Lines |');
-      L.push('|------|------|------:|');
-      for (const g of items.slice(0, 50)) {
-        L.push(`| \`${g.path}\` | ${g.type} | ${g.lines} |`);
-      }
-      if (items.length > 50) L.push(`| … and ${items.length - 50} more | | |`);
+    const headers = ['File', 'Type', 'Lines'];
+    if (gc) headers.push('Graph context');
+    if (attr) headers.push('Who to ask');
+    L.push(`| ${headers.join(' | ')} |`);
+    L.push(`|${headers.map((h) => (h === 'Lines' ? '-----:' : '---')).join('|')}|`);
+    for (const g of items.slice(0, 50)) {
+      const cells = [`\`${g.path}\``, g.type, String(g.lines)];
+      if (gc) cells.push(formatGraphContextCell(gc.contexts[locationKey(g.path)]));
+      if (attr) cells.push(formatAttributionCell(attr.attributions[locationKey(g.path)]));
+      L.push(`| ${cells.join(' | ')} |`);
+    }
+    if (items.length > 50) {
+      L.push(
+        `| … and ${items.length - 50} more |${headers
+          .slice(1)
+          .map(() => ' |')
+          .join('')}`,
+      );
     }
     L.push('');
   }

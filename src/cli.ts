@@ -70,6 +70,23 @@ async function buildGraphContextIfRequested(
   return gc;
 }
 
+async function buildAttributionIfRequested(
+  enabled: boolean,
+  cwd: string,
+  locations: ReadonlyArray<{ file: string; line?: number }>,
+) {
+  if (!enabled) return undefined;
+  const { buildAttributionMap } = await import('./attribution/attribute');
+  const attr = buildAttributionMap(cwd, locations);
+  if (!attr) {
+    logger.dim('--attribute: no attributable locations (git blame produced nothing) — skipped.');
+    return undefined;
+  }
+  const n = Object.keys(attr.attributions).length;
+  logger.dim(`--attribute: "who to ask" attached to ${n}/${locations.length} finding location(s).`);
+  return attr;
+}
+
 /**
  * Apply `--fail-on-score` to a higher-is-better score. Exits with
  * code 1 + a logged reason when the gate fires. Skips when the user
@@ -234,6 +251,11 @@ function printUsage(): void {
     --graph-context   Vulnerabilities/test-gaps/quality: attach per-finding graph context
                       (module + blast radius) to the detailed report. Needs a graph.json
                       (run health first); fail-open — skipped silently if absent.
+    --attribute       Vulnerabilities/test-gaps/quality: attach a "who to ask" column to
+                      the detailed report (git blame → active-owner model; inactive authors
+                      routed to the current owner). Names + @handles, never emails. Opt-in;
+                      fail-open. Historical only — net-new findings are introduced by your
+                      own change.
     --xlsx            Licenses/bom: also write 15-col BOM XLSX
     --since           Dev-report: start date (YYYY-MM-DD)
     --filter          Bom: 'all' (default) or 'top-level' (keeps only root manifest deps;
@@ -342,6 +364,8 @@ export async function run(argv: string[]): Promise<void> {
       depth: { type: 'string' },
       // graph-context enrichment for detailed reports (vuln/test-gaps/quality)
       'graph-context': { type: 'boolean', default: false },
+      // attribution enrichment for detailed reports — "who to ask" (opt-in)
+      attribute: { type: 'boolean', default: false },
       // ingest flags (external SAST engines → .dxkit/external snapshots)
       sarif: { type: 'string' },
       'from-snyk': { type: 'boolean', default: false },
@@ -842,12 +866,18 @@ export async function run(argv: string[]): Promise<void> {
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
         const { buildSecurityDetailed, formatSecurityDetailedMarkdown } =
           await import('./analyzers/security/detailed');
+        const securityLocations = report.findings.map((f) => ({ file: f.file, line: f.line }));
         const graphContext = await buildGraphContextIfRequested(
           !!values['graph-context'],
           targetPath,
-          report.findings.map((f) => ({ file: f.file, line: f.line })),
+          securityLocations,
         );
-        const securityDetailed = buildSecurityDetailed(report, graphContext);
+        const securityAttribution = await buildAttributionIfRequested(
+          !!values.attribute,
+          targetPath,
+          securityLocations,
+        );
+        const securityDetailed = buildSecurityDetailed(report, graphContext, securityAttribution);
         const securityDetailedJsonPath = path.join(
           reportDir,
           `vulnerability-scan-${date}-detailed.json`,
@@ -968,7 +998,16 @@ export async function run(argv: string[]): Promise<void> {
           targetPath,
           report.gaps.map((g) => ({ file: g.path })),
         );
-        const testGapsDetailed = buildTestGapsDetailed(report, testGapsGraphContext);
+        const testGapsAttribution = await buildAttributionIfRequested(
+          !!values.attribute,
+          targetPath,
+          report.gaps.map((g) => ({ file: g.path })),
+        );
+        const testGapsDetailed = buildTestGapsDetailed(
+          report,
+          testGapsGraphContext,
+          testGapsAttribution,
+        );
         const testGapsDetailedJsonPath = path.join(reportDir, `test-gaps-${date}-detailed.json`);
         const testGapsDetailedMdPath = path.join(reportDir, `test-gaps-${date}-detailed.md`);
         fs.writeFileSync(
@@ -1068,14 +1107,25 @@ export async function run(argv: string[]): Promise<void> {
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
         const { buildQualityDetailed, formatQualityDetailedMarkdown } =
           await import('./analyzers/quality/detailed');
+        const qualityLocations = [
+          ...(report.metrics.topConsoleFiles ?? []),
+          ...(report.metrics.topTodoFiles ?? []),
+        ].map((f) => ({ file: f.file }));
         const qualityGraphContext = await buildGraphContextIfRequested(
           !!values['graph-context'],
           targetPath,
-          [...(report.metrics.topConsoleFiles ?? []), ...(report.metrics.topTodoFiles ?? [])].map(
-            (f) => ({ file: f.file }),
-          ),
+          qualityLocations,
         );
-        const qualityDetailed = buildQualityDetailed(report, qualityGraphContext);
+        const qualityAttribution = await buildAttributionIfRequested(
+          !!values.attribute,
+          targetPath,
+          qualityLocations,
+        );
+        const qualityDetailed = buildQualityDetailed(
+          report,
+          qualityGraphContext,
+          qualityAttribution,
+        );
         const qualityDetailedJsonPath = path.join(
           reportDir,
           `quality-review-${date}-detailed.json`,

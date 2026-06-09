@@ -187,6 +187,23 @@ export function rankOwners(
   return { ranked, busFactor, allInactive: activeOwners.length === 0 };
 }
 
+/**
+ * The set of NORMALIZED author emails considered currently active — anyone
+ * with a non-merge commit repo-wide within `since`. Departed contributors
+ * (no recent commit anywhere) are absent. Shared by the ownership ranking
+ * and by finding attribution (to decide whether a blamed author is still
+ * around to ask).
+ */
+export function gatherActiveEmails(cwd: string, since = '6 months ago'): Set<string> {
+  const out = run(`git shortlog -sne --no-merges --since='${since}' HEAD`, cwd, 30000);
+  const emails = new Set<string>();
+  for (const line of (out || '').split('\n')) {
+    const m = line.trim().match(/^\d+\s+.+?\s+<([^>]+)>$/);
+    if (m) emails.add(normalizeEmail(m[1]));
+  }
+  return emails;
+}
+
 export interface OwnersForOptions {
   /** Recent-activity window for "active" (git `--since`). Default 6 months. */
   readonly activeSince?: string;
@@ -230,14 +247,7 @@ export function ownersFor(
     if (name && email && dateISO) touches.push({ name, email, dateISO });
   }
 
-  // Active set: anyone with a non-merge commit repo-wide in the recent window.
-  const activeSince = opts.activeSince ?? '6 months ago';
-  const activeOut = run(`git shortlog -sne --no-merges --since='${activeSince}' HEAD`, cwd, 30000);
-  const activeEmails = new Set<string>();
-  for (const line of (activeOut || '').split('\n')) {
-    const m = line.trim().match(/^\d+\s+.+?\s+<([^>]+)>$/);
-    if (m) activeEmails.add(normalizeEmail(m[1]));
-  }
+  const activeEmails = gatherActiveEmails(cwd, opts.activeSince ?? '6 months ago');
 
   return rankOwners(touches, activeEmails, {
     excludeEmails: opts.excludeEmails,
