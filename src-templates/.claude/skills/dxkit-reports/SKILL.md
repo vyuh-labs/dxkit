@@ -103,7 +103,7 @@ Surface those three when summarizing a dep-vuln finding. The detailed JSON has t
 
 ## When the user wants to ACT on findings
 
-Hand off to the `dxkit-action` skill — that's the workflow for prioritizing + fixing + re-baselining. This skill stops at "here's what's wrong."
+Hand off to the `dxkit-action` skill — that's the workflow for prioritizing + fixing + re-baselining. This skill stops at "here's what's wrong." For a dimension-focused push, hand to the specialist generator skills instead: **dxkit-test** to close test-gaps / raise the Tests score, **dxkit-docs** to write missing documentation.
 
 ## Troubleshooting
 

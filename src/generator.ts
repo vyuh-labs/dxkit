@@ -134,6 +134,12 @@ const DXKIT_SKILLS = [
   // `.snyk` policy. The fix-vs-suppress decision + the `add` path stay
   // in dxkit-action; this owns everything after an entry exists.
   'dxkit-allowlist',
+  // dxkit-test: test-generation surface, the testing mirror of
+  // dxkit-docs. Reads the blast-radius-weighted test-gaps worklist,
+  // orients on real behavior via the graph, and writes meaningful tests
+  // that close the highest-risk gaps + move the Tests score without
+  // coverage theater. dxkit-action triages WHETHER to test; this WRITES.
+  'dxkit-test',
 ] as const;
 
 interface GenerateResult {
