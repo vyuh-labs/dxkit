@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { weightGapsByBlastRadius } from '../src/analyzers/tests/actions';
-import type { SourceFile } from '../src/analyzers/tests/types';
+import { buildTestGapsDetailed } from '../src/analyzers/tests/detailed';
+import type { SourceFile, TestGapsReport } from '../src/analyzers/tests/types';
 import type { DetailedGraphContext } from '../src/explore/finding-context';
 import type { FindingContext } from '../src/explore/queries';
 
@@ -75,5 +76,52 @@ describe('weightGapsByBlastRadius', () => {
       'src/unknown-big.ts', // unknowns fall back to LOC desc
       'src/unknown-small.ts',
     ]);
+  });
+});
+
+describe('buildTestGapsDetailed — weighting is score-invariant (A/B)', () => {
+  function report(gaps: SourceFile[]): TestGapsReport {
+    const byRisk = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const g of gaps) byRisk[g.risk]++;
+    return {
+      repo: 'r',
+      analyzedAt: '2026-06-09T00:00:00Z',
+      commitSha: 'abc',
+      branch: 'main',
+      summary: {
+        testFiles: 1,
+        activeTestFiles: 1,
+        commentedOutFiles: 0,
+        effectiveCoverage: 40,
+        coverageSource: 'import-graph',
+        coverageFidelity: 'import-graph',
+        sourceFiles: 10,
+        untestedCritical: byRisk.critical,
+        untestedHigh: byRisk.high,
+        untestedMedium: byRisk.medium,
+        untestedLow: byRisk.low,
+      },
+      testFiles: [],
+      gaps,
+      toolsUsed: ['find'],
+      toolsUnavailable: [],
+    } as TestGapsReport;
+  }
+
+  it('produces an IDENTICAL coverageScore with vs without graph context, but reorders gaps', () => {
+    const gaps = [gap('src/big.ts', 500, 'high'), gap('src/hub.ts', 40, 'high')];
+    const gc = graphContext({
+      'src/big.ts': ctx('src/big.ts', 1),
+      'src/hub.ts': ctx('src/hub.ts', 30),
+    });
+
+    const withoutGraph = buildTestGapsDetailed(report(gaps));
+    const withGraph = buildTestGapsDetailed(report(gaps), gc);
+
+    // The score is byte-stable — weighting can never move the Tests dimension.
+    expect(withGraph.coverageScore).toBe(withoutGraph.coverageScore);
+    // But the worklist reorders: the 30-caller hub leads, not the 500-line file.
+    expect(withoutGraph.gaps.map((g) => g.path)).toEqual(['src/big.ts', 'src/hub.ts']);
+    expect(withGraph.gaps.map((g) => g.path)).toEqual(['src/hub.ts', 'src/big.ts']);
   });
 });
