@@ -202,6 +202,29 @@ engine already computed** (Snyk Code / CodeQL encode it), not to compute our own
 - [ ] (Longer term) Densify the graphify call graph enough to attempt native
       intraprocedural→interprocedural reachability; gated on call-graph quality.
 
+### Finding attribution + reviewer recommendation
+
+Connect findings and PRs to the people who know the code, building on the
+existing dev-report analyzer (`ContributorStats` / `HotFile` from git history)
+and the code graph.
+
+- [ ] **Net-new finding attribution.** When the guardrail blocks a PR, name the
+      introducing commit + author for each net-new finding. This is cheap and
+      accurate — the introducer is the PR's own commits — and non-political (you
+      annotate your own change), so "who to ask" is unambiguous.
+- [ ] **Historical-finding attribution (opt-in, with care).** `git blame` for
+      pre-existing/baselined findings is fuzzy (it gives _last to touch_, not
+      _who introduced_ — a formatter run or file move reassigns it) and socially
+      loaded, which cuts against dxkit's "grandfather the past, gate the future"
+      stance. Gate it behind an explicit opt-in, and treat author emails with the
+      same disclosure posture as the baseline (don't bake PII into committed
+      reports on public repos).
+- [ ] **Reviewer recommendation in `dxkit-pr`.** Suggest reviewers for a PR from
+      the git history on the touched files + ownership of the blast-radius modules
+      (the graph already knows the dependents), honoring `CODEOWNERS` when present.
+      "Who knows this code" is a safer, higher-value signal than "who broke it";
+      it slots next to the reviewer checklist the skill already generates.
+
 ### AI readiness
 
 - [ ] Semantic anchors and function-body hashes for cross-file refactor detection
