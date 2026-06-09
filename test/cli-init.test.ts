@@ -122,6 +122,7 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
       'dxkit-ingest',
       'dxkit-allowlist',
       'dxkit-test',
+      'dxkit-pr',
     ];
     for (const name of expected) {
       const skillPath = path.join(tmpDir, '.claude', 'skills', name, 'SKILL.md');
