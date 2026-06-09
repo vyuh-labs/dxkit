@@ -16,7 +16,7 @@ import { ContributorStats, HotFile, CommitQuality, WeeklyVelocity } from './type
  * placeholders (`root`, `unknown`). Bot rows still appear in the
  * leaderboard but get tagged so they don't crowd out human signal.
  */
-function isBotAuthor(name: string, email: string): boolean {
+export function isBotAuthor(name: string, email: string): boolean {
   if (/\[bot\]/.test(name)) return true;
   if (/^(dependabot|renovate|github-actions|snyk-bot|deepsource-io)$/i.test(name)) return true;
   if (/^(dependabot|renovate|github-actions|noreply)@/.test(email)) return true;
@@ -31,7 +31,7 @@ function isBotAuthor(name: string, email: string): boolean {
  * collapse to the same cluster key. Lowercase the whole thing so
  * casing differences don't split a cluster.
  */
-function normalizeEmail(email: string): string {
+export function normalizeEmail(email: string): string {
   return email.toLowerCase().replace(/^\d+\+/, '');
 }
 
