@@ -43,6 +43,15 @@ A file is considered "tested" if:
 Without coverage data, the report opens with a banner explicitly
 calling out the heuristic and pointing to `--with-coverage`.
 
+**Within a tier, `--graph-context` weights the worklist by blast radius.**
+When a code graph is present, the most-depended-on untested files (the ones
+many other files call into) surface first within their risk tier — a
+30-caller untested file is a bigger liability than a 500-line leaf nothing
+calls. Files the graph can't resolve (or languages whose call graph is
+unreliable, e.g. C#) fall back to LOC ranking and are never dropped. This
+re-orders the worklist only; it never changes the Tests score (which comes
+from the tier counts).
+
 ## Output
 
 ```markdown

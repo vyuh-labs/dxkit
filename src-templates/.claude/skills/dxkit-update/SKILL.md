@@ -135,6 +135,10 @@ Iterate optional steps in the plan:
 | "Doctor says X is broken" | `dxkit-fix` |
 | "I want to run a report" | `dxkit-reports` |
 | "Fix these findings" | `dxkit-action` |
+| "Write the missing tests" | `dxkit-test` |
+| "Write the missing docs" | `dxkit-docs` |
+| "Manage / audit the allowlist" | `dxkit-allowlist` |
+| "Raise the PR" | `dxkit-pr` |
 | "Configure dxkit" | `dxkit-config` |
 | "Set up hooks" | `dxkit-hooks` |
 | "Explain dxkit" | `dxkit-learn` |

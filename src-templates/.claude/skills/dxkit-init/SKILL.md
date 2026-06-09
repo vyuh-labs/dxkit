@@ -21,7 +21,7 @@ Ask the user what they want, then pick the right invocation:
 
 | Flag | What it ships | Default under `--full`? |
 |---|---|---|
-| `--with-dxkit-agents` | The 6 dxkit-* skills + AGENTS.md + CLAUDE.md shim | Yes |
+| `--with-dxkit-agents` | The dxkit-* skills + AGENTS.md + CLAUDE.md shim | Yes |
 | `--with-hooks` | `.githooks/pre-push` + postinstall activation wire-up | Yes |
 | `--with-precommit-hook` | Adds `.githooks/pre-commit` (slow on large repos) | No (still opt-in) |
 | `--with-devcontainer` | `.devcontainer/devcontainer.json` (per-stack features) + post-create.sh | Yes |

@@ -82,7 +82,7 @@ Before running, ASK:
 
 Optional flags worth surfacing if the customer pushes back on "full":
 
-- `--with-dxkit-agents` — just the 8 dxkit-* skills (no hooks, no CI)
+- `--with-dxkit-agents` — just the dxkit-* skills (no hooks, no CI)
 - `--with-hooks --with-dxkit-agents` — skills + pre-push hook
 - `--with-precommit-hook` — also pre-commit (slow on large repos)
 
@@ -262,7 +262,7 @@ When in doubt, dxkit-onboard handles the full first-install journey and delegate
 ```
 ✓ Fresh dxkit install complete:
    • Binary: 2.5.X installed globally + project-local
-   • Scaffold: 8 dxkit-* skills, AGENTS.md, CLAUDE.md, devcontainer, hooks, CI workflows
+   • Scaffold: dxkit-* skills, AGENTS.md, CLAUDE.md, devcontainer, hooks, CI workflows
    • Doctor: 14/14 (Reports + Agent DX + Operational health)
    • Baseline: N findings locked in (or "skipped — you're triaging first")
    • Pre-commit: yes/no (your choice)

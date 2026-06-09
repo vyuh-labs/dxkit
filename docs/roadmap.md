@@ -28,7 +28,7 @@ What dxkit ships today and what is planned next. For per-release detail see [`CH
 ### Agent integration
 
 - [x] `AGENTS.md` (open standard, read by Claude Code, Codex, Cursor, Aider)
-- [x] Twelve `dxkit-*` Claude Code skills for the read, act, verify loop
+- [x] A suite of `dxkit-*` Claude Code skills for the read, act, verify loop
 - [x] Devcontainer with pinned per-stack toolchains
 - [x] Optional install scripts for AI agent CLIs
 
@@ -112,6 +112,49 @@ CI resolve a pinned local binary (not a stale global); `hooks activate`
 restores the hook's executable bit (git silently ignores a non-executable
 hook) and `doctor` verifies it; hook activation chains after an existing
 `postinstall`.
+
+## Shipped in 2.9.1–2.9.3 — governance depth + the agent loop
+
+Follow-ups that made the ingested + native findings genuinely enforceable and
+the fix loop targetable.
+
+### Cross-tool dedup + allowlist as a real gate (2.9.1)
+
+- [x] Cross-tool dedup — two engines flagging one weakness at one site collapse
+      to a single finding (canonical-rule map + same-location CWE bridge),
+      keeping the higher severity and recording every contributing tool.
+- [x] The allowlist suppresses findings from the guardrail verdict (was
+      audit-only), expiry-aware, with robust matching across dedup so run-to-run
+      nondeterminism can't orphan an acceptance.
+- [x] Inbound Snyk ignore sync — a finding dismissed upstream (SARIF
+      `result.suppressions`) no longer re-surfaces; ingested findings honor the
+      same `.dxkit-ignore` path exclusions as native ones.
+
+### Allowlist lifecycle + Snyk credential ergonomics (2.9.2)
+
+- [x] `allowlist remove <fingerprint>` and `allowlist audit --against-baseline`
+      (orphaned-entry bucket, flag-for-review never auto-removed).
+- [x] `allowlist export --snyk` — outbound ignore sync: writes a `.snyk` policy
+      for allowlisted Snyk Code findings, round-trip stable with the inbound reader.
+- [x] Opt-in `.env` loading scoped strictly to `SNYK_*` keys for
+      `ingest --from-snyk` (real env / CI secret always wins).
+- [x] `dxkit-allowlist` skill; skills + docs steer baseline refreshes to CI.
+
+### Targetable fix loop + test generation (2.9.3)
+
+- [x] Scoped fixes — `dxkit-action` burns down one category at a time
+      (dependency/BOM, security, code quality, tests, docs), running the report
+      that partitions that dimension and prioritizing within scope.
+- [x] `dxkit-test` skill — the testing mirror of `dxkit-docs`: reads the
+      blast-radius-weighted test-gaps worklist, orients via the graph, and writes
+      meaningful tests that close the highest-risk gaps without coverage theater.
+- [x] Test-gap blast-radius weighting — `test-gaps --graph-context` surfaces the
+      most-depended-on untested files first within each tier (ordering only; the
+      Tests score is unchanged).
+- [x] `dxkit-pr` skill — opens a PR with a diff-grounded title + body (features,
+      fixes, findings closed), the dxkit guardrail/allowlist/score signals, and a
+      tailored reviewer checklist. `dxkit-feature` now offers to write tests for a
+      new surface (user-confirmed) and hands off to `dxkit-test`.
 
 ## Next release — Reachability refinements (carried from 2.8)
 
