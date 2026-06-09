@@ -116,7 +116,7 @@ hook) and `doctor` verifies it; hook activation chains after an existing
 ## Next release — Reachability refinements (carried from 2.8)
 
 - [ ] Per-ecosystem reliability gating: only mark a finding `reachable: false` when its language pack resolves imports reliably (TS / Python / Go). For packs whose import resolution is unreliable (C# namespaces ≠ package names, etc.), leave `reachable` unset rather than risk a false "unreachable" that hides a real vuln.
-- [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders).
+- [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders). _Considered for 2.9.3 and deferred: the dependency table already discounts unreachable advisories 0.25× inside the composite `riskScore`, so this is a presentation refinement (a hard reachable-first sort tier + the summary lens) rather than new signal._
 
 ## Future
 
@@ -135,6 +135,29 @@ hook) and `doctor` verifies it; hook activation chains after an existing
 - [ ] Scoped + incremental scanning for fast pre-commit on monorepos
 - [ ] Symbol-level coverage gaps across all 8 packs
 - [ ] SARIF export for GitHub code-scanning interop
+
+### Deep SAST reachability (interprocedural)
+
+Today `reachable` is a **dependency** concept only — "is the vulnerable package
+imported in source." Code/SAST findings carry no reachability signal, and that's
+a deliberate gap, not an oversight:
+
+- dxkit's bundled SAST is community **semgrep (intraprocedural)** — it cannot do
+  the interprocedural taint analysis that "is this vulnerable code path reachable
+  from an attacker-controlled entry point" requires.
+- dxkit's own **graphify call graph is too sparse for taint** today (~28%
+  method-edge resolution measured during the Snyk-parity investigation).
+
+Code-path reachability is high value — it's the primary false-positive-noise
+reducer the premium engines (Snyk Code, CodeQL dataflow, Endor) compete on. The
+realistic path for dxkit is therefore **to surface the reachability the INGESTED
+engine already computed** (Snyk Code / CodeQL encode it), not to compute our own:
+
+- [ ] Carry an ingested finding's engine-reported reachability through
+      `src/ingest/` → `SecurityFinding`, and render/sort code findings reachable-first
+      when the source engine provides it.
+- [ ] (Longer term) Densify the graphify call graph enough to attempt native
+      intraprocedural→interprocedural reachability; gated on call-graph quality.
 
 ### AI readiness
 
