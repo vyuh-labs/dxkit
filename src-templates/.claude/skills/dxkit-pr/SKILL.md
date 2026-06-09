@@ -78,6 +78,22 @@ Put in the body:
 - **Score deltas** — only when the change targeted a dimension (e.g. "Tests
   62 → 71 after closing the auth gaps"). Don't pad with unchanged scores.
 
+### Suggested reviewers
+
+```bash
+npx vyuh-dxkit reviewers --base <base-branch> --json
+```
+
+This ranks reviewers by the **active-owner model** — recency-weighted git
+history on the touched files, with bots and departed contributors filtered, the
+PR author excluded, blended with `CODEOWNERS`. Better signal than the platform's
+naive last-touch suggestion. Surface the top few in the body with the *why*
+("@alice — owns 3/4 touched files, active"), and you can pass them to
+`gh pr create --reviewer`. Honor the output's caveats: if it returns a
+`busFactor: 1`, note the single-point-of-failure; if it returns a `note`
+(original authors inactive / no signal), say so rather than inventing a
+reviewer. Renders `@handle`s, never emails.
+
 ## [4] Draft — title, body, reviewer checklist
 
 **Title** — imperative, scoped, specific. `feat(auth): add refresh-token
@@ -100,6 +116,10 @@ rotation`, not `Updates`. Match the repo's existing PR/commit convention
 - Allowlist: <new suppressions + reason + expiry, or "no changes">
 - Scores: <dimension deltas, if the change targeted one>
 
+## Suggested reviewers
+- @alice — owns 3/4 touched files, active · @bob — CODEOWNERS
+  (or the `note` when there's no active-owner signal)
+
 ## Reviewer checklist
 - [ ] Change matches the description; scope isn't broader than stated
 - [ ] <feature>: behavior verified (how to exercise it)
@@ -120,7 +140,8 @@ Show the user the full draft (title + body) and confirm. On yes:
 
 ```bash
 git push -u origin HEAD                # if not already pushed
-gh pr create --base main --title "<title>" --body "<body>"
+gh pr create --base main --title "<title>" --body "<body>" \
+    --reviewer <handle1>,<handle2>     # the active owners from `reviewers`, if any
 ```
 
 If `gh` isn't authenticated, print the title + body for the user to paste, and
