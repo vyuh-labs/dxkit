@@ -5,11 +5,14 @@ import * as path from 'path';
 import {
   runAllowlistAdd,
   runAllowlistAudit,
+  runAllowlistExport,
   runAllowlistList,
   runAllowlistPrune,
   runAllowlistRemove,
   runAllowlistShow,
 } from '../../src/allowlist/cli';
+import { canonicalRuleFor, computeCodeFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { writeSnapshot } from '../../src/ingest/snapshot';
 import {
   ALLOWLIST_SCHEMA_VERSION,
   loadAllowlist,
@@ -788,6 +791,107 @@ describe('runAllowlistAudit --against-baseline (orphaned bucket)', () => {
     const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
     // No baseline → no orphaned bucket computed.
     expect(parsed.orphaned).toBeUndefined();
+    stdoutSpy.mockRestore();
+  });
+});
+
+describe('runAllowlistExport --snyk', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = makeTmpdir();
+  });
+  afterEach(() => {
+    rmrf(tmp);
+  });
+
+  function seedSnykFinding(rule: string, file: string, line: number): string {
+    writeSnapshot(tmp, {
+      schemaVersion: 1,
+      engine: 'snyk-code',
+      generatedAt: '2026-06-09T00:00:00.000Z',
+      findings: [
+        {
+          engine: 'snyk-code',
+          severity: 'high',
+          category: 'code',
+          cwe: 'CWE-23',
+          rule,
+          title: 'Path Traversal',
+          file,
+          line,
+        },
+      ],
+    });
+    // The fingerprint dxkit would compute for this finding.
+    return computeCodeFingerprint(canonicalRuleFor('snyk-code', rule), file, line);
+  }
+
+  it('fails without --snyk', async () => {
+    const exitSpy = mockExit();
+    await expect(runAllowlistExport(tmp, {})).rejects.toThrow(/process\.exit\(1\)/);
+    exitSpy.mockRestore();
+  });
+
+  it('exports a .snyk ignore for an allowlisted Snyk-originated finding', async () => {
+    const fp = seedSnykFinding('javascript/PT', 'src/handler.ts', 42);
+    await runAllowlistAdd(tmp, {
+      fingerprint: fp,
+      kind: 'code',
+      category: 'accepted-risk',
+      reason: 'reviewed: input is internal',
+      addedBy: 'a@b.c',
+      expires: '2027-01-01',
+    });
+
+    await runAllowlistExport(tmp, { snyk: true, now: '2026-06-09T00:00:00.000Z' });
+
+    const snyk = fs.readFileSync(path.join(tmp, '.snyk'), 'utf8');
+    expect(snyk).toContain("'javascript/PT':");
+    expect(snyk).toContain("'src/handler.ts':");
+    expect(snyk).toContain('reason: "reviewed: input is internal"');
+    expect(snyk).toContain('expires: 2027-01-01T00:00:00.000Z');
+  });
+
+  it('skips an expired allowlist entry', async () => {
+    const fp = seedSnykFinding('javascript/PT', 'src/handler.ts', 42);
+    // Inject an expired entry directly.
+    const { loadAllowlist, saveAllowlist, addEntry, emptyAllowlistFile } =
+      await import('../../src/allowlist/file');
+    saveAllowlist(
+      tmp,
+      addEntry(loadAllowlist(tmp) ?? emptyAllowlistFile('full'), {
+        fingerprint: fp,
+        kind: 'code',
+        category: 'accepted-risk',
+        reason: 'expired',
+        addedBy: 'a@b.c',
+        addedAt: '2020-01-01',
+        expiresAt: '2020-01-02',
+      }),
+    );
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistExport(tmp, { snyk: true, json: true, now: '2026-06-09T00:00:00.000Z' });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.ignores).toBe(0);
+    expect(parsed.skippedExpired).toBe(1);
+    stdoutSpy.mockRestore();
+  });
+
+  it('does not export a finding that is not allowlisted', async () => {
+    seedSnykFinding('javascript/PT', 'src/handler.ts', 42);
+    // Allowlist a DIFFERENT fingerprint.
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'ffff000011112222',
+      kind: 'code',
+      category: 'false-positive',
+      reason: 'unrelated',
+      addedBy: 'a@b.c',
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistExport(tmp, { snyk: true, json: true, now: '2026-06-09T00:00:00.000Z' });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.ignores).toBe(0);
     stdoutSpy.mockRestore();
   });
 });

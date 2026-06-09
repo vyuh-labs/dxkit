@@ -42,6 +42,9 @@ import {
   pathForBaseline,
   readBaselineFile,
 } from '../baseline/baseline-file';
+import { canonicalRuleFor, computeCodeFingerprint } from '../analyzers/tools/fingerprint';
+import { readAllSnapshots } from '../ingest/snapshot';
+import { buildSnykPolicy, expiryToSnykDatetime, type SnykIgnore } from '../ingest/snyk-policy';
 import { LANGUAGES } from '../languages';
 import type { LanguageSupport } from '../languages/types';
 import type { IdentityKind } from '../baseline/producers';
@@ -62,6 +65,7 @@ import {
   auditAllowlist,
   emptyAllowlistFile,
   findEntry,
+  isEntryActive,
   loadAllowlist,
   pathForAllowlist,
   pruneExpired,
@@ -76,7 +80,15 @@ import {
 import { insertAnnotation } from './inline';
 
 /** Subcommands recognized under `vyuh-dxkit allowlist`. */
-export const ALLOWLIST_SUBCOMMANDS = ['add', 'list', 'show', 'audit', 'prune', 'remove'] as const;
+export const ALLOWLIST_SUBCOMMANDS = [
+  'add',
+  'list',
+  'show',
+  'audit',
+  'prune',
+  'remove',
+  'export',
+] as const;
 export type AllowlistSubcommand = (typeof ALLOWLIST_SUBCOMMANDS)[number];
 
 export interface AllowlistAddOpts {
@@ -122,6 +134,17 @@ export interface AllowlistAuditOpts {
 export interface AllowlistRemoveOpts {
   readonly fingerprint?: string;
   readonly json?: boolean;
+}
+
+export interface AllowlistExportOpts {
+  /** Target format. Only `--snyk` is supported today. */
+  readonly snyk?: boolean;
+  /** Output path (default `.snyk` in cwd). */
+  readonly out?: string;
+  readonly json?: boolean;
+  /** ISO datetime stamped as each ignore's `created`. Defaults to now;
+   *  injectable for deterministic tests. */
+  readonly now?: string;
 }
 
 export interface AllowlistPruneOpts {
@@ -195,6 +218,12 @@ export async function runAllowlist(
     case 'remove':
       return runAllowlistRemove(cwd, {
         fingerprint: args.positionalAfter,
+        json: !!args.values.json,
+      });
+    case 'export':
+      return runAllowlistExport(cwd, {
+        snyk: !!args.values.snyk,
+        out: args.values.out as string | undefined,
         json: !!args.values.json,
       });
   }
@@ -579,6 +608,101 @@ export async function runAllowlistRemove(cwd: string, opts: AllowlistRemoveOpts)
     return;
   }
   logger.success(`Removed allowlist entry ${fp} (kind=${entry.kind}, category=${entry.category}).`);
+}
+
+// ─── export ─────────────────────────────────────────────────────────────────
+
+/**
+ * `allowlist export --snyk` — emit a `.snyk` policy file that ignores
+ * every Snyk-originated finding the team has allowlisted in dxkit, so
+ * the suppression propagates to Snyk's own gate (the OUTBOUND half of
+ * the sync; 2.9.1 did the inbound SARIF-suppressions direction).
+ *
+ * Each ingested Snyk finding's canonical fingerprint is recomputed via
+ * the shared helpers (Rule 9 — no parallel hash). A finding whose
+ * fingerprint matches an ACTIVE allowlist entry becomes a `.snyk`
+ * ignore keyed on the Snyk-native rule id + path, carrying the entry's
+ * reason + expiry. Expired entries are skipped (they no longer
+ * suppress). Only `snyk-code` findings export — native semgrep /
+ * gitleaks findings have no Snyk equivalent.
+ */
+export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts): Promise<void> {
+  if (!opts.snyk) {
+    logger.fail(`allowlist export currently supports only --snyk. Usage: allowlist export --snyk`);
+    process.exit(1);
+  }
+
+  const file = loadAllowlist(cwd);
+  if (!file || file.entries.length === 0) {
+    logger.info(`No allowlist entries — nothing to export.`);
+    return;
+  }
+
+  const snapshots = readAllSnapshots(cwd).filter((f) => f.engine === 'snyk-code');
+  if (snapshots.length === 0) {
+    logger.info(
+      `No Snyk Code findings have been ingested yet. ` +
+        `Run \`vyuh-dxkit ingest --from-snyk\` first.`,
+    );
+    return;
+  }
+
+  // Recompute each Snyk finding's canonical fingerprint and match it to
+  // an active allowlist entry. Dedup (rule, path) so several findings on
+  // the same rule+path collapse to one ignore directive.
+  const created = opts.now ?? new Date().toISOString();
+  const ignores: SnykIgnore[] = [];
+  const seenRulePath = new Set<string>();
+  let skippedExpired = 0;
+  for (const f of snapshots) {
+    const fingerprint = computeCodeFingerprint(canonicalRuleFor(f.engine, f.rule), f.file, f.line);
+    const entry = findEntry(file, fingerprint);
+    if (!entry) continue;
+    if (!isEntryActive(entry)) {
+      skippedExpired++;
+      continue;
+    }
+    const key = `${f.rule}\0${f.file}`;
+    if (seenRulePath.has(key)) continue;
+    seenRulePath.add(key);
+    ignores.push({
+      ruleId: f.rule,
+      path: f.file,
+      reason: entry.reason,
+      expires: expiryToSnykDatetime(entry.expiresAt),
+      created,
+    });
+  }
+
+  const outPath = path.resolve(cwd, opts.out ?? '.snyk');
+  const policy = buildSnykPolicy(ignores);
+  fs.writeFileSync(outPath, policy, 'utf8');
+
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify({ out: outPath, ignores: ignores.length, skippedExpired }, null, 2) + '\n',
+    );
+    return;
+  }
+
+  if (ignores.length === 0) {
+    logger.info(
+      `No Snyk-originated findings are allowlisted — wrote an empty policy to ${outPath}.` +
+        (skippedExpired > 0
+          ? ` (${skippedExpired} expired entr${skippedExpired === 1 ? 'y' : 'ies'} skipped.)`
+          : ''),
+    );
+    return;
+  }
+  logger.success(
+    `Wrote ${ignores.length} Snyk ignore${ignores.length === 1 ? '' : 's'} to ${outPath}` +
+      (skippedExpired > 0 ? ` (${skippedExpired} expired skipped)` : '') +
+      '.',
+  );
+  logger.dim(
+    '  Note: Snyk Code (SAST) honors .snyk ignores only with the "consistent ignores" ' +
+      'feature enabled for your org; SCA/dependency ignores are standard.',
+  );
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────
