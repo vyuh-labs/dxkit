@@ -202,12 +202,13 @@ vyuh-dxkit allowlist show <fingerprint> --json
 ### `audit` — find stale + soon-to-expire entries
 
 ```bash
-vyuh-dxkit allowlist audit               # default: 14-day soon window
+vyuh-dxkit allowlist audit                  # default: 14-day soon window
 vyuh-dxkit allowlist audit --soon-days=30
+vyuh-dxkit allowlist audit --against-baseline   # also flag orphaned entries
 vyuh-dxkit allowlist audit --json
 ```
 
-Three buckets:
+Buckets:
 
 - **Expired** — entries past `expiresAt`. Run `prune` to remove.
 - **Soon to expire** — within `--soon-days` (default 14). Either
@@ -216,6 +217,29 @@ Three buckets:
 - **Missing rationale** — entries with empty `reason` field. In
   full mode this should never happen; in sanitized mode it means
   the gitignored reasons sidecar isn't synced locally.
+- **Orphaned** — _only with `--against-baseline`_. Entries whose
+  fingerprint matches no finding in the committed baseline. The check
+  counts both each finding's own fingerprint and any cross-tool
+  fingerprints it absorbed, so an entry keyed on a collapsed
+  contributor isn't falsely flagged. **Orphans are flagged for review,
+  never auto-removed**: re-baselining can churn fingerprints, and an
+  orphan may still suppress an intermittently-detected finding.
+  Confirm the finding is truly gone (re-run the analyzer), then
+  `allowlist remove <fingerprint>`. Needs a baseline on disk — refresh
+  it in CI first (see [`baseline`](./baseline.md)).
+
+### `remove` — delete one entry
+
+```bash
+vyuh-dxkit allowlist remove <fingerprint>
+vyuh-dxkit allowlist remove <fingerprint> --json
+```
+
+Deletes a single file-level entry by fingerprint. Use this for a
+confirmed-orphaned entry or any stale-but-unexpired one — `prune` only
+removes _expired_ entries, so `remove` is the way to drop a still-valid
+entry whose finding is genuinely gone. No more hand-editing
+`.dxkit/allowlist.json`.
 
 ### `prune` — remove expired entries
 
@@ -224,6 +248,30 @@ vyuh-dxkit allowlist prune              # default: removes expired entries
 vyuh-dxkit allowlist prune --dry-run    # preview without writing
 vyuh-dxkit allowlist prune --json       # structured envelope
 ```
+
+### `export --snyk` — propagate suppressions to Snyk
+
+```bash
+vyuh-dxkit allowlist export --snyk             # writes ./.snyk
+vyuh-dxkit allowlist export --snyk --out=path/to/.snyk
+vyuh-dxkit allowlist export --snyk --json
+```
+
+Writes a `.snyk` policy file ignoring every Snyk Code finding the team
+has allowlisted in dxkit, so the suppression propagates to Snyk's own
+gate (`snyk code test`, the Snyk UI). Each ignore is keyed on the Snyk
+rule id + path and carries the entry's reason + expiry. This is the
+**outbound** half of the Snyk ignore sync — dxkit already honors Snyk's
+SARIF `result.suppressions` on the inbound side, and the two are
+round-trip stable (an exported ignore re-read from Snyk's SARIF is
+suppressed, not double-counted).
+
+Only Snyk-originated, **active** (unexpired) entries export; native
+semgrep/gitleaks findings have no Snyk equivalent. Snyk Code (SAST)
+honors `.snyk` ignores only when your org has Snyk's "consistent
+ignores" feature enabled; SCA/dependency ignores are standard. The
+export is opt-in — if dxkit is the only gate, you don't need it. Commit
+the `.snyk` so it applies in CI.
 
 ## Stale annotations (the strict-cleanup loop)
 
