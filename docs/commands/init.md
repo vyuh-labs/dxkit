@@ -63,7 +63,7 @@ CLAUDE.md              # Claude Code shim that points at AGENTS.md
   settings.json        # tool permissions
   skills/dxkit-*/      # lifecycle skills: learn / init / config / hooks /
                        # reports / action / fix / update / onboard / feature /
-                       # docs / ingest / allowlist
+                       # docs / ingest / allowlist / test / pr
   rules/               # per-language coding conventions
 .vyuh-dxkit.json       # install manifest (config, install flags, evolving file hashes)
 ```

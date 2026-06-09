@@ -184,15 +184,17 @@ Orphaned annotations become their own findings. The TypeScript `@ts-expect-error
 
 dxkit ships a suite of Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
 
-| Skill                                                                                                     | What it does                                                            |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `dxkit-onboard`                                                                                           | Walks a customer through the full first-install journey                 |
-| `dxkit-reports`                                                                                           | Runs analyzers and explains the output                                  |
-| `dxkit-action`                                                                                            | Reads a report, prioritizes findings, plans and runs fixes, re-verifies |
-| `dxkit-ingest`                                                                                            | Brings external SAST findings (Snyk Code, CodeQL, SARIF) into dxkit     |
-| `dxkit-fix`                                                                                               | Repairs a broken install from doctor output                             |
-| `dxkit-allowlist`                                                                                         | Manages the suppression lifecycle: audit, remove, prune, export to Snyk |
-| `dxkit-feature`, `dxkit-docs`, `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                           |
+| Skill                                                                                                     | What it does                                                              |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `dxkit-onboard`                                                                                           | Walks a customer through the full first-install journey                   |
+| `dxkit-reports`                                                                                           | Runs analyzers and explains the output                                    |
+| `dxkit-action`                                                                                            | Reads a report, prioritizes findings, plans and runs fixes, re-verifies   |
+| `dxkit-ingest`                                                                                            | Brings external SAST findings (Snyk Code, CodeQL, SARIF) into dxkit       |
+| `dxkit-fix`                                                                                               | Repairs a broken install from doctor output                               |
+| `dxkit-allowlist`                                                                                         | Manages the suppression lifecycle: audit, remove, prune, export to Snyk   |
+| `dxkit-test`                                                                                              | Writes the missing tests to close gaps + raise the Tests score            |
+| `dxkit-pr`                                                                                                | Opens a PR with a diff-grounded body + dxkit signals + reviewer checklist |
+| `dxkit-feature`, `dxkit-docs`, `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                             |
 
 `AGENTS.md` (the open standard read by Codex, Cursor, Aider, and others) also ships in every install. The skill flows are Claude Code-specific today; the AGENTS.md context is portable.
 

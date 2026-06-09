@@ -12,14 +12,20 @@ For agent-specific config, see the editor-specific files alongside this one — 
 
 This repo is managed by [`@vyuhlabs/dxkit`](https://github.com/vyuh-labs/dxkit). dxkit measures code health across 6 dimensions, captures a per-finding baseline, and gates PRs on net-new regressions.
 
-Six skills are installed under `.claude/skills/` (Claude Code auto-discovers via skill frontmatter):
+The `dxkit-*` skills are installed under `.claude/skills/` (Claude Code auto-discovers via skill frontmatter):
 
 - **dxkit-learn** — explains dxkit concepts (baselines, dimensions, scanners)
-- **dxkit-init** — interactive setup walkthrough
+- **dxkit-onboard** — fresh-install walkthrough; **dxkit-init** — interactive setup
 - **dxkit-config** — edit `.dxkit-ignore`, `.vyuh-dxkit.json`, policy
 - **dxkit-hooks** — install / troubleshoot git hooks
 - **dxkit-reports** — run analyzers, explain output, dashboard
-- **dxkit-action** — prioritize + fix + verify + re-baseline
+- **dxkit-action** — prioritize + fix + verify + re-baseline (scoped to one category if asked)
+- **dxkit-test** — write the missing tests to close gaps; **dxkit-docs** — write the missing docs
+- **dxkit-feature** — graph-guided net-new development
+- **dxkit-ingest** — bring external SAST (Snyk Code / CodeQL / SARIF) into dxkit
+- **dxkit-allowlist** — manage the suppression lifecycle (audit / remove / prune / export to Snyk)
+- **dxkit-pr** — open a PR with a diff-grounded body + reviewer checklist
+- **dxkit-update** — upgrade an existing install; **dxkit-fix** — repair a broken one
 
 Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxkit` CLI with workflow guidance.
 
