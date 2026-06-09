@@ -140,6 +140,12 @@ const DXKIT_SKILLS = [
   // that close the highest-risk gaps + move the Tests score without
   // coverage theater. dxkit-action triages WHETHER to test; this WRITES.
   'dxkit-test',
+  // dxkit-pr: opens a pull request with a title + body grounded in the
+  // branch's real commits/diff (features, fixes, findings closed) plus
+  // the dxkit signals (guardrail verdict, allowlist activity, score
+  // deltas) and a tailored reviewer checklist. The close of the
+  // dxkit-feature / dxkit-action loop.
+  'dxkit-pr',
 ] as const;
 
 interface GenerateResult {

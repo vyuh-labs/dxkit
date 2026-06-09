@@ -310,4 +310,5 @@ In those cases: `vyuh-dxkit allowlist add` is the right tool for per-finding dec
 - For broken dxkit install (hooks not firing, vyuh-dxkit not on PATH) → `dxkit-fix` skill
 - For a dedicated test-writing push (close many gaps / raise the Tests score) → `dxkit-test` skill
 - For generating missing documentation → `dxkit-docs` skill
+- For raising the PR once fixes are done + guardrail-green → `dxkit-pr` skill (PR body from the diff + the guardrail/allowlist signals + a reviewer checklist)
 - For allowlist management beyond the per-finding `add` path — auditing existing entries (including orphans after a re-baseline), removing stale fingerprints, pruning expired ones, exporting to a `.snyk`, or reviewing the team's overall suppression posture → **dxkit-allowlist** skill

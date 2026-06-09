@@ -190,6 +190,8 @@ own feature introduced.
 - A finding the guardrail blocked needs fixing → `dxkit-action` (the fix-loop
   recipes for secrets, dep-vulns, SAST).
 - Writing tests for the new (or any untested) surface → `dxkit-test`.
+- Raising the PR once the feature is built + green → `dxkit-pr` (title + body
+  from the diff, dxkit signals, reviewer checklist).
 - Re-running reports between iterations → `dxkit-reports`.
 - Ignore-file / config edits as part of the feature → `dxkit-config`.
 - Hook problems on the verify push → `dxkit-hooks`.
