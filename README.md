@@ -182,7 +182,7 @@ Orphaned annotations become their own findings. The TypeScript `@ts-expect-error
 
 ### AI-agent integration
 
-dxkit ships twelve Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
+dxkit ships a suite of Claude Code skills under `.claude/skills/dxkit-*`. They wrap the CLI in conversational flows:
 
 | Skill                                                                                                     | What it does                                                            |
 | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -191,6 +191,7 @@ dxkit ships twelve Claude Code skills under `.claude/skills/dxkit-*`. They wrap 
 | `dxkit-action`                                                                                            | Reads a report, prioritizes findings, plans and runs fixes, re-verifies |
 | `dxkit-ingest`                                                                                            | Brings external SAST findings (Snyk Code, CodeQL, SARIF) into dxkit     |
 | `dxkit-fix`                                                                                               | Repairs a broken install from doctor output                             |
+| `dxkit-allowlist`                                                                                         | Manages the suppression lifecycle: audit, remove, prune, export to Snyk |
 | `dxkit-feature`, `dxkit-docs`, `dxkit-hooks`, `dxkit-config`, `dxkit-learn`, `dxkit-update`, `dxkit-init` | Focused flows                                                           |
 
 `AGENTS.md` (the open standard read by Codex, Cursor, Aider, and others) also ships in every install. The skill flows are Claude Code-specific today; the AGENTS.md context is portable.
@@ -250,7 +251,7 @@ npx vyuh-dxkit setup-prebuild            # Codespaces prebuild
 À la carte if you only want specific pieces:
 
 ```bash
-npx vyuh-dxkit init --with-dxkit-agents       # just the twelve Claude skills + AGENTS.md
+npx vyuh-dxkit init --with-dxkit-agents       # just the dxkit-* Claude skills + AGENTS.md
 npx vyuh-dxkit init --with-hooks              # just the pre-push hook
 npx vyuh-dxkit init --with-precommit-hook     # add pre-commit (slow on large repos)
 npx vyuh-dxkit init --with-devcontainer       # just the per-stack devcontainer
