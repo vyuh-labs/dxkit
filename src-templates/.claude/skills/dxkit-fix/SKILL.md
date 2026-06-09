@@ -91,7 +91,7 @@ If doctor flags a tool (git, dotnet, node, npm, a scanner) as missing but the cu
 2. Add that directory to `.dxkit/tools.json` `probePaths` (hand off to **dxkit-config**, which documents the file).
 3. Re-run `npx vyuh-dxkit doctor` to confirm it now resolves.
 
-This matters: an undetected scanner means `baseline create` silently captured ZERO findings for that tool's category — re-baseline (`baseline create --force`) once detection is fixed.
+This matters: an undetected scanner means `baseline create` silently captured ZERO findings for that tool's category — refresh the baseline once detection is fixed. Do that through the `dxkit-baseline-refresh` CI workflow, not a local `baseline create --force`: a local refresh records your machine's scanner versions in the committed baseline, so the next PR's guardrail emits spurious `TOOLING-DRIFT` warnings and phantom "resolved" findings when CI's versions differ.
 
 ## Capturing the FIRST baseline — be deliberate
 

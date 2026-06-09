@@ -139,6 +139,16 @@ and auto-commits the updated file with `[skip ci]`. The next PR's
 [`guardrail check`](guardrail.md) reads the refreshed anchor without
 manual intervention.
 
+> **Refresh the canonical baseline in CI, not on a dev laptop.** A local
+> `baseline create --force` bakes your machine's scanner versions
+> (semgrep, npm-audit, jscpd, …) into the committed file. When those
+> differ from CI's, the next PR's guardrail emits spurious
+> `TOOLING-DRIFT` warnings and shows phantom "resolved" findings — the
+> baseline and the PR were scanned by different tool versions. The
+> bundled refresh workflow (or any runner pinned to CI's scanner
+> versions) keeps the anchor canonical. Use a local `--force` only for
+> the very first capture or a throwaway experiment.
+
 ## See also
 
 - [`guardrail`](guardrail.md) — diff a current scan against a baseline

@@ -15,8 +15,8 @@ npm init @vyuhlabs/dxkit
 ```
 
 This installs `@vyuhlabs/dxkit` as a devDependency in your repo,
-runs `vyuh-dxkit init --full --yes`, and lands all nine `dxkit-*`
-agent skills + devcontainer + git hooks + CI workflows. The post-
+runs `vyuh-dxkit init --full --yes`, and lands the full set of
+`dxkit-*` agent skills + devcontainer + git hooks + CI workflows. The post-
 install hook also auto-activates `core.hooksPath = .githooks` so
 teammates who clone + `npm install` get hooks wired automatically.
 
@@ -165,7 +165,7 @@ from landing — without forcing a cleanup sprint first.
 
 ```bash
 # Install hooks + devcontainer + GitHub Actions PR-gate + baseline-refresh
-# + nine dxkit-* agent skills + AGENTS.md.
+# + the dxkit-* agent skills + AGENTS.md.
 vyuh-dxkit init --full
 
 # Or pick à la carte:
@@ -185,6 +185,15 @@ vyuh-dxkit baseline create
 git add .dxkit/baselines/main.json .githooks .github/workflows/dxkit-*.yml
 git commit -m "chore: enable dxkit guardrails"
 ```
+
+> **First capture local, refreshes in CI.** The initial `baseline create`
+> above is fine to run locally. But later _refreshes_ (after fixing
+> findings, adding scanners, or ingesting an external engine) should run
+> through the bundled `dxkit-baseline-refresh` workflow — not a local
+> `baseline create --force`. A local refresh bakes your machine's
+> scanner versions into the committed baseline, so the next PR's guardrail
+> emits spurious `TOOLING-DRIFT` warnings and phantom "resolved" findings
+> when CI's versions differ. Install it with `--with-baseline-refresh`.
 
 Hook activation is now automatic on `npm install` via the postinstall
 chain (added in 2.5.1). If you ever need to activate manually (e.g.
