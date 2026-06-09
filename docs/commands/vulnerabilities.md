@@ -27,12 +27,13 @@ vyuh-dxkit vuln [path]  # alias
 
 ## Options
 
-| Option            | Effect                                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `--detailed`      | Write the detailed report + JSON                                                                                            |
-| `--json`          | Stdout JSON                                                                                                                 |
-| `--no-save`       | Skip writing files                                                                                                          |
-| `--graph-context` | Attach each finding's module + blast radius to the detailed report (needs a graph; fail-open — see [`context`](context.md)) |
+| Option            | Effect                                                                                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`      | Write the detailed report + JSON                                                                                                                                                                                           |
+| `--json`          | Stdout JSON                                                                                                                                                                                                                |
+| `--no-save`       | Skip writing files                                                                                                                                                                                                         |
+| `--graph-context` | Attach each finding's module + blast radius to the detailed report (needs a graph; fail-open — see [`context`](context.md))                                                                                                |
+| `--attribute`     | Attach a "Who to ask" column (git blame → active-owner model; inactive authors routed to the current owner). Opt-in; names + @handles, never emails. Historical only — net-new findings are introduced by your own change. |
 
 ## Output
 

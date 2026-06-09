@@ -22,6 +22,7 @@ vyuh-dxkit test-gaps [path] [options]
 | `--json`          | Stdout JSON                                                                                                                                                       |
 | `--no-save`       | Skip files                                                                                                                                                        |
 | `--graph-context` | Attach each gap file's module + blast radius to the detailed report (a high-blast-radius untested file is higher-stakes; fail-open — see [`context`](context.md)) |
+| `--attribute`     | Attach a "Who to ask" column (each untested file's current owner, via the active-owner model). Opt-in; names + @handles, never emails.                            |
 
 ## How it ranks
 
