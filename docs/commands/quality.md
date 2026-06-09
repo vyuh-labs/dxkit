@@ -33,12 +33,13 @@ vyuh-dxkit quality [path] [options]
 
 ## Options
 
-| Option            | Effect                                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `--detailed`      | Write detailed report (top-10 duplicate clones, top hygiene offenders, slop breakdown)                             |
-| `--json`          | Stdout JSON                                                                                                        |
-| `--no-save`       | Skip files                                                                                                         |
-| `--graph-context` | Attach each offender file's module + blast radius to the detailed report (fail-open — see [`context`](context.md)) |
+| Option            | Effect                                                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `--detailed`      | Write detailed report (top-10 duplicate clones, top hygiene offenders, slop breakdown)                                                 |
+| `--json`          | Stdout JSON                                                                                                                            |
+| `--no-save`       | Skip files                                                                                                                             |
+| `--graph-context` | Attach each offender file's module + blast radius to the detailed report (fail-open — see [`context`](context.md))                     |
+| `--attribute`     | Attach a "Who to ask" column (each offender file's current owner, via the active-owner model). Opt-in; names + @handles, never emails. |
 
 ## Output
 

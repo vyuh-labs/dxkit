@@ -113,7 +113,7 @@ restores the hook's executable bit (git silently ignores a non-executable
 hook) and `doctor` verifies it; hook activation chains after an existing
 `postinstall`.
 
-## Shipped in 2.9.1–2.9.3 — governance depth + the agent loop
+## Shipped in 2.9.1–2.9.4 — governance depth + the agent loop
 
 Follow-ups that made the ingested + native findings genuinely enforceable and
 the fix loop targetable.
@@ -155,6 +155,22 @@ the fix loop targetable.
       fixes, findings closed), the dxkit guardrail/allowlist/score signals, and a
       tailored reviewer checklist. `dxkit-feature` now offers to write tests for a
       new surface (user-confirmed) and hands off to `dxkit-test`.
+
+### Connecting findings + PRs to people (2.9.4)
+
+Both grounded on a new active-owner model (`src/analyzers/developer/ownership.ts`):
+recency-weighted git history, bots + departed contributors filtered, the change
+author excluded, a bus-factor signal. Renders names + GitHub @handles, never emails.
+
+- [x] **`vyuh-dxkit reviewers`** — suggests reviewers for a change from the
+      active-owner model blended with `CODEOWNERS`, with a bus-factor warning and
+      an inactive-owner fallback. Consumed by `dxkit-pr`. Beats naive last-touch
+      blame by being activity-weighted + active-only.
+- [x] **`--attribute` "who to ask"** on the detailed vulnerability / test-gaps /
+      quality reports — line-level findings are git-blamed and routed through the
+      owner model (inactive author → current owner); file-level findings (test
+      gaps) attribute to the file's current owner. Opt-in; net-new findings need no
+      blame (the introducer is the PR author). Honesty: blame is last-touch.
 
 ## Next release — Reachability refinements (carried from 2.8)
 
@@ -202,51 +218,18 @@ engine already computed** (Snyk Code / CodeQL encode it), not to compute our own
 - [ ] (Longer term) Densify the graphify call graph enough to attempt native
       intraprocedural→interprocedural reachability; gated on call-graph quality.
 
-### Finding attribution + reviewer recommendation
+### Attribution + reviewer recommendation — remaining
 
-Connect findings and PRs to the people who know the code, building on the
-existing dev-report analyzer (`ContributorStats` / `HotFile` from git history)
-and the code graph.
+The core shipped in 2.9.4 (see Shipped above). Deferred follow-ons:
 
-- [ ] **Net-new finding attribution.** When the guardrail blocks a PR, name the
-      introducing commit + author for each net-new finding. This is cheap and
-      accurate — the introducer is the PR's own commits — and non-political (you
-      annotate your own change), so "who to ask" is unambiguous.
-- [ ] **Historical-finding attribution (opt-in, with care).** `git blame` for
-      pre-existing/baselined findings is fuzzy (it gives _last to touch_, not
-      _who introduced_ — a formatter run or file move reassigns it) and socially
-      loaded, which cuts against dxkit's "grandfather the past, gate the future"
-      stance. Gate it behind an explicit opt-in, and treat author emails with the
-      same disclosure posture as the baseline (don't bake PII into committed
-      reports on public repos).
-- [ ] **Reviewer recommendation in `dxkit-pr`.** Suggest reviewers for a PR
-      grounded on the **dev-report analyzer** (`ContributorStats` over the
-      analysis window) — not ad-hoc `git blame` — so the candidate set is already
-      scoped to _active_ contributors. Rank by history on the touched files +
-      ownership of the blast-radius modules (the graph knows the dependents),
-      honoring `CODEOWNERS` when present. "Who knows this code" is a safer,
-      higher-value signal than "who broke it," and it slots next to the reviewer
-      checklist the skill already generates.
-
-  **Edge cases that make or break this feature:**
-  - **Exclude the PR author** — never recommend someone to review their own change.
-  - **Departed contributors** — the dev who knows a file best may have left.
-    Grounding on the dev-report's analysis window naturally drops long-inactive
-    authors, but handle the case where _every_ knowledgeable contributor is gone:
-    fall back to current module owners / most-active live contributors /
-    `CODEOWNERS`, and say so ("original authors inactive — suggesting by current
-    ownership") rather than recommending someone unreachable.
-  - **Bots + automation** — exclude dependabot / CI / release-bot commits from
-    both attribution and reviewer ranking; they're not people to ask.
-  - **Recency-weight** — a single commit three years ago is weak signal next to
-    sustained recent activity; weight accordingly.
-  - **Don't recommend a single point of failure** — if one person owns
-    everything touched, surface that as a bus-factor signal, not just a reviewer.
-
-  The same active-contributor + bot-exclusion filtering applies to finding
-  attribution above: attributing a finding to someone who has left the company is
-  a dead end ("who to ask" = nobody), so attribution should flag when the
-  introducer is no longer active and route to the current owner instead.
+- [ ] **GitHub API handle resolution.** Today @handles resolve offline from
+      `…@users.noreply.github.com` emails; a real-email author has no handle.
+      Optionally resolve commit→login via the GitHub API where `gh` is
+      authenticated (network, opt-in) to fill the gap.
+- [ ] **Blast-radius ownership blend in `reviewers`.** Expand the candidate set
+      to owners of the touched files' dependents (the graph knows the callers),
+      not just the touched files themselves — a change's reviewers include the
+      people whose code it could break.
 
 ### AI readiness
 

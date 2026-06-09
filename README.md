@@ -210,6 +210,15 @@ dxkit builds a deterministic code graph of your repo (its symbols, call edges, a
 
 This is an additive, fail-open layer. When the graph is missing, or a language's call edges can't be resolved, every command behaves exactly as it did before. It's reliable on TypeScript, Python, and Go. Where the call graph can't be resolved (C#), blast radius is suppressed rather than faked, so a "no callers" reading is never mistaken for "safe to change."
 
+### Connect findings and PRs to the people who know the code
+
+A finding or a PR is more actionable when you know who to ask. dxkit grounds that in an **active-owner model** — recency-weighted git history, scoped to who is still active, with bots and departed contributors filtered, the change author excluded, and a bus-factor signal.
+
+- **`vyuh-dxkit reviewers`** suggests reviewers for a change, ranked by active ownership of the touched files and blended with `CODEOWNERS` — a better signal than a platform's naive last-touch suggestion. The `dxkit-pr` skill folds it into the PR body.
+- **`--attribute`** adds a "who to ask" column to a detailed report: a pre-existing finding is traced to its current owner (an inactive author is routed to whoever owns the file now). It's opt-in and historical — a net-new finding is introduced by your own change.
+
+Output is names + GitHub @handles, never raw emails — the @handle is both privacy-safe and @-mentionable.
+
 ### Deep SAST: interprocedural findings from any engine
 
 dxkit's bundled SAST (community semgrep) is intraprocedural — it can't follow tainted data across function boundaries, so it misses the path-traversal / information-exposure / SSRF / injection class that an interprocedural engine like Snyk Code or CodeQL catches. dxkit doesn't try to re-detect that class; it **ingests** it and makes it first-class.

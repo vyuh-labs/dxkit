@@ -38,33 +38,34 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 
 Once dxkit + its tools are installed, here's the command surface:
 
-| Command                                                          | Question it answers                                           | Typical runtime                    |
-| ---------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
-| [`health`](commands/health.md)                                   | "What's the overall shape of this codebase?"                  | 1-4 min                            |
-| [`vulnerabilities`](commands/vulnerabilities.md)                 | "What security issues are there?"                             | 1-3 min                            |
-| [`test-gaps`](commands/test-gaps.md)                             | "Which untested files are riskiest?"                          | 30-90 sec                          |
-| [`quality`](commands/quality.md)                                 | "Where's the technical debt + duplication?"                   | 1-8 min (jscpd is the long-pole)   |
-| [`dev-report`](commands/dev-report.md)                           | "Who's working on what, where are the hot files?"             | 5-30 sec                           |
-| [`licenses`](commands/licenses.md)                               | "What licenses are in my dependency tree?"                    | 30-60 sec                          |
-| [`bom`](commands/bom.md)                                         | "Full dependency × license × CVE × upgrade view"              | 1-3 min                            |
-| [`coverage`](commands/coverage.md)                               | "Materialize real line-coverage data"                         | varies (runs your tests)           |
-| [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                     | < 5 sec (renders existing reports) |
-| [`explore`](commands/explore.md)                                 | "What does this repo do / where does X live?"                 | < 5 sec (queries the graph)        |
-| [`context`](commands/context.md)                                 | "Token-budgeted structural slice for an LLM"                  | < 5 sec (queries the graph)        |
-| [`report`](commands/report.md)                                   | "Run all of the above in one shot"                            | 5-30 min                           |
-| [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                          | < 5 sec                            |
-| [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                       | < 5 sec                            |
-| [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"            | 5-30 sec                           |
-| [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"     | 5-30 sec                           |
-| [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"  | 1-3 min                            |
-| [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"           | < 5 sec                            |
-| [`baseline create`](commands/baseline.md)                        | "Capture today's findings as a brownfield anchor"             | 30s-2m                             |
-| [`baseline show`](commands/baseline.md)                          | "Inspect/filter the on-disk baseline"                         | < 1 sec                            |
-| [`guardrail check`](commands/guardrail.md)                       | "Block on net-new regressions vs. the baseline"               | 30s-2m                             |
-| [`setup-branch-protection`](commands/setup-branch-protection.md) | "Mark `dxkit-guardrails` as required check on default branch" | < 5 sec                            |
-| [`setup-prebuild`](commands/setup-prebuild.md)                   | "Configure Codespaces prebuild (cold-start ~7 min → ~30s)"    | < 5 sec                            |
-| [`allowlist`](commands/allowlist.md)                             | "Suppress a specific finding with typed reason + expiry"      | < 1 sec                            |
-| [`issue`](commands/issue.md)                                     | "Open a pre-filled GitHub Issue against dxkit"                | < 5 sec                            |
+| Command                                                          | Question it answers                                                | Typical runtime                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
+| [`health`](commands/health.md)                                   | "What's the overall shape of this codebase?"                       | 1-4 min                            |
+| [`vulnerabilities`](commands/vulnerabilities.md)                 | "What security issues are there?"                                  | 1-3 min                            |
+| [`test-gaps`](commands/test-gaps.md)                             | "Which untested files are riskiest?"                               | 30-90 sec                          |
+| [`quality`](commands/quality.md)                                 | "Where's the technical debt + duplication?"                        | 1-8 min (jscpd is the long-pole)   |
+| [`dev-report`](commands/dev-report.md)                           | "Who's working on what, where are the hot files?"                  | 5-30 sec                           |
+| [`licenses`](commands/licenses.md)                               | "What licenses are in my dependency tree?"                         | 30-60 sec                          |
+| [`bom`](commands/bom.md)                                         | "Full dependency × license × CVE × upgrade view"                   | 1-3 min                            |
+| [`coverage`](commands/coverage.md)                               | "Materialize real line-coverage data"                              | varies (runs your tests)           |
+| [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                          | < 5 sec (renders existing reports) |
+| [`explore`](commands/explore.md)                                 | "What does this repo do / where does X live?"                      | < 5 sec (queries the graph)        |
+| [`context`](commands/context.md)                                 | "Token-budgeted structural slice for an LLM"                       | < 5 sec (queries the graph)        |
+| [`report`](commands/report.md)                                   | "Run all of the above in one shot"                                 | 5-30 min                           |
+| [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                               | < 5 sec                            |
+| [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                            | < 5 sec                            |
+| [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"                 | 5-30 sec                           |
+| [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"          | 5-30 sec                           |
+| [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"       | 1-3 min                            |
+| [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"                | < 5 sec                            |
+| [`baseline create`](commands/baseline.md)                        | "Capture today's findings as a brownfield anchor"                  | 30s-2m                             |
+| [`baseline show`](commands/baseline.md)                          | "Inspect/filter the on-disk baseline"                              | < 1 sec                            |
+| [`guardrail check`](commands/guardrail.md)                       | "Block on net-new regressions vs. the baseline"                    | 30s-2m                             |
+| [`setup-branch-protection`](commands/setup-branch-protection.md) | "Mark `dxkit-guardrails` as required check on default branch"      | < 5 sec                            |
+| [`setup-prebuild`](commands/setup-prebuild.md)                   | "Configure Codespaces prebuild (cold-start ~7 min → ~30s)"         | < 5 sec                            |
+| [`allowlist`](commands/allowlist.md)                             | "Suppress a specific finding with typed reason + expiry"           | < 1 sec                            |
+| [`reviewers`](commands/reviewers.md)                             | "Who should review this change?" (active-owner model + CODEOWNERS) | < 5 sec                            |
+| [`issue`](commands/issue.md)                                     | "Open a pre-filled GitHub Issue against dxkit"                     | < 5 sec                            |
 
 ## Configuration
 
