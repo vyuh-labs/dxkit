@@ -10,6 +10,9 @@
  *                    On plans without REST API access (Enterprise-only)
  *                    this auto-falls-back to `snyk code test`; pass
  *                    --snyk-cli to force that path and skip the REST try.
+ *                    SNYK_* credentials are read from the environment and,
+ *                    as a fallback, from a local `.env` (only SNYK_* keys;
+ *                    --no-env-file opts out, --env-file <path> overrides).
  *
  * Either way the result is written to `.dxkit/external/<engine>.json`,
  * a committed snapshot every later scan reads — so the token is needed
@@ -23,6 +26,7 @@ import { fetchSnykCodeFindings } from './ingest/snyk-api';
 import { runSnykCodeTest } from './ingest/snyk-cli';
 import { runCodeql, type CodeqlTarget } from './ingest/codeql';
 import { readDeepSastConfig } from './ingest/config';
+import { loadSnykEnv } from './ingest/env-file';
 import { writeSnapshot } from './ingest/snapshot';
 import { detectActiveLanguages } from './languages/index';
 import type { SourceEngine, ExternalFinding } from './ingest/types';
@@ -42,6 +46,10 @@ export interface IngestOptions {
   project?: string;
   generatedAt: string;
   commitSha?: string;
+  /** Skip opt-in `.env` loading of `SNYK_*` credentials (`--no-env-file`). */
+  noEnvFile?: boolean;
+  /** Explicit `.env` path for `SNYK_*` credentials (`--env-file <path>`). */
+  envFile?: string;
 }
 
 function isSourceEngine(s: string | undefined): s is SourceEngine {
@@ -66,6 +74,7 @@ export async function runIngest(cwd: string, opts: IngestOptions): Promise<void>
   logger.dim('    vyuh-dxkit ingest --sarif results.sarif');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --org <id> --project <id>');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --snyk-cli  # free/team plans');
+  logger.dim('    vyuh-dxkit ingest --from-snyk   # SNYK_* read from .env when present');
   logger.dim('    vyuh-dxkit ingest --codeql        # OSS / GitHub Advanced Security only');
   process.exitCode = 1;
 }
@@ -126,20 +135,36 @@ export function isNotEntitled(message: string): boolean {
 }
 
 async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
+  // Opt-in: lift ONLY SNYK_* keys from a local `.env` into the
+  // environment (real exported env / CI secret always wins). Disabled
+  // by --no-env-file; path overridable by --env-file. CI has no .env →
+  // no-op, so behavior there is unchanged.
+  const envLoad = loadSnykEnv(cwd, { noEnvFile: opts.noEnvFile, envFile: opts.envFile });
+  if (envLoad) {
+    for (const w of envLoad.warnings) logger.warn(w);
+    if (envLoad.loadedKeys.length > 0) {
+      logger.dim(`  Loaded ${envLoad.loadedKeys.join(', ')} from ${envLoad.path}`);
+    }
+  }
+
   const token = process.env.SNYK_TOKEN;
   if (!token) {
     logger.warn('SNYK_TOKEN is not set.');
     logger.dim(
-      '  dxkit reads SNYK_TOKEN from the environment — it does NOT auto-load a .env file.',
+      '  dxkit reads SNYK_TOKEN from the environment. It also auto-loads SNYK_* keys ' +
+        'from a local .env (only those keys, never the rest of the file).',
     );
-    logger.dim('  Export it (`export SNYK_TOKEN=…`) or add it as a CI secret, then retry.');
+    logger.dim(
+      '  Export it (`export SNYK_TOKEN=…`), put it in .env, or add it as a CI secret, then retry. ' +
+        'Use --no-env-file to skip .env, or --env-file <path> to point elsewhere.',
+    );
     process.exitCode = 1;
     return;
   }
   // Org/project resolve flag → persisted config (`.vyuh-dxkit.json:
   // deepSast.snyk`) → environment, so a sourced shell or configured repo
-  // can run `ingest --from-snyk` with no flags. (dxkit does not read .env;
-  // export the vars or set CI secrets.)
+  // can run `ingest --from-snyk` with no flags. SNYK_ORG_ID / SNYK_PROJECT_ID
+  // also come from a local .env via loadSnykEnv above (SNYK_* keys only).
   const cfg = readDeepSastConfig(cwd);
   const orgId = opts.org ?? cfg.snyk?.orgId ?? process.env.SNYK_ORG_ID;
   const projectId = opts.project ?? cfg.snyk?.projectId ?? process.env.SNYK_PROJECT_ID;

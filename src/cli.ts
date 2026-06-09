@@ -342,6 +342,9 @@ export async function run(argv: string[]): Promise<void> {
       engine: { type: 'string' },
       org: { type: 'string' },
       project: { type: 'string' },
+      // ingest: opt-in .env loading of SNYK_* creds
+      'no-env-file': { type: 'boolean', default: false },
+      'env-file': { type: 'string' },
       // baseline create: proceed despite missing scanners (CI/non-interactive)
       'allow-incomplete': { type: 'boolean', default: false },
     },
@@ -1980,6 +1983,8 @@ export async function run(argv: string[]): Promise<void> {
         engine: values.engine as string | undefined,
         org: values.org as string | undefined,
         project: values.project as string | undefined,
+        noEnvFile: !!values['no-env-file'],
+        envFile: values['env-file'] as string | undefined,
         generatedAt: new Date().toISOString(),
         commitSha,
       });
