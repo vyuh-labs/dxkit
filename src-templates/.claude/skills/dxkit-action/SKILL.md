@@ -1,6 +1,6 @@
 ---
 name: dxkit-action
-description: Read a dxkit report and execute fixes — prioritize findings by severity, plan the fix sequence, run the fix, verify the score moved, re-baseline if appropriate. Use when the user says "fix these findings", "act on the health report", "close out these vulnerabilities", or after dxkit-reports has surfaced something concrete.
+description: Read a dxkit report and execute fixes — prioritize findings by severity, plan the fix sequence, run the fix, verify the score moved, re-baseline if appropriate. Supports a SCOPED pass to burn down one category at a time (dependency/BOM vulnerabilities, security, code quality, tests, docs). Use when the user says "fix these findings", "act on the health report", "close out these vulnerabilities", "just fix the dependency vulns", "only the security findings", or after dxkit-reports has surfaced something concrete.
 ---
 
 # dxkit-action
@@ -27,6 +27,38 @@ npx vyuh-dxkit vulnerabilities --detailed --graph-context   # or test-gaps / qua
 ```
 
 `--graph-context` adds a "Graph context" column (the module a finding lives in + its blast radius — how many files call into it) so you can plan the fix without separately discovering structure. It's a structural HINT, not ground truth — read "Graph context" below for how to use it safely.
+
+## Scoped fix — fix one category at a time
+
+Often the user doesn't want "fix everything" — they want to burn down **one
+category**: "just the dependency vulns", "only the security findings", "the
+code-quality stuff." Honor that. A scoped pass keeps the change reviewable and
+lets the team sequence the work.
+
+When the user names a scope (or you propose one), run the report that already
+partitions that dimension and work **only** that worklist — prioritization
+(severity → reachability → blast radius) still applies, but within the scope:
+
+| Scope the user asks for | Run | Findings in scope | Notes / hand-off |
+|---|---|---|---|
+| "dependency / BOM vulnerabilities" | `npx vyuh-dxkit bom` (or `vulnerabilities --detailed`) | `dep-vuln` | upgrade-first; see "Dependency vulnerability" below |
+| "security" | `npx vyuh-dxkit vulnerabilities --detailed --graph-context` | code-SAST, secrets, dep-vuln | reachable findings first (the report orders them); secrets always top |
+| "code quality" | `npx vyuh-dxkit quality --detailed --graph-context` | duplication, slop, lint, complexity | see "Slop / code-pattern finding" below |
+| "tests" / "coverage" | `npx vyuh-dxkit test-gaps --detailed --graph-context` | test-gap | hand off to **dxkit-test** for a real test-writing push |
+| "documentation" | `npx vyuh-dxkit health --detailed` (Documentation) | doc-gap | hand off to **dxkit-docs** |
+
+Rules for a scoped pass:
+
+- **Stay in the lane.** If the user said "just deps," don't also start fixing
+  SAST findings you notice — surface them ("I also see 3 HIGH SAST findings;
+  want a separate pass?") but don't expand scope unasked.
+- **Tests / docs scopes are hand-offs, not inline work.** Closing test gaps or
+  writing docs is a dedicated loop — route to `dxkit-test` / `dxkit-docs`
+  rather than half-doing it here.
+- **Verify within the scope.** Step [5] re-runs the scope's own report; the
+  scoped dimension should move and nothing else should regress (guardrail).
+
+Without a named scope, work the full **Priority order** below.
 
 ## Priority order
 
