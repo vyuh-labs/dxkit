@@ -82,7 +82,7 @@ function buildSettingsJson(config: ResolvedConfig): string {
 }
 
 /**
- * The six dxkit-specific skills shipped under `--with-dxkit-agents`.
+ * The dxkit-specific skills shipped under `--with-dxkit-agents`.
  * Each lives at `.claude/skills/<name>/SKILL.md` in the template dir;
  * generator copies them verbatim (no template substitution — the
  * skill content references the canonical `vyuh-dxkit` CLI surface
@@ -128,6 +128,12 @@ const DXKIT_SKILLS = [
   // by dxkit-action. License-aware engine selection; quota-free Snyk
   // read; committed snapshot so the token is needed only at ingest time.
   'dxkit-ingest',
+  // dxkit-allowlist: suppression-lifecycle surface. Reviews, audits
+  // (including orphans after a re-baseline), removes stale entries,
+  // prunes expired ones, and exports Snyk-originated suppressions to a
+  // `.snyk` policy. The fix-vs-suppress decision + the `add` path stay
+  // in dxkit-action; this owns everything after an entry exists.
+  'dxkit-allowlist',
 ] as const;
 
 interface GenerateResult {

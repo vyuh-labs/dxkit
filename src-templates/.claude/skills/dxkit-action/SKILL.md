@@ -202,7 +202,7 @@ npx vyuh-dxkit allowlist audit            # expired / soon-to-expire / missing-r
 npx vyuh-dxkit allowlist prune            # remove expired entries
 ```
 
-Run `audit` periodically — `accepted-risk` and `deferred` entries that pass their expiry should either be re-justified (renew expiry) or pruned (remove the entry; the underlying finding will re-flag on the next scan).
+Run `audit` periodically — `accepted-risk` and `deferred` entries that pass their expiry should either be re-justified (renew expiry) or pruned (remove the entry; the underlying finding will re-flag on the next scan). For the full lifecycle — auditing orphaned entries after a re-baseline (`audit --against-baseline`), removing a single stale fingerprint (`allowlist remove`), and exporting Snyk-originated suppressions back to a `.snyk` (`allowlist export --snyk`) — hand off to the **dxkit-allowlist** skill.
 
 ### Stale annotations
 
@@ -270,4 +270,4 @@ In those cases: `vyuh-dxkit allowlist add` is the right tool for per-finding dec
 - For hook-related issues during a fix push → `dxkit-hooks` skill
 - For re-running reports between fixes → `dxkit-reports` skill
 - For broken dxkit install (hooks not firing, vyuh-dxkit not on PATH) → `dxkit-fix` skill
-- For allowlist management beyond the per-finding `add` path (auditing existing entries, pruning expired ones, reviewing the team's overall suppression posture) → run `npx vyuh-dxkit allowlist audit` / `list` / `prune` directly; no separate skill yet
+- For allowlist management beyond the per-finding `add` path — auditing existing entries (including orphans after a re-baseline), removing stale fingerprints, pruning expired ones, exporting to a `.snyk`, or reviewing the team's overall suppression posture → **dxkit-allowlist** skill
