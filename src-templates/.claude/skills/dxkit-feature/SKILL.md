@@ -154,14 +154,22 @@ Exit 0 = the feature added no net-new regressions. Exit 1 = something new
 appeared — **a finding you introduced.** Address it before pushing:
 
 - A real finding in your new code → fix it now (hand off to `dxkit-action`
-  for the fix recipes — secret rotation, dep upgrade, writing the missing
-  test, etc.).
+  for the fix recipes — secret rotation, dep upgrade, SAST, etc.).
 - A genuine false positive / intentional pattern → allowlist with a typed
   category + reason (see `dxkit-action`'s allowlisting section). Fix first;
   allowlist second.
 
 The feature isn't done when it works — it's done when it works **and** the
 guardrail is green.
+
+### Offer to test the new surface
+
+A new feature is the most common source of a fresh test gap. When step [5]'s
+`test-gaps` shows the code you just added is untested — especially if it has
+callers (a non-trivial blast radius) — **offer to write tests for it, and on
+the user's confirmation hand off to `dxkit-test`** to write them grounded in
+the behavior you just built. Keep it an offer: don't auto-generate tests the
+user didn't ask for, but don't let a new untested surface ship silently either.
 
 ## [6] Baseline decision
 
@@ -180,7 +188,8 @@ own feature introduced.
 ## Hand-offs
 
 - A finding the guardrail blocked needs fixing → `dxkit-action` (the fix-loop
-  recipes for secrets, dep-vulns, SAST, test gaps).
+  recipes for secrets, dep-vulns, SAST).
+- Writing tests for the new (or any untested) surface → `dxkit-test`.
 - Re-running reports between iterations → `dxkit-reports`.
 - Ignore-file / config edits as part of the feature → `dxkit-config`.
 - Hook problems on the verify push → `dxkit-hooks`.

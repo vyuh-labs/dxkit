@@ -146,3 +146,5 @@ npx vyuh-dxkit guardrail check
   should leave the new surface documented).
 - Slop findings outside docs (AI-generated code prose, CHANGELOG slop) →
   `dxkit-action`'s slop recipe.
+- Closing test gaps / raising the Tests score (the sibling generator skill) →
+  `dxkit-test`.

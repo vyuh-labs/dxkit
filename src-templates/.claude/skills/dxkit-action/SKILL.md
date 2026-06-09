@@ -105,6 +105,8 @@ If no patched version exists OR the upgrade breaks other constraints AND the ris
 
 ### Test gap
 
+For one test gap inside a broader fix pass, close it inline:
+
 ```bash
 # 1. Read the source file the test-gap analyzer flagged
 # 2. Write a test that exercises the file's primary contract
@@ -115,6 +117,8 @@ npx vyuh-dxkit test-gaps
 ```
 
 Don't write tests that just import the module — write tests that exercise behavior. Useless tests inflate the count but don't move the dimension.
+
+For a dedicated push to close many gaps / raise the Tests score — reading the blast-radius-weighted worklist, orienting via the graph, writing meaningful tests in the repo's framework — hand off to the **dxkit-test** skill (the testing mirror of dxkit-docs).
 
 ### Slop / code-pattern finding
 
@@ -272,4 +276,6 @@ In those cases: `vyuh-dxkit allowlist add` is the right tool for per-finding dec
 - For hook-related issues during a fix push → `dxkit-hooks` skill
 - For re-running reports between fixes → `dxkit-reports` skill
 - For broken dxkit install (hooks not firing, vyuh-dxkit not on PATH) → `dxkit-fix` skill
+- For a dedicated test-writing push (close many gaps / raise the Tests score) → `dxkit-test` skill
+- For generating missing documentation → `dxkit-docs` skill
 - For allowlist management beyond the per-finding `add` path — auditing existing entries (including orphans after a re-baseline), removing stale fingerprints, pruning expired ones, exporting to a `.snyk`, or reviewing the team's overall suppression posture → **dxkit-allowlist** skill
