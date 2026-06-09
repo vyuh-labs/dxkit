@@ -16,6 +16,11 @@ import {
   locationKey,
   type DetailedGraphContext,
 } from '../../explore/finding-context';
+import {
+  formatAttributionCell,
+  attributionProvenanceLine,
+  type DetailedAttribution,
+} from '../../attribution/attribute';
 
 export interface QualityDetailedReport extends QualityReport {
   /** Schema version for agent consumers. Bump on breaking shape changes. */
@@ -28,11 +33,15 @@ export interface QualityDetailedReport extends QualityReport {
    * loaded.
    */
   graphContext?: DetailedGraphContext;
+  /** Per-file "who to ask" (owner), keyed by file path. Present only when
+   *  the run passed `--attribute`. */
+  attribution?: DetailedAttribution;
 }
 
 export function buildQualityDetailed(
   report: QualityReport,
   graphContext?: DetailedGraphContext,
+  attribution?: DetailedAttribution,
 ): QualityDetailedReport {
   const actions = rank(buildSlopActions(report.metrics), report.metrics, (m) =>
     evaluateSpec(QUALITY_SCORING_SPEC, qualityMetricsToScoreInput(m)),
@@ -42,6 +51,7 @@ export function buildQualityDetailed(
     schemaVersion: '11',
     actions,
     ...(graphContext ? { graphContext } : {}),
+    ...(attribution ? { attribution } : {}),
   };
 }
 
@@ -127,12 +137,28 @@ export function formatQualityDetailedMarkdown(
   // when --graph-context ran, so a reader sees how central each
   // offender file is before deciding to touch it.
   const gc = detailed.graphContext;
+  const attr = detailed.attribution;
   let provenancePrinted = false;
   const offenderProvenance = () => {
-    if (gc && !provenancePrinted) {
-      L.push(graphContextProvenanceLine(gc));
-      L.push('');
-      provenancePrinted = true;
+    if (provenancePrinted) return;
+    if (gc) L.push(graphContextProvenanceLine(gc));
+    if (attr) L.push(attributionProvenanceLine());
+    if (gc || attr) L.push('');
+    provenancePrinted = true;
+  };
+
+  // Column-driven offender table — graph context + attribution compose.
+  const offenderTable = (files: ReadonlyArray<{ file: string; count: number }>) => {
+    const headers = ['File', 'Count'];
+    if (gc) headers.push('Graph context');
+    if (attr) headers.push('Who to ask');
+    L.push(`| ${headers.join(' | ')} |`);
+    L.push(`|${headers.map((h) => (h === 'Count' ? '-----:' : '---')).join('|')}|`);
+    for (const f of files) {
+      const cells = [`\`${f.file}\``, String(f.count)];
+      if (gc) cells.push(formatGraphContextCell(gc.contexts[locationKey(f.file)]));
+      if (attr) cells.push(formatAttributionCell(attr.attributions[locationKey(f.file)]));
+      L.push(`| ${cells.join(' | ')} |`);
     }
   };
 
@@ -140,19 +166,7 @@ export function formatQualityDetailedMarkdown(
     L.push('## Files with Most Console Statements');
     L.push('');
     offenderProvenance();
-    if (gc) {
-      L.push('| File | Count | Graph context |');
-      L.push('|------|------:|----------------|');
-      for (const f of m.topConsoleFiles) {
-        L.push(
-          `| \`${f.file}\` | ${f.count} | ${formatGraphContextCell(gc.contexts[locationKey(f.file)])} |`,
-        );
-      }
-    } else {
-      L.push('| File | Count |');
-      L.push('|------|------:|');
-      for (const f of m.topConsoleFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
-    }
+    offenderTable(m.topConsoleFiles);
     L.push('');
   }
 
@@ -160,19 +174,7 @@ export function formatQualityDetailedMarkdown(
     L.push('## Files with Most TODO/FIXME/HACK');
     L.push('');
     offenderProvenance();
-    if (gc) {
-      L.push('| File | Count | Graph context |');
-      L.push('|------|------:|----------------|');
-      for (const f of m.topTodoFiles) {
-        L.push(
-          `| \`${f.file}\` | ${f.count} | ${formatGraphContextCell(gc.contexts[locationKey(f.file)])} |`,
-        );
-      }
-    } else {
-      L.push('| File | Count |');
-      L.push('|------|------:|');
-      for (const f of m.topTodoFiles) L.push(`| \`${f.file}\` | ${f.count} |`);
-    }
+    offenderTable(m.topTodoFiles);
     L.push('');
   }
 

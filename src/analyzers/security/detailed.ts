@@ -13,6 +13,11 @@ import {
   locationKey,
   type DetailedGraphContext,
 } from '../../explore/finding-context';
+import {
+  formatAttributionCell,
+  attributionProvenanceLine,
+  type DetailedAttribution,
+} from '../../attribution/attribute';
 
 export interface SecurityDetailedReport extends SecurityReport {
   schemaVersion: string;
@@ -24,11 +29,17 @@ export interface SecurityDetailedReport extends SecurityReport {
    * AND a graph.json was loadable; absent otherwise (fail-open).
    */
   graphContext?: DetailedGraphContext;
+  /**
+   * Per-finding "who to ask" attribution, keyed by `file:line`. Present
+   * only when the run passed `--attribute`; absent otherwise (fail-open).
+   */
+  attribution?: DetailedAttribution;
 }
 
 export function buildSecurityDetailed(
   report: SecurityReport,
   graphContext?: DetailedGraphContext,
+  attribution?: DetailedAttribution,
 ): SecurityDetailedReport {
   const input = countsFromReport(report);
   const scoreFromInput = (i: SecurityScoreInput) => evaluateSpec(SECURITY_SCORING_SPEC, i);
@@ -41,6 +52,7 @@ export function buildSecurityDetailed(
     securityScore: scoreFromInput(input).score,
     actions,
     ...(graphContext ? { graphContext } : {}),
+    ...(attribution ? { attribution } : {}),
   };
 }
 
@@ -138,25 +150,29 @@ export function formatSecurityDetailedMarkdown(
   );
   if (sorted.length === 0) {
     L.push('No code findings.');
-  } else if (detailed.graphContext) {
-    const gc = detailed.graphContext;
-    L.push(graphContextProvenanceLine(gc));
-    L.push('');
-    L.push('| Severity | Rule | File:Line | Tool | CWE | Graph context |');
-    L.push('|----------|------|-----------|------|-----|----------------|');
-    for (const f of sorted) {
-      const ctx = gc.contexts[locationKey(f.file, f.line)];
-      L.push(
-        `| ${f.severity.toUpperCase()} | \`${f.rule}\` | \`${f.file}${f.line ? ':' + f.line : ''}\` | ${f.tool} | ${f.cwe || '—'} | ${formatGraphContextCell(ctx)} |`,
-      );
-    }
   } else {
-    L.push('| Severity | Rule | File:Line | Tool | CWE |');
-    L.push('|----------|------|-----------|------|-----|');
+    const gc = detailed.graphContext;
+    const attr = detailed.attribution;
+    if (gc) L.push(graphContextProvenanceLine(gc));
+    if (attr) L.push(attributionProvenanceLine());
+    if (gc || attr) L.push('');
+    // Column-driven so graph context + attribution compose cleanly.
+    const headers = ['Severity', 'Rule', 'File:Line', 'Tool', 'CWE'];
+    if (gc) headers.push('Graph context');
+    if (attr) headers.push('Who to ask');
+    L.push(`| ${headers.join(' | ')} |`);
+    L.push(`|${headers.map(() => '---').join('|')}|`);
     for (const f of sorted) {
-      L.push(
-        `| ${f.severity.toUpperCase()} | \`${f.rule}\` | \`${f.file}${f.line ? ':' + f.line : ''}\` | ${f.tool} | ${f.cwe || '—'} |`,
-      );
+      const cells = [
+        f.severity.toUpperCase(),
+        `\`${f.rule}\``,
+        `\`${f.file}${f.line ? ':' + f.line : ''}\``,
+        f.tool,
+        f.cwe || '—',
+      ];
+      if (gc) cells.push(formatGraphContextCell(gc.contexts[locationKey(f.file, f.line)]));
+      if (attr) cells.push(formatAttributionCell(attr.attributions[locationKey(f.file, f.line)]));
+      L.push(`| ${cells.join(' | ')} |`);
     }
   }
   L.push('');

@@ -28,6 +28,8 @@ npx vyuh-dxkit vulnerabilities --detailed --graph-context   # or test-gaps / qua
 
 `--graph-context` adds a "Graph context" column (the module a finding lives in + its blast radius — how many files call into it) so you can plan the fix without separately discovering structure. It's a structural HINT, not ground truth — read "Graph context" below for how to use it safely.
 
+Add **`--attribute`** when you need to know *who to ask* about a pre-existing finding — it adds a "Who to ask" column from `git blame` routed through the active-owner model, so an inactive author is forwarded to the file's current owner (names + @handles, never emails). It's opt-in and **historical only**: a net-new finding the guardrail just blocked was introduced by your own change, so "who to ask" there is simply the PR author — no blame needed. Honor the honesty caveat (blame is last-touch, not necessarily who introduced it).
+
 ## Scoped fix — fix one category at a time
 
 Often the user doesn't want "fix everything" — they want to burn down **one
