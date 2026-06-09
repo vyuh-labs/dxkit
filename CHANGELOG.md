@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-06-09
+
+### Allowlist lifecycle + Snyk credential ergonomics
+
+A follow-up to 2.9.1 closing the self-service gaps the first customer
+walkthrough surfaced: managing the allowlist after a re-baseline without
+hand-editing JSON, propagating suppressions back to Snyk, and reading Snyk
+credentials from a local `.env`.
+
+- **`vyuh-dxkit allowlist remove <fingerprint>`.** Delete a single file-level
+  entry from the CLI. `prune` still removes only expired entries; `remove`
+  handles a stale-but-unexpired one (e.g. a confirmed-gone finding) — no more
+  hand-editing `.dxkit/allowlist.json`.
+- **Orphaned-entry audit.** `vyuh-dxkit allowlist audit --against-baseline`
+  cross-checks every entry against the committed baseline and flags those whose
+  fingerprint matches no current finding. Orphans are flagged for review, never
+  auto-removed — re-baselining can churn fingerprints and an orphan may still
+  suppress an intermittently-detected finding. The matcher counts both a
+  finding's own fingerprint and any cross-tool fingerprints it absorbed, so an
+  entry keyed on a collapsed contributor isn't falsely flagged.
+- **`vyuh-dxkit allowlist export --snyk`.** The outbound half of the Snyk
+  ignore sync (2.9.1 did the inbound SARIF-suppressions direction). Writes a
+  `.snyk` policy ignoring every Snyk Code finding the team has allowlisted in
+  dxkit, keyed on the Snyk rule id + path with the entry's reason + expiry, so
+  the suppression propagates to Snyk's own gate. Round-trip stable with the
+  inbound reader; only Snyk-originated, active entries export.
+- **Opt-in `.env` loading for Snyk credentials.** `ingest --from-snyk` now
+  reads `SNYK_*` keys from a local `.env` as a fallback — and ONLY those keys,
+  never the rest of the file. A real exported env / CI secret always wins, so CI
+  behavior is unchanged. `--no-env-file` opts out; `--env-file <path>` overrides
+  the location. dxkit warns if the file looks committed to git.
+- **New `dxkit-allowlist` skill** covering the full suppression lifecycle
+  (review, audit, remove, prune, the re-baseline → re-point flow, and Snyk
+  export), deferring the fix-vs-suppress decision back to `dxkit-action`.
+- **Baseline refreshes steer to CI.** The skills and docs now warn against an
+  ad-hoc local `baseline create --force` — it bakes the dev machine's scanner
+  versions into the committed baseline, producing spurious tooling-drift
+  warnings and phantom "resolved" findings on the next PR — and route refreshes
+  through the bundled refresh workflow instead. The first local capture stays
+  fine.
+
 ## [2.9.1] - 2026-06-08
 
 ### Cross-tool dedup + allowlist suppression + ignore sync
