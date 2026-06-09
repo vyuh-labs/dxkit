@@ -6,14 +6,20 @@ Whenever Claude Code starts a session in this repo, it reads BOTH files: this on
 
 ## dxkit skills
 
-Six dxkit-specific skills are installed under `.claude/skills/`. Claude Code auto-discovers them via their frontmatter `description` fields:
+The `dxkit-*` skills are installed under `.claude/skills/`. Claude Code auto-discovers them via their frontmatter `description` fields:
 
 - `dxkit-learn` — explain what dxkit does, what scores mean, what scanners run
-- `dxkit-init` — walk through `vyuh-dxkit init` flag choices
+- `dxkit-onboard` / `dxkit-init` — fresh-install walkthrough / `init` flag choices
 - `dxkit-config` — edit `.dxkit-ignore` / `.vyuh-dxkit.json` / policy
 - `dxkit-hooks` — install / troubleshoot git hooks
 - `dxkit-reports` — run analyzers + read output
-- `dxkit-action` — prioritize + fix + verify + re-baseline
+- `dxkit-action` — prioritize + fix + verify + re-baseline (scoped to one category if asked)
+- `dxkit-test` / `dxkit-docs` — write the missing tests / docs to move a dimension
+- `dxkit-feature` — graph-guided net-new development
+- `dxkit-ingest` — bring external SAST (Snyk Code / CodeQL / SARIF) into dxkit
+- `dxkit-allowlist` — manage the suppression lifecycle (audit / remove / prune / export)
+- `dxkit-pr` — open a PR with a diff-grounded body + reviewer checklist
+- `dxkit-update` / `dxkit-fix` — upgrade / repair an install
 
 When the user asks about dxkit concepts or wants to run an analyzer, reach for the matching skill before improvising.
 
