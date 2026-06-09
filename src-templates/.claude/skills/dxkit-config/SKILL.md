@@ -155,7 +155,7 @@ A `npx vyuh-dxkit doctor` or `tools list` showing tools as missing **when they a
 1. Create / edit `.dxkit/tools.json` and add that directory to `probePaths`.
 2. Re-run `npx vyuh-dxkit tools list` — the tool should now show as available.
 3. If the user wants dxkit to *install* tools into a specific dir, set `installDir`, then `npx vyuh-dxkit tools install`.
-4. Regenerate the baseline so it reflects the now-available scanners: `npx vyuh-dxkit baseline create --force`.
+4. Regenerate the baseline so it reflects the now-available scanners — through the `dxkit-baseline-refresh` CI workflow, not a local `baseline create --force` (see "What NOT to do" for why).
 
 ## Workflow
 
@@ -163,11 +163,11 @@ When the user asks for a config change:
 
 1. Identify which file owns the concern (path exclusion → `.dxkit-ignore`; severity routing → `.dxkit/policy.json`; detection override → `.npx vyuh-dxkit.json`).
 2. Open the file, propose the edit, confirm.
-3. After writing, run `npx vyuh-dxkit baseline create --force` if exclusions changed (so the baseline doesn't carry stale findings from the now-excluded paths).
-4. Commit both: the config file + the regenerated baseline.
+3. If exclusions changed, refresh the baseline so it doesn't carry stale findings from the now-excluded paths — via the `dxkit-baseline-refresh` CI workflow, not a local `baseline create --force` (see "What NOT to do").
+4. Commit the config file; let CI refresh + commit the baseline.
 
 ## What NOT to do
 
 - Don't edit `.dxkit/cache/` or `.dxkit/reports/` — they're regenerated on every run (gitignored).
-- Don't manually mutate `.dxkit/baselines/main.json` — use `baseline create --force` to regenerate.
+- Don't manually mutate `.dxkit/baselines/main.json` — regenerate it. And regenerate it in CI (the `dxkit-baseline-refresh` workflow), NOT with a local `baseline create --force`: a local refresh bakes your machine's scanner versions into the committed baseline, so the next PR's guardrail emits spurious `TOOLING-DRIFT` warnings and phantom "resolved" findings when CI's versions differ. A local `--force` is fine only for the first capture or a throwaway experiment.
 - Don't add `.dxkit/` to `.dxkit-ignore` — dxkit itself doesn't scan its own outputs.

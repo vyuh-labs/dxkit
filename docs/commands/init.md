@@ -9,7 +9,7 @@
 > use the short form.
 
 Install the dxkit agent DX layer in a repository: `AGENTS.md` +
-`CLAUDE.md` shim + `.claude/skills/dxkit-*/` (nine lifecycle skills)
+`CLAUDE.md` shim + `.claude/skills/dxkit-*/` (the lifecycle skills)
 
 - `.claude/rules/` (per-language conventions), plus — optionally —
   git hooks, per-stack devcontainer, CI guardrails, and the post-merge
@@ -37,7 +37,7 @@ vyuh-dxkit init [options]
 
 | Option                    | Effect                                                                                                                                                                                                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--with-dxkit-agents`     | Install the nine `dxkit-*` skills + `AGENTS.md` + `CLAUDE.md` shim. Default-on under `--full`; opt-in on bare `init`.                                                                                                                                         |
+| `--with-dxkit-agents`     | Install the `dxkit-*` skills + `AGENTS.md` + `CLAUDE.md` shim. Default-on under `--full`; opt-in on bare `init`.                                                                                                                                              |
 | `--with-hooks`            | Install `.githooks/pre-push` for [guardrail check](guardrail.md). Hook activation is auto-chained via package.json postinstall — teammates who `npm install` get hooks wired automatically. Pre-commit is opt-in (`--with-precommit-hook`).                   |
 | `--with-precommit-hook`   | Additionally install `.githooks/pre-commit`. Implies `--with-hooks`. Use on small/fast repos where every-commit gating is worth the wait.                                                                                                                     |
 | `--with-devcontainer`     | Install `.devcontainer/` with per-stack pinned toolchains (only the languages your project uses) + Claude Code & Codex CLIs                                                                                                                                   |
@@ -61,8 +61,9 @@ AGENTS.md              # open-standard project-context file (Claude Code,
 CLAUDE.md              # Claude Code shim that points at AGENTS.md
 .claude/
   settings.json        # tool permissions
-  skills/dxkit-*/      # nine lifecycle skills: learn / init / config /
-                       # hooks / reports / action / fix / update / onboard
+  skills/dxkit-*/      # lifecycle skills: learn / init / config / hooks /
+                       # reports / action / fix / update / onboard / feature /
+                       # docs / ingest / allowlist
   rules/               # per-language coding conventions
 .vyuh-dxkit.json       # install manifest (config, install flags, evolving file hashes)
 ```

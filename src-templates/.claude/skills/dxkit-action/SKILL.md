@@ -235,12 +235,14 @@ Once a finding is processed (fixed, allowlisted, or accepted), the workflow depe
 | Real risk neutralized externally (WAF, runtime guard) | `vyuh-dxkit allowlist add` with `category=mitigated-externally` + a reason describing the mitigation. Baseline unchanged. |
 | Real risk, accepted by team, won't fix | `vyuh-dxkit allowlist add` with `category=accepted-risk` + `--expires=YYYY-MM-DD` (defaults 90 days). Acknowledged-severity required for high/critical. |
 | Real risk, will fix later (tracked work) | `vyuh-dxkit allowlist add` with `category=deferred` + `--expires=YYYY-MM-DD`. The expiry forces re-review when the deadline passes. |
-| Fix landed via a config change (e.g., new entry in `.dxkit-ignore`) | Re-baseline: `npx vyuh-dxkit baseline create --force`. Commit both `.dxkit-ignore` and the new baseline. |
+| Fix landed via a config change (e.g., new entry in `.dxkit-ignore`) | Re-baseline through the `dxkit-baseline-refresh` CI workflow (NOT a local `baseline create --force` — see the note below). Commit the `.dxkit-ignore` change; let CI refresh + commit the baseline. |
 | Brownfield acceptance (the whole CURRENT state is known mess; future regressions must be net-new) | Re-baseline with an explicit reason in the commit message. Reserve this for the deliberate "draw a line here" moment, not per-finding suppression. |
 
 **Prefer the allowlist over re-baselining for per-finding decisions.** The allowlist carries a typed category + reason + (when relevant) expiry; the baseline carries only "this finding was here." Future maintainers reading `vyuh-dxkit allowlist show <fingerprint>` see WHY the suppression is in place; reading the baseline file shows only that the finding existed at capture time. Per-finding decisions belong in the allowlist; codebase-wide brownfield acceptance belongs in the baseline.
 
 **Never** re-baseline a finding silently — the commit message should explain why the regression is accepted. Future maintainers reading `git log .dxkit/baselines/` should see the rationale.
+
+**Refresh the baseline in CI, not locally.** When a re-baseline is the right call, run it through the bundled `dxkit-baseline-refresh` workflow (or a runner pinned to CI's scanner versions) — not a local `npx vyuh-dxkit baseline create --force`. A local refresh records your machine's semgrep / npm-audit / jscpd versions in the committed baseline; when they differ from CI's, the next PR's guardrail surfaces spurious `TOOLING-DRIFT` warnings and phantom "resolved" findings. A local `--force` is fine only for the very first capture or a throwaway experiment.
 
 ## Workflow guardrail
 

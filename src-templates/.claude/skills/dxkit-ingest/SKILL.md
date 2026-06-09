@@ -88,6 +88,8 @@ Compiled languages (Java, C#, Kotlin, Go) need a working build for CodeQL extrac
 
 Ingested findings flow through the same aggregate as native findings, so they appear in the vulnerability report (with the engine as the `tool`), get a stable fingerprint, dedupe against any overlapping semgrep finding, and — with `--graph-context` — carry the enclosing symbol + blast radius the agent needs to fix safely. That graph enrichment is the part the source engine's own autofix doesn't have.
 
+> **Step [4] belongs in CI, not on your laptop.** Adding ingested findings changes the finding set, so the baseline must be refreshed to pick them up. Do that through the bundled `dxkit-baseline-refresh` workflow (workflow_dispatch / post-merge), NOT a local `baseline create --force`. A local refresh bakes your machine's scanner versions into the committed baseline; when they differ from CI's, the next PR gets spurious `TOOLING-DRIFT` warnings and phantom "resolved" findings. Refresh the snapshot AND the baseline from CI so both are captured with CI's tool versions.
+
 ## Keeping it fresh (CI)
 
 Add a scheduled refresh (mirrors `dxkit-baseline-refresh`): a CI job with the `SNYK_TOKEN` secret runs `ingest --from-snyk` and commits the updated snapshot. The bundled `--with-deep-sast-refresh` workflow (`workflow_dispatch`) does exactly this; its `method` input picks `api` (Enterprise, quota-free) or `cli` (free/team, one test per run). The ingested findings are a point-in-time snapshot of the engine's last scan — re-ingest after the engine re-scans.
