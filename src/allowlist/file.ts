@@ -377,11 +377,23 @@ export interface SoonToExpire {
  *   reason. In full mode this should never happen (validator
  *   rejects); in sanitized mode it may occur when the sidecar is
  *   missing or stale.
+ * - `orphaned` — entries whose fingerprint matches no current
+ *   finding. Only populated when the caller supplies the set of
+ *   current finding fingerprints via `AuditOptions.currentFingerprints`
+ *   (otherwise `undefined` — audit stays pure-over-file). An orphaned
+ *   entry is NOT necessarily stale: re-baselining churns some
+ *   fingerprints (semgrep nondeterminism, cross-tool dedup ordering),
+ *   and an entry may suppress an intermittently-detected finding. So
+ *   this bucket FLAGS for review — it never drives auto-removal.
  */
 export interface AuditReport {
   readonly expired: ReadonlyArray<AllowlistEntry>;
   readonly soonToExpire: ReadonlyArray<SoonToExpire>;
   readonly missingRationale: ReadonlyArray<AllowlistEntry>;
+  /** Entries whose fingerprint is absent from the supplied current-
+   *  finding set. `undefined` when no set was supplied (the caller
+   *  didn't ask for orphan detection). */
+  readonly orphaned?: ReadonlyArray<AllowlistEntry>;
 }
 
 export interface AuditOptions {
@@ -389,6 +401,12 @@ export interface AuditOptions {
   /** Window in days within which `expiresAt` is considered "soon."
    *  Default 14 — chosen to match a typical sprint cadence. */
   readonly soonToExpireDays?: number;
+  /** Set of fingerprints present in the current finding set (the
+   *  union of every baseline entry's `id` plus its
+   *  `absorbedFingerprints`, so an entry keyed on a collapsed
+   *  contributor isn't falsely flagged). When provided, entries whose
+   *  fingerprint isn't in this set land in the `orphaned` bucket. */
+  readonly currentFingerprints?: ReadonlySet<string>;
 }
 
 export function auditAllowlist(file: AllowlistFile, options: AuditOptions = {}): AuditReport {
@@ -397,6 +415,7 @@ export function auditAllowlist(file: AllowlistFile, options: AuditOptions = {}):
   const expired: AllowlistEntry[] = [];
   const soonToExpire: SoonToExpire[] = [];
   const missingRationale: AllowlistEntry[] = [];
+  const orphaned: AllowlistEntry[] = [];
 
   for (const entry of file.entries) {
     const days = daysUntilExpiry(entry, now);
@@ -412,8 +431,16 @@ export function auditAllowlist(file: AllowlistFile, options: AuditOptions = {}):
       // "unavailable locally" notice.
       missingRationale.push(entry);
     }
+    if (options.currentFingerprints && !options.currentFingerprints.has(entry.fingerprint)) {
+      orphaned.push(entry);
+    }
   }
-  return { expired, soonToExpire, missingRationale };
+  return {
+    expired,
+    soonToExpire,
+    missingRationale,
+    ...(options.currentFingerprints ? { orphaned } : {}),
+  };
 }
 
 /**

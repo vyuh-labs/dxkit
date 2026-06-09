@@ -174,7 +174,17 @@ function printUsage(): void {
     vyuh-dxkit allowlist list | show <fingerprint> | audit | prune [--dry-run] [--json]
                                  Review / audit / clean the allowlist. audit surfaces
                                  expired + soon-to-expire (within 14 days) + missing-
-                                 rationale entries. prune removes expired entries.
+                                 rationale entries; add --against-baseline to also flag
+                                 orphaned entries (match no current finding). prune
+                                 removes expired entries.
+    vyuh-dxkit allowlist remove <fingerprint>
+                                 Delete one file-level allowlist entry by fingerprint.
+                                 Use after a re-baseline orphans an entry whose finding
+                                 is confirmed gone (see allowlist audit --against-baseline).
+    vyuh-dxkit allowlist export --snyk [--out=<.snyk>]
+                                 Write a .snyk policy file ignoring every Snyk-originated
+                                 allowlisted finding, so the team's dxkit suppressions
+                                 propagate to Snyk's own gate.
     vyuh-dxkit issue --type=<type> [--about=<text>] [--fingerprint=<id>] [--no-browser]
                                  Open a pre-filled GitHub Issue against vyuh-labs/dxkit.
                                  Types: false-positive, missing-finding, bug,
@@ -297,7 +307,7 @@ export async function run(argv: string[]): Promise<void> {
       target: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       plan: { type: 'boolean', default: false },
-      // allowlist flags (allowlist add | list | show | audit | prune)
+      // allowlist flags (allowlist add | list | show | audit | prune | remove | export)
       category: { type: 'string' },
       reason: { type: 'string' },
       fingerprint: { type: 'string' },
@@ -307,6 +317,10 @@ export async function run(argv: string[]): Promise<void> {
       mode: { type: 'string' },
       ref: { type: 'string' },
       'soon-days': { type: 'string' },
+      'against-baseline': { type: 'boolean', default: false },
+      'baseline-name': { type: 'string' },
+      snyk: { type: 'boolean', default: false },
+      out: { type: 'string' },
       // issue flags
       type: { type: 'string' },
       about: { type: 'string' },
@@ -1935,8 +1949,8 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'allowlist': {
       const { runAllowlist } = await import('./allowlist/cli');
-      // positionals[1] = subcommand (add | list | show)
-      // positionals[2] = optional target (file:line for add, fingerprint for show)
+      // positionals[1] = subcommand (add | list | show | audit | prune | remove | export)
+      // positionals[2] = optional target (file:line for add; fingerprint for show / remove)
       await runAllowlist(cwd, positionals[1], {
         positionalAfter: positionals[2],
         values: values as Record<string, unknown>,

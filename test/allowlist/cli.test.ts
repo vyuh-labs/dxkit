@@ -7,6 +7,7 @@ import {
   runAllowlistAudit,
   runAllowlistList,
   runAllowlistPrune,
+  runAllowlistRemove,
   runAllowlistShow,
 } from '../../src/allowlist/cli';
 import {
@@ -619,5 +620,174 @@ describe('runAllowlistPrune', () => {
       addedBy: 'a@b.c',
     });
     await expect(runAllowlistPrune(tmp, {})).resolves.toBeUndefined();
+  });
+});
+
+describe('runAllowlistRemove', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = makeTmpdir();
+  });
+  afterEach(() => {
+    rmrf(tmp);
+  });
+
+  it('removes an existing entry by fingerprint', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    await runAllowlistRemove(tmp, { fingerprint: 'bbbb111111111111' });
+    const after = loadAllowlist(tmp);
+    expect(after?.entries ?? []).toHaveLength(0);
+  });
+
+  it('fails when fingerprint is missing from the allowlist', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    const exitSpy = mockExit();
+    await expect(runAllowlistRemove(tmp, { fingerprint: 'cccc222222222222' })).rejects.toThrow(
+      /process\.exit\(1\)/,
+    );
+    // Original entry untouched
+    expect(loadAllowlist(tmp)?.entries).toHaveLength(1);
+    exitSpy.mockRestore();
+  });
+
+  it('fails with no positional fingerprint', async () => {
+    const exitSpy = mockExit();
+    await expect(runAllowlistRemove(tmp, {})).rejects.toThrow(/process\.exit\(1\)/);
+    exitSpy.mockRestore();
+  });
+
+  it('--json emits the removed entry', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'bbbb111111111111',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'r',
+      addedBy: 'a@b.c',
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistRemove(tmp, { fingerprint: 'bbbb111111111111', json: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.removed.fingerprint).toBe('bbbb111111111111');
+    stdoutSpy.mockRestore();
+  });
+});
+
+describe('runAllowlistAudit --against-baseline (orphaned bucket)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = makeTmpdir();
+  });
+  afterEach(() => {
+    rmrf(tmp);
+  });
+
+  async function writeBaseline(
+    ids: ReadonlyArray<{ id: string; absorbed?: readonly string[] }>,
+  ): Promise<void> {
+    const { writeBaselineFile, pathForBaseline, BASELINE_SCHEMA_VERSION, DEFAULT_BASELINE_NAME } =
+      await import('../../src/baseline/baseline-file');
+    writeBaselineFile(pathForBaseline(tmp, DEFAULT_BASELINE_NAME), {
+      schemaVersion: BASELINE_SCHEMA_VERSION,
+      name: DEFAULT_BASELINE_NAME,
+      createdAt: '2026-06-09T00:00:00.000Z',
+      repo: { commitSha: 'a'.repeat(40), branch: 'main', root: '/repo' },
+      analysis: {
+        dxkitVersion: '2.9.2',
+        policyHash: 'p'.repeat(16),
+        ignoreHash: 'i'.repeat(16),
+        toolchainHash: 't'.repeat(16),
+        configHash: 'c'.repeat(16),
+      },
+      tools: { semgrep: '1.161.0' },
+      saltMode: 'deterministic',
+      findings: ids.map((e) => ({
+        id: e.id,
+        kind: 'code' as const,
+        tool: 'semgrep',
+        rule: 'r',
+        file: 'f.ts',
+        line: 1,
+        ...(e.absorbed ? { absorbedFingerprints: e.absorbed } : {}),
+      })),
+    });
+  }
+
+  it('flags an entry whose fingerprint is absent from the baseline', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'aaaa111111111111',
+      kind: 'code',
+      category: 'false-positive',
+      reason: 'fp',
+      addedBy: 'a@b.c',
+    });
+    await writeBaseline([{ id: 'dddd999999999999' }]); // different fp
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true, againstBaseline: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.orphaned).toHaveLength(1);
+    expect(parsed.orphaned[0].fingerprint).toBe('aaaa111111111111');
+    stdoutSpy.mockRestore();
+  });
+
+  it('does NOT flag an entry matched only via absorbedFingerprints', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'aaaa111111111111',
+      kind: 'code',
+      category: 'false-positive',
+      reason: 'fp',
+      addedBy: 'a@b.c',
+    });
+    // The entry's fp is a collapsed contributor of a current finding.
+    await writeBaseline([{ id: 'dddd999999999999', absorbed: ['aaaa111111111111'] }]);
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true, againstBaseline: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.orphaned).toHaveLength(0);
+    stdoutSpy.mockRestore();
+  });
+
+  it('omits the orphaned bucket entirely without --against-baseline', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'aaaa111111111111',
+      kind: 'code',
+      category: 'false-positive',
+      reason: 'fp',
+      addedBy: 'a@b.c',
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    expect(parsed.orphaned).toBeUndefined();
+    stdoutSpy.mockRestore();
+  });
+
+  it('warns and skips orphan detection when no baseline exists', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'aaaa111111111111',
+      kind: 'code',
+      category: 'false-positive',
+      reason: 'fp',
+      addedBy: 'a@b.c',
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    await runAllowlistAudit(tmp, { json: true, againstBaseline: true });
+    const parsed = JSON.parse(stdoutSpy.mock.calls.map((c) => c[0]).join(''));
+    // No baseline → no orphaned bucket computed.
+    expect(parsed.orphaned).toBeUndefined();
+    stdoutSpy.mockRestore();
   });
 });

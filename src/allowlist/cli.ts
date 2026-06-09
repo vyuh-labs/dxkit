@@ -33,9 +33,15 @@
  * IO logic here — this file is pure orchestration.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import * as logger from '../logger';
+import {
+  DEFAULT_BASELINE_NAME,
+  pathForBaseline,
+  readBaselineFile,
+} from '../baseline/baseline-file';
 import { LANGUAGES } from '../languages';
 import type { LanguageSupport } from '../languages/types';
 import type { IdentityKind } from '../baseline/producers';
@@ -59,6 +65,7 @@ import {
   loadAllowlist,
   pathForAllowlist,
   pruneExpired,
+  removeEntry,
   saveAllowlist,
   validateAllowlistEntry,
   type AllowlistEntry,
@@ -69,7 +76,7 @@ import {
 import { insertAnnotation } from './inline';
 
 /** Subcommands recognized under `vyuh-dxkit allowlist`. */
-export const ALLOWLIST_SUBCOMMANDS = ['add', 'list', 'show', 'audit', 'prune'] as const;
+export const ALLOWLIST_SUBCOMMANDS = ['add', 'list', 'show', 'audit', 'prune', 'remove'] as const;
 export type AllowlistSubcommand = (typeof ALLOWLIST_SUBCOMMANDS)[number];
 
 export interface AllowlistAddOpts {
@@ -103,6 +110,18 @@ export interface AllowlistAuditOpts {
   readonly json?: boolean;
   /** Soon-to-expire horizon in days (default 14). */
   readonly soonToExpireDays?: number;
+  /** Cross-check fingerprints against the committed baseline so the
+   *  audit can flag orphaned entries (suppress nothing in the current
+   *  finding set). Off by default — keeps `audit` a pure read of the
+   *  allowlist file unless the user opts in. */
+  readonly againstBaseline?: boolean;
+  /** Named baseline to diff against (default `main`). */
+  readonly baselineName?: string;
+}
+
+export interface AllowlistRemoveOpts {
+  readonly fingerprint?: string;
+  readonly json?: boolean;
 }
 
 export interface AllowlistPruneOpts {
@@ -163,6 +182,8 @@ export async function runAllowlist(
       return runAllowlistAudit(cwd, {
         json: !!args.values.json,
         soonToExpireDays: Number.isFinite(horizon) ? horizon : undefined,
+        againstBaseline: !!args.values['against-baseline'],
+        baselineName: args.values['baseline-name'] as string | undefined,
       });
     }
     case 'prune':
@@ -170,6 +191,11 @@ export async function runAllowlist(
         json: !!args.values.json,
         dryRun: !!args.values['dry-run'],
         yes: !!args.values.yes,
+      });
+    case 'remove':
+      return runAllowlistRemove(cwd, {
+        fingerprint: args.positionalAfter,
+        json: !!args.values.json,
       });
   }
 }
@@ -396,7 +422,26 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
     return;
   }
 
-  const report = auditAllowlist(file, { soonToExpireDays: opts.soonToExpireDays });
+  // Orphan detection is opt-in: only when `--against-baseline` is set
+  // do we read the committed baseline and build the current-finding
+  // fingerprint set. Without it, audit stays a pure read of the file.
+  let currentFingerprints: ReadonlySet<string> | undefined;
+  if (opts.againstBaseline) {
+    currentFingerprints = baselineFingerprintSet(cwd, opts.baselineName);
+    if (!currentFingerprints) {
+      logger.warn(
+        `--against-baseline requested but no baseline found at ` +
+          `${pathForBaseline(cwd, opts.baselineName ?? DEFAULT_BASELINE_NAME)} — ` +
+          `skipping orphan detection. Refresh the baseline in CI first ` +
+          `(see the dxkit-baseline-refresh workflow).`,
+      );
+    }
+  }
+
+  const report = auditAllowlist(file, {
+    soonToExpireDays: opts.soonToExpireDays,
+    ...(currentFingerprints ? { currentFingerprints } : {}),
+  });
 
   if (opts.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
@@ -413,7 +458,8 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
   if (
     report.expired.length === 0 &&
     report.soonToExpire.length === 0 &&
-    report.missingRationale.length === 0
+    report.missingRationale.length === 0 &&
+    (report.orphaned?.length ?? 0) === 0
   ) {
     logger.success(`No issues found.`);
     return;
@@ -447,6 +493,19 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
     );
     for (const e of report.missingRationale) {
       logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}`);
+    }
+  }
+
+  if (report.orphaned && report.orphaned.length > 0) {
+    logger.warn(
+      `Orphaned (${report.orphaned.length}) — fingerprint matches no current finding. ` +
+        `REVIEW, don't bulk-remove: re-baselining can churn fingerprints, and an ` +
+        `orphan may still suppress an intermittently-detected finding. Confirm the ` +
+        `finding is truly gone, then \`vyuh-dxkit allowlist remove <fingerprint>\`:`,
+    );
+    for (const e of report.orphaned) {
+      const reasonPreview = e.reason ? ` — ${truncate(e.reason, 50)}` : '';
+      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}${reasonPreview}`);
     }
   }
 }
@@ -490,10 +549,71 @@ export async function runAllowlistPrune(cwd: string, opts: AllowlistPruneOpts): 
   logger.success(`Pruned ${removed.length} expired entries.`);
 }
 
+// ─── remove ─────────────────────────────────────────────────────────────────
+
+export async function runAllowlistRemove(cwd: string, opts: AllowlistRemoveOpts): Promise<void> {
+  const fp = opts.fingerprint?.trim();
+  if (!fp) {
+    logger.fail(`Usage: vyuh-dxkit allowlist remove <fingerprint>`);
+    process.exit(1);
+  }
+  const file = loadAllowlist(cwd);
+  if (!file) {
+    logger.fail(`No allowlist file at ${pathForAllowlist(cwd)} — nothing to remove.`);
+    process.exit(1);
+  }
+  const entry = findEntry(file, fp);
+  if (!entry) {
+    logger.fail(
+      `No allowlist entry for fingerprint ${fp}. ` +
+        `Run \`vyuh-dxkit allowlist list\` to see current entries.`,
+    );
+    process.exit(1);
+  }
+
+  const updated = removeEntry(file, fp);
+  saveAllowlist(cwd, updated);
+
+  if (opts.json) {
+    process.stdout.write(JSON.stringify({ removed: entry }, null, 2) + '\n');
+    return;
+  }
+  logger.success(`Removed allowlist entry ${fp} (kind=${entry.kind}, category=${entry.category}).`);
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────
 
 function isAllowlistSubcommand(value: string): value is AllowlistSubcommand {
   return (ALLOWLIST_SUBCOMMANDS as readonly string[]).includes(value);
+}
+
+/**
+ * Build the set of fingerprints present in the committed baseline —
+ * the union of every entry's `id` plus its `absorbedFingerprints`.
+ * The absorbed set matters: cross-tool dedup collapses several
+ * findings into one representative, and an allowlist entry keyed on a
+ * collapsed contributor still suppresses the merged finding (CLAUDE.md
+ * Rule 9 robust matching). Including absorbed fingerprints here keeps
+ * such entries OUT of the orphaned bucket.
+ *
+ * Returns `undefined` when no baseline exists on disk (the caller
+ * renders a steer-to-CI notice rather than reporting false orphans).
+ */
+function baselineFingerprintSet(
+  cwd: string,
+  name: string | undefined,
+): ReadonlySet<string> | undefined {
+  const baselinePath = pathForBaseline(cwd, name ?? DEFAULT_BASELINE_NAME);
+  if (!fs.existsSync(baselinePath)) return undefined;
+  const baseline = readBaselineFile(baselinePath);
+  const set = new Set<string>();
+  for (const entry of baseline.findings) {
+    set.add(entry.id);
+    if ('absorbedFingerprints' in entry && entry.absorbedFingerprints) {
+      for (const fp of entry.absorbedFingerprints) set.add(fp);
+    }
+  }
+  return set;
 }
 
 function parseCategory(raw: string | undefined): AllowlistCategory {
