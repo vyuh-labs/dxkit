@@ -219,11 +219,34 @@ and the code graph.
       stance. Gate it behind an explicit opt-in, and treat author emails with the
       same disclosure posture as the baseline (don't bake PII into committed
       reports on public repos).
-- [ ] **Reviewer recommendation in `dxkit-pr`.** Suggest reviewers for a PR from
-      the git history on the touched files + ownership of the blast-radius modules
-      (the graph already knows the dependents), honoring `CODEOWNERS` when present.
-      "Who knows this code" is a safer, higher-value signal than "who broke it";
-      it slots next to the reviewer checklist the skill already generates.
+- [ ] **Reviewer recommendation in `dxkit-pr`.** Suggest reviewers for a PR
+      grounded on the **dev-report analyzer** (`ContributorStats` over the
+      analysis window) — not ad-hoc `git blame` — so the candidate set is already
+      scoped to _active_ contributors. Rank by history on the touched files +
+      ownership of the blast-radius modules (the graph knows the dependents),
+      honoring `CODEOWNERS` when present. "Who knows this code" is a safer,
+      higher-value signal than "who broke it," and it slots next to the reviewer
+      checklist the skill already generates.
+
+  **Edge cases that make or break this feature:**
+  - **Exclude the PR author** — never recommend someone to review their own change.
+  - **Departed contributors** — the dev who knows a file best may have left.
+    Grounding on the dev-report's analysis window naturally drops long-inactive
+    authors, but handle the case where _every_ knowledgeable contributor is gone:
+    fall back to current module owners / most-active live contributors /
+    `CODEOWNERS`, and say so ("original authors inactive — suggesting by current
+    ownership") rather than recommending someone unreachable.
+  - **Bots + automation** — exclude dependabot / CI / release-bot commits from
+    both attribution and reviewer ranking; they're not people to ask.
+  - **Recency-weight** — a single commit three years ago is weak signal next to
+    sustained recent activity; weight accordingly.
+  - **Don't recommend a single point of failure** — if one person owns
+    everything touched, surface that as a bus-factor signal, not just a reviewer.
+
+  The same active-contributor + bot-exclusion filtering applies to finding
+  attribution above: attributing a finding to someone who has left the company is
+  a dead end ("who to ask" = nobody), so attribution should flag when the
+  introducer is no longer active and route to the current owner instead.
 
 ### AI readiness
 
