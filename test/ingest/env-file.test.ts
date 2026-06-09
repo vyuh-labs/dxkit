@@ -67,7 +67,7 @@ describe('loadSnykEnv', () => {
       'GITHUB_TOKEN=nope\nSNYK_TOKEN=abc\nSNYK_ORG_ID=org-1\n',
     );
     const result = loadSnykEnv(tmp);
-    expect(result?.loadedKeys.sort()).toEqual(['SNYK_ORG_ID', 'SNYK_TOKEN']);
+    expect([...(result?.loadedKeys ?? [])].sort()).toEqual(['SNYK_ORG_ID', 'SNYK_TOKEN']);
     expect(process.env.SNYK_TOKEN).toBe('abc');
     expect(process.env.SNYK_ORG_ID).toBe('org-1');
     // Non-SNYK key was never lifted.
