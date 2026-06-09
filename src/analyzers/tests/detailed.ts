@@ -3,7 +3,7 @@
  */
 import { TestGapsReport, SourceFile, RiskTier } from './types';
 import { RankedAction, rank } from '../remediation';
-import { buildTestGapsActions, countsFromReport } from './actions';
+import { buildTestGapsActions, countsFromReport, weightGapsByBlastRadius } from './actions';
 import { TestGapsCounts, scoreTestGapsCounts } from './scoring';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 import {
@@ -30,9 +30,16 @@ export function buildTestGapsDetailed(
   graphContext?: DetailedGraphContext,
 ): TestGapsDetailedReport {
   const counts = countsFromReport(report);
-  const actions = rank(buildTestGapsActions(report), counts, scoreTestGapsCounts);
+  // When a graph is present, re-rank the gap worklist by blast radius so
+  // the most-depended-on untested files surface first (within tier). This
+  // re-orders only — `counts` (and therefore the score) come from the
+  // summary, untouched by gap order.
+  const weighted = graphContext
+    ? { ...report, gaps: weightGapsByBlastRadius(report.gaps, graphContext) }
+    : report;
+  const actions = rank(buildTestGapsActions(weighted), counts, scoreTestGapsCounts);
   return {
-    ...report,
+    ...weighted,
     schemaVersion: '11',
     coverageScore: scoreTestGapsCounts(counts).score,
     actions,
@@ -120,8 +127,14 @@ export function formatTestGapsDetailedMarkdown(
     L.push(graphContextProvenanceLine(gc));
     L.push('');
   }
+  // Within a tier, prefer higher blast radius (most-depended-on first)
+  // when the graph stamped it, falling back to LOC. Mirrors the worklist
+  // ranking so the table and the actions agree on ordering.
   const sorted: SourceFile[] = [...detailed.gaps].sort(
-    (a, b) => TIER_ORDER[a.risk] - TIER_ORDER[b.risk] || b.lines - a.lines,
+    (a, b) =>
+      TIER_ORDER[a.risk] - TIER_ORDER[b.risk] ||
+      (b.blastRadius ?? -1) - (a.blastRadius ?? -1) ||
+      b.lines - a.lines,
   );
   const grouped: Record<RiskTier, SourceFile[]> = {
     critical: [],

@@ -27,6 +27,16 @@ export interface SourceFile {
   type: string;
   risk: RiskTier;
   hasMatchingTest: boolean;
+  /**
+   * Caller-file count from the code graph — how many files depend on
+   * this one (its blast radius). Stamped only when a graph is present
+   * AND the language's call graph is reliable (so an untrustworthy `0`
+   * from a language graphify can't resolve, e.g. C#, never masquerades
+   * as a leaf). Absent ⇒ unknown, NOT zero. Used to weight the test-gap
+   * worklist so the most-depended-on untested files surface first;
+   * never affects the Tests score (that comes from summary counts).
+   */
+  blastRadius?: number;
 }
 
 /**
