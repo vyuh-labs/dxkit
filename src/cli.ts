@@ -137,6 +137,11 @@ function printUsage(): void {
                                  (hot-files / entry-points / file / feature / communities / api-surface / context)
     vyuh-dxkit context <query>   Slim structural slice for a query — token-efficient
                                  codebase context for LLMs (--budget / --depth / --substring / --json)
+    vyuh-dxkit reviewers [--base <ref>|--staged] [--limit N] [--json]
+                                 Suggest reviewers for the change — active-owner model
+                                 (recency-weighted git history, bots + departed devs
+                                 filtered, excludes the author) blended with CODEOWNERS,
+                                 with a bus-factor signal. Names + @handles, never emails.
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -329,6 +334,9 @@ export async function run(argv: string[]): Promise<void> {
       limit: { type: 'string' },
       refresh: { type: 'boolean', default: false },
       substring: { type: 'boolean', default: false },
+      // reviewers flags
+      staged: { type: 'boolean', default: false },
+      base: { type: 'string' },
       // context flags
       budget: { type: 'string' },
       depth: { type: 'string' },
@@ -1998,6 +2006,19 @@ export async function run(argv: string[]): Promise<void> {
         fingerprint: values.fingerprint as string | undefined,
         about: values.about as string | undefined,
         noBrowser: !!values['no-browser'],
+      });
+      break;
+    }
+
+    case 'reviewers': {
+      const { runReviewers } = await import('./reviewers-cli');
+      const limitRaw = values.limit as string | undefined;
+      const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+      runReviewers(cwd, {
+        base: values.base as string | undefined,
+        staged: !!values.staged,
+        json: !!values.json,
+        ...(Number.isFinite(limit) ? { limit } : {}),
       });
       break;
     }
