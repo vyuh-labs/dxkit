@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.3] - 2026-06-09
+
+### Targetable fix loop + test generation
+
+A workflow-depth release: make the fix loop targetable, add the test-writing
+skill the suite was missing, and surface the riskiest test gaps first. Almost
+entirely agent-skill + docs work; one contained, flag-gated analyzer change.
+
+- **Scoped fixes.** `dxkit-action` can burn down one category at a time —
+  dependency/BOM vulnerabilities, security, code quality, tests, or docs. It
+  runs the report that partitions that dimension and works only that worklist,
+  with the usual severity → reachability → blast-radius prioritization applied
+  within the scope. Tests/docs scopes hand off to `dxkit-test` / `dxkit-docs`.
+- **New `dxkit-test` skill** — the testing mirror of `dxkit-docs`. Reads the
+  test-gaps worklist, orients on real behavior via the code graph, and writes
+  meaningful tests that close the highest-risk gaps and move the Tests score
+  without coverage theater (real assertions, the repo's framework, the suite +
+  coverage run to prove it).
+- **Test-gap blast-radius weighting.** With a code graph present
+  (`test-gaps --graph-context`), the untested-file worklist is ranked within
+  each risk tier by how many files depend on each one — the most-depended-on
+  gaps surface first instead of just the largest by line count. Ordering only;
+  the Tests score is unchanged (it derives from the tier counts). Files the
+  graph can't resolve fall back to line-count ranking and are never dropped.
+- **New `dxkit-pr` skill** — opens a pull request with a title + body grounded
+  in the branch's real commits and diff (features, fixes, findings closed),
+  the dxkit signals a reviewer needs (guardrail verdict, allowlist activity,
+  score deltas), and a checklist tailored to the actual change. `dxkit-feature`
+  now offers to write tests for a newly built surface (on confirmation) and
+  hands off to `dxkit-test`.
+- **Docs + roadmap refresh.** Every doc surface updated for the current skill
+  set; the roadmap records why deep-SAST (code-path) reachability is deferred —
+  it needs interprocedural taint analysis dxkit can't do natively (semgrep is
+  intraprocedural; the call graph is too sparse), so the realistic path is
+  surfacing an ingested engine's reachability rather than computing our own.
+
 ## [2.9.2] - 2026-06-09
 
 ### Allowlist lifecycle + Snyk credential ergonomics
