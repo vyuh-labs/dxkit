@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.4] - 2026-06-09
+
+### Connecting findings + PRs to the people who know the code
+
+Two features on a shared **active-owner model** — recency-weighted git history
+scoped to who is still active, with bots and departed contributors filtered, the
+change author excluded, and a bus-factor signal. Output renders names + GitHub
+@handles, never raw emails (the @handle is both privacy-safe and the actionable
+identifier — it's @-mentionable and feeds `gh --reviewer`).
+
+- **`vyuh-dxkit reviewers`** suggests reviewers for a change (`--base <ref>` /
+  `--staged`). It ranks the active owners of the touched files — recency-weighted,
+  bot-free, departed-dev-aware, author-excluded — blended with `CODEOWNERS`, and
+  warns on a bus factor of 1. The differentiation over a platform's naive
+  last-touch suggestion is the activity grounding + active-only scoping. The
+  `dxkit-pr` skill consumes it for a "Suggested reviewers" block and
+  `gh pr create --reviewer`.
+- **`--attribute` "who to ask"** on the detailed vulnerability / test-gaps /
+  quality reports. For a pre-existing finding it adds a "Who to ask" column:
+  line-level findings are `git blame`d and routed through the owner model (an
+  inactive author is forwarded to the file's current owner); file-level findings
+  (test gaps) attribute to the file's current owner. Opt-in and historical only —
+  a net-new finding the guardrail just blocked was introduced by your own change,
+  so its owner is the PR author. The column is honest that blame is last-touch,
+  not necessarily who introduced the finding.
+
+### Privacy
+
+Author emails are used only as the internal identity key for clustering; they
+are never rendered in any report or PR output. Everything user-facing is a
+display name or a GitHub @handle.
+
 ## [2.9.3] - 2026-06-09
 
 ### Targetable fix loop + test generation
