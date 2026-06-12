@@ -567,7 +567,14 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   graphify: {
     name: 'graphify',
     description: 'Deterministic AST extraction via tree-sitter (20+ languages)',
-    install: 'pip install graphifyy',
+    // graphifyy pinned to a tested release. Unpinned, `pip install graphifyy`
+    // pulls the latest, and graphifyy's internal API drifts between minors
+    // (0.8 changed `cache_dir(root)` → `cache_dir(root, kind)`, #582). The
+    // generated script in graphify.ts now drives graphify only through its
+    // public surface (`extract(..., cache_root=...)`), so the pin guards
+    // against a future *public*-API drift, not the cache_dir signature.
+    // Bumping requires retesting the generated script against the new release.
+    install: 'pip install "graphifyy==0.8.36"',
     check: 'python3 -c "import graphify"',
     for: 'all',
     layer: 'optional',
@@ -577,16 +584,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       'python3 -c "import graphify; print(\'installed\')" || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')"',
     installCommands: {
       macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q graphifyy',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.36"',
       linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q graphifyy',
-      windows: 'pip install --user graphifyy',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.36"',
+      windows: 'pip install --user "graphifyy==0.8.36"',
     },
   },
   jscpd: {
     name: 'jscpd',
     description: 'Copy-paste / duplicate code detector',
-    install: 'npm install -g jscpd',
+    // jscpd pinned to the last 4.x. jscpd 5.x is a Rust rewrite ("cpd") that
+    // dropped the `--gitignore` flag (jscpd.ts passes it → exit 2) AND changed
+    // the report JSON schema this module parses. Pinning to 4.x is lower-risk
+    // than tracking v5's CLI + schema; revisit as a deliberate v5 migration
+    // (flag + parser) if/when we adopt it.
+    install: 'npm install -g jscpd@4.2.5',
     check: 'jscpd --version',
     for: 'all',
     layer: 'universal',
@@ -594,10 +606,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'jscpd --version',
     installCommands: {
       macos:
-        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd@4.2.5 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
       linux:
-        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
-      windows: 'npm install -g jscpd',
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install jscpd@4.2.5 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/jscpd ~/.local/bin/jscpd',
+      windows: 'npm install -g jscpd@4.2.5',
     },
   },
   semgrep: {
