@@ -80,6 +80,45 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     expect(pk!.severity).toBe('critical');
   });
 
+  it('downgrades a generic password match in a test file to low + test-fixture', () => {
+    // The customer case (C-D4): unit-test fixture passwords were flagged
+    // as headline CRITICALs. Generic matches in test files downgrade.
+    fs.mkdirSync(path.join(tmp, '__tests__'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '__tests__', 'validator.unit.test.ts'),
+      "const user = { password: 'password1' };\nexport default user;\n",
+    );
+    const result = gatherGrepSecretsResult(tmp);
+    expect(result).not.toBeNull();
+    const pw = result!.findings.find((f) => f.rule === 'hardcoded-password');
+    expect(pw).toBeDefined();
+    expect(pw!.severity).toBe('low');
+    expect(pw!.category).toBe('test-fixture');
+  });
+
+  it('keeps full severity for branded tokens even inside test files', () => {
+    // A real AWS key in a test file is still a leaked credential.
+    fs.writeFileSync(
+      path.join(tmp, 'auth.spec.ts'),
+      "const key = 'AKIAIOSFODNN7EXAMPLE';\nexport default key;\n",
+    );
+    const result = gatherGrepSecretsResult(tmp);
+    expect(result).not.toBeNull();
+    const aws = result!.findings.find((f) => f.rule === 'aws-access-key');
+    expect(aws).toBeDefined();
+    expect(aws!.severity).toBe('high');
+    expect(aws!.category).toBeUndefined();
+  });
+
+  it('keeps critical severity for passwords in non-test source files', () => {
+    fs.writeFileSync(path.join(tmp, 'config.ts'), "const password = 'hunter22';\n");
+    const result = gatherGrepSecretsResult(tmp);
+    const pw = result!.findings.find((f) => f.rule === 'hardcoded-password');
+    expect(pw).toBeDefined();
+    expect(pw!.severity).toBe('critical');
+    expect(pw!.category).toBeUndefined();
+  });
+
   it('returns a success envelope with zero findings on a clean tree', () => {
     fs.writeFileSync(path.join(tmp, 'ok.ts'), "export const greeting = 'hello';\n");
     const result = gatherGrepSecretsResult(tmp);

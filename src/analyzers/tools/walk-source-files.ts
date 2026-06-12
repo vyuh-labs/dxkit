@@ -265,6 +265,20 @@ function splitTestPatterns(patterns: string[]): {
 }
 
 /**
+ * Classify a project-relative path as a test file using the active
+ * language packs' test patterns — the same classification the walker's
+ * `includeTests` filter applies. Exported so consumers that walk WITH
+ * tests included (e.g. grep-secrets, which must still see test files)
+ * can distinguish them without re-deriving pattern-matching logic.
+ * Registry-rooted: only call from index-rooted code paths, not from
+ * inside a language pack (see the module-cycle note at the top).
+ */
+export function isTestSourceFile(relPath: string): boolean {
+  const basename = relPath.slice(relPath.lastIndexOf('/') + 1);
+  return isTestFile(relPath, basename, splitTestPatterns(allTestFilePatterns()));
+}
+
+/**
  * Count directories under `cwd`, mirroring `find . -type d ${getFindExcludeFlags(cwd)}`:
  * the root counts as 1, plus every descendant directory not pruned by
  * the centralized exclusion set (`isExcludedPath`). Cross-platform,

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { scoreDocsDimension } from '../src/analyzers/docs/shallow';
 import { scoreMaintainabilityDimension } from '../src/analyzers/maintainability/shallow';
 import { scoreDxDimension } from '../src/analyzers/dx/shallow';
-import { scoreSecurityDimension } from '../src/analyzers/security/shallow';
+import { scoreSecurityDimension, toSecurityScoreInput } from '../src/analyzers/security/shallow';
 import { scoreQualityDimension } from '../src/analyzers/quality/shallow';
 import { scoreTestsDimension } from '../src/analyzers/tests/shallow';
 import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../src/scoring';
@@ -19,6 +19,7 @@ import {
   depVulnCapability,
   lintCapability,
   qualityMeasuredCapabilities,
+  secretsCapability,
   secretsCapabilityWithCount,
   withInput,
 } from './fixtures/score-input';
@@ -143,6 +144,41 @@ function emptyScoreInput(overrides: Partial<SecurityScoreInput> = {}): SecurityS
 describe('scoreSecurityFromInput', () => {
   it('returns 100 for an empty input', () => {
     expect(scoreSecurityFromInput(emptyScoreInput()).score).toBe(100);
+  });
+
+  it('C-D4: test-fixture secrets do not drive secretFindings (no trust-broken cap)', () => {
+    // A repo whose only "secrets" are auto-downgraded unit-test fixtures
+    // must not be capped as committed-credentials. Real findings still count.
+    const fixtureOnly = withInput({
+      capabilities: {
+        secrets: secretsCapability([
+          {
+            file: '__tests__/validator.unit.test.ts',
+            line: 10,
+            rule: 'hardcoded-password',
+            severity: 'low',
+            category: 'test-fixture',
+          },
+        ]),
+      },
+    });
+    expect(toSecurityScoreInput(fixtureOnly).secretFindings).toBe(0);
+
+    const mixed = withInput({
+      capabilities: {
+        secrets: secretsCapability([
+          {
+            file: '__tests__/validator.unit.test.ts',
+            line: 10,
+            rule: 'hardcoded-password',
+            severity: 'low',
+            category: 'test-fixture',
+          },
+          { file: 'src/keycloak.ts', line: 127, rule: 'hardcoded-password', severity: 'critical' },
+        ]),
+      },
+    });
+    expect(toSecurityScoreInput(mixed).secretFindings).toBe(1);
   });
 
   it('C2.2 / D098: every secret-class signal caps the score at 40', () => {
