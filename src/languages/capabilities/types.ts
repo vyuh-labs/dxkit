@@ -269,6 +269,15 @@ export interface SecretFinding {
   severity: keyof SeverityCounts;
   /** Human-readable description from the scanner (e.g. gitleaks' `Description` field). */
   title?: string;
+  /**
+   * `test-fixture`: a generic keyword-assignment match inside a test
+   * file (per the active packs' test patterns). Auto-downgraded to
+   * `low` severity and excluded from the committed-credentials score
+   * cap — still reported, never headline-critical. Branded token
+   * shapes (real AWS keys etc.) are NEVER tagged: a live credential
+   * in a test file is still a leak.
+   */
+  category?: 'test-fixture';
 }
 
 /**

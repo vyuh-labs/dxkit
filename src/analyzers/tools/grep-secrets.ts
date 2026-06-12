@@ -30,7 +30,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { applySuppressions, loadSuppressions } from './suppressions';
-import { walkSourceFiles } from './walk-source-files';
+import { isTestSourceFile, walkSourceFiles } from './walk-source-files';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
@@ -98,11 +98,32 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
     } catch {
       continue;
     }
+    // Generic keyword-assignment matches inside a test file are almost
+    // always fixtures (`password: 'password1'` in a unit test), not
+    // committed credentials — flagging them CRITICAL buried a real
+    // customer's headline counts under their own test data. Downgrade
+    // to low + tag `test-fixture` (still visible, never headline, and
+    // excluded from the committed-credentials cap by the score
+    // adapter). Branded token shapes keep full severity everywhere: a
+    // real AWS key in a test file is still a leaked credential.
+    const isTest = isTestSourceFile(rel);
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       for (const sp of patterns) {
         if (sp.regex.test(lines[i])) {
-          raw.push({ file: rel, line: i + 1, rule: sp.rule, severity: severityFor(sp.rule) });
+          const fixture = isTest && GENERIC_PATTERNS.includes(sp);
+          raw.push({
+            file: rel,
+            line: i + 1,
+            rule: sp.rule,
+            severity: fixture ? 'low' : severityFor(sp.rule),
+            ...(fixture
+              ? {
+                  category: 'test-fixture' as const,
+                  title: 'Likely test fixture (in a test file) — auto-downgraded',
+                }
+              : {}),
+          });
           break; // at most one finding per line
         }
       }

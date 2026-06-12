@@ -89,7 +89,12 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
       };
 
   return {
-    secretFindings: c.secrets?.findings.length ?? 0,
+    // Test-fixture matches (generic password literals inside test
+    // files, auto-downgraded by grep-secrets) stay visible in reports
+    // but must not drive the committed-credentials penalty/cap — a
+    // customer's own unit-test fixtures capped their Security score at
+    // the trust-broken tier (C-D4).
+    secretFindings: c.secrets?.findings.filter((f) => f.category !== 'test-fixture').length ?? 0,
     privateKeyFiles: m.privateKeyFiles,
     envFilesInGit: m.envFilesInGit,
     codeFindings,
