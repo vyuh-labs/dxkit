@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.5] - 2026-06-12
+
+### Tool-robustness + matcher rename fixes
+
+Hardening pass closing a set of brownfield-install and guardrail-matcher
+defects surfaced while benchmarking on Python 3.14 and large real-world repos.
+
+#### Fixed
+
+- **graphify on Python 3.14 (D-01).** Python 3.14 made `forkserver` the default
+  multiprocessing start method on Linux. graphify parallelises extraction with a
+  `ProcessPoolExecutor`, and under spawn/forkserver each worker re-imports the
+  generated script — re-running top-level extraction and crashing the run (no
+  `.dxkit/reports/graph.json` written; every graph-dependent feature silently
+  degraded). The generated script now wraps its execution body in
+  `if __name__ == '__main__'` — graphify's own documented requirement for
+  parallel extraction — so it is correct on every platform and start method
+  (Linux fork/forkserver, macOS/Windows spawn) while keeping multi-core
+  extraction. The previous forced `set_start_method('fork')` workaround is
+  removed.
+- **graphify cache redirect (D-02).** The on-disk cache is now redirected via
+  graphify's public `extract(cache_root=...)` parameter instead of
+  monkeypatching the internal `graphify.cache.cache_dir`, whose signature
+  changed in graphifyy 0.8 (`cache_dir(root)` → `cache_dir(root, kind)`) and
+  crashed the run. This also stops graphify's `atexit` stat-index flush from
+  writing a stray `graphify-out/` into the scanned repo. The temp cache lives
+  under the caller-owned script dir and is reclaimed after the process (and its
+  atexit handlers) exit. `graphifyy` is pinned to `0.8.36`.
+- **jscpd version pin (E-01).** jscpd is pinned to `4.2.5`. jscpd 5.x is a Rust
+  rewrite that dropped the `--gitignore` flag (dxkit passed it → exit 2) and
+  changed the report JSON schema dxkit parses.
+- **Guardrail matcher — whole-file rename relocation (D-03).** Renaming a source
+  file no longer reports its whole-file findings (test-gap, coverage-gap,
+  test-file-degradation, god-file, stale-file, large-file) as removed + added,
+  which falsely blocked the guardrail on a pure rename. The git-aware matcher
+  now relocates these line-less, file-anchored findings through git's rename
+  detection, keyed on `(renamed-path, kind)` so two different whole-file kinds
+  on the same renamed file never cross-pair.
+
+#### Internal
+
+- New version-pin guard test partitions every registry tool into pinned /
+  audited-unpinned / package-manager-tracked, so a tool can't be added or
+  un-pinned without a deliberate decision. `semgrep` and nine others remain on
+  the audited-unpinned backlog.
+
 ## [2.9.4] - 2026-06-09
 
 ### Connecting findings + PRs to the people who know the code
