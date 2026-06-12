@@ -252,6 +252,102 @@ describe('gitAwareMatch', () => {
     expect(pair.reasons.some((r) => r.code === 'git-rename')).toBe(true);
   });
 
+  // ── Whole-file rename relocation (Pass 1b) ──────────────────────────────
+  // Whole-file findings (test-gap, large-file, …) are file-anchored with no
+  // line. `entryToLocated` gives them `file` + `rule = kind`. On a pure file
+  // rename their path-based identity changes, so without Pass 1b they read as
+  // removed + added → a false net-new block on a rename.
+  function wholeFileFinding(file: string, kind: 'test-gap' | 'large-file'): LocatedIdentity {
+    const id =
+      kind === 'test-gap'
+        ? identityFor({ kind: 'test-gap', file, risk: 'high' })
+        : identityFor({ kind: 'large-file', file });
+    return { id, file, rule: kind }; // no line — whole-file
+  }
+
+  it('relocates a whole-file finding across a pure file rename (Pass 1b)', () => {
+    writeFileSync(join(dir, 'old-service.ts'), lines('a', 'b', 'c'));
+    const base = commit(dir, 'initial');
+    execFileSync('git', ['mv', 'old-service.ts', 'new-service.ts'], { cwd: dir });
+    const head = commit(dir, 'rename service');
+
+    const prior = [wholeFileFinding('old-service.ts', 'test-gap')];
+    const current = [wholeFileFinding('new-service.ts', 'test-gap')];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+
+    expect(result.removed).toEqual([]);
+    expect(result.added).toEqual([]);
+    expect(result.pairs).toHaveLength(1);
+    const [pair] = result.pairs;
+    expect(pair.status).toBe('relocated');
+    expect(pair.priorId).toBe(prior[0].id);
+    expect(pair.currentId).toBe(current[0].id);
+    expect(pair.reasons.some((r) => r.code === 'git-rename')).toBe(true);
+  });
+
+  it('does not cross-pair different whole-file kinds on the same renamed file', () => {
+    // The correctness guard: a file is renamed; on the old path it had a
+    // test-gap (now resolved — a test was added), on the new path it has a
+    // brand-new large-file finding. Keying the rename pass on (path, kind)
+    // must keep these apart — pairing them would mask a genuinely net-new
+    // finding as a relocation and let real debt through the guardrail.
+    writeFileSync(join(dir, 'old.ts'), lines('a', 'b', 'c'));
+    const base = commit(dir, 'initial');
+    execFileSync('git', ['mv', 'old.ts', 'new.ts'], { cwd: dir });
+    const head = commit(dir, 'rename old → new');
+
+    const prior = [wholeFileFinding('old.ts', 'test-gap')];
+    const current = [wholeFileFinding('new.ts', 'large-file')];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+
+    // No relocation: the test-gap is genuinely gone, the large-file genuinely new.
+    expect(result.persisted).toEqual([]);
+    expect(result.removed).toEqual([prior[0].id]);
+    expect(result.added).toEqual([current[0].id]);
+    expect(result.pairs.some((p) => p.status === 'relocated')).toBe(false);
+  });
+
+  it('relocates each kind independently when both kinds move with one renamed file', () => {
+    // Same renamed file carries a test-gap AND a large-file on both sides.
+    // Each must relocate to its own kind — never swap.
+    writeFileSync(join(dir, 'old.ts'), lines('a', 'b', 'c'));
+    const base = commit(dir, 'initial');
+    execFileSync('git', ['mv', 'old.ts', 'new.ts'], { cwd: dir });
+    const head = commit(dir, 'rename old → new');
+
+    const priorTg = wholeFileFinding('old.ts', 'test-gap');
+    const priorLf = wholeFileFinding('old.ts', 'large-file');
+    const curTg = wholeFileFinding('new.ts', 'test-gap');
+    const curLf = wholeFileFinding('new.ts', 'large-file');
+    const result = gitAwareMatch([priorTg, priorLf], [curTg, curLf], {
+      cwd: dir,
+      baseSha: base,
+      headSha: head,
+    });
+
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    const relocated = result.pairs.filter((p) => p.status === 'relocated');
+    expect(relocated).toHaveLength(2);
+    // Each prior id pairs with the current id of the SAME kind.
+    const byPrior = new Map(relocated.map((p) => [p.priorId, p.currentId]));
+    expect(byPrior.get(priorTg.id)).toBe(curTg.id);
+    expect(byPrior.get(priorLf.id)).toBe(curLf.id);
+  });
+
+  it('does not relocate a whole-file finding when the file was not renamed', () => {
+    // Same path on both sides → Pass 1b must not fire (it acts only on
+    // git-detected renames); the exact-id multiset pass persists it instead.
+    writeFileSync(join(dir, 'keep.ts'), lines('a', 'b'));
+    const sha = commit(dir, 'initial');
+    const prior = [wholeFileFinding('keep.ts', 'test-gap')];
+    const current = [wholeFileFinding('keep.ts', 'test-gap')];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: sha, headSha: sha });
+
+    expect(result.persisted).toEqual([prior[0].id]);
+    expect(result.pairs.some((p) => p.reasons.some((r) => r.code === 'git-rename'))).toBe(false);
+  });
+
   it('pairs via line-fuzz when the scanner reports a slightly different line', () => {
     writeFileSync(join(dir, 'a.ts'), lines('alpha', 'beta', 'gamma'));
     const base = commit(dir, 'initial');
@@ -297,12 +393,12 @@ describe('gitAwareMatch', () => {
     const sha = commit(dir, 'initial');
     const sharedHash = 'abc123def456cafe';
     const prior: LocatedIdentity[] = [
-      { id: 'prior-id', file: 'src/old.ts', line: 10, rule: 'demo-rule', contentHash: sharedHash },
+      { id: 'prior-id', file: 'old.ts', line: 10, rule: 'demo-rule', contentHash: sharedHash },
     ];
     const current: LocatedIdentity[] = [
       {
         id: 'current-id',
-        file: 'src/new.ts',
+        file: 'new.ts',
         line: 99,
         rule: 'demo-rule',
         contentHash: sharedHash,

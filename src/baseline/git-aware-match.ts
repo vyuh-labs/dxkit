@@ -29,11 +29,13 @@
  * on its own. Callers in shallow-clone CI or non-git workflows get
  * a working (if less precise) result.
  *
- * Known limitations (Sprint 0 v1):
- *   - File renames are not auto-tracked. A renamed file looks like
- *     "removed prior + added current"; future iterations will use
- *     `git log --follow` or `git diff -M` rename detection to close
- *     this gap.
+ * File renames are auto-tracked via git's rename detection
+ * (`--find-renames`): line-anchored findings relocate through Pass 1
+ * (the rename map feeds `mapLineThroughDiff`), and whole-file findings
+ * (test-gap, large-file, …) relocate through Pass 1b. A renamed file
+ * therefore reports `relocated`, not removed+added.
+ *
+ * Known limitations:
  *   - Cross-file refactors (function extracted to a new file) are
  *     reported as removed-and-added.
  *   - When the line-bucket mapping fails on context edits (tool
@@ -333,6 +335,60 @@ export function gitAwareMatch(
         reasons,
       });
     }
+
+    // Pass 1b — whole-file rename relocation. Whole-file findings
+    // (test-gap, large-file, stale-file, test-file-degradation, …) are
+    // file-anchored with no line, so Pass 1's line mapping can't reach
+    // them. Their identity is path-based, so a pure file rename makes a
+    // naive diff read them as removed+added → false net-new debt on a
+    // rename. Here we remap each unmatched prior whole-file finding's
+    // file through the rename map and pair it with an unmatched current
+    // whole-file finding of the SAME kind at the renamed path. The key
+    // is (renamed-path, kind) — `entryToLocated` carries the kind in
+    // `rule` — so two different whole-file kinds on one renamed file
+    // never cross-pair (which would mask a genuinely new finding as
+    // relocated). Acts only on files git detected as renamed; same-path
+    // whole-file findings are left to Pass 2's exact-id match.
+    if (renames.size > 0) {
+      const currentWholeFile = new Map<string, LocatedIdentity[]>();
+      for (const c of current) {
+        if (currentMatched.has(c)) continue;
+        if (!c.file || c.line !== undefined) continue; // whole-file only
+        const key = wholeFileKey(c.file, c.rule);
+        const bucket = currentWholeFile.get(key);
+        if (bucket) bucket.push(c);
+        else currentWholeFile.set(key, [c]);
+      }
+      const takeWholeFile = (key: string): LocatedIdentity | undefined => {
+        const bucket = currentWholeFile.get(key);
+        if (!bucket || bucket.length === 0) return undefined;
+        const head = bucket.shift();
+        if (bucket.length === 0) currentWholeFile.delete(key);
+        return head;
+      };
+      for (const p of prior) {
+        if (priorMatched.has(p)) continue;
+        if (!p.file || p.line !== undefined) continue; // whole-file only
+        const renamedPath = renames.get(p.file);
+        if (renamedPath === undefined || renamedPath === p.file) continue; // renamed only
+        const candidate = takeWholeFile(wholeFileKey(renamedPath, p.rule));
+        if (!candidate) continue;
+        priorMatched.add(p);
+        currentMatched.add(candidate);
+        pairs.push({
+          priorId: p.id,
+          currentId: candidate.id,
+          status: 'relocated',
+          confidence: CONFIDENCE_GIT_EXACT,
+          reasons: [
+            {
+              code: 'git-rename',
+              detail: `whole-file finding relocated across rename: ${p.file} → ${renamedPath}`,
+            },
+          ],
+        });
+      }
+    }
   }
 
   // Pass 1.5 — content-hash fallback. Pairs prior+current findings
@@ -428,6 +484,15 @@ function locationKey(file: string, rule: string, line: number): string {
 
 function contentKey(rule: string, contentHash: string): string {
   return `content\0${rule}\0${contentHash}`;
+}
+
+/** Key for the whole-file rename pass: renamed path + the finding's
+ *  kind (carried in `rule` by `entryToLocated`). The kind component
+ *  stops two different whole-file kinds on one renamed file from
+ *  cross-pairing. `rule` is always present for produced whole-file
+ *  findings; the `?? ''` guards a hand-built identity that omits it. */
+function wholeFileKey(file: string, rule: string | undefined): string {
+  return `${file}\0${rule ?? ''}`;
 }
 
 /**
