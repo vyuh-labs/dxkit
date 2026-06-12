@@ -133,7 +133,17 @@ export async function gatherOsvScannerFixPlans(
     if (!outcome.stdout) return new Map();
     return parseOsvScannerFixOutput(outcome.stdout);
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    // Best-effort cleanup. On Windows the npm-install grandchildren (or
+    // antivirus scanning their files) can briefly hold handles inside the
+    // temp dir, making the immediate rm fail with EPERM. Retry with
+    // backoff, and never throw out of this finally — a throw here would
+    // discard the already-parsed fix plans, turning a cleanup hiccup into
+    // a week of invisible dep vulns (the original customer symptom).
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      // Leaked temp dir < lost dep-audit result. The OS temp cleaner owns it now.
+    }
   }
 }
 
