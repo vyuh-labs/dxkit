@@ -15,11 +15,18 @@
  * location-pair pass must too. The canonical-rule registry doesn't
  * apply to hygiene markers; the marker IS the canonical name.
  *
- * Kinds without file/line locators (dep-vuln, duplication,
- * coverage-gap, test-gap, test-file-degradation, god-file,
- * stale-file, large-file, secret-hmac) fall through to the matcher's
- * multiset pass — they're paired by exact identity-hash equality,
- * which the matcher already handles without any locator metadata.
+ * Whole-file findings (test-gap, coverage-gap, test-file-degradation,
+ * god-file, stale-file, large-file) are file-anchored but carry no
+ * line. They flow to the matcher's whole-file rename pass with `file`
+ * populated and `kind` carried in `rule` — so a pure file rename
+ * relocates them (instead of reading as removed+added → false net-new
+ * debt), and two different whole-file kinds on the same renamed file
+ * never cross-pair. The line-anchored passes skip them (no line); the
+ * multiset pass still pairs them by exact identity-hash equality.
+ *
+ * Kinds without any file/line locator (dep-vuln, duplication,
+ * secret-hmac) fall through to the matcher's multiset pass — paired by
+ * exact identity-hash equality, no locator metadata needed.
  */
 
 import { canonicalRuleFor } from '../analyzers/tools/fingerprint';
@@ -70,14 +77,21 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
         line: entry.line,
         rule: entry.category,
       };
-    case 'dep-vuln':
-    case 'duplication':
     case 'coverage-gap':
     case 'test-gap':
     case 'test-file-degradation':
     case 'god-file':
     case 'stale-file':
     case 'large-file':
+      // Whole-file findings: file-anchored, no line. `file` lets the
+      // matcher's whole-file rename pass relocate them on a pure rename;
+      // `kind` (reused as the `rule` discriminator, like hygiene/marker
+      // and stale-allow/category above) keeps two different whole-file
+      // kinds on the same renamed file from cross-pairing. No line, so
+      // the line-anchored passes correctly skip them.
+      return { id: entry.id, file: entry.file, rule: entry.kind };
+    case 'dep-vuln':
+    case 'duplication':
     case 'secret-hmac':
       return { id: entry.id };
   }

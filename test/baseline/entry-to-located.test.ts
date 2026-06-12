@@ -58,7 +58,7 @@ describe('entryToLocated', () => {
     });
   });
 
-  it('falls through to identity-only for content-independent kinds', () => {
+  it('falls through to identity-only for kinds with no file/line locator', () => {
     const cases: BaselineEntry[] = [
       { id: 'd1', kind: 'dep-vuln', package: 'lodash', advisoryId: 'GHSA-x' },
       {
@@ -70,9 +70,6 @@ describe('entryToLocated', () => {
         startLineA: 1,
         startLineB: 1,
       },
-      { id: 'd4', kind: 'test-gap', file: 'src/a.ts', risk: 'high' },
-      { id: 'd5', kind: 'large-file', file: 'src/big.ts' },
-      { id: 'd6', kind: 'stale-file', file: '.foo.swp', suffix: 'swp' },
       { id: 'd7', kind: 'secret-hmac', tool: 'gitleaks', rule: 'aws-token', hmac: 'h' },
     ];
     for (const entry of cases) {
@@ -81,6 +78,30 @@ describe('entryToLocated', () => {
       expect(out.file).toBeUndefined();
       expect(out.line).toBeUndefined();
       expect(out.rule).toBeUndefined();
+    }
+  });
+
+  it('carries file + kind (as rule) but no line for whole-file findings', () => {
+    // Whole-file findings are file-anchored with no line. `file` lets the
+    // matcher's whole-file rename pass relocate them across a pure rename;
+    // `rule` carries the kind so two different whole-file kinds on the same
+    // renamed file never cross-pair. No line → the line-anchored passes skip
+    // them. Covers every wired + deferred whole-file kind.
+    const cases = [
+      { id: 'w1', kind: 'test-gap', file: 'src/a.ts', risk: 'high' },
+      { id: 'w2', kind: 'large-file', file: 'src/big.ts' },
+      { id: 'w3', kind: 'stale-file', file: '.foo.swp', suffix: 'swp' },
+      { id: 'w4', kind: 'test-file-degradation', file: 'test/a.test.ts', status: 'empty' },
+      { id: 'w5', kind: 'god-file', file: 'src/kitchen-sink.ts' },
+      { id: 'w6', kind: 'coverage-gap', file: 'src/c.ts', symbol: 'doThing' },
+    ] satisfies BaselineEntry[];
+    for (const entry of cases) {
+      const out = entryToLocated(entry);
+      expect(out.id).toBe(entry.id);
+      expect(out.file).toBe(entry.file);
+      expect(out.rule).toBe(entry.kind);
+      expect(out.line).toBeUndefined();
+      expect(out.contentHash).toBeUndefined();
     }
   });
 
