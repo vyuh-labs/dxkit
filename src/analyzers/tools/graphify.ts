@@ -41,16 +41,22 @@ interface GraphifyResult {
   graph?: GraphJson;
 }
 
-/** Build the graphify Python script with cwd-specific exclusions baked in. */
-function buildGraphifyScript(cwd: string): string {
+/**
+ * Build the graphify Python script with cwd-specific exclusions baked in.
+ *
+ * Exported so the structural contract of the generated script — the
+ * `if __name__ == '__main__'` guard that keeps ProcessPoolExecutor workers
+ * from re-running extraction under spawn/forkserver (Python 3.14's Linux
+ * default), and the public `extract(cache_root=...)` cache redirect that
+ * replaced the fragile `cache_dir` monkeypatch — is unit-testable without a
+ * Python interpreter or graphify installed (mirrors `buildGraphifyEnvelope`).
+ */
+export function buildGraphifyScript(cwd: string): string {
   const { dirsSet, pathsList, fileGlobsList } = getPythonExcludeFilter(cwd);
   return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
-import json, sys, os, tempfile
+import json, sys, os
 from pathlib import Path
 from collections import Counter
-
-# Redirect graphify cache to /tmp so we don't pollute the target repo
-_cache_dir = Path(tempfile.mkdtemp(prefix='dxkit-graphify-'))
 
 try:
     from graphify.extract import extract, collect_files
@@ -60,17 +66,6 @@ try:
 except ImportError:
     print(json.dumps({"error": "graphify not installed"}))
     sys.exit(0)
-
-# Redirect graphify's on-disk cache BEFORE any graphify function runs.
-# collect_files() eagerly resolves cache_dir() during enumeration, so
-# the patch has to land before the first graphify call — not after.
-# Pre-patch, a 'graphify-out/cache/' directory was created in the
-# customer's repo every time the analyzer touched a project.
-import graphify.cache as _gc
-_gc.cache_dir = lambda root=None: _cache_dir / "cache"
-(_cache_dir / "cache").mkdir(parents=True, exist_ok=True)
-
-target = Path(sys.argv[1])
 
 # Three-axis exclusion. EXCLUDE_DIRS is basename-only (any path
 # segment matching skips the file). EXCLUDE_PATHS holds multi-segment
@@ -253,407 +248,418 @@ def _strip_paren_suffix(label):
         s = s.rsplit('.', 1)[1]
     return s
 
-all_files = collect_files(target)
-files = [f for f in all_files if not _is_excluded(f)]
-if not files:
-    print(json.dumps({"error": "no files found"}))
-    sys.exit(0)
+if __name__ == '__main__':
+    # ProcessPoolExecutor workers re-import this module under spawn/
+    # forkserver (the Python 3.14 default on Linux); the __main__ guard
+    # keeps extraction from re-running per worker. graphify's own
+    # _extract_parallel requires this guard (it warns BrokenProcessPool
+    # and dies without it). See graphify/extract.py:_extract_parallel.
+    target = Path(sys.argv[1])
+    # graphify's on-disk cache is redirected here (the public cache_root
+    # param passed to extract() below) so it never lands in the target
+    # repo. The TS caller owns this dir's lifecycle — it lives under the
+    # ephemeral scriptDir and is removed after this process fully exits,
+    # which is the only point that survives graphify's atexit stat-index
+    # flush (graphify/cache.py registers _flush_stat_index at exit, so a
+    # Python-side rmtree here would be undone by that post-exit write).
+    _cache_dir = Path(sys.argv[2])
+    all_files = collect_files(target)
+    files = [f for f in all_files if not _is_excluded(f)]
+    if not files:
+        print(json.dumps({"error": "no files found"}))
+        sys.exit(0)
 
-# Suppress progress output by redirecting stdout during extraction
-import io
-_real_stdout = sys.stdout
-sys.stdout = io.StringIO()
-result = extract(files)
-sys.stdout = _real_stdout
-G = build([result], directed=True)
-communities = cluster(G)
+    # Suppress progress output by redirecting stdout during extraction
+    import io
+    _real_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    result = extract(files, cache_root=_cache_dir)
+    sys.stdout = _real_stdout
+    G = build([result], directed=True)
+    communities = cluster(G)
 
-# Functions vs modules
-nodes = list(G.nodes(data=True))
-functions = [(n, d) for n, d in nodes if "()" in d.get("label", "")]
-modules = [(n, d) for n, d in nodes if "()" not in d.get("label", "")]
+    # Functions vs modules
+    nodes = list(G.nodes(data=True))
+    functions = [(n, d) for n, d in nodes if "()" in d.get("label", "")]
+    modules = [(n, d) for n, d in nodes if "()" not in d.get("label", "")]
 
-# Functions per file
-file_funcs = Counter()
-for n, d in functions:
-    sf = d.get("source_file", "")
-    file_funcs[sf] += 1
+    # Functions per file
+    file_funcs = Counter()
+    for n, d in functions:
+        sf = d.get("source_file", "")
+        file_funcs[sf] += 1
 
-max_file = file_funcs.most_common(1)[0] if file_funcs else ("", 0)
+    max_file = file_funcs.most_common(1)[0] if file_funcs else ("", 0)
 
-# God nodes: graphifyy@0.5.0 renamed the result key "edges" → "degree".
-gods = god_nodes(G, top_n=50)
-god_count = sum(1 for g in gods if g["degree"] > 15)
+    # God nodes: graphifyy@0.5.0 renamed the result key "edges" → "degree".
+    gods = god_nodes(G, top_n=50)
+    god_count = sum(1 for g in gods if g["degree"] > 15)
 
-# Cohesion
-scores = score_all(G, communities) if communities else {}
-avg_cohesion = sum(scores.values()) / len(scores) if scores else 0.0
+    # Cohesion
+    scores = score_all(G, communities) if communities else {}
+    avg_cohesion = sum(scores.values()) / len(scores) if scores else 0.0
 
-# Orphan modules (no inbound imports)
-import_targets = set()
-for u, v, data in G.edges(data=True):
-    if data.get("relation") == "imports_from":
-        import_targets.add(v)
-module_ids = set(n for n, d in modules)
-orphans = module_ids - import_targets
+    # Orphan modules (no inbound imports)
+    import_targets = set()
+    for u, v, data in G.edges(data=True):
+        if data.get("relation") == "imports_from":
+            import_targets.add(v)
+    module_ids = set(n for n, d in modules)
+    orphans = module_ids - import_targets
 
-# Dead imports (imported but never called)
-call_targets = set()
-for u, v, data in G.edges(data=True):
-    if data.get("relation") == "calls":
-        call_targets.add(v)
-dead = import_targets - call_targets - module_ids
+    # Dead imports (imported but never called)
+    call_targets = set()
+    for u, v, data in G.edges(data=True):
+        if data.get("relation") == "calls":
+            call_targets.add(v)
+    dead = import_targets - call_targets - module_ids
 
-# Commented code ratio: source files with 0 function/class AST nodes
-source_files_set = set()
-files_with_nodes = set()
-for n, d in nodes:
-    sf = d.get("source_file", "")
-    if sf:
-        source_files_set.add(sf)
-        if "()" in d.get("label", "") or any(
-            data.get("relation") == "method"
-            for _, _, data in G.edges(n, data=True)
-        ):
-            files_with_nodes.add(sf)
+    # Commented code ratio: source files with 0 function/class AST nodes
+    source_files_set = set()
+    files_with_nodes = set()
+    for n, d in nodes:
+        sf = d.get("source_file", "")
+        if sf:
+            source_files_set.add(sf)
+            if "()" in d.get("label", "") or any(
+                data.get("relation") == "method"
+                for _, _, data in G.edges(n, data=True)
+            ):
+                files_with_nodes.add(sf)
 
-total_src = len(source_files_set)
-empty_files = total_src - len(files_with_nodes)
-commented_ratio = empty_files / total_src if total_src > 0 else 0.0
+    total_src = len(source_files_set)
+    empty_files = total_src - len(files_with_nodes)
+    commented_ratio = empty_files / total_src if total_src > 0 else 0.0
 
 
-# ── Build the full graph artifact ────────────────────────────────────────────
-# 2.7 Sprint 1: emit nodes / edges / communities / symbolIndex alongside
-# the aggregate metrics. Consumers (explore CLI, dashboard viz, future
-# 2.8 context CLI + reachability) read this via src/explore/load.ts.
-# Schema contract documented in tmp/2.7-graph-json-schema.md.
+    # ── Build the full graph artifact ────────────────────────────────────────────
+    # 2.7 Sprint 1: emit nodes / edges / communities / symbolIndex alongside
+    # the aggregate metrics. Consumers (explore CLI, dashboard viz, future
+    # 2.8 context CLI + reachability) read this via src/explore/load.ts.
+    # Schema contract documented in tmp/2.7-graph-json-schema.md.
 
-# Determine class membership: a module-shaped node is a CLASS if it has
-# outbound 'method' edges to other nodes (it's the owner). A function-
-# shaped node ("()" in label) is a METHOD if it has inbound 'method'
-# edges from a class node; otherwise it's a free FUNCTION.
-_class_owners = set()
-_method_members = set()
-for u, v, data in G.edges(data=True):
-    if data.get("relation") == "method":
-        _class_owners.add(u)
-        _method_members.add(v)
+    # Determine class membership: a module-shaped node is a CLASS if it has
+    # outbound 'method' edges to other nodes (it's the owner). A function-
+    # shaped node ("()" in label) is a METHOD if it has inbound 'method'
+    # edges from a class node; otherwise it's a free FUNCTION.
+    _class_owners = set()
+    _method_members = set()
+    for u, v, data in G.edges(data=True):
+        if data.get("relation") == "method":
+            _class_owners.add(u)
+            _method_members.add(v)
 
-def _node_kind(nid, attrs):
-    label = attrs.get('label', '')
-    is_callable = '()' in label
-    if is_callable:
-        return 'method' if nid in _method_members else 'function'
-    return 'class' if nid in _class_owners else 'module'
+    def _node_kind(nid, attrs):
+        label = attrs.get('label', '')
+        is_callable = '()' in label
+        if is_callable:
+            return 'method' if nid in _method_members else 'function'
+        return 'class' if nid in _class_owners else 'module'
 
-# Make node sourceFile paths project-relative (graphify emits absolute
-# paths derived from \`target = sys.argv[1]\`). Mirrors the existing
-# maxFunctionsFilePath path-normalization at the TS layer.
-def _rel(p):
-    if not p:
-        return ''
-    s = str(p).replace(os.sep, '/')
-    t = str(target).replace(os.sep, '/').rstrip('/')
-    if s.startswith(t + '/'):
-        return s[len(t) + 1:]
-    if s == t:
-        return ''
-    return s
+    # Make node sourceFile paths project-relative (graphify emits absolute
+    # paths derived from \`target = sys.argv[1]\`). Mirrors the existing
+    # maxFunctionsFilePath path-normalization at the TS layer.
+    def _rel(p):
+        if not p:
+            return ''
+        s = str(p).replace(os.sep, '/')
+        t = str(target).replace(os.sep, '/').rstrip('/')
+        if s.startswith(t + '/'):
+            return s[len(t) + 1:]
+        if s == t:
+            return ''
+        return s
 
-# Assign stable in-run ids: n0, n1, n2, ... in extraction order. The
-# graphify-internal id strings (long underscored slugs) work but bloat
-# the JSON by ~20 bytes per node; the n<idx> shortening saves ~50KB on
-# a 13k-node repo. IDs are NOT stable across runs (per schema doc).
-_id_remap = {}
-graph_nodes = []
-for idx, (nid, attrs) in enumerate(nodes):
-    short_id = f'n{idx}'
-    _id_remap[nid] = short_id
-    line_no = _parse_line_no(attrs)
-    rel_source = _rel(attrs.get('source_file', ''))
-    label = attrs.get('label', '')
-    name = _strip_paren_suffix(label)
-    kind = _node_kind(nid, attrs)
-    node_obj = {
-        'id': short_id,
-        'kind': kind,
-        'label': label,
-        'sourceFile': rel_source,
-    }
-    if line_no:
-        node_obj['line'] = line_no
-    # Export detection only meaningful for symbol-bearing kinds
-    # (functions, classes, methods). Module-level "is this file
-    # exported?" isn't a useful question — exclude.
-    if kind in ('function', 'class', 'method'):
-        # Resolve to absolute path for the file-line cache (we read
-        # the raw source content; the cache key is the actual path
-        # on disk, not the project-relative form).
-        abs_source = attrs.get('source_file', '')
-        exported = _detect_exported(abs_source, line_no, name)
-        if exported is not None:
-            node_obj['exported'] = exported
-    graph_nodes.append(node_obj)
-
-# Edges remapped to short ids. Drop self-loops and edges where either
-# endpoint was filtered out (defensive — graphify shouldn't produce them
-# but be tolerant). Graphify emits both 'imports' (broad form: \`import X\`)
-# and 'imports_from' (\`from X import Y\` / \`import {Y} from X\`); both
-# carry the same semantic for our schema ("A imports from B"). Merge
-# both into the canonical 'imports_from' edge relation. The 'contains'
-# and 'inherits' relations graphify also produces are intentionally
-# dropped — 'contains' duplicates the file/symbol-membership info
-# already encoded in nodes' sourceFile field, and 'inherits' is
-# class-inheritance which isn't yet a first-class schema relation.
-graph_edges = []
-for u, v, data in G.edges(data=True):
-    if u not in _id_remap or v not in _id_remap:
-        continue
-    graphify_relation = data.get('relation', '')
-    if graphify_relation == 'calls':
-        relation = 'calls'
-    elif graphify_relation in ('imports', 'imports_from'):
-        relation = 'imports_from'
-    elif graphify_relation == 'method':
-        relation = 'method'
-    else:
-        continue
-    edge_obj = {
-        'from': _id_remap[u],
-        'to': _id_remap[v],
-        'relation': relation,
-    }
-    graph_edges.append(edge_obj)
-
-# Communities: for each cluster compute dominantSourceDir + dominantPack.
-# dominantSourceDir = most common ancestor directory (the longest
-# leading-segment path that >= 40% of members share); empty string when
-# no clear dominant. dominantPack = most common pack id among member
-# files' extensions; empty when no dominant pack.
-def _ancestor_dir(rel_path):
-    if not rel_path or '/' not in rel_path:
-        return ''
-    return rel_path.rsplit('/', 1)[0] + '/'
-
-graph_communities = []
-# Graphify's cluster() returns dict[community_id: list[node_id]].
-# Iterate via .items(); the community_id is the actual cluster
-# identifier (used to look up cohesion in scores), members is the
-# node-id list.
-_node_attrs_by_id = dict(nodes)
-for cidx, member_list in communities.items():
-    member_ids = sorted(_id_remap.get(n, '') for n in member_list if n in _id_remap)
-    member_ids = [m for m in member_ids if m]
-    if not member_ids:
-        continue
-    # Per-member source files (project-relative)
-    member_files = []
-    for nid in member_list:
-        if nid in _id_remap:
-            sf = _rel(_node_attrs_by_id.get(nid, {}).get('source_file', ''))
-            if sf:
-                member_files.append(sf)
-    # Dominant directory: longest common ancestor that >= 40% of
-    # members share (or empty if no clear winner).
-    dir_counter = Counter(_ancestor_dir(f) for f in member_files)
-    dir_counter.pop('', None)
-    dominant_dir = ''
-    if dir_counter:
-        top_dir, top_count = dir_counter.most_common(1)[0]
-        if top_count / len(member_files) >= 0.4:
-            dominant_dir = top_dir
-    # Dominant pack
-    pack_counter = Counter()
-    for f in member_files:
-        pk = _EXT_TO_PACK.get(_ext_of(f))
-        if pk:
-            pack_counter[pk] += 1
-    dominant_pack = ''
-    if pack_counter:
-        top_pack, top_pack_count = pack_counter.most_common(1)[0]
-        if top_pack_count / max(1, len(member_files)) >= 0.5:
-            dominant_pack = top_pack
-    cohesion = float(scores.get(cidx, 0.0)) if scores else 0.0
-    graph_communities.append({
-        'id': cidx,
-        'nodeIds': member_ids,
-        'cohesion': round(cohesion, 3),
-        'dominantSourceDir': dominant_dir,
-        'dominantPack': dominant_pack,
-    })
-
-# Symbol index: lowercased label (without trailing ()) → list of nodeIds.
-_symbol_index = {}
-for node_obj in graph_nodes:
-    key = _strip_paren_suffix(node_obj['label']).lower()
-    if not key:
-        continue
-    _symbol_index.setdefault(key, []).append(node_obj['id'])
-
-# Active-pack detection: derive from extensions seen in source files.
-_packs_seen = sorted({_EXT_TO_PACK[e] for e in (_ext_of(_rel(d.get('source_file', '')))
-                                                  for _, d in nodes)
-                       if e in _EXT_TO_PACK})
-
-# Size-budget enforcement. Hard cap 50MB serialized. If we exceed,
-# drop method edges first (densest class — structural noise, doesn't
-# affect call-graph queries).
-import datetime as _dt
-_meta = {
-    'tool': 'graphify',
-    'graphifyVersion': '',  # filled by TS-side post-parse (read from graphifyy package version)
-    'dxkitVersion': '',     # filled by TS-side post-parse (read from package.json)
-    'generatedAt': _dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-    'sourceFilesInGraph': total_src,
-    'excludedFileCount': len(all_files) - len(files),
-    'packs': _packs_seen,
-    'truncated': False,
-    'truncatedReason': '',
-}
-
-_graph_payload = {
-    'schemaVersion': 1,
-    'meta': _meta,
-    'nodes': graph_nodes,
-    'edges': graph_edges,
-    'communities': graph_communities,
-    'symbolIndex': _symbol_index,
-}
-
-# Cheap pre-check on size: serialize once, measure, drop method edges
-# if over the cap, re-serialize. The 50MB cap matches the schema
-# contract; 10MB soft target is informational only (no enforcement).
-_BYTES_HARD_CAP = 50 * 1024 * 1024
-
-def _serialize(payload):
-    return json.dumps(payload, separators=(',', ':'))
-
-_graph_json = _serialize(_graph_payload)
-if len(_graph_json.encode('utf-8')) > _BYTES_HARD_CAP:
-    # Drop method edges first; they're structural (class-owns-method),
-    # not behavioral. Call + import edges carry the actionable info.
-    pre_count = len(_graph_payload['edges'])
-    _graph_payload['edges'] = [e for e in _graph_payload['edges']
-                               if e['relation'] != 'method']
-    post_count = len(_graph_payload['edges'])
-    _meta['truncated'] = True
-    _meta['truncatedReason'] = (
-        f"dropped {pre_count - post_count} method edges to fit under "
-        f"the 50MB hard cap"
-    )
-
-# Render the interactive viewer alongside graph.json so the dashboard
-# Graph tab can embed it. graphify ships its own vis.js-based renderer
-# (graphify.export.to_html). Two emission paths:
-#
-#   - Full graph (G.number_of_nodes() <= MAX_NODES_FOR_VIZ = 5000):
-#     pass the original G + communities. The viewer renders every
-#     symbol; the user can zoom + drill.
-#
-#   - Aggregated community view (G > MAX_NODES_FOR_VIZ): build a
-#     networkx super-graph whose nodes ARE the communities. Sized by
-#     member count via graphify member_counts parameter. Inter-
-#     community edges aggregated to weighted edges. This lets a
-#     customer-scale repo still get a meaningful "what does this
-#     codebase look like" viz instead of a dead empty-state.
-#
-# Either way failures are non-fatal: the dashboard surfaces a clear
-# empty-state when graph.html isn't on disk.
-try:
-    from graphify.export import to_html as _to_html, MAX_NODES_FOR_VIZ as _MAX_VIZ
-    import networkx as _nx
-    _html_dir = target / '.dxkit' / 'reports'
-    _html_dir.mkdir(parents=True, exist_ok=True)
-    _html_path = _html_dir / 'graph.html'
-
-    if G.number_of_nodes() <= _MAX_VIZ:
-        _labels = {
-            c['id']: (c.get('dominantSourceDir') or f"community-{c['id']}")
-            for c in graph_communities
+    # Assign stable in-run ids: n0, n1, n2, ... in extraction order. The
+    # graphify-internal id strings (long underscored slugs) work but bloat
+    # the JSON by ~20 bytes per node; the n<idx> shortening saves ~50KB on
+    # a 13k-node repo. IDs are NOT stable across runs (per schema doc).
+    _id_remap = {}
+    graph_nodes = []
+    for idx, (nid, attrs) in enumerate(nodes):
+        short_id = f'n{idx}'
+        _id_remap[nid] = short_id
+        line_no = _parse_line_no(attrs)
+        rel_source = _rel(attrs.get('source_file', ''))
+        label = attrs.get('label', '')
+        name = _strip_paren_suffix(label)
+        kind = _node_kind(nid, attrs)
+        node_obj = {
+            'id': short_id,
+            'kind': kind,
+            'label': label,
+            'sourceFile': rel_source,
         }
-        _to_html(G, communities, str(_html_path), community_labels=_labels)
-        _viz_mode = 'full'
-    else:
-        # Aggregated community super-graph.
-        _node_to_comm = {}
-        for _cid, _members in communities.items():
-            for _nid in _members:
-                _node_to_comm[_nid] = _cid
+        if line_no:
+            node_obj['line'] = line_no
+        # Export detection only meaningful for symbol-bearing kinds
+        # (functions, classes, methods). Module-level "is this file
+        # exported?" isn't a useful question — exclude.
+        if kind in ('function', 'class', 'method'):
+            # Resolve to absolute path for the file-line cache (we read
+            # the raw source content; the cache key is the actual path
+            # on disk, not the project-relative form).
+            abs_source = attrs.get('source_file', '')
+            exported = _detect_exported(abs_source, line_no, name)
+            if exported is not None:
+                node_obj['exported'] = exported
+        graph_nodes.append(node_obj)
 
-        _G_agg = _nx.DiGraph()
-        _member_counts = {}
-        _labels = {}
-        for _c in graph_communities:
-            _cid = _c['id']
-            _label = _c.get('dominantSourceDir') or f"community-{_cid}"
-            # vis.js node attrs: label drives display; file_type is
-            # surfaced in graphify's sidebar so we set a sentinel
-            # value the dashboard can grep on.
-            _G_agg.add_node(_cid, label=_label, source_file='', file_type='community')
-            _member_counts[_cid] = len(_c['nodeIds'])
-            _labels[_cid] = _label
+    # Edges remapped to short ids. Drop self-loops and edges where either
+    # endpoint was filtered out (defensive — graphify shouldn't produce them
+    # but be tolerant). Graphify emits both 'imports' (broad form: \`import X\`)
+    # and 'imports_from' (\`from X import Y\` / \`import {Y} from X\`); both
+    # carry the same semantic for our schema ("A imports from B"). Merge
+    # both into the canonical 'imports_from' edge relation. The 'contains'
+    # and 'inherits' relations graphify also produces are intentionally
+    # dropped — 'contains' duplicates the file/symbol-membership info
+    # already encoded in nodes' sourceFile field, and 'inherits' is
+    # class-inheritance which isn't yet a first-class schema relation.
+    graph_edges = []
+    for u, v, data in G.edges(data=True):
+        if u not in _id_remap or v not in _id_remap:
+            continue
+        graphify_relation = data.get('relation', '')
+        if graphify_relation == 'calls':
+            relation = 'calls'
+        elif graphify_relation in ('imports', 'imports_from'):
+            relation = 'imports_from'
+        elif graphify_relation == 'method':
+            relation = 'method'
+        else:
+            continue
+        edge_obj = {
+            'from': _id_remap[u],
+            'to': _id_remap[v],
+            'relation': relation,
+        }
+        graph_edges.append(edge_obj)
 
-        # Cross-community edge aggregation. Counter keyed on
-        # (smaller_id, larger_id) for undirected aggregation; we then
-        # add a directed edge in one canonical direction so vis.js
-        # has a definite source/target. The viewer doesn't show
-        # arrows on these (they're community connections, not calls).
-        from collections import Counter as _CommCounter
-        _edge_w = _CommCounter()
-        for _u, _v, _ in G.edges(data=True):
-            _cu = _node_to_comm.get(_u)
-            _cv = _node_to_comm.get(_v)
-            if _cu is None or _cv is None or _cu == _cv:
-                continue
-            _key = (_cu, _cv) if _cu < _cv else (_cv, _cu)
-            _edge_w[_key] += 1
-        for (_a, _b), _w in _edge_w.items():
-            _G_agg.add_edge(_a, _b, relation='inter_community', occurrences=_w)
+    # Communities: for each cluster compute dominantSourceDir + dominantPack.
+    # dominantSourceDir = most common ancestor directory (the longest
+    # leading-segment path that >= 40% of members share); empty string when
+    # no clear dominant. dominantPack = most common pack id among member
+    # files' extensions; empty when no dominant pack.
+    def _ancestor_dir(rel_path):
+        if not rel_path or '/' not in rel_path:
+            return ''
+        return rel_path.rsplit('/', 1)[0] + '/'
 
-        # to_html requires a communities dict; one-element groups
-        # treat each aggregated node as its own community so each
-        # community keeps a distinct color in graphify's palette.
-        _agg_groups = {_cid: [_cid] for _cid in communities}
+    graph_communities = []
+    # Graphify's cluster() returns dict[community_id: list[node_id]].
+    # Iterate via .items(); the community_id is the actual cluster
+    # identifier (used to look up cohesion in scores), members is the
+    # node-id list.
+    _node_attrs_by_id = dict(nodes)
+    for cidx, member_list in communities.items():
+        member_ids = sorted(_id_remap.get(n, '') for n in member_list if n in _id_remap)
+        member_ids = [m for m in member_ids if m]
+        if not member_ids:
+            continue
+        # Per-member source files (project-relative)
+        member_files = []
+        for nid in member_list:
+            if nid in _id_remap:
+                sf = _rel(_node_attrs_by_id.get(nid, {}).get('source_file', ''))
+                if sf:
+                    member_files.append(sf)
+        # Dominant directory: longest common ancestor that >= 40% of
+        # members share (or empty if no clear winner).
+        dir_counter = Counter(_ancestor_dir(f) for f in member_files)
+        dir_counter.pop('', None)
+        dominant_dir = ''
+        if dir_counter:
+            top_dir, top_count = dir_counter.most_common(1)[0]
+            if top_count / len(member_files) >= 0.4:
+                dominant_dir = top_dir
+        # Dominant pack
+        pack_counter = Counter()
+        for f in member_files:
+            pk = _EXT_TO_PACK.get(_ext_of(f))
+            if pk:
+                pack_counter[pk] += 1
+        dominant_pack = ''
+        if pack_counter:
+            top_pack, top_pack_count = pack_counter.most_common(1)[0]
+            if top_pack_count / max(1, len(member_files)) >= 0.5:
+                dominant_pack = top_pack
+        cohesion = float(scores.get(cidx, 0.0)) if scores else 0.0
+        graph_communities.append({
+            'id': cidx,
+            'nodeIds': member_ids,
+            'cohesion': round(cohesion, 3),
+            'dominantSourceDir': dominant_dir,
+            'dominantPack': dominant_pack,
+        })
 
-        _to_html(
-            _G_agg, _agg_groups, str(_html_path),
-            community_labels=_labels, member_counts=_member_counts,
+    # Symbol index: lowercased label (without trailing ()) → list of nodeIds.
+    _symbol_index = {}
+    for node_obj in graph_nodes:
+        key = _strip_paren_suffix(node_obj['label']).lower()
+        if not key:
+            continue
+        _symbol_index.setdefault(key, []).append(node_obj['id'])
+
+    # Active-pack detection: derive from extensions seen in source files.
+    _packs_seen = sorted({_EXT_TO_PACK[e] for e in (_ext_of(_rel(d.get('source_file', '')))
+                                                      for _, d in nodes)
+                           if e in _EXT_TO_PACK})
+
+    # Size-budget enforcement. Hard cap 50MB serialized. If we exceed,
+    # drop method edges first (densest class — structural noise, doesn't
+    # affect call-graph queries).
+    import datetime as _dt
+    _meta = {
+        'tool': 'graphify',
+        'graphifyVersion': '',  # filled by TS-side post-parse (read from graphifyy package version)
+        'dxkitVersion': '',     # filled by TS-side post-parse (read from package.json)
+        'generatedAt': _dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'sourceFilesInGraph': total_src,
+        'excludedFileCount': len(all_files) - len(files),
+        'packs': _packs_seen,
+        'truncated': False,
+        'truncatedReason': '',
+    }
+
+    _graph_payload = {
+        'schemaVersion': 1,
+        'meta': _meta,
+        'nodes': graph_nodes,
+        'edges': graph_edges,
+        'communities': graph_communities,
+        'symbolIndex': _symbol_index,
+    }
+
+    # Cheap pre-check on size: serialize once, measure, drop method edges
+    # if over the cap, re-serialize. The 50MB cap matches the schema
+    # contract; 10MB soft target is informational only (no enforcement).
+    _BYTES_HARD_CAP = 50 * 1024 * 1024
+
+    def _serialize(payload):
+        return json.dumps(payload, separators=(',', ':'))
+
+    _graph_json = _serialize(_graph_payload)
+    if len(_graph_json.encode('utf-8')) > _BYTES_HARD_CAP:
+        # Drop method edges first; they're structural (class-owns-method),
+        # not behavioral. Call + import edges carry the actionable info.
+        pre_count = len(_graph_payload['edges'])
+        _graph_payload['edges'] = [e for e in _graph_payload['edges']
+                                   if e['relation'] != 'method']
+        post_count = len(_graph_payload['edges'])
+        _meta['truncated'] = True
+        _meta['truncatedReason'] = (
+            f"dropped {pre_count - post_count} method edges to fit under "
+            f"the 50MB hard cap"
         )
-        _viz_mode = 'aggregated'
 
-    # Sidecar so the dashboard renderer can label the view honestly.
-    # JSON is tiny (~120B); avoids parsing graph.json twice from TS.
-    _meta_path = _html_dir / 'graph.html.meta.json'
-    _meta_path.write_text(json.dumps({
-        'mode': _viz_mode,
-        'totalNodes': G.number_of_nodes(),
-        'totalEdges': G.number_of_edges(),
-        'communities': len(communities),
-        'aggregatedNodeCount': len(communities) if _viz_mode == 'aggregated' else None,
+    # Render the interactive viewer alongside graph.json so the dashboard
+    # Graph tab can embed it. graphify ships its own vis.js-based renderer
+    # (graphify.export.to_html). Two emission paths:
+    #
+    #   - Full graph (G.number_of_nodes() <= MAX_NODES_FOR_VIZ = 5000):
+    #     pass the original G + communities. The viewer renders every
+    #     symbol; the user can zoom + drill.
+    #
+    #   - Aggregated community view (G > MAX_NODES_FOR_VIZ): build a
+    #     networkx super-graph whose nodes ARE the communities. Sized by
+    #     member count via graphify member_counts parameter. Inter-
+    #     community edges aggregated to weighted edges. This lets a
+    #     customer-scale repo still get a meaningful "what does this
+    #     codebase look like" viz instead of a dead empty-state.
+    #
+    # Either way failures are non-fatal: the dashboard surfaces a clear
+    # empty-state when graph.html isn't on disk.
+    try:
+        from graphify.export import to_html as _to_html, MAX_NODES_FOR_VIZ as _MAX_VIZ
+        import networkx as _nx
+        _html_dir = target / '.dxkit' / 'reports'
+        _html_dir.mkdir(parents=True, exist_ok=True)
+        _html_path = _html_dir / 'graph.html'
+
+        if G.number_of_nodes() <= _MAX_VIZ:
+            _labels = {
+                c['id']: (c.get('dominantSourceDir') or f"community-{c['id']}")
+                for c in graph_communities
+            }
+            _to_html(G, communities, str(_html_path), community_labels=_labels)
+            _viz_mode = 'full'
+        else:
+            # Aggregated community super-graph.
+            _node_to_comm = {}
+            for _cid, _members in communities.items():
+                for _nid in _members:
+                    _node_to_comm[_nid] = _cid
+
+            _G_agg = _nx.DiGraph()
+            _member_counts = {}
+            _labels = {}
+            for _c in graph_communities:
+                _cid = _c['id']
+                _label = _c.get('dominantSourceDir') or f"community-{_cid}"
+                # vis.js node attrs: label drives display; file_type is
+                # surfaced in graphify's sidebar so we set a sentinel
+                # value the dashboard can grep on.
+                _G_agg.add_node(_cid, label=_label, source_file='', file_type='community')
+                _member_counts[_cid] = len(_c['nodeIds'])
+                _labels[_cid] = _label
+
+            # Cross-community edge aggregation. Counter keyed on
+            # (smaller_id, larger_id) for undirected aggregation; we then
+            # add a directed edge in one canonical direction so vis.js
+            # has a definite source/target. The viewer doesn't show
+            # arrows on these (they're community connections, not calls).
+            from collections import Counter as _CommCounter
+            _edge_w = _CommCounter()
+            for _u, _v, _ in G.edges(data=True):
+                _cu = _node_to_comm.get(_u)
+                _cv = _node_to_comm.get(_v)
+                if _cu is None or _cv is None or _cu == _cv:
+                    continue
+                _key = (_cu, _cv) if _cu < _cv else (_cv, _cu)
+                _edge_w[_key] += 1
+            for (_a, _b), _w in _edge_w.items():
+                _G_agg.add_edge(_a, _b, relation='inter_community', occurrences=_w)
+
+            # to_html requires a communities dict; one-element groups
+            # treat each aggregated node as its own community so each
+            # community keeps a distinct color in graphify's palette.
+            _agg_groups = {_cid: [_cid] for _cid in communities}
+
+            _to_html(
+                _G_agg, _agg_groups, str(_html_path),
+                community_labels=_labels, member_counts=_member_counts,
+            )
+            _viz_mode = 'aggregated'
+
+        # Sidecar so the dashboard renderer can label the view honestly.
+        # JSON is tiny (~120B); avoids parsing graph.json twice from TS.
+        _meta_path = _html_dir / 'graph.html.meta.json'
+        _meta_path.write_text(json.dumps({
+            'mode': _viz_mode,
+            'totalNodes': G.number_of_nodes(),
+            'totalEdges': G.number_of_edges(),
+            'communities': len(communities),
+            'aggregatedNodeCount': len(communities) if _viz_mode == 'aggregated' else None,
+        }))
+    except Exception as _html_err:
+        sys.stderr.write(f"dxkit: graph.html not generated ({_html_err})\\n")
+
+    print(json.dumps({
+        "functionCount": len(functions),
+        "classCount": len([n for n, d in modules if any(
+            data.get("relation") == "method" for _, _, data in G.edges(n, data=True)
+        )]),
+        "maxFunctionsInFile": max_file[1] if max_file else 0,
+        "maxFunctionsFilePath": str(max_file[0]) if max_file else "",
+        "godNodeCount": god_count,
+        "communityCount": len(communities),
+        "avgCohesion": round(avg_cohesion, 3),
+        "orphanModuleCount": len(orphans),
+        "deadImportCount": len(dead),
+        "commentedCodeRatio": round(commented_ratio, 3),
+        "sourceFilesInGraph": total_src,
+        "graph": _graph_payload,
     }))
-except Exception as _html_err:
-    sys.stderr.write(f"dxkit: graph.html not generated ({_html_err})\\n")
-
-# Clean up temp cache
-import shutil
-shutil.rmtree(str(_cache_dir), ignore_errors=True)
-
-print(json.dumps({
-    "functionCount": len(functions),
-    "classCount": len([n for n, d in modules if any(
-        data.get("relation") == "method" for _, _, data in G.edges(n, data=True)
-    )]),
-    "maxFunctionsInFile": max_file[1] if max_file else 0,
-    "maxFunctionsFilePath": str(max_file[0]) if max_file else "",
-    "godNodeCount": god_count,
-    "communityCount": len(communities),
-    "avgCohesion": round(avg_cohesion, 3),
-    "orphanModuleCount": len(orphans),
-    "deadImportCount": len(dead),
-    "commentedCodeRatio": round(commented_ratio, 3),
-    "sourceFilesInGraph": total_src,
-    "graph": _graph_payload,
-}))
 `;
 }
 
@@ -792,6 +798,15 @@ async function computeAndCache(cwd: string): Promise<void> {
   // don't litter /tmp across runs.
   const scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-graphify-'));
   const scriptPath = path.join(scriptDir, 'run.py');
+  // graphify's on-disk AST cache is redirected here (passed to the script
+  // as argv[2] → extract(cache_root=...)), keeping it out of the target
+  // repo. It lives under scriptDir so the single `fs.rmSync(scriptDir)`
+  // below reclaims it — crucially AFTER the Python process and its atexit
+  // handlers exit. graphify flushes a stat-index via atexit
+  // (graphify/cache.py), so cleaning the cache from inside the script
+  // would be undone by that post-exit write; owning the lifecycle here is
+  // the only leak-free point.
+  const cacheDir = path.join(scriptDir, 'graphify-cache');
   fs.writeFileSync(scriptPath, buildGraphifyScript(cwd));
   // Spawn-with-process-group so the Python interpreter + any
   // tree-sitter worker subprocesses it starts are all killed
@@ -804,7 +819,7 @@ async function computeAndCache(cwd: string): Promise<void> {
   //
   // runDetached captures stderr natively so the tempfile redirect
   // pattern is no longer needed — same effect, fewer moving parts.
-  const outcome = await runDetached(pythonCmd, [scriptPath, cwd], {
+  const outcome = await runDetached(pythonCmd, [scriptPath, cwd, cacheDir], {
     cwd: scriptDir,
     timeoutMs: 300000, // 5 min — bumped from 120000 in 2.4.7 for multi-thousand-file frontend repos
   });

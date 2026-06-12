@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as path from 'path';
-import { buildGraphifyEnvelope } from '../src/analyzers/tools/graphify';
+import { buildGraphifyEnvelope, buildGraphifyScript } from '../src/analyzers/tools/graphify';
 
 // Minimal valid GraphifyResult shape — only maxFunctionsFilePath is
 // path-bearing; the other fields are numeric counts the envelope
@@ -66,5 +66,47 @@ describe('buildGraphifyEnvelope', () => {
     expect(env.commentedCodeRatio).toBe(0.1);
     expect(env.tool).toBe('graphify');
     expect(env.schemaVersion).toBe(1);
+  });
+});
+
+/**
+ * Structural contract of the generated Python script. These guard the
+ * D-01 (Python 3.14 multiprocessing) and D-02 (graphifyy cache redirect)
+ * fixes at the source level, so a regression is caught in CI even where
+ * graphify isn't installed and the script can't actually be run.
+ */
+describe('buildGraphifyScript — Python 3.14 / cache-redirect contract', () => {
+  const script = buildGraphifyScript('/tmp/repo');
+
+  it("guards execution behind `if __name__ == '__main__'` (D-01)", () => {
+    // ProcessPoolExecutor workers re-import the module under spawn/forkserver
+    // (Python 3.14's Linux default). Without the guard, top-level extraction
+    // re-runs per worker → BrokenProcessPool / crash.
+    expect(script).toContain("if __name__ == '__main__':");
+    // The extraction call must sit inside the guard (indented), not at module
+    // top level.
+    expect(script).toMatch(/\n {4}result = extract\(/);
+  });
+
+  it('redirects the cache via the public cache_root param, not a monkeypatch (D-02)', () => {
+    expect(script).toContain('extract(files, cache_root=_cache_dir)');
+    // The fragile internal-signature monkeypatch must be gone — it broke when
+    // graphifyy 0.8 changed cache_dir(root) → cache_dir(root, kind).
+    expect(script).not.toContain('_gc.cache_dir');
+    expect(script).not.toContain('import graphify.cache');
+  });
+
+  it('does not force a multiprocessing start method (D-01 — the guard makes it unnecessary)', () => {
+    // The old `set_start_method('fork')` hack only papered over the missing
+    // guard on Linux and silently failed on spawn-default platforms.
+    expect(script).not.toContain('set_start_method');
+  });
+
+  it('takes the cache dir from argv[2] so the TS caller owns its lifecycle', () => {
+    // graphify flushes a stat-index via atexit (after the script body), so the
+    // temp cache is reclaimed by the TS layer's scriptDir cleanup, not a
+    // Python-side rmtree that the atexit write would undo.
+    expect(script).toContain('_cache_dir = Path(sys.argv[2])');
+    expect(script).not.toContain('tempfile.mkdtemp');
   });
 });
