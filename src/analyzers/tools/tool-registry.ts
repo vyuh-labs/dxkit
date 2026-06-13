@@ -615,7 +615,13 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   semgrep: {
     name: 'semgrep',
     description: 'Static analysis security scanner (SAST)',
-    install: 'pipx install semgrep',
+    // Pinned (2.10 version-pin sweep). semgrep is the highest-risk
+    // unpinned tool — it runs on every scan and dxkit parses its JSON
+    // output, so a breaking CLI/schema change lands like jscpd 5.x did.
+    // 1.165.0 is the version the 2.9.x benchmark suite validated against.
+    // Proper multi-version/schema-adaptive handling is deferred to a
+    // later release; this freeze is the defensive stopgap.
+    install: 'pipx install "semgrep==1.165.0"',
     check: 'semgrep --version',
     for: 'all',
     layer: 'universal',
@@ -623,9 +629,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'semgrep --version',
     installCommands: {
-      macos: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
-      linux: `${PIPX_BOOTSTRAP} && pipx install semgrep`,
-      windows: 'pipx install semgrep',
+      macos: `${PIPX_BOOTSTRAP} && pipx install "semgrep==1.165.0"`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install "semgrep==1.165.0"`,
+      windows: 'pipx install "semgrep==1.165.0"',
     },
   },
   eslint: {
@@ -705,7 +711,8 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   'license-checker-rseidelsohn': {
     name: 'license-checker-rseidelsohn',
     description: 'License inventory for npm dependencies (maintained fork of license-checker)',
-    install: 'npm install -g license-checker-rseidelsohn',
+    // Pinned (2.10 version-pin sweep) — dxkit parses its JSON inventory.
+    install: 'npm install -g license-checker-rseidelsohn@5.0.1',
     check: 'license-checker-rseidelsohn --version',
     for: 'node',
     layer: 'language',
@@ -713,16 +720,19 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'license-checker-rseidelsohn --version',
     installCommands: {
       macos:
-        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn@5.0.1 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
       linux:
-        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
-      windows: 'npm install -g license-checker-rseidelsohn',
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install license-checker-rseidelsohn@5.0.1 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/license-checker-rseidelsohn ~/.local/bin/license-checker-rseidelsohn',
+      windows: 'npm install -g license-checker-rseidelsohn@5.0.1',
     },
   },
   ruff: {
     name: 'ruff',
     description: 'Python linting and formatting',
-    install: 'pipx install ruff',
+    // Pinned (2.10 version-pin sweep) to the current release — freezes
+    // fresh installs to today's de-facto version so a future breaking
+    // major can't silently change lint output or exit codes.
+    install: 'pipx install "ruff==0.15.17"',
     check: 'ruff --version',
     for: 'python',
     layer: 'language',
@@ -730,15 +740,16 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'ruff --version',
     installCommands: {
-      macos: `${PIPX_BOOTSTRAP} && pipx install ruff`,
-      linux: `${PIPX_BOOTSTRAP} && pipx install ruff`,
-      windows: 'pipx install ruff',
+      macos: `${PIPX_BOOTSTRAP} && pipx install "ruff==0.15.17"`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install "ruff==0.15.17"`,
+      windows: 'pipx install "ruff==0.15.17"',
     },
   },
   'pip-audit': {
     name: 'pip-audit',
     description: 'Python dependency vulnerability scanning',
-    install: 'pipx install pip-audit',
+    // Pinned (2.10 version-pin sweep) — dxkit parses pip-audit's JSON.
+    install: 'pipx install "pip-audit==2.10.1"',
     check: 'pip-audit --version',
     for: 'python',
     layer: 'language',
@@ -746,15 +757,16 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'pip-audit --version',
     installCommands: {
-      macos: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
-      linux: `${PIPX_BOOTSTRAP} && pipx install pip-audit`,
-      windows: 'pipx install pip-audit',
+      macos: `${PIPX_BOOTSTRAP} && pipx install "pip-audit==2.10.1"`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install "pip-audit==2.10.1"`,
+      windows: 'pipx install "pip-audit==2.10.1"',
     },
   },
   'pip-licenses': {
     name: 'pip-licenses',
     description: 'License inventory for Python packages in a venv',
-    install: 'pipx install pip-licenses',
+    // Pinned (2.10 version-pin sweep) — dxkit parses pip-licenses JSON.
+    install: 'pipx install "pip-licenses==5.5.5"',
     check: 'pip-licenses --version',
     for: 'python',
     layer: 'language',
@@ -762,15 +774,21 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'pip-licenses --version',
     installCommands: {
-      macos: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
-      linux: `${PIPX_BOOTSTRAP} && pipx install pip-licenses`,
-      windows: 'pipx install pip-licenses',
+      macos: `${PIPX_BOOTSTRAP} && pipx install "pip-licenses==5.5.5"`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install "pip-licenses==5.5.5"`,
+      windows: 'pipx install "pip-licenses==5.5.5"',
     },
   },
   'golangci-lint': {
     name: 'golangci-lint',
     description: 'Go linting',
-    install: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest',
+    // Pinned (2.10 version-pin sweep) to the latest v1 release.
+    // golangci-lint v2 is a breaking rewrite on a separate `/v2` module
+    // path (changed config schema + output) — exactly the jscpd-5.x
+    // class. The v1 module path's @latest still resolves to v1.64.8;
+    // we pin it explicitly so a future v1→v2 retag can't surprise us.
+    // brew (macos) tracks its own version and is exempt from the pin.
+    install: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8',
     check: 'golangci-lint --version',
     for: 'go',
     layer: 'language',
@@ -778,38 +796,40 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'golangci-lint --version',
     installCommands: {
       macos: 'brew install golangci-lint',
-      linux: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest',
-      windows: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest',
+      linux: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8',
+      windows: 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8',
     },
   },
   govulncheck: {
     name: 'govulncheck',
     description: 'Go vulnerability scanning',
-    install: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
+    // Pinned (2.10 version-pin sweep) — dxkit parses govulncheck output.
+    install: 'go install golang.org/x/vuln/cmd/govulncheck@v1.3.0',
     check: 'govulncheck -version',
     for: 'go',
     layer: 'language',
     binaries: ['govulncheck'],
     versionCheck: 'govulncheck -version',
     installCommands: {
-      macos: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
-      linux: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
-      windows: 'go install golang.org/x/vuln/cmd/govulncheck@latest',
+      macos: 'go install golang.org/x/vuln/cmd/govulncheck@v1.3.0',
+      linux: 'go install golang.org/x/vuln/cmd/govulncheck@v1.3.0',
+      windows: 'go install golang.org/x/vuln/cmd/govulncheck@v1.3.0',
     },
   },
   'go-licenses': {
     name: 'go-licenses',
     description: 'License inventory for Go modules',
-    install: 'go install github.com/google/go-licenses@latest',
+    // Pinned (2.10 version-pin sweep) — dxkit parses go-licenses output.
+    install: 'go install github.com/google/go-licenses@v1.6.0',
     check: 'go-licenses --help',
     for: 'go',
     layer: 'language',
     binaries: ['go-licenses'],
     versionCheck: 'go-licenses --help | head -1',
     installCommands: {
-      macos: 'go install github.com/google/go-licenses@latest',
-      linux: 'go install github.com/google/go-licenses@latest',
-      windows: 'go install github.com/google/go-licenses@latest',
+      macos: 'go install github.com/google/go-licenses@v1.6.0',
+      linux: 'go install github.com/google/go-licenses@v1.6.0',
+      windows: 'go install github.com/google/go-licenses@v1.6.0',
     },
   },
   clippy: {
@@ -997,7 +1017,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   'coverage-py': {
     name: 'coverage-py',
     description: 'Python line-level coverage (produces coverage.json)',
-    install: 'pipx install coverage',
+    // Pinned (2.10 version-pin sweep) — dxkit parses coverage.json,
+    // whose schema is stable across the 7.x line. Freeze defends
+    // against a future major that changes the report shape.
+    install: 'pipx install "coverage==7.14.1"',
     check: 'coverage --version',
     for: 'python',
     layer: 'language',
@@ -1005,9 +1028,9 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     probePaths: [`${TOOLS_VENV}/bin`, `${LEGACY_TOOLS_VENV}/bin`],
     versionCheck: 'coverage --version',
     installCommands: {
-      macos: `${PIPX_BOOTSTRAP} && pipx install coverage`,
-      linux: `${PIPX_BOOTSTRAP} && pipx install coverage`,
-      windows: 'pipx install coverage',
+      macos: `${PIPX_BOOTSTRAP} && pipx install "coverage==7.14.1"`,
+      linux: `${PIPX_BOOTSTRAP} && pipx install "coverage==7.14.1"`,
+      windows: 'pipx install "coverage==7.14.1"',
     },
   },
   rubocop: {
