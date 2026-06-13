@@ -7,9 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.9.5] - 2026-06-12
+## [2.10.0] - 2026-06-13
 
-### Tool-robustness + matcher rename fixes
+### Honest scoring under changing scanners, passive graph delivery, tool-robustness
+
+Closes a set of brownfield-install and guardrail-matcher defects (the original
+2.9.5 hardening), a customer-reported "my score got worse after fixing things"
+class of scoring-honesty bugs, a defensive tool-version-pin sweep, and the
+agentic-delivery redesign that finally routes the code graph to the agent in a
+real fix workflow.
+
+#### Scoring honesty (customer-reported)
+
+A customer saw their Security score drop 65 → 40 on an **unchanged commit** after
+a dxkit upgrade, and 7 of "8 CRITICAL" secrets were their own allowlisted unit-test
+fixtures. The score wasn't wrong — the measurement got more honest — but nothing
+in the output explained that. These close the explanation gap.
+
+- **Symmetric unavailable-scanner caps (C-D1).** A missing dependency-audit
+  already capped the Security score at the uncertainty tier, but missing
+  secret/code-pattern scanners silently scored as "0 findings" — so enabling
+  those scanners later read as a phantom regression. The secret and code-pattern
+  axes now get the same uncertainty cap when their scan didn't run, surfaced in
+  `metrics.toolsUnavailable` and the standalone vuln-scan report.
+- **Allowlisted findings are marked in reports (C-D2).** The vulnerability report
+  and dashboard now annotate findings covered by an active allowlist entry and
+  render `Subtotal N (M allowlisted)`, so reviewed-and-accepted fixtures no longer
+  read as unexplained headline criticals. Raw counts and the score are unchanged
+  — only the presentation gains the disclosure.
+- **Scanner-coverage drift is disclosed (C-D3).** When the active scanner set grew
+  since the last run, the vuln-scan report leads with a note: findings the new
+  scanners surface are newly **visible**, not newly **introduced**. This is the
+  root-cause explanation for a score that moved on unchanged code.
+- **Test-fixture credentials are downgraded (C-D4).** Generic hardcoded-credential
+  matches inside test files (classified via the active language packs' test
+  patterns) are downgraded to low severity + a `test-fixture` category and
+  excluded from the committed-credentials trust-broken cap. They stay visible but
+  never headline-critical. Real branded tokens (AWS keys, PATs, private keys) keep
+  full severity everywhere — a live credential in a test is still a leak.
+- **Windows dep-audit EPERM (C-D5).** The osv-scanner-fix temp-dir cleanup now
+  retries with backoff and never throws out of its `finally`, so a Windows handle
+  race (npm-install grandchildren / antivirus) can no longer discard the
+  already-parsed fix plans — the failure that left a customer's dependency vulns
+  invisible for a week.
+
+#### Passive graph delivery (agentic value)
+
+- **Context-hook fires on the tools agents actually use.** Pre-2.10 the graph
+  context-hook fired only on the native `Grep`/`Glob` tools and only when the
+  search pattern substring-matched a symbol name — so in a real fix workflow
+  (agents search via `Bash grep` for a symptom, and read files directly) it
+  almost never engaged. It now fires on **Read/Edit** (keyed on the file touched
+  → that file's structural summary: symbols, callers, callees, module group),
+  **Bash** (parses grep/rg commands; a named source file delivers its summary,
+  else a symbol match on the pattern), and the original **Grep/Glob** path.
+  Per-session, per-file dedup keeps it cheap; the FAIL-OPEN + ADDITIVE contract is
+  preserved (any problem is a silent no-op). **Existing repos must re-run
+  `vyuh-dxkit init`** (or update `.claude/settings.json`) to pick up the broadened
+  `Read|Edit|Bash|Grep|Glob` matcher.
+
+#### Snyk sync
+
+- **`.dxkit-ignore` → `.snyk` exclude sync.** `allowlist export --snyk` now also
+  emits the paths dxkit's analyzers skip (`.dxkit-ignore`) into the `.snyk`
+  `exclude.global` block, so Snyk and dxkit agree on what's out of scope —
+  mirroring the existing allowlist → `.snyk` ignore sync. An export carrying only
+  exclusions still writes.
+
+#### Tool-robustness + matcher rename fixes
 
 Hardening pass closing a set of brownfield-install and guardrail-matcher
 defects surfaced while benchmarking on Python 3.14 and large real-world repos.
@@ -46,12 +111,26 @@ defects surfaced while benchmarking on Python 3.14 and large real-world repos.
   detection, keyed on `(renamed-path, kind)` so two different whole-file kinds
   on the same renamed file never cross-pair.
 
+#### Tool-version pins
+
+- **Defensive pin sweep.** Nine more dxkit-owned, deterministic-output scanners
+  are pinned to their current releases (semgrep `1.165.0`, ruff `0.15.17`,
+  pip-audit `2.10.1`, pip-licenses `5.5.5`, coverage `7.14.1`,
+  license-checker-rseidelsohn `5.0.1`, golangci-lint `v1.64.8` — the v1 line,
+  since v2 is a breaking rewrite on a separate module path — govulncheck `v1.3.0`,
+  go-licenses `v1.6.0`), so a future breaking major can't silently change parsed
+  output or exit codes the way jscpd 5.x and graphifyy 0.8 did. Five tools stay
+  unpinned by design and are now documented as such: `eslint` + `vitest-coverage`
+  (project-local — the consumer owns the version), `snyk` (a SaaS client that
+  self-manages backend compatibility), `codeql` (a GitHub-managed bundle paired
+  with query packs), and `cloc` (non-semver npm tag, lowest-risk schema). Proper
+  schema-adaptive multi-version handling is planned for a later release.
+
 #### Internal
 
-- New version-pin guard test partitions every registry tool into pinned /
-  audited-unpinned / package-manager-tracked, so a tool can't be added or
-  un-pinned without a deliberate decision. `semgrep` and nine others remain on
-  the audited-unpinned backlog.
+- The version-pin guard test partitions every registry tool into pinned /
+  unpinned-by-design / package-manager-tracked, so a tool can't be added or
+  un-pinned without a deliberate decision.
 
 ## [2.9.4] - 2026-06-09
 
