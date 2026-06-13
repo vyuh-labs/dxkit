@@ -257,6 +257,13 @@ export interface CapabilityReport {
    *  out under parallel load). */
   codePatternsAvailability?: { available: boolean; unavailableReason: string };
 
+  /** Availability for SECRETS (gitleaks + grep-secrets). Same shape.
+   *  C-D1: read by `toSecurityScoreInput` so a failed secret scan
+   *  caps the Security score (uncertainty tier) instead of silently
+   *  counting as "0 secrets" — the asymmetry that made a customer's
+   *  scanner-enabling upgrade read as a score regression. */
+  secretsAvailability?: { available: boolean; unavailableReason: string };
+
   /** Availability for DUPLICATION (jscpd). Same shape. */
   duplicationAvailability?: { available: boolean; unavailableReason: string };
 

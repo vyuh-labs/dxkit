@@ -137,6 +137,9 @@ function emptyScoreInput(overrides: Partial<SecurityScoreInput> = {}): SecurityS
     // scan ran cleanly. Tests for the cap explicitly override
     // `depVulnsAvailable: false`.
     depVulnsAvailable: true,
+    // C-D1: same happy-path default for the secret + code-pattern axes.
+    secretsAvailable: true,
+    codePatternsAvailable: true,
     ...overrides,
   };
 }
@@ -315,6 +318,33 @@ describe('scoreSecurityFromInput', () => {
     // Sanity check: cap only fires on the false case.
     const s = scoreSecurityFromInput(emptyScoreInput({ depVulnsAvailable: true }));
     expect(s.score).toBe(100);
+  });
+
+  // ── C-D1 symmetric honesty caps ────────────────────────────────────────
+
+  it('C-D1: caps at 65 when the secret scan did not run', () => {
+    // Pre-2.10 a missing secret scan silently scored as "0 secrets" —
+    // the customer's Jun-4 report printed a confident clean subtotal
+    // next to "Sources: (none)", and the eventual upgrade read as a
+    // phantom score drop. Same uncertainty treatment as dep-vulns now.
+    const s = scoreSecurityFromInput(emptyScoreInput({ secretsAvailable: false }));
+    expect(s.score).toBe(65);
+    expect(s.capsApplied.map((c) => c.id)).toContain('secrets-unavailable');
+  });
+
+  it('C-D1: caps at 65 when the code-pattern scan did not run', () => {
+    const s = scoreSecurityFromInput(emptyScoreInput({ codePatternsAvailable: false }));
+    expect(s.score).toBe(65);
+    expect(s.capsApplied.map((c) => c.id)).toContain('code-patterns-unavailable');
+  });
+
+  it('C-D1: trust-broken (40) still dominates an unavailability cap (65)', () => {
+    // Found credentials are worse news than a scanner that didn't run;
+    // most-aggressive cap wins.
+    const s = scoreSecurityFromInput(
+      emptyScoreInput({ secretFindings: 1, codePatternsAvailable: false }),
+    );
+    expect(s.score).toBe(40);
   });
 
   it('dep-availability cap is a ceiling, not a floor — other penalties still drop the score below 65', () => {

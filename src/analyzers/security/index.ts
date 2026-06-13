@@ -195,6 +195,11 @@ export async function analyzeSecurity(
       codeOnly: codeOnlySummary,
       secretsOnly: secretsOnlySummary,
       dependencies: depSummary,
+      // C-D1: scanner run-state for the score adapter's uncertainty
+      // caps — same canonical provenance the toolsUnavailable list
+      // above is derived from.
+      secretsAvailable: aggregate.provenance.secrets.ran,
+      codePatternsAvailable: aggregate.provenance.codePatterns.ran,
     },
     findings: codeFindings,
     toolsUsed,

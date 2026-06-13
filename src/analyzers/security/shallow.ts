@@ -106,6 +106,13 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
     // is a downgrade; an explicit `false` from the gather is the only
     // signal we trust to apply it.
     depVulnsAvailable: c.depVulnsAvailability?.available ?? true,
+    // C-D1: same default-true contract as depVulnsAvailable — the
+    // explicit `false` from the gather is the only signal we trust to
+    // apply an uncertainty cap. Closes the asymmetry where a missing
+    // dep scan capped the score but missing secret/code scanners
+    // silently scored as clean.
+    secretsAvailable: c.secretsAvailability?.available ?? true,
+    codePatternsAvailable: c.codePatternsAvailability?.available ?? true,
   };
 }
 
