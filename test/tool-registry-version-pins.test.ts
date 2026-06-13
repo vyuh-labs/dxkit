@@ -36,32 +36,47 @@ const PINNED_TOOLS: Record<string, string> = {
   detekt: 'v1.23.6',
   graphify: 'graphifyy==0.8.36',
   jscpd: 'jscpd@4.2.5',
+  // 2.10 version-pin sweep: defensive freezes for the dxkit-owned,
+  // deterministic-output scanners so a future breaking major can't
+  // silently change parsed output or exit codes (the jscpd-5.x class).
+  // Proper schema-adaptive multi-version handling is deferred to a
+  // later release. Versions are the current releases as of the sweep
+  // (semgrep is the benchmark-validated 1.165.0). Consumer-owned and
+  // SaaS/managed tools deliberately stay in KNOWN_UNPINNED below.
+  semgrep: 'semgrep==1.165.0',
+  ruff: 'ruff==0.15.17',
+  'pip-audit': 'pip-audit==2.10.1',
+  'pip-licenses': 'pip-licenses==5.5.5',
+  'coverage-py': 'coverage==7.14.1',
+  'license-checker-rseidelsohn': 'license-checker-rseidelsohn@5.0.1',
+  'golangci-lint': '@v1.64.8',
+  govulncheck: '@v1.3.0',
+  'go-licenses': '@v1.6.0',
 };
 
 /**
- * Tools dxkit installs from a spec it authors (npm / pip / `go install`)
- * that is NOT yet version-pinned — the audited backlog. Pinning one (with a
- * tested version) is the closure: move it into PINNED_TOOLS. `semgrep` is
- * the highest-risk entry — universal, runs on every scan, and dxkit parses
- * its JSON output, so a breaking CLI/schema change lands like jscpd 5.x did.
- * The go-toolchain entries currently float on `@latest`.
+ * Tools dxkit installs but does NOT version-pin — each for a deliberate
+ * reason, not an oversight. The 2.10 sweep emptied the "just hasn't been
+ * pinned yet" backlog into PINNED_TOOLS; what remains stays unpinned BY
+ * DESIGN:
+ *
+ *   - `eslint`, `vitest-coverage` — `installScope: 'project-local'`. They
+ *     install into the CONSUMER's package.json; the consumer owns the
+ *     version. dxkit pinning them would override the project's own choice.
+ *   - `snyk` — a SaaS CLI that authenticates against Snyk's backend and
+ *     self-manages client/server compatibility. Pinning an old client
+ *     risks server-side deprecation breaking it; let it float.
+ *   - `codeql` — a GitHub-managed bundle paired with versioned query
+ *     packs; the CLI and packs must stay in lockstep, so GitHub's
+ *     channel owns the version, not dxkit.
+ *   - `cloc` — a stable line-counter on a non-semver npm tag
+ *     (`2.6.0-cloc`); lowest-risk output schema in the registry, and the
+ *     odd version string makes a clean pin fragile for negligible gain.
+ *
+ * Moving a tool here into PINNED_TOOLS (with a tested version) is the
+ * closure step for any future backlog entry.
  */
-const KNOWN_UNPINNED = [
-  'semgrep',
-  'ruff',
-  'pip-audit',
-  'pip-licenses',
-  'coverage-py',
-  'eslint',
-  'vitest-coverage',
-  'license-checker-rseidelsohn',
-  'snyk',
-  'codeql',
-  'cloc',
-  'golangci-lint',
-  'govulncheck',
-  'go-licenses',
-];
+const KNOWN_UNPINNED = ['eslint', 'vitest-coverage', 'snyk', 'codeql', 'cloc'];
 
 /**
  * Tools installed through a system / language package manager that owns its
