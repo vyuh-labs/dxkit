@@ -44,7 +44,12 @@ import {
 } from '../baseline/baseline-file';
 import { canonicalRuleFor, computeCodeFingerprint } from '../analyzers/tools/fingerprint';
 import { readAllSnapshots } from '../ingest/snapshot';
-import { buildSnykPolicy, expiryToSnykDatetime, type SnykIgnore } from '../ingest/snyk-policy';
+import {
+  buildSnykPolicy,
+  dxkitIgnoreLinesToSnykExcludes,
+  expiryToSnykDatetime,
+  type SnykIgnore,
+} from '../ingest/snyk-policy';
 import { LANGUAGES } from '../languages';
 import type { LanguageSupport } from '../languages/types';
 import type { IdentityKind } from '../baseline/producers';
@@ -625,6 +630,12 @@ export async function runAllowlistRemove(cwd: string, opts: AllowlistRemoveOpts)
  * reason + expiry. Expired entries are skipped (they no longer
  * suppress). Only `snyk-code` findings export — native semgrep /
  * gitleaks findings have no Snyk equivalent.
+ *
+ * 2.10 also syncs the PATH-EXCLUSION half: `.dxkit-ignore` patterns
+ * (the paths dxkit's own analyzers skip) are emitted into the `.snyk`
+ * `exclude.global` block, so Snyk and dxkit agree on what's out of
+ * scope. The two halves compose into one `.snyk`; an export carrying
+ * only exclusions (no allowlisted Snyk findings yet) still writes.
  */
 export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts): Promise<void> {
   if (!opts.snyk) {
@@ -632,20 +643,14 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
     process.exit(1);
   }
 
-  const file = loadAllowlist(cwd);
-  if (!file || file.entries.length === 0) {
-    logger.info(`No allowlist entries — nothing to export.`);
-    return;
-  }
+  // Path-exclusion half of the sync: `.dxkit-ignore` → Snyk
+  // `exclude.global`. Independent of allowlist findings, so it's read up
+  // front and can carry an export even when no Snyk findings are
+  // allowlisted (the two halves compose into one `.snyk`).
+  const excludes = readDxkitIgnoreExcludes(cwd);
 
+  const file = loadAllowlist(cwd);
   const snapshots = readAllSnapshots(cwd).filter((f) => f.engine === 'snyk-code');
-  if (snapshots.length === 0) {
-    logger.info(
-      `No Snyk Code findings have been ingested yet. ` +
-        `Run \`vyuh-dxkit ingest --from-snyk\` first.`,
-    );
-    return;
-  }
 
   // Recompute each Snyk finding's canonical fingerprint and match it to
   // an active allowlist entry. Dedup (rule, path) so several findings on
@@ -654,48 +659,72 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
   const ignores: SnykIgnore[] = [];
   const seenRulePath = new Set<string>();
   let skippedExpired = 0;
-  for (const f of snapshots) {
-    const fingerprint = computeCodeFingerprint(canonicalRuleFor(f.engine, f.rule), f.file, f.line);
-    const entry = findEntry(file, fingerprint);
-    if (!entry) continue;
-    if (!isEntryActive(entry)) {
-      skippedExpired++;
-      continue;
+  if (file && file.entries.length > 0) {
+    for (const f of snapshots) {
+      const fingerprint = computeCodeFingerprint(
+        canonicalRuleFor(f.engine, f.rule),
+        f.file,
+        f.line,
+      );
+      const entry = findEntry(file, fingerprint);
+      if (!entry) continue;
+      if (!isEntryActive(entry)) {
+        skippedExpired++;
+        continue;
+      }
+      const key = `${f.rule}\0${f.file}`;
+      if (seenRulePath.has(key)) continue;
+      seenRulePath.add(key);
+      ignores.push({
+        ruleId: f.rule,
+        path: f.file,
+        reason: entry.reason,
+        expires: expiryToSnykDatetime(entry.expiresAt),
+        created,
+      });
     }
-    const key = `${f.rule}\0${f.file}`;
-    if (seenRulePath.has(key)) continue;
-    seenRulePath.add(key);
-    ignores.push({
-      ruleId: f.rule,
-      path: f.file,
-      reason: entry.reason,
-      expires: expiryToSnykDatetime(entry.expiresAt),
-      created,
-    });
+  }
+
+  // Bail only when there's nothing to act on at all: no usable allowlist
+  // context (entries + ingested snapshots to match them against) AND no
+  // path exclusions. When an allowlist+snapshots context exists we still
+  // write — an empty policy + JSON is meaningful output (preserves the
+  // pre-2.10 behavior the export tests pin).
+  const hasAllowlistContext = !!file && file.entries.length > 0 && snapshots.length > 0;
+  if (!hasAllowlistContext && excludes.length === 0) {
+    if (!file || file.entries.length === 0) {
+      logger.info(`No allowlist entries and no .dxkit-ignore exclusions — nothing to export.`);
+    } else {
+      logger.info(
+        `No Snyk Code findings have been ingested yet and no .dxkit-ignore ` +
+          `exclusions are present. Run \`vyuh-dxkit ingest --from-snyk\` first.`,
+      );
+    }
+    return;
   }
 
   const outPath = path.resolve(cwd, opts.out ?? '.snyk');
-  const policy = buildSnykPolicy(ignores);
+  const policy = buildSnykPolicy(ignores, excludes);
   fs.writeFileSync(outPath, policy, 'utf8');
 
   if (opts.json) {
     process.stdout.write(
-      JSON.stringify({ out: outPath, ignores: ignores.length, skippedExpired }, null, 2) + '\n',
+      JSON.stringify(
+        { out: outPath, ignores: ignores.length, excludes: excludes.length, skippedExpired },
+        null,
+        2,
+      ) + '\n',
     );
     return;
   }
 
-  if (ignores.length === 0) {
-    logger.info(
-      `No Snyk-originated findings are allowlisted — wrote an empty policy to ${outPath}.` +
-        (skippedExpired > 0
-          ? ` (${skippedExpired} expired entr${skippedExpired === 1 ? 'y' : 'ies'} skipped.)`
-          : ''),
-    );
-    return;
+  const parts: string[] = [];
+  parts.push(`${ignores.length} Snyk ignore${ignores.length === 1 ? '' : 's'}`);
+  if (excludes.length > 0) {
+    parts.push(`${excludes.length} path exclusion${excludes.length === 1 ? '' : 's'}`);
   }
   logger.success(
-    `Wrote ${ignores.length} Snyk ignore${ignores.length === 1 ? '' : 's'} to ${outPath}` +
+    `Wrote ${parts.join(' + ')} to ${outPath}` +
       (skippedExpired > 0 ? ` (${skippedExpired} expired skipped)` : '') +
       '.',
   );
@@ -706,6 +735,21 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────
+
+/**
+ * Read `.dxkit-ignore` (if present) and convert its patterns into Snyk
+ * `exclude.global` globs. Returns [] when the file is absent or
+ * unreadable — the exclusion sync is best-effort and never blocks an
+ * allowlist export.
+ */
+function readDxkitIgnoreExcludes(cwd: string): string[] {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, '.dxkit-ignore'), 'utf8');
+    return dxkitIgnoreLinesToSnykExcludes(raw.split('\n'));
+  } catch {
+    return [];
+  }
+}
 
 function isAllowlistSubcommand(value: string): value is AllowlistSubcommand {
   return (ALLOWLIST_SUBCOMMANDS as readonly string[]).includes(value);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSnykPolicy,
+  dxkitIgnoreLinesToSnykExcludes,
   expiryToSnykDatetime,
   SNYK_POLICY_VERSION,
   type SnykIgnore,
@@ -12,6 +13,59 @@ describe('expiryToSnykDatetime', () => {
   });
   it('returns undefined for a missing date (permanent ignore)', () => {
     expect(expiryToSnykDatetime(undefined)).toBeUndefined();
+  });
+});
+
+describe('dxkitIgnoreLinesToSnykExcludes', () => {
+  it('drops comments, blanks, and negations', () => {
+    expect(dxkitIgnoreLinesToSnykExcludes(['# a comment', '', '   ', '!keep/this'])).toEqual([]);
+  });
+
+  it('expands directory and bare-name patterns to subtree globs', () => {
+    expect(dxkitIgnoreLinesToSnykExcludes(['vendor/', 'generated', 'fixtures/large/'])).toEqual([
+      'vendor/**',
+      'generated/**',
+      'fixtures/large/**',
+    ]);
+  });
+
+  it('passes through existing globs and strips a leading anchor slash', () => {
+    expect(dxkitIgnoreLinesToSnykExcludes(['*.generated.ts', '/build/', 'src/**'])).toEqual([
+      '*.generated.ts',
+      'build/**',
+      'src/**',
+    ]);
+  });
+
+  it('de-duplicates while preserving order', () => {
+    expect(dxkitIgnoreLinesToSnykExcludes(['vendor/', 'vendor', 'legacy'])).toEqual([
+      'vendor/**',
+      'legacy/**',
+    ]);
+  });
+});
+
+describe('buildSnykPolicy with excludes', () => {
+  it('emits an exclude.global block from .dxkit-ignore patterns', () => {
+    const out = buildSnykPolicy([], ['vendor/**', '*.generated.ts']);
+    expect(out).toContain('exclude:');
+    expect(out).toContain('  global:');
+    expect(out).toContain("    - 'vendor/**'");
+    expect(out).toContain("    - '*.generated.ts'");
+  });
+
+  it('omits the exclude block entirely when there are no excludes (stable prior shape)', () => {
+    expect(buildSnykPolicy([])).not.toContain('exclude:');
+  });
+
+  it('combines ignores and excludes in one policy', () => {
+    const out = buildSnykPolicy(
+      [{ ruleId: 'r', path: 'src/a.ts', created: '2026-06-09T00:00:00.000Z' }],
+      ['vendor/**'],
+    );
+    expect(out).toContain("'r':");
+    expect(out).toContain('exclude:');
+    expect(out).toContain("    - 'vendor/**'");
   });
 });
 
