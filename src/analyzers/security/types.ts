@@ -3,6 +3,7 @@
  */
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { AllowlistCategory } from '../../allowlist/categories';
+import type { ScannerCoverageDrift } from './scanner-drift';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
@@ -111,4 +112,12 @@ export interface SecurityReport {
   findings: SecurityFinding[];
   toolsUsed: string[];
   toolsUnavailable: string[];
+  /**
+   * C-D3: scanners added since the most recent prior vuln-scan report,
+   * when any. Present only when the active scanner set grew run-over-run
+   * — drives the "coverage expanded; findings newly visible, not newly
+   * introduced" note that explains an otherwise-baffling score change on
+   * an unchanged commit. Absent on a first run or a stable scanner set.
+   */
+  scannerDrift?: ScannerCoverageDrift;
 }

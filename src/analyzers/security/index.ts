@@ -13,6 +13,7 @@ import type { LanguageId } from '../../types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 import { loadAllowlist } from '../../allowlist/file';
 import { annotateFindingsWithAllowlist } from '../../allowlist/annotate';
+import { detectScannerCoverageDrift } from './scanner-drift';
 
 export type { SecurityReport, SecurityFinding } from './types';
 
@@ -195,6 +196,18 @@ export async function analyzeSecurity(
     findings: [...aggregate.findingsByCategory.dependency],
   };
 
+  // C-D3: did the scanner set grow since the last run? If so the report
+  // discloses that new findings are newly *visible*, not newly
+  // *introduced* — the root-cause explanation for a score that "got
+  // worse" on an unchanged commit after a dxkit upgrade enabled more
+  // scanners. Read-only + fail-open; compared against the most recent
+  // prior persisted report.
+  const scannerDrift = detectScannerCoverageDrift(
+    result.cwd,
+    toolsUsed,
+    result.builtAt.slice(0, 10),
+  );
+
   return {
     repo: stack.projectName || path.basename(result.cwd),
     analyzedAt: result.builtAt,
@@ -214,6 +227,7 @@ export async function analyzeSecurity(
     findings: codeFindings,
     toolsUsed,
     toolsUnavailable,
+    ...(scannerDrift ? { scannerDrift } : {}),
   };
 }
 
@@ -251,6 +265,21 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('');
   L.push('---');
   L.push('');
+
+  // C-D3: scanner-coverage-drift note. Surfaced at the very top so a
+  // reader who sees a worse score knows to attribute it to improved
+  // measurement, not regressed code, BEFORE reading the numbers.
+  if (report.scannerDrift) {
+    const { added, previousDate } = report.scannerDrift;
+    const toolList = added.map((t) => `\`${t}\``).join(', ');
+    L.push(
+      `> ℹ **Scanner coverage expanded since ${previousDate}.** This run added ` +
+        `${toolList}. Findings these scanners surface are newly **visible**, not newly ` +
+        `**introduced** — if the score moved, it reflects improved measurement of code ` +
+        `that was already there, not new risk.`,
+    );
+    L.push('');
+  }
 
   // C2.1 (perception D086 closure): three independent axes, each with
   // its own labeled table. Pre-C2.1 the executive summary had a single
