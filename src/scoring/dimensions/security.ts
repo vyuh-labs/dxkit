@@ -81,6 +81,23 @@ export interface SecurityScoreInput {
    * Adapters MUST populate this from `DepVulnSummary.available`.
    */
   depVulnsAvailable: boolean;
+  /**
+   * C-D1: pre-2.10 the unavailability cap was asymmetric — a missing
+   * dep-vuln scan capped at the uncertainty tier while missing
+   * secret/code scanners silently scored as "0 findings". A customer
+   * upgrade that merely turned the secret scanners ON then read as a
+   * 25-point score drop on an unchanged commit. These two flags give
+   * every measurement axis the same honest treatment: scanner didn't
+   * run → uncertainty cap, never a confident clean score.
+   *
+   * Same attempted-and-failed semantics as `depVulnsAvailable`:
+   * false ONLY when the gather was attempted and no provider
+   * succeeded. "No active provider" stays vacuously true.
+   */
+  secretsAvailable: boolean;
+  /** See `secretsAvailable` (C-D1) — same contract for the semgrep /
+   *  code-patterns axis. */
+  codePatternsAvailable: boolean;
 }
 
 /**
@@ -164,6 +181,18 @@ export const SECURITY_SCORING_SPEC: DimensionScoringSpec<SecurityScoreInput> = {
       tier: 'uncertainty',
       describe: () => `dependency vulnerability scan did not run`,
       applies: (i) => !i.depVulnsAvailable,
+    },
+    {
+      id: 'secrets-unavailable',
+      tier: 'uncertainty',
+      describe: () => `secret scan did not run`,
+      applies: (i) => !i.secretsAvailable,
+    },
+    {
+      id: 'code-patterns-unavailable',
+      tier: 'uncertainty',
+      describe: () => `static-analysis (code-pattern) scan did not run`,
+      applies: (i) => !i.codePatternsAvailable,
     },
     {
       id: 'high-plus-code-open',

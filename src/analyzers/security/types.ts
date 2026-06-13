@@ -78,6 +78,17 @@ export interface SecurityReport {
      */
     secretsOnly: { critical: number; high: number; medium: number; low: number; total: number };
     dependencies: DepVulnSummary;
+    /**
+     * C-D1: whether the secret / code-pattern scans actually ran,
+     * from `aggregate.provenance.{secrets,codePatterns}.ran`. The
+     * standalone-side score adapter (`countsFromReport`) plumbs these
+     * into the uncertainty caps, mirroring `dependencies.available` —
+     * a "0 secrets" subtotal printed next to "Sources: (none)" must
+     * not score as a confident clean. Optional: report JSONs saved
+     * before 2.10 lack them (adapter defaults to true).
+     */
+    secretsAvailable?: boolean;
+    codePatternsAvailable?: boolean;
   };
   findings: SecurityFinding[];
   toolsUsed: string[];

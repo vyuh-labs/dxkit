@@ -254,6 +254,7 @@ export async function gatherAnalysisResultBody(
   // fields populated above. The reason text is consumer-renderable;
   // keep it concise (~one short sentence).
   pushUnavailable(metrics, capabilities.codePatternsAvailability, 'semgrep');
+  pushUnavailable(metrics, capabilities.secretsAvailability, 'secret-scan');
   pushUnavailable(metrics, capabilities.duplicationAvailability, 'jscpd');
   pushUnavailable(metrics, capabilities.structuralAvailability, 'graphify');
   pushUnavailable(metrics, capabilities.lintAvailability, 'lint');
@@ -388,7 +389,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     coverage,
     imports,
     testFramework,
-    secrets,
+    secretsOutcome,
     codePatternsOutcome,
     duplicationOutcome,
     structuralOutcome,
@@ -405,7 +406,14 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
     defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
-    defaultDispatcher.gather(cwd, SECRETS, providersFor(SECRETS, cwd)),
+    // gatherWithProvenance (C-D1): the secret scan needs the same
+    // attempted-vs-succeeded discriminant the code-patterns gather has,
+    // so a failed secret scan caps the Security score (uncertainty)
+    // instead of silently reading as "0 secrets". The customer-facing
+    // symptom of the old silent path: a dxkit upgrade that merely
+    // turned the secret scanners ON looked like a 25-point score drop
+    // on an unchanged commit.
+    defaultDispatcher.gatherWithProvenance(cwd, SECRETS, providersFor(SECRETS, cwd)),
     // gatherWithProvenance so the cache builder can plumb per-capability
     // availability metadata for tools that may legitimately gather
     // attempted-but-failed (semgrep / jscpd / graphify under resource
@@ -483,7 +491,14 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   if (coverage) report.coverage = coverage;
   if (imports) report.imports = imports;
   if (testFramework) report.testFramework = testFramework;
+  const secrets = secretsOutcome.envelope;
   if (secrets) report.secrets = secrets;
+  // C-D1: same shape as codePatternsAvailability. Distinguishes "no
+  // secret provider active" (vacuous clean) from "secret scan was
+  // attempted but every provider returned null" — the latter caps the
+  // Security score at the uncertainty tier instead of silently
+  // scoring an unscanned repo as secret-free.
+  report.secretsAvailability = availabilityFromOutcome(secretsOutcome, 'gitleaks');
   if (codePatterns) report.codePatterns = codePatterns;
   // Same shape as lintAvailability — distinguishes "no rulesets
   // active" (vacuous clean) from "semgrep/jscpd/graphify was

@@ -60,6 +60,11 @@ export function countsFromReport(report: SecurityReport): SecurityScoreInput {
     // `true` for fixtures that pre-date the field (legacy report JSONs
     // saved before 2.4.7).
     depVulnsAvailable: d.available ?? true,
+    // C-D1: same default-true contract — caps only on an explicit
+    // "scan did not run" from the report's provenance-derived summary
+    // fields. Legacy report JSONs (pre-2.10) lack them → no cap.
+    secretsAvailable: report.summary.secretsAvailable ?? true,
+    codePatternsAvailable: report.summary.codePatternsAvailable ?? true,
   };
 }
 
