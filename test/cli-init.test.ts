@@ -96,12 +96,18 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
     expect(parsed).toHaveProperty('permissions');
   });
 
-  it('wires the fail-open context-hook as a Grep|Glob PreToolUse hook', () => {
+  it('wires the fail-open context-hook on the Read/Bash/Grep navigation surfaces', () => {
     const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
     const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     const preToolUse = parsed.hooks?.PreToolUse ?? [];
-    const entry = preToolUse.find((h: { matcher?: string }) => h.matcher === 'Grep|Glob');
-    expect(entry).toBeDefined();
+    const entry = preToolUse.find(
+      (h: { matcher?: string }) =>
+        /\bRead\b/.test(h.matcher ?? '') && /\bBash\b/.test(h.matcher ?? ''),
+    );
+    expect(entry, 'context-hook should fire on Read + Bash (2.10 passive-delivery)').toBeDefined();
+    // The original symbol-search surfaces are retained.
+    expect(entry.matcher).toMatch(/Grep/);
+    expect(entry.matcher).toMatch(/Glob/);
     const cmd = entry.hooks?.[0]?.command ?? '';
     expect(cmd).toContain('vyuh-dxkit context-hook');
   });
