@@ -11,6 +11,8 @@ import { gatherAnalysisResultBody } from '../health';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import { loadAllowlist } from '../../allowlist/file';
+import { annotateFindingsWithAllowlist } from '../../allowlist/annotate';
 
 export type { SecurityReport, SecurityFinding } from './types';
 
@@ -142,6 +144,14 @@ export async function analyzeSecurity(
     ...aggregate.findingsByCategory.code,
     ...aggregate.findingsByCategory.config,
   ];
+
+  // C-D2: mark findings an active allowlist entry already accepts, so
+  // the renderer can show "(N allowlisted)" beside raw counts. Pure
+  // annotation — counts + score are unchanged; this just stops a repo's
+  // own reviewed test fixtures from reading as unexplained headline
+  // criticals. The aggregator stamps `fingerprint` on every
+  // code/secret/config finding, so no identity is computed here.
+  annotateFindingsWithAllowlist(codeFindings, loadAllowlist(result.cwd));
   const codeSummary = {
     critical: aggregate.codeBySeverity.critical + aggregate.secretsBySeverity.critical,
     high: aggregate.codeBySeverity.high + aggregate.secretsBySeverity.high,
@@ -207,6 +217,30 @@ export async function analyzeSecurity(
   };
 }
 
+/**
+ * C-D2: inline " (N allowlisted)" suffix for a subtotal cell, or empty
+ * string when nothing in the axis is allowlisted. Keeps the raw count
+ * authoritative while disclosing how much of it is reviewed-and-accepted.
+ */
+function allowlistedSuffix(allowlisted: number): string {
+  return allowlisted > 0 ? ` (${allowlisted} allowlisted)` : '';
+}
+
+/**
+ * C-D2: explanatory note under a findings table when some of its
+ * findings are allowlisted. Clarifies that the raw count is unchanged
+ * and the suppressed items are reviewed-and-accepted, not hidden.
+ */
+function pushAllowlistedNote(L: string[], allowlisted: number): void {
+  if (allowlisted <= 0) return;
+  L.push(
+    `> ℹ ${allowlisted} of the above ${allowlisted === 1 ? 'finding is' : 'findings are'} ` +
+      `covered by an active allowlist entry (reviewed and accepted). Counts above are raw ` +
+      `totals; the guardrail does not block on allowlisted findings.`,
+  );
+  L.push('');
+}
+
 export function formatSecurityReport(report: SecurityReport, elapsed: string): string {
   const L: string[] = [];
   L.push('# Vulnerability Scan Report');
@@ -249,6 +283,9 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   const codeSources = [
     ...new Set(report.findings.filter((f) => f.category === 'code').map((f) => f.tool)),
   ].sort();
+  const codeAllowlisted = report.findings.filter(
+    (f) => f.category === 'code' && f.allowlisted,
+  ).length;
   L.push('### Code Findings');
   L.push('');
   L.push(`_Sources: ${codeSources.join(', ') || '(none)'}_`);
@@ -259,8 +296,9 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push(`| HIGH     | ${c.high} |`);
   L.push(`| MEDIUM   | ${c.medium} |`);
   L.push(`| LOW      | ${c.low} |`);
-  L.push(`| **Subtotal** | **${c.total}** |`);
+  L.push(`| **Subtotal** | **${c.total}**${allowlistedSuffix(codeAllowlisted)} |`);
   L.push('');
+  pushAllowlistedNote(L, codeAllowlisted);
 
   // Secret + config severity table. Reads `summary.secretsOnly` from
   // the aggregator's `secretsBySeverity` axis.
@@ -271,6 +309,9 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
         .map((f) => f.tool),
     ),
   ].sort();
+  const secretAllowlisted = report.findings.filter(
+    (f) => (f.category === 'secret' || f.category === 'config') && f.allowlisted,
+  ).length;
   L.push('### Secret & Config Findings');
   L.push('');
   L.push(`_Sources: ${secretSources.join(', ') || '(none)'}_`);
@@ -281,8 +322,9 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push(`| HIGH     | ${k.high} |`);
   L.push(`| MEDIUM   | ${k.medium} |`);
   L.push(`| LOW      | ${k.low} |`);
-  L.push(`| **Subtotal** | **${k.total}** |`);
+  L.push(`| **Subtotal** | **${k.total}**${allowlistedSuffix(secretAllowlisted)} |`);
   L.push('');
+  pushAllowlistedNote(L, secretAllowlisted);
 
   L.push('### Dependency Vulnerabilities');
   L.push('');

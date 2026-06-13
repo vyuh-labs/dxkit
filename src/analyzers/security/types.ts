@@ -2,6 +2,7 @@
  * Security analyzer types.
  */
 import type { DepVulnFinding } from '../../languages/capabilities/types';
+import type { AllowlistCategory } from '../../allowlist/categories';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
@@ -16,6 +17,23 @@ export interface SecurityFinding {
   file: string;
   line: number;
   tool: string;
+  /**
+   * C-D2: true when an ACTIVE (unexpired) allowlist entry matches this
+   * finding's fingerprint. The finding is still reported in full (raw
+   * counts are unchanged — dxkit's raw-truth model holds), but renderers
+   * surface "(N allowlisted)" alongside the subtotal so a reviewer isn't
+   * alarmed by, e.g., 8 CRITICAL secrets when 7 are accepted test
+   * fixtures. Absent (undefined) when no allowlist exists or no entry
+   * matches. Only code/secret/config findings (which carry a
+   * fingerprint) are annotated; dependency findings are keyed by tuple
+   * through a producer and are out of scope here.
+   */
+  allowlisted?: boolean;
+  /** C-D2: the matched allowlist entry's category (`test-fixture`,
+   *  `false-positive`, `accepted-risk`, ...) so renderers can explain
+   *  WHY the finding is suppressed, not just that it is. Present only
+   *  when `allowlisted` is true. */
+  allowlistCategory?: AllowlistCategory;
 }
 
 export interface DepVulnSummary {

@@ -187,6 +187,10 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     line?: number;
     package?: string;
     installedVersion?: string;
+    /** C-D2: set upstream when an active allowlist entry accepts this
+     *  finding. Surfaced in the Vulnerabilities tile so the dashboard
+     *  doesn't read as "8 CRITICAL" when 7 are reviewed test fixtures. */
+    allowlisted?: boolean;
   };
   // D047 (2.4.7 fix-forward): the dashboard previously read only
   // `vulns.findings` (code findings — semgrep/gitleaks). Dependency
@@ -221,6 +225,10 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   // length count. Post-C1.2 both arrays are already dedup'd by the
   // canonical aggregator, so the union is unique-by-construction.
   const vulnFindings: VulnFinding[] = [...codeFindings, ...depFindings];
+  // C-D2: how many of the surfaced findings are reviewed-and-accepted
+  // (active allowlist). Disclosed in the tile sub-line so raw counts
+  // aren't mistaken for unaddressed risk.
+  const vulnAllowlisted = vulnFindings.filter((f) => f.allowlisted).length;
 
   // G_v4_8 (2.4.7 Phase C1.5): severity buckets read directly from
   // `vulns.summary.findings` + `vulns.summary.dependencies` — both
@@ -356,6 +364,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     orderedDims,
     vulnFindings,
     vulnBySeverity,
+    vulnAllowlisted,
     gapCount,
     gapsByRisk,
     advisoryCount,
@@ -481,6 +490,7 @@ interface RenderArgs {
   orderedDims: Array<[string, { score?: number } | undefined]>;
   vulnFindings: unknown[];
   vulnBySeverity: Record<string, number>;
+  vulnAllowlisted: number;
   gapCount: number;
   gapsByRisk: Record<string, number>;
   advisoryCount: number;
@@ -711,7 +721,7 @@ function renderHtml(a: RenderArgs): string {
           <div class="stat-card">
             <div class="label">Vulnerabilities</div>
             <div class="value" style="color:${a.vulnFindings.length > 0 ? 'var(--accent-red)' : 'var(--accent-green)'}">${a.vulnFindings.length}</div>
-            <div class="sub">${a.vulnBySeverity.critical ?? 0} critical · ${a.vulnBySeverity.high ?? 0} high · ${a.vulnBySeverity.medium ?? 0} medium · ${a.vulnBySeverity.low ?? 0} low</div>
+            <div class="sub">${a.vulnBySeverity.critical ?? 0} critical · ${a.vulnBySeverity.high ?? 0} high · ${a.vulnBySeverity.medium ?? 0} medium · ${a.vulnBySeverity.low ?? 0} low${a.vulnAllowlisted > 0 ? ` · <span style="color:var(--text-secondary)">${a.vulnAllowlisted} allowlisted</span>` : ''}</div>
           </div>
           <div class="stat-card">
             <div class="label">Test Gaps</div>
