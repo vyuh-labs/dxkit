@@ -120,14 +120,46 @@ export function anyActivePackSupportsSnykCode(flags: DetectedStack['languages'])
 }
 
 /**
- * All test-file patterns across every registered pack, deduplicated.
- * Patterns without a slash are basename-style (matched by find `-name`);
- * patterns containing a slash are path-anchored (e.g. Rust's
- * tests-directory glob for integration tests) and need find
- * `-path` semantics — see `splitTestFilePatterns()`.
+ * Cross-ecosystem test-DIRECTORY conventions. Where tests live is a
+ * structural convention shared across languages (Jest's `__tests__/`,
+ * the near-universal `test/` / `tests/` / `spec/` / `e2e/`), unlike how
+ * test FILES are named (`*Test.java` vs `*_test.go` vs `*.spec.ts`),
+ * which genuinely varies per language and stays in each pack's
+ * `testFilePatterns`. Declaring the directory conventions once here —
+ * rather than copying them into every pack — is why a repo that
+ * organizes tests by directory is classified correctly in any language,
+ * and why adding a new pack inherits them for free.
+ *
+ * Path-anchored (each contains `/`), so `splitTestFilePatterns` routes
+ * them to the path matcher: `__tests__/**` matches `src/__tests__/a.ts`
+ * AND `a/b/__tests__/c.ts` (anywhere in the tree). The walker only
+ * evaluates these against files that already passed the source-extension
+ * filter, so non-source files under a test dir are never misclassified.
+ *
+ * `__mocks__/` is intentionally excluded — mocks are test *support*, not
+ * tests, and counting them would inflate the test-file ratio.
+ */
+export const UNIVERSAL_TEST_DIR_PATTERNS: readonly string[] = [
+  '__tests__/**',
+  'test/**',
+  'tests/**',
+  'spec/**',
+  'e2e/**',
+];
+
+/**
+ * All test-file patterns: each pack's language-specific filename
+ * conventions unioned with the shared cross-ecosystem test-directory
+ * conventions (`UNIVERSAL_TEST_DIR_PATTERNS`), deduplicated. Patterns
+ * without a slash are basename-style (matched by find `-name`); patterns
+ * containing a slash are path-anchored (the test-dir conventions + e.g.
+ * Rust's tests-directory glob) and need find `-path` semantics — see
+ * `splitTestFilePatterns()`.
  */
 export function allTestFilePatterns(): string[] {
-  return [...new Set(LANGUAGES.flatMap((l) => l.testFilePatterns))];
+  return [
+    ...new Set([...LANGUAGES.flatMap((l) => l.testFilePatterns), ...UNIVERSAL_TEST_DIR_PATTERNS]),
+  ];
 }
 
 /**
