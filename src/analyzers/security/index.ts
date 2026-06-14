@@ -11,6 +11,7 @@ import { gatherAnalysisResultBody } from '../health';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import { isTestSourceFile } from '../tools/walk-source-files';
 import { detectScannerCoverageDrift } from './scanner-drift';
 
 export type { SecurityReport, SecurityFinding } from './types';
@@ -249,6 +250,26 @@ function pushAllowlistedNote(L: string[], allowlisted: number): void {
   L.push('');
 }
 
+/**
+ * Triage guidance for secret findings that sit in test files and aren't
+ * yet allowlisted. dxkit never lowers a secret's severity by location —
+ * a real credential leaked into a test is still a leak — so these surface
+ * at full severity and the reader decides: throwaway fixture (allowlist
+ * it) or real credential (rotate it). `count` is the un-allowlisted,
+ * test-located secret/config findings.
+ */
+function pushTestSecretGuidance(L: string[], count: number): void {
+  if (count <= 0) return;
+  L.push(
+    `> 🔍 ${count} of the above ${count === 1 ? 'finding is' : 'findings are'} in test files. ` +
+      `dxkit does not lower a secret's severity by location — a real credential leaked into a ` +
+      `test is still a leak. Review each: if it's a throwaway fixture, allowlist it with ` +
+      '`vyuh-dxkit allowlist add --category test-fixture` (which also lifts it from the Security ' +
+      `score); if it's a real credential, rotate it and remove it from git history.`,
+  );
+  L.push('');
+}
+
 export function formatSecurityReport(report: SecurityReport, elapsed: string): string {
   const L: string[] = [];
   L.push('# Vulnerability Scan Report');
@@ -332,8 +353,14 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
         .map((f) => f.tool),
     ),
   ].sort();
-  const secretAllowlisted = report.findings.filter(
-    (f) => (f.category === 'secret' || f.category === 'config') && f.allowlisted,
+  const secretConfig = report.findings.filter(
+    (f) => f.category === 'secret' || f.category === 'config',
+  );
+  const secretAllowlisted = secretConfig.filter((f) => f.allowlisted).length;
+  // Un-allowlisted secrets that live in test files — surfaced for triage
+  // (fixture → allowlist, or real → rotate), never auto-suppressed.
+  const secretsInTests = secretConfig.filter(
+    (f) => !f.allowlisted && isTestSourceFile(f.file),
   ).length;
   L.push('### Secret & Config Findings');
   L.push('');
@@ -348,6 +375,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push(`| **Subtotal** | **${k.total}**${allowlistedSuffix(secretAllowlisted)} |`);
   L.push('');
   pushAllowlistedNote(L, secretAllowlisted);
+  pushTestSecretGuidance(L, secretsInTests);
 
   L.push('### Dependency Vulnerabilities');
   L.push('');
