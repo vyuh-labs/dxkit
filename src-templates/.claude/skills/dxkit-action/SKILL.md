@@ -101,7 +101,16 @@ npx vyuh-dxkit vulnerabilities --json | jq '.summary.findings'
 
 Don't try to redact the secret in place — the git history still has it. Rotation is the only true fix.
 
-If the "secret" is actually a placeholder in test code (e.g., `"sk_test_xxxxxxxxxxxx"` with no real credential value), confirm with the developer and allowlist via `dxkit-allow:test-fixture` — see "Allowlisting (when fix is not viable)" below.
+#### Secrets in test files — TRIAGE, don't assume
+
+dxkit deliberately does **not** lower a secret's severity just because it sits in a test file: the scanner can't tell a throwaway fixture from a real credential someone pasted into an integration test, and a real leak in a test is still a leak. So test-file secrets reach you at full severity, and the report flags how many are test-located — that's your cue to triage each one, not to dismiss them:
+
+1. **Open the line and judge the value.** Obvious throwaway fixture (`'password1'`, `'changeme'`, `'sk_test_xxxx'`, low-entropy / dictionary)? Or does it look like a real credential (high-entropy token, a real-looking host/user/password, something that would actually authenticate)?
+2. **Fixture → allowlist it.** `vyuh-dxkit allowlist add <file>:<line> --category=test-fixture --reason="..."`. This is the right tool: it records *why*, and `test-fixture` (like `false-positive`) **lifts the finding from the Security score**, not just the guardrail — so a properly-triaged test file stops dragging the score down. Don't waste effort "rotating" a fake value.
+3. **Real credential → treat it as a live leak.** Rotate in the provider, remove from the file, scrub git history (`git filter-repo` / BFG). Being in a test does not make it safe.
+4. **Unsure? Ask the developer** before allowlisting — never allowlist a value you haven't confirmed is fake.
+
+Allowlisting under `test-fixture` is a deliberate per-finding judgment, not a blanket "ignore tests" — don't add a `.dxkit-ignore` for the test directory to make the noise go away (that also drops the files from coverage + test-gap analysis, and would hide a real leak the same way). See "Allowlisting (when fix is not viable)" below.
 
 ### SAST finding (semgrep)
 
@@ -166,7 +175,7 @@ If the finding is a false positive, add `// slop-ok: <reason>` on the offending 
 
 ## Allowlisting (when fix is not viable)
 
-**Fix first.** The allowlist is the SECOND option, not the first. When you reach for it, choose deliberately — every allowlist entry is a future maintenance burden the customer's team will revisit.
+**Fix first.** The allowlist is the SECOND option, not the first. When you reach for it, choose deliberately — every allowlist entry is a future maintenance burden the team will revisit.
 
 Five typed categories signal WHY the suppression is in place:
 

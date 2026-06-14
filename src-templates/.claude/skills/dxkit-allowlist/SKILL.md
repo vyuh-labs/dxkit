@@ -7,6 +7,15 @@ description: Manage the dxkit allowlist over its whole lifecycle — list, inspe
 
 The allowlist is dxkit's per-finding suppression surface: a reviewed finding that the team has categorized (`false-positive`, `test-fixture`, `mitigated-externally`, `accepted-risk`, `deferred`) with a reason, so the guardrail lets it pass on future runs. It's the single source of truth across every scanner — native semgrep/gitleaks and ingested Snyk Code / CodeQL findings alike, all keyed on one fingerprint.
 
+### Categories affect the score, not just the guardrail
+
+The category isn't just a label — it decides whether the finding still counts toward the **Security score**:
+
+- **`false-positive` / `test-fixture`** declare the finding is *not a real finding* (a scanner misfire, or throwaway test data). These are **lifted from the Security penalties and caps**, so a repo that has genuinely triaged its noise scores honestly instead of staying capped on findings it has already reviewed and accepted. This is also why test-file secrets (which dxkit never auto-downgrades by path) should be allowlisted as `test-fixture` once confirmed fake — that's what removes them from the score.
+- **`accepted-risk` / `deferred` / `mitigated-externally`** accept a *real* exposure. The guardrail stops blocking, but the score keeps counting them — accepting a real risk can't earn an A. (`accepted-risk` / `deferred` also require an expiry so the acceptance ages out.)
+
+So `false-positive`/`test-fixture` are the only categories that recover score. Reserve them for findings that genuinely aren't real — miscategorizing a real risk as `false-positive` to lift the score is exactly the self-deception the typed categories exist to prevent.
+
 This skill manages the allowlist's **lifecycle**: reviewing what's there, keeping it honest, and propagating decisions outward. For the upstream question — *should this be fixed instead of suppressed, and how do I add an entry* — that decision and the `add` path live in **dxkit-action**. Fix first; suppress second.
 
 ## The lifecycle at a glance

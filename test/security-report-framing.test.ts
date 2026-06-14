@@ -355,3 +355,62 @@ describe('formatDepActionTitle (G_v4_10 / D111)', () => {
     expect(md).not.toContain('to (no patch)');
   });
 });
+
+describe('formatSecurityReport — Secret & Config framing (allowlist + test-located guidance)', () => {
+  function reportWithSecrets(findings: SecurityReport['findings']): SecurityReport {
+    const r = makeReport({});
+    return { ...r, findings };
+  }
+  const secret = (
+    file: string,
+    extra: Partial<SecurityReport['findings'][number]> = {},
+  ): SecurityReport['findings'][number] => ({
+    severity: 'critical',
+    category: 'secret',
+    cwe: 'CWE-798',
+    rule: 'hardcoded-password',
+    title: 'Secret',
+    file,
+    line: 1,
+    tool: 'grep-secrets',
+    ...extra,
+  });
+
+  it('shows the allowlisted suffix + note for reviewed-and-accepted secrets', () => {
+    const md = formatSecurityReport(
+      reportWithSecrets([
+        secret('src/a.ts', { allowlisted: true, allowlistCategory: 'false-positive' }),
+        secret('src/b.ts'),
+      ]),
+      '1.0',
+    );
+    expect(md).toContain('(1 allowlisted)');
+    expect(md).toContain('covered by an active allowlist entry');
+  });
+
+  it('guides triage for un-allowlisted secrets that live in test files', () => {
+    const md = formatSecurityReport(
+      reportWithSecrets([
+        secret('src/__tests__/auth.unit.ts'), // test-located, not allowlisted
+        secret('src/config.ts'), // production
+      ]),
+      '1.0',
+    );
+    expect(md).toContain('1 of the above finding is in test files');
+    expect(md).toContain('allowlist add --category test-fixture');
+    expect(md).toContain('rotate it and remove it from git history');
+  });
+
+  it('does not show the test-file guidance when a test-located secret is already allowlisted', () => {
+    const md = formatSecurityReport(
+      reportWithSecrets([
+        secret('src/__tests__/auth.unit.ts', {
+          allowlisted: true,
+          allowlistCategory: 'test-fixture',
+        }),
+      ]),
+      '1.0',
+    );
+    expect(md).not.toContain('in test files');
+  });
+});
