@@ -82,7 +82,7 @@ export interface SecurityScoreInput {
    */
   depVulnsAvailable: boolean;
   /**
-   * C-D1: pre-2.10 the unavailability cap was asymmetric — a missing
+   * Pre-2.10 the unavailability cap was asymmetric — a missing
    * dep-vuln scan capped at the uncertainty tier while missing
    * secret/code scanners silently scored as "0 findings". A customer
    * upgrade that merely turned the secret scanners ON then read as a
@@ -95,7 +95,7 @@ export interface SecurityScoreInput {
    * succeeded. "No active provider" stays vacuously true.
    */
   secretsAvailable: boolean;
-  /** See `secretsAvailable` (C-D1) — same contract for the semgrep /
+  /** See `secretsAvailable` — same contract for the semgrep /
    *  code-patterns axis. */
   codePatternsAvailable: boolean;
 }

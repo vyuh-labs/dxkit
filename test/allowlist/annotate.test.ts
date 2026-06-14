@@ -6,7 +6,7 @@ import {
 import type { AllowlistFile, AllowlistEntry } from '../../src/allowlist/file';
 
 /**
- * C-D2 unit coverage: report findings gain `allowlisted` +
+ * Unit coverage: report findings gain `allowlisted` +
  * `allowlistCategory` when (and only when) an ACTIVE allowlist entry
  * matches their fingerprint AND kind. Raw fields are untouched — the
  * annotation is purely additive (the renderer reads it to disclose

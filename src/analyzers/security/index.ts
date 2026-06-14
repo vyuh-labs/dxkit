@@ -146,7 +146,7 @@ export async function analyzeSecurity(
     ...aggregate.findingsByCategory.config,
   ];
 
-  // C-D2: mark findings an active allowlist entry already accepts, so
+  // Mark findings an active allowlist entry already accepts, so
   // the renderer can show "(N allowlisted)" beside raw counts. Pure
   // annotation — counts + score are unchanged; this just stops a repo's
   // own reviewed test fixtures from reading as unexplained headline
@@ -196,7 +196,7 @@ export async function analyzeSecurity(
     findings: [...aggregate.findingsByCategory.dependency],
   };
 
-  // C-D3: did the scanner set grow since the last run? If so the report
+  // Did the scanner set grow since the last run? If so the report
   // discloses that new findings are newly *visible*, not newly
   // *introduced* — the root-cause explanation for a score that "got
   // worse" on an unchanged commit after a dxkit upgrade enabled more
@@ -218,7 +218,7 @@ export async function analyzeSecurity(
       codeOnly: codeOnlySummary,
       secretsOnly: secretsOnlySummary,
       dependencies: depSummary,
-      // C-D1: scanner run-state for the score adapter's uncertainty
+      // Scanner run-state for the score adapter's uncertainty
       // caps — same canonical provenance the toolsUnavailable list
       // above is derived from.
       secretsAvailable: aggregate.provenance.secrets.ran,
@@ -232,7 +232,7 @@ export async function analyzeSecurity(
 }
 
 /**
- * C-D2: inline " (N allowlisted)" suffix for a subtotal cell, or empty
+ * Inline " (N allowlisted)" suffix for a subtotal cell, or empty
  * string when nothing in the axis is allowlisted. Keeps the raw count
  * authoritative while disclosing how much of it is reviewed-and-accepted.
  */
@@ -241,7 +241,7 @@ function allowlistedSuffix(allowlisted: number): string {
 }
 
 /**
- * C-D2: explanatory note under a findings table when some of its
+ * Explanatory note under a findings table when some of its
  * findings are allowlisted. Clarifies that the raw count is unchanged
  * and the suppressed items are reviewed-and-accepted, not hidden.
  */
@@ -266,7 +266,7 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
   L.push('---');
   L.push('');
 
-  // C-D3: scanner-coverage-drift note. Surfaced at the very top so a
+  // Scanner-coverage-drift note. Surfaced at the very top so a
   // reader who sees a worse score knows to attribute it to improved
   // measurement, not regressed code, BEFORE reading the numbers.
   if (report.scannerDrift) {

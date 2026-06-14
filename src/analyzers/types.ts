@@ -258,7 +258,7 @@ export interface CapabilityReport {
   codePatternsAvailability?: { available: boolean; unavailableReason: string };
 
   /** Availability for SECRETS (gitleaks + grep-secrets). Same shape.
-   *  C-D1: read by `toSecurityScoreInput` so a failed secret scan
+   *  read by `toSecurityScoreInput` so a failed secret scan
    *  caps the Security score (uncertainty tier) instead of silently
    *  counting as "0 secrets" — the asymmetry that made a customer's
    *  scanner-enabling upgrade read as a score regression. */

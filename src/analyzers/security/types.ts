@@ -19,7 +19,7 @@ export interface SecurityFinding {
   line: number;
   tool: string;
   /**
-   * C-D2: true when an ACTIVE (unexpired) allowlist entry matches this
+   * True when an ACTIVE (unexpired) allowlist entry matches this
    * finding's fingerprint. The finding is still reported in full (raw
    * counts are unchanged — dxkit's raw-truth model holds), but renderers
    * surface "(N allowlisted)" alongside the subtotal so a reviewer isn't
@@ -30,7 +30,7 @@ export interface SecurityFinding {
    * through a producer and are out of scope here.
    */
   allowlisted?: boolean;
-  /** C-D2: the matched allowlist entry's category (`test-fixture`,
+  /** The matched allowlist entry's category (`test-fixture`,
    *  `false-positive`, `accepted-risk`, ...) so renderers can explain
    *  WHY the finding is suppressed, not just that it is. Present only
    *  when `allowlisted` is true. */
@@ -98,7 +98,7 @@ export interface SecurityReport {
     secretsOnly: { critical: number; high: number; medium: number; low: number; total: number };
     dependencies: DepVulnSummary;
     /**
-     * C-D1: whether the secret / code-pattern scans actually ran,
+     * Whether the secret / code-pattern scans actually ran,
      * from `aggregate.provenance.{secrets,codePatterns}.ran`. The
      * standalone-side score adapter (`countsFromReport`) plumbs these
      * into the uncertainty caps, mirroring `dependencies.available` —
@@ -113,7 +113,7 @@ export interface SecurityReport {
   toolsUsed: string[];
   toolsUnavailable: string[];
   /**
-   * C-D3: scanners added since the most recent prior vuln-scan report,
+   * Scanners added since the most recent prior vuln-scan report,
    * when any. Present only when the active scanner set grew run-over-run
    * — drives the "coverage expanded; findings newly visible, not newly
    * introduced" note that explains an otherwise-baffling score change on
