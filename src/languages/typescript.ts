@@ -1149,6 +1149,13 @@ export const typescript: LanguageSupport = {
   displayName: 'TypeScript / JavaScript',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: [...TS_JS_EXT],
+  // Filename conventions for the JS/TS ecosystem. The `__tests__/`
+  // directory convention is supplied once, cross-ecosystem, by
+  // `UNIVERSAL_TEST_DIR_PATTERNS` (languages/index.ts) — these are the
+  // co-located naming conventions that vary by ecosystem and so belong
+  // in the pack: Jest/Vitest `.test.`/`.spec.`, plus the widespread
+  // `.unit.` / `.e2e.` / `.cy.` (Cypress) suffixes for tests that sit
+  // next to the code they exercise rather than under a test directory.
   testFilePatterns: [
     '*.test.ts',
     '*.test.tsx',
@@ -1162,6 +1169,18 @@ export const typescript: LanguageSupport = {
     '*.spec.jsx',
     '*.spec.mjs',
     '*.spec.cjs',
+    '*.unit.ts',
+    '*.unit.tsx',
+    '*.unit.js',
+    '*.unit.jsx',
+    '*.e2e.ts',
+    '*.e2e.tsx',
+    '*.e2e.js',
+    '*.e2e.jsx',
+    '*.cy.ts',
+    '*.cy.tsx',
+    '*.cy.js',
+    '*.cy.jsx',
   ],
   extraExcludes: ['node_modules', 'dist', '.next', '.turbo', 'coverage', '.cache'],
 

@@ -250,6 +250,30 @@ describe('walkSourceFiles — test-file filter', () => {
     expect(out).toContain('src/a.test.ts');
     expect(out).toContain('tests/b.rs');
   });
+
+  it('recognizes the cross-ecosystem test-directory conventions (__tests__/, etc.)', () => {
+    // The customer case: tests under Jest's `__tests__/` directory were
+    // counted as source because no pack declared the directory
+    // convention. UNIVERSAL_TEST_DIR_PATTERNS now supplies them.
+    write('src/app.ts');
+    write('src/__tests__/unit/validator.unit.ts');
+    write('src/__tests__/helpers.ts');
+    write('e2e/login.ts');
+    const out = walkSourceFiles(tmp);
+    expect(out).toContain('src/app.ts');
+    expect(out).not.toContain('src/__tests__/unit/validator.unit.ts');
+    expect(out).not.toContain('src/__tests__/helpers.ts');
+    expect(out).not.toContain('e2e/login.ts');
+  });
+
+  it('recognizes co-located TS test suffixes (.unit/.e2e/.cy)', () => {
+    write('src/service.ts');
+    write('src/service.unit.ts');
+    write('src/flow.e2e.ts');
+    write('src/page.cy.tsx');
+    const out = walkSourceFiles(tmp);
+    expect(out).toEqual(['src/service.ts']);
+  });
 });
 
 describe('walkSourceFiles — memoization', () => {
