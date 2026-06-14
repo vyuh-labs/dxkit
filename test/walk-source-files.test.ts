@@ -252,9 +252,9 @@ describe('walkSourceFiles — test-file filter', () => {
   });
 
   it('recognizes the cross-ecosystem test-directory conventions (__tests__/, etc.)', () => {
-    // The customer case: tests under Jest's `__tests__/` directory were
-    // counted as source because no pack declared the directory
-    // convention. UNIVERSAL_TEST_DIR_PATTERNS now supplies them.
+    // Tests under Jest's `__tests__/` directory were counted as source
+    // because no pack declared the directory convention.
+    // UNIVERSAL_TEST_DIR_PATTERNS now supplies them.
     write('src/app.ts');
     write('src/__tests__/unit/validator.unit.ts');
     write('src/__tests__/helpers.ts');

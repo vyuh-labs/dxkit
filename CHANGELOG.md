@@ -12,17 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Honest scoring under changing scanners, passive graph delivery, tool-robustness
 
 Closes a set of brownfield-install and guardrail-matcher defects (the original
-2.9.5 hardening), a customer-reported "my score got worse after fixing things"
-class of scoring-honesty bugs, a defensive tool-version-pin sweep, and the
-agentic-delivery redesign that finally routes the code graph to the agent in a
-real fix workflow.
+2.9.5 hardening), a class of scoring-honesty bugs (a Security score that could get
+worse on an unchanged commit, with nothing explaining why), a defensive
+tool-version-pin sweep, and the agentic-delivery redesign that finally routes the
+code graph to the agent in a real fix workflow.
 
-#### Scoring honesty (customer-reported)
+#### Scoring honesty
 
-A customer saw their Security score drop 65 → 40 on an **unchanged commit** after
-a dxkit upgrade, and 7 of "8 CRITICAL" secrets were their own allowlisted unit-test
-fixtures. The score wasn't wrong — the measurement got more honest — but nothing
-in the output explained that. These close the explanation gap.
+A Security score could drop on an **unchanged commit** — e.g. after an upgrade
+enabled more scanners, or because a repo's own reviewed-and-accepted findings kept
+holding it at a cap. The measurement was getting more honest, but the output
+didn't explain it, and a properly-triaged repo couldn't recover its score. These
+close that gap.
 
 - **Symmetric unavailable-scanner caps.** A missing dependency-audit
   already capped the Security score at the uncertainty tier, but missing
@@ -30,26 +31,34 @@ in the output explained that. These close the explanation gap.
   those scanners later read as a phantom regression. The secret and code-pattern
   axes now get the same uncertainty cap when their scan didn't run, surfaced in
   `metrics.toolsUnavailable` and the standalone vuln-scan report.
-- **Allowlisted findings are marked in reports.** The vulnerability report
-  and dashboard now annotate findings covered by an active allowlist entry and
-  render `Subtotal N (M allowlisted)`, so reviewed-and-accepted fixtures no longer
-  read as unexplained headline criticals. Raw counts and the score are unchanged
-  — only the presentation gains the disclosure.
+- **The score respects the allowlist.** Findings reviewed-and-accepted as
+  `false-positive` / `test-fixture` are now lifted from the Security penalties and
+  caps (not just the guardrail), so a triaged repo scores honestly instead of
+  staying capped on noise it has already accepted. `accepted-risk` / `deferred` /
+  `mitigated-externally` still count — accepting a real risk can't earn an A. The
+  vulnerability report and dashboard also annotate allowlisted findings and render
+  `Subtotal N (M allowlisted)` so the raw counts are explained, not alarming.
 - **Scanner-coverage drift is disclosed.** When the active scanner set grew
   since the last run, the vuln-scan report leads with a note: findings the new
   scanners surface are newly **visible**, not newly **introduced**. This is the
   root-cause explanation for a score that moved on unchanged code.
-- **Test-fixture credentials are downgraded.** Generic hardcoded-credential
-  matches inside test files (classified via the active language packs' test
-  patterns) are downgraded to low severity + a `test-fixture` category and
-  excluded from the committed-credentials trust-broken cap. They stay visible but
-  never headline-critical. Real branded tokens (AWS keys, PATs, private keys) keep
-  full severity everywhere — a live credential in a test is still a leak.
-- **Windows dep-audit EPERM.** The osv-scanner-fix temp-dir cleanup now
-  retries with backoff and never throws out of its `finally`, so a Windows handle
-  race (npm-install grandchildren / antivirus) can no longer discard the
-  already-parsed fix plans — the failure that left a customer's dependency vulns
-  invisible for a week.
+- **Secret severity is never lowered by file path.** A hardcoded credential keeps
+  its natural severity whether it sits in production code or a test — the generic
+  matcher can't tell a throwaway fixture from a real secret leaked into a test, so
+  lowering severity by path would silently hide genuine leaks. Test-file noise is
+  managed by the allowlist score-lift above (review fixtures once with
+  `--category test-fixture`), not by hiding.
+- **Systematic test-file detection.** Tests organized under Jest's `__tests__/`
+  directory — or named with the widespread `.unit.` / `.e2e.` / `.cy.` suffixes —
+  were classified as source, corrupting the test ratio, coverage, and test-gap
+  analysis. The cross-ecosystem test directories (`__tests__/`, `test/`, `tests/`,
+  `spec/`, `e2e/`) are now recognized in any language; the TS pack gains the
+  co-located suffix conventions.
+- **Dependency-audit cleanup on Windows (EPERM).** The osv-scanner-fix temp-dir
+  cleanup now retries with backoff and never throws out of its `finally`, so a
+  Windows handle race (npm-install grandchildren / antivirus) can no longer
+  discard the already-parsed fix plans — which had let dependency vulnerabilities
+  go silently unreported.
 
 #### Passive graph delivery (agentic value)
 

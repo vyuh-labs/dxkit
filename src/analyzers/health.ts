@@ -409,9 +409,9 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     // gatherWithProvenance: the secret scan needs the same
     // attempted-vs-succeeded discriminant the code-patterns gather has,
     // so a failed secret scan caps the Security score (uncertainty)
-    // instead of silently reading as "0 secrets". The customer-facing
+    // instead of silently reading as "0 secrets". The user-facing
     // symptom of the old silent path: a dxkit upgrade that merely
-    // turned the secret scanners ON looked like a 25-point score drop
+    // turned the secret scanners ON looked like a score drop
     // on an unchanged commit.
     defaultDispatcher.gatherWithProvenance(cwd, SECRETS, providersFor(SECRETS, cwd)),
     // gatherWithProvenance so the cache builder can plumb per-capability

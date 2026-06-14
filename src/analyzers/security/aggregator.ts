@@ -58,6 +58,8 @@
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { Severity, FindingCategory, SecurityFinding } from './types';
 import { canonicalRuleFor, computeCodeFingerprint, lineWindowFor } from '../tools/fingerprint';
+import { annotateFindingsWithAllowlist, allowlistLiftsScore } from '../../allowlist/annotate';
+import type { AllowlistFile } from '../../allowlist/file';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
 
@@ -164,6 +166,18 @@ export interface SecurityAggregate {
    *  pick which they own. */
   secretsBySeverity: SeverityCounts;
 
+  /** Code-pattern findings by severity, EXCLUDING findings an active
+   *  allowlist entry lifts from the score (`false-positive` /
+   *  `test-fixture`). The dimension scorer reads these; reports read the
+   *  raw `codeBySeverity`. Equal to `codeBySeverity` when no allowlist
+   *  was supplied or none of the findings are score-lifted. */
+  scoreableCodeBySeverity: SeverityCounts;
+
+  /** Secret + secret-adjacent findings by severity, EXCLUDING
+   *  score-lifting allowlisted findings. Scorer reads this; reports read
+   *  raw `secretsBySeverity`. */
+  scoreableSecretsBySeverity: SeverityCounts;
+
   /** Findings partitioned by category, post-dedup. Renderers iterate
    *  these — never iterate raw envelope arrays. `dependency` is the
    *  fingerprint-unique advisory set. */
@@ -268,6 +282,13 @@ export interface SecurityAggregateInput {
     available: boolean;
     unavailableReason: string;
   };
+  /** The repo's allowlist, loaded by the caller (the aggregator stays
+   *  pure / does no I/O). When present, each code/secret/config finding
+   *  is annotated with its active-allowlist status, and the `scoreable*`
+   *  severity buckets exclude findings allowlisted under a category that
+   *  lifts the score (`false-positive` / `test-fixture`). Absent/null →
+   *  `scoreable*` buckets equal the raw buckets. */
+  allowlist?: AllowlistFile | null;
 }
 
 /**
@@ -489,6 +510,32 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     }
   }
 
+  // ─── Allowlist annotation + scoreable buckets ───────────────────────
+  // Mark every code/secret/config finding an active allowlist entry
+  // covers (renderers show "(N allowlisted)"), then derive the
+  // score-only buckets that EXCLUDE findings allowlisted under a
+  // category that lifts the score. This is what lets a repo that has
+  // reviewed-and-accepted its findings (false-positive / test-fixture)
+  // score honestly instead of staying capped on noise — while still
+  // counting accepted-risk / deferred, which accept a real exposure.
+  const allCodeSideFindings = [
+    ...codeFindingsByCategory.secret,
+    ...codeFindingsByCategory.code,
+    ...codeFindingsByCategory.config,
+  ];
+  annotateFindingsWithAllowlist(allCodeSideFindings, input.allowlist ?? null);
+
+  const scoreableCodeBySeverity = emptyCounts();
+  const scoreableSecretsBySeverity = emptyCounts();
+  const scoreLifted = (f: CodeFinding): boolean =>
+    !!f.allowlisted && allowlistLiftsScore(f.allowlistCategory);
+  for (const f of codeFindingsByCategory.code) {
+    if (!scoreLifted(f)) bumpCounts(scoreableCodeBySeverity, f.severity);
+  }
+  for (const f of [...codeFindingsByCategory.secret, ...codeFindingsByCategory.config]) {
+    if (!scoreLifted(f)) bumpCounts(scoreableSecretsBySeverity, f.severity);
+  }
+
   // ─── Dep-side dedup ─────────────────────────────────────────────────
   // Group by fingerprint. Findings without a fingerprint (defensive
   // path — shouldn't happen post-`stampFingerprints`) get a synthetic
@@ -549,6 +596,8 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     codeBySeverity,
     depBySeverity,
     secretsBySeverity,
+    scoreableCodeBySeverity,
+    scoreableSecretsBySeverity,
     findingsByCategory: {
       secret: codeFindingsByCategory.secret,
       code: codeFindingsByCategory.code,

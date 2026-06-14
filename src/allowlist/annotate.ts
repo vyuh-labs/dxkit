@@ -5,10 +5,10 @@
  * The guardrail already consults the allowlist to decide whether a
  * net-new finding blocks a push (`src/baseline/check.ts`). But the
  * vulnerability-scan report and dashboard rendered raw counts with no
- * indication that some findings are reviewed-and-accepted — a customer
- * who correctly allowlisted 7 unit-test fixtures still saw "8 CRITICAL"
- * with zero visual distinction, the proximate trigger for a "the score
- * is lying" support case.
+ * indication that some findings are reviewed-and-accepted — a repo that
+ * has correctly allowlisted, say, its unit-test fixtures still showed
+ * them as headline criticals with no visual distinction, which reads as
+ * "the score is lying."
  *
  * This module marks each finding whose fingerprint matches an ACTIVE
  * (unexpired) allowlist entry so renderers can show "(N allowlisted)"
@@ -59,6 +59,25 @@ function kindForCategory(category: FindingCategory): IdentityKind | null {
     case 'dependency':
       return null;
   }
+}
+
+/**
+ * Whether an active allowlist entry of this category should LIFT the
+ * finding from the dimension score (penalties + caps), not just from
+ * the guardrail.
+ *
+ * `false-positive` and `test-fixture` declare the finding is "not a real
+ * finding" — a misfire or throwaway test data — so a properly-triaged
+ * repo shouldn't carry a score penalty for it (the failure mode where a
+ * repo stays capped at the trust-broken tier despite having reviewed and
+ * accepted every flagged secret). `accepted-risk` and `deferred`, by
+ * contrast, accept a REAL risk: the guardrail stops blocking on them,
+ * but the score must still reflect the residual exposure — you can't
+ * `accepted-risk` your way to an A. `mitigated-externally` counts too:
+ * the risk is real, just handled outside dxkit.
+ */
+export function allowlistLiftsScore(category: AllowlistCategory | undefined): boolean {
+  return category === 'false-positive' || category === 'test-fixture';
 }
 
 /**

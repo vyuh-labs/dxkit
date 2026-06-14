@@ -80,9 +80,12 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     expect(pk!.severity).toBe('critical');
   });
 
-  it('downgrades a generic password match in a test file to low + test-fixture', () => {
-    // The customer case: unit-test fixture passwords were flagged
-    // as headline CRITICALs. Generic matches in test files downgrade.
+  it('keeps full severity for a password in a test file — severity is not lowered by path', () => {
+    // A hardcoded credential is severe wherever it lives: the generic
+    // matcher cannot tell a throwaway fixture from a real password leaked
+    // into a test, so lowering severity by path would hide genuine leaks.
+    // Test-file noise is managed downstream (report grouping + the
+    // allowlist score-lift), never by silently dropping severity here.
     fs.mkdirSync(path.join(tmp, '__tests__'), { recursive: true });
     fs.writeFileSync(
       path.join(tmp, '__tests__', 'validator.unit.test.ts'),
@@ -92,12 +95,10 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     expect(result).not.toBeNull();
     const pw = result!.findings.find((f) => f.rule === 'hardcoded-password');
     expect(pw).toBeDefined();
-    expect(pw!.severity).toBe('low');
-    expect(pw!.category).toBe('test-fixture');
+    expect(pw!.severity).toBe('critical');
   });
 
-  it('keeps full severity for branded tokens even inside test files', () => {
-    // A real AWS key in a test file is still a leaked credential.
+  it('keeps full severity for branded tokens in test files too', () => {
     fs.writeFileSync(
       path.join(tmp, 'auth.spec.ts'),
       "const key = 'AKIAIOSFODNN7EXAMPLE';\nexport default key;\n",
@@ -107,7 +108,6 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     const aws = result!.findings.find((f) => f.rule === 'aws-access-key');
     expect(aws).toBeDefined();
     expect(aws!.severity).toBe('high');
-    expect(aws!.category).toBeUndefined();
   });
 
   it('keeps critical severity for passwords in non-test source files', () => {
@@ -116,7 +116,6 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     const pw = result!.findings.find((f) => f.rule === 'hardcoded-password');
     expect(pw).toBeDefined();
     expect(pw!.severity).toBe('critical');
-    expect(pw!.category).toBeUndefined();
   });
 
   it('returns a success envelope with zero findings on a clean tree', () => {

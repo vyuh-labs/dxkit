@@ -41,7 +41,7 @@ describe('detectScannerCoverageDrift', () => {
     expect(detectScannerCoverageDrift(repo, ['gitleaks'], '2026-06-10')).toBeNull();
   });
 
-  it('detects the customer case: grep-secrets + snyk-code added since the prior run', () => {
+  it('detects scanners added since the prior run (grep-secrets + snyk-code)', () => {
     writePrior('2026-06-09', ['find', 'git', 'gitleaks']);
     const drift = detectScannerCoverageDrift(
       repo,

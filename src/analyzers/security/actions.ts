@@ -9,6 +9,7 @@ import { Evidence } from '../evidence';
 import { RemediationAction } from '../remediation';
 import { SecurityReport, SecurityFinding, Severity } from './types';
 import { SecurityScoreInput } from '../../scoring';
+import { allowlistLiftsScore } from '../../allowlist/annotate';
 
 /**
  * Project a SecurityReport into the canonical scoring input shape.
@@ -25,6 +26,13 @@ export function countsFromReport(report: SecurityReport): SecurityScoreInput {
   const codeFindings = { critical: 0, high: 0, medium: 0, low: 0 };
 
   for (const f of report.findings) {
+    // Findings reviewed-and-accepted as false-positive / test-fixture are
+    // lifted from the score (not just the guardrail) — same rule the
+    // health-side aggregate applies — so a triaged repo scores honestly.
+    // accepted-risk / deferred still count (real exposure accepted).
+    if (f.allowlisted && allowlistLiftsScore(f.allowlistCategory)) {
+      continue;
+    }
     if (f.rule === 'private-key-file') {
       privateKeyFiles++;
     } else if (f.rule === 'env-in-git') {

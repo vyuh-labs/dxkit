@@ -19,6 +19,7 @@ import {
   evaluateSpec,
   ratingFromScore,
 } from '../../scoring';
+import { allowlistLiftsScore } from '../../allowlist/annotate';
 import { DimensionScore, ScoreInput } from '../types';
 
 /**
@@ -57,9 +58,13 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
   // `m.tlsDisabledCount` and `m.evalCount` as separate signals; the
   // aggregate now carries the tls-bypass findings directly (with
   // file/line and post-dedup), so those manual adds are gone.
+  // The score reads the allowlist-adjusted `scoreableCodeBySeverity`
+  // (excludes findings reviewed-and-accepted as false-positive /
+  // test-fixture); reports keep reading the raw `codeBySeverity`. Same
+  // source either way — the aggregator computes both.
   let codeFindings: { critical: number; high: number; medium: number; low: number };
   if (c.securityAggregate) {
-    codeFindings = { ...c.securityAggregate.codeBySeverity };
+    codeFindings = { ...c.securityAggregate.scoreableCodeBySeverity };
   } else {
     // Legacy fallback (test fixtures, pre-2.4.7 callers without
     // `securityAggregate`). Mirrors the pre-C1.3 behavior so existing
@@ -89,12 +94,19 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
       };
 
   return {
-    // Test-fixture matches (generic password literals inside test
-    // files, auto-downgraded by grep-secrets) stay visible in reports
-    // but must not drive the committed-credentials penalty/cap — a
-    // customer's own unit-test fixtures capped their Security score at
-    // the trust-broken tier.
-    secretFindings: c.secrets?.findings.filter((f) => f.category !== 'test-fixture').length ?? 0,
+    // Secret count for scoring EXCLUDES findings reviewed-and-accepted
+    // as false-positive / test-fixture, so a repo that has triaged its
+    // flagged secrets isn't held at the committed-credentials cap on
+    // noise it has already accepted. Read
+    // from the annotated aggregate when present (its secret category
+    // carries the allowlist status); fall back to the raw capability
+    // count for legacy ScoreInputs with no aggregate. accepted-risk /
+    // deferred are NOT lifted — those accept a real exposure.
+    secretFindings: c.securityAggregate
+      ? c.securityAggregate.findingsByCategory.secret.filter(
+          (f) => !(f.allowlisted && allowlistLiftsScore(f.allowlistCategory)),
+        ).length
+      : (c.secrets?.findings.length ?? 0),
     privateKeyFiles: m.privateKeyFiles,
     envFilesInGit: m.envFilesInGit,
     codeFindings,
