@@ -71,14 +71,14 @@ describe('buildGraphifyEnvelope', () => {
 
 /**
  * Structural contract of the generated Python script. These guard the
- * D-01 (Python 3.14 multiprocessing) and D-02 (graphifyy cache redirect)
+ * Python 3.14 multiprocessing and graphifyy cache-redirect
  * fixes at the source level, so a regression is caught in CI even where
  * graphify isn't installed and the script can't actually be run.
  */
 describe('buildGraphifyScript — Python 3.14 / cache-redirect contract', () => {
   const script = buildGraphifyScript('/tmp/repo');
 
-  it("guards execution behind `if __name__ == '__main__'` (D-01)", () => {
+  it("guards execution behind `if __name__ == '__main__'` ", () => {
     // ProcessPoolExecutor workers re-import the module under spawn/forkserver
     // (Python 3.14's Linux default). Without the guard, top-level extraction
     // re-runs per worker → BrokenProcessPool / crash.
@@ -88,7 +88,7 @@ describe('buildGraphifyScript — Python 3.14 / cache-redirect contract', () => 
     expect(script).toMatch(/\n {4}result = extract\(/);
   });
 
-  it('redirects the cache via the public cache_root param, not a monkeypatch (D-02)', () => {
+  it('redirects the cache via the public cache_root param, not a monkeypatch', () => {
     expect(script).toContain('extract(files, cache_root=_cache_dir)');
     // The fragile internal-signature monkeypatch must be gone — it broke when
     // graphifyy 0.8 changed cache_dir(root) → cache_dir(root, kind).
@@ -96,7 +96,7 @@ describe('buildGraphifyScript — Python 3.14 / cache-redirect contract', () => 
     expect(script).not.toContain('import graphify.cache');
   });
 
-  it('does not force a multiprocessing start method (D-01 — the guard makes it unnecessary)', () => {
+  it('does not force a multiprocessing start method (the if-__main__ guard makes it unnecessary)', () => {
     // The old `set_start_method('fork')` hack only papered over the missing
     // guard on Linux and silently failed on spawn-default platforms.
     expect(script).not.toContain('set_start_method');

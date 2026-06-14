@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { detectScannerCoverageDrift } from '../src/analyzers/security/scanner-drift';
 
 /**
- * C-D3: the scanner-coverage-drift detector compares this run's tool set
+ * The scanner-coverage-drift detector compares this run's tool set
  * against the most recent prior persisted vuln-scan report and reports
  * which scanners are newly active — the signal that explains a score
  * change on an unchanged commit after a dxkit upgrade enabled more

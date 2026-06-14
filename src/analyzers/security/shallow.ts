@@ -93,7 +93,7 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
     // files, auto-downgraded by grep-secrets) stay visible in reports
     // but must not drive the committed-credentials penalty/cap — a
     // customer's own unit-test fixtures capped their Security score at
-    // the trust-broken tier (C-D4).
+    // the trust-broken tier.
     secretFindings: c.secrets?.findings.filter((f) => f.category !== 'test-fixture').length ?? 0,
     privateKeyFiles: m.privateKeyFiles,
     envFilesInGit: m.envFilesInGit,
@@ -106,7 +106,7 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
     // is a downgrade; an explicit `false` from the gather is the only
     // signal we trust to apply it.
     depVulnsAvailable: c.depVulnsAvailability?.available ?? true,
-    // C-D1: same default-true contract as depVulnsAvailable — the
+    // Same default-true contract as depVulnsAvailable — the
     // explicit `false` from the gather is the only signal we trust to
     // apply an uncertainty cap. Closes the asymmetry where a missing
     // dep scan capped the score but missing secret/code scanners

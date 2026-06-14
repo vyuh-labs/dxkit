@@ -6,15 +6,17 @@
  * `additionalContext`, so the agent needs fewer follow-up whole-file
  * reads.
  *
- * Delivery surfaces (2.10 redesign — F-01/F-02/F-03):
+ * Delivery surfaces:
  *   - **Read** — keyed on the FILE the agent is opening. Injects that
  *     file's structural summary (symbols + who calls it + what it calls).
  *     This is the highest-leverage surface: agents read files constantly,
  *     so the hook fires reliably and is useful regardless of search term.
  *   - **Bash** — parses `grep`/`rg`-style commands. When a concrete
  *     source file is named, delivers that file's summary; otherwise falls
- *     back to a symbol-name match on the search pattern. Closes F-01:
- *     real agents search via `Bash grep`, not the native `Grep` tool.
+ *     back to a symbol-name match on the search pattern. This is what lets
+ *     the hook engage at all in a real fix workflow: agents search via the
+ *     `Bash` tool (`grep -n …`), not the native `Grep` tool, so a
+ *     Grep-only hook almost never fired.
  *   - **Grep / Glob** — the original surface, keyed on `tool_input.pattern`
  *     matched against graph symbol names.
  *

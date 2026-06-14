@@ -1,5 +1,5 @@
 /**
- * C-D2: annotate security findings with their active-allowlist status
+ * Annotate security findings with their active-allowlist status
  * for REPORTING (not gating).
  *
  * The guardrail already consults the allowlist to decide whether a

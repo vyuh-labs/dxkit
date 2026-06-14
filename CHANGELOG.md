@@ -24,28 +24,28 @@ a dxkit upgrade, and 7 of "8 CRITICAL" secrets were their own allowlisted unit-t
 fixtures. The score wasn't wrong — the measurement got more honest — but nothing
 in the output explained that. These close the explanation gap.
 
-- **Symmetric unavailable-scanner caps (C-D1).** A missing dependency-audit
+- **Symmetric unavailable-scanner caps.** A missing dependency-audit
   already capped the Security score at the uncertainty tier, but missing
   secret/code-pattern scanners silently scored as "0 findings" — so enabling
   those scanners later read as a phantom regression. The secret and code-pattern
   axes now get the same uncertainty cap when their scan didn't run, surfaced in
   `metrics.toolsUnavailable` and the standalone vuln-scan report.
-- **Allowlisted findings are marked in reports (C-D2).** The vulnerability report
+- **Allowlisted findings are marked in reports.** The vulnerability report
   and dashboard now annotate findings covered by an active allowlist entry and
   render `Subtotal N (M allowlisted)`, so reviewed-and-accepted fixtures no longer
   read as unexplained headline criticals. Raw counts and the score are unchanged
   — only the presentation gains the disclosure.
-- **Scanner-coverage drift is disclosed (C-D3).** When the active scanner set grew
+- **Scanner-coverage drift is disclosed.** When the active scanner set grew
   since the last run, the vuln-scan report leads with a note: findings the new
   scanners surface are newly **visible**, not newly **introduced**. This is the
   root-cause explanation for a score that moved on unchanged code.
-- **Test-fixture credentials are downgraded (C-D4).** Generic hardcoded-credential
+- **Test-fixture credentials are downgraded.** Generic hardcoded-credential
   matches inside test files (classified via the active language packs' test
   patterns) are downgraded to low severity + a `test-fixture` category and
   excluded from the committed-credentials trust-broken cap. They stay visible but
   never headline-critical. Real branded tokens (AWS keys, PATs, private keys) keep
   full severity everywhere — a live credential in a test is still a leak.
-- **Windows dep-audit EPERM (C-D5).** The osv-scanner-fix temp-dir cleanup now
+- **Windows dep-audit EPERM.** The osv-scanner-fix temp-dir cleanup now
   retries with backoff and never throws out of its `finally`, so a Windows handle
   race (npm-install grandchildren / antivirus) can no longer discard the
   already-parsed fix plans — the failure that left a customer's dependency vulns
@@ -81,7 +81,7 @@ defects surfaced while benchmarking on Python 3.14 and large real-world repos.
 
 #### Fixed
 
-- **graphify on Python 3.14 (D-01).** Python 3.14 made `forkserver` the default
+- **graphify on Python 3.14.** Python 3.14 made `forkserver` the default
   multiprocessing start method on Linux. graphify parallelises extraction with a
   `ProcessPoolExecutor`, and under spawn/forkserver each worker re-imports the
   generated script — re-running top-level extraction and crashing the run (no
@@ -92,7 +92,7 @@ defects surfaced while benchmarking on Python 3.14 and large real-world repos.
   (Linux fork/forkserver, macOS/Windows spawn) while keeping multi-core
   extraction. The previous forced `set_start_method('fork')` workaround is
   removed.
-- **graphify cache redirect (D-02).** The on-disk cache is now redirected via
+- **graphify cache redirect.** The on-disk cache is now redirected via
   graphify's public `extract(cache_root=...)` parameter instead of
   monkeypatching the internal `graphify.cache.cache_dir`, whose signature
   changed in graphifyy 0.8 (`cache_dir(root)` → `cache_dir(root, kind)`) and
@@ -100,10 +100,10 @@ defects surfaced while benchmarking on Python 3.14 and large real-world repos.
   writing a stray `graphify-out/` into the scanned repo. The temp cache lives
   under the caller-owned script dir and is reclaimed after the process (and its
   atexit handlers) exit. `graphifyy` is pinned to `0.8.36`.
-- **jscpd version pin (E-01).** jscpd is pinned to `4.2.5`. jscpd 5.x is a Rust
+- **jscpd version pin.** jscpd is pinned to `4.2.5`. jscpd 5.x is a Rust
   rewrite that dropped the `--gitignore` flag (dxkit passed it → exit 2) and
   changed the report JSON schema dxkit parses.
-- **Guardrail matcher — whole-file rename relocation (D-03).** Renaming a source
+- **Guardrail matcher — whole-file rename relocation.** Renaming a source
   file no longer reports its whole-file findings (test-gap, coverage-gap,
   test-file-degradation, god-file, stale-file, large-file) as removed + added,
   which falsely blocked the guardrail on a pure rename. The git-aware matcher

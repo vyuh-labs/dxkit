@@ -406,7 +406,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
     defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
     defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
-    // gatherWithProvenance (C-D1): the secret scan needs the same
+    // gatherWithProvenance: the secret scan needs the same
     // attempted-vs-succeeded discriminant the code-patterns gather has,
     // so a failed secret scan caps the Security score (uncertainty)
     // instead of silently reading as "0 secrets". The customer-facing
@@ -493,7 +493,7 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
   if (testFramework) report.testFramework = testFramework;
   const secrets = secretsOutcome.envelope;
   if (secrets) report.secrets = secrets;
-  // C-D1: same shape as codePatternsAvailability. Distinguishes "no
+  // Same shape as codePatternsAvailability. Distinguishes "no
   // secret provider active" (vacuous clean) from "secret scan was
   // attempted but every provider returned null" — the latter caps the
   // Security score at the uncertainty tier instead of silently

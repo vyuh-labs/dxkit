@@ -187,7 +187,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     line?: number;
     package?: string;
     installedVersion?: string;
-    /** C-D2: set upstream when an active allowlist entry accepts this
+    /** Set upstream when an active allowlist entry accepts this
      *  finding. Surfaced in the Vulnerabilities tile so the dashboard
      *  doesn't read as "8 CRITICAL" when 7 are reviewed test fixtures. */
     allowlisted?: boolean;
@@ -225,7 +225,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   // length count. Post-C1.2 both arrays are already dedup'd by the
   // canonical aggregator, so the union is unique-by-construction.
   const vulnFindings: VulnFinding[] = [...codeFindings, ...depFindings];
-  // C-D2: how many of the surfaced findings are reviewed-and-accepted
+  // How many of the surfaced findings are reviewed-and-accepted
   // (active allowlist). Disclosed in the tile sub-line so raw counts
   // aren't mistaken for unaddressed risk.
   const vulnAllowlisted = vulnFindings.filter((f) => f.allowlisted).length;

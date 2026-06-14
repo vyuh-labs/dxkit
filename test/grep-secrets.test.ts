@@ -81,7 +81,7 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
   });
 
   it('downgrades a generic password match in a test file to low + test-fixture', () => {
-    // The customer case (C-D4): unit-test fixture passwords were flagged
+    // The customer case: unit-test fixture passwords were flagged
     // as headline CRITICALs. Generic matches in test files downgrade.
     fs.mkdirSync(path.join(tmp, '__tests__'), { recursive: true });
     fs.writeFileSync(

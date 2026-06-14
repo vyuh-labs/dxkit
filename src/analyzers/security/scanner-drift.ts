@@ -1,5 +1,5 @@
 /**
- * C-D3: scanner-coverage drift detection across runs.
+ * Scanner-coverage drift detection across runs.
  *
  * Root cause of the customer "my score got worse after fixing things"
  * support case: between two runs the active scanner set grew (`gitleaks`
