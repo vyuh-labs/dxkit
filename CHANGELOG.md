@@ -47,7 +47,11 @@ close that gap.
   matcher can't tell a throwaway fixture from a real secret leaked into a test, so
   lowering severity by path would silently hide genuine leaks. Test-file noise is
   managed by the allowlist score-lift above (review fixtures once with
-  `--category test-fixture`), not by hiding.
+  `--category test-fixture`), not by hiding. The vulnerability report now flags how
+  many secret findings sit in test files and points fixtures at the allowlist; the
+  `dxkit-action` and `dxkit-allowlist` skills gain an explicit triage step
+  (confirm fixture vs. real, allowlist fakes, rotate reals) so an agent handles
+  this judgment per finding rather than blanket-ignoring the test directory.
 - **Systematic test-file detection.** Tests organized under Jest's `__tests__/`
   directory — or named with the widespread `.unit.` / `.e2e.` / `.cy.` suffixes —
   were classified as source, corrupting the test ratio, coverage, and test-gap
