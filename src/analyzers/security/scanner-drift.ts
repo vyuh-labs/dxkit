@@ -1,13 +1,13 @@
 /**
  * Scanner-coverage drift detection across runs.
  *
- * Root cause of the customer "my score got worse after fixing things"
- * support case: between two runs the active scanner set grew (`gitleaks`
- * → `gitleaks, grep-secrets` + `snyk-code`), which surfaced 7
- * pre-existing hardcoded credentials that older dxkit simply couldn't
- * see. The Security score dropped 65 → 40 on an UNCHANGED commit, with
- * nothing in the report explaining that the findings were newly
- * *visible*, not newly *introduced*.
+ * Closes the "my score got worse after fixing things" confusion: when
+ * the active scanner set grows between two runs (e.g. `gitleaks` →
+ * `gitleaks, grep-secrets` + `snyk-code`), the newly-added scanners
+ * surface pre-existing findings that older runs simply couldn't see. The
+ * Security score can drop on an UNCHANGED commit, with nothing in the
+ * report explaining that those findings are newly *visible*, not newly
+ * *introduced*.
  *
  * This module compares the current run's scanner set against the most
  * recent prior vulnerability-scan report persisted under

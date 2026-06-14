@@ -24,6 +24,7 @@ import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-
 import * as path from 'path';
 import { SecurityFinding, DepVulnSummary, Severity } from './types';
 import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
+import { loadAllowlist } from '../../allowlist/file';
 import { defaultDispatcher } from '../dispatcher';
 import { allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
 import {
@@ -596,5 +597,10 @@ export async function buildSecurityAggregateForHealth(
       available: depVulnsAvailable,
       unavailableReason: depVulnsUnavailableReason,
     },
+    // Loaded here (the aggregator does no I/O) so both the health score
+    // and the standalone vuln-scan — which share this one aggregate via
+    // the analysis cache — see the same allowlist-adjusted scoreable
+    // buckets and the same per-finding allowlist annotations.
+    allowlist: loadAllowlist(cwd),
   });
 }

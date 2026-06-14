@@ -30,7 +30,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { applySuppressions, loadSuppressions } from './suppressions';
-import { isTestSourceFile, walkSourceFiles } from './walk-source-files';
+import { walkSourceFiles } from './walk-source-files';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
@@ -98,32 +98,20 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
     } catch {
       continue;
     }
-    // Generic keyword-assignment matches inside a test file are almost
-    // always fixtures (`password: 'password1'` in a unit test), not
-    // committed credentials — flagging them CRITICAL buried a real
-    // customer's headline counts under their own test data. Downgrade
-    // to low + tag `test-fixture` (still visible, never headline, and
-    // excluded from the committed-credentials cap by the score
-    // adapter). Branded token shapes keep full severity everywhere: a
-    // real AWS key in a test file is still a leaked credential.
-    const isTest = isTestSourceFile(rel);
+    // Findings keep their natural severity regardless of file path. A
+    // hardcoded credential is severe whether it sits in production code
+    // or a test — the generic matcher cannot tell a throwaway fixture
+    // (`password: 'password1'`) from a real password leaked into an
+    // integration test, so lowering severity by path would silently
+    // hide genuine leaks. Test-file noise is managed downstream instead:
+    // the report groups test-located secrets for review (a pure function
+    // of the path), and the score lifts only the ones a human has
+    // explicitly allowlisted as `test-fixture` / `false-positive`.
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       for (const sp of patterns) {
         if (sp.regex.test(lines[i])) {
-          const fixture = isTest && GENERIC_PATTERNS.includes(sp);
-          raw.push({
-            file: rel,
-            line: i + 1,
-            rule: sp.rule,
-            severity: fixture ? 'low' : severityFor(sp.rule),
-            ...(fixture
-              ? {
-                  category: 'test-fixture' as const,
-                  title: 'Likely test fixture (in a test file) — auto-downgraded',
-                }
-              : {}),
-          });
+          raw.push({ file: rel, line: i + 1, rule: sp.rule, severity: severityFor(sp.rule) });
           break; // at most one finding per line
         }
       }

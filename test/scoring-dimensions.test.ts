@@ -11,6 +11,8 @@ import { SECURITY_SCORING_SPEC, SecurityScoreInput, evaluateSpec } from '../src/
 const scoreSecurityFromInput = (input: SecurityScoreInput) =>
   evaluateSpec(SECURITY_SCORING_SPEC, input);
 import { scoreTestGapsCounts } from '../src/analyzers/tests/scoring';
+import { buildSecurityAggregate } from '../src/analyzers/security/aggregator';
+import { canonicalRuleFor, computeCodeFingerprint } from '../src/analyzers/tools/fingerprint';
 import { buildSecurityDetailed } from '../src/analyzers/security/detailed';
 import type { SecurityReport } from '../src/analyzers/security/types';
 import {
@@ -19,7 +21,6 @@ import {
   depVulnCapability,
   lintCapability,
   qualityMeasuredCapabilities,
-  secretsCapability,
   secretsCapabilityWithCount,
   withInput,
 } from './fixtures/score-input';
@@ -149,39 +150,60 @@ describe('scoreSecurityFromInput', () => {
     expect(scoreSecurityFromInput(emptyScoreInput()).score).toBe(100);
   });
 
-  it('test-fixture secrets do not drive secretFindings (no trust-broken cap)', () => {
-    // A repo whose only "secrets" are auto-downgraded unit-test fixtures
-    // must not be capped as committed-credentials. Real findings still count.
-    const fixtureOnly = withInput({
-      capabilities: {
-        secrets: secretsCapability([
-          {
-            file: '__tests__/validator.unit.test.ts',
-            line: 10,
-            rule: 'hardcoded-password',
-            severity: 'low',
-            category: 'test-fixture',
-          },
-        ]),
-      },
-    });
-    expect(toSecurityScoreInput(fixtureOnly).secretFindings).toBe(0);
+  it('allowlisted (false-positive/test-fixture) secrets do not drive secretFindings; real ones do', () => {
+    // A repo that has reviewed and accepted its flagged secrets as
+    // false-positive / test-fixture must not stay capped at the
+    // committed-credentials tier on that noise — but an un-triaged real
+    // secret still counts. The aggregate carries the allowlist-adjusted
+    // scoreable buckets; toSecurityScoreInput reads them.
+    const fixtureFp = computeCodeFingerprint(
+      canonicalRuleFor('grep-secrets', 'hardcoded-password'),
+      'src/__tests__/validator.unit.ts',
+      10,
+    );
+    const buildAgg = (entries: object[]) =>
+      buildSecurityAggregate({
+        secrets: {
+          findings: [
+            {
+              severity: 'critical',
+              category: 'secret',
+              cwe: 'CWE-798',
+              rule: 'hardcoded-password',
+              title: 's',
+              file: 'src/__tests__/validator.unit.ts',
+              line: 10,
+              tool: 'grep-secrets',
+            },
+          ],
+          toolUsed: 'grep-secrets',
+        },
+        fileFindings: [],
+        codePatterns: { findings: [], toolUsed: null },
+        tlsBypass: [],
+        tlsBypassPatternCount: 0,
+        depVulns: { findings: [], tool: null, available: true, unavailableReason: '' },
+        allowlist: { schemaVersion: 'dxkit-allowlist/v1', mode: 'full', entries } as never,
+      });
 
-    const mixed = withInput({
+    // No allowlist → the secret counts (real-secret baseline).
+    const counted = withInput({ capabilities: { securityAggregate: buildAgg([]) } });
+    expect(toSecurityScoreInput(counted).secretFindings).toBe(1);
+
+    // Allowlisted as test-fixture → lifted from the score.
+    const lifted = withInput({
       capabilities: {
-        secrets: secretsCapability([
+        securityAggregate: buildAgg([
           {
-            file: '__tests__/validator.unit.test.ts',
-            line: 10,
-            rule: 'hardcoded-password',
-            severity: 'low',
+            fingerprint: fixtureFp,
+            kind: 'secret',
             category: 'test-fixture',
+            addedAt: '2026-06-01',
           },
-          { file: 'src/keycloak.ts', line: 127, rule: 'hardcoded-password', severity: 'critical' },
         ]),
       },
     });
-    expect(toSecurityScoreInput(mixed).secretFindings).toBe(1);
+    expect(toSecurityScoreInput(lifted).secretFindings).toBe(0);
   });
 
   it('C2.2 / D098: every secret-class signal caps the score at 40', () => {
@@ -323,10 +345,10 @@ describe('scoreSecurityFromInput', () => {
   // ── Symmetric unavailable-scanner honesty caps ────────────────────────────────────────
 
   it('caps at 65 when the secret scan did not run', () => {
-    // Pre-2.10 a missing secret scan silently scored as "0 secrets" —
-    // the customer's Jun-4 report printed a confident clean subtotal
-    // next to "Sources: (none)", and the eventual upgrade read as a
-    // phantom score drop. Same uncertainty treatment as dep-vulns now.
+    // Pre-2.10 a missing secret scan silently scored as "0 secrets" — a
+    // confident clean subtotal next to "Sources: (none)", so enabling the
+    // scanner later read as a phantom score drop. Same uncertainty
+    // treatment as dep-vulns now.
     const s = scoreSecurityFromInput(emptyScoreInput({ secretsAvailable: false }));
     expect(s.score).toBe(65);
     expect(s.capsApplied.map((c) => c.id)).toContain('secrets-unavailable');

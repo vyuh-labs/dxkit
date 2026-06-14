@@ -84,9 +84,9 @@ export interface SecurityScoreInput {
   /**
    * Pre-2.10 the unavailability cap was asymmetric — a missing
    * dep-vuln scan capped at the uncertainty tier while missing
-   * secret/code scanners silently scored as "0 findings". A customer
-   * upgrade that merely turned the secret scanners ON then read as a
-   * 25-point score drop on an unchanged commit. These two flags give
+   * secret/code scanners silently scored as "0 findings". An upgrade
+   * that merely turned the secret scanners ON then read as a score
+   * drop on an unchanged commit. These two flags give
    * every measurement axis the same honest treatment: scanner didn't
    * run → uncertainty cap, never a confident clean score.
    *

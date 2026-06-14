@@ -137,8 +137,8 @@ export async function gatherOsvScannerFixPlans(
     // antivirus scanning their files) can briefly hold handles inside the
     // temp dir, making the immediate rm fail with EPERM. Retry with
     // backoff, and never throw out of this finally — a throw here would
-    // discard the already-parsed fix plans, turning a cleanup hiccup into
-    // a week of invisible dep vulns (the original customer symptom).
+    // discard the already-parsed fix plans, turning a transient cleanup
+    // hiccup into silently missing dependency vulnerabilities entirely.
     try {
       fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch {

@@ -260,7 +260,7 @@ export interface CapabilityReport {
   /** Availability for SECRETS (gitleaks + grep-secrets). Same shape.
    *  read by `toSecurityScoreInput` so a failed secret scan
    *  caps the Security score (uncertainty tier) instead of silently
-   *  counting as "0 secrets" — the asymmetry that made a customer's
+   *  counting as "0 secrets" — the asymmetry that made a
    *  scanner-enabling upgrade read as a score regression. */
   secretsAvailability?: { available: boolean; unavailableReason: string };
 

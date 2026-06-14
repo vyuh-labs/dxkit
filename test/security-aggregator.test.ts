@@ -77,6 +77,103 @@ describe('buildSecurityAggregate — empty case', () => {
     expect(agg.provenance.tlsBypass.ran).toBe(false);
     expect(agg.provenance.depVulns.available).toBe(true);
   });
+
+  it('scoreable buckets equal raw buckets when no allowlist is supplied', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [makeFinding({ category: 'secret', severity: 'critical', file: 'a.ts' })],
+        toolUsed: 'gitleaks',
+      },
+      codePatterns: {
+        findings: [makeFinding({ category: 'code', severity: 'high', file: 'b.ts' })],
+        toolUsed: 'semgrep',
+      },
+    });
+    expect(agg.scoreableSecretsBySeverity).toEqual(agg.secretsBySeverity);
+    expect(agg.scoreableCodeBySeverity).toEqual(agg.codeBySeverity);
+  });
+});
+
+describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () => {
+  // Build the allowlist entry for a finding using the same canonical
+  // fingerprint scheme the aggregator stamps, so the match is exact.
+  function fpFor(tool: string, rule: string, file: string, line: number): string {
+    return computeCodeFingerprint(canonicalRuleFor(tool, rule), file, line);
+  }
+  function allowEntry(fingerprint: string, kind: 'secret' | 'code', category: string) {
+    return { fingerprint, kind, category, addedAt: '2026-06-01' } as never;
+  }
+
+  it('false-positive / test-fixture secrets are lifted from the scoreable bucket but stay in the raw bucket + annotated', () => {
+    const fpFixture = fpFor('grep-secrets', 'hardcoded-password', 'src/__tests__/a.unit.ts', 1);
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [
+          makeFinding({
+            category: 'secret',
+            severity: 'critical',
+            rule: 'hardcoded-password',
+            tool: 'grep-secrets',
+            file: 'src/__tests__/a.unit.ts',
+            line: 1,
+          }),
+          makeFinding({
+            category: 'secret',
+            severity: 'critical',
+            rule: 'hardcoded-password',
+            tool: 'grep-secrets',
+            file: 'src/services/session.ts',
+            line: 9,
+          }),
+        ],
+        toolUsed: 'grep-secrets',
+      },
+      allowlist: {
+        schemaVersion: 'dxkit-allowlist/v1',
+        mode: 'full',
+        entries: [allowEntry(fpFixture, 'secret', 'test-fixture')],
+      } as never,
+    });
+
+    // Raw bucket still counts both (reports show the truth + "1 allowlisted").
+    expect(agg.secretsBySeverity.critical).toBe(2);
+    // Scoreable bucket excludes the reviewed test-fixture → only the real one.
+    expect(agg.scoreableSecretsBySeverity.critical).toBe(1);
+    const fixture = agg.findingsByCategory.secret.find((f) => f.file === 'src/__tests__/a.unit.ts');
+    expect(fixture?.allowlisted).toBe(true);
+    expect(fixture?.allowlistCategory).toBe('test-fixture');
+  });
+
+  it('accepted-risk does NOT lift the score — a real, accepted exposure still counts', () => {
+    const fp = fpFor('semgrep', 'sql-injection', 'src/db.ts', 12);
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: {
+        findings: [
+          makeFinding({
+            category: 'code',
+            severity: 'high',
+            rule: 'sql-injection',
+            tool: 'semgrep',
+            file: 'src/db.ts',
+            line: 12,
+          }),
+        ],
+        toolUsed: 'semgrep',
+      },
+      allowlist: {
+        schemaVersion: 'dxkit-allowlist/v1',
+        mode: 'full',
+        entries: [allowEntry(fp, 'code', 'accepted-risk')],
+      } as never,
+    });
+    expect(agg.codeBySeverity.high).toBe(1);
+    // accepted-risk is annotated but NOT lifted from the score.
+    expect(agg.scoreableCodeBySeverity.high).toBe(1);
+    expect(agg.findingsByCategory.code[0]?.allowlisted).toBe(true);
+  });
 });
 
 describe('buildSecurityAggregate — D091 cross-tool TLS-bypass dedup', () => {

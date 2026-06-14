@@ -11,8 +11,6 @@ import { gatherAnalysisResultBody } from '../health';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
-import { loadAllowlist } from '../../allowlist/file';
-import { annotateFindingsWithAllowlist } from '../../allowlist/annotate';
 import { detectScannerCoverageDrift } from './scanner-drift';
 
 export type { SecurityReport, SecurityFinding } from './types';
@@ -140,19 +138,15 @@ export async function analyzeSecurity(
   // Derived from the dedup'd aggregate, NOT from raw envelope arrays —
   // that's the D086/D091 closure. Sum of unique findings across the
   // code/secret/config categories.
+  // Already carry their allowlist annotation (`allowlisted` /
+  // `allowlistCategory`) — the aggregator stamps it at build time, so
+  // the renderer's "(N allowlisted)" counts and the score-lift share one
+  // source of truth instead of a second annotation pass here.
   const codeFindings = [
     ...aggregate.findingsByCategory.secret,
     ...aggregate.findingsByCategory.code,
     ...aggregate.findingsByCategory.config,
   ];
-
-  // Mark findings an active allowlist entry already accepts, so
-  // the renderer can show "(N allowlisted)" beside raw counts. Pure
-  // annotation — counts + score are unchanged; this just stops a repo's
-  // own reviewed test fixtures from reading as unexplained headline
-  // criticals. The aggregator stamps `fingerprint` on every
-  // code/secret/config finding, so no identity is computed here.
-  annotateFindingsWithAllowlist(codeFindings, loadAllowlist(result.cwd));
   const codeSummary = {
     critical: aggregate.codeBySeverity.critical + aggregate.secretsBySeverity.critical,
     high: aggregate.codeBySeverity.high + aggregate.secretsBySeverity.high,
