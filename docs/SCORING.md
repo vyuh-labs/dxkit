@@ -91,9 +91,23 @@ with the Label Contract enforced through caps).
 | CRITICAL dependency vulnerabilities    | -15                  |
 | HIGH dependency vulnerabilities        | -5/-10 by count      |
 
-**Caps:** committed credentials trigger `trust-broken` (40);
-dep-vuln scanner unavailable triggers `uncertainty` (65); any open
+**Caps:** committed credentials trigger `trust-broken` (40); a
+dep-vuln, secret, OR code-pattern scanner that didn't run triggers
+`uncertainty` (65) — every measurement axis is treated the same, so a
+missing scanner never reads as a confident "0 findings"; any open
 HIGH+ code finding triggers `fixable-finding` (79).
+
+**Allowlist and the score.** Penalties and caps count only findings that
+are still _open_. A finding allowlisted as `false-positive` or
+`test-fixture` is declared "not a real finding" and is lifted from the
+Security penalties and caps (not just the guardrail), so a repo that has
+genuinely triaged its noise scores honestly rather than staying capped on
+findings it has already reviewed and accepted. `accepted-risk`,
+`deferred`, and `mitigated-externally` accept a _real_ exposure — the
+guardrail stops blocking, but the score keeps counting them, so accepting
+a real risk can't earn an A. Secret findings are never down-ranked by
+file path: a credential in a test keeps full severity until a human
+allowlists it as `test-fixture`.
 
 Severity bands follow **CVSS v4.0** (FIRST.org). Weakness taxonomy
 follows **CWE** (MITRE). Category framing follows

@@ -44,18 +44,30 @@ so the team can tune the underlying detection.
 
 ## The five categories
 
-| Category               | Meaning                                    | Expiry       | Surfaces                        |
-| ---------------------- | ------------------------------------------ | ------------ | ------------------------------- |
-| `false-positive`       | Scanner is wrong about this finding        | Optional     | Inline annotation OR file-level |
-| `test-fixture`         | Intentional pattern in fixture / test code | Optional     | Inline annotation OR file-level |
-| `mitigated-externally` | Real risk but neutralized at runtime       | Optional     | Inline annotation OR file-level |
-| `accepted-risk`        | Real risk, team accepts, signed off        | **Required** | File-level only                 |
-| `deferred`             | Real, will fix later, tracked work         | **Required** | File-level only                 |
+| Category               | Meaning                                    | Expiry       | Surfaces                        | Lifts score? |
+| ---------------------- | ------------------------------------------ | ------------ | ------------------------------- | ------------ |
+| `false-positive`       | Scanner is wrong about this finding        | Optional     | Inline annotation OR file-level | **Yes**      |
+| `test-fixture`         | Intentional pattern in fixture / test code | Optional     | Inline annotation OR file-level | **Yes**      |
+| `mitigated-externally` | Real risk but neutralized at runtime       | Optional     | Inline annotation OR file-level | No           |
+| `accepted-risk`        | Real risk, team accepts, signed off        | **Required** | File-level only                 | No           |
+| `deferred`             | Real, will fix later, tracked work         | **Required** | File-level only                 | No           |
 
 `accepted-risk` and `deferred` require an expiry because they
 describe assertions that should age out. By default the CLI sets
 `--expires` to 90 days from today (industry convention, matches
 Snyk / Dependabot).
+
+**The category decides whether the finding still counts toward the
+score, not just the guardrail.** `false-positive` and `test-fixture`
+declare the finding is _not real_ (a misfire, or throwaway test data), so
+it is lifted from the Security dimension's penalties and caps — a repo
+that has triaged its noise scores honestly. The remaining three accept a
+_real_ exposure: the guardrail stops blocking, but the score keeps
+counting them, so accepting a real risk can't earn an A. This is also
+the supported way to quiet a hardcoded credential in a test file — dxkit
+never lowers a secret's severity by path, so confirm it's a fixture and
+allowlist it as `test-fixture` (which removes it from the score); a real
+credential in a test is still rotated, not allowlisted.
 
 ## The two surfaces
 
