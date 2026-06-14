@@ -104,7 +104,7 @@ For each fixable signal in doctor's output, dispatch through `dxkit-fix`'s recov
 
 - `git hooks active` not active → `npx vyuh-dxkit hooks activate`
 - `baseline captured` missing → defer to step 5 (we'll handle that explicitly with the secrets warning)
-- `vyuh-dxkit on PATH` missing → `npm install -g @vyuhlabs/dxkit`
+- `vyuh-dxkit on PATH` missing → `npm install -g @vyuhlabs/dxkit` (a global install — it affects every Node project on the machine and may need elevated permissions; a project-local install or a Node version manager works too)
 - `scanner toolchain` incomplete → `npx vyuh-dxkit tools install --yes`
 
 Don't auto-execute baseline capture here — step 5 has a values-laden warning that needs explicit customer confirmation.
@@ -195,7 +195,7 @@ Local hooks are fast feedback; CI is the unbypassable enforcement. Branch protec
 
 ASK:
 
-> **Configure branch protection now?** Default yes. Adds `dxkit-guardrails` as a required status check on `<default branch>`. Requires admin permission on the GitHub repo. Without this, the CI workflow is informational — PRs can merge even on guardrail failures.
+> **Configure branch protection now?** Default yes. This **modifies your GitHub repository settings** — it adds `dxkit-guardrails` as a required status check on `<default branch>`, and so needs admin permission on the repo. Without it, the CI workflow is informational — PRs can merge even on guardrail failures.
 
 If yes:
 
