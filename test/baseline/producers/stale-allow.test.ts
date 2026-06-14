@@ -40,6 +40,8 @@ function makeAggregate(
     codeBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     depBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     secretsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+    scoreableCodeBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+    scoreableSecretsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     findingsByCategory: {
       secret: opts.secrets ?? [],
       code: opts.code ?? [],
