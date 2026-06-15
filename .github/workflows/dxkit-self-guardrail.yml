@@ -1,0 +1,76 @@
+name: dxkit self-guardrail
+
+# Dogfood: dxkit runs its own guardrail against every PR, exactly as a
+# customer would — but against the local build (node dist/index.js), not
+# the published package, so it gates on HEAD's behavior. The repo is
+# public, so dxkit auto-selects ref-based mode: the guardrail re-gathers
+# origin/main and diffs HEAD against it, blocking only on net-new findings
+# (secret / code-pattern / dep-vuln regressions). Pre-existing findings —
+# including the allowlisted fixture secrets — are not flagged.
+#
+# This is the authoritative gate; .husky/pre-push runs the same check
+# with --changed-only as a fast, fail-open local signal.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  self-guardrail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so the git-aware matcher can resolve origin/main
+          # and diff HEAD against it.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install deps + build dxkit
+        run: |
+          npm ci
+          npm run build
+
+      # Install the scanner toolchain dxkit needs for this stack
+      # (gitleaks, semgrep, cloc, jscpd, osv-scanner, graphify, ...).
+      - name: Install scanner tools
+        run: node dist/index.js tools install --yes
+
+      - name: Run guardrail check
+        id: guardrail
+        run: |
+          set +e
+          node dist/index.js guardrail check --markdown > guardrail-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Update one comment in place rather than appending per push.
+          MARKER='<!-- dxkit-self-guardrail -->'
+          {
+            printf '%s\n' "$MARKER"
+            cat guardrail-report.md
+          } > comment.md
+          existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" \
+            | head -n1)
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH \
+              "repos/${{ github.repository }}/issues/comments/${existing}" \
+              -F body=@comment.md
+          else
+            gh pr comment "${PR_NUMBER}" --body-file comment.md
+          fi
+
+      - name: Fail if guardrail blocked
+        run: exit ${{ steps.guardrail.outputs.exit_code }}

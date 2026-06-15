@@ -51,3 +51,26 @@ DXKIT_SLOP_BASE=origin/main bash scripts/check-slop.sh
 npm run build
 npx vitest run --coverage
 bash scripts/check-coverage.sh
+
+# Dogfood: dxkit's own guardrail against this push, so a net-new finding
+# (secret / code-pattern / dep-vuln / duplication / test-gap regression)
+# fails the push the same way it would fail a customer's. Fast (~8s) — the
+# repo pins committed-full mode in .dxkit/policy.json, so the check diffs
+# HEAD against the committed .dxkit/baselines/main.json instead of
+# re-gathering origin/main in a worktree (ref-based was ~3m45s and, on a
+# JS repo, mis-flagged everything as net-new because the throwaway base
+# worktree has no node_modules for jscpd/coverage/npm-audit). Fail-open if
+# dxkit itself can't run (missing scanner toolchain on a contributor's
+# machine); the dxkit-self-guardrail CI workflow is the authoritative gate.
+# Set DXKIT_GUARDRAIL_PREPUSH=0 to skip locally.
+if [ "${DXKIT_GUARDRAIL_PREPUSH:-1}" = "1" ]; then
+  if ! node dist/index.js guardrail check; then
+    status=$?
+    if [ "$status" = "1" ]; then
+      echo "[pre-push] dxkit guardrail blocked: net-new findings vs the baseline."
+      echo "           Review above, then fix / allowlist / refresh the baseline."
+      exit 1
+    fi
+    echo "[pre-push] dxkit guardrail could not run (tools) — skipping; CI enforces."
+  fi
+fi
