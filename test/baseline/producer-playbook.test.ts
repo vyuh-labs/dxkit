@@ -69,6 +69,7 @@ function fixtureContext(): ProducerContext {
       dxkitVersion: '2.5.0',
       schemaVersion: 3,
       ignoreFileMtime: null,
+      inputsDigest: null,
       workingTreeDirty: false,
     } as ProducerContext['analysisResult'],
     testGapsReport: {

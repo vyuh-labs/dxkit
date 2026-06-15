@@ -60,6 +60,7 @@ function makeProvenance(overrides: Partial<ResolvedProvenance> = {}): ResolvedPr
     cwd: tmp,
     dxkitVersion: '9.9.9-test',
     ignoreFileMtime: null,
+    inputsDigest: null,
     workingTreeDirty: false,
     ...overrides,
   };
@@ -240,6 +241,39 @@ describe('readOrBuildAnalysisResult', () => {
 
     expect(calls).toBe(2);
     expect(second.ignoreFileMtime).toBe(2_000_000);
+  });
+
+  it('rebuilds when the inputs digest differs (allowlist / policy / external edit)', async () => {
+    // The dirty-check excludes the whole `.dxkit/` prefix, so editing
+    // `.dxkit/allowlist.json` does not flip workingTreeDirty. The inputs
+    // digest is the only signal that re-scores an allowlisted finding
+    // without waiting for the next commit. Regression guard for that bug.
+    let calls = 0;
+    const build = async (): Promise<AnalysisResultBody> => {
+      calls++;
+      return stubBody();
+    };
+
+    await readOrBuildAnalysisResult({
+      cwd: tmp,
+      build,
+      opts: {
+        resolveProvenance: () => makeProvenance({ inputsDigest: 'digest-before-allowlist' }),
+        cacheDir,
+      },
+    });
+    clearInMemoryCache();
+    const second = await readOrBuildAnalysisResult({
+      cwd: tmp,
+      build,
+      opts: {
+        resolveProvenance: () => makeProvenance({ inputsDigest: 'digest-after-allowlist' }),
+        cacheDir,
+      },
+    });
+
+    expect(calls).toBe(2);
+    expect(second.inputsDigest).toBe('digest-after-allowlist');
   });
 
   it('rebuilds when the dxkit version differs', async () => {

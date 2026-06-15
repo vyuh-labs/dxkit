@@ -40,6 +40,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { execSync } from 'child_process';
 import {
   ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -50,6 +51,21 @@ import { VERSION as DXKIT_VERSION } from '../constants';
 
 const IGNORE_FILE = '.dxkit-ignore';
 const CACHE_SUBDIR = path.join('.dxkit', 'cache');
+
+// `.dxkit/`-resident analysis INPUTS that the working-tree-dirty check
+// cannot observe — `isWorkingTreeDirty` excludes the entire `.dxkit/`
+// prefix so dxkit's own OUTPUT writes (reports, this cache, dashboard,
+// salt) never make a run look dirty. These inputs live under that same
+// excluded prefix, so a change to any of them would otherwise be served
+// stale until the commit SHA changed. They are folded into the cache key
+// via a content digest instead. (`.dxkit-ignore` is handled separately by
+// `ignoreFileMtime` — it does NOT live under the excluded prefix.)
+// These reference the input files only to content-hash their raw bytes for
+// cache invalidation — not to read/parse their data — so they bypass the
+// canonical loaders (no schema validation or sidecar merge is wanted here).
+const ALLOWLIST_FILE = path.join('.dxkit', 'allowlist.json'); // allowlist-io-ok
+const POLICY_FILE = path.join('.dxkit', 'policy.json');
+const EXTERNAL_SUBDIR = path.join('.dxkit', 'external'); // ingest-snapshot-ok
 
 /**
  * Provenance fields the cache resolves before deciding hit vs miss.
@@ -62,6 +78,7 @@ export interface ResolvedProvenance {
   cwd: string;
   dxkitVersion: string;
   ignoreFileMtime: number | null;
+  inputsDigest: string | null;
   workingTreeDirty: boolean;
 }
 
@@ -110,6 +127,7 @@ export function resolveProvenance(cwd: string): ResolvedProvenance {
     cwd: path.resolve(cwd),
     dxkitVersion: DXKIT_VERSION,
     ignoreFileMtime: readIgnoreFileMtime(cwd),
+    inputsDigest: computeInputsDigest(cwd),
     workingTreeDirty: isWorkingTreeDirty(cwd),
   };
 }
@@ -157,6 +175,7 @@ export async function readOrBuildAnalysisResult(args: {
       dxkitVersion: provenance.dxkitVersion,
       schemaVersion: ANALYSIS_RESULT_SCHEMA_VERSION,
       ignoreFileMtime: provenance.ignoreFileMtime,
+      inputsDigest: provenance.inputsDigest,
       workingTreeDirty: provenance.workingTreeDirty,
     };
     if (!provenance.workingTreeDirty) {
@@ -191,6 +210,7 @@ function buildCacheKey(p: ResolvedProvenance): string {
     p.dxkitVersion,
     String(ANALYSIS_RESULT_SCHEMA_VERSION),
     p.ignoreFileMtime ?? 'no-ignore',
+    p.inputsDigest ?? 'no-inputs',
   ].join('::');
 }
 
@@ -224,6 +244,11 @@ function isCacheStillValid(cached: AnalysisResult, expected: ResolvedProvenance)
   if (cached.dxkitVersion !== expected.dxkitVersion) return false;
   if (cached.commitSha !== expected.commitSha) return false;
   if (cached.ignoreFileMtime !== expected.ignoreFileMtime) return false;
+  // Allowlist / policy / external-snapshot edits live under the
+  // dirty-check's excluded `.dxkit/` prefix, so the digest is the only
+  // signal that they changed. A pre-digest cache file (field absent →
+  // undefined) never matches a computed digest, so it invalidates once.
+  if ((cached.inputsDigest ?? null) !== expected.inputsDigest) return false;
   // A persisted result is always clean (we don't write dirty ones).
   // Defensive: refuse to honor any persisted record claiming dirty.
   if (cached.workingTreeDirty) return false;
@@ -333,4 +358,47 @@ function readIgnoreFileMtime(cwd: string): number | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Content digest over the `.dxkit/`-resident analysis inputs the
+ * dirty-check can't see (allowlist, policy, external snapshots). Content
+ * hash rather than mtime — mtime is unreliable across `git checkout` /
+ * `git stash`, which rewrite files to identical content with a fresh
+ * timestamp. Returns `null` when none of the inputs exist so a repo that
+ * has never allowlisted anything keys identically before and after the
+ * feature ships. Best-effort: an unreadable file contributes nothing
+ * rather than throwing (the cache stays a performance optimization, never
+ * a correctness dependency).
+ */
+function computeInputsDigest(cwd: string): string | null {
+  // SHA-1 of (relpath, content) pairs; NOT a finding identity — this is a
+  // cache-input fingerprint, exempt from the Rule 9 createHash ban.
+  const h = createHash('sha1'); // fingerprint-helper-ok
+  let any = false;
+  const feed = (rel: string): void => {
+    try {
+      const buf = fs.readFileSync(path.join(cwd, rel));
+      h.update(rel);
+      h.update('\0');
+      h.update(buf);
+      h.update('\0');
+      any = true;
+    } catch {
+      /* absent / unreadable — contributes nothing */
+    }
+  };
+  feed(ALLOWLIST_FILE);
+  feed(POLICY_FILE);
+  // External-engine snapshots, sorted for a stable digest regardless of
+  // readdir order.
+  try {
+    const names = fs.readdirSync(path.join(cwd, EXTERNAL_SUBDIR)).sort();
+    for (const name of names) {
+      if (name.endsWith('.json')) feed(path.join(EXTERNAL_SUBDIR, name));
+    }
+  } catch {
+    /* no external dir */
+  }
+  return any ? h.digest('hex') : null;
 }

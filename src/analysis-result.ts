@@ -123,6 +123,17 @@ export interface AnalysisResult extends AnalysisResultBody {
    *  metrics computed against the old ruleset are stale. */
   ignoreFileMtime: number | null;
 
+  /** Content digest of the `.dxkit/`-resident analysis *inputs* that
+   *  the working-tree-dirty check cannot see (it excludes the whole
+   *  `.dxkit/` prefix so dxkit's own report/cache writes don't
+   *  self-dirty). Covers `.dxkit/allowlist.json`, `.dxkit/policy.json`,
+   *  and `.dxkit/external/*.json`. `null` when none exist. A change
+   *  here invalidates the cache — e.g. allowlisting a finding must
+   *  re-score immediately, not wait for the next commit. Distinct from
+   *  `ignoreFileMtime` because those files live under the excluded
+   *  prefix; `.dxkit-ignore` itself does not. */
+  inputsDigest: string | null;
+
   /** True when `git status --porcelain` reports any change. Dirty-tree
    *  results NEVER persist to disk and are not read back from disk
    *  (their commit SHA doesn't reflect the on-disk state). The flag
