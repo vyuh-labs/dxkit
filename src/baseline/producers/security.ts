@@ -154,6 +154,7 @@ export function securityAggregateToBaselineEntries(
       package: f.package,
       installedVersion: f.installedVersion,
       id: f.id,
+      ...(f.aliases !== undefined ? { aliases: f.aliases } : {}),
     };
     const entry: RichBaselineEntry = {
       id: identityFor(input),

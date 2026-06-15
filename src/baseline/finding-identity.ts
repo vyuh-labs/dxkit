@@ -64,8 +64,8 @@ export function identityFor(
     case 'dep-vuln':
       return computeFingerprint({
         package: input.package,
-        installedVersion: input.installedVersion,
         id: input.id,
+        aliases: input.aliases,
       });
     case 'duplication':
       return computeDuplicationIdentity(

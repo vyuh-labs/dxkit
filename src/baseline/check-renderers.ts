@@ -138,6 +138,15 @@ export function renderConsole(result: GuardrailCheckResult): string {
     `  Verdict:     ${result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED'}`,
   );
   lines.push(`  Exit code:   ${result.blocks ? 1 : 0}`);
+  if (result.refExcludedKinds.length > 0) {
+    const detail = result.refExcludedKinds.map((e) => `${e.currentCount} ${e.kind}`).join(', ');
+    lines.push('');
+    lines.push(
+      `  Note: ref-based mode does not gate ${detail} — these depend on build ` +
+        `artifacts (node_modules / coverage) absent at a bare git ref. Use ` +
+        `committed-full mode to gate them.`,
+    );
+  }
   if (result.blocks) {
     lines.push('');
     lines.push(
@@ -439,6 +448,16 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   lines.push('');
   lines.push(summarySentence(result, blocking.length, warning.length, resolved.length));
   lines.push('');
+
+  if (result.refExcludedKinds.length > 0) {
+    const detail = result.refExcludedKinds.map((e) => `${e.currentCount} ${e.kind}`).join(', ');
+    lines.push(
+      `> ℹ️ ref-based mode does not gate **${detail}** — these depend on build ` +
+        `artifacts (\`node_modules\` / coverage) not present at a bare git ref. ` +
+        `Switch \`.dxkit/policy.json\` to \`committed-full\` to gate them.`,
+    );
+    lines.push('');
+  }
 
   if (blocking.length > 0) {
     lines.push('### Blocking findings');
