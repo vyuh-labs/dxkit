@@ -53,6 +53,9 @@
     "test:coverage": "npm run build && vitest run --coverage",
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
     "new-lang": "node scripts/scaffold-language.js",
+    "dxkit:health": "npm run build && node dist/index.js health",
+    "dxkit:guardrail": "npm run build && node dist/index.js guardrail check",
+    "dxkit:baseline:refresh": "npm run build && node dist/index.js baseline create --force",
     "prepare": "husky || true"
   },
   "lint-staged": {
