@@ -7,11 +7,19 @@
  * Two fingerprint families live here:
  *
  *   1. Dependency-advisory fingerprints — stable hash of
- *      `(package, installedVersion, id)`. Used by `gatherDepVulns` +
+ *      `(package, canonicalAdvisoryId)`. Used by `gatherDepVulns` +
  *      BoM. Excludes severity / cvssScore / enrichment fields
  *      (epssScore, kev, reachable, riskScore), producer `tool`, and
  *      `upgradeAdvice` / `upgradePlan` so re-scoring the same advisory
- *      against the same install never mints a new identity.
+ *      against the same install never mints a new identity. Crucially
+ *      it also excludes `installedVersion`: that value is only known
+ *      when the dependency tree is installed (npm-audit reads
+ *      node_modules), so a lockfile-only scanner (osv-scanner, or any
+ *      gather in a bare git worktree) omits it — and including it forked
+ *      the SAME advisory into two identities depending on the scan
+ *      environment. The version is display metadata, not identity:
+ *      bumping to a still-vulnerable version is the same finding, and
+ *      bumping to a fixed version makes the finding disappear on its own.
  *
  *   2. Code/secret/config-finding fingerprints — stable hash of
  *      `(canonicalRule, file, lineWindow)`. The canonical-rule map
@@ -30,19 +38,45 @@ import { createHash, createHmac } from 'crypto';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 
 /**
- * Stable 16-char hex fingerprint for one DepVulnFinding. Input tuple
- * is NUL-separated (not present in any legal package / version / id)
- * so distinct tuples can never collide via concatenation tricks.
- *
- * `installedVersion` is normalized to the empty string when absent so
- * version-less findings (rare — some providers omit it when the lock
- * file is missing) still get a deterministic fingerprint instead of
- * mixing an ambient `undefined` into the hash input.
+ * Canonical advisory id for dep-vuln identity. Scanners label the same
+ * advisory differently — npm-audit emits an uppercase `GHSA-…`, while
+ * osv-scanner may primary an `OSV-…` / `CVE-…` / `GHSA-…` id and carry
+ * the rest in `aliases`. Collapse them to one token so the SAME
+ * vulnerability fingerprints identically regardless of which tool found
+ * it: prefer GHSA (the namespace every supported scanner shares), then
+ * CVE (the next-best cross-tool token), else the producer's own id.
+ * Lowercased so `GHSA-AB` and `ghsa-ab` don't fork identity.
  */
-export function computeFingerprint(
-  finding: Pick<DepVulnFinding, 'package' | 'installedVersion' | 'id'>,
-): string {
-  const input = `${finding.package}\0${finding.installedVersion ?? ''}\0${finding.id}`;
+export function canonicalAdvisoryId(finding: {
+  readonly id: string;
+  readonly aliases?: readonly string[];
+}): string {
+  const candidates = [finding.id, ...(finding.aliases ?? [])]
+    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    .map((x) => x.trim());
+  const ghsa = candidates.find((c) => /^GHSA-/i.test(c));
+  if (ghsa) return ghsa.toLowerCase();
+  const cve = candidates.find((c) => /^CVE-/i.test(c));
+  if (cve) return cve.toLowerCase();
+  return finding.id.toLowerCase();
+}
+
+/**
+ * Stable 16-char hex fingerprint for one DepVulnFinding. Input tuple is
+ * NUL-separated (not present in any legal package name / advisory id) so
+ * distinct tuples can never collide via concatenation tricks.
+ *
+ * Identity is `(package, canonicalAdvisoryId)` — deliberately NOT the
+ * installed version (see the module header): the version is unavailable
+ * to lockfile-only scanners, so including it forked identity by scan
+ * environment.
+ */
+export function computeFingerprint(finding: {
+  readonly package: string;
+  readonly id: string;
+  readonly aliases?: readonly string[];
+}): string {
+  const input = `${finding.package}\0${canonicalAdvisoryId(finding)}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

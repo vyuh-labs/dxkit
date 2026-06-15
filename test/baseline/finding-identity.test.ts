@@ -256,7 +256,7 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     expected: 'persisted',
   },
   {
-    name: 'dep-vuln/upgraded — installed version changes, identity changes',
+    name: 'dep-vuln/version-bumped — same advisory, identity UNCHANGED (version excluded from hash)',
     prior: {
       kind: 'dep-vuln',
       package: 'fixture-pkg-a',
@@ -269,7 +269,10 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
       installedVersion: '1.2.4',
       id: 'GHSA-aaaa-bbbb-cccc',
     },
-    expected: 'changed',
+    // Bumping to a still-vulnerable version is the SAME finding — identity
+    // must not depend on installedVersion (it's environment-dependent; a
+    // lockfile-only scanner can't resolve it). See computeFingerprint.
+    expected: 'persisted',
   },
   {
     name: 'dep-vuln/new advisory against same install — identity changes',

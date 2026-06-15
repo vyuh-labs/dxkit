@@ -144,10 +144,16 @@ export interface DepVulnIdentityInput {
   /** Package name as reported by the producer. */
   readonly package: string;
   /** Installed version string, when known. Absent for findings produced
-   *  without an accessible lockfile. */
+   *  without an accessible lockfile. Display metadata only — NOT part of
+   *  the fingerprint (it's environment-dependent; see
+   *  `computeFingerprint`). */
   readonly installedVersion: string | undefined;
   /** Advisory id (GHSA / CVE / RUSTSEC / etc.). Producer-canonical. */
   readonly id: string;
+  /** Cross-namespace aliases (CVE / GHSA / OSV / SNYK …) the producer
+   *  surfaced. Used to canonicalize identity so the same advisory found
+   *  by different scanners shares one fingerprint. */
+  readonly aliases?: readonly string[];
 }
 
 /** jscpd-style duplicate-block findings. */

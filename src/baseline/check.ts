@@ -198,6 +198,80 @@ export interface GuardrailCheckResult {
    *  see new suppressions being introduced. Absent when the
    *  baseline SHA wasn't reachable to diff against. */
   readonly allowlistDelta: AllowlistDelta;
+  /** Kinds dropped from the diff because the resolved mode can't gather
+   *  them comparably on the prior side. Populated only in `ref-based`
+   *  mode: `duplication` + `test-gap` depend on build artifacts (jscpd's
+   *  `node_modules`, the coverage report) that don't exist in a detached
+   *  worktree, so the prior side systematically under-produces them and a
+   *  naive diff would flag the entire current set as net-new. They're
+   *  excluded from BOTH sides instead; this records what was dropped so
+   *  renderers can disclose "not gated in ref-based mode — use
+   *  committed-full to gate these." Empty in committed modes. */
+  readonly refExcludedKinds: ReadonlyArray<{
+    readonly kind: BaselineEntry['kind'];
+    readonly currentCount: number;
+  }>;
+}
+
+/**
+ * Finding kinds that cannot be gathered comparably from a detached git
+ * worktree, so ref-based mode must not diff them. `duplication` runs
+ * jscpd, which needs the project's `node_modules`; `test-gap` reads the
+ * coverage report — neither exists in a bare `git worktree add` checkout.
+ * The prior (worktree) side therefore under-produces these systematically
+ * while the current (working-tree) side produces them in full, so a
+ * straight diff reports the entire current set as net-new regressions.
+ * Confirmed empirically: gathering the SAME commit via cwd vs a worktree
+ * differed only here (duplication 15→0, test-gap 44→12). Excluded from
+ * both sides in ref-based mode; committed-full (which captures them once
+ * from a fully-provisioned tree) is the mode that gates them. (D-G4.)
+ */
+const REF_UNRELIABLE_KINDS: ReadonlySet<BaselineEntry['kind']> = new Set([
+  'duplication',
+  'test-gap',
+]);
+
+/**
+ * Apply the ref-based-mode kind exclusion to both sides of the diff.
+ *
+ * In ref-based mode the prior side is gathered from a detached worktree
+ * that can't produce the build-artifact-dependent kinds (REF_UNRELIABLE_KINDS),
+ * so they're dropped from BOTH sides to keep the comparison symmetric —
+ * otherwise the current side's full set has nothing to match against and
+ * every one reads as a net-new regression. The dropped current-side counts
+ * are returned for disclosure. In committed modes nothing is excluded.
+ *
+ * Pure + exported so the exclusion behavior is unit-testable without
+ * driving the (slow, environment-dependent) gather pipeline.
+ */
+export function partitionForRefBasedDiff<T extends { readonly kind: BaselineEntry['kind'] }>(
+  priorFindings: ReadonlyArray<T>,
+  currentFindings: ReadonlyArray<T>,
+  isRefBased: boolean,
+): {
+  diffablePrior: ReadonlyArray<T>;
+  diffableCurrent: ReadonlyArray<T>;
+  refExcludedKinds: GuardrailCheckResult['refExcludedKinds'];
+} {
+  if (!isRefBased) {
+    return {
+      diffablePrior: priorFindings,
+      diffableCurrent: currentFindings,
+      refExcludedKinds: [],
+    };
+  }
+  const keep = (f: T): boolean => !REF_UNRELIABLE_KINDS.has(f.kind);
+  const refExcludedKinds = [...REF_UNRELIABLE_KINDS]
+    .map((kind) => ({
+      kind,
+      currentCount: currentFindings.filter((f) => f.kind === kind).length,
+    }))
+    .filter((e) => e.currentCount > 0);
+  return {
+    diffablePrior: priorFindings.filter(keep),
+    diffableCurrent: currentFindings.filter(keep),
+    refExcludedKinds,
+  };
 }
 
 const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSeverity>> =
@@ -251,8 +325,17 @@ export async function runGuardrailCheck(
 
   const current = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
-  const priorLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(baseline.findings);
-  const currentLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(current.findings);
+  // In ref-based mode the prior side came from a detached worktree that
+  // can't gather the build-artifact-dependent kinds; drop them from both
+  // sides so the diff stays symmetric (see partitionForRefBasedDiff).
+  const { diffablePrior, diffableCurrent, refExcludedKinds } = partitionForRefBasedDiff(
+    baseline.findings,
+    current.findings,
+    mode.mode === 'ref-based',
+  );
+
+  const priorLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(diffablePrior);
+  const currentLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(diffableCurrent);
 
   // The matcher needs the baseline's anchor commit to drive `git
   // diff`. Empty string is the canonical "not a git repo at capture
@@ -394,6 +477,7 @@ export async function runGuardrailCheck(
     blocks: options.changedOnly ? filteredBlocks : blocks,
     warns: options.changedOnly ? filteredWarns : warns,
     allowlistDelta,
+    refExcludedKinds,
   };
 }
 
