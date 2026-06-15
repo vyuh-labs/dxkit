@@ -183,6 +183,7 @@ describe('analyzeBom filter', () => {
         dxkitVersion: '0.0.0-test',
         schemaVersion: 2,
         ignoreFileMtime: null,
+        inputsDigest: null,
         workingTreeDirty: false,
         stack: { projectName: 'fake', languages: {} },
         capabilities: { licenses: null },
