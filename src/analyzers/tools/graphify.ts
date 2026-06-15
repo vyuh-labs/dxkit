@@ -21,6 +21,7 @@ import * as path from 'path';
 import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeFilter } from './exclusions';
+import { allSourceExtensions } from '../../languages';
 import { toProjectRelative } from './paths';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { StructuralResult } from '../../languages/capabilities/types';
@@ -53,6 +54,22 @@ interface GraphifyResult {
  */
 export function buildGraphifyScript(cwd: string): string {
   const { dirsSet, pathsList, fileGlobsList } = getPythonExcludeFilter(cwd);
+  // Source-extension allowlist for the CODE graph. graphify's collect_files
+  // enumerates everything its _DISPATCH table can parse — including .md / .mdx
+  // (markdown headings → "module" nodes) and .json (config + lockfile keys →
+  // nodes). On NodeGoat that produced a graph that was ~92% non-code:
+  // package-lock.json alone contributed 137 nodes, .claude/**/*.md (dxkit's
+  // own scaffolding) 205, .vyuh-dxkit.json 53 — versus 51 nodes of real app
+  // code. Doc/config nodes pollute every graph-derived surface (communities,
+  // hot-files, api-surface, god-node ranking) and the context-hook's file
+  // summaries. Restrict the walk to the pack-declared source extensions
+  // (Rule 3/6: "what counts as source" is a language fact). graphify's TS
+  // import resolution reads tsconfig.json / package.json by direct path, not
+  // from the collected set, so dropping config files from the walk does not
+  // affect import-edge resolution.
+  const includeExtsSet = `set([${allSourceExtensions()
+    .map((e) => `'${e.toLowerCase()}'`)
+    .join(', ')}])`;
   return `# Exclusion set derived from src/analyzers/tools/exclusions.ts
 import json, sys, os
 from pathlib import Path
@@ -80,6 +97,12 @@ EXCLUDE_DIRS = ${dirsSet}
 EXCLUDE_PATHS = ${pathsList}
 EXCLUDE_FILE_GLOBS = ${fileGlobsList}
 
+# Source-extension allowlist (pack-declared via allSourceExtensions()).
+# Keeps the CODE graph to actual source files — graphify also parses .md /
+# .json into nodes, which is noise for code navigation. Empty set would be a
+# bug (no files pass); the TS builder always emits a non-empty literal.
+INCLUDE_EXTS = ${includeExtsSet}
+
 # Bytes-per-line floor above which a file is almost certainly minified
 # / bundled output. Mirrors the heuristic in
 # src/analyzers/tools/minified-detection.ts so graphify's enumeration
@@ -106,6 +129,11 @@ def _is_likely_minified(f):
         return False
 
 def _is_excluded(f):
+    # Source-extension allowlist first: anything that isn't a pack-declared
+    # source file (markdown, JSON config, lockfiles, plain text) is not part
+    # of the code graph.
+    if f.suffix.lower() not in INCLUDE_EXTS:
+        return True
     if any(seg in EXCLUDE_DIRS for seg in f.parts):
         return True
     name = f.name

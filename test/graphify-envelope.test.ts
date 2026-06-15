@@ -109,4 +109,21 @@ describe('buildGraphifyScript — Python 3.14 / cache-redirect contract', () => 
     expect(script).toContain('_cache_dir = Path(sys.argv[2])');
     expect(script).not.toContain('tempfile.mkdtemp');
   });
+
+  it('restricts the walk to pack-declared source extensions (code graph, not docs/config)', () => {
+    // graphify's collect_files also parses .md (headings → "module" nodes) and
+    // .json (config + lockfile keys → nodes). On NodeGoat that made the graph
+    // ~92% non-code. The INCLUDE_EXTS allowlist (from allSourceExtensions())
+    // keeps the graph to real source, and the exclude check consults it first.
+    expect(script).toContain('INCLUDE_EXTS = set([');
+    expect(script).toContain('f.suffix.lower() not in INCLUDE_EXTS');
+    // The allowlist is the source extensions — and must NOT carry the doc /
+    // config extensions that produced the noise.
+    for (const ext of ['.ts', '.js', '.py', '.go', '.rs', '.cs', '.java', '.rb', '.kt']) {
+      expect(script).toContain(`'${ext}'`);
+    }
+    const includeLine = script.split('\n').find((l) => l.startsWith('INCLUDE_EXTS')) ?? '';
+    expect(includeLine).not.toContain("'.md'");
+    expect(includeLine).not.toContain("'.json'");
+  });
 });
