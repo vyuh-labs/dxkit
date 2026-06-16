@@ -11,7 +11,7 @@ import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
  *   - jscpd 5.x (Rust rewrite) dropped `--gitignore` + changed the report
  *     schema → exit 2.  (pinned jscpd@4.2.5)
  *   - graphifyy 0.8 changed an internal `cache_dir` signature.  (pinned
- *     graphifyy==0.8.36; the generated script now also drives graphify only
+ *     graphifyy==0.8.40; the generated script now also drives graphify only
  *     through its public API)
  *
  * This test locks every tool we install from a versioned GitHub release /
@@ -34,7 +34,7 @@ const PINNED_TOOLS: Record<string, string> = {
   'osv-scanner': 'v2.3.8',
   pmd: '7.24.0',
   detekt: 'v1.23.6',
-  graphify: 'graphifyy==0.8.36',
+  graphify: 'graphifyy==0.8.40',
   jscpd: 'jscpd@4.2.5',
   // 2.10 version-pin sweep: defensive freezes for the dxkit-owned,
   // deterministic-output scanners so a future breaking major can't
