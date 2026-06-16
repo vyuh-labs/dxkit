@@ -21,6 +21,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { parseSarif } from '../src/ingest/sarif';
 import { snykIssueToFinding } from '../src/ingest/snyk-api';
+import { spanHash } from '../src/analyzers/tools/fingerprint';
 import { externalToSecurityFindings } from '../src/ingest/normalize';
 import { writeSnapshot, readAllSnapshots, snapshotEngines } from '../src/ingest/snapshot';
 import { resolveDeepSastEngine } from '../src/ingest/engine-resolver';
@@ -102,6 +103,41 @@ describe('parseSarif', () => {
       'SnykCode',
     );
     expect(parseSarif(raw)[0].cwe).toBe('CWE-94');
+  });
+
+  it('captures region.snippet.text as the content-anchored spanHash (D-G5, Rule 13)', () => {
+    // An ingested SARIF finding with a matched snippet earns the SAME
+    // line-independent identity material a native semgrep finding gets —
+    // the spanHash matches the canonical helper byte-for-byte, so the
+    // aggregator + identity layer treat ingested + native uniformly.
+    const raw = sarifWith(
+      [
+        {
+          ruleId: 'js/path-injection',
+          locations: [
+            {
+              physicalLocation: {
+                artifactLocation: { uri: 'src/handler.ts' },
+                region: { startLine: 42, snippet: { text: '  fs.readFile(req.query.path)  ' } },
+              },
+            },
+          ],
+        },
+      ],
+      [{ id: 'js/path-injection' }],
+    );
+    const f = parseSarif(raw);
+    expect(f[0].spanHash).toBe(spanHash('  fs.readFile(req.query.path)  '));
+    // Line-independent by construction: the same snippet at a different
+    // line yields the same spanHash (it carries no line).
+    expect(f[0].spanHash).toBe(spanHash('fs.readFile(req.query.path)'));
+  });
+
+  it('omits spanHash when the engine reports no snippet (line fallback)', () => {
+    // Snyk REST API / any SARIF without region.snippet → no anchor →
+    // line-based identity, exactly like a native source with no span.
+    const raw = sarifWith([{ ruleId: 'r', locations: [loc('a.ts', 1)] }], [{ id: 'r' }]);
+    expect(parseSarif(raw)[0].spanHash).toBeUndefined();
   });
 
   it('maps security-severity bands to four tiers', () => {

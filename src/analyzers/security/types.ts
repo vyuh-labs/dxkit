@@ -35,6 +35,28 @@ export interface SecurityFinding {
    *  WHY the finding is suppressed, not just that it is. Present only
    *  when `allowlisted` is true. */
   allowlistCategory?: AllowlistCategory;
+  /**
+   * Content-anchored identity material (D-G5). Carried from the gather
+   * boundary through the aggregator so the finding's durable identity
+   * can be anchored to WHAT it is, not WHERE it sits (the line). These
+   * are additive plumbing: until the D-G5 migration flip (step 4) the
+   * identity layer still hashes the line; afterward it hashes the
+   * content anchor and `line` becomes display metadata only.
+   *
+   *   - `contentAnchor` — the fully-resolved anchor when known at gather:
+   *     for secrets it's the salted HMAC of the value; for config it's
+   *     `''`. For CODE findings it's NOT set at gather (it needs `scope`
+   *     + ordinal); the aggregator stamps it.
+   *   - `spanHash` — the 16-char hash of a code finding's normalized
+   *     matched span (semgrep gather). Combined with `scope` + ordinal by
+   *     the aggregator to build the code `contentAnchor`.
+   *   - `scope` — the enclosing symbol (function/class) for a code
+   *     finding, attached by the step-3 graph pre-pass; `''`/absent →
+   *     file-level fallback.
+   */
+  contentAnchor?: string;
+  spanHash?: string;
+  scope?: string;
 }
 
 export interface DepVulnSummary {

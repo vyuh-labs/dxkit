@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { resolveSalt } from '../../src/baseline/salt';
+import { resolveSalt } from '../../src/analyzers/tools/salt';
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dxkit-salt-'));

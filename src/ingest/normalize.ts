@@ -32,5 +32,9 @@ export function externalToSecurityFindings(
     file: f.file,
     line: f.line,
     tool: f.engine,
+    // D-G5: carry the engine's matched-span hash so ingested code
+    // findings get the same content-anchored identity as native ones.
+    // The aggregator builds the full anchor (scope + ordinal) at step 4.
+    ...(f.spanHash !== undefined ? { spanHash: f.spanHash } : {}),
   }));
 }

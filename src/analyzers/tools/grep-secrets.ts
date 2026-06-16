@@ -29,6 +29,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { findTool, TOOL_DEFS } from './tool-registry';
+import { computeSecretHmac } from './fingerprint';
+import { tryResolveSalt } from './salt';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import { walkSourceFiles } from './walk-source-files';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
@@ -48,9 +50,9 @@ interface SecretPattern {
  * (`password = ""`). These run on every scan — gitleaks does not.
  */
 const GENERIC_PATTERNS: SecretPattern[] = [
-  { regex: /password\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-password' },
-  { regex: /(?:api[_-]?key|apikey)\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-api-key' },
-  { regex: /(?:secret|token|passwd|pwd)\s*[:=]\s*["'][^"']{3,}/i, rule: 'hardcoded-secret' },
+  { regex: /password\s*[:=]\s*["']([^"']{3,})/i, rule: 'hardcoded-password' },
+  { regex: /(?:api[_-]?key|apikey)\s*[:=]\s*["']([^"']{3,})/i, rule: 'hardcoded-api-key' },
+  { regex: /(?:secret|token|passwd|pwd)\s*[:=]\s*["']([^"']{3,})/i, rule: 'hardcoded-secret' },
 ];
 
 /**
@@ -90,6 +92,11 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   // `test-fixture`, not silently ignored).
   const files = walkSourceFiles(cwd, { includeTests: true, includeAutogen: true });
 
+  // D-G5 content anchor: HMAC the matched secret VALUE (capture group 1
+  // for the keyword-assignment patterns; the whole token for branded
+  // ones) at this boundary and carry only the digest. Fail-open: no salt
+  // (non-git dir) → no anchor → line-based identity fallback.
+  const salt = tryResolveSalt(cwd);
   const raw: SecretFinding[] = [];
   for (const rel of files) {
     let content: string;
@@ -110,8 +117,18 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       for (const sp of patterns) {
-        if (sp.regex.test(lines[i])) {
-          raw.push({ file: rel, line: i + 1, rule: sp.rule, severity: severityFor(sp.rule) });
+        const m = lines[i].match(sp.regex);
+        if (m) {
+          // group 1 = the captured value (generic patterns); fall back to
+          // the whole match (branded token shapes). HMAC it, drop it.
+          const value = m[1] ?? m[0];
+          raw.push({
+            file: rel,
+            line: i + 1,
+            rule: sp.rule,
+            severity: severityFor(sp.rule),
+            ...(salt && value ? { contentAnchor: computeSecretHmac(value, salt) } : {}),
+          });
           break; // at most one finding per line
         }
       }

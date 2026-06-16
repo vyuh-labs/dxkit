@@ -232,7 +232,25 @@ export function spanHash(span: string): string {
  * concatenation.
  */
 export function codeContentAnchor(scope: string, span: string, ordinal: number): string {
-  return `${scope}\0${spanHash(span)}\0${ordinal}`;
+  return codeContentAnchorFromHash(scope, spanHash(span), ordinal);
+}
+
+/**
+ * Build a code content anchor from an ALREADY-HASHED span. The gather
+ * boundary hashes the matched span once (`spanHash`) and carries only
+ * that 16-char digest downstream — never the raw source text — so the
+ * matched code never bloats reports or rides through the dashboard /
+ * JSON surfaces. The aggregator, which knows the enclosing `scope` (D-G5
+ * step 3 pre-pass) and the in-scope `ordinal`, assembles the final
+ * anchor from that carried digest via this helper. Equivalent to
+ * `codeContentAnchor` when fed `spanHash(span)`.
+ */
+export function codeContentAnchorFromHash(
+  scope: string,
+  spanHashHex: string,
+  ordinal: number,
+): string {
+  return `${scope}\0${spanHashHex}\0${ordinal}`;
 }
 
 /**

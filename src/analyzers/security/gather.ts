@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import { run } from '../tools/runner';
 import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from '../tools/deadline';
 import { enrichEpss, extractCveId } from '../tools/epss';
-import { stampFingerprints } from '../tools/fingerprint';
+import { spanHash, stampFingerprints } from '../tools/fingerprint';
 import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
 import { buildReachablePackageSet, markReachable } from '../tools/reachability';
@@ -61,6 +61,9 @@ export async function gatherSecrets(cwd: string): Promise<{
     file: f.file,
     line: f.line,
     tool: result.tool,
+    // D-G5: carry the content anchor (salted HMAC) through to the
+    // aggregator so the secret's identity survives line moves.
+    ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
   }));
   return { findings, toolUsed: result.tool };
 }
@@ -201,6 +204,8 @@ export function gatherTlsBypassFindings(cwd: string): SecurityFinding[] {
         file: relPath,
         line: i + 1,
         tool: 'tls-bypass-registry',
+        // D-G5 content anchor: the matched line is this finding's span.
+        ...(trimmed.length > 0 ? { spanHash: spanHash(trimmed) } : {}),
       });
     }
   }
@@ -236,6 +241,9 @@ export async function gatherCodePatterns(cwd: string): Promise<{
     file: f.file,
     line: f.line,
     tool: result.tool,
+    // D-G5: carry the matched-span hash; the aggregator combines it with
+    // the enclosing-symbol scope + ordinal to build the content anchor.
+    ...(f.spanHash !== undefined ? { spanHash: f.spanHash } : {}),
   }));
   return { findings, toolUsed: result.tool };
 }
@@ -516,6 +524,8 @@ export async function buildSecurityAggregateForHealth(
           title?: string;
           file: string;
           line: number;
+          /** D-G5 content anchor (salted HMAC) when the gather derived one. */
+          contentAnchor?: string;
         }>;
       }
     | undefined,
@@ -529,6 +539,8 @@ export async function buildSecurityAggregateForHealth(
           file: string;
           line: number;
           cwe: string;
+          /** D-G5 matched-span hash when the scanner surfaced the span. */
+          spanHash?: string;
         }>;
       }
     | undefined,
@@ -553,6 +565,7 @@ export async function buildSecurityAggregateForHealth(
         file: f.file,
         line: f.line,
         tool: secrets.tool,
+        ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
       }))
     : [];
 
@@ -566,6 +579,7 @@ export async function buildSecurityAggregateForHealth(
         file: f.file,
         line: f.line,
         tool: codePatterns.tool,
+        ...(f.spanHash !== undefined ? { spanHash: f.spanHash } : {}),
       }))
     : [];
 
