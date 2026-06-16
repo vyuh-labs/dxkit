@@ -42,7 +42,13 @@ import {
   pathForBaseline,
   readBaselineFile,
 } from '../baseline/baseline-file';
-import { canonicalRuleFor, computeCodeFingerprint } from '../analyzers/tools/fingerprint';
+import {
+  canonicalRuleFor,
+  codeContentAnchorFromHash,
+  computeCodeFingerprint,
+  computeContentFingerprint,
+} from '../analyzers/tools/fingerprint';
+import { buildEnclosingScopeMap, locationKey } from '../explore/finding-context';
 import { readAllSnapshots } from '../ingest/snapshot';
 import {
   buildSnykPolicy,
@@ -660,12 +666,48 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
   const seenRulePath = new Set<string>();
   let skippedExpired = 0;
   if (file && file.entries.length > 0) {
+    // Recompute each ingested finding's CONTENT fingerprint exactly as the
+    // security aggregator does (D-G5): the enclosing-symbol scope (graph
+    // pre-pass) + the spanHash carried on the snapshot + an in-bucket
+    // ordinal. Falls back to the line fingerprint when no span was captured
+    // — which is also what the aggregator does, so anchorless findings
+    // still match. (Ordinals are assigned over the ingested set; a native
+    // finding sharing the same (file, scope, spanHash) bucket would need to
+    // be cross-counted, but distinct engines never produce an identical
+    // normalized span hash, so the ingested-only ordinal matches the
+    // aggregator's in practice.)
+    const scopeMap =
+      buildEnclosingScopeMap(
+        cwd,
+        snapshots.map((f) => ({ file: f.file, line: f.line })),
+      ) ?? {};
+    const ordinalOf = new Map<(typeof snapshots)[number], number>();
+    const buckets = new Map<string, typeof snapshots>();
     for (const f of snapshots) {
-      const fingerprint = computeCodeFingerprint(
-        canonicalRuleFor(f.engine, f.rule),
-        f.file,
-        f.line,
-      );
+      if (f.spanHash === undefined) continue;
+      const scope = scopeMap[locationKey(f.file, f.line)] ?? '';
+      const key = `${f.file}\0${scope}\0${f.spanHash}`;
+      const list = buckets.get(key) ?? [];
+      list.push(f);
+      buckets.set(key, list);
+    }
+    for (const list of buckets.values()) {
+      list
+        .slice()
+        .sort((a, b) => a.line - b.line)
+        .forEach((f, i) => ordinalOf.set(f, i));
+    }
+    const fingerprintOf = (f: (typeof snapshots)[number]): string => {
+      const canonical = canonicalRuleFor(f.engine, f.rule);
+      if (f.spanHash !== undefined) {
+        const scope = scopeMap[locationKey(f.file, f.line)] ?? '';
+        const anchor = codeContentAnchorFromHash(scope, f.spanHash, ordinalOf.get(f) ?? 0);
+        return computeContentFingerprint(canonical, f.file, anchor);
+      }
+      return computeCodeFingerprint(canonical, f.file, f.line);
+    };
+    for (const f of snapshots) {
+      const fingerprint = fingerprintOf(f);
       const entry = findEntry(file, fingerprint);
       if (!entry) continue;
       if (!isEntryActive(entry)) {
