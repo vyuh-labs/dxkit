@@ -11,7 +11,12 @@ import {
   runAllowlistRemove,
   runAllowlistShow,
 } from '../../src/allowlist/cli';
-import { canonicalRuleFor, computeCodeFingerprint } from '../../src/analyzers/tools/fingerprint';
+import {
+  canonicalRuleFor,
+  codeContentAnchorFromHash,
+  computeCodeFingerprint,
+  computeContentFingerprint,
+} from '../../src/analyzers/tools/fingerprint';
 import { writeSnapshot } from '../../src/ingest/snapshot';
 import {
   ALLOWLIST_SCHEMA_VERSION,
@@ -826,6 +831,42 @@ describe('runAllowlistExport --snyk', () => {
     return computeCodeFingerprint(canonicalRuleFor('snyk-code', rule), file, line);
   }
 
+  // A snyk finding carrying a matched-span hash (real SARIF region.snippet)
+  // gets a CONTENT fingerprint, not a line one. Returns that content fp so
+  // the test can allowlist it and confirm the export resolves it correctly
+  // post-D-G5 (the line-based recompute would have missed it). No graph in
+  // the tmp dir → scope defaults to '' (file-level), ordinal 0.
+  function seedSnykFindingWithSpan(
+    rule: string,
+    file: string,
+    line: number,
+    spanHash: string,
+  ): string {
+    writeSnapshot(tmp, {
+      schemaVersion: 1,
+      engine: 'snyk-code',
+      generatedAt: '2026-06-09T00:00:00.000Z',
+      findings: [
+        {
+          engine: 'snyk-code',
+          severity: 'high',
+          category: 'code',
+          cwe: 'CWE-23',
+          rule,
+          title: 'Path Traversal',
+          file,
+          line,
+          spanHash,
+        },
+      ],
+    });
+    return computeContentFingerprint(
+      canonicalRuleFor('snyk-code', rule),
+      file,
+      codeContentAnchorFromHash('', spanHash, 0),
+    );
+  }
+
   it('fails without --snyk', async () => {
     const exitSpy = mockExit();
     await expect(runAllowlistExport(tmp, {})).rejects.toThrow(/process\.exit\(1\)/);
@@ -850,6 +891,27 @@ describe('runAllowlistExport --snyk', () => {
     expect(snyk).toContain("'src/handler.ts':");
     expect(snyk).toContain('reason: "reviewed: input is internal"');
     expect(snyk).toContain('expires: 2027-01-01T00:00:00.000Z');
+  });
+
+  it('resolves a content-anchored (spanHash) Snyk finding (D-G5)', async () => {
+    // The flip's regression target: an allowlist entry keyed on the CONTENT
+    // fingerprint must still produce a .snyk ignore. A line-based recompute
+    // would no longer match this entry.
+    const fp = seedSnykFindingWithSpan('javascript/PT', 'src/handler.ts', 42, 'abc123abc123abc1');
+    await runAllowlistAdd(tmp, {
+      fingerprint: fp,
+      kind: 'code',
+      category: 'accepted-risk',
+      reason: 'reviewed: input is internal',
+      addedBy: 'a@b.c',
+      expires: '2027-01-01',
+    });
+
+    await runAllowlistExport(tmp, { snyk: true, now: '2026-06-09T00:00:00.000Z' });
+
+    const snyk = fs.readFileSync(path.join(tmp, '.snyk'), 'utf8');
+    expect(snyk).toContain("'javascript/PT':");
+    expect(snyk).toContain("'src/handler.ts':");
   });
 
   it('skips an expired allowlist entry', async () => {

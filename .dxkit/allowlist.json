@@ -3,276 +3,212 @@
   "mode": "full",
   "entries": [
     {
-      "fingerprint": "0a1513e92903389f",
+      "fingerprint": "04f08fdc63a082de",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "a2a8ff21ae00149f",
+      "fingerprint": "06bb3f1fbe9098ae",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "0e1302c94863c9c2",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "112d853e6e1449a5",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "41e8ffccb3cad525",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "4317834ba27861ea",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "4bfa290c9eec17d6",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "530a260807e7a6dc",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "b818f4b95b581b60",
+      "fingerprint": "8afba806b7258162",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "b61496ff61a5b7b6",
+      "fingerprint": "91a10f33c229e2a0",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "9202c9884d0aaeef",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "fec217b609b859e5",
+      "fingerprint": "9d1113858634d80c",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "f923a9770ef09825",
+      "fingerprint": "9d8e3f2f92b0e083",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "ae55b052a3fd45d5",
+      "fingerprint": "9f124fb324222453",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "1e95ed2cb44f2830",
+      "fingerprint": "a352fd85d4d3ea96",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "4e28f45ba3050d14",
+      "fingerprint": "b9aeb3e033e8416a",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "4763fdbc2ad3d9d6",
+      "fingerprint": "c4ba912dbd5c30f1",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "d3362c21af36bf70",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "d9e76aa443c1c824",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "e0ec220ed02d41d2",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "9819a088422f0d65",
+      "fingerprint": "e194776eafd2a7f2",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "e559aaf089c949cc",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "041a6e7d647b11c6",
+      "fingerprint": "f3394afb15b0284a",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "f66c8d6c931c00b9",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "fdfdc080f2ce3975",
       "kind": "secret",
       "category": "false-positive",
       "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     },
     {
-      "fingerprint": "cebca9af2b9fdbeb",
-      "kind": "secret",
-      "category": "false-positive",
-      "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "ff8ec02149eadc66",
-      "kind": "secret",
-      "category": "false-positive",
-      "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "ce0beb7a22ff025d",
-      "kind": "secret",
-      "category": "false-positive",
-      "reason": "secret-detection regex pattern or doc/scaffold example, not a real credential",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "d231c84d310e1b6b",
+      "fingerprint": "fea5fd14ea977574",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "2e57a946dd240b84",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "7efa2648b98e0da3",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "2a58e6f13101108b",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "78bcd9ee0b73ebe9",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "2b2db5107536c040",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "8ed03d1d15009fc1",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "f2f6a9101138fbe2",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "eba80cd16e2d821d",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "5e027f0e89cd8ec9",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "e89c66bb7cceaf40",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "3b69c0a0508e03c0",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "22430f24035a7bf3",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "767945a436d1728b",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "cd2d48baa5ad623e",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "e496b8bcc1d76246",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "def7d10e62b557ee",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "0bfd02d0390b9784",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
-    },
-    {
-      "fingerprint": "62ccacb3812670a1",
-      "kind": "secret",
-      "category": "test-fixture",
-      "reason": "fake credential in a test fixture for the secret-detection suite",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-06-15"
+      "addedAt": "2026-06-16"
     }
   ]
 }
