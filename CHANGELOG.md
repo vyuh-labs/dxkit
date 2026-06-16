@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-06-16
+
+### Code-graph quality, guardrail reliability on JS/TS, and a dogfooding pass
+
+dxkit was run on its own repo and on real public targets, the way a user would.
+That surfaced a cluster of graph-quality and guardrail-identity defects — several
+HIGH — that the unit suite couldn't catch because they only appear on the default
+configuration, end-to-end. This release closes them.
+
+#### Code graph
+
+- **JS/TS method extraction (via `graphifyy` 0.8.40).** Function symbols defined as
+  `this.x = () => {}` (constructor-assigned methods), `exports.x` / `module.exports.x`,
+  prototype methods, class arrow fields, and function expressions are now captured.
+  Previously only top-level declarations, `const` arrows, and class-method shorthand
+  were, so on expression-style JS and CommonJS the bulk of callable symbols — and any
+  call edges to them — were invisible. On a constructor-style DAO, a file goes from 1
+  captured symbol to all of its methods. (Fixed upstream in
+  [safishamsi/graphify#1323](https://github.com/safishamsi/graphify/pull/1323).)
+- **The code graph is restricted to source files.** graphify also parses `.md`
+  (headings → nodes) and `.json` (config + lockfile keys → nodes); on a JS repo that
+  made the graph ~92% non-code (a `package-lock.json` alone outweighed all application
+  code). A source-extension allowlist, sourced from the language registry, keeps the
+  graph to actual code — node counts, communities, hot-files, api-surface, and the
+  context-hook's file summaries all stop being diluted by docs/config.
+
+#### Guardrail + finding identity
+
+- **Dependency-vulnerability identity is now environment-independent.** The
+  fingerprint hashed `(package, installedVersion, id)`; the installed version is only
+  resolvable when the dependency tree is installed (`npm-audit` reads `node_modules`),
+  so a lockfile-only scanner — or any scan in an environment without `node_modules` —
+  omitted it, and the **same advisory forked into two identities by scan environment.**
+  Identity is now `(package, canonicalAdvisoryId)`: the version is display metadata, not
+  identity, and the advisory id is canonicalized across namespaces (GHSA → CVE → raw) so
+  different scanners agree on the same vulnerability.
+  **Migration:** dep-vuln fingerprints change. `ref-based` baselines: nothing to do.
+  `committed-full` baselines: run `vyuh-dxkit baseline create --force` once; the
+  transition run shows dep-vulns as resolved+added (non-blocking) until re-baselined.
+  Fingerprint-allowlisted dep-vulns (rare) need re-adding.
+- **`ref-based` guardrail is reliable on JS/TS repos.** ref-based gathers the prior side
+  from a detached `git worktree` that has no `node_modules` or coverage report, so the
+  build-artifact-dependent kinds (`duplication` via jscpd, `test-gap` via coverage)
+  under-produced on the prior side and the current side's full set read as net-new. They
+  are now excluded from both sides of a ref-based diff (symmetric), with a disclosure in
+  the console + PR-comment output; `committed-full` remains the mode that gates them.
+- **The analysis cache invalidates on `.dxkit/` input changes.** Editing
+  `.dxkit/allowlist.json` had no effect until the commit changed, because the cache
+  key tracked `.dxkit-ignore` but not the allowlist / policy / ingested-snapshot inputs
+  that live under the same `.dxkit/` prefix the dirty-check excludes. The cache key now
+  folds in a content digest of those inputs, so an allowlist edit re-scores immediately.
+
+#### Toolchain
+
+- **vitest 4.** Bumps vitest + `@vitest/coverage-v8` to v4 and clears the critical +
+  high dev-tooling advisories in the vitest → vite → esbuild chain (plus `tmp`). All
+  dev-only — none ship in `dist/`. No published-`engines` change.
+
 ## [2.10.0] - 2026-06-13
 
 ### Honest scoring under changing scanners, passive graph delivery, tool-robustness
