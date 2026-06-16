@@ -27,7 +27,11 @@ import {
   type SecurityAggregateInput,
   type SecurityFinding,
 } from '../src/analyzers/security/aggregator';
-import { canonicalRuleFor, computeCodeFingerprint } from '../src/analyzers/tools/fingerprint';
+import {
+  canonicalRuleFor,
+  codeContentAnchorFromHash,
+  computeCodeFingerprint,
+} from '../src/analyzers/tools/fingerprint';
 import type { DepVulnFinding } from '../src/languages/capabilities/types';
 
 function makeFinding(overrides: Partial<SecurityFinding>): SecurityFinding {
@@ -169,6 +173,86 @@ describe('buildSecurityAggregate — D-G5 content-anchor threading (step 2)', ()
       },
     });
     expect(agg.findingsByCategory.code).toHaveLength(1);
+  });
+});
+
+describe('buildSecurityAggregate — D-G5 content-anchored fingerprint (step 4 flip)', () => {
+  const codeF = (over: Partial<SecurityFinding>): SecurityFinding =>
+    makeFinding({ category: 'code', tool: 'semgrep', rule: 'r', cwe: '', ...over });
+
+  it('code: same (scope, span) at far-apart lines → SAME fingerprint (motion-independent)', () => {
+    const fpAt = (line: number) =>
+      buildSecurityAggregate({
+        ...emptyInput(),
+        codePatterns: {
+          toolUsed: 'semgrep',
+          findings: [codeF({ file: 'a.ts', line, spanHash: 'aaaa000000000000', scope: 'fn' })],
+        },
+      }).findingsByCategory.code[0].fingerprint;
+    // The whole point of D-G5: a finding that moves keeps its identity.
+    expect(fpAt(10)).toBe(fpAt(500));
+  });
+
+  it('secret: same HMAC anchor at far-apart lines → SAME fingerprint', () => {
+    const fpAt = (line: number) =>
+      buildSecurityAggregate({
+        ...emptyInput(),
+        secrets: {
+          toolUsed: 'gitleaks',
+          findings: [
+            makeFinding({
+              category: 'secret',
+              tool: 'gitleaks',
+              rule: 'k',
+              file: 'a.ts',
+              line,
+              contentAnchor: 'deadbeefdeadbeef',
+            }),
+          ],
+        },
+      }).findingsByCategory.secret[0].fingerprint;
+    expect(fpAt(5)).toBe(fpAt(900));
+  });
+
+  it('anchorless code finding falls back to the line-window fingerprint (v1-compatible)', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: { toolUsed: 'semgrep', findings: [codeF({ file: 'a.ts', line: 100 })] },
+    });
+    expect(agg.findingsByCategory.code[0].fingerprint).toBe(
+      computeCodeFingerprint(canonicalRuleFor('semgrep', 'r'), 'a.ts', 100),
+    );
+  });
+
+  it('two identical constructs in one scope get distinct fingerprints via ordinal', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: {
+        toolUsed: 'semgrep',
+        findings: [
+          codeF({ file: 'a.ts', line: 10, spanHash: 'eeee111111111111', scope: 'fn' }),
+          codeF({ file: 'a.ts', line: 50, spanHash: 'eeee111111111111', scope: 'fn' }),
+        ],
+      },
+    });
+    const code = agg.findingsByCategory.code;
+    expect(code).toHaveLength(2);
+    expect(code[0].fingerprint).not.toBe(code[1].fingerprint);
+  });
+
+  it('stamps the final content anchor on the emitted code finding', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: {
+        toolUsed: 'semgrep',
+        findings: [codeF({ file: 'a.ts', line: 10, spanHash: 'abc0abc0abc0abc0', scope: 'login' })],
+      },
+    });
+    // scope + spanHash + ordinal 0, built via the canonical helper (avoids
+    // embedding NUL separators as literals in the test source).
+    expect(agg.findingsByCategory.code[0].contentAnchor).toBe(
+      codeContentAnchorFromHash('login', 'abc0abc0abc0abc0', 0),
+    );
   });
 });
 

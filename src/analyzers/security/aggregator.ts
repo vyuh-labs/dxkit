@@ -57,7 +57,13 @@
 
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { Severity, FindingCategory, SecurityFinding } from './types';
-import { canonicalRuleFor, computeCodeFingerprint, lineWindowFor } from '../tools/fingerprint';
+import {
+  canonicalRuleFor,
+  codeContentAnchorFromHash,
+  computeCodeFingerprint,
+  computeContentFingerprint,
+  lineWindowFor,
+} from '../tools/fingerprint';
 import { annotateFindingsWithAllowlist, allowlistLiftsScore } from '../../allowlist/annotate';
 import type { AllowlistFile } from '../../allowlist/file';
 
@@ -336,23 +342,33 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     title: string;
     tool: string;
     // D-G5 content-anchor material, carried from the representative
-    // finding. Not yet part of the group key or fingerprint (that flip is
-    // step 4); threaded here so the emitted CodeFinding exposes it to the
-    // identity layer. `contentAnchor` is set for secrets (HMAC) at gather;
-    // for code the aggregator builds it from `spanHash` + `scope` + ordinal
-    // at the step-4 flip.
+    // finding. The durable fingerprint anchors to this (not the line
+    // window) when available; the line key below is still used for
+    // intra-run dedup grouping. `contentAnchor` is the secret HMAC (set at
+    // gather); for code the final anchor is built at emit from `spanHash` +
+    // `scope` + `ordinal`.
     contentAnchor?: string;
     spanHash?: string;
     scope?: string;
+    /** In-scope ordinal among code groups sharing the same
+     *  `(file, scope, spanHash)`, assigned in document (line) order after
+     *  grouping. Keeps identical constructs in one scope distinct. */
+    ordinal?: number;
     producedBy: Set<string>;
-    raws: Array<{ tool: string; rule: string; line: number; severity: Severity }>;
-    /** Natural fingerprints of findings that merged into this group but
-     *  whose own fingerprint differs from the representative — i.e. the
-     *  cross-tool / neighbor-bucket / CWE-bridge merges. A suppression
-     *  keyed on any of these (e.g. allowlisted from a run where a
-     *  different tool was the representative) still matches the merged
-     *  finding, so dedup nondeterminism between runs can't orphan it. */
-    absorbedFingerprints: Set<string>;
+    /** Each raw finding that merged into this group, carrying its own
+     *  anchor material so the emit pass can compute the content
+     *  fingerprint it WOULD have had as representative — recorded as an
+     *  `absorbedFingerprint` so a suppression keyed on it still matches
+     *  the merged finding (robust against cross-tool dedup nondeterminism
+     *  between runs). */
+    raws: Array<{
+      tool: string;
+      rule: string;
+      line: number;
+      severity: Severity;
+      spanHash?: string;
+      contentAnchor?: string;
+    }>;
   };
   const groups = new Map<string, Group>();
 
@@ -418,14 +434,9 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         rule: f.rule,
         line: f.line,
         severity: f.severity,
+        spanHash: f.spanHash,
+        contentAnchor: f.contentAnchor,
       });
-      // Record the merged finding's own fingerprint when it differs
-      // from the representative — that's the identity a suppression
-      // might have been keyed on in a run where the merge landed the
-      // other way around.
-      if (naturalFingerprint !== existing.fingerprint) {
-        existing.absorbedFingerprints.add(naturalFingerprint);
-      }
       // Prefer the lower line number as the canonical line — semgrep
       // typically reports the declaration (earlier line) while
       // registry-grep reports the assignment; the declaration is the
@@ -463,15 +474,66 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
             rule: f.rule,
             line: f.line,
             severity: f.severity,
+            spanHash: f.spanHash,
+            contentAnchor: f.contentAnchor,
           },
         ],
-        absorbedFingerprints: new Set(),
       });
     }
     // Index this finding's CWE + location → its group, so a later
     // finding from another tool sharing the CWE can collapse into it.
     if (f.cwe) byCweLoc.set(cweLocKey(f.cwe, f.file, f.line), fingerprint);
   }
+
+  // ─── D-G5 ordinal assignment ────────────────────────────────────────
+  // Code groups sharing the same (file, scope, spanHash) get a stable
+  // in-document-order ordinal so identical constructs in one scope stay
+  // distinct (three `eval(userInput)` in one function stay three
+  // findings). Only code groups that captured a span participate; secrets
+  // (HMAC), config (file-stable line 0), and anchorless findings need no
+  // ordinal. Deterministic regardless of Map iteration order: sorted by
+  // line, then by the line-based group key as tiebreak.
+  const ordinalBuckets = new Map<string, Group[]>();
+  for (const g of groups.values()) {
+    if (g.category === 'code' && g.spanHash !== undefined) {
+      const key = `${g.file}\0${g.scope ?? ''}\0${g.spanHash}`;
+      const list = ordinalBuckets.get(key) ?? [];
+      list.push(g);
+      ordinalBuckets.set(key, list);
+    }
+  }
+  for (const list of ordinalBuckets.values()) {
+    list.sort(
+      (a, b) =>
+        a.line - b.line ||
+        (a.fingerprint < b.fingerprint ? -1 : a.fingerprint > b.fingerprint ? 1 : 0),
+    );
+    list.forEach((g, i) => {
+      g.ordinal = i;
+    });
+  }
+
+  // The durable content anchor for a group (scheme v2), or undefined when
+  // none is resolvable → line-window fallback. Secrets: the salted HMAC.
+  // Code: (scope, spanHash, ordinal) when a span was captured. Config +
+  // anchorless: undefined (config's line-0 identity is already
+  // (canonicalRule, file)-stable, so it stays on the line path unchanged).
+  const anchorFor = (g: Group): string | undefined => {
+    if (g.category === 'secret') return g.contentAnchor;
+    if (g.category === 'code' && g.spanHash !== undefined) {
+      return codeContentAnchorFromHash(g.scope ?? '', g.spanHash, g.ordinal ?? 0);
+    }
+    return undefined;
+  };
+  const fingerprintFor = (
+    canonicalRule: string,
+    file: string,
+    line: number,
+    anchor: string | undefined,
+  ): string =>
+    anchor !== undefined
+      ? computeContentFingerprint(canonicalRule, file, anchor)
+      : computeCodeFingerprint(canonicalRule, file, line);
 
   const codeFindingsByCategory: Record<'secret' | 'code' | 'config', CodeFinding[]> = {
     secret: [],
@@ -483,6 +545,24 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
   const dedupCollisions: DedupCollision[] = [];
 
   for (const g of groups.values()) {
+    const anchor = anchorFor(g);
+    const fingerprint = fingerprintFor(g.canonicalRule, g.file, g.line, anchor);
+
+    // Absorbed fingerprints: the content fingerprint each merged raw WOULD
+    // have had as representative (its own span/HMAC, the group's scope +
+    // ordinal). Lets a suppression keyed on a contributing finding's
+    // identity still match after the representative flips between runs.
+    const absorbed = new Set<string>();
+    for (const raw of g.raws) {
+      const rawCanonical = canonicalRuleFor(raw.tool, raw.rule);
+      let rawAnchor: string | undefined;
+      if (g.category === 'secret') rawAnchor = raw.contentAnchor;
+      else if (g.category === 'code' && raw.spanHash !== undefined)
+        rawAnchor = codeContentAnchorFromHash(g.scope ?? '', raw.spanHash, g.ordinal ?? 0);
+      const rawFp = fingerprintFor(rawCanonical, g.file, raw.line, rawAnchor);
+      if (rawFp !== fingerprint) absorbed.add(rawFp);
+    }
+
     const finding: CodeFinding = {
       severity: g.severity,
       category: g.category,
@@ -492,18 +572,15 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       file: g.file,
       line: g.line,
       tool: g.tool,
-      fingerprint: g.fingerprint,
+      fingerprint,
       canonicalRule: g.canonicalRule,
       producedBy: [...g.producedBy].sort(),
-      // D-G5: expose the carried content-anchor material on the finding so
-      // the identity layer (step 4) and producers can consume it. Omitted
-      // when absent so the emitted shape stays minimal pre-flip.
-      ...(g.contentAnchor !== undefined ? { contentAnchor: g.contentAnchor } : {}),
+      // D-G5: stamp the FINAL content anchor (the producer reads it back to
+      // recompute the same identity). Omitted when absent (→ line fallback).
+      ...(anchor !== undefined ? { contentAnchor: anchor } : {}),
       ...(g.spanHash !== undefined ? { spanHash: g.spanHash } : {}),
       ...(g.scope !== undefined ? { scope: g.scope } : {}),
-      ...(g.absorbedFingerprints.size > 0
-        ? { absorbedFingerprints: [...g.absorbedFingerprints].sort() }
-        : {}),
+      ...(absorbed.size > 0 ? { absorbedFingerprints: [...absorbed].sort() } : {}),
     };
 
     if (g.category === 'secret') {

@@ -15,6 +15,7 @@ import { createHash } from 'crypto';
 import {
   canonicalRuleFor,
   computeCodeFingerprint,
+  computeContentFingerprint,
   computeFingerprint,
   lineWindowFor,
 } from '../analyzers/tools/fingerprint';
@@ -37,8 +38,8 @@ import type {
 
 /**
  * Compute the durable identity for a finding. `version` defaults to
- * `'v1'` — explicit so future scheme migrations can co-exist without
- * silent identity drift.
+ * `'v2'` (the D-G5 content-anchored scheme) — explicit so future scheme
+ * migrations can co-exist without silent identity drift.
  *
  * Identity is the SAME 16-char hex string format across all kinds, so
  * a baseline can store identities in a single flat set without
@@ -49,9 +50,9 @@ import type {
  */
 export function identityFor(
   input: IdentityInput,
-  version: IdentitySchemeVersion = 'v1',
+  version: IdentitySchemeVersion = 'v2',
 ): FindingId {
-  if (version !== 'v1') {
+  if (version !== 'v2') {
     throw new Error(`Unsupported identity-scheme version: ${version}`);
   }
   switch (input.kind) {
@@ -59,6 +60,17 @@ export function identityFor(
     case 'code':
     case 'config': {
       const canonicalRule = canonicalRuleFor(input.tool, input.rule);
+      // D-G5 (scheme v2): identity anchors to CONTENT, not line, when a
+      // content anchor is available — the salted HMAC for secrets, the
+      // (scope, spanHash, ordinal) anchor for code, `''` for config. A
+      // finding that moves lines keeps its identity; it re-mints only when
+      // the matched content (or, for code, its enclosing symbol) changes.
+      // Falls back to the legacy line-window hash ONLY when no anchor was
+      // resolvable (no salt / no matched span surfaced) — that keeps
+      // identity defined for every finding, just less motion-stable.
+      if (input.contentAnchor !== undefined) {
+        return computeContentFingerprint(canonicalRule, input.file, input.contentAnchor);
+      }
       return computeCodeFingerprint(canonicalRule, input.file, input.line);
     }
     case 'dep-vuln':
