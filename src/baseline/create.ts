@@ -50,6 +50,7 @@ import { resolveSalt } from '../analyzers/tools/salt';
 import type { SaltMode } from '../analyzers/tools/salt';
 import { sanitizeFile } from './sanitize';
 import type { RichBaselineEntry } from './types';
+import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
 
@@ -470,6 +471,7 @@ export async function createBaseline(
     analysis: scan.analysisMeta,
     tools: scan.tools,
     saltMode: scan.saltMode,
+    identityScheme: CURRENT_IDENTITY_SCHEME,
     coverage: scan.coverage,
     findings: scan.findings,
   };
