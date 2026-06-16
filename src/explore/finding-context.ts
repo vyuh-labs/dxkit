@@ -98,8 +98,8 @@ export function buildFindingContextMap(
 }
 
 /**
- * Build a `locationKey → enclosing-symbol` map for the D-G5 content
- * anchor (the scope pre-pass). Loads the graph once (Rule 12: graph
+ * Build a `locationKey → enclosing-symbol` map for the content-anchored
+ * code identity (the scope pre-pass). Loads the graph once (Rule 12: graph
  * access stays in `src/explore/`), resolves each location's enclosing
  * symbol via the canonical `enclosingSymbolFor` query, and returns only
  * the locations that resolved to a symbol. The security orchestration

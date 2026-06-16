@@ -31,7 +31,7 @@ interface SarifRule {
     'problem.severity'?: string;
     tags?: string[];
     /** Snyk Code SARIF puts CWE(s) in a dedicated array here
-     *  (e.g. `["CWE-94"]`), not in `tags` like CodeQL does. */
+     * (e.g. `["CWE-94"]`), not in `tags` like CodeQL does. */
     cwe?: string[];
   };
   shortDescription?: { text?: string };
@@ -47,16 +47,16 @@ interface SarifResult {
       artifactLocation?: { uri?: string };
       // `snippet.text` is SARIF's matched-source span — the cross-engine
       // analog of semgrep's `extra.lines`. Used to derive the
-      // content-anchored `spanHash` (D-G5) so an ingested finding's
+      // content-anchored `spanHash` so an ingested finding's
       // identity tracks the matched construct, not its line.
       region?: { startLine?: number; snippet?: { text?: string } };
     };
   }>;
   /** SARIF 2.1.0 suppression state. A result an engine has dismissed —
-   *  Snyk Code via the Snyk UI / API, CodeQL via a dismissed alert,
-   *  Semgrep Pro via a triage action — carries one or more suppression
-   *  entries. `status` defaults to `accepted` when absent (per spec);
-   *  `underReview` / `rejected` mean the dismissal is not in effect. */
+   * Snyk Code via the Snyk UI / API, CodeQL via a dismissed alert,
+   * Semgrep Pro via a triage action — carries one or more suppression
+   * entries. `status` defaults to `accepted` when absent (per spec);
+   * `underReview` / `rejected` mean the dismissal is not in effect. */
   suppressions?: Array<{ kind?: string; status?: string; justification?: string }>;
 }
 
@@ -73,8 +73,8 @@ interface SarifLog {
 }
 
 /** Map a SARIF tool driver name to a known engine, when the caller
- *  didn't pass one explicitly. Unknown drivers fall back to the generic
- *  `sarif` engine so attribution is still honest. */
+ * didn't pass one explicitly. Unknown drivers fall back to the generic
+ * `sarif` engine so attribution is still honest. */
 function engineFromDriver(name: string | undefined): SourceEngine {
   const n = (name || '').toLowerCase();
   if (n.includes('codeql')) return 'codeql';
@@ -84,7 +84,7 @@ function engineFromDriver(name: string | undefined): SourceEngine {
 }
 
 /** Normalize any CWE-ish string to canonical `CWE-<n>` (leading zeros
- *  stripped), or '' when none present. */
+ * stripped), or '' when none present. */
 function normalizeCwe(s: string | undefined): string {
   if (!s) return '';
   const m = /cwe[-/_]?(\d+)/i.exec(s);
@@ -92,8 +92,8 @@ function normalizeCwe(s: string | undefined): string {
 }
 
 /** Resolve the CWE for a rule across engine conventions:
- *  Snyk Code uses `properties.cwe: ["CWE-94"]`; CodeQL uses
- *  `properties.tags: ["external/cwe/cwe-094"]`. Checks both. */
+ * Snyk Code uses `properties.cwe: ["CWE-94"]`; CodeQL uses
+ * `properties.tags: ["external/cwe/cwe-094"]`. Checks both. */
 function cweFromRule(rule: SarifRule | undefined): string {
   const direct = rule?.properties?.cwe;
   if (Array.isArray(direct)) {
@@ -128,8 +128,8 @@ function isResultSuppressed(res: SarifResult): boolean {
 }
 
 /** Resolve four-tier severity. Prefer numeric `security-severity`
- *  (CVSS-like 0–10); else the rule's `problem.severity`; else the
- *  result `level`. */
+ * (CVSS-like 0–10); else the rule's `problem.severity`; else the
+ * result `level`. */
 function resolveSeverity(rule: SarifRule | undefined, level: string | undefined): Severity {
   const num = rule?.properties?.['security-severity'];
   if (num !== undefined && num !== null && num !== '') {
@@ -200,7 +200,7 @@ export function parseSarif(raw: string, engine?: SourceEngine): ExternalFinding[
       // fixed — skip rather than emit a phantom at line 0.
       if (!file || !line) continue;
 
-      // D-G5 content anchor: hash the matched snippet here at the ingest
+      // Content anchor: hash the matched snippet here at the ingest
       // boundary, so an ingested finding earns the same line-independent
       // identity as a native one (Rule 13). Absent snippet → no anchor →
       // line fallback, exactly like a native source with no span.

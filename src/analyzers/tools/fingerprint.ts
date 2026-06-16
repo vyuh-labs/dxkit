@@ -6,27 +6,27 @@
  *
  * Two fingerprint families live here:
  *
- *   1. Dependency-advisory fingerprints — stable hash of
- *      `(package, canonicalAdvisoryId)`. Used by `gatherDepVulns` +
- *      BoM. Excludes severity / cvssScore / enrichment fields
- *      (epssScore, kev, reachable, riskScore), producer `tool`, and
- *      `upgradeAdvice` / `upgradePlan` so re-scoring the same advisory
- *      against the same install never mints a new identity. Crucially
- *      it also excludes `installedVersion`: that value is only known
- *      when the dependency tree is installed (npm-audit reads
- *      node_modules), so a lockfile-only scanner (osv-scanner, or any
- *      gather in a bare git worktree) omits it — and including it forked
- *      the SAME advisory into two identities depending on the scan
- *      environment. The version is display metadata, not identity:
- *      bumping to a still-vulnerable version is the same finding, and
- *      bumping to a fixed version makes the finding disappear on its own.
+ * 1. Dependency-advisory fingerprints — stable hash of
+ * `(package, canonicalAdvisoryId)`. Used by `gatherDepVulns` +
+ * BoM. Excludes severity / cvssScore / enrichment fields
+ * (epssScore, kev, reachable, riskScore), producer `tool`, and
+ * `upgradeAdvice` / `upgradePlan` so re-scoring the same advisory
+ * against the same install never mints a new identity. Crucially
+ * it also excludes `installedVersion`: that value is only known
+ * when the dependency tree is installed (npm-audit reads
+ * node_modules), so a lockfile-only scanner (osv-scanner, or any
+ * gather in a bare git worktree) omits it — and including it forked
+ * the SAME advisory into two identities depending on the scan
+ * environment. The version is display metadata, not identity:
+ * bumping to a still-vulnerable version is the same finding, and
+ * bumping to a fixed version makes the finding disappear on its own.
  *
- *   2. Code/secret/config-finding fingerprints — stable hash of
- *      `(canonicalRule, file, lineWindow)`. The canonical-rule map
- *      collapses cross-tool overlaps (e.g. semgrep + a per-language
- *      grep-based pattern both reporting the same TLS-bypass
- *      construct). The line-window absorbs the small offset between
- *      tools that report the declaration vs. the assignment.
+ * 2. Code/secret/config-finding fingerprints — stable hash of
+ * `(canonicalRule, file, lineWindow)`. The canonical-rule map
+ * collapses cross-tool overlaps (e.g. semgrep + a per-language
+ * grep-based pattern both reporting the same TLS-bypass
+ * construct). The line-window absorbs the small offset between
+ * tools that report the declaration vs. the assignment.
  *
  * Both families share format: 16-char lowercase hex (first 8 bytes of
  * SHA-1). Short enough to embed inline in reports, long enough to make
@@ -187,25 +187,25 @@ export function computeCodeFingerprint(canonicalRule: string, file: string, line
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
-// ─── Content-anchored finding identity (D-G5, scheme v2) ─────────────────────
+// ─── Content-anchored finding identity (scheme v2) ─────────────────────
 // The line-based fingerprint above re-mints identity whenever a finding
 // shifts more than CODE_FINGERPRINT_LINE_WINDOW lines, which strands
 // allowlist entries + churns baselines on unrelated edits. The
 // content-anchored scheme replaces the line component with an anchor
 // derived from WHAT the finding is, not WHERE it sits:
 //
-//   secret → the salted HMAC of the value (computeSecretHmac) — already
-//            location-independent; identical values collapse (accepted).
-//   code   → codeContentAnchor(scope, span, ordinal): the normalized
-//            matched span, scoped to its enclosing symbol when the graph
-//            resolves one (else file-level), with an ordinal to keep
-//            identical constructs in one scope distinct.
-//   config → '' — identity is just (canonicalRule, file); inherently
-//            line-independent (a file is tracked / on disk or it isn't).
+// secret → the salted HMAC of the value (computeSecretHmac) — already
+// location-independent; identical values collapse (accepted).
+// code → codeContentAnchor(scope, span, ordinal): the normalized
+// matched span, scoped to its enclosing symbol when the graph
+// resolves one (else file-level), with an ordinal to keep
+// identical constructs in one scope distinct.
+// config → '' — identity is just (canonicalRule, file); inherently
+// line-independent (a file is tracked / on disk or it isn't).
 //
-// `line` becomes display metadata only. These primitives are additive;
-// the dispatch + aggregator flip to them at the migration boundary
-// (D-G5 step 4). See tmp/benchmark/DG5-content-anchored-identity-spec.md.
+// `line` becomes display metadata only. The dispatch (`identityFor`) and
+// the security aggregator prefer this anchor when one is available and
+// fall back to the line-window hash otherwise.
 
 /**
  * Normalize a matched code span so cosmetic reformatting (reindentation,
@@ -240,9 +240,9 @@ export function codeContentAnchor(scope: string, span: string, ordinal: number):
  * boundary hashes the matched span once (`spanHash`) and carries only
  * that 16-char digest downstream — never the raw source text — so the
  * matched code never bloats reports or rides through the dashboard /
- * JSON surfaces. The aggregator, which knows the enclosing `scope` (D-G5
- * step 3 pre-pass) and the in-scope `ordinal`, assembles the final
- * anchor from that carried digest via this helper. Equivalent to
+ * JSON surfaces. The aggregator, which knows the enclosing `scope` (from
+ * the graph scope pre-pass) and the in-scope `ordinal`, assembles the
+ * final anchor from that carried digest via this helper. Equivalent to
  * `codeContentAnchor` when fed `spanHash(span)`.
  */
 export function codeContentAnchorFromHash(

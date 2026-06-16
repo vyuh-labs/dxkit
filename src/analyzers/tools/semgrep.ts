@@ -33,11 +33,11 @@ interface SemgrepRawFinding {
     message: string;
     severity: string;
     /** The matched source span. Semgrep's JSON reporter populates
-     *  `extra.lines` with the exact text of the matched region. Used to
-     *  derive the content-anchored `spanHash` (D-G5) so a finding's
-     *  identity tracks the matched construct, not its line number. May be
-     *  absent / `requires login` on some rule sources; the gather treats
-     *  a missing span as "no anchor" and falls back to line identity. */
+     * `extra.lines` with the exact text of the matched region. Used to
+     * derive the content-anchored `spanHash` so a finding's
+     * identity tracks the matched construct, not its line number. May be
+     * absent / `requires login` on some rule sources; the gather treats
+     * a missing span as "no anchor" and falls back to line identity. */
     lines?: string;
     metadata?: {
       // semgrep rules emit `cwe` as either string OR string[] depending
@@ -119,13 +119,13 @@ function collectRulesets(cwd: string): string[] {
  *
  * Failure-mode honesty: when semgrep doesn't produce a parseable
  * report, the returned `reason` distinguishes between:
- *   - timeout (we hit our wall-clock budget — the customer probably
- *     wants to install nothing and instead either prune the scan
- *     scope via `.dxkit-ignore` or bump the timeout)
- *   - non-zero exit with a captured stderr first line (semgrep
- *     itself complained — surface its complaint)
- *   - the historical fallback "no output" (rare now; means stderr
- *     was empty AND exit was zero AND the report file was missing)
+ * - timeout (we hit our wall-clock budget — the customer probably
+ * wants to install nothing and instead either prune the scan
+ * scope via `.dxkit-ignore` or bump the timeout)
+ * - non-zero exit with a captured stderr first line (semgrep
+ * itself complained — surface its complaint)
+ * - the historical fallback "no output" (rare now; means stderr
+ * was empty AND exit was zero AND the report file was missing)
  *
  * Pre-fix every failure collapsed to "no output," masking
  * resource-contention deaths (parallel jscpd + graphify + semgrep
@@ -219,7 +219,7 @@ export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGath
       cwe: extractCwe(r.extra.metadata?.cwe),
       file: toProjectRelative(cwd, r.path),
       line: r.start.line,
-      // D-G5 content anchor: hash the matched span here at the gather
+      // Content anchor: hash the matched span here at the gather
       // boundary and carry only the digest. A missing / placeholder span
       // ("requires login") yields no anchor → line-based fallback.
       ...(typeof r.extra.lines === 'string' && r.extra.lines.trim().length > 0

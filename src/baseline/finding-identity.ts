@@ -38,7 +38,7 @@ import type {
 
 /**
  * Compute the durable identity for a finding. `version` defaults to
- * `'v2'` (the D-G5 content-anchored scheme) — explicit so future scheme
+ * `'v2'` (the content-anchored scheme) — explicit so future scheme
  * migrations can co-exist without silent identity drift.
  *
  * Identity is the SAME 16-char hex string format across all kinds, so
@@ -60,7 +60,7 @@ export function identityFor(
     case 'code':
     case 'config': {
       const canonicalRule = canonicalRuleFor(input.tool, input.rule);
-      // D-G5 (scheme v2): identity anchors to CONTENT, not line, when a
+      // Content-anchored identity (scheme v2): identity anchors to CONTENT, not line, when a
       // content anchor is available — the salted HMAC for secrets, the
       // (scope, spanHash, ordinal) anchor for code, `''` for config. A
       // finding that moves lines keeps its identity; it re-mints only when
@@ -284,10 +284,10 @@ function computeStaleAllowIdentity(file: string, line: number, category: string)
  * incorrectly collapsed those to a single persisted).
  *
  * For each shared identity:
- *   - the first `min(priorCount, currentCount)` occurrences pair as
- *     `persisted` with confidence 1.0 (exact byte equality).
- *   - excess occurrences in `current` produce `added` pairs.
- *   - excess occurrences in `prior` produce `removed` pairs.
+ * - the first `min(priorCount, currentCount)` occurrences pair as
+ * `persisted` with confidence 1.0 (exact byte equality).
+ * - excess occurrences in `current` produce `added` pairs.
+ * - excess occurrences in `prior` produce `removed` pairs.
  *
  * Output ordering: pairs grouped by identity, then by status. The
  * flat-array views (`persisted`, `added`, `removed`) preserve

@@ -22,15 +22,15 @@ import type { Severity, FindingCategory } from '../analyzers/security/types';
  * The engines dxkit can ingest from. Each is a *producer* of
  * `ExternalFinding[]`:
  *
- *   - `snyk-code`   — Snyk Code (SAST), read from the Snyk REST API
- *                     (quota-free; reads stored results) or a SARIF
- *                     export from `snyk code test --sarif`.
- *   - `codeql`      — CodeQL, run on-demand where licensing permits
- *                     (OSS / GitHub Advanced Security), emitting SARIF.
- *   - `semgrep-pro` — Semgrep Pro engine (interprocedural), if a
- *                     customer has it; SARIF.
- *   - `sarif`       — a generic SARIF file from any other tool. The
- *                     producer-of-last-resort; keeps dxkit open.
+ * - `snyk-code` — Snyk Code (SAST), read from the Snyk REST API
+ * (quota-free; reads stored results) or a SARIF
+ * export from `snyk code test --sarif`.
+ * - `codeql` — CodeQL, run on-demand where licensing permits
+ * (OSS / GitHub Advanced Security), emitting SARIF.
+ * - `semgrep-pro` — Semgrep Pro engine (interprocedural), if a
+ * customer has it; SARIF.
+ * - `sarif` — a generic SARIF file from any other tool. The
+ * producer-of-last-resort; keeps dxkit open.
  *
  * The string also becomes the finding's `tool` provenance so reports
  * and the aggregator can attribute each finding to its origin.
@@ -52,13 +52,13 @@ export interface ExternalFinding {
   /** Four-tier severity, already mapped from the engine's vocabulary. */
   severity: Severity;
   /** `code` for SAST taint findings; `secret`/`config` reserved for
-   *  engines that also emit those kinds. Dependency advisories are NOT
-   *  ingested here — dxkit's own dep-vuln gather is at parity. */
+   * engines that also emit those kinds. Dependency advisories are NOT
+   * ingested here — dxkit's own dep-vuln gather is at parity. */
   category: FindingCategory;
   /** CWE identifier (e.g. `CWE-23`), or `''` when the engine gives none. */
   cwe: string;
   /** Engine-native rule id (e.g. `javascript/path-injection`,
-   *  `SNYK-JS-...`). Combined with `engine` to form the canonical rule. */
+   * `SNYK-JS-...`). Combined with `engine` to form the canonical rule. */
   rule: string;
   /** Human-readable one-line title. */
   title: string;
@@ -67,7 +67,7 @@ export interface ExternalFinding {
   /** 1-based line number of the primary location. */
   line: number;
   /**
-   * Content-anchored identity material (D-G5): the 16-char `spanHash` of
+   * Content-anchored identity material: the 16-char `spanHash` of
    * the matched source span, when the engine surfaces one (SARIF's
    * `region.snippet.text`). Identical in meaning + format to the native
    * `CodePatternFinding.spanHash` — ingested findings are first-class

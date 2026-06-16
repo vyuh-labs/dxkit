@@ -3,9 +3,9 @@
  *
  * Sprint 1 ships three primitives consumed by both the explore CLI
  * (Sprint 2) and the dashboard viz adapter (Sprint 3):
- *   - callersOf(graph, nodeId) — predecessors via 'calls' edges
- *   - calleesOf(graph, nodeId) — successors via 'calls' edges
- *   - nodesInFile(graph, sourceFile) — all symbols declared in a file
+ * - callersOf(graph, nodeId) — predecessors via 'calls' edges
+ * - calleesOf(graph, nodeId) — successors via 'calls' edges
+ * - nodesInFile(graph, sourceFile) — all symbols declared in a file
  *
  * Pure tests against a synthetic Graph fixture built inline (no
  * loadGraph, no disk).
@@ -94,9 +94,9 @@ function makeGraph(nodes: GraphNode[], edges: GraphEdge[], communities: Communit
 }
 
 // Six-node, four-call-edge fixture:
-//   src/a.ts: n0 module, n1 function (main)
-//   src/b.ts: n2 module, n3 function (helper)
-//   src/c.ts: n4 module, n5 function (logger)
+// src/a.ts: n0 module, n1 function (main)
+// src/b.ts: n2 module, n3 function (helper)
+// src/c.ts: n4 module, n5 function (logger)
 // Calls: main -> helper, main -> logger, helper -> logger.
 // Plus one imports_from + one method edge to confirm filter behavior.
 const NODES: GraphNode[] = [
@@ -500,8 +500,8 @@ describe('featureQuery', () => {
 describe('findingContextQuery', () => {
   // Fixture: src/svc/auth.ts declares login() @10 and validate() @30.
   // Two other files call into auth.ts:
-  //   src/api/routes.ts (n10 handler) -> login()  [1 call]
-  //   src/api/admin.ts  (n12 adminFn) -> login() + validate()  [2 calls]
+  // src/api/routes.ts (n10 handler) -> login() [1 call]
+  // src/api/admin.ts (n12 adminFn) -> login() + validate() [2 calls]
   // Community 0 (dominantSourceDir 'src/svc/') owns the auth.ts nodes.
   const FC_NODES: GraphNode[] = [
     { id: 'a0', kind: 'module', label: 'src/svc/auth.ts', sourceFile: 'src/svc/auth.ts' },
@@ -594,7 +594,7 @@ describe('findingContextQuery', () => {
     expect(ctx.blastRadius.callerFiles).toBe(2);
   });
 
-  // D-G5: the focused scope query backing content-anchored identity.
+  // The focused scope query backing content-anchored code identity.
   describe('enclosingSymbolFor', () => {
     it('resolves the declaration nearest at-or-above the line (parens stripped)', () => {
       // 12 sits below login()@10, above validate()@30 → login.

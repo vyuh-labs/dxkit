@@ -31,28 +31,28 @@ export interface SecurityFinding {
    */
   allowlisted?: boolean;
   /** The matched allowlist entry's category (`test-fixture`,
-   *  `false-positive`, `accepted-risk`, ...) so renderers can explain
-   *  WHY the finding is suppressed, not just that it is. Present only
-   *  when `allowlisted` is true. */
+   * `false-positive`, `accepted-risk`, ...) so renderers can explain
+   * WHY the finding is suppressed, not just that it is. Present only
+   * when `allowlisted` is true. */
   allowlistCategory?: AllowlistCategory;
   /**
-   * Content-anchored identity material (D-G5). Carried from the gather
+   * Content-anchored identity material. Carried from the gather
    * boundary through the aggregator so the finding's durable identity
    * can be anchored to WHAT it is, not WHERE it sits (the line). These
-   * are additive plumbing: until the D-G5 migration flip (step 4) the
+   * are additive plumbing: until the content-anchored migration the
    * identity layer still hashes the line; afterward it hashes the
    * content anchor and `line` becomes display metadata only.
    *
-   *   - `contentAnchor` — the fully-resolved anchor when known at gather:
-   *     for secrets it's the salted HMAC of the value; for config it's
-   *     `''`. For CODE findings it's NOT set at gather (it needs `scope`
-   *     + ordinal); the aggregator stamps it.
-   *   - `spanHash` — the 16-char hash of a code finding's normalized
-   *     matched span (semgrep gather). Combined with `scope` + ordinal by
-   *     the aggregator to build the code `contentAnchor`.
-   *   - `scope` — the enclosing symbol (function/class) for a code
-   *     finding, attached by the step-3 graph pre-pass; `''`/absent →
-   *     file-level fallback.
+   * - `contentAnchor` — the fully-resolved anchor when known at gather:
+   * for secrets it's the salted HMAC of the value; for config it's
+   * `''`. For CODE findings it's NOT set at gather (it needs `scope`
+   * + ordinal); the aggregator stamps it.
+   * - `spanHash` — the 16-char hash of a code finding's normalized
+   * matched span (semgrep gather). Combined with `scope` + ordinal by
+   * the aggregator to build the code `contentAnchor`.
+   * - `scope` — the enclosing symbol (function/class) for a code
+   * finding, attached by the graph scope pre-pass; `''`/absent →
+   * file-level fallback.
    */
   contentAnchor?: string;
   spanHash?: string;
@@ -67,8 +67,8 @@ export interface DepVulnSummary {
   total: number;
   tool: string | null;
   /** Per-advisory detail concatenated across every active pack. Empty
-   *  when no provider returned findings (counts may still be non-zero
-   *  for legacy pack output that only emits aggregate counts). */
+   * when no provider returned findings (counts may still be non-zero
+   * for legacy pack output that only emits aggregate counts). */
   findings: DepVulnFinding[];
   /**
    * D025b (2.4.7): true if at least one active pack's depVulns gather
@@ -99,8 +99,8 @@ export interface SecurityReport {
   branch: string;
   summary: {
     /** Combined code+secret+config severity counts. Preserved for
-     *  backward-compat with detailed report + dashboard consumers
-     *  that already read this shape. */
+     * backward-compat with detailed report + dashboard consumers
+     * that already read this shape. */
     findings: { critical: number; high: number; medium: number; low: number; total: number };
     /**
      * C2.1 (2.4.7 Phase C2 — perception D086 closure): code-pattern

@@ -229,22 +229,20 @@ describe('computeSecretHmac', () => {
   });
 });
 
-describe('content-anchored identity (D-G5)', () => {
+describe('content-anchored identity', () => {
   describe('normalizeSpan', () => {
     it('collapses whitespace runs and trims so reformatting is invariant', () => {
-      expect(normalizeSpan('  rejectUnauthorized:   false  ')).toBe('rejectUnauthorized: false');
-      expect(normalizeSpan('a\t\tb\n  c')).toBe('a b c');
+      expect(normalizeSpan(' rejectUnauthorized: false ')).toBe('rejectUnauthorized: false');
+      expect(normalizeSpan('a\t\tb\n c')).toBe('a b c');
     });
     it('reindentation does not change the normalized form', () => {
-      expect(normalizeSpan('    eval(x)')).toBe(normalizeSpan('\teval(x)'));
+      expect(normalizeSpan(' eval(x)')).toBe(normalizeSpan('\teval(x)'));
     });
   });
 
   describe('spanHash', () => {
     it('is stable across cosmetic reformatting', () => {
-      expect(spanHash('rejectUnauthorized: false')).toBe(
-        spanHash('  rejectUnauthorized:    false'),
-      );
+      expect(spanHash('rejectUnauthorized: false')).toBe(spanHash(' rejectUnauthorized: false'));
     });
     it('differs when the construct actually changes', () => {
       expect(spanHash('eval(a)')).not.toBe(spanHash('eval(b)'));

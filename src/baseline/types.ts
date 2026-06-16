@@ -9,20 +9,20 @@
  * identity." Each finding has up to several fingerprint axes,
  * differentiated by what they capture:
  *
- *   - **Location fingerprint** — `(canonicalRule, file, lineWindow)`
- *     for code/secret/config/hygiene findings. Locates a finding
- *     in the source tree with ±2 line drift tolerance via bucket
- *     windowing. Stable across small reformat / whitespace edits;
- *     drifts on bigger shifts (closed by git-aware match).
- *   - **Domain fingerprint** — `(package, version, advisoryId)` for
- *     dep-vulns; `(package, version, licenseType)` for licenses;
- *     normalized block hash for jscpd. Captures *what the finding
- *     is about* independent of source position. Drift-immune.
- *   - **Semantic fingerprint** — `(file, symbol)` for coverage gaps
- *     when a symbol is known. Survives any vertical drift within
- *     the symbol body.
- *   - **Content fingerprint** — Sprint 0.x. Normalized snippet
- *     hash; fallback when git history is unreachable.
+ * - **Location fingerprint** — `(canonicalRule, file, lineWindow)`
+ * for code/secret/config/hygiene findings. Locates a finding
+ * in the source tree with ±2 line drift tolerance via bucket
+ * windowing. Stable across small reformat / whitespace edits;
+ * drifts on bigger shifts (closed by git-aware match).
+ * - **Domain fingerprint** — `(package, version, advisoryId)` for
+ * dep-vulns; `(package, version, licenseType)` for licenses;
+ * normalized block hash for jscpd. Captures *what the finding
+ * is about* independent of source position. Drift-immune.
+ * - **Semantic fingerprint** — `(file, symbol)` for coverage gaps
+ * when a symbol is known. Survives any vertical drift within
+ * the symbol body.
+ * - **Content fingerprint** — Sprint 0.x. Normalized snippet
+ * hash; fallback when git history is unreachable.
  *
  * The hash format is identical across axes — 16-char lowercase hex
  * (SHA-1[0:16]). Callers don't need to know which axis a hash came
@@ -34,18 +34,18 @@
  * findings. Each `IdentityInput` discriminant maps 1:1 to an existing
  * gather pipeline:
  *
- *   - `secret` / `code` / `config` — security analyzer's
- *     `SecurityFinding` (gitleaks, semgrep, TLS-bypass registry,
- *     private-key files, env-in-git).
- *   - `dep-vuln` — security analyzer's `DepVulnFinding` (osv-scanner,
- *     npm-audit, pip-audit, cargo-audit, etc.).
- *   - `duplication` — quality analyzer's `CloneGroup` (jscpd).
- *   - `coverage-gap` — coverage-gap report entries (file + symbol
- *     when available, fallback to file + line range).
- *   - `test-gap` — non-test source files flagged by the test-gaps
- *     analyzer.
- *   - `hygiene` — TODO / FIXME / HACK / console-log / any-type
- *     occurrences (per-occurrence identity).
+ * - `secret` / `code` / `config` — security analyzer's
+ * `SecurityFinding` (gitleaks, semgrep, TLS-bypass registry,
+ * private-key files, env-in-git).
+ * - `dep-vuln` — security analyzer's `DepVulnFinding` (osv-scanner,
+ * npm-audit, pip-audit, cargo-audit, etc.).
+ * - `duplication` — quality analyzer's `CloneGroup` (jscpd).
+ * - `coverage-gap` — coverage-gap report entries (file + symbol
+ * when available, fallback to file + line range).
+ * - `test-gap` — non-test source files flagged by the test-gaps
+ * analyzer.
+ * - `hygiene` — TODO / FIXME / HACK / console-log / any-type
+ * occurrences (per-occurrence identity).
  *
  * License attributions are NOT a baseline finding kind. They live in
  * the per-package BoM artifact (`.dxkit/bom.json`) — the canonical
@@ -71,7 +71,7 @@ export type FindingId = string;
 /**
  * Identity-scheme version. Bumping this is required when the hashing
  * inputs change in a way that invalidates stored baselines. `v2` is the
- * D-G5 content-anchored scheme (secret HMAC / code (scope, spanHash,
+ * content-anchored scheme (secret HMAC / code (scope, spanHash,
  * ordinal) / config `''`), with a line-window fallback when no anchor is
  * resolvable. It superseded the line-only `v1` scheme; the change
  * invalidated existing secret/code/config identities once
@@ -88,9 +88,9 @@ export type IdentitySchemeVersion = 'v2';
  * these before calling `identityFor`.
  *
  * Adding a new finding kind to the dispatch is a three-line change:
- *   1. Add the per-kind interface below.
- *   2. Append the interface name to this union.
- *   3. Add the corresponding case branch in `identityFor`.
+ * 1. Add the per-kind interface below.
+ * 2. Append the interface name to this union.
+ * 3. Add the corresponding case branch in `identityFor`.
  *
  * The hash format is SHA-1[0:16] across every kind — callers store
  * identities in one flat set without tracking provenance.
@@ -112,18 +112,18 @@ export type IdentityInput =
   | StaleAllowIdentityInput;
 
 /**
- * Content anchor for the secret/code/config identity schemes (D-G5).
+ * Content anchor for the secret/code/config identity schemes.
  * Derived from WHAT a finding is, not WHERE it sits, so identity
  * survives the finding moving lines:
- *   - secret → salted HMAC of the value (`computeSecretHmac`).
- *   - code   → `codeContentAnchor(scope, span, ordinal)` — enclosing
- *              symbol + normalized-span hash + in-scope ordinal.
- *   - config → `''` (identity is just `(canonicalRule, file)`; a config
- *              finding is inherently line-independent).
+ * - secret → salted HMAC of the value (`computeSecretHmac`).
+ * - code → `codeContentAnchor(scope, span, ordinal)` — enclosing
+ * symbol + normalized-span hash + in-scope ordinal.
+ * - config → `''` (identity is just `(canonicalRule, file)`; a config
+ * finding is inherently line-independent).
  *
- * Optional during the staged migration: when absent, `identityFor` falls
- * back to the legacy line-window hash. After the step-4 flip the
- * dispatch prefers this anchor and `line` is display metadata only.
+ * Optional: when absent, `identityFor` falls back to the legacy
+ * line-window hash; when present, the dispatch prefers this anchor and
+ * `line` becomes display metadata only.
  */
 export type ContentAnchor = string;
 
@@ -133,16 +133,16 @@ export interface SecretIdentityInput {
   /** Producer tool name as reported by the analyzer (e.g. 'gitleaks'). */
   readonly tool: string;
   /** Producer-specific rule id. The canonical-rule map collapses
-   *  cross-tool overlaps where they exist. */
+   * cross-tool overlaps where they exist. */
   readonly rule: string;
   /** Project-relative file path. */
   readonly file: string;
   /** 1-based line number. Bucketed to absorb small drift between
-   *  tool versions; see `CODE_FINGERPRINT_LINE_WINDOW`. Display metadata
-   *  once `contentAnchor` is present (D-G5). */
+   * tool versions; see `CODE_FINGERPRINT_LINE_WINDOW`. Display metadata
+   * once `contentAnchor` is present. */
   readonly line: number;
-  /** Salted HMAC of the secret value (D-G5 content anchor). Present when
-   *  the gather could derive a salt; absent → line-based fallback. */
+  /** Salted HMAC of the secret value (Content anchor). Present when
+   * the gather could derive a salt; absent → line-based fallback. */
   readonly contentAnchor?: ContentAnchor;
 }
 
@@ -153,8 +153,8 @@ export interface CodeIdentityInput {
   readonly rule: string;
   readonly file: string;
   readonly line: number;
-  /** `codeContentAnchor(scope, span, ordinal)` (D-G5). Present when the
-   *  aggregator could resolve a span/scope; absent → line-based fallback. */
+  /** `codeContentAnchor(scope, span, ordinal)`. Present when the
+   * aggregator could resolve a span/scope; absent → line-based fallback. */
   readonly contentAnchor?: ContentAnchor;
 }
 
@@ -167,7 +167,7 @@ export interface ConfigIdentityInput {
   /** Line 0 acceptable for whole-file findings. */
   readonly line: number;
   /** `''` for config (identity is `(canonicalRule, file)`). Carried for
-   *  uniformity with the other code-side inputs (D-G5). */
+   * uniformity with the other code-side inputs. */
   readonly contentAnchor?: ContentAnchor;
 }
 
@@ -177,15 +177,15 @@ export interface DepVulnIdentityInput {
   /** Package name as reported by the producer. */
   readonly package: string;
   /** Installed version string, when known. Absent for findings produced
-   *  without an accessible lockfile. Display metadata only — NOT part of
-   *  the fingerprint (it's environment-dependent; see
-   *  `computeFingerprint`). */
+   * without an accessible lockfile. Display metadata only — NOT part of
+   * the fingerprint (it's environment-dependent; see
+   * `computeFingerprint`). */
   readonly installedVersion: string | undefined;
   /** Advisory id (GHSA / CVE / RUSTSEC / etc.). Producer-canonical. */
   readonly id: string;
   /** Cross-namespace aliases (CVE / GHSA / OSV / SNYK …) the producer
-   *  surfaced. Used to canonicalize identity so the same advisory found
-   *  by different scanners shares one fingerprint. */
+   * surfaced. Used to canonicalize identity so the same advisory found
+   * by different scanners shares one fingerprint. */
   readonly aliases?: readonly string[];
 }
 
@@ -193,19 +193,19 @@ export interface DepVulnIdentityInput {
 export interface DuplicationIdentityInput {
   readonly kind: 'duplication';
   /** Files on each side of the duplicate pair. Order is normalized
-   *  inside `identityFor` so swapped sides hash identically. */
+   * inside `identityFor` so swapped sides hash identically. */
   readonly fileA: string;
   readonly fileB: string;
   /** Line count of the duplicated block. `lines` is preferred over
-   *  the `tokens` field jscpd also reports because jscpd's JSON
-   *  reporter does not populate `tokens` in practice — it's always
-   *  0, which would degenerate the identity tuple and silently lose
-   *  the "block-size changes → identity changes" property. */
+   * the `tokens` field jscpd also reports because jscpd's JSON
+   * reporter does not populate `tokens` in practice — it's always
+   * 0, which would degenerate the identity tuple and silently lose
+   * the "block-size changes → identity changes" property. */
   readonly lines: number;
   /** Start line of the block on side A. Combined with `startLineB`
-   *  this distinguishes intra-file clones at different positions
-   *  (same `fileA === fileB`, different line ranges) which would
-   *  otherwise collapse to one identity. */
+   * this distinguishes intra-file clones at different positions
+   * (same `fileA === fileB`, different line ranges) which would
+   * otherwise collapse to one identity. */
   readonly startLineA: number;
   /** Start line of the block on side B. */
   readonly startLineB: number;
@@ -221,11 +221,11 @@ export interface CoverageGapIdentityInput {
   readonly kind: 'coverage-gap';
   readonly file: string;
   /** Function / method / class symbol. Present when the gap is
-   *  attributable to a named symbol; absent for line-range-only
-   *  attribution. */
+   * attributable to a named symbol; absent for line-range-only
+   * attribution. */
   readonly symbol?: string;
   /** Inclusive `[startLine, endLine]`. Required when `symbol` is
-   *  absent. */
+   * absent. */
   readonly lineRange?: readonly [number, number];
 }
 
@@ -303,9 +303,9 @@ export interface StaleFileIdentityInput {
   readonly kind: 'stale-file';
   readonly file: string;
   /** Lower-case suffix without the leading dot (`'swp'`, `'bak'`,
-   *  `'orig'`, `'tmp'`). The producer derives this from the file
-   *  extension; storing it in identity makes the reason for the
-   *  flag inspectable from the baseline alone. */
+   * `'orig'`, `'tmp'`). The producer derives this from the file
+   * extension; storing it in identity makes the reason for the
+   * flag inspectable from the baseline alone. */
   readonly suffix: string;
 }
 
@@ -349,8 +349,8 @@ export interface SecretHmacIdentityInput {
   /** Producer tool name (e.g. 'gitleaks'). */
   readonly tool: string;
   /** Producer-specific rule id. The canonical-rule map applies here
-   *  too: two tools detecting the same secret class collapse to one
-   *  canonical rule. */
+   * too: two tools detecting the same secret class collapse to one
+   * canonical rule. */
   readonly rule: string;
   /** 16-char hex from `computeSecretHmac(secret, repoSalt)`. */
   readonly hmac: string;
@@ -377,9 +377,9 @@ export interface StaleAllowIdentityInput {
   readonly file: string;
   readonly line: number;
   /** The category named in the orphaned annotation. Free-form
-   *  string at identity-input level (the canonical
-   *  `AllowlistCategory` union lives in `src/allowlist/categories.ts`
-   *  to avoid a cross-module import here in the baseline types). */
+   * string at identity-input level (the canonical
+   * `AllowlistCategory` union lives in `src/allowlist/categories.ts`
+   * to avoid a cross-module import here in the baseline types). */
   readonly category: string;
 }
 
@@ -399,18 +399,18 @@ export type BaselineEntry =
       file: string;
       line: number;
       /** 16-char hex hash of normalized context around `line` at
-       *  baseline-create time. Stamped via `computeContentHashFromCommit`;
-       *  the matcher's third pass uses it as a fallback when git-aware
-       *  location matching fails (shallow clones, force-pushed base,
-       *  context survives but line shifts past the fuzz window). Absent
-       *  when the producer couldn't read the file. */
+       * baseline-create time. Stamped via `computeContentHashFromCommit`;
+       * the matcher's third pass uses it as a fallback when git-aware
+       * location matching fails (shallow clones, force-pushed base,
+       * context survives but line shifts past the fuzz window). Absent
+       * when the producer couldn't read the file. */
       contentHash?: string;
       /** Fingerprints of cross-tool / neighbor-bucket / CWE-bridge
-       *  findings that the aggregator collapsed into this one. Carried
-       *  so an allowlist entry keyed on a contributing fingerprint still
-       *  suppresses the merged finding — robust matching against dedup
-       *  nondeterminism between runs. Present only when such a merge
-       *  fired. */
+       * findings that the aggregator collapsed into this one. Carried
+       * so an allowlist entry keyed on a contributing fingerprint still
+       * suppresses the merged finding — robust matching against dedup
+       * nondeterminism between runs. Present only when such a merge
+       * fired. */
       absorbedFingerprints?: readonly string[];
     }
   | {
@@ -444,8 +444,8 @@ export type BaselineEntry =
       line: number;
       marker: HygieneMarker;
       /** Same content-hash semantics as the secret/code/config variant
-       *  — populated when the producer can read the file at the
-       *  baseline commit. */
+       * — populated when the producer can read the file at the
+       * baseline commit. */
       contentHash?: string;
     }
   | {
@@ -518,18 +518,18 @@ export interface SanitizedBaselineEntry {
  * the prose and use the codes for filtering / policy decisions.
  *
  * `priorId` and `currentId` are both optional because:
- *   - `added`   → only `currentId` is present.
- *   - `removed` → only `priorId` is present.
- *   - `persisted` / `relocated` → both, and they may differ when a
- *      location fingerprint shifted across the line-window boundary
- *      (each "side" has its own hash even though they describe the
- *      same finding).
+ * - `added` → only `currentId` is present.
+ * - `removed` → only `priorId` is present.
+ * - `persisted` / `relocated` → both, and they may differ when a
+ * location fingerprint shifted across the line-window boundary
+ * (each "side" has its own hash even though they describe the
+ * same finding).
  */
 export type MatchStatus = 'persisted' | 'relocated' | 'added' | 'removed';
 
 export interface MatchReason {
   /** Short code: 'exact-id', 'git-line-exact', 'git-line-fuzz',
-   *  'git-rename', 'multiset-occurrence'. */
+   * 'git-rename', 'multiset-occurrence'. */
   readonly code: string;
   /** Human-readable explanation suitable for end-user rendering. */
   readonly detail: string;
@@ -540,7 +540,7 @@ export interface MatchPair {
   readonly currentId?: FindingId;
   readonly status: MatchStatus;
   /** Confidence in [0, 1]. 1.0 = exact identity; <1.0 = paired via
-   *  a fallback layer (git relocation, line-fuzz, rename). */
+   * a fallback layer (git relocation, line-fuzz, rename). */
   readonly confidence: number;
   readonly reasons: ReadonlyArray<MatchReason>;
 }
@@ -557,26 +557,26 @@ export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low';
  * check can emit. Wider than `MatchStatus` because policy adds context
  * the matcher doesn't have:
  *
- *   - `persisted` / `relocated` / `added` / `removed` — direct
- *     pass-through of the matcher's pair status.
- *   - `fixed` — a `removed` finding that the policy treats as a
- *     positive event (resolution rather than disappearance). Today
- *     this is informational only; Phase 3 distinguishes the two when
- *     `--detailed` flags it.
- *   - `newly_detected` — current-only finding that surfaced because
- *     the scanner / ruleset / advisory DB / policy config changed,
- *     not because a developer introduced new code. Parent category;
- *     `tooling_drift` and `config_drift` are the specific subtypes.
- *   - `tooling_drift` — scanner or advisory-db version differs
- *     between baseline and current. Reclassified `added` is suspect.
- *   - `config_drift` — `.dxkit-ignore` / policy / suppressions hash
- *     differs between runs.
- *   - `probable_existing` — current-only with weak evidence it's
- *     truly new (a prior near-match exists but didn't pair cleanly).
- *     Reserved for the content-hash / semantic fallback layer in
- *     Sprint 0.x.
- *   - `uncertain` — confidence below the per-severity threshold;
- *     the policy can't classify with conviction.
+ * - `persisted` / `relocated` / `added` / `removed` — direct
+ * pass-through of the matcher's pair status.
+ * - `fixed` — a `removed` finding that the policy treats as a
+ * positive event (resolution rather than disappearance). Today
+ * this is informational only; Phase 3 distinguishes the two when
+ * `--detailed` flags it.
+ * - `newly_detected` — current-only finding that surfaced because
+ * the scanner / ruleset / advisory DB / policy config changed,
+ * not because a developer introduced new code. Parent category;
+ * `tooling_drift` and `config_drift` are the specific subtypes.
+ * - `tooling_drift` — scanner or advisory-db version differs
+ * between baseline and current. Reclassified `added` is suspect.
+ * - `config_drift` — `.dxkit-ignore` / policy / suppressions hash
+ * differs between runs.
+ * - `probable_existing` — current-only with weak evidence it's
+ * truly new (a prior near-match exists but didn't pair cleanly).
+ * Reserved for the content-hash / semantic fallback layer in
+ * Sprint 0.x.
+ * - `uncertain` — confidence below the per-severity threshold;
+ * the policy can't classify with conviction.
  *
  * The enum is the contract Phase 3's guardrail CLI reads. Today's
  * classifier emits a subset — the remaining states are reserved for

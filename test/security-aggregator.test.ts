@@ -3,20 +3,20 @@
  *
  * Three classes of regression are pinned here:
  *
- *   - **D086** (Health vs vuln-scan code-finding count drift). Verifies
- *     the aggregate produces ONE `codeBySeverity` number that both
- *     consumers will read; no consumer has a second path to re-count
- *     from.
+ * - **D086** (Health vs vuln-scan code-finding count drift). Verifies
+ * the aggregate produces ONE `codeBySeverity` number that both
+ * consumers will read; no consumer has a second path to re-count
+ * from.
  *
- *   - **D087** (Dep-vuln Subtotal vs "N advisories" same-page drift).
- *     Verifies `dependencyAdvisoryUniqueCount` collapses raw findings
- *     by fingerprint AND that `depBySeverity` is derived from the
- *     unique set (sums to `dependencyAdvisoryUniqueCount`).
+ * - **D087** (Dep-vuln Subtotal vs "N advisories" same-page drift).
+ * Verifies `dependencyAdvisoryUniqueCount` collapses raw findings
+ * by fingerprint AND that `depBySeverity` is derived from the
+ * unique set (sums to `dependencyAdvisoryUniqueCount`).
  *
- *   - **D091** (TLS-bypass cross-tool double-count). Verifies that
- *     two raw findings at the same file/canonical-rule with a small
- *     line drift collapse to one `CodeFinding` with `keptSeverity =
- *     max` and `producedBy` carrying both source tools.
+ * - **D091** (TLS-bypass cross-tool double-count). Verifies that
+ * two raw findings at the same file/canonical-rule with a small
+ * line drift collapse to one `CodeFinding` with `keptSeverity =
+ * max` and `producedBy` carrying both source tools.
  *
  * Plus invariants the contract guarantees and consumer migration
  * later in C1.2–C1.5 will depend on.
@@ -99,12 +99,12 @@ describe('buildSecurityAggregate — empty case', () => {
   });
 });
 
-describe('buildSecurityAggregate — D-G5 content-anchor threading (step 2)', () => {
+describe('buildSecurityAggregate — content-anchor threading', () => {
   // The anchor material is carried from the gather boundary onto the
-  // emitted CodeFinding so the identity layer (step 4) and producers can
+  // emitted CodeFinding so the identity layer and producers can
   // consume it. It is NOT yet part of the group key / fingerprint —
   // grouping still keys on (canonicalRule, file, lineWindow). These tests
-  // pin "carried, not yet used" so the step-4 flip is the only behavior
+  // pin "carried, not yet used" so the content-anchored switch is the only behavior
   // change.
   it('threads a secret contentAnchor (HMAC) onto the emitted finding', () => {
     const agg = buildSecurityAggregate({
@@ -148,7 +148,7 @@ describe('buildSecurityAggregate — D-G5 content-anchor threading (step 2)', ()
 
   it('does not yet alter the group key: same (rule,file,line), different anchors still collapse', () => {
     // Two findings the dedup pipeline collapses by (canonicalRule, file,
-    // lineWindow). Until the step-4 flip, differing anchors must NOT split
+    // lineWindow). Until the content-anchored switch, differing anchors must NOT split
     // them — proves the anchor is carried but inert for grouping.
     const agg = buildSecurityAggregate({
       ...emptyInput(),
@@ -176,7 +176,7 @@ describe('buildSecurityAggregate — D-G5 content-anchor threading (step 2)', ()
   });
 });
 
-describe('buildSecurityAggregate — D-G5 content-anchored fingerprint (step 4 flip)', () => {
+describe('buildSecurityAggregate — content-anchored fingerprint', () => {
   const codeF = (over: Partial<SecurityFinding>): SecurityFinding =>
     makeFinding({ category: 'code', tool: 'semgrep', rule: 'r', cwe: '', ...over });
 
@@ -189,7 +189,7 @@ describe('buildSecurityAggregate — D-G5 content-anchored fingerprint (step 4 f
           findings: [codeF({ file: 'a.ts', line, spanHash: 'aaaa000000000000', scope: 'fn' })],
         },
       }).findingsByCategory.code[0].fingerprint;
-    // The whole point of D-G5: a finding that moves keeps its identity.
+    // The whole point: a finding that moves keeps its identity.
     expect(fpAt(10)).toBe(fpAt(500));
   });
 
@@ -721,10 +721,10 @@ describe('buildSecurityAggregate — D086 health/vuln-scan parity', () => {
     expect(agg.findingsByCategory.code).toHaveLength(4);
 
     // Severity buckets:
-    //   - a.ts: collapsed to HIGH (max)
-    //   - b.ts: MED (semgrep TLS, alone)
-    //   - c.ts: HIGH (eval)
-    //   - d.ts: HIGH (registry TLS, alone)
+    // - a.ts: collapsed to HIGH (max)
+    // - b.ts: MED (semgrep TLS, alone)
+    // - c.ts: HIGH (eval)
+    // - d.ts: HIGH (registry TLS, alone)
     // → 3 HIGH, 1 MED
     expect(agg.codeBySeverity).toEqual({ critical: 0, high: 3, medium: 1, low: 0 });
 

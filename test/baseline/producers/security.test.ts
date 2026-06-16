@@ -123,7 +123,7 @@ describe('securityAggregateToBaselineEntries', () => {
     );
   });
 
-  it('D-G5: passes the content anchor through so the entry id is content-anchored', () => {
+  it('Content-anchored identity: passes the content anchor through so the entry id is content-anchored', () => {
     // The contract that makes the guardrail work post-flip: the baseline
     // entry id MUST equal the identity computed from the finding's content
     // anchor (which equals the fingerprint the aggregator stamped). A
