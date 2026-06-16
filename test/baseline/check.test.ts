@@ -310,3 +310,43 @@ describe('runGuardrailCheck (integration)', () => {
     }, 300_000);
   });
 });
+
+describe('runGuardrailCheck — identity-scheme migration guard', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeRepo();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('freshly created baselines are stamped with the current scheme', async () => {
+    const created = await createBaseline({ cwd: dir });
+    if (!created.path) throw new Error('expected committed-mode baseline');
+    const bl = JSON.parse(readFileSync(created.path, 'utf8'));
+    expect(bl.identityScheme).toBe('v2');
+  });
+
+  it('rejects a committed baseline minted under an older scheme, with an actionable message', async () => {
+    const created = await createBaseline({ cwd: dir });
+    if (!created.path) throw new Error('expected committed-mode baseline');
+    const bl = JSON.parse(readFileSync(created.path, 'utf8'));
+    bl.identityScheme = 'v1'; // simulate a pre-2.11 baseline
+    writeFileSync(created.path, JSON.stringify(bl, null, 2));
+    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(
+      /identity.*scheme|scheme.*changed/i,
+    );
+    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(
+      /vyuh-dxkit update|baseline create --force/,
+    );
+  }, 300_000);
+
+  it('treats a baseline with no identityScheme field as the original scheme and rejects it', async () => {
+    const created = await createBaseline({ cwd: dir });
+    if (!created.path) throw new Error('expected committed-mode baseline');
+    const bl = JSON.parse(readFileSync(created.path, 'utf8'));
+    delete bl.identityScheme; // pre-field baseline
+    writeFileSync(created.path, JSON.stringify(bl, null, 2));
+    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(/scheme/i);
+  }, 300_000);
+});

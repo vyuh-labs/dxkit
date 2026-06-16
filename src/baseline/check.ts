@@ -60,6 +60,7 @@ import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy
 import { gatherFromRef } from './ref-baseline';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
+import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { computeAllowlistDelta, type AllowlistDelta } from '../allowlist/diff';
 import { findEntry, isEntryActive, loadAllowlist } from '../allowlist/file';
@@ -322,6 +323,26 @@ export async function runGuardrailCheck(
   // `BaselineFile`-shaped value so the matcher / classifier
   // downstream stay mode-agnostic.
   const { baseline, baselinePath } = await loadPriorSide(cwd, mode, options);
+
+  // A committed baseline minted under an older identity scheme cannot be
+  // meaningfully diffed against the current one — every finding's id
+  // changed, so the matcher would report all pre-existing findings as
+  // net-new. Stop with an actionable message instead of that confusing
+  // churn. (ref-based re-gathers the prior side with the current dxkit, so
+  // it is always current-scheme and exempt; a baseline written before this
+  // field existed reads as the original 'v1'.)
+  if (mode.mode !== 'ref-based') {
+    const baselineScheme = baseline.identityScheme ?? 'v1';
+    if (baselineScheme !== CURRENT_IDENTITY_SCHEME) {
+      throw new Error(
+        `Baseline "${baseline.name}" was captured under finding-identity scheme ` +
+          `${baselineScheme}, but this dxkit mints ${CURRENT_IDENTITY_SCHEME}. The identity ` +
+          `scheme changed between versions; diffing across schemes would flag every existing ` +
+          `finding as net-new. Run \`vyuh-dxkit update\` to migrate the baseline + allowlist ` +
+          `automatically, or \`vyuh-dxkit baseline create --force\` to re-anchor manually.`,
+      );
+    }
+  }
 
   const current = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
@@ -818,6 +839,7 @@ async function loadPriorSide(
     analysis: refScan.analysisMeta,
     tools: refScan.tools,
     saltMode: refScan.saltMode,
+    identityScheme: CURRENT_IDENTITY_SCHEME,
     findings: refScan.findings,
   };
   return { baseline };

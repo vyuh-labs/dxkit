@@ -23,7 +23,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { BaselineEntry } from './types';
+import type { BaselineEntry, IdentitySchemeVersion } from './types';
 import type { SaltMode } from '../analyzers/tools/salt';
 import type { ScanCoverage } from './coverage';
 
@@ -97,6 +97,13 @@ export interface BaselineFile {
    *  treats a missing record as "no coverage info to diff against"
    *  rather than erroring. */
   readonly coverage?: ScanCoverage;
+  /** Identity scheme the `findings[].id` values were minted under. Lets a
+   *  later dxkit detect that a baseline predates an identity-scheme change
+   *  and migrate it (rather than silently reporting every pre-existing
+   *  finding as net-new because the ids no longer line up). Optional:
+   *  baselines written before this field existed omit it and are treated
+   *  as the original `'v1'` scheme. */
+  readonly identityScheme?: IdentitySchemeVersion;
   /** Per-finding entries. Multiset — duplicates allowed (an
    *  identity appearing twice means two distinct occurrences). */
   readonly findings: ReadonlyArray<BaselineEntry>;

@@ -45,7 +45,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { IdentityKind } from '../baseline/producers';
-import type { FindingSeverity } from '../baseline/types';
+import type { FindingSeverity, IdentitySchemeVersion } from '../baseline/types';
+import { CURRENT_IDENTITY_SCHEME } from '../baseline/types';
 import {
   ALL_CATEGORIES,
   isCategoryValidForKind,
@@ -113,6 +114,12 @@ export interface AllowlistEntry {
 export interface AllowlistFile {
   readonly schemaVersion: AllowlistSchemaVersion;
   readonly mode: AllowlistMode;
+  /** Identity scheme the entry `fingerprint`s were minted under. Lets the
+   *  identity migrator detect that the allowlist predates a scheme change
+   *  and remap its fingerprints onto the current scheme. Optional:
+   *  allowlists written before this field existed omit it and are treated
+   *  as the original `'v1'` scheme. */
+  readonly identityScheme?: IdentitySchemeVersion;
   readonly entries: ReadonlyArray<AllowlistEntry>;
 }
 
@@ -155,7 +162,12 @@ export function pathForAllowlistReasons(cwd: string): string {
  * the `vyuh-dxkit allowlist add` CLI path when no file exists yet.
  */
 export function emptyAllowlistFile(mode: AllowlistMode = 'full'): AllowlistFile {
-  return { schemaVersion: ALLOWLIST_SCHEMA_VERSION, mode, entries: [] };
+  return {
+    schemaVersion: ALLOWLIST_SCHEMA_VERSION,
+    mode,
+    identityScheme: CURRENT_IDENTITY_SCHEME,
+    entries: [],
+  };
 }
 
 /**
