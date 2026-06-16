@@ -3,6 +3,102 @@
   "mode": "full",
   "entries": [
     {
+      "fingerprint": "0c894c403e718a21",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "1b50351cccf7629c",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "1c9f6fd1f3ccf48f",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "1dbc206f2ea9a766",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "317d0be72de416f5",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "5f0d10f319f90c6f",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "75cc9dce6a13e8a5",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "aeeb1b8292a723d4",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "b1a892aab9f2a29d",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "db9446a56548a1b8",
+      "kind": "code",
+      "category": "test-fixture",
+      "reason": "TLS-bypass idiom in a test fixture, not runtime code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "e4a2a7dfdebe21c1",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "e6c4fb98aaa2970f",
+      "kind": "code",
+      "category": "false-positive",
+      "reason": "tls-bypass detector pattern DEFINITION in a language pack, not a real bypass",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
       "fingerprint": "04f08fdc63a082de",
       "kind": "secret",
       "category": "false-positive",
