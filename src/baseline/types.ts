@@ -69,11 +69,18 @@
 export type FindingId = string;
 
 /**
- * Identity-scheme version. Bumping this minor field will be required
- * if the hashing inputs change in a way that would invalidate stored
- * baselines. v1 is the only scheme today.
+ * Identity-scheme version. Bumping this is required when the hashing
+ * inputs change in a way that invalidates stored baselines. `v2` is the
+ * D-G5 content-anchored scheme (secret HMAC / code (scope, spanHash,
+ * ordinal) / config `''`), with a line-window fallback when no anchor is
+ * resolvable. It superseded the line-only `v1` scheme; the change
+ * invalidated existing secret/code/config identities once
+ * (committed-full users re-baseline; ref-based users — including dxkit
+ * itself — need nothing). The field is not persisted or cross-checked
+ * today; it documents the break and reserves room for future co-existing
+ * schemes.
  */
-export type IdentitySchemeVersion = 'v1';
+export type IdentitySchemeVersion = 'v2';
 
 /**
  * Discriminated union of every finding kind that participates in

@@ -123,6 +123,67 @@ describe('securityAggregateToBaselineEntries', () => {
     );
   });
 
+  it('D-G5: passes the content anchor through so the entry id is content-anchored', () => {
+    // The contract that makes the guardrail work post-flip: the baseline
+    // entry id MUST equal the identity computed from the finding's content
+    // anchor (which equals the fingerprint the aggregator stamped). A
+    // mismatch would silently break allowlist + baseline matching.
+    const code = codeFinding({
+      tool: 'semgrep',
+      rule: 'path-traversal',
+      file: 'src/api/files.ts',
+      line: 100,
+      contentAnchor: 'handleUpload a1b2c3d4e5f60718 0',
+    });
+    const secret = {
+      ...codeFinding({
+        category: 'secret',
+        tool: 'gitleaks',
+        rule: 'generic-api-key',
+        file: 'src/config.ts',
+        line: 42,
+        contentAnchor: 'cafebabedeadbeef',
+      }),
+    };
+    const entries = securityAggregateToBaselineEntries(
+      emptyAggregate({
+        findingsByCategory: { secret: [secret], code: [code], config: [], dependency: [] },
+      }),
+    );
+    const byKind = (k: string) => entries.find((e) => e.kind === k)!;
+    expect(byKind('code').id).toBe(
+      identityFor({
+        kind: 'code',
+        tool: code.tool,
+        rule: code.rule,
+        file: code.file,
+        line: code.line,
+        contentAnchor: code.contentAnchor,
+      }),
+    );
+    // And the id is line-independent: same anchor at a different line → same id.
+    expect(byKind('code').id).toBe(
+      identityFor({
+        kind: 'code',
+        tool: code.tool,
+        rule: code.rule,
+        file: code.file,
+        line: 999,
+        contentAnchor: code.contentAnchor,
+      }),
+    );
+    expect(byKind('secret').id).toBe(
+      identityFor({
+        kind: 'secret',
+        tool: secret.tool,
+        rule: secret.rule,
+        file: secret.file,
+        line: secret.line,
+        contentAnchor: secret.contentAnchor,
+      }),
+    );
+  });
+
   it('omits installedVersion on dep-vuln entries when the source lacks it', () => {
     const aggregate = emptyAggregate({
       findingsByCategory: {

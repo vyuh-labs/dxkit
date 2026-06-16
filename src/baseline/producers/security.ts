@@ -84,6 +84,10 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      // D-G5: the aggregator stamped the final content anchor (secret HMAC)
+      // on the finding; pass it so identityFor recomputes the SAME id the
+      // finding carries. Absent → identityFor falls back to the line hash.
+      ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
     };
     const contentHash = stamp(f.file, f.line);
     out.push({
@@ -107,6 +111,9 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      // D-G5: the (scope, spanHash, ordinal) content anchor the aggregator
+      // built; passing it reproduces the finding's content fingerprint.
+      ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
     };
     const contentHash = stamp(f.file, f.line);
     out.push({
@@ -130,6 +137,10 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      // D-G5: config (.env-in-git, whole-file at line 0) stays on the
+      // line-stable path — the aggregator leaves its anchor unset — so this
+      // is normally undefined and identity is unchanged from v1.
+      ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
     };
     // Whole-file findings (`.env in git`) carry line 0; content-hash
     // is meaningless for them and `stamp` returns undefined.
