@@ -269,6 +269,17 @@ export interface SecretFinding {
   severity: keyof SeverityCounts;
   /** Human-readable description from the scanner (e.g. gitleaks' `Description` field). */
   title?: string;
+  /**
+   * Content-anchored identity material (D-G5): the salted HMAC of the
+   * detected secret value, computed at the gather boundary via
+   * `computeSecretHmac(value, salt)`. The raw value is HMAC'd and
+   * dropped immediately — only this 16-char digest flows downstream, so
+   * the secret never enters the aggregate / report / dashboard surfaces.
+   * Used as the secret's `contentAnchor` so its identity survives line
+   * moves. Absent when no salt was derivable (non-git dir) → the
+   * identity layer falls back to the location-based scheme.
+   */
+  contentAnchor?: string;
 }
 
 /**
@@ -295,6 +306,17 @@ export interface CodePatternFinding {
   title: string;
   /** CWE identifier when the scanner supplies one (e.g. `CWE-79`). Empty otherwise. */
   cwe: string;
+  /**
+   * Content-anchored identity material (D-G5): the 16-char `spanHash` of
+   * the normalized matched code span, computed at the gather boundary
+   * (semgrep's `extra.lines`). Only the digest is carried downstream —
+   * never the raw matched text. The aggregator combines it with the
+   * enclosing-symbol `scope` (step 3 pre-pass) and an in-scope ordinal to
+   * form the finding's `contentAnchor`, so identity survives the
+   * construct moving lines. Absent when the scanner didn't surface the
+   * matched span → the identity layer falls back to the location scheme.
+   */
+  spanHash?: string;
 }
 
 /**

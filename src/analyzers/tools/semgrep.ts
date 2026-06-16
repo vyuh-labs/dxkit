@@ -19,6 +19,7 @@ import { detectActiveLanguages } from '../../languages';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { CodePatternFinding, CodePatternsResult } from '../../languages/capabilities/types';
 import { getSemgrepExcludeFlags } from './exclusions';
+import { spanHash } from './fingerprint';
 import { toProjectRelative } from './paths';
 import { runDetached } from './runner';
 import { applySuppressions, loadSuppressions } from './suppressions';
@@ -31,6 +32,13 @@ interface SemgrepRawFinding {
   extra: {
     message: string;
     severity: string;
+    /** The matched source span. Semgrep's JSON reporter populates
+     *  `extra.lines` with the exact text of the matched region. Used to
+     *  derive the content-anchored `spanHash` (D-G5) so a finding's
+     *  identity tracks the matched construct, not its line number. May be
+     *  absent / `requires login` on some rule sources; the gather treats
+     *  a missing span as "no anchor" and falls back to line identity. */
+    lines?: string;
     metadata?: {
       // semgrep rules emit `cwe` as either string OR string[] depending
       // on how the rule's YAML metadata block is written. Both shapes
@@ -211,6 +219,12 @@ export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGath
       cwe: extractCwe(r.extra.metadata?.cwe),
       file: toProjectRelative(cwd, r.path),
       line: r.start.line,
+      // D-G5 content anchor: hash the matched span here at the gather
+      // boundary and carry only the digest. A missing / placeholder span
+      // ("requires login") yields no anchor → line-based fallback.
+      ...(typeof r.extra.lines === 'string' && r.extra.lines.trim().length > 0
+        ? { spanHash: spanHash(r.extra.lines) }
+        : {}),
     }));
 
   // Apply `.dxkit-suppressions.json` so known false positives can be

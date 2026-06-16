@@ -66,4 +66,15 @@ export interface ExternalFinding {
   file: string;
   /** 1-based line number of the primary location. */
   line: number;
+  /**
+   * Content-anchored identity material (D-G5): the 16-char `spanHash` of
+   * the matched source span, when the engine surfaces one (SARIF's
+   * `region.snippet.text`). Identical in meaning + format to the native
+   * `CodePatternFinding.spanHash` — ingested findings are first-class
+   * (Rule 13), so they earn the same line-independent identity as native
+   * findings. Absent when the engine reports only a location with no
+   * snippet (e.g. the Snyk REST API) → line-based fallback, same as any
+   * native source that can't produce a span.
+   */
+  spanHash?: string;
 }

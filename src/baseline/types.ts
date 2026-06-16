@@ -104,6 +104,22 @@ export type IdentityInput =
   | SecretHmacIdentityInput
   | StaleAllowIdentityInput;
 
+/**
+ * Content anchor for the secret/code/config identity schemes (D-G5).
+ * Derived from WHAT a finding is, not WHERE it sits, so identity
+ * survives the finding moving lines:
+ *   - secret → salted HMAC of the value (`computeSecretHmac`).
+ *   - code   → `codeContentAnchor(scope, span, ordinal)` — enclosing
+ *              symbol + normalized-span hash + in-scope ordinal.
+ *   - config → `''` (identity is just `(canonicalRule, file)`; a config
+ *              finding is inherently line-independent).
+ *
+ * Optional during the staged migration: when absent, `identityFor` falls
+ * back to the legacy line-window hash. After the step-4 flip the
+ * dispatch prefers this anchor and `line` is display metadata only.
+ */
+export type ContentAnchor = string;
+
 /** gitleaks + private-key files + similar secret detectors. */
 export interface SecretIdentityInput {
   readonly kind: 'secret';
@@ -115,8 +131,12 @@ export interface SecretIdentityInput {
   /** Project-relative file path. */
   readonly file: string;
   /** 1-based line number. Bucketed to absorb small drift between
-   *  tool versions; see `CODE_FINGERPRINT_LINE_WINDOW`. */
+   *  tool versions; see `CODE_FINGERPRINT_LINE_WINDOW`. Display metadata
+   *  once `contentAnchor` is present (D-G5). */
   readonly line: number;
+  /** Salted HMAC of the secret value (D-G5 content anchor). Present when
+   *  the gather could derive a salt; absent → line-based fallback. */
+  readonly contentAnchor?: ContentAnchor;
 }
 
 /** semgrep + TLS-bypass registry + per-language code-pattern providers. */
@@ -126,6 +146,9 @@ export interface CodeIdentityInput {
   readonly rule: string;
   readonly file: string;
   readonly line: number;
+  /** `codeContentAnchor(scope, span, ordinal)` (D-G5). Present when the
+   *  aggregator could resolve a span/scope; absent → line-based fallback. */
+  readonly contentAnchor?: ContentAnchor;
 }
 
 /** Configuration-class findings (e.g. .env tracked in git). */
@@ -136,6 +159,9 @@ export interface ConfigIdentityInput {
   readonly file: string;
   /** Line 0 acceptable for whole-file findings. */
   readonly line: number;
+  /** `''` for config (identity is `(canonicalRule, file)`). Carried for
+   *  uniformity with the other code-side inputs (D-G5). */
+  readonly contentAnchor?: ContentAnchor;
 }
 
 /** Dependency-advisory findings (osv-scanner / npm-audit / pip-audit / ...). */

@@ -25,6 +25,15 @@
  * matcher can either match the same mode (HMAC compare works) or
  * gracefully degrade to location-only matching when the salt is
  * unrecoverable on the current run.
+ *
+ * Home: the salt is one half of the HMAC key for `computeSecretHmac`
+ * (the canonical secret-identity primitive in `fingerprint.ts`), so it
+ * lives in the identity/tooling layer alongside it. That keeps the
+ * dependency direction natural: `baseline/create.ts` (orchestration)
+ * and the secret gather (`tools/gitleaks.ts`, `tools/grep-secrets.ts`)
+ * both reach DOWN into this layer for it — no analyzer ever depends on
+ * baseline. The content-anchored secret identity (D-G5) needs the salt
+ * at the gather boundary, where the raw value is HMAC'd and dropped.
  */
 
 import { execFileSync } from 'child_process';
@@ -88,4 +97,35 @@ export function resolveSalt(cwd: string): ResolvedSalt {
         'Set DXKIT_BASELINE_SALT or initialize a git repo before running baseline commands.',
     );
   }
+}
+
+/** Per-cwd memo for the fail-open analysis-path resolver. Holds the
+ *  resolved salt or `null` (resolution failed) so a non-git directory
+ *  doesn't re-run `git rev-list` once per secret gather. */
+const saltCache = new Map<string, string | null>();
+
+/**
+ * Fail-open salt resolution for the analysis path (secret gather).
+ *
+ * Unlike `resolveSalt`, this NEVER throws: `baseline create` wants the
+ * hard error when no salt is derivable, but a plain `health` /
+ * `vulnerabilities` run on a non-git directory must still produce
+ * findings — it simply forgoes the content-anchored secret identity and
+ * falls back to the location-based scheme. Returns the salt string, or
+ * `null` when no salt could be derived (caller leaves `contentAnchor`
+ * unset and the identity layer falls back). Memoized per-cwd because the
+ * secret gather runs gitleaks + grep-secrets, and both want the same
+ * salt without a second `git rev-list`.
+ */
+export function tryResolveSalt(cwd: string): string | null {
+  const cached = saltCache.get(cwd);
+  if (cached !== undefined) return cached;
+  let salt: string | null;
+  try {
+    salt = resolveSalt(cwd).salt;
+  } catch {
+    salt = null;
+  }
+  saltCache.set(cwd, salt);
+  return salt;
 }

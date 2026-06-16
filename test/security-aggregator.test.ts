@@ -95,6 +95,83 @@ describe('buildSecurityAggregate — empty case', () => {
   });
 });
 
+describe('buildSecurityAggregate — D-G5 content-anchor threading (step 2)', () => {
+  // The anchor material is carried from the gather boundary onto the
+  // emitted CodeFinding so the identity layer (step 4) and producers can
+  // consume it. It is NOT yet part of the group key / fingerprint —
+  // grouping still keys on (canonicalRule, file, lineWindow). These tests
+  // pin "carried, not yet used" so the step-4 flip is the only behavior
+  // change.
+  it('threads a secret contentAnchor (HMAC) onto the emitted finding', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [
+          makeFinding({
+            category: 'secret',
+            severity: 'critical',
+            file: 'a.ts',
+            contentAnchor: 'deadbeefcafe0000',
+          }),
+        ],
+        toolUsed: 'gitleaks',
+      },
+    });
+    expect(agg.findingsByCategory.secret).toHaveLength(1);
+    expect(agg.findingsByCategory.secret[0].contentAnchor).toBe('deadbeefcafe0000');
+  });
+
+  it('threads a code finding spanHash + scope onto the emitted finding', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: {
+        findings: [
+          makeFinding({
+            category: 'code',
+            severity: 'high',
+            file: 'b.ts',
+            spanHash: 'abc123abc123abc1',
+            scope: 'validateLogin',
+          }),
+        ],
+        toolUsed: 'semgrep',
+      },
+    });
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+    expect(agg.findingsByCategory.code[0].spanHash).toBe('abc123abc123abc1');
+    expect(agg.findingsByCategory.code[0].scope).toBe('validateLogin');
+  });
+
+  it('does not yet alter the group key: same (rule,file,line), different anchors still collapse', () => {
+    // Two findings the dedup pipeline collapses by (canonicalRule, file,
+    // lineWindow). Until the step-4 flip, differing anchors must NOT split
+    // them — proves the anchor is carried but inert for grouping.
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      codePatterns: {
+        findings: [
+          makeFinding({
+            category: 'code',
+            rule: 'r',
+            file: 'c.ts',
+            line: 10,
+            spanHash: 'aaaa000000000000',
+          }),
+          makeFinding({
+            category: 'code',
+            rule: 'r',
+            file: 'c.ts',
+            line: 10,
+            spanHash: 'bbbb111111111111',
+          }),
+        ],
+        toolUsed: 'semgrep',
+      },
+    });
+    expect(agg.findingsByCategory.code).toHaveLength(1);
+  });
+});
+
 describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () => {
   // Build the allowlist entry for a finding using the same canonical
   // fingerprint scheme the aggregator stamps, so the match is exact.

@@ -335,6 +335,15 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     rule: string;
     title: string;
     tool: string;
+    // D-G5 content-anchor material, carried from the representative
+    // finding. Not yet part of the group key or fingerprint (that flip is
+    // step 4); threaded here so the emitted CodeFinding exposes it to the
+    // identity layer. `contentAnchor` is set for secrets (HMAC) at gather;
+    // for code the aggregator builds it from `spanHash` + `scope` + ordinal
+    // at the step-4 flip.
+    contentAnchor?: string;
+    spanHash?: string;
+    scope?: string;
     producedBy: Set<string>;
     raws: Array<{ tool: string; rule: string; line: number; severity: Severity }>;
     /** Natural fingerprints of findings that merged into this group but
@@ -427,6 +436,10 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         existing.rule = f.rule;
         existing.tool = f.tool;
         existing.cwe = f.cwe || existing.cwe;
+        // Keep the anchor material aligned with the chosen representative.
+        existing.contentAnchor = f.contentAnchor;
+        existing.spanHash = f.spanHash;
+        existing.scope = f.scope;
       }
     } else {
       groups.set(fingerprint, {
@@ -440,6 +453,9 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         rule: f.rule,
         title: f.title,
         tool: f.tool,
+        contentAnchor: f.contentAnchor,
+        spanHash: f.spanHash,
+        scope: f.scope,
         producedBy: new Set([f.tool]),
         raws: [
           {
@@ -479,6 +495,12 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       fingerprint: g.fingerprint,
       canonicalRule: g.canonicalRule,
       producedBy: [...g.producedBy].sort(),
+      // D-G5: expose the carried content-anchor material on the finding so
+      // the identity layer (step 4) and producers can consume it. Omitted
+      // when absent so the emitted shape stays minimal pre-flip.
+      ...(g.contentAnchor !== undefined ? { contentAnchor: g.contentAnchor } : {}),
+      ...(g.spanHash !== undefined ? { spanHash: g.spanHash } : {}),
+      ...(g.scope !== undefined ? { scope: g.scope } : {}),
       ...(g.absorbedFingerprints.size > 0
         ? { absorbedFingerprints: [...g.absorbedFingerprints].sort() }
         : {}),

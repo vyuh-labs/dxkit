@@ -24,7 +24,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { BaselineEntry } from './types';
-import type { SaltMode } from './salt';
+import type { SaltMode } from '../analyzers/tools/salt';
 import type { ScanCoverage } from './coverage';
 
 /** Banner stamped on every baseline file. Bump when the on-disk

@@ -21,6 +21,7 @@
  */
 import type { SourceEngine, ExternalFinding } from './types';
 import type { Severity } from '../analyzers/security/types';
+import { spanHash } from '../analyzers/tools/fingerprint';
 
 interface SarifRule {
   id?: string;
@@ -44,7 +45,11 @@ interface SarifResult {
   locations?: Array<{
     physicalLocation?: {
       artifactLocation?: { uri?: string };
-      region?: { startLine?: number };
+      // `snippet.text` is SARIF's matched-source span — the cross-engine
+      // analog of semgrep's `extra.lines`. Used to derive the
+      // content-anchored `spanHash` (D-G5) so an ingested finding's
+      // identity tracks the matched construct, not its line.
+      region?: { startLine?: number; snippet?: { text?: string } };
     };
   }>;
   /** SARIF 2.1.0 suppression state. A result an engine has dismissed —
@@ -195,6 +200,12 @@ export function parseSarif(raw: string, engine?: SourceEngine): ExternalFinding[
       // fixed — skip rather than emit a phantom at line 0.
       if (!file || !line) continue;
 
+      // D-G5 content anchor: hash the matched snippet here at the ingest
+      // boundary, so an ingested finding earns the same line-independent
+      // identity as a native one (Rule 13). Absent snippet → no anchor →
+      // line fallback, exactly like a native source with no span.
+      const snippetText = loc?.region?.snippet?.text;
+
       out.push({
         engine: resolvedEngine,
         severity: resolveSeverity(rule, res.level),
@@ -204,6 +215,9 @@ export function parseSarif(raw: string, engine?: SourceEngine): ExternalFinding[
         title: res.message?.text || rule?.shortDescription?.text || ruleId || 'SAST finding',
         file,
         line,
+        ...(typeof snippetText === 'string' && snippetText.trim().length > 0
+          ? { spanHash: spanHash(snippetText) }
+          : {}),
       });
     }
   }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   canonicalAdvisoryId,
   codeContentAnchor,
+  codeContentAnchorFromHash,
   collectFingerprints,
   computeContentFingerprint,
   computeFingerprint,
@@ -212,7 +213,7 @@ describe('computeSecretHmac', () => {
   it('handles unicode and binary-ish secret inputs', () => {
     // Secrets sometimes contain weird bytes (raw tokens, multi-line
     // PEMs, etc.). The HMAC primitive must not blow up on them.
-    const tricky = ' 秘密\nline2\t\r';
+    const tricky = '\u0000秘密\nline2\t\r';
     const hmac = computeSecretHmac(tricky, 'salt');
     expect(hmac).toMatch(/^[0-9a-f]{16}$/);
   });
@@ -264,6 +265,27 @@ describe('content-anchored identity (D-G5)', () => {
     });
     it('file-level fallback (A) uses empty scope', () => {
       expect(codeContentAnchor('', 'eval(x)', 0)).not.toBe(codeContentAnchor('fn', 'eval(x)', 0));
+    });
+  });
+
+  describe('codeContentAnchorFromHash', () => {
+    it('equals codeContentAnchor when fed spanHash(span)', () => {
+      // The gather boundary carries only spanHash downstream (never raw
+      // matched text); the aggregator rebuilds the anchor from it. The two
+      // construction paths MUST agree or gather-side and direct identities
+      // would diverge.
+      const span = 'rejectUnauthorized: false';
+      expect(codeContentAnchorFromHash('validateLogin', spanHash(span), 2)).toBe(
+        codeContentAnchor('validateLogin', span, 2),
+      );
+    });
+    it('distinguishes scope, spanHash, and ordinal', () => {
+      const h = spanHash('eval(x)');
+      expect(codeContentAnchorFromHash('a', h, 0)).not.toBe(codeContentAnchorFromHash('b', h, 0));
+      expect(codeContentAnchorFromHash('a', h, 0)).not.toBe(codeContentAnchorFromHash('a', h, 1));
+      expect(codeContentAnchorFromHash('a', h, 0)).not.toBe(
+        codeContentAnchorFromHash('a', spanHash('eval(y)'), 0),
+      );
     });
   });
 
