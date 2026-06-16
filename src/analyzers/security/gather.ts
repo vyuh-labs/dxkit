@@ -2,10 +2,10 @@
  * Security finding gatherers — one function per tool, no overlap.
  *
  * Tool boundaries:
- *   gitleaks   → secrets (hardcoded credentials, API keys, private keys in source)
- *   find/git   → private key files on disk (.key, .pem), .env tracked in git
- *   semgrep    → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
- *   dispatcher → dependency CVEs unioned across every active language pack
+ * gitleaks → secrets (hardcoded credentials, API keys, private keys in source)
+ * find/git → private key files on disk (.key, .pem), .env tracked in git
+ * semgrep → code patterns (eval, exec, TLS, CORS, SQLi, XSS, SSRF, etc.)
+ * dispatcher → dependency CVEs unioned across every active language pack
  */
 import * as fs from 'fs';
 import { run } from '../tools/runner';
@@ -62,7 +62,7 @@ export async function gatherSecrets(cwd: string): Promise<{
     file: f.file,
     line: f.line,
     tool: result.tool,
-    // D-G5: carry the content anchor (salted HMAC) through to the
+    // Content-anchored identity: carry the content anchor (salted HMAC) through to the
     // aggregator so the secret's identity survives line moves.
     ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
   }));
@@ -205,7 +205,7 @@ export function gatherTlsBypassFindings(cwd: string): SecurityFinding[] {
         file: relPath,
         line: i + 1,
         tool: 'tls-bypass-registry',
-        // D-G5 content anchor: the matched line is this finding's span.
+        // Content anchor: the matched line is this finding's span.
         ...(trimmed.length > 0 ? { spanHash: spanHash(trimmed) } : {}),
       });
     }
@@ -242,7 +242,7 @@ export async function gatherCodePatterns(cwd: string): Promise<{
     file: f.file,
     line: f.line,
     tool: result.tool,
-    // D-G5: carry the matched-span hash; the aggregator combines it with
+    // Content-anchored identity: carry the matched-span hash; the aggregator combines it with
     // the enclosing-symbol scope + ordinal to build the content anchor.
     ...(f.spanHash !== undefined ? { spanHash: f.spanHash } : {}),
   }));
@@ -525,7 +525,7 @@ export async function buildSecurityAggregateForHealth(
           title?: string;
           file: string;
           line: number;
-          /** D-G5 content anchor (salted HMAC) when the gather derived one. */
+          /** Content anchor (salted HMAC) when the gather derived one. */
           contentAnchor?: string;
         }>;
       }
@@ -540,7 +540,7 @@ export async function buildSecurityAggregateForHealth(
           file: string;
           line: number;
           cwe: string;
-          /** D-G5 matched-span hash when the scanner surfaced the span. */
+          /** Matched-span hash when the scanner surfaced the span. */
           spanHash?: string;
         }>;
       }
@@ -599,14 +599,14 @@ export async function buildSecurityAggregateForHealth(
   );
   const externalEngines = snapshotEngines(cwd);
 
-  // D-G5 scope pre-pass: attach each CODE finding's enclosing symbol from
+  // Scope pre-pass: attach each CODE finding's enclosing symbol from
   // the graph so identity can anchor to the symbol (B), not the line. Runs
   // here — the single chokepoint that builds the one cached aggregate every
   // consumer reads — so vuln-scan, health, baseline, and BoM all inherit
   // it. Graph access stays in `src/explore/` (Rule 12); the aggregator
   // never touches the graph. Only code-category findings get a scope
   // (secrets anchor on their HMAC; config on (rule, file)). Fail-open: no
-  // graph → scopes stay unset → file-level fallback at the step-4 flip.
+  // graph → scopes stay unset → file-level fallback under the content-anchored scheme.
   const codeScopeTargets = [...codeFindings, ...tlsBypass, ...externalFindings];
   const scopeMap = buildEnclosingScopeMap(
     cwd,

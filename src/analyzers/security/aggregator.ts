@@ -9,46 +9,46 @@
  *
  * The disease this closes (D086 / D087 / D091):
  *
- *   - **D086** Health Security section and standalone vuln-scan Code
- *     Findings table both reported "code findings by severity" but
- *     came up with different numbers (`0C 11H 18M 0L` vs
- *     `0C 17H 14M 0L`) on the same repo. Two consumers, two
- *     aggregation paths, slightly-different inclusion rules.
+ * - **D086** Health Security section and standalone vuln-scan Code
+ * Findings table both reported "code findings by severity" but
+ * came up with different numbers (`0C 11H 18M 0L` vs
+ * `0C 17H 14M 0L`) on the same repo. Two consumers, two
+ * aggregation paths, slightly-different inclusion rules.
  *
- *   - **D087** Vuln-scan exec summary said "Subtotal: 70" (sum of
- *     dep-vuln severity buckets) and the same page later said
- *     "81 advisories" (findings.length). 70 vs 81 on one page.
+ * - **D087** Vuln-scan exec summary said "Subtotal: 70" (sum of
+ * dep-vuln severity buckets) and the same page later said
+ * "81 advisories" (findings.length). 70 vs 81 on one page.
  *
- *   - **D091** A single TLS-bypass root finding surfaced twice in the
- *     Code Findings table (registry-grep at `:74` HIGH, semgrep at
- *     `:72` MEDIUM) because code findings carried no fingerprint and
- *     no cross-tool dedup ran.
+ * - **D091** A single TLS-bypass root finding surfaced twice in the
+ * Code Findings table (registry-grep at `:74` HIGH, semgrep at
+ * `:72` MEDIUM) because code findings carried no fingerprint and
+ * no cross-tool dedup ran.
  *
  * Architectural posture:
  *
- *   - The aggregator sits BETWEEN gather and reports. Gather still
- *     produces raw envelopes (`gatherSecrets`, `gatherFileFindings`,
- *     `gatherCodePatterns`, `gatherTlsBypassFindings`, `gatherDepVulns`);
- *     the aggregator merges + dedups + buckets them into the canonical
- *     shape; consumers read by field name.
+ * - The aggregator sits BETWEEN gather and reports. Gather still
+ * produces raw envelopes (`gatherSecrets`, `gatherFileFindings`,
+ * `gatherCodePatterns`, `gatherTlsBypassFindings`, `gatherDepVulns`);
+ * the aggregator merges + dedups + buckets them into the canonical
+ * shape; consumers read by field name.
  *
- *   - Three separately-named severity buckets (`codeBySeverity`,
- *     `depBySeverity`, `secretsBySeverity`) — the shape forbids any
- *     consumer from accidentally summing cross-axis again.
+ * - Three separately-named severity buckets (`codeBySeverity`,
+ * `depBySeverity`, `secretsBySeverity`) — the shape forbids any
+ * consumer from accidentally summing cross-axis again.
  *
- *   - Two named dep counts (`dependencyAdvisoryUniqueCount` for the
- *     canonical user-facing total; `dependencyFindingsRawCount` for
- *     diagnostic audit). Renderers cannot pick "the wrong number"
- *     without naming which they want.
+ * - Two named dep counts (`dependencyAdvisoryUniqueCount` for the
+ * canonical user-facing total; `dependencyFindingsRawCount` for
+ * diagnostic audit). Renderers cannot pick "the wrong number"
+ * without naming which they want.
  *
- *   - Code findings get a canonical-rule + line-window fingerprint;
- *     cross-tool collisions collapse to ONE CodeFinding with
- *     `keptSeverity = max(severities)` and `producedBy` listing all
- *     contributing tools. The `dedupCollisions` audit trail records
- *     every collapse for `--detailed` visibility.
+ * - Code findings get a canonical-rule + line-window fingerprint;
+ * cross-tool collisions collapse to ONE CodeFinding with
+ * `keptSeverity = max(severities)` and `producedBy` listing all
+ * contributing tools. The `dedupCollisions` audit trail records
+ * every collapse for `--detailed` visibility.
  *
- *   - `provenance` distinguishes "tool ran, 0 findings" from "tool
- *     didn't run" — drives D080-style "(not run: typescript)" labels.
+ * - `provenance` distinguishes "tool ran, 0 findings" from "tool
+ * didn't run" — drives D080-style "(not run: typescript)" labels.
  *
  * G_v4_8 architectural gate (`scripts/check-architecture.sh`) blocks
  * `countBySeverity` / severity-Record accumulator declarations
@@ -90,26 +90,26 @@ export interface SeverityCounts {
  * `SecurityFinding` with the identity + provenance fields the
  * aggregator stamps:
  *
- *   - `fingerprint` — stable 16-char hash of
- *     `(canonicalRule | file | lineWindow)`. Same key across runs;
- *     enables diff tooling and dedup-by-identity downstream.
- *   - `canonicalRule` — normalized rule id from the canonical-rule
- *     registry. Different raw tool/rule pairs that describe the same
- *     root finding collapse to the same `canonicalRule`. Unmapped
- *     pairs pass through as `raw:${tool}:${rule}` — conservative
- *     default; new collapse rules require explicit registry entries.
- *   - `producedBy` — every raw `tool` that contributed to this
- *     finding. Length > 1 means cross-tool dedup fired.
+ * - `fingerprint` — stable 16-char hash of
+ * `(canonicalRule | file | lineWindow)`. Same key across runs;
+ * enables diff tooling and dedup-by-identity downstream.
+ * - `canonicalRule` — normalized rule id from the canonical-rule
+ * registry. Different raw tool/rule pairs that describe the same
+ * root finding collapse to the same `canonicalRule`. Unmapped
+ * pairs pass through as `raw:${tool}:${rule}` — conservative
+ * default; new collapse rules require explicit registry entries.
+ * - `producedBy` — every raw `tool` that contributed to this
+ * finding. Length > 1 means cross-tool dedup fired.
  */
 export interface CodeFinding extends SecurityFinding {
   fingerprint: string;
   canonicalRule: string;
   producedBy: string[];
   /** Fingerprints of the cross-tool / neighbor-bucket / CWE-bridge
-   *  findings that collapsed into this one, when their own fingerprint
-   *  differed from `fingerprint`. Present only when such a merge fired.
-   *  Lets a suppression keyed on a contributing fingerprint still match
-   *  the merged finding (robust matching against dedup nondeterminism). */
+   * findings that collapsed into this one, when their own fingerprint
+   * differed from `fingerprint`. Present only when such a merge fired.
+   * Lets a suppression keyed on a contributing fingerprint still match
+   * the merged finding (robust matching against dedup nondeterminism). */
   absorbedFingerprints?: string[];
 }
 
@@ -142,10 +142,10 @@ export interface AggregateProvenance {
   secrets: { tool: string | null; ran: boolean };
   codePatterns: { tool: string | null; ran: boolean };
   /** Ingested external-engine provenance. `tools` is the set of
-   *  engines whose findings were ingested this run (e.g. `['codeql']`,
-   *  `['snyk-code']`); `ran` is true when ingestion contributed. Always
-   *  populated by `buildSecurityAggregate`; optional in the type only so
-   *  pre-existing test mocks needn't be rewritten. */
+   * engines whose findings were ingested this run (e.g. `['codeql']`,
+   * `['snyk-code']`); `ran` is true when ingestion contributed. Always
+   * populated by `buildSecurityAggregate`; optional in the type only so
+   * pre-existing test mocks needn't be rewritten. */
   external?: { tools: string[]; ran: boolean };
   tlsBypass: { ran: boolean; patternCount: number };
   fileFindings: { ran: boolean };
@@ -159,34 +159,34 @@ export interface AggregateProvenance {
  */
 export interface SecurityAggregate {
   /** Code-pattern findings by severity (semgrep + tls-bypass-registry
-   *  + any future per-pack code-pattern producers), post-dedup. */
+   * + any future per-pack code-pattern producers), post-dedup. */
   codeBySeverity: SeverityCounts;
 
   /** Dependency advisories by severity, derived from the
-   *  fingerprint-unique advisory set (NOT the per-pack envelope
-   *  count sum). Sums to `dependencyAdvisoryUniqueCount`. */
+   * fingerprint-unique advisory set (NOT the per-pack envelope
+   * count sum). Sums to `dependencyAdvisoryUniqueCount`. */
   depBySeverity: SeverityCounts;
 
   /** Secret + secret-adjacent findings (gitleaks + private-key files +
-   *  .env-in-git) by severity. Each axis stays separate so consumers
-   *  pick which they own. */
+   * .env-in-git) by severity. Each axis stays separate so consumers
+   * pick which they own. */
   secretsBySeverity: SeverityCounts;
 
   /** Code-pattern findings by severity, EXCLUDING findings an active
-   *  allowlist entry lifts from the score (`false-positive` /
-   *  `test-fixture`). The dimension scorer reads these; reports read the
-   *  raw `codeBySeverity`. Equal to `codeBySeverity` when no allowlist
-   *  was supplied or none of the findings are score-lifted. */
+   * allowlist entry lifts from the score (`false-positive` /
+   * `test-fixture`). The dimension scorer reads these; reports read the
+   * raw `codeBySeverity`. Equal to `codeBySeverity` when no allowlist
+   * was supplied or none of the findings are score-lifted. */
   scoreableCodeBySeverity: SeverityCounts;
 
   /** Secret + secret-adjacent findings by severity, EXCLUDING
-   *  score-lifting allowlisted findings. Scorer reads this; reports read
-   *  raw `secretsBySeverity`. */
+   * score-lifting allowlisted findings. Scorer reads this; reports read
+   * raw `secretsBySeverity`. */
   scoreableSecretsBySeverity: SeverityCounts;
 
   /** Findings partitioned by category, post-dedup. Renderers iterate
-   *  these — never iterate raw envelope arrays. `dependency` is the
-   *  fingerprint-unique advisory set. */
+   * these — never iterate raw envelope arrays. `dependency` is the
+   * fingerprint-unique advisory set. */
   findingsByCategory: {
     secret: ReadonlyArray<CodeFinding>;
     code: ReadonlyArray<CodeFinding>;
@@ -212,7 +212,7 @@ export interface SecurityAggregate {
   dependencyFindingsRawCount: number;
 
   /** Audit trail of every cross-tool / cross-line-window collapse.
-   *  Empty in the no-collision case. */
+   * Empty in the no-collision case. */
   dedupCollisions: ReadonlyArray<DedupCollision>;
 
   /** Per-source provenance — drives "(not run: typescript)" labels. */
@@ -269,18 +269,18 @@ export interface SecurityAggregateInput {
   fileFindings: SecurityFinding[];
   codePatterns: { findings: SecurityFinding[]; toolUsed: string | null };
   /** Findings ingested from external interprocedural-SAST engines
-   *  (Snyk Code, CodeQL, …) via `src/ingest`. Already mapped to
-   *  `SecurityFinding` with the engine as the `tool`. They join the
-   *  same code-side dedup pipeline as native findings, so a Snyk and a
-   *  semgrep finding on the same line collapse to one `CodeFinding`.
-   *  Optional: absent (or empty) yields output identical to a run with
-   *  no ingestion configured. */
+   * (Snyk Code, CodeQL, …) via `src/ingest`. Already mapped to
+   * `SecurityFinding` with the engine as the `tool`. They join the
+   * same code-side dedup pipeline as native findings, so a Snyk and a
+   * semgrep finding on the same line collapse to one `CodeFinding`.
+   * Optional: absent (or empty) yields output identical to a run with
+   * no ingestion configured. */
   external?: { findings: SecurityFinding[]; toolsUsed: string[] };
   tlsBypass: SecurityFinding[];
   /** Pattern count from `allTlsBypassPatterns()` — drives the
-   *  `provenance.tlsBypass.ran` flag (ran=false when no patterns were
-   *  registered, NOT when 0 findings matched against a non-empty
-   *  pattern set). */
+   * `provenance.tlsBypass.ran` flag (ran=false when no patterns were
+   * registered, NOT when 0 findings matched against a non-empty
+   * pattern set). */
   tlsBypassPatternCount: number;
   depVulns: {
     findings: DepVulnFinding[];
@@ -289,11 +289,11 @@ export interface SecurityAggregateInput {
     unavailableReason: string;
   };
   /** The repo's allowlist, loaded by the caller (the aggregator stays
-   *  pure / does no I/O). When present, each code/secret/config finding
-   *  is annotated with its active-allowlist status, and the `scoreable*`
-   *  severity buckets exclude findings allowlisted under a category that
-   *  lifts the score (`false-positive` / `test-fixture`). Absent/null →
-   *  `scoreable*` buckets equal the raw buckets. */
+   * pure / does no I/O). When present, each code/secret/config finding
+   * is annotated with its active-allowlist status, and the `scoreable*`
+   * severity buckets exclude findings allowlisted under a category that
+   * lifts the score (`false-positive` / `test-fixture`). Absent/null →
+   * `scoreable*` buckets equal the raw buckets. */
   allowlist?: AllowlistFile | null;
 }
 
@@ -302,21 +302,21 @@ export interface SecurityAggregateInput {
  * function — same input always produces the same output.
  *
  * Dedup pipeline (code-side):
- *   1. Concat raw findings from secrets/fileFindings/codePatterns/tlsBypass.
- *   2. Group by `(canonicalRule, file, lineWindow)` key.
- *   3. For each group:
- *      - Emit ONE `CodeFinding` with `keptSeverity = max(severities)`,
- *        `producedBy` = unique sources.
- *      - If the group had >1 raw finding, record a `DedupCollision`
- *        audit entry.
+ * 1. Concat raw findings from secrets/fileFindings/codePatterns/tlsBypass.
+ * 2. Group by `(canonicalRule, file, lineWindow)` key.
+ * 3. For each group:
+ * - Emit ONE `CodeFinding` with `keptSeverity = max(severities)`,
+ * `producedBy` = unique sources.
+ * - If the group had >1 raw finding, record a `DedupCollision`
+ * audit entry.
  *
  * Dedup pipeline (dep-side):
- *   - Group `depVulns.findings` by `fingerprint`.
- *   - For each group: pick the highest-severity entry as the
- *     representative; severity counts are derived from the unique
- *     set so they match `dependencyAdvisoryUniqueCount`.
- *   - Findings without a fingerprint pass through unchanged (defensive;
- *     `stampFingerprints` in `gatherDepVulns` runs before this).
+ * - Group `depVulns.findings` by `fingerprint`.
+ * - For each group: pick the highest-severity entry as the
+ * representative; severity counts are derived from the unique
+ * set so they match `dependencyAdvisoryUniqueCount`.
+ * - Findings without a fingerprint pass through unchanged (defensive;
+ * `stampFingerprints` in `gatherDepVulns` runs before this).
  */
 export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityAggregate {
   // ─── Code-side dedup ────────────────────────────────────────────────
@@ -341,7 +341,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     rule: string;
     title: string;
     tool: string;
-    // D-G5 content-anchor material, carried from the representative
+    // Content-anchor material, carried from the representative
     // finding. The durable fingerprint anchors to this (not the line
     // window) when available; the line key below is still used for
     // intra-run dedup grouping. `contentAnchor` is the secret HMAC (set at
@@ -351,16 +351,16 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     spanHash?: string;
     scope?: string;
     /** In-scope ordinal among code groups sharing the same
-     *  `(file, scope, spanHash)`, assigned in document (line) order after
-     *  grouping. Keeps identical constructs in one scope distinct. */
+     * `(file, scope, spanHash)`, assigned in document (line) order after
+     * grouping. Keeps identical constructs in one scope distinct. */
     ordinal?: number;
     producedBy: Set<string>;
     /** Each raw finding that merged into this group, carrying its own
-     *  anchor material so the emit pass can compute the content
-     *  fingerprint it WOULD have had as representative — recorded as an
-     *  `absorbedFingerprint` so a suppression keyed on it still matches
-     *  the merged finding (robust against cross-tool dedup nondeterminism
-     *  between runs). */
+     * anchor material so the emit pass can compute the content
+     * fingerprint it WOULD have had as representative — recorded as an
+     * `absorbedFingerprint` so a suppression keyed on it still matches
+     * the merged finding (robust against cross-tool dedup nondeterminism
+     * between runs). */
     raws: Array<{
       tool: string;
       rule: string;
@@ -485,7 +485,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     if (f.cwe) byCweLoc.set(cweLocKey(f.cwe, f.file, f.line), fingerprint);
   }
 
-  // ─── D-G5 ordinal assignment ────────────────────────────────────────
+  // ─── Ordinal assignment ────────────────────────────────────────
   // Code groups sharing the same (file, scope, spanHash) get a stable
   // in-document-order ordinal so identical constructs in one scope stay
   // distinct (three `eval(userInput)` in one function stay three
@@ -575,7 +575,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       fingerprint,
       canonicalRule: g.canonicalRule,
       producedBy: [...g.producedBy].sort(),
-      // D-G5: stamp the FINAL content anchor (the producer reads it back to
+      // Content-anchored identity: stamp the FINAL content anchor (the producer reads it back to
       // recompute the same identity). Omitted when absent (→ line fallback).
       ...(anchor !== undefined ? { contentAnchor: anchor } : {}),
       ...(g.spanHash !== undefined ? { spanHash: g.spanHash } : {}),

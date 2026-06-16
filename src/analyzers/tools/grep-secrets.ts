@@ -12,13 +12,13 @@
  * sails through the guardrail. This provider closes it. The patterns
  * split into two classes:
  *
- *   - GENERIC keyword-assignment secrets (`password`/`secret`/`token` =
- *     a quoted literal). gitleaks misses these, so they run ALWAYS —
- *     they are the complement of gitleaks coverage, not a fallback.
- *   - BRANDED token shapes (AWS keys, GitHub PATs, private keys).
- *     gitleaks covers these with higher precision, so they run ONLY
- *     when gitleaks is absent — full standalone fallback, no
- *     double-counting when both scanners are present.
+ * - GENERIC keyword-assignment secrets (`password`/`secret`/`token` =
+ * a quoted literal). gitleaks misses these, so they run ALWAYS —
+ * they are the complement of gitleaks coverage, not a fallback.
+ * - BRANDED token shapes (AWS keys, GitHub PATs, private keys).
+ * gitleaks covers these with higher precision, so they run ONLY
+ * when gitleaks is absent — full standalone fallback, no
+ * double-counting when both scanners are present.
  *
  * Scanning is in-process via the canonical `walkSourceFiles` walker
  * (not POSIX `grep -r`, which is unavailable on Windows and overflows
@@ -92,7 +92,7 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   // `test-fixture`, not silently ignored).
   const files = walkSourceFiles(cwd, { includeTests: true, includeAutogen: true });
 
-  // D-G5 content anchor: HMAC the matched secret VALUE (capture group 1
+  // Content anchor: HMAC the matched secret VALUE (capture group 1
   // for the keyword-assignment patterns; the whole token for branded
   // ones) at this boundary and carry only the digest. Fail-open: no salt
   // (non-git dir) → no anchor → line-based identity fallback.

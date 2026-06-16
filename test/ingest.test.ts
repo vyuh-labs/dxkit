@@ -7,13 +7,13 @@
  * run against private repos whose paths must not leak into the tree.
  *
  * Coverage:
- *   - SARIF 2.1.0 parse: severity resolution (security-severity →
- *     level fallback), CWE normalization, location skipping, engine
- *     auto-detection + override, rules-by-index.
- *   - Snyk REST issue mapping: severity fold (info→low), CWE from
- *     classes, sourceLocation extraction, no-location skip.
- *   - normalize: engine → tool provenance, identity left to the aggregator.
- *   - snapshot: write → read round-trip + fail-open on a missing dir.
+ * - SARIF 2.1.0 parse: severity resolution (security-severity →
+ * level fallback), CWE normalization, location skipping, engine
+ * auto-detection + override, rules-by-index.
+ * - Snyk REST issue mapping: severity fold (info→low), CWE from
+ * classes, sourceLocation extraction, no-location skip.
+ * - normalize: engine → tool provenance, identity left to the aggregator.
+ * - snapshot: write → read round-trip + fail-open on a missing dir.
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
@@ -105,7 +105,7 @@ describe('parseSarif', () => {
     expect(parseSarif(raw)[0].cwe).toBe('CWE-94');
   });
 
-  it('captures region.snippet.text as the content-anchored spanHash (D-G5, Rule 13)', () => {
+  it('captures region.snippet.text as the content-anchored spanHash (Rule 13)', () => {
     // An ingested SARIF finding with a matched snippet earns the SAME
     // line-independent identity material a native semgrep finding gets —
     // the spanHash matches the canonical helper byte-for-byte, so the
@@ -118,7 +118,7 @@ describe('parseSarif', () => {
             {
               physicalLocation: {
                 artifactLocation: { uri: 'src/handler.ts' },
-                region: { startLine: 42, snippet: { text: '  fs.readFile(req.query.path)  ' } },
+                region: { startLine: 42, snippet: { text: ' fs.readFile(req.query.path) ' } },
               },
             },
           ],
@@ -127,7 +127,7 @@ describe('parseSarif', () => {
       [{ id: 'js/path-injection' }],
     );
     const f = parseSarif(raw);
-    expect(f[0].spanHash).toBe(spanHash('  fs.readFile(req.query.path)  '));
+    expect(f[0].spanHash).toBe(spanHash(' fs.readFile(req.query.path) '));
     // Line-independent by construction: the same snippet at a different
     // line yields the same spanHash (it carries no line).
     expect(f[0].spanHash).toBe(spanHash('fs.readFile(req.query.path)'));

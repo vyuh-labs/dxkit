@@ -46,8 +46,8 @@ export interface GitleaksRawSecret {
   readonly line: number;
   readonly rule: string;
   /** The matched secret value as reported by gitleaks. Process-only;
-   *  callers MUST NOT write this to disk, log it, or include it in
-   *  any output payload. */
+   * callers MUST NOT write this to disk, log it, or include it in
+   * any output payload. */
   readonly secret: string;
 }
 
@@ -192,7 +192,7 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     (c) => c.finding.file,
   );
 
-  // D-G5 content anchor: HMAC each surviving secret's value at this
+  // Content anchor: HMAC each surviving secret's value at this
   // boundary (where the raw value lives) and attach ONLY the digest to
   // the envelope finding. The raw value still never enters the envelope.
   // Salt resolution is fail-open — a non-git directory yields no salt, so

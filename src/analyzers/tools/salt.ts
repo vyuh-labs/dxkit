@@ -2,24 +2,24 @@
  * Per-repo salt resolution for secret HMAC identity.
  *
  * The secret-HMAC scheme uses a salt that's:
- *   1. Consistent across `baseline create` (writes HMACs) and every
- *      subsequent `guardrail check` (reads them).
- *   2. Not stored in git — a baseline-file leak should not enable
- *      secret recovery via rainbow tables.
- *   3. Reachable from every consumer — single dev, multiple devs on
- *      one repo, CI, shallow clones, detached HEADs.
+ * 1. Consistent across `baseline create` (writes HMACs) and every
+ * subsequent `guardrail check` (reads them).
+ * 2. Not stored in git — a baseline-file leak should not enable
+ * secret recovery via rainbow tables.
+ * 3. Reachable from every consumer — single dev, multiple devs on
+ * one repo, CI, shallow clones, detached HEADs.
  *
  * A three-step waterfall satisfies all three:
  *
- *   1. `DXKIT_BASELINE_SALT` env var — opt-in override for teams
- *      who want stronger isolation than the deterministic default.
- *   2. `.dxkit/salt` file — reserved for environments where env-vars
- *      are awkward (cron jobs, embedded runners). Gitignored by
- *      default.
- *   3. Deterministic default — `HMAC("dxkit-baseline-salt-v1",
- *      initialCommitSha)`. Zero-setup; same across clones of the
- *      same repo; different across different repos; reachable in
- *      shallow clones (git always includes the root commit).
+ * 1. `DXKIT_BASELINE_SALT` env var — opt-in override for teams
+ * who want stronger isolation than the deterministic default.
+ * 2. `.dxkit/salt` file — reserved for environments where env-vars
+ * are awkward (cron jobs, embedded runners). Gitignored by
+ * default.
+ * 3. Deterministic default — `HMAC("dxkit-baseline-salt-v1",
+ * initialCommitSha)`. Zero-setup; same across clones of the
+ * same repo; different across different repos; reachable in
+ * shallow clones (git always includes the root commit).
  *
  * Every baseline file records which mode produced it so the
  * matcher can either match the same mode (HMAC compare works) or
@@ -32,7 +32,7 @@
  * dependency direction natural: `baseline/create.ts` (orchestration)
  * and the secret gather (`tools/gitleaks.ts`, `tools/grep-secrets.ts`)
  * both reach DOWN into this layer for it — no analyzer ever depends on
- * baseline. The content-anchored secret identity (D-G5) needs the salt
+ * baseline. The content-anchored secret identity needs the salt
  * at the gather boundary, where the raw value is HMAC'd and dropped.
  */
 
@@ -42,7 +42,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /** Resolution path that produced the salt. Stamped on every baseline
- *  file so the guardrail check knows what the matcher needs. */
+ * file so the guardrail check knows what the matcher needs. */
 export type SaltMode = 'env-var' | 'file' | 'deterministic';
 
 export interface ResolvedSalt {
@@ -51,9 +51,9 @@ export interface ResolvedSalt {
 }
 
 /** Domain separator for the deterministic default. Bumping the
- *  suffix would invalidate every existing deterministic-mode
- *  baseline (consumers would compute different salts for the same
- *  commit). Treat it as a permanent identifier. */
+ * suffix would invalidate every existing deterministic-mode
+ * baseline (consumers would compute different salts for the same
+ * commit). Treat it as a permanent identifier. */
 const DETERMINISTIC_DOMAIN = 'dxkit-baseline-salt-v1';
 
 /**
@@ -100,8 +100,8 @@ export function resolveSalt(cwd: string): ResolvedSalt {
 }
 
 /** Per-cwd memo for the fail-open analysis-path resolver. Holds the
- *  resolved salt or `null` (resolution failed) so a non-git directory
- *  doesn't re-run `git rev-list` once per secret gather. */
+ * resolved salt or `null` (resolution failed) so a non-git directory
+ * doesn't re-run `git rev-list` once per secret gather. */
 const saltCache = new Map<string, string | null>();
 
 /**

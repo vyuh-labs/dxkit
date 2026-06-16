@@ -6,10 +6,10 @@
  * runs, and aggregates. Each capability returns a strongly-typed envelope
  * that extends `CapabilityEnvelope` so every result carries:
  *
- *   - `schemaVersion`: pinned literal so downstream consumers can detect
- *     wire-format changes without inspecting fields.
- *   - `tool`: which underlying tool produced this result. Required for
- *     attribution in reports and for the `toolsUsed` aggregation.
+ * - `schemaVersion`: pinned literal so downstream consumers can detect
+ * wire-format changes without inspecting fields.
+ * - `tool`: which underlying tool produced this result. Required for
+ * attribution in reports and for the `toolsUsed` aggregation.
  *
  * `ImportsResult` landed in Phase 10e.B.4 — a pack pre-computes the full
  * per-pack import graph (extracted specifiers + resolved edges) for every
@@ -50,12 +50,12 @@ export interface CapabilityEnvelope {
  * `@loopback/cli@6.0.0` — the Tier-2 tool resolves that upgrading
  * `@loopback/cli` to `7.0.1` pulls a patched `minimatch`:
  *
- *   {
- *     parent: '@loopback/cli',
- *     parentVersion: '7.0.1',
- *     patches: ['GHSA-xxxx-yyyy-zzzz', 'CVE-2022-1234'],
- *     breaking: true,
- *   }
+ * {
+ * parent: '@loopback/cli',
+ * parentVersion: '7.0.1',
+ * patches: ['GHSA-xxxx-yyyy-zzzz', 'CVE-2022-1234'],
+ * breaking: true,
+ * }
  *
  * `parent` equals the finding's own `package` when the vulnerable
  * package itself is a direct dep. `patches` lists every advisory id the
@@ -67,17 +67,17 @@ export interface CapabilityEnvelope {
  */
 export interface DepVulnUpgradePlan {
   /** Package to upgrade (top-level dep when different from the
-   *  finding's `package`; otherwise the finding's own package). */
+   * finding's `package`; otherwise the finding's own package). */
   parent: string;
   /** Target version for the parent. Semver triple, no range prefix. */
   parentVersion: string;
   /** Advisory ids this upgrade resolves — always includes the finding's
-   *  own `id`; may include sibling advisories when one parent bump
-   *  patches several transitives at once. Sorted, deduplicated. */
+   * own `id`; may include sibling advisories when one parent bump
+   * patches several transitives at once. Sorted, deduplicated. */
   patches: string[];
   /** True when the target version crosses a major boundary from the
-   *  installed parent version. Producer-classified; consumers treat it
-   *  as a triage hint, not a guarantee. */
+   * installed parent version. Producer-classified; consumers treat it
+   * as a triage hint, not a guarantee. */
   breaking: boolean;
 }
 
@@ -85,17 +85,17 @@ export interface DepVulnUpgradePlan {
  * Per-finding detail for dep-vuln reports that need more than counts.
  *
  * Field tiers (when each tier populates which fields):
- *   Tier 1 (per-pack native tool — npm-audit / pip-audit / govulncheck /
- *           cargo-audit / dotnet vulnerable):
- *     id, package, installedVersion, severity, tool, fixedVersion?,
- *     cvssScore?, aliases?, summary?, references?
- *   Tier 2 (per-pack fix-tool — osv-scanner fix / pip-audit --fix /
- *           cargo audit fix):
- *     upgradeAdvice, breakingUpgrade, upgradePlan, reachable (osv-scanner only)
- *   Tier 3 (exploitability enrichment — EPSS, CISA KEV):
- *     epssScore, kev
- *   Tier 4 (snyk opt-in):
- *     reachable, riskScore, upgradeAdvice, breakingUpgrade, upgradePlan
+ * Tier 1 (per-pack native tool — npm-audit / pip-audit / govulncheck /
+ * cargo-audit / dotnet vulnerable):
+ * id, package, installedVersion, severity, tool, fixedVersion?,
+ * cvssScore?, aliases?, summary?, references?
+ * Tier 2 (per-pack fix-tool — osv-scanner fix / pip-audit --fix /
+ * cargo audit fix):
+ * upgradeAdvice, breakingUpgrade, upgradePlan, reachable (osv-scanner only)
+ * Tier 3 (exploitability enrichment — EPSS, CISA KEV):
+ * epssScore, kev
+ * Tier 4 (snyk opt-in):
+ * reachable, riskScore, upgradeAdvice, breakingUpgrade, upgradePlan
  *
  * All non-identity fields are optional so higher tiers can extend without
  * changing this contract.
@@ -242,10 +242,10 @@ export interface LicenseFinding {
   /** ISO 8601 release date; present when the registry exposes it. */
   releaseDate?: string;
   /** True when this package is a root manifest dep (direct or dev-dep) as
-   *  opposed to a transitive. Populated per-pack by the same root-manifest
-   *  parse that seeds `buildXxxTopLevelDepIndex`. Unset when the pack
-   *  can't read the manifest/lockfile — the bom filter treats unset as
-   *  "don't know" and passes the row through rather than dropping it. */
+   * opposed to a transitive. Populated per-pack by the same root-manifest
+   * parse that seeds `buildXxxTopLevelDepIndex`. Unset when the pack
+   * can't read the manifest/lockfile — the bom filter treats unset as
+   * "don't know" and passes the row through rather than dropping it. */
   isTopLevel?: boolean;
 }
 
@@ -270,7 +270,7 @@ export interface SecretFinding {
   /** Human-readable description from the scanner (e.g. gitleaks' `Description` field). */
   title?: string;
   /**
-   * Content-anchored identity material (D-G5): the salted HMAC of the
+   * Content-anchored identity material: the salted HMAC of the
    * detected secret value, computed at the gather boundary via
    * `computeSecretHmac(value, salt)`. The raw value is HMAC'd and
    * dropped immediately — only this 16-char digest flows downstream, so
@@ -307,11 +307,11 @@ export interface CodePatternFinding {
   /** CWE identifier when the scanner supplies one (e.g. `CWE-79`). Empty otherwise. */
   cwe: string;
   /**
-   * Content-anchored identity material (D-G5): the 16-char `spanHash` of
+   * Content-anchored identity material: the 16-char `spanHash` of
    * the normalized matched code span, computed at the gather boundary
    * (semgrep's `extra.lines`). Only the digest is carried downstream —
    * never the raw matched text. The aggregator combines it with the
-   * enclosing-symbol `scope` (step 3 pre-pass) and an in-scope ordinal to
+   * enclosing-symbol `scope` (graph scope pre-pass) and an in-scope ordinal to
    * form the finding's `contentAnchor`, so identity survives the
    * construct moving lines. Absent when the scanner didn't surface the
    * matched span → the identity layer falls back to the location scheme.
@@ -407,17 +407,17 @@ export interface StructuralResult extends CapabilityEnvelope {
  * `tool-missing`, `no-output`, `parse-error`) that lumped together two
  * semantically distinct cases:
  *
- *   1. **The dep-vuln scan was infrastructurally unavailable** — tool
- *      not installed, tool produced no output, output unparseable. From
- *      the user's perspective: "dxkit couldn't tell me if my deps are
- *      safe." This is the F4 baseline customer-credibility case
- *      (Security 100/100 on an unscannable repo). Maps to `unavailable`.
+ * 1. **The dep-vuln scan was infrastructurally unavailable** — tool
+ * not installed, tool produced no output, output unparseable. From
+ * the user's perspective: "dxkit couldn't tell me if my deps are
+ * safe." This is the F4 baseline customer-credibility case
+ * (Security 100/100 on an unscannable repo). Maps to `unavailable`.
  *
- *   2. **There's nothing in this stack to scan** — no `.csproj` in a
- *      csharp pack run, no `Cargo.lock` in a rust pack run, no
- *      `requirements.txt` in a python pack run. Legitimate state for
- *      polyglot repos where one pack activates but contributes no
- *      manifests. Maps to `no-manifest`.
+ * 2. **There's nothing in this stack to scan** — no `.csproj` in a
+ * csharp pack run, no `Cargo.lock` in a rust pack run, no
+ * `requirements.txt` in a python pack run. Legitimate state for
+ * polyglot repos where one pack activates but contributes no
+ * manifests. Maps to `no-manifest`.
  *
  * The split lets downstream scorers cap on (1) without penalizing (2).
  * Pre-2.4.7 they both collapsed to `tool-missing` and the security
@@ -444,21 +444,21 @@ export type LintGatherOutcome =
  * licenses report can differentiate three distinct customer-facing
  * states:
  *
- *   - **success**: the canonical license extraction tool ran
- *     cleanly (e.g. `nuget-license` for csharp, `pip-licenses` for
- *     python, `cargo-license` for rust, etc.). Envelope carries the
- *     per-package license inventory.
+ * - **success**: the canonical license extraction tool ran
+ * cleanly (e.g. `nuget-license` for csharp, `pip-licenses` for
+ * python, `cargo-license` for rust, etc.). Envelope carries the
+ * per-package license inventory.
  *
- *   - **unavailable**: tool isn't installed OR the gather failed
- *     mid-run. F12 in the .NET WinForms benchmark baseline was exactly this:
- *     `nuget-license` absent → pre-D031 the licenses report rendered
- *     "0 packages" with no caveat, indistinguishable from a repo
- *     that legitimately has no third-party deps.
+ * - **unavailable**: tool isn't installed OR the gather failed
+ * mid-run. F12 in the .NET WinForms benchmark baseline was exactly this:
+ * `nuget-license` absent → pre-D031 the licenses report rendered
+ * "0 packages" with no caveat, indistinguishable from a repo
+ * that legitimately has no third-party deps.
  *
- *   - **no-manifest**: pack is active but the repo has no dep
- *     manifest in scope (no `.csproj` for csharp, no `package.json`
- *     for ts, no `Cargo.toml` for rust, no `requirements.txt`/
- *     `pyproject.toml` for python). Legitimate "nothing to license."
+ * - **no-manifest**: pack is active but the repo has no dep
+ * manifest in scope (no `.csproj` for csharp, no `package.json`
+ * for ts, no `Cargo.toml` for rust, no `requirements.txt`/
+ * `pyproject.toml` for python). Legitimate "nothing to license."
  *
  * The provider's `gather()` method continues to collapse non-success
  * to null for dispatcher consumers; availability-aware analyzers

@@ -19,7 +19,7 @@ import type { SecurityFinding } from '../analyzers/security/types';
 import type { ExternalFinding } from './types';
 
 /** Map normalized external findings to `SecurityFinding[]` for the
- *  aggregator. Identity + dedup happen downstream (Rule 9). */
+ * aggregator. Identity + dedup happen downstream (Rule 9). */
 export function externalToSecurityFindings(
   findings: ReadonlyArray<ExternalFinding>,
 ): SecurityFinding[] {
@@ -32,9 +32,9 @@ export function externalToSecurityFindings(
     file: f.file,
     line: f.line,
     tool: f.engine,
-    // D-G5: carry the engine's matched-span hash so ingested code
+    // Carry the engine's matched-span hash so ingested code
     // findings get the same content-anchored identity as native ones.
-    // The aggregator builds the full anchor (scope + ordinal) at step 4.
+    // The aggregator assembles the full anchor (scope + ordinal) during aggregation.
     ...(f.spanHash !== undefined ? { spanHash: f.spanHash } : {}),
   }));
 }

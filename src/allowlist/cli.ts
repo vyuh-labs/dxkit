@@ -4,22 +4,22 @@
  *
  * Subcommands (Sprint 1 chunk):
  *
- *   - `add <file>:<line>` — inline annotation insertion. Kind-agnostic;
- *     the annotation grammar carries category + reason only. Refuses
- *     non-inline-compatible categories (accepted-risk / deferred).
+ * - `add <file>:<line>` — inline annotation insertion. Kind-agnostic;
+ * the annotation grammar carries category + reason only. Refuses
+ * non-inline-compatible categories (accepted-risk / deferred).
  *
- *   - `add --fingerprint=<id> --kind=<kind>` — file-level allowlist
- *     entry. Persists to `.dxkit/allowlist.json` (or its sanitized
- *     mode + gitignored reasons sidecar). Required for any
- *     accepted-risk / deferred suppression OR any kind that lacks a
- *     stable single-line attachment point.
+ * - `add --fingerprint=<id> --kind=<kind>` — file-level allowlist
+ * entry. Persists to `.dxkit/allowlist.json` (or its sanitized
+ * mode + gitignored reasons sidecar). Required for any
+ * accepted-risk / deferred suppression OR any kind that lacks a
+ * stable single-line attachment point.
  *
- *   - `list` — print every entry across the file-level allowlist.
- *     Reads only; no mutation. Honors `--json` for structured output.
+ * - `list` — print every entry across the file-level allowlist.
+ * Reads only; no mutation. Honors `--json` for structured output.
  *
- *   - `show <fingerprint>` — print one entry's full detail. Falls
- *     back to a "no entry found" message when the fingerprint isn't
- *     present.
+ * - `show <fingerprint>` — print one entry's full detail. Falls
+ * back to a "no entry found" message when the fingerprint isn't
+ * present.
  *
  * Subcommands `audit` and `prune` land in a follow-up commit.
  *
@@ -104,8 +104,8 @@ export type AllowlistSubcommand = (typeof ALLOWLIST_SUBCOMMANDS)[number];
 
 export interface AllowlistAddOpts {
   /** Positional target. `<file>:<line>` for inline form; absent or a
-   *  bare file path for file-level form (requires `--fingerprint`
-   *  + `--kind`). */
+   * bare file path for file-level form (requires `--fingerprint`
+   * + `--kind`). */
   readonly target?: string;
   readonly category?: string;
   readonly reason?: string;
@@ -115,8 +115,8 @@ export interface AllowlistAddOpts {
   readonly acknowledgedSeverity?: string;
   readonly addedBy?: string;
   /** Override the configured mode for this write only. Default
-   *  reads from `.dxkit/policy.json` (out of scope here; this
-   *  module accepts a flag to choose). */
+   * reads from `.dxkit/policy.json` (out of scope here; this
+   * module accepts a flag to choose). */
   readonly mode?: AllowlistMode;
 }
 
@@ -134,9 +134,9 @@ export interface AllowlistAuditOpts {
   /** Soon-to-expire horizon in days (default 14). */
   readonly soonToExpireDays?: number;
   /** Cross-check fingerprints against the committed baseline so the
-   *  audit can flag orphaned entries (suppress nothing in the current
-   *  finding set). Off by default — keeps `audit` a pure read of the
-   *  allowlist file unless the user opts in. */
+   * audit can flag orphaned entries (suppress nothing in the current
+   * finding set). Off by default — keeps `audit` a pure read of the
+   * allowlist file unless the user opts in. */
   readonly againstBaseline?: boolean;
   /** Named baseline to diff against (default `main`). */
   readonly baselineName?: string;
@@ -154,7 +154,7 @@ export interface AllowlistExportOpts {
   readonly out?: string;
   readonly json?: boolean;
   /** ISO datetime stamped as each ignore's `created`. Defaults to now;
-   *  injectable for deterministic tests. */
+   * injectable for deterministic tests. */
   readonly now?: string;
 }
 
@@ -163,8 +163,8 @@ export interface AllowlistPruneOpts {
   /** Don't write; just print what would be removed. */
   readonly dryRun?: boolean;
   /** Skip confirmation prompt + write directly. Default behavior
-   *  in Sprint 1 (no interactive prompts in dxkit yet) — the flag
-   *  is accepted for future-proofing. */
+   * in Sprint 1 (no interactive prompts in dxkit yet) — the flag
+   * is accepted for future-proofing. */
   readonly yes?: boolean;
 }
 
@@ -254,8 +254,8 @@ export async function runAllowlistAdd(cwd: string, opts: AllowlistAddOpts): Prom
 
   // Two routing paths: inline annotation insertion vs file-level entry.
   // The target shape decides:
-  //   - `<file>:<line>` → inline (category must be inline-compatible)
-  //   - `--fingerprint=<id> --kind=<kind>` → file-level
+  // - `<file>:<line>` → inline (category must be inline-compatible)
+  // - `--fingerprint=<id> --kind=<kind>` → file-level
   const inlineTarget = parseInlineTarget(opts.target);
   if (inlineTarget) {
     return runAddInline({ cwd, target: inlineTarget, category, reason });
@@ -360,7 +360,7 @@ async function runAddFileLevel(args: {
   if (validationErrors.length > 0) {
     logger.fail(`allowlist entry failed validation:`);
     for (const e of validationErrors) {
-      logger.fail(`  - ${e.field}: ${e.message}`);
+      logger.fail(` - ${e.field}: ${e.message}`);
     }
     process.exit(1);
   }
@@ -403,8 +403,8 @@ export async function runAllowlistList(cwd: string, opts: AllowlistListOpts): Pr
     const expires = entry.expiresAt ? ` · expires ${entry.expiresAt}` : '';
     const reasonPreview = entry.reason ? ` — ${truncate(entry.reason, 60)}` : '';
     logger.info(
-      `  ${entry.fingerprint}  ${entry.kind}/${entry.category}` +
-        `  (added ${entry.addedAt}${expires})${reasonPreview}`,
+      ` ${entry.fingerprint} ${entry.kind}/${entry.category}` +
+        ` (added ${entry.addedAt}${expires})${reasonPreview}`,
     );
   }
 }
@@ -431,16 +431,16 @@ export async function runAllowlistShow(cwd: string, opts: AllowlistShowOpts): Pr
     process.stdout.write(JSON.stringify(entry, null, 2) + '\n');
     return;
   }
-  logger.info(`Fingerprint:        ${entry.fingerprint}`);
-  logger.info(`Kind:               ${entry.kind}`);
-  logger.info(`Category:           ${entry.category}`);
-  logger.info(`Added at:           ${entry.addedAt}`);
-  if (entry.addedBy) logger.info(`Added by:           ${entry.addedBy}`);
-  if (entry.expiresAt) logger.info(`Expires at:         ${entry.expiresAt}`);
+  logger.info(`Fingerprint: ${entry.fingerprint}`);
+  logger.info(`Kind: ${entry.kind}`);
+  logger.info(`Category: ${entry.category}`);
+  logger.info(`Added at: ${entry.addedAt}`);
+  if (entry.addedBy) logger.info(`Added by: ${entry.addedBy}`);
+  if (entry.expiresAt) logger.info(`Expires at: ${entry.expiresAt}`);
   if (entry.acknowledgedSeverity) {
-    logger.info(`Acknowledged sev.:  ${entry.acknowledgedSeverity}`);
+    logger.info(`Acknowledged sev.: ${entry.acknowledgedSeverity}`);
   }
-  if (entry.reason) logger.info(`Reason:             ${entry.reason}`);
+  if (entry.reason) logger.info(`Reason: ${entry.reason}`);
 }
 
 // ─── audit ────────────────────────────────────────────────────────────────
@@ -510,7 +510,7 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
       `Expired (${report.expired.length}) — run \`vyuh-dxkit allowlist prune\` to remove:`,
     );
     for (const e of report.expired) {
-      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}  expired ${e.expiresAt}`);
+      logger.info(` ${e.fingerprint} ${e.kind}/${e.category} expired ${e.expiresAt}`);
     }
   }
 
@@ -520,8 +520,8 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
     );
     for (const { entry, daysRemaining } of report.soonToExpire) {
       logger.info(
-        `  ${entry.fingerprint}  ${entry.kind}/${entry.category}` +
-          `  expires ${entry.expiresAt} (in ${daysRemaining}d)`,
+        ` ${entry.fingerprint} ${entry.kind}/${entry.category}` +
+          ` expires ${entry.expiresAt} (in ${daysRemaining}d)`,
       );
     }
   }
@@ -532,7 +532,7 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
         `add a reason or sync the gitignored reasons sidecar:`,
     );
     for (const e of report.missingRationale) {
-      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}`);
+      logger.info(` ${e.fingerprint} ${e.kind}/${e.category}`);
     }
   }
 
@@ -545,7 +545,7 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
     );
     for (const e of report.orphaned) {
       const reasonPreview = e.reason ? ` — ${truncate(e.reason, 50)}` : '';
-      logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}${reasonPreview}`);
+      logger.info(` ${e.fingerprint} ${e.kind}/${e.category}${reasonPreview}`);
     }
   }
 }
@@ -578,7 +578,7 @@ export async function runAllowlistPrune(cwd: string, opts: AllowlistPruneOpts): 
   const verb = opts.dryRun ? 'Would remove' : 'Removing';
   logger.warn(`${verb} ${removed.length} expired entr${removed.length === 1 ? 'y' : 'ies'}:`);
   for (const e of removed) {
-    logger.info(`  ${e.fingerprint}  ${e.kind}/${e.category}  expired ${e.expiresAt}`);
+    logger.info(` ${e.fingerprint} ${e.kind}/${e.category} expired ${e.expiresAt}`);
   }
 
   if (opts.dryRun) {
@@ -667,7 +667,7 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
   let skippedExpired = 0;
   if (file && file.entries.length > 0) {
     // Recompute each ingested finding's CONTENT fingerprint exactly as the
-    // security aggregator does (D-G5): the enclosing-symbol scope (graph
+    // security aggregator does: the enclosing-symbol scope (graph
     // pre-pass) + the spanHash carried on the snapshot + an in-bucket
     // ordinal. Falls back to the line fingerprint when no span was captured
     // — which is also what the aggregator does, so anchorless findings
@@ -771,7 +771,7 @@ export async function runAllowlistExport(cwd: string, opts: AllowlistExportOpts)
       '.',
   );
   logger.dim(
-    '  Note: Snyk Code (SAST) honors .snyk ignores only with the "consistent ignores" ' +
+    ' Note: Snyk Code (SAST) honors .snyk ignores only with the "consistent ignores" ' +
       'feature enabled for your org; SCA/dependency ignores are standard.',
   );
 }

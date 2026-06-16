@@ -56,15 +56,15 @@ export function nodesInFile(graph: Graph, sourceFile: string): GraphNode[] {
  * symbols it declares + inbound imports to the file's module node).
  *
  * - `callsIn`: count of `calls` edges terminating at any symbol in
- *   the file (summed across the file's function / class / method
- *   nodes)
+ * the file (summed across the file's function / class / method
+ * nodes)
  * - `importsIn`: count of `imports_from` edges terminating at the
- *   file's module node
+ * file's module node
  * - `callsOut`: count of `calls` edges originating from any symbol
- *   in the file
+ * in the file
  * - `communityId` / `communityLabel`: the community the file's
- *   module node belongs to, when one exists; label is the
- *   community's dominantSourceDir for a quick visual anchor
+ * module node belongs to, when one exists; label is the
+ * community's dominantSourceDir for a quick visual anchor
  */
 export interface HotFileResult {
   sourceFile: string;
@@ -503,9 +503,9 @@ export type LanguageFlags = DetectedStack['languages'];
  * zero internal callers (no other file in the graph calls into it).
  *
  * Typically this set falls into three buckets:
- *   - Genuine public API (library entry points, named exports)
- *   - CLI entry points (legitimately not internally imported)
- *   - Dead exports (false positives surfaced honestly)
+ * - Genuine public API (library entry points, named exports)
+ * - CLI entry points (legitimately not internally imported)
+ * - Dead exports (false positives surfaced honestly)
  *
  * The consumer should verify before treating any as dead code.
  */
@@ -616,12 +616,12 @@ export interface FeatureResult {
  * The marquee query — "where is feature X implemented?" Three-stage
  * resolution:
  *
- *   1. Direct symbolIndex lookup (case-insensitive, exact match on
- *      the stripped name)
- *   2. Substring expansion (opt-in via opts.substring) — scans every
- *      node's label for substring match
- *   3. Structural expansion — for each seed, gather community
- *      membership + immediate callers + callees, group by community
+ * 1. Direct symbolIndex lookup (case-insensitive, exact match on
+ * the stripped name)
+ * 2. Substring expansion (opt-in via opts.substring) — scans every
+ * node's label for substring match
+ * 3. Structural expansion — for each seed, gather community
+ * membership + immediate callers + callees, group by community
  *
  * On zero hits, computes edit-distance suggestions against the
  * symbolIndex keys so the caller can prompt the user with "did you
@@ -1101,7 +1101,7 @@ export function findingContextQuery(
 
 /**
  * Resolve the enclosing symbol for a source location — the focused
- * primitive behind the D-G5 content-anchored identity scope (CLAUDE.md
+ * primitive behind the content-anchored identity scope (CLAUDE.md
  * Rule 12: graph traversal stays in this module). Returns the label
  * (parens stripped) of the declaration nearest at-or-above `line` in
  * `sourceFile`, or `undefined` when the file declares no symbol

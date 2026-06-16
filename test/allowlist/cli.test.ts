@@ -30,7 +30,7 @@ import { getLanguage } from '../../src/languages';
 function makeTmpdir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-allowlist-cli-'));
   // Seed git config so resolveGitUserEmail returns deterministic value
-  fs.writeFileSync(path.join(dir, '.gitconfig-script'), '[user]\n  email = test@example.com\n');
+  fs.writeFileSync(path.join(dir, '.gitconfig-script'), '[user]\n email = test@example.com\n');
   return dir;
 }
 
@@ -115,7 +115,7 @@ describe('runAllowlistAdd — inline path', () => {
       runAllowlistAdd(tmp, {
         target: 'a.py:1',
         category: 'test-fixture',
-        reason: '   ',
+        reason: ' ',
       }),
     ).rejects.toThrow(/process\.exit/);
     expect(exit).toHaveBeenCalledWith(1);
@@ -834,7 +834,7 @@ describe('runAllowlistExport --snyk', () => {
   // A snyk finding carrying a matched-span hash (real SARIF region.snippet)
   // gets a CONTENT fingerprint, not a line one. Returns that content fp so
   // the test can allowlist it and confirm the export resolves it correctly
-  // post-D-G5 (the line-based recompute would have missed it). No graph in
+  // under content-anchored identity (the line-based recompute would have missed it). No graph in
   // the tmp dir → scope defaults to '' (file-level), ordinal 0.
   function seedSnykFindingWithSpan(
     rule: string,
@@ -893,7 +893,7 @@ describe('runAllowlistExport --snyk', () => {
     expect(snyk).toContain('expires: 2027-01-01T00:00:00.000Z');
   });
 
-  it('resolves a content-anchored (spanHash) Snyk finding (D-G5)', async () => {
+  it('resolves a content-anchored (spanHash) Snyk finding', async () => {
     // The flip's regression target: an allowlist entry keyed on the CONTENT
     // fingerprint must still produce a .snyk ignore. A line-based recompute
     // would no longer match this entry.

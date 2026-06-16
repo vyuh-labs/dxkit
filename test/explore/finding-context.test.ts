@@ -169,7 +169,7 @@ describe('buildFindingContextMap', () => {
   });
 });
 
-describe('buildEnclosingScopeMap (D-G5 scope pre-pass)', () => {
+describe('buildEnclosingScopeMap (content-anchored identity scope pre-pass)', () => {
   it('returns undefined (fail-open) when no graph.json exists', () => {
     expect(buildEnclosingScopeMap(tmpDir, [{ file: 'src/svc/auth.ts', line: 12 }])).toBeUndefined();
   });
