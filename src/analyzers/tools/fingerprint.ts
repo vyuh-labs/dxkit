@@ -81,6 +81,25 @@ export function computeFingerprint(finding: {
 }
 
 /**
+ * Pre-2.11 dependency-advisory fingerprint: `(package, installedVersion,
+ * id)`. Superseded by `computeFingerprint` (which drops the
+ * environment-dependent installed version and canonicalizes the advisory
+ * id), but retained verbatim so the identity-scheme migrator can
+ * recompute a finding's PRIOR-scheme id and remap allowlist entries onto
+ * the current scheme. Never delete a shipped scheme's id function — a
+ * migration from it must always be able to reproduce its output
+ * byte-for-byte. Not used to mint new identities.
+ */
+export function computeFingerprintV1(finding: {
+  readonly package: string;
+  readonly installedVersion?: string;
+  readonly id: string;
+}): string {
+  const input = `${finding.package}\0${finding.installedVersion ?? ''}\0${finding.id}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/**
  * Stamp `fingerprint` on every finding in place. Called once in
  * `gatherDepVulns` after cross-pack merge + enrichment so every
  * downstream consumer (bom, security/detailed, JSON export) sees a

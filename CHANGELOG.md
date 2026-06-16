@@ -47,6 +47,31 @@ configuration, end-to-end. This release closes them.
   `committed-full` baselines: run `vyuh-dxkit baseline create --force` once; the
   transition run shows dep-vulns as resolved+added (non-blocking) until re-baselined.
   Fingerprint-allowlisted dep-vulns (rare) need re-adding.
+- **Secret + code-pattern finding identity is anchored to content, not line position.**
+  A finding's durable fingerprint hashed its file plus a 3-line window, so any edit that
+  shifted a finding more than three lines re-minted its identity — which silently
+  stranded the allowlist entry pinned to it (the suppression stopped matching) and
+  churned the baseline on edits that never touched the finding. Identity now derives from
+  *what the finding is*: a secret from a salted HMAC of its value (location-independent);
+  a code-pattern finding from its enclosing symbol (resolved from the code graph, or the
+  file when no symbol resolves) plus a hash of the matched span plus an in-symbol ordinal;
+  a config finding (`.env`-in-git) from `(rule, file)`. The line number becomes display
+  metadata. A finding keeps its identity when it moves and re-mints only when the matched
+  construct — or its enclosing function — actually changes, so allowlist entries and
+  baselines survive refactors and unrelated edits. Ingested SARIF findings (Snyk Code /
+  CodeQL) earn the same anchor from the engine's reported code snippet. When no anchor is
+  resolvable (no repo salt, or a scanner that surfaces no matched snippet) identity falls
+  back to the previous line-window hash, so every finding still has a stable id.
+  **Migration:** secret/code/config fingerprints change once, and the baseline schema
+  version is bumped so a pre-upgrade `committed-full` baseline is rejected with an
+  explicit "re-baseline" message rather than silently reporting pre-existing findings as
+  net-new. `ref-based` baselines: nothing to do. `committed-full` baselines: run
+  `vyuh-dxkit baseline create --force` once to re-anchor. Re-add any fingerprint-based
+  allowlist entries on the new identity (`vyuh-dxkit allowlist add` reads the new
+  fingerprint straight from the report; inline `dxkit-allow:` source annotations are
+  unaffected — they match by location). Refresh committed SARIF snapshots
+  (`vyuh-dxkit ingest …`) so ingested findings pick up content anchors; until refreshed
+  they ride the line-window fallback.
 - **`ref-based` guardrail is reliable on JS/TS repos.** ref-based gathers the prior side
   from a detached `git worktree` that has no `node_modules` or coverage report, so the
   build-artifact-dependent kinds (`duplication` via jscpd, `test-gap` via coverage)

@@ -17,6 +17,7 @@ import {
   computeCodeFingerprint,
   computeContentFingerprint,
   computeFingerprint,
+  computeFingerprintV1,
   lineWindowFor,
 } from '../analyzers/tools/fingerprint';
 // Note: `computeSecretHmac` is the producer-side primitive that turns
@@ -35,24 +36,32 @@ import type {
   TestFileDegradationStatus,
   TestGapRisk,
 } from './types';
+import { CURRENT_IDENTITY_SCHEME } from './types';
 
 /**
- * Compute the durable identity for a finding. `version` defaults to
- * `'v2'` (the content-anchored scheme) — explicit so future scheme
- * migrations can co-exist without silent identity drift.
+ * Compute the durable identity for a finding under a given scheme
+ * version (defaults to the current scheme, `'v2'`).
  *
- * Identity is the SAME 16-char hex string format across all kinds, so
- * a baseline can store identities in a single flat set without
- * tracking which kind they came from. Mixing across kinds is safe:
- * the input space for each scheme is disjoint (a dep-vuln tuple of
- * `(package, version, id)` can never collide with a code-finding
- * tuple of `(canonicalRule, file, lineWindow)` at SHA-1 strength).
+ * `identityFor` can compute ANY shipped scheme, not just the current one:
+ * only two kinds changed between `v1` and `v2` — code/secret/config and
+ * dep-vuln — and both prior formulas are retained, so passing
+ * `version: 'v1'` reproduces a finding's pre-2.11 id byte-for-byte. That
+ * is the mechanism the identity migrator (`src/baseline/migrate.ts`)
+ * relies on: it computes each current finding's `(old, new)` id pair from
+ * one scan and remaps allowlist entries across the upgrade. Every other
+ * finding kind is version-independent (its branch ignores `version`), so
+ * its id is stable across schemes and needs no migration.
+ *
+ * Identity is the SAME 16-char hex string format across all kinds, so a
+ * baseline can store identities in a single flat set without tracking
+ * which kind they came from. The input space for each scheme is disjoint
+ * at SHA-1 strength, so mixing across kinds is safe.
  */
 export function identityFor(
   input: IdentityInput,
-  version: IdentitySchemeVersion = 'v2',
+  version: IdentitySchemeVersion = CURRENT_IDENTITY_SCHEME,
 ): FindingId {
-  if (version !== 'v2') {
+  if (version !== 'v1' && version !== 'v2') {
     throw new Error(`Unsupported identity-scheme version: ${version}`);
   }
   switch (input.kind) {
@@ -60,25 +69,31 @@ export function identityFor(
     case 'code':
     case 'config': {
       const canonicalRule = canonicalRuleFor(input.tool, input.rule);
-      // Content-anchored identity (scheme v2): identity anchors to CONTENT, not line, when a
-      // content anchor is available — the salted HMAC for secrets, the
-      // (scope, spanHash, ordinal) anchor for code, `''` for config. A
-      // finding that moves lines keeps its identity; it re-mints only when
-      // the matched content (or, for code, its enclosing symbol) changes.
-      // Falls back to the legacy line-window hash ONLY when no anchor was
-      // resolvable (no salt / no matched span surfaced) — that keeps
-      // identity defined for every finding, just less motion-stable.
-      if (input.contentAnchor !== undefined) {
+      // v1: pure line-window hash. v2: anchor to CONTENT (secret HMAC /
+      // code (scope, spanHash, ordinal) / config) when an anchor is
+      // available, so a finding that moves keeps its identity; falls back
+      // to the line-window hash when no anchor was resolvable, which keeps
+      // identity defined for every finding (just less motion-stable) AND
+      // means an anchorless v2 id equals the v1 id (handy for migration).
+      if (version === 'v2' && input.contentAnchor !== undefined) {
         return computeContentFingerprint(canonicalRule, input.file, input.contentAnchor);
       }
       return computeCodeFingerprint(canonicalRule, input.file, input.line);
     }
     case 'dep-vuln':
-      return computeFingerprint({
-        package: input.package,
-        id: input.id,
-        aliases: input.aliases,
-      });
+      // v1 hashed the (environment-dependent) installed version; v2 drops
+      // it and canonicalizes the advisory id across namespaces.
+      return version === 'v1'
+        ? computeFingerprintV1({
+            package: input.package,
+            installedVersion: input.installedVersion,
+            id: input.id,
+          })
+        : computeFingerprint({
+            package: input.package,
+            id: input.id,
+            aliases: input.aliases,
+          });
     case 'duplication':
       return computeDuplicationIdentity(
         input.fileA,

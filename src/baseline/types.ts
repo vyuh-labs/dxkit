@@ -69,18 +69,31 @@
 export type FindingId = string;
 
 /**
- * Identity-scheme version. Bumping this is required when the hashing
- * inputs change in a way that invalidates stored baselines. `v2` is the
- * content-anchored scheme (secret HMAC / code (scope, spanHash,
- * ordinal) / config `''`), with a line-window fallback when no anchor is
- * resolvable. It superseded the line-only `v1` scheme; the change
- * invalidated existing secret/code/config identities once
- * (committed-full users re-baseline; ref-based users — including dxkit
- * itself — need nothing). The field is not persisted or cross-checked
- * today; it documents the break and reserves room for future co-existing
- * schemes.
+ * Identity-scheme version. Bumped whenever the hashing inputs change in a
+ * way that would invalidate stored baselines / allowlists.
+ *
+ *   - `v1` — the pre-2.11 scheme: code/secret/config hashed
+ *     `(canonicalRule, file, lineWindow)`; dep-vuln hashed
+ *     `(package, installedVersion, id)`.
+ *   - `v2` (current) — content-anchored: code = `(scope, spanHash,
+ *     ordinal)`, secret = salted HMAC, config = `(rule, file)`, all with
+ *     a line-window fallback; dep-vuln = `(package, canonicalAdvisoryId)`.
+ *
+ * `identityFor` can compute EITHER scheme (every shipped scheme's id
+ * function is retained — see `computeFingerprintV1`), which is what lets
+ * the identity migrator build an `old → new` remap and carry allowlist
+ * entries across an upgrade. The version is stamped on the baseline +
+ * allowlist files so a later dxkit can detect the gap and migrate.
+ *
+ * Adding a future `v3`: extend this union, add its branch in
+ * `identityFor`, retain the prior scheme's id function, and the migrator
+ * + `update` handle the rest with no further wiring.
  */
-export type IdentitySchemeVersion = 'v2';
+export type IdentitySchemeVersion = 'v1' | 'v2';
+
+/** The scheme `identityFor` mints new identities under by default, and the
+ *  version stamped on freshly written baseline / allowlist files. */
+export const CURRENT_IDENTITY_SCHEME: IdentitySchemeVersion = 'v2';
 
 /**
  * Discriminated union of every finding kind that participates in
