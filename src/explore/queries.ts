@@ -1099,6 +1099,37 @@ export function findingContextQuery(
   };
 }
 
+/**
+ * Resolve the enclosing symbol for a source location — the focused
+ * primitive behind the D-G5 content-anchored identity scope (CLAUDE.md
+ * Rule 12: graph traversal stays in this module). Returns the label
+ * (parens stripped) of the declaration nearest at-or-above `line` in
+ * `sourceFile`, or `undefined` when the file declares no symbol
+ * at-or-above the line (top-level code, file absent from the graph).
+ *
+ * Same heuristic `findingContextQuery` uses, extracted as a cheap
+ * standalone query (no caller aggregation / community lookup) because
+ * the scope pre-pass runs it once per code finding. Graph nodes carry
+ * only a declaration line (no end line), so this is best-effort: a
+ * finding below the last symbol's declaration but outside its body
+ * attributes to that symbol. Accepted for identity — far stabler than a
+ * line number, and `undefined` cleanly degrades to the file-level anchor.
+ */
+export function enclosingSymbolFor(
+  graph: Graph,
+  sourceFile: string,
+  line: number,
+): string | undefined {
+  const nodes = graph.nodesByFile.get(sourceFile);
+  if (!nodes) return undefined;
+  let best: GraphNode | undefined;
+  for (const n of nodes) {
+    if (typeof n.line !== 'number' || n.line > line) continue;
+    if (best?.line === undefined || n.line > best.line) best = n;
+  }
+  return best ? stripParens(best.label) : undefined;
+}
+
 // ─── File-line context query (the `context <file:line>` structural half) ─────
 
 /**

@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  buildEnclosingScopeMap,
   buildFindingContextMap,
   formatGraphContextCell,
   graphContextProvenanceLine,
@@ -165,6 +166,43 @@ describe('buildFindingContextMap', () => {
     );
     // Only the first unique location is enriched.
     expect(Object.keys(gc!.contexts)).toEqual(['src/svc/auth.ts:12']);
+  });
+});
+
+describe('buildEnclosingScopeMap (D-G5 scope pre-pass)', () => {
+  it('returns undefined (fail-open) when no graph.json exists', () => {
+    expect(buildEnclosingScopeMap(tmpDir, [{ file: 'src/svc/auth.ts', line: 12 }])).toBeUndefined();
+  });
+
+  it('maps code locations to their enclosing symbol, keyed by file:line', () => {
+    writeGraphFixture(fixtureGraph());
+    const map = buildEnclosingScopeMap(tmpDir, [
+      { file: 'src/svc/auth.ts', line: 12 }, // inside login()@10
+      { file: 'src/svc/auth.ts', line: 35 }, // inside validate()@30
+    ]);
+    expect(map).toEqual({
+      'src/svc/auth.ts:12': 'login',
+      'src/svc/auth.ts:35': 'validate',
+    });
+  });
+
+  it('omits locations with no resolvable symbol (→ file-level fallback downstream)', () => {
+    writeGraphFixture(fixtureGraph());
+    const map = buildEnclosingScopeMap(tmpDir, [
+      { file: 'src/svc/auth.ts', line: 5 }, // above the earliest declaration
+      { file: 'src/nowhere.ts', line: 9 }, // file not in graph
+      { file: 'src/svc/auth.ts' }, // no line (file-level finding)
+    ]);
+    expect(map).toEqual({});
+  });
+
+  it('dedupes identical locations (resolves each file:line once)', () => {
+    writeGraphFixture(fixtureGraph());
+    const map = buildEnclosingScopeMap(tmpDir, [
+      { file: 'src/svc/auth.ts', line: 12 },
+      { file: 'src/svc/auth.ts', line: 12 },
+    ]);
+    expect(map).toEqual({ 'src/svc/auth.ts:12': 'login' });
   });
 });
 
