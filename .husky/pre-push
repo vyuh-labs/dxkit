@@ -52,18 +52,15 @@ npm run build
 npx vitest run --coverage
 bash scripts/check-coverage.sh
 
-# Dogfood: dxkit's own guardrail against this push, so a net-new finding
-# (secret / code-pattern / dep-vuln / duplication / test-gap regression)
-# fails the push the same way it would fail a customer's. Fast (~8s) — the
-# repo pins committed-full mode in .dxkit/policy.json, so the check diffs
-# HEAD against the committed .dxkit/baselines/main.json instead of
-# re-gathering origin/main in a worktree (ref-based was ~3m45s and, on a
-# JS repo, mis-flagged everything as net-new because the throwaway base
-# worktree has no node_modules for jscpd/coverage/npm-audit). Fail-open if
-# dxkit itself can't run (missing scanner toolchain on a contributor's
-# machine); the dxkit-self-guardrail CI workflow is the authoritative gate.
-# Set DXKIT_GUARDRAIL_PREPUSH=0 to skip locally.
-if [ "${DXKIT_GUARDRAIL_PREPUSH:-1}" = "1" ]; then
+# Dogfood: dxkit's own guardrail against this push, OPT-IN. This is a
+# public repo, so it uses ref-based mode (our own recommended default for
+# public repos — nothing is committed, so no finding paths / advisory ids
+# leak into git). ref-based re-gathers origin/main into a worktree and
+# diffs, which runs ~3min, so it's off by default rather than paid on every
+# push; the dxkit-self-guardrail CI workflow is the authoritative gate.
+# Enable locally with: DXKIT_GUARDRAIL_PREPUSH=1 git push
+# Run on demand any time with: npm run dxkit:guardrail
+if [ "${DXKIT_GUARDRAIL_PREPUSH:-0}" = "1" ]; then
   if ! node dist/index.js guardrail check; then
     status=$?
     if [ "$status" = "1" ]; then
