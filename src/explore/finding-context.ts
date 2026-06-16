@@ -18,7 +18,7 @@
  */
 
 import { tryLoadGraph } from './load';
-import { findingContextQuery, type FindingContext } from './queries';
+import { enclosingSymbolFor, findingContextQuery, type FindingContext } from './queries';
 import { languageForFile } from '../languages';
 
 /** A finding's location — the enrichment key. `line` optional (file-level findings). */
@@ -95,6 +95,39 @@ export function buildFindingContextMap(
     truncated: graph.meta.truncated,
     contexts,
   };
+}
+
+/**
+ * Build a `locationKey → enclosing-symbol` map for the D-G5 content
+ * anchor (the scope pre-pass). Loads the graph once (Rule 12: graph
+ * access stays in `src/explore/`), resolves each location's enclosing
+ * symbol via the canonical `enclosingSymbolFor` query, and returns only
+ * the locations that resolved to a symbol. The security orchestration
+ * applies these onto its code findings' `scope` field before
+ * aggregation — the aggregator itself never touches the graph.
+ *
+ * Fail-open + additive, like `buildFindingContextMap`: a missing /
+ * corrupt / stale graph returns `undefined`, and locations with no
+ * resolvable symbol are simply absent from the map (caller leaves
+ * `scope` unset → the identity layer falls back to file-level). Dedupes
+ * identical locations so a file:line surfaced by several tools resolves
+ * once.
+ */
+export function buildEnclosingScopeMap(
+  cwd: string,
+  locations: ReadonlyArray<FindingLocation>,
+): Record<string, string> | undefined {
+  const graph = tryLoadGraph(cwd);
+  if (!graph) return undefined;
+  const scopes: Record<string, string> = {};
+  for (const loc of locations) {
+    if (typeof loc.line !== 'number') continue;
+    const key = locationKey(loc.file, loc.line);
+    if (key in scopes) continue;
+    const symbol = enclosingSymbolFor(graph, loc.file, loc.line);
+    if (symbol) scopes[key] = symbol;
+  }
+  return scopes;
 }
 
 /**

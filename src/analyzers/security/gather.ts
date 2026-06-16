@@ -19,6 +19,7 @@ import { scoreFindings } from '../tools/risk-score';
 import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { externalToSecurityFindings } from '../../ingest/normalize';
 import { readAllSnapshots, snapshotEngines } from '../../ingest/snapshot';
+import { buildEnclosingScopeMap, locationKey } from '../../explore/finding-context';
 import { getFindExcludeFlags, isExcludedPath } from '../tools/exclusions';
 import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-source-files';
 import * as path from 'path';
@@ -597,6 +598,26 @@ export async function buildSecurityAggregateForHealth(
     (f) => !isExcludedPath(cwd, f.file),
   );
   const externalEngines = snapshotEngines(cwd);
+
+  // D-G5 scope pre-pass: attach each CODE finding's enclosing symbol from
+  // the graph so identity can anchor to the symbol (B), not the line. Runs
+  // here — the single chokepoint that builds the one cached aggregate every
+  // consumer reads — so vuln-scan, health, baseline, and BoM all inherit
+  // it. Graph access stays in `src/explore/` (Rule 12); the aggregator
+  // never touches the graph. Only code-category findings get a scope
+  // (secrets anchor on their HMAC; config on (rule, file)). Fail-open: no
+  // graph → scopes stay unset → file-level fallback at the step-4 flip.
+  const codeScopeTargets = [...codeFindings, ...tlsBypass, ...externalFindings];
+  const scopeMap = buildEnclosingScopeMap(
+    cwd,
+    codeScopeTargets.map((f) => ({ file: f.file, line: f.line })),
+  );
+  if (scopeMap) {
+    for (const f of codeScopeTargets) {
+      const symbol = scopeMap[locationKey(f.file, f.line)];
+      if (symbol) f.scope = symbol;
+    }
+  }
 
   return buildSecurityAggregate({
     secrets: { findings: secretFindings, toolUsed: secrets?.tool ?? null },

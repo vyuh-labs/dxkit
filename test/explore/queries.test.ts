@@ -17,6 +17,7 @@ import {
   callersOf,
   calleesOf,
   communitiesQuery,
+  enclosingSymbolFor,
   entryPointsQuery,
   featureQuery,
   fileSummaryQuery,
@@ -591,5 +592,32 @@ describe('findingContextQuery', () => {
     expect(ctx.blastRadius.topCallerFiles).toHaveLength(1);
     // Full count is preserved even when the sample is capped.
     expect(ctx.blastRadius.callerFiles).toBe(2);
+  });
+
+  // D-G5: the focused scope query backing content-anchored identity.
+  describe('enclosingSymbolFor', () => {
+    it('resolves the declaration nearest at-or-above the line (parens stripped)', () => {
+      // 12 sits below login()@10, above validate()@30 → login.
+      expect(enclosingSymbolFor(FC, 'src/svc/auth.ts', 12)).toBe('login');
+      // 35 sits below validate()@30 → validate.
+      expect(enclosingSymbolFor(FC, 'src/svc/auth.ts', 35)).toBe('validate');
+      // Exactly on the declaration counts as inside it.
+      expect(enclosingSymbolFor(FC, 'src/svc/auth.ts', 10)).toBe('login');
+    });
+
+    it('is line-stable within a symbol: every line in the body maps to one scope', () => {
+      // The whole point of B — a finding moving 10→29 keeps scope=login,
+      // so its content anchor (scope, span, ordinal) survives the move.
+      const scopes = [10, 15, 20, 29].map((l) => enclosingSymbolFor(FC, 'src/svc/auth.ts', l));
+      expect(new Set(scopes)).toEqual(new Set(['login']));
+    });
+
+    it('returns undefined above the earliest declaration (file-level fallback)', () => {
+      expect(enclosingSymbolFor(FC, 'src/svc/auth.ts', 5)).toBeUndefined();
+    });
+
+    it('returns undefined for a file absent from the graph', () => {
+      expect(enclosingSymbolFor(FC, 'src/nowhere.ts', 12)).toBeUndefined();
+    });
   });
 });
