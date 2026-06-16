@@ -187,6 +187,71 @@ export function computeCodeFingerprint(canonicalRule: string, file: string, line
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
+// ─── Content-anchored finding identity (D-G5, scheme v2) ─────────────────────
+// The line-based fingerprint above re-mints identity whenever a finding
+// shifts more than CODE_FINGERPRINT_LINE_WINDOW lines, which strands
+// allowlist entries + churns baselines on unrelated edits. The
+// content-anchored scheme replaces the line component with an anchor
+// derived from WHAT the finding is, not WHERE it sits:
+//
+//   secret → the salted HMAC of the value (computeSecretHmac) — already
+//            location-independent; identical values collapse (accepted).
+//   code   → codeContentAnchor(scope, span, ordinal): the normalized
+//            matched span, scoped to its enclosing symbol when the graph
+//            resolves one (else file-level), with an ordinal to keep
+//            identical constructs in one scope distinct.
+//   config → '' — identity is just (canonicalRule, file); inherently
+//            line-independent (a file is tracked / on disk or it isn't).
+//
+// `line` becomes display metadata only. These primitives are additive;
+// the dispatch + aggregator flip to them at the migration boundary
+// (D-G5 step 4). See tmp/benchmark/DG5-content-anchored-identity-spec.md.
+
+/**
+ * Normalize a matched code span so cosmetic reformatting (reindentation,
+ * collapsed vs expanded whitespace, trailing space) doesn't re-mint
+ * identity. Runs of whitespace collapse to a single space; ends trimmed.
+ * Deliberately conservative — it does NOT strip comments or rename
+ * identifiers, so a real change to the construct still re-mints.
+ */
+export function normalizeSpan(span: string): string {
+  return span.replace(/\s+/g, ' ').trim();
+}
+
+/** 16-char hex hash of a normalized matched span. */
+export function spanHash(span: string): string {
+  return createHash('sha1').update(normalizeSpan(span)).digest('hex').slice(0, 16);
+}
+
+/**
+ * Build the content anchor for a CODE finding: `scope\0spanHash\0ordinal`.
+ * `scope` is the enclosing symbol (graph-resolved) or '' (file-level
+ * fallback). `ordinal` is the index among findings sharing the same
+ * `(scope, spanHash)` in document order, so identical constructs in one
+ * scope stay distinct. NUL-separated so the parts can't collide via
+ * concatenation.
+ */
+export function codeContentAnchor(scope: string, span: string, ordinal: number): string {
+  return `${scope}\0${spanHash(span)}\0${ordinal}`;
+}
+
+/**
+ * Content-anchored finding fingerprint (scheme v2). Identity is
+ * `(canonicalRule, file, contentAnchor)` — the anchor carries the
+ * stable, location-independent content (built by the caller per kind:
+ * secret=HMAC, code=`codeContentAnchor(...)`, config=''). A finding that
+ * moves to a new line keeps its fingerprint; it re-mints only when the
+ * matched content (or, for code, its enclosing symbol) changes.
+ */
+export function computeContentFingerprint(
+  canonicalRule: string,
+  file: string,
+  contentAnchor: string,
+): string {
+  const input = `${canonicalRule}\0${file}\0${contentAnchor}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
 // ─── Secret HMAC primitive ───────────────────────────────────────────────────
 
 /**
