@@ -574,7 +574,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // public surface (`extract(..., cache_root=...)`), so the pin guards
     // against a future *public*-API drift, not the cache_dir signature.
     // Bumping requires retesting the generated script against the new release.
-    install: 'pip install "graphifyy==0.8.36"',
+    install: 'pip install "graphifyy==0.8.40"',
     check: 'python3 -c "import graphify"',
     for: 'all',
     layer: 'optional',
@@ -584,10 +584,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       'python3 -c "import graphify; print(\'installed\')" || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')"',
     installCommands: {
       macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.36"',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.40"',
       linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.36"',
-      windows: 'pip install --user "graphifyy==0.8.36"',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.40"',
+      windows: 'pip install --user "graphifyy==0.8.40"',
     },
   },
   jscpd: {
