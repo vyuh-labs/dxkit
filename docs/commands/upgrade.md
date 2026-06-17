@@ -20,6 +20,13 @@ Either step alone leaves an inconsistent install. `vyuh-dxkit upgrade`
 runs both, plus `vyuh-dxkit doctor` afterwards to verify operational
 health.
 
+The scaffold-refresh step (`vyuh-dxkit update`) also **migrates your
+baseline + allowlist** when a release changes the finding-identity scheme:
+it re-anchors allowlist fingerprints onto the new scheme (preserving your
+reviewed suppressions) and regenerates the baseline, so the guardrail keeps
+working without a manual re-baseline. See [`update`](update.md#identity-scheme-migration-run-after-every-upgrade)
+for details. Commit `.dxkit/` afterward to finish the migration.
+
 ## Usage
 
 ```bash

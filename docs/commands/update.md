@@ -21,6 +21,39 @@ vyuh-dxkit update [options]
   hash
 - Files with unchanged hash → safe to re-generate
 - Files with changed hash → marked "evolved", preserved by default
+- **Migrates your baseline + allowlist if a dxkit upgrade changed the
+  finding-identity scheme** (see below) — so the upgrade is one command,
+  not a manual re-baseline
+
+## Identity-scheme migration (run after every upgrade)
+
+dxkit stamps each `.dxkit/baselines/*.json` and `.dxkit/allowlist.json`
+with the finding-identity scheme it was written under. When a new dxkit
+version changes that scheme, `update` detects the gap and migrates
+automatically:
+
+- **Re-anchors your allowlist** — rewrites each entry's `fingerprint` onto
+  the new scheme, preserving every reviewed suppression. You don't
+  re-review anything or copy fingerprints from reports. (Inline
+  `dxkit-allow:` source comments are unaffected — they match by location.)
+- **Regenerates the baseline** onto the new scheme (only if one already
+  exists — `ref-based` repos gain no baseline).
+- **Reports** what it re-anchored / left unchanged, and flags any allowlist
+  entry whose finding no longer exists (review + prune those).
+
+So the full upgrade is:
+
+```bash
+npm i -D @vyuhlabs/dxkit@latest
+vyuh-dxkit update
+git add .dxkit && git commit -m "chore(dxkit): adopt latest"
+```
+
+If you skip `update` and run `vyuh-dxkit guardrail check` against a
+pre-upgrade `committed-full` baseline, the guardrail stops with an explicit
+"run `vyuh-dxkit update`" message rather than reporting every existing
+finding as net-new. The manual equivalent is `vyuh-dxkit baseline create
+--force` plus re-adding fingerprint-based allowlist entries by hand.
 
 ## Options
 
