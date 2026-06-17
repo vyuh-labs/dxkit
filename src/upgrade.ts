@@ -188,7 +188,9 @@ export function buildUpgradePlan(cwd: string, opts: UpgradeOpts = {}): UpgradePl
   if (latest) {
     steps.push({
       command: 'npx vyuh-dxkit update',
-      purpose: 'Refresh scaffold (.devcontainer, .githooks, .claude/skills, CI workflows)',
+      purpose:
+        'Refresh scaffold (.devcontainer, .githooks, .claude/skills, CI workflows) + ' +
+        'migrate baseline & allowlist if the finding-identity scheme changed',
     });
   }
 
