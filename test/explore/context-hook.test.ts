@@ -10,11 +10,12 @@ import { describe, expect, it } from 'vitest';
 import {
   extractPattern,
   formatFileContext,
+  formatFileLineContext,
   formatHookContext,
   parseBashForTarget,
   resolveHookTarget,
 } from '../../src/explore/context-hook';
-import type { ContextResult, FileSummary } from '../../src/explore/queries';
+import type { ContextResult, FileLineContext, FileSummary } from '../../src/explore/queries';
 import type { Graph, GraphJson } from '../../src/explore/types';
 
 /**
@@ -172,6 +173,33 @@ describe('resolveHookTarget (2.10 routing)', () => {
     expect(t).toEqual({ kind: 'pattern', pattern: 'configureApp' });
   });
 
+  it("carries Read's offset as the line, so the hook can localize context", () => {
+    const t = resolveHookTarget(
+      { toolName: 'Read', toolInput: { file_path: 'src/server.ts', offset: 78 } },
+      graph,
+      cwd,
+    );
+    expect(t).toEqual({ kind: 'file', file: 'src/server.ts', line: 78 });
+  });
+
+  it('omits the line for a whole-file Read (no offset) → file-level map', () => {
+    const t = resolveHookTarget(
+      { toolName: 'Read', toolInput: { file_path: 'src/server.ts' } },
+      graph,
+      cwd,
+    );
+    expect(t).toEqual({ kind: 'file', file: 'src/server.ts' });
+  });
+
+  it('ignores offset on Edit (only Read paginates by line)', () => {
+    const t = resolveHookTarget(
+      { toolName: 'Edit', toolInput: { file_path: 'src/server.ts', offset: 50 } },
+      graph,
+      cwd,
+    );
+    expect(t).toEqual({ kind: 'file', file: 'src/server.ts' });
+  });
+
   it('routes a Bash grep on a graph file to that file', () => {
     const t = resolveHookTarget(
       { toolName: 'Bash', toolInput: { command: 'grep -n "sendFile" src/server.ts' } },
@@ -271,5 +299,106 @@ describe('formatFileContext', () => {
 
   it('includes the module group when present', () => {
     expect(formatFileContext(summary, graph)).toContain('Module group: http-layer');
+  });
+});
+
+describe('formatFileContext — fire gate', () => {
+  const graph = { meta: { generatedAt: '2026-06-12T10:00:00Z' } as GraphJson['meta'] } as Graph;
+
+  it("returns '' (silent no-op) when a file has no symbols and no cross-file edges", () => {
+    // A symbol-less, unconnected file (e.g. top-level config) has nothing
+    // structural worth the token cost — the hook must stay silent.
+    const empty: FileSummary = {
+      found: true,
+      sourceFile: 'server.js',
+      symbols: [],
+      callerFiles: [],
+      calleeFiles: [],
+    } as unknown as FileSummary;
+    expect(formatFileContext(empty, graph)).toBe('');
+  });
+
+  it('fires for a symbol-less file that is still connected (imported by others)', () => {
+    const connected: FileSummary = {
+      found: true,
+      sourceFile: 'config/index.js',
+      symbols: [],
+      callerFiles: [{ sourceFile: 'src/app.js', count: 4 }],
+      calleeFiles: [],
+    } as unknown as FileSummary;
+    expect(formatFileContext(connected, graph)).toContain('Depended on by 1 file(s):');
+  });
+});
+
+describe('formatFileLineContext (line-aware delivery)', () => {
+  const graph = { meta: { generatedAt: '2026-06-17T10:00:00Z' } as GraphJson['meta'] } as Graph;
+  const summaryNoEdges: FileSummary = {
+    found: true,
+    sourceFile: 'app/data/user-dao.js',
+    symbols: [],
+    callerFiles: [],
+    calleeFiles: [],
+  } as unknown as FileSummary;
+
+  it('frames the enclosing symbol + its direct callees (the precise neighborhood)', () => {
+    const ctx: FileLineContext = {
+      found: true,
+      sourceFile: 'app/data/user-dao.js',
+      enclosingSymbol: {
+        id: 'n',
+        symbol: 'addUser',
+        line: 17,
+        kind: 'method',
+        callsIn: 0,
+        callsOut: 2,
+      },
+      callers: [],
+      callees: [
+        { symbol: 'getNextSequence', sourceFile: 'app/data/user-dao.js', line: 109 },
+        { symbol: 'getRandomFutureDate', sourceFile: 'app/data/user-dao.js', line: 49 },
+      ],
+      blastRadius: { callerFiles: 0, callers: 0 },
+    };
+    const out = formatFileLineContext(ctx, summaryNoEdges, graph, 'app/data/user-dao.js', 30);
+    expect(out).toContain('app/data/user-dao.js:30');
+    expect(out).toContain('Inside `addUser` (method, declared :17) — 0 caller(s), 2 callee(s).');
+    expect(out).toContain('getNextSequence');
+    // No source text is injected — the Read already returns the lines.
+    expect(out).not.toContain('```');
+  });
+
+  it('still helps a module-level line (no enclosing symbol) via the file role', () => {
+    const ctx: FileLineContext = {
+      found: true,
+      sourceFile: 'config/index.js',
+      enclosingSymbol: undefined,
+      callers: [],
+      callees: [],
+      blastRadius: { callerFiles: 1, callers: 4 },
+    };
+    const summary: FileSummary = {
+      found: true,
+      sourceFile: 'config/index.js',
+      symbols: [],
+      callerFiles: [{ sourceFile: 'src/app.js', count: 4 }],
+      calleeFiles: [],
+    } as unknown as FileSummary;
+    const out = formatFileLineContext(ctx, summary, graph, 'config/index.js', 12);
+    expect(out).toContain('module-level');
+    expect(out).toContain('File depended on by 1 file(s):');
+  });
+
+  it("returns '' when there is neither an enclosing symbol nor any cross-file edge", () => {
+    // The true server.js case: zero graph structure → nothing to inject →
+    // silent no-op → the dxkit arm behaves exactly like vanilla here.
+    const ctx: FileLineContext = {
+      found: true,
+      sourceFile: 'server.js',
+      enclosingSymbol: undefined,
+      callers: [],
+      callees: [],
+      blastRadius: { callerFiles: 0, callers: 0 },
+    };
+    expect(formatFileLineContext(ctx, summaryNoEdges, graph, 'server.js', 78)).toBe('');
   });
 });

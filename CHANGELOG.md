@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-06-17
+
+### Line-aware passive context hook
+
+- **The PreToolUse context hook now uses the line the agent is reading.** When a
+  `Read` carries an `offset`, the hook injects the *location's* structural
+  neighborhood — the enclosing symbol plus its direct callers/callees, and the
+  file's cross-file role — instead of only a flat file-level symbol map. Reading
+  the body of a function now yields "you're inside `addUser`; it calls
+  `getNextSequence`, `getRandomFutureDate`" rather than a list of every symbol in
+  the file. No source text is injected (the `Read` already returns the lines); the
+  hook adds only the structure the read doesn't show.
+- **The hook also fires for symbol-less but connected files.** The old gate
+  skipped any file with zero named symbols, which silently blanked out top-level
+  config / entrypoint modules even when other files import them. The gate is now
+  "fire iff there's useful structure" (named symbols *or* cross-file edges),
+  applied uniformly to the file-level and line-level paths.
+- The fail-open/additive contract is unchanged: when the graph has no structure
+  for a location, the hook stays a silent no-op and the agent proceeds exactly as
+  without dxkit.
+
+No identity-scheme change; no migration. `vyuh-dxkit update` (or `npm i -D
+@vyuhlabs/dxkit@latest`) picks up the refreshed hook scaffolding.
+
 ## [2.11.0] - 2026-06-16
 
 ### Code-graph quality, guardrail reliability on JS/TS, and a dogfooding pass

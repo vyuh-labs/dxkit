@@ -41,15 +41,30 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { contextQuery, fileSummaryQuery, type ContextResult, type FileSummary } from './queries';
+import {
+  contextQuery,
+  fileLineContextQuery,
+  fileSummaryQuery,
+  type ContextResult,
+  type FileLineContext,
+  type FileSummary,
+} from './queries';
 import { tryLoadGraph } from './load';
 import type { Graph } from './types';
 
 /** Stingier than the manual CLI's 2000 — the hook fires on every search/read. */
 const HOOK_BUDGET = 1500;
 
-/** What the agent's tool call resolved to: a specific file, or a search term. */
-type HookTarget = { kind: 'file'; file: string } | { kind: 'pattern'; pattern: string };
+/**
+ * What the agent's tool call resolved to. A file target may carry the
+ * `line` the agent is reading (Read's `offset`): with a line we inject the
+ * location's structural neighborhood (enclosing symbol + its edges + the
+ * file's role) — useful even for files with no named symbols, like
+ * top-level config; without one we inject the file's symbol map.
+ */
+type HookTarget =
+  | { kind: 'file'; file: string; line?: number }
+  | { kind: 'pattern'; pattern: string };
 
 /**
  * Entry point for `case 'context-hook'`. Reads stdin, resolves the
@@ -83,8 +98,23 @@ export async function runContextHook(cwd: string): Promise<void> {
     let additionalContext: string | undefined;
     if (target.kind === 'file') {
       const summary = fileSummaryQuery(graph, target.file);
-      if (!summary.found || summary.symbols.length === 0) return;
-      additionalContext = formatFileContext(summary, graph);
+      if (!summary.found) return;
+      // With a line, frame the location's structural neighborhood (enclosing
+      // symbol + its edges + the file's role); without one, the file's symbol
+      // map. Either formatter returns '' when there's genuinely nothing useful
+      // to add — that empty string is the single "don't fire" gate (replacing
+      // the old `symbols.length === 0` check, which blanked out symbol-less but
+      // well-connected files like top-level config).
+      additionalContext =
+        target.line !== undefined
+          ? formatFileLineContext(
+              fileLineContextQuery(graph, target.file, target.line),
+              summary,
+              graph,
+              target.file,
+              target.line,
+            )
+          : formatFileContext(summary, graph);
     } else {
       const result = contextQuery(graph, target.pattern, { budget: HOOK_BUDGET, substring: true });
       if (!result.matched || result.selection.length === 0) return;
@@ -154,7 +184,17 @@ export function resolveHookTarget(
     const fp = payload.toolInput.file_path ?? payload.toolInput.notebook_path;
     if (typeof fp !== 'string' || !fp.trim()) return undefined;
     const rel = toRepoRelative(fp.trim(), cwd);
-    return graph.nodesByFile.has(rel) ? { kind: 'file', file: rel } : undefined;
+    if (!graph.nodesByFile.has(rel)) return undefined;
+    // Read carries `offset` = the 1-based line the agent starts reading at.
+    // Use it to deliver location-local structure (the enclosing symbol's
+    // neighborhood) rather than only a file-level symbol map — which is
+    // what lets the hook help on findings inside symbol-less regions
+    // (top-level config, an entrypoint's middleware setup). Edit/Write
+    // carry no line, so they fall back to the file map.
+    const off = payload.toolInput.offset;
+    const line =
+      tool === 'Read' && typeof off === 'number' && off > 0 ? Math.floor(off) : undefined;
+    return line !== undefined ? { kind: 'file', file: rel, line } : { kind: 'file', file: rel };
   }
 
   // Bash — parse a grep/rg-style search command.
@@ -232,6 +272,17 @@ function toRepoRelative(p: string, cwd: string): string {
  * calibrates trust.
  */
 export function formatFileContext(summary: FileSummary, graph: Graph): string {
+  // Fire only when there's structure worth the tokens: named symbols, or the
+  // file's cross-file role (who imports it / what it reaches into). A file
+  // with none of those (and no line to localize) has nothing useful to add —
+  // return '' so the hook stays a silent no-op (additive contract).
+  if (
+    summary.symbols.length === 0 &&
+    summary.callerFiles.length === 0 &&
+    summary.calleeFiles.length === 0
+  ) {
+    return '';
+  }
   const lines: string[] = [];
   lines.push(
     `dxkit graph context for \`${summary.sourceFile}\` (from .dxkit/reports/graph.json, generated ${graph.meta.generatedAt.slice(0, 10)} — structural map, the file's actual contents remain authoritative):`,
@@ -273,6 +324,75 @@ export function formatFileContext(summary: FileSummary, graph: Graph): string {
   if (summary.communityLabel) {
     lines.push(`- Module group: ${summary.communityLabel}`);
   }
+
+  return lines.join('\n');
+}
+
+/**
+ * Compact `additionalContext` for a FILE target with a LINE (Read's
+ * `offset`). Frames the location's structural neighborhood: the enclosing
+ * symbol + its direct callers/callees, plus the file's cross-file role
+ * (who imports it, what it reaches into) and module group.
+ *
+ * It deliberately injects NO source text — the Read the agent just issued
+ * already returns the lines; the hook's value is the structure the Read
+ * does NOT show (who reaches this symbol, blast radius, what it calls).
+ * That's also why this works for symbol-less regions (top-level config,
+ * an entrypoint's middleware block): even with no enclosing symbol, the
+ * file's role orients the agent — exactly the case a file-level symbol map
+ * left empty. Returns '' (→ silent no-op) when there's no enclosing symbol
+ * AND no cross-file edges to report.
+ */
+export function formatFileLineContext(
+  ctx: FileLineContext,
+  summary: FileSummary,
+  graph: Graph,
+  file: string,
+  line: number,
+): string {
+  const enc = ctx.enclosingSymbol;
+  const hasFileEdges = summary.callerFiles.length > 0 || summary.calleeFiles.length > 0;
+  if (!enc && !hasFileEdges) return '';
+
+  const lines: string[] = [];
+  lines.push(
+    `dxkit graph context for \`${file}:${line}\` (from .dxkit/reports/graph.json, generated ${graph.meta.generatedAt.slice(0, 10)} — structural map, the file's actual contents remain authoritative):`,
+  );
+
+  if (enc) {
+    const where = enc.line ? `${enc.kind}, declared :${enc.line}` : enc.kind;
+    lines.push(
+      `- Inside \`${enc.symbol}\` (${where}) — ${enc.callsIn} caller(s), ${enc.callsOut} callee(s).`,
+    );
+    if (ctx.callers.length > 0) {
+      const top = ctx.callers.slice(0, 6);
+      lines.push(`- Callers of \`${enc.symbol}\`:`);
+      for (const c of top)
+        lines.push(`    ${c.symbol} — ${c.line ? `${c.sourceFile}:${c.line}` : c.sourceFile}`);
+    }
+    if (ctx.callees.length > 0) {
+      const top = ctx.callees.slice(0, 6);
+      lines.push(`- \`${enc.symbol}\` calls:`);
+      for (const c of top)
+        lines.push(`    ${c.symbol} — ${c.line ? `${c.sourceFile}:${c.line}` : c.sourceFile}`);
+    }
+  } else {
+    lines.push(
+      `- Line ${line} is module-level (top of file / config) — not inside a tracked symbol.`,
+    );
+  }
+
+  if (summary.callerFiles.length > 0) {
+    const top = summary.callerFiles.slice(0, 6);
+    lines.push(`- File depended on by ${summary.callerFiles.length} file(s):`);
+    for (const c of top) lines.push(`    ${c.sourceFile} (${c.count} call(s))`);
+  }
+  if (summary.calleeFiles.length > 0) {
+    const top = summary.calleeFiles.slice(0, 6);
+    lines.push(`- File calls into ${summary.calleeFiles.length} file(s):`);
+    for (const c of top) lines.push(`    ${c.sourceFile} (${c.count} call(s))`);
+  }
+  if (summary.communityLabel) lines.push(`- Module group: ${summary.communityLabel}`);
 
   return lines.join('\n');
 }
