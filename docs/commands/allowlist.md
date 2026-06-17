@@ -338,6 +338,16 @@ vyuh-dxkit issue --type=false-positive --fingerprint=<id> \
 
 See [`vyuh-dxkit issue`](./issue.md) for full details.
 
+## Upgrades: your suppressions are carried automatically
+
+File-level entries are keyed on a finding's `fingerprint`. When a dxkit
+release changes the finding-identity scheme, those fingerprints change —
+but you don't re-add anything: `vyuh-dxkit update` re-anchors every entry
+onto the new scheme, preserving your reviewed decisions, and flags only
+entries whose finding no longer exists. Inline `dxkit-allow:` source
+comments are unaffected (they match by location). See
+[`update`](update.md#identity-scheme-migration-run-after-every-upgrade).
+
 ## Related
 
 - [`vyuh-dxkit guardrail check`](./guardrail.md) — blocks PRs on new findings; allowlist suppresses individual findings
