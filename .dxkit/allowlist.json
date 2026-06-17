@@ -219,7 +219,23 @@
       "addedAt": "2026-06-16"
     },
     {
+      "fingerprint": "b52ca2a2d9ba33e3",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
       "fingerprint": "b9aeb3e033e8416a",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "fake credential in a test fixture for the secret-detection suite",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-06-16"
+    },
+    {
+      "fingerprint": "bd7daffec80066c3",
       "kind": "secret",
       "category": "test-fixture",
       "reason": "fake credential in a test fixture for the secret-detection suite",
