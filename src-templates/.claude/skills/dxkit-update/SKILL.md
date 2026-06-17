@@ -31,7 +31,9 @@ dxkit ships in two layers and an upgrade touches both:
 1. **The binary** — `@vyuhlabs/dxkit` npm package. `npm update` or `npm install @vyuhlabs/dxkit@<version>` replaces the local binary.
 2. **The scaffold** — files in the customer's repo (`.devcontainer/`, `.githooks/`, `.claude/skills/dxkit-*/`, `AGENTS.md`, `CLAUDE.md`, `.github/workflows/dxkit-*.yml`). `npx vyuh-dxkit update` refreshes these to match the new binary's templates.
 
-Both run for any non-trivial upgrade. The CLI subcommand `vyuh-dxkit upgrade` orchestrates them; this skill drives the customer through the orchestration with explanations and confirmations.
+`vyuh-dxkit update` also does one more thing automatically: if the new binary changed the **finding-identity scheme** (how baselines + allowlists fingerprint findings), it **migrates the committed baseline and allowlist** onto the new scheme — re-anchoring every reviewed suppression so nothing has to be re-reviewed. This is deterministic and lives in the CLI; the skill's job is to surface what it did, handle the rare entry it couldn't map, and get the result committed. See "Identity-scheme migration" below.
+
+Both stages run for any non-trivial upgrade. The CLI subcommand `vyuh-dxkit upgrade` orchestrates them (its plan includes `vyuh-dxkit update` as a step); this skill drives the customer through the orchestration with explanations and confirmations.
 
 ## The upgrade loop
 
@@ -104,9 +106,45 @@ future installs don't re-hit it: `echo "legacy-peer-deps=true" >> .npmrc`.
 After it succeeds, continue the loop. (`doctor` flags a missing `.npmrc`
 persistence as its own operational check.)
 
-### 6. Verify with doctor
+### 5b. Identity-scheme migration (automatic, inside `vyuh-dxkit update`)
+
+When the new binary changed the finding-identity scheme, the `vyuh-dxkit update`
+step (5) migrates the committed baseline + allowlist automatically. You don't run
+a separate command — you **read its output and react**. Two signals tell you a
+migration happened:
+
+- The console prints lines like `✓ Re-baselined onto identity scheme vN.` and
+  `✓ Allowlist migrated: X re-anchored, Y unchanged` (and, if any, `Z unmapped`).
+- A pre-`update` guardrail run would have stopped with
+  `Baseline "<name>" was captured under finding-identity scheme vA, but this
+  dxkit mints vB … Run vyuh-dxkit update`. (If the customer hit that message
+  first, this is the fix — reassure them it's expected, not a failure.)
+
+What to do with the report:
+
+1. **Explain it in one line.** "Your fingerprints changed in this version; dxkit
+   re-anchored your baseline and all X reviewed suppressions automatically — no
+   re-reviewing needed."
+2. **Handle `unmapped` entries — the one spot that needs judgment.** An unmapped
+   allowlist entry is a suppression whose finding no longer exists under the new
+   scheme (the finding was fixed/removed, or its metadata is insufficient to
+   recompute). Do NOT silently drop them. List each (`fingerprint`, `kind`,
+   `reason`) and ask the customer whether to remove it (likely stale) or keep it
+   (defer). `0 unmapped` → say so and move on.
+3. **Get it committed.** `update` prints "Commit .dxkit/baselines + .dxkit/allowlist.json
+   to finish the migration." Offer to stage and commit exactly those:
+   ```bash
+   git add .dxkit/baselines .dxkit/allowlist.json
+   git commit -m "chore(dxkit): migrate finding-identity scheme on upgrade"
+   ```
+   For `ref-based` repos (no committed baseline) there's nothing to commit —
+   each run re-gathers both sides under the new scheme. Say so and skip.
+
+### 6. Verify with doctor (+ guardrail if a migration ran)
 
 If all steps succeeded, run `npx vyuh-dxkit doctor` and report. If doctor surfaces operational issues post-upgrade (e.g. `summary.fixable[]` not empty), **hand off to dxkit-fix** — say "Upgrade complete, but doctor surfaced N gaps. Walking through dxkit-fix to close them."
+
+If an identity-scheme migration ran in step 5b, also run `npx vyuh-dxkit guardrail check` once. The migration succeeded iff the guardrail **does not** report a wave of net-new findings caused by the scheme change (a clean run shows the prior findings as `persisted`, blocking 0). If it instead blocks on many net-new at once, the migration didn't take — surface the output and hand off to dxkit-fix rather than letting the customer commit a broken baseline.
 
 ### 7. Surface manual follow-ups
 
@@ -122,7 +160,8 @@ Iterate optional steps in the plan:
 ## What dxkit-update can NOT do
 
 - **Cross-major migrations** — major bumps may need MIGRATION.md guidance + manual policy edits. Surface the link; don't auto-execute.
-- **Customer code changes** — if the upgrade requires changes to the customer's scoring policy, baseline schema, or workflow file customizations, point at the CHANGELOG.md section and stop.
+- **Customer code changes** — if the upgrade requires changes to the customer's scoring policy or workflow file customizations, point at the CHANGELOG.md section and stop. (Finding-identity scheme changes are the exception: `vyuh-dxkit update` migrates the baseline + allowlist automatically — see step 5b. Don't stop for those; drive them.)
+- **Re-derive a finding's identity by hand** — the old→new fingerprint mapping is deterministic and owned by the CLI's migrator. The skill explains, surfaces unmapped entries, and commits the result; it never recomputes a fingerprint itself.
 - **Downgrades** — never auto-execute. Always confirm; warn about schema differences; suggest backing up `.dxkit/baselines/` first.
 - **Rollback** — if execution mid-step fails, dxkit-update can't undo the binary install. Customer needs to `npm install @vyuhlabs/dxkit@<previous-version>` themselves.
 
@@ -163,8 +202,10 @@ After the loop completes:
 ```
 ✓ Upgraded: dxkit X → Y
 ✓ Scaffold refreshed: N files updated, M new (e.g. dxkit-fix skill if upgrading from <2.5.2)
-✓ Doctor: all green
+✓ Identity scheme migrated: baseline re-anchored, K suppressions carried over (0 unmapped)  ← only if a migration ran
+✓ Doctor: all green   ·   Guardrail: clean (no scheme-driven net-new)
 ○ Manual: rebuild devcontainer to pick up changes
+○ Committed .dxkit/baselines + .dxkit/allowlist.json (migration)
 ```
 
 Or if something failed:
