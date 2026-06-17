@@ -31,6 +31,9 @@ import {
   canonicalRuleFor,
   codeContentAnchorFromHash,
   computeCodeFingerprint,
+  computeContentFingerprint,
+  secretContentAnchor,
+  SECRET_CANONICAL_RULE,
 } from '../src/analyzers/tools/fingerprint';
 import type { DepVulnFinding } from '../src/languages/capabilities/types';
 
@@ -106,7 +109,10 @@ describe('buildSecurityAggregate — content-anchor threading', () => {
   // grouping still keys on (canonicalRule, file, lineWindow). These tests
   // pin "carried, not yet used" so the content-anchored switch is the only behavior
   // change.
-  it('threads a secret contentAnchor (HMAC) onto the emitted finding', () => {
+  it('stamps a value/salt-free ordinal anchor on a secret, ignoring any gather anchor', () => {
+    // Secret identity must not depend on a tool-captured value or a salt, so
+    // the aggregator IGNORES any anchor the gather attached and stamps a
+    // tool-independent (file, ordinal) anchor instead.
     const agg = buildSecurityAggregate({
       ...emptyInput(),
       secrets: {
@@ -115,6 +121,7 @@ describe('buildSecurityAggregate — content-anchor threading', () => {
             category: 'secret',
             severity: 'critical',
             file: 'a.ts',
+            // A stray gather-supplied HMAC must have no effect on identity.
             contentAnchor: 'deadbeefcafe0000',
           }),
         ],
@@ -122,7 +129,8 @@ describe('buildSecurityAggregate — content-anchor threading', () => {
       },
     });
     expect(agg.findingsByCategory.secret).toHaveLength(1);
-    expect(agg.findingsByCategory.secret[0].contentAnchor).toBe('deadbeefcafe0000');
+    // First (only) secret in the file → ordinal 0; the gather HMAC is gone.
+    expect(agg.findingsByCategory.secret[0].contentAnchor).toBe(secretContentAnchor(0));
   });
 
   it('threads a code finding spanHash + scope onto the emitted finding', () => {
@@ -262,12 +270,18 @@ describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () 
   function fpFor(tool: string, rule: string, file: string, line: number): string {
     return computeCodeFingerprint(canonicalRuleFor(tool, rule), file, line);
   }
+  // Content-anchored SECRET identity: tool-independent constant rule + file +
+  // in-file ordinal (value/salt-free). Mirrors the aggregator + identityFor.
+  function secretFpFor(file: string, ordinal: number): string {
+    return computeContentFingerprint(SECRET_CANONICAL_RULE, file, secretContentAnchor(ordinal));
+  }
   function allowEntry(fingerprint: string, kind: 'secret' | 'code', category: string) {
     return { fingerprint, kind, category, addedAt: '2026-06-01' } as never;
   }
 
   it('false-positive / test-fixture secrets are lifted from the scoreable bucket but stay in the raw bucket + annotated', () => {
-    const fpFixture = fpFor('grep-secrets', 'hardcoded-password', 'src/__tests__/a.unit.ts', 1);
+    // The fixture secret is the only secret in its file → ordinal 0.
+    const fpFixture = secretFpFor('src/__tests__/a.unit.ts', 0);
     const agg = buildSecurityAggregate({
       ...emptyInput(),
       secrets: {

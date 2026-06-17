@@ -7,19 +7,21 @@
  * identity — which silently stranded the allowlist entry pinned to the
  * old identity, so a reviewed-and-accepted finding came back as if new.
  *
- * Content-anchored identity hashes WHAT a finding is (a secret's salted
- * HMAC; a code finding's enclosing-symbol + matched-span + ordinal), not
- * WHERE it sits, so the identity is stable across line moves. This test
- * plants a real hardcoded secret, scans it end-to-end through the real
- * pipeline (in-process grep-secrets gather -> buildSecurityAggregate ->
- * allowlist annotator — not a mock, so a regression in any layer fails
- * the gate), allowlists it by its content fingerprint, shifts it 20 lines
- * down, and re-scans. The allowlist MUST still match.
+ * Content-anchored identity keys on WHAT a finding is (a secret's
+ * tool/salt-free file + in-file ordinal; a code finding's enclosing-symbol
+ * + matched-span + ordinal), not WHERE it sits, so the identity is stable
+ * across line moves. This test plants a real hardcoded secret, scans it
+ * end-to-end through the real pipeline (in-process grep-secrets gather ->
+ * buildSecurityAggregate -> allowlist annotator — not a mock, so a
+ * regression in any layer fails the gate), allowlists it by its content
+ * fingerprint, shifts it 20 lines down, and re-scans. The allowlist MUST
+ * still match.
  *
  * The in-process grep-secrets scanner avoids any external-tool dependency
- * (gitleaks/semgrep); the deterministic salt is supplied via
- * DXKIT_BASELINE_SALT so the HMAC content anchor is reproducible across
- * both scans without needing a git repo in the temp dir.
+ * (gitleaks/semgrep). A deterministic DXKIT_BASELINE_SALT is still set so
+ * the temp dir needn't be a git repo, but note the secret identity no
+ * longer depends on it — that salt-independence is asserted separately in
+ * secret-identity-tool-independence.test.ts.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
@@ -53,7 +55,8 @@ afterEach(() => {
 });
 
 /** Reshape the grep-secrets envelope into the aggregator's input shape
- *  (mirrors `gatherSecrets`), carrying the content anchor through. */
+ *  (mirrors `gatherSecrets`). The gather carries no content anchor — the
+ *  aggregator assembles the value/salt-free secret anchor itself. */
 function secretsInput(cwd: string): SecurityAggregateInput {
   const res = gatherGrepSecretsResult(cwd);
   const findings: SecurityFinding[] = (res?.findings ?? []).map((f) => ({
@@ -65,7 +68,6 @@ function secretsInput(cwd: string): SecurityAggregateInput {
     file: f.file,
     line: f.line,
     tool: 'grep-secrets',
-    ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
   }));
   return {
     secrets: { findings, toolUsed: 'grep-secrets' },
@@ -89,7 +91,7 @@ describe('content-anchored identity — allowlist survives a >3-line shift', () 
     expect(agg1.findingsByCategory.secret).toHaveLength(1);
     const before = agg1.findingsByCategory.secret[0];
     const fp = before.fingerprint;
-    expect(before.contentAnchor).toBeTruthy(); // HMAC anchor resolved (salt present)
+    expect(before.contentAnchor).toBeTruthy(); // value/salt-free ordinal anchor stamped
 
     // Allowlist it by its content fingerprint.
     const allowlist: AllowlistFile = {

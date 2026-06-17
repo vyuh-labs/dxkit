@@ -29,8 +29,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { findTool, TOOL_DEFS } from './tool-registry';
-import { computeSecretHmac } from './fingerprint';
-import { tryResolveSalt } from './salt';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import { walkSourceFiles } from './walk-source-files';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
@@ -92,11 +90,10 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   // `test-fixture`, not silently ignored).
   const files = walkSourceFiles(cwd, { includeTests: true, includeAutogen: true });
 
-  // Content anchor: HMAC the matched secret VALUE (capture group 1
-  // for the keyword-assignment patterns; the whole token for branded
-  // ones) at this boundary and carry only the digest. Fail-open: no salt
-  // (non-git dir) → no anchor → line-based identity fallback.
-  const salt = tryResolveSalt(cwd);
+  // Per-occurrence secret identity is (canonicalRule, file, ordinal),
+  // assembled in the aggregator — value- and salt-free, so the same secret
+  // fingerprints identically whether gitleaks or this grep fallback found
+  // it, and across environments. So this gather carries no content anchor.
   const raw: SecretFinding[] = [];
   for (const rel of files) {
     let content: string;
@@ -119,15 +116,11 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
       for (const sp of patterns) {
         const m = lines[i].match(sp.regex);
         if (m) {
-          // group 1 = the captured value (generic patterns); fall back to
-          // the whole match (branded token shapes). HMAC it, drop it.
-          const value = m[1] ?? m[0];
           raw.push({
             file: rel,
             line: i + 1,
             rule: sp.rule,
             severity: severityFor(sp.rule),
-            ...(salt && value ? { contentAnchor: computeSecretHmac(value, salt) } : {}),
           });
           break; // at most one finding per line
         }
