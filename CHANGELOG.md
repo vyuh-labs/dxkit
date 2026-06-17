@@ -62,16 +62,27 @@ configuration, end-to-end. This release closes them.
   CodeQL) earn the same anchor from the engine's reported code snippet. When no anchor is
   resolvable (no repo salt, or a scanner that surfaces no matched snippet) identity falls
   back to the previous line-window hash, so every finding still has a stable id.
-  **Migration:** secret/code/config fingerprints change once, and the baseline schema
-  version is bumped so a pre-upgrade `committed-full` baseline is rejected with an
-  explicit "re-baseline" message rather than silently reporting pre-existing findings as
-  net-new. `ref-based` baselines: nothing to do. `committed-full` baselines: run
-  `vyuh-dxkit baseline create --force` once to re-anchor. Re-add any fingerprint-based
-  allowlist entries on the new identity (`vyuh-dxkit allowlist add` reads the new
-  fingerprint straight from the report; inline `dxkit-allow:` source annotations are
-  unaffected — they match by location). Refresh committed SARIF snapshots
-  (`vyuh-dxkit ingest …`) so ingested findings pick up content anchors; until refreshed
-  they ride the line-window fallback.
+  **Migration — one command:** secret/code/config and dep-vuln fingerprints change once.
+  Every artifact now records the identity scheme it was written under, and the upgrade is
+  automatic:
+
+  ```
+  npm i -D @vyuhlabs/dxkit@latest
+  vyuh-dxkit update     # detects the scheme change → migrates baseline + allowlist
+  git add .dxkit && git commit -m "chore(dxkit): adopt this release"
+  ```
+
+  `update` rewrites the allowlist's fingerprints onto the new scheme (preserving every
+  reviewed suppression — no re-reviewing, no copying fingerprints from reports) and
+  regenerates the baseline, reporting what it re-anchored and flagging any entry whose
+  finding is gone. Inline `dxkit-allow:` source annotations need nothing (they match by
+  location). If you skip `update` and run the guardrail directly, it stops with an
+  explicit "run `vyuh-dxkit update`" message instead of reporting every pre-existing
+  finding as net-new. `ref-based` repos (no committed baseline) need nothing. Manual
+  fallback if you'd rather not use `update`: `vyuh-dxkit baseline create --force` plus
+  re-adding fingerprint-based allowlist entries by hand. Refresh committed SARIF
+  snapshots (`vyuh-dxkit ingest …`) so ingested findings pick up content anchors; until
+  refreshed they ride the line-window fallback.
 - **`ref-based` guardrail is reliable on JS/TS repos.** ref-based gathers the prior side
   from a detached `git worktree` that has no `node_modules` or coverage report, so the
   build-artifact-dependent kinds (`duplication` via jscpd, `test-gap` via coverage)
