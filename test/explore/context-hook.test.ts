@@ -9,12 +9,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractPattern,
-  formatFileContext,
-  formatFileLineContext,
-  formatHookContext,
   parseBashForTarget,
   resolveHookTarget,
 } from '../../src/explore/context-hook';
+import {
+  formatFileContext,
+  formatFileLineContext,
+  formatHookContext,
+} from '../../src/explore/context-hook-format';
 import type { ContextResult, FileLineContext, FileSummary } from '../../src/explore/queries';
 import type { Graph, GraphJson } from '../../src/explore/types';
 
