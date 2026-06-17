@@ -63,6 +63,8 @@ import {
   computeCodeFingerprint,
   computeContentFingerprint,
   lineWindowFor,
+  secretContentAnchor,
+  SECRET_CANONICAL_RULE,
 } from '../tools/fingerprint';
 import { annotateFindingsWithAllowlist, allowlistLiftsScore } from '../../allowlist/annotate';
 import type { AllowlistFile } from '../../allowlist/file';
@@ -341,17 +343,17 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     rule: string;
     title: string;
     tool: string;
-    // Content-anchor material, carried from the representative
-    // finding. The durable fingerprint anchors to this (not the line
-    // window) when available; the line key below is still used for
-    // intra-run dedup grouping. `contentAnchor` is the secret HMAC (set at
-    // gather); for code the final anchor is built at emit from `spanHash` +
-    // `scope` + `ordinal`.
-    contentAnchor?: string;
+    // Content-anchor material, carried from the representative finding.
+    // The durable fingerprint anchors to this (not the line window) when
+    // available; the line key below is still used for intra-run dedup
+    // grouping. Code: the final anchor is built at emit from `spanHash` +
+    // `scope` + `ordinal`. Secrets: from `ordinal` alone (value/salt-free,
+    // see `secretContentAnchor`). Config + anchorless: line-window fallback.
     spanHash?: string;
     scope?: string;
-    /** In-scope ordinal among code groups sharing the same
-     * `(file, scope, spanHash)`, assigned in document (line) order after
+    /** In-document-order ordinal that disambiguates findings sharing one
+     * anchor bucket: code groups sharing `(file, scope, spanHash)`, and
+     * secret groups sharing `(file, canonicalRule)`. Assigned after
      * grouping. Keeps identical constructs in one scope distinct. */
     ordinal?: number;
     producedBy: Set<string>;
@@ -367,7 +369,6 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       line: number;
       severity: Severity;
       spanHash?: string;
-      contentAnchor?: string;
     }>;
   };
   const groups = new Map<string, Group>();
@@ -435,7 +436,6 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         line: f.line,
         severity: f.severity,
         spanHash: f.spanHash,
-        contentAnchor: f.contentAnchor,
       });
       // Prefer the lower line number as the canonical line — semgrep
       // typically reports the declaration (earlier line) while
@@ -448,7 +448,6 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         existing.tool = f.tool;
         existing.cwe = f.cwe || existing.cwe;
         // Keep the anchor material aligned with the chosen representative.
-        existing.contentAnchor = f.contentAnchor;
         existing.spanHash = f.spanHash;
         existing.scope = f.scope;
       }
@@ -464,7 +463,6 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
         rule: f.rule,
         title: f.title,
         tool: f.tool,
-        contentAnchor: f.contentAnchor,
         spanHash: f.spanHash,
         scope: f.scope,
         producedBy: new Set([f.tool]),
@@ -475,7 +473,6 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
             line: f.line,
             severity: f.severity,
             spanHash: f.spanHash,
-            contentAnchor: f.contentAnchor,
           },
         ],
       });
@@ -486,17 +483,28 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
   }
 
   // ─── Ordinal assignment ────────────────────────────────────────
-  // Code groups sharing the same (file, scope, spanHash) get a stable
-  // in-document-order ordinal so identical constructs in one scope stay
-  // distinct (three `eval(userInput)` in one function stay three
-  // findings). Only code groups that captured a span participate; secrets
-  // (HMAC), config (file-stable line 0), and anchorless findings need no
-  // ordinal. Deterministic regardless of Map iteration order: sorted by
-  // line, then by the line-based group key as tiebreak.
+  // Findings sharing one anchor bucket get a stable in-document-order
+  // ordinal so identical constructs stay distinct:
+  //   • code groups sharing (file, scope, spanHash) — three
+  //     `eval(userInput)` in one function stay three findings;
+  //   • secret groups sharing (file) — two leaked credentials in one file
+  //     stay two findings. Keyed on file ALONE (not the per-tool rule):
+  //     secret identity discriminates on the tool-independent
+  //     SECRET_CANONICAL_RULE, so the ordinal must be unique per file
+  //     across every secret regardless of which scanner/rule found it.
+  // Config (file-stable line 0) and anchorless findings need no ordinal.
+  // The bucket key is prefixed by category so the code and secret
+  // namespaces can never collide. Deterministic regardless of Map
+  // iteration order: sorted by line, then by the line-based group key.
   const ordinalBuckets = new Map<string, Group[]>();
   for (const g of groups.values()) {
+    let key: string | undefined;
     if (g.category === 'code' && g.spanHash !== undefined) {
-      const key = `${g.file}\0${g.scope ?? ''}\0${g.spanHash}`;
+      key = `code\0${g.file}\0${g.scope ?? ''}\0${g.spanHash}`;
+    } else if (g.category === 'secret') {
+      key = `secret\0${g.file}`;
+    }
+    if (key !== undefined) {
       const list = ordinalBuckets.get(key) ?? [];
       list.push(g);
       ordinalBuckets.set(key, list);
@@ -514,12 +522,13 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
   }
 
   // The durable content anchor for a group (scheme v2), or undefined when
-  // none is resolvable → line-window fallback. Secrets: the salted HMAC.
+  // none is resolvable → line-window fallback. Secrets: (ordinal) alone —
+  // value/salt-free, so identity is tool- and environment-independent.
   // Code: (scope, spanHash, ordinal) when a span was captured. Config +
   // anchorless: undefined (config's line-0 identity is already
   // (canonicalRule, file)-stable, so it stays on the line path unchanged).
   const anchorFor = (g: Group): string | undefined => {
-    if (g.category === 'secret') return g.contentAnchor;
+    if (g.category === 'secret') return secretContentAnchor(g.ordinal ?? 0);
     if (g.category === 'code' && g.spanHash !== undefined) {
       return codeContentAnchorFromHash(g.scope ?? '', g.spanHash, g.ordinal ?? 0);
     }
@@ -535,6 +544,15 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       ? computeContentFingerprint(canonicalRule, file, anchor)
       : computeCodeFingerprint(canonicalRule, file, line);
 
+  // The rule discriminator used for IDENTITY (not display/grouping).
+  // Secrets fold onto the tool-independent SECRET_CANONICAL_RULE so the same
+  // leak fingerprints identically no matter which scanner/rule found it;
+  // code/config keep their per-tool canonical rule. Mirrors the secret
+  // branch in `identityFor` so the aggregator's stamped fingerprint and the
+  // baseline producer's recomputed id always agree.
+  const identityRuleFor = (g: Group): string =>
+    g.category === 'secret' ? SECRET_CANONICAL_RULE : g.canonicalRule;
+
   const codeFindingsByCategory: Record<'secret' | 'code' | 'config', CodeFinding[]> = {
     secret: [],
     code: [],
@@ -546,17 +564,22 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
 
   for (const g of groups.values()) {
     const anchor = anchorFor(g);
-    const fingerprint = fingerprintFor(g.canonicalRule, g.file, g.line, anchor);
+    const identityRule = identityRuleFor(g);
+    const fingerprint = fingerprintFor(identityRule, g.file, g.line, anchor);
 
     // Absorbed fingerprints: the content fingerprint each merged raw WOULD
     // have had as representative (its own span/HMAC, the group's scope +
     // ordinal). Lets a suppression keyed on a contributing finding's
     // identity still match after the representative flips between runs.
+    // Secrets fold onto SECRET_CANONICAL_RULE and a per-file ordinal, so
+    // every secret raw in a group resolves to the SAME fingerprint — nothing
+    // to absorb (the cross-tool divergence this guarded against is gone).
     const absorbed = new Set<string>();
     for (const raw of g.raws) {
-      const rawCanonical = canonicalRuleFor(raw.tool, raw.rule);
+      const rawCanonical =
+        g.category === 'secret' ? SECRET_CANONICAL_RULE : canonicalRuleFor(raw.tool, raw.rule);
       let rawAnchor: string | undefined;
-      if (g.category === 'secret') rawAnchor = raw.contentAnchor;
+      if (g.category === 'secret') rawAnchor = secretContentAnchor(g.ordinal ?? 0);
       else if (g.category === 'code' && raw.spanHash !== undefined)
         rawAnchor = codeContentAnchorFromHash(g.scope ?? '', raw.spanHash, g.ordinal ?? 0);
       const rawFp = fingerprintFor(rawCanonical, g.file, raw.line, rawAnchor);

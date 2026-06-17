@@ -270,6 +270,40 @@ The fingerprint is the durable contract between today's scan and
 tomorrow's guardrail check. Bypassing the canonical helpers means
 silently opting out of that contract.
 
+#### Identity inputs must be tool- and environment-independent
+
+The contract only holds if a finding's identity is **reproducible from
+one environment to the next** — otherwise a committed baseline/allowlist
+stops matching when the scan moves from a developer's machine to CI.
+So an identity scheme may hash **only inputs dxkit derives itself**:
+the source file's content/structure (read by dxkit, not captured by a
+tool), the finding's location, and an intrinsic, tool-independent
+classification. It MUST NOT hash:
+
+- a **specific tool's captured text** (gitleaks' `Secret` field, a grep
+  capture group, semgrep `extra.lines`, an ingested SARIF
+  `region.snippet.text`) — different tools capture different text for
+  the same finding;
+- the **(tool, rule) pair** when a tool-independent discriminator
+  exists — secrets fold onto the constant `SECRET_CANONICAL_RULE`
+  (every secret is "a leaked credential", so the same leak found by
+  different scanners shares one identity); code keeps its per-tool
+  canonical rule only because distinct rules on one construct are
+  genuinely distinct findings;
+- an **environment-derived salt** (`DXKIT_BASELINE_SALT` / `.dxkit/salt`
+  / root-SHA) — it differs across environments. (The salt survives only
+  in the separate `secret-hmac` kind, whose anti-rainbow-table purpose
+  requires it; that kind is for cross-file relocation matching, not
+  per-occurrence identity.)
+
+Known exception, tracked: **code** identity still hashes a tool-captured
+span (`spanHash`) and its per-tool canonical rule, so it can drift
+across engines (semgrep vs an ingested CodeQL/Snyk run) under
+inconsistent multi-engine ingestion. It is stable on the bundled-semgrep
+default path. A future scheme version should give code a dxkit-read
+source anchor; the migration platform below makes that a non-event for
+users.
+
 #### Identity-scheme versioning (migration contract)
 
 `identityFor` takes an `IdentitySchemeVersion` and can compute **any

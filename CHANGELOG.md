@@ -52,16 +52,20 @@ configuration, end-to-end. This release closes them.
   shifted a finding more than three lines re-minted its identity — which silently
   stranded the allowlist entry pinned to it (the suppression stopped matching) and
   churned the baseline on edits that never touched the finding. Identity now derives from
-  *what the finding is*: a secret from a salted HMAC of its value (location-independent);
-  a code-pattern finding from its enclosing symbol (resolved from the code graph, or the
-  file when no symbol resolves) plus a hash of the matched span plus an in-symbol ordinal;
-  a config finding (`.env`-in-git) from `(rule, file)`. The line number becomes display
-  metadata. A finding keeps its identity when it moves and re-mints only when the matched
-  construct — or its enclosing function — actually changes, so allowlist entries and
-  baselines survive refactors and unrelated edits. Ingested SARIF findings (Snyk Code /
-  CodeQL) earn the same anchor from the engine's reported code snippet. When no anchor is
-  resolvable (no repo salt, or a scanner that surfaces no matched snippet) identity falls
-  back to the previous line-window hash, so every finding still has a stable id.
+  *what the finding is*, computed only from inputs dxkit derives itself — never a scanner's
+  captured text or an environment-derived salt: a secret from a tool-independent constant
+  plus its file plus an in-file ordinal (no captured value, no salt — so the same leak gets
+  one identity whether gitleaks or the grep fallback found it, and identically across a
+  developer's machine and CI); a code-pattern finding from its enclosing symbol (resolved
+  from the code graph, or the file when no symbol resolves) plus a hash of the matched span
+  plus an in-symbol ordinal; a config finding (`.env`-in-git) from `(rule, file)`. The line
+  number becomes display metadata. A finding keeps its identity when it moves and re-mints
+  only when the matched construct — or its enclosing function — actually changes, so
+  allowlist entries and baselines survive refactors and unrelated edits. Ingested SARIF
+  findings (Snyk Code / CodeQL) earn the same code anchor from the engine's reported
+  snippet. When no anchor is resolvable (e.g. a scanner that surfaces no matched snippet)
+  identity falls back to the previous line-window hash, so every finding still has a stable
+  id.
   **Migration — one command:** secret/code/config and dep-vuln fingerprints change once.
   Every artifact now records the identity scheme it was written under, and the upgrade is
   automatic:

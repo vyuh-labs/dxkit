@@ -12,7 +12,11 @@ const scoreSecurityFromInput = (input: SecurityScoreInput) =>
   evaluateSpec(SECURITY_SCORING_SPEC, input);
 import { scoreTestGapsCounts } from '../src/analyzers/tests/scoring';
 import { buildSecurityAggregate } from '../src/analyzers/security/aggregator';
-import { canonicalRuleFor, computeCodeFingerprint } from '../src/analyzers/tools/fingerprint';
+import {
+  computeContentFingerprint,
+  secretContentAnchor,
+  SECRET_CANONICAL_RULE,
+} from '../src/analyzers/tools/fingerprint';
 import { buildSecurityDetailed } from '../src/analyzers/security/detailed';
 import type { SecurityReport } from '../src/analyzers/security/types';
 import {
@@ -156,10 +160,12 @@ describe('scoreSecurityFromInput', () => {
     // committed-credentials tier on that noise — but an un-triaged real
     // secret still counts. The aggregate carries the allowlist-adjusted
     // scoreable buckets; toSecurityScoreInput reads them.
-    const fixtureFp = computeCodeFingerprint(
-      canonicalRuleFor('grep-secrets', 'hardcoded-password'),
+    // Content-anchored SECRET identity: tool-independent constant rule +
+    // file + in-file ordinal (the only secret in the file → ordinal 0).
+    const fixtureFp = computeContentFingerprint(
+      SECRET_CANONICAL_RULE,
       'src/__tests__/validator.unit.ts',
-      10,
+      secretContentAnchor(0),
     );
     const buildAgg = (entries: object[]) =>
       buildSecurityAggregate({

@@ -62,9 +62,8 @@ export async function gatherSecrets(cwd: string): Promise<{
     file: f.file,
     line: f.line,
     tool: result.tool,
-    // Content-anchored identity: carry the content anchor (salted HMAC) through to the
-    // aggregator so the secret's identity survives line moves.
-    ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
+    // Secret identity is value/salt-free (canonicalRule, file, ordinal),
+    // assembled in the aggregator — the gather carries no content anchor.
   }));
   return { findings, toolUsed: result.tool };
 }
@@ -525,8 +524,6 @@ export async function buildSecurityAggregateForHealth(
           title?: string;
           file: string;
           line: number;
-          /** Content anchor (salted HMAC) when the gather derived one. */
-          contentAnchor?: string;
         }>;
       }
     | undefined,
@@ -566,7 +563,6 @@ export async function buildSecurityAggregateForHealth(
         file: f.file,
         line: f.line,
         tool: secrets.tool,
-        ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
       }))
     : [];
 

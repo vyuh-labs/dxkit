@@ -269,17 +269,10 @@ export interface SecretFinding {
   severity: keyof SeverityCounts;
   /** Human-readable description from the scanner (e.g. gitleaks' `Description` field). */
   title?: string;
-  /**
-   * Content-anchored identity material: the salted HMAC of the
-   * detected secret value, computed at the gather boundary via
-   * `computeSecretHmac(value, salt)`. The raw value is HMAC'd and
-   * dropped immediately — only this 16-char digest flows downstream, so
-   * the secret never enters the aggregate / report / dashboard surfaces.
-   * Used as the secret's `contentAnchor` so its identity survives line
-   * moves. Absent when no salt was derivable (non-git dir) → the
-   * identity layer falls back to the location-based scheme.
-   */
-  contentAnchor?: string;
+  // No content anchor here: a secret's durable identity is value- and
+  // salt-free (canonicalRule, file, in-file ordinal), assembled in the
+  // aggregator. The raw secret value still flows out separately (for the
+  // `secret-hmac` relocation-matching kind), never as identity material.
 }
 
 /**

@@ -14,8 +14,6 @@ import * as path from 'path';
 import { runFileSync } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
-import { computeSecretHmac } from './fingerprint';
-import { tryResolveSalt } from './salt';
 import { toProjectRelative } from './paths';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
@@ -192,19 +190,16 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     (c) => c.finding.file,
   );
 
-  // Content anchor: HMAC each surviving secret's value at this
-  // boundary (where the raw value lives) and attach ONLY the digest to
-  // the envelope finding. The raw value still never enters the envelope.
-  // Salt resolution is fail-open — a non-git directory yields no salt, so
-  // the anchor is simply omitted and identity falls back to line-based.
-  const salt = tryResolveSalt(cwd);
+  // Per-occurrence secret identity is (canonicalRule, file, ordinal),
+  // assembled in the aggregator — value- and salt-free, so it stays stable
+  // across scanners and environments. The envelope therefore carries no
+  // content anchor. (The raw value still flows out via `rawSecrets` below,
+  // where the `secret-hmac` producer HMACs it for cross-file relocation
+  // matching — a separate identity kind.)
   const envelope: SecretsResult = {
     schemaVersion: 1,
     tool: 'gitleaks',
-    findings: kept.map((c) => ({
-      ...c.finding,
-      ...(salt && c.secret ? { contentAnchor: computeSecretHmac(c.secret, salt) } : {}),
-    })),
+    findings: kept.map((c) => ({ ...c.finding })),
     suppressedCount: suppressed.length,
   };
   const rawSecrets: GitleaksRawSecret[] = kept.map((c) => ({

@@ -19,6 +19,7 @@ import {
   computeFingerprint,
   computeFingerprintV1,
   lineWindowFor,
+  SECRET_CANONICAL_RULE,
 } from '../analyzers/tools/fingerprint';
 // Note: `computeSecretHmac` is the producer-side primitive that turns
 // a raw secret + salt into the HMAC string stored in
@@ -69,14 +70,20 @@ export function identityFor(
     case 'code':
     case 'config': {
       const canonicalRule = canonicalRuleFor(input.tool, input.rule);
-      // v1: pure line-window hash. v2: anchor to CONTENT (secret HMAC /
-      // code (scope, spanHash, ordinal) / config) when an anchor is
-      // available, so a finding that moves keeps its identity; falls back
-      // to the line-window hash when no anchor was resolvable, which keeps
-      // identity defined for every finding (just less motion-stable) AND
-      // means an anchorless v2 id equals the v1 id (handy for migration).
+      // v1: pure line-window hash, keyed on the per-tool canonical rule
+      // (preserved byte-for-byte for migration). v2: anchor to CONTENT when
+      // an anchor is available, so a finding that moves keeps its identity;
+      // falls back to the line-window hash when no anchor was resolvable,
+      // which keeps identity defined for every finding (just less
+      // motion-stable) AND means an anchorless v2 id equals the v1 id.
       if (version === 'v2' && input.contentAnchor !== undefined) {
-        return computeContentFingerprint(canonicalRule, input.file, input.contentAnchor);
+        // Secrets discriminate on a tool-independent constant, not the
+        // per-tool rule: the same leak found by different scanners (under
+        // different rule names) must share one identity. Code/config keep
+        // their per-tool rule — for code, distinct rules on one construct
+        // are distinct findings.
+        const v2Rule = input.kind === 'secret' ? SECRET_CANONICAL_RULE : canonicalRule;
+        return computeContentFingerprint(v2Rule, input.file, input.contentAnchor);
       }
       return computeCodeFingerprint(canonicalRule, input.file, input.line);
     }

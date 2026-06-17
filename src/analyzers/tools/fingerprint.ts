@@ -213,8 +213,14 @@ export function computeCodeFingerprint(canonicalRule: string, file: string, line
 // content-anchored scheme replaces the line component with an anchor
 // derived from WHAT the finding is, not WHERE it sits:
 //
-// secret → the salted HMAC of the value (computeSecretHmac) — already
-// location-independent; identical values collapse (accepted).
+// secret → secretContentAnchor(ordinal): (canonicalRule, file) plus an
+// ordinal among same-(canonicalRule, file) secrets. Deliberately free of
+// the captured value AND the salt, so a secret's identity is identical no
+// matter which scanner found it (gitleaks and the grep fallback capture
+// different text) or how the salt resolves (env var / file / root-SHA
+// differ across environments). The value HMAC lives on only in the
+// separate `secret-hmac` kind, which recognizes the same value relocating
+// across files — a different question from per-occurrence identity.
 // code → codeContentAnchor(scope, span, ordinal): the normalized
 // matched span, scoped to its enclosing symbol when the graph
 // resolves one (else file-level), with an ordinal to keep
@@ -225,6 +231,18 @@ export function computeCodeFingerprint(canonicalRule: string, file: string, line
 // `line` becomes display metadata only. The dispatch (`identityFor`) and
 // the security aggregator prefer this anchor when one is available and
 // fall back to the line-window hash otherwise.
+//
+// Known limitation (code only): the code anchor's `spanHash` is the hash
+// of the tool-captured matched span, which differs between engines
+// (semgrep `extra.lines` vs an ingested SARIF `region.snippet.text` vs a
+// grep capture). When the SAME construct is found by different engines
+// across two environments — and the cross-tool dedup doesn't merge them
+// because only one environment ran the second engine — the code finding's
+// identity can drift across those environments. It does not affect
+// secrets (their anchor carries no tool-captured content) and only
+// surfaces under inconsistent multi-engine ingestion, never on the
+// bundled-semgrep default path. A future release should anchor code
+// identity to a content representation that is stable across engines.
 
 /**
  * Normalize a matched code span so cosmetic reformatting (reindentation,
@@ -271,6 +289,43 @@ export function codeContentAnchorFromHash(
 ): string {
   return `${scope}\0${spanHashHex}\0${ordinal}`;
 }
+
+/**
+ * Build the content anchor for a SECRET finding: `secret\0<ordinal>`.
+ * The `(canonicalRule, file)` half of identity already lives in
+ * `computeContentFingerprint`, so the anchor only has to disambiguate
+ * multiple secrets of the same rule in the same file — the ordinal does
+ * that, assigned in document order by the aggregator.
+ *
+ * Crucially it carries NEITHER the captured value NOR the salt. That
+ * makes a secret's per-occurrence identity byte-identical across scanners
+ * (gitleaks' `Secret` field and the grep fallback's capture group differ)
+ * and across environments (the salt resolves differently via env var /
+ * file / root-SHA), which is what a baseline/allowlist needs to stay
+ * matched between a developer's machine and CI. The `secret` prefix
+ * namespaces it away from code anchors (`scope\0spanHash\0ordinal`) so the
+ * two schemes can never collide.
+ *
+ * The value HMAC is not lost — the separate `secret-hmac` identity kind
+ * still pins it, for recognizing the same value relocating across files.
+ */
+export function secretContentAnchor(ordinal: number): string {
+  return `secret\0${ordinal}`;
+}
+
+/**
+ * The tool-independent rule discriminator for SECRET identity. Unlike code
+ * findings — where two different rules firing on one construct are two
+ * distinct findings, so the rule must stay in identity — every secret
+ * detection means the same thing ("a hardcoded/leaked credential", CWE-798).
+ * Folding them onto one constant makes a secret's identity independent of
+ * WHICH scanner found it and under what rule name (gitleaks `aws-access-key`
+ * vs the grep fallback's `hardcoded-password` describe the same leak). Used
+ * in place of `canonicalRuleFor(tool, rule)` when fingerprinting secrets;
+ * the per-tool canonical rule is still used for intra-run dedup grouping and
+ * survives on the finding as display metadata.
+ */
+export const SECRET_CANONICAL_RULE = 'canonical:secret';
 
 /**
  * Content-anchored finding fingerprint (scheme v2). Identity is
