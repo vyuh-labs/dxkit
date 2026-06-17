@@ -29,7 +29,9 @@
  * wiring here.
  */
 
+import * as fs from 'fs';
 import { createBaseline, gatherCurrentScan } from './create';
+import { pathForBaseline } from './baseline-file';
 import { identityFor } from './finding-identity';
 import { isSanitized } from './sanitize';
 import { CURRENT_IDENTITY_SCHEME } from './types';
@@ -141,15 +143,48 @@ export function buildIdentityRemap(
 }
 
 /**
+ * Detect whether a repo's committed artifacts (baseline + allowlist) were
+ * written under an OLDER identity scheme than the current one, returning
+ * the scheme to migrate FROM (today only `'v1'`), or `null` when
+ * everything is already current / there's nothing to migrate. A
+ * lightweight probe — reads the stamped `identityScheme` (absent ⇒ `'v1'`)
+ * without re-scanning. Used by `vyuh-dxkit update` to decide whether to
+ * run the migrator after an upgrade.
+ */
+export function detectStaleScheme(
+  cwd: string,
+  baselineName = 'main',
+): IdentitySchemeVersion | null {
+  const found = new Set<IdentitySchemeVersion>();
+  const blPath = pathForBaseline(cwd, baselineName);
+  if (fs.existsSync(blPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(blPath, 'utf8')) as {
+        identityScheme?: IdentitySchemeVersion;
+      };
+      found.add(raw.identityScheme ?? 'v1');
+    } catch {
+      /* unreadable baseline — leave migration to an explicit re-baseline */
+    }
+  }
+  const allowlist = loadAllowlist(cwd);
+  if (allowlist && allowlist.entries.length > 0) found.add(allowlist.identityScheme ?? 'v1');
+
+  if (found.has('v1') && CURRENT_IDENTITY_SCHEME !== 'v1') return 'v1';
+  return null;
+}
+
+/**
  * Migrate a repo's baseline + allowlist from `from` scheme to the current
  * scheme: one scan, rewrite the allowlist through the remap, regenerate
- * the baseline. Idempotent in spirit — running it when already current
- * produces an empty remap and a re-stamped baseline. Returns a summary the
- * caller renders.
+ * the baseline (only if one exists). Idempotent in spirit — running it
+ * when already current produces an empty remap and a re-stamped baseline.
+ * Returns a summary the caller renders.
  */
 export async function migrateIdentity(opts: {
   readonly cwd: string;
   readonly from: IdentitySchemeVersion;
+  readonly baselineName?: string;
   readonly verbose?: boolean;
 }): Promise<MigrationResult> {
   const { cwd } = opts;
@@ -183,8 +218,15 @@ export async function migrateIdentity(opts: {
     saveAllowlist(cwd, { ...allowlist, identityScheme: to, entries });
   }
 
-  // Regenerate the baseline with fresh new-scheme ids + stamped scheme.
-  const created = await createBaseline({ cwd, force: true, verbose: opts.verbose });
+  // Regenerate the baseline with fresh new-scheme ids + stamped scheme —
+  // but only if one already exists. A repo with no committed baseline
+  // (ref-based posture) shouldn't gain one as a side effect of migrating;
+  // its allowlist still gets remapped above.
+  const baselineName = opts.baselineName ?? 'main';
+  const hasBaseline = fs.existsSync(pathForBaseline(cwd, baselineName));
+  const created = hasBaseline
+    ? await createBaseline({ cwd, name: baselineName, force: true, verbose: opts.verbose })
+    : null;
 
   return {
     fromScheme: opts.from,
@@ -194,6 +236,6 @@ export async function migrateIdentity(opts: {
     allowlistRemapped: remapped,
     allowlistUnchanged: unchanged,
     allowlistUnmapped: unmapped,
-    baselinePath: created.path ?? null,
+    baselinePath: created?.path ?? null,
   };
 }

@@ -15,6 +15,7 @@ import {
   ShipInstallResult,
 } from './ship-installers';
 import * as logger from './logger';
+import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
 
 /**
  * Re-exports the shared type so callers within the update module can
@@ -242,6 +243,62 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   }
   for (const note of aggregate.notes) logger.dim(note);
 
+  // Identity-scheme migration: if this repo's committed baseline / allowlist
+  // were written under an older finding-identity scheme (a dxkit version
+  // bump changed it), carry them onto the current scheme automatically —
+  // remap the allowlist's fingerprints (preserving reviewed suppressions)
+  // and regenerate the baseline — so the guardrail keeps working without a
+  // manual re-baseline. Fail-soft: a migration error is reported, not fatal
+  // to the rest of the update.
+  await migrateIdentityIfStale(cwd);
+
   console.log(''); // slop-ok
   logger.success('Update complete. Evolved files (gotchas, conventions) preserved.');
+}
+
+/**
+ * Detect a stale finding-identity scheme on the repo's artifacts and, if
+ * found, migrate them to the current scheme. Reports a summary; never
+ * throws (a migration failure is surfaced as a warning so the rest of the
+ * update still succeeds).
+ */
+async function migrateIdentityIfStale(cwd: string): Promise<void> {
+  let from;
+  try {
+    from = detectStaleScheme(cwd);
+  } catch {
+    return; // probe failed (unreadable artifacts) — nothing to do here
+  }
+  if (!from) return;
+
+  logger.info(`Finding-identity scheme changed since last init — migrating baseline + allowlist…`);
+  try {
+    const result = await migrateIdentity({ cwd, from });
+    if (result.baselinePath) {
+      logger.success(`Re-baselined onto identity scheme ${result.toScheme}.`);
+    }
+    if (result.allowlistTotal > 0) {
+      logger.success(
+        `Allowlist migrated: ${result.allowlistRemapped} re-anchored, ` +
+          `${result.allowlistUnchanged} unchanged.`,
+      );
+    }
+    if (result.allowlistUnmapped.length > 0) {
+      logger.warn(
+        `${result.allowlistUnmapped.length} allowlist entr${
+          result.allowlistUnmapped.length === 1 ? 'y' : 'ies'
+        } matched no current finding (the suppressed finding is gone) — review + prune:`,
+      );
+      for (const e of result.allowlistUnmapped) {
+        logger.dim(`  ${e.fingerprint}  ${e.kind}/${e.category}`);
+      }
+    }
+    logger.dim('  → Commit .dxkit/baselines + .dxkit/allowlist.json to finish the migration.');
+  } catch (err) {
+    logger.warn(
+      `Identity migration could not complete: ${(err as Error).message}. ` +
+        `Run \`vyuh-dxkit baseline create --force\` and re-add fingerprint-based allowlist ` +
+        `entries manually.`,
+    );
+  }
 }
