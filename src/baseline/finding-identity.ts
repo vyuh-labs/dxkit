@@ -151,6 +151,30 @@ export function identityFor(
  * Without this, three intra-file clones in a single file would all
  * collapse to one identity.
  */
+/**
+ * The two `(file, startLine)` sides of a duplicate pair, sorted into a
+ * canonical order: by file path, then by start line. Sorting makes a clone
+ * reported as `(a:10, b:20)` and one reported as `(b:20, a:10)` resolve to the
+ * same first/second side, so the identity below and the matcher's relocation
+ * locator (`entryToLocated`) agree on which side is the representative WITHOUT
+ * duplicating the sort in two places — keeping them in lockstep is load-bearing
+ * for relocation (the locator's line must be the same side the prior entry
+ * stored, or the git-diff line mapping pairs the wrong occurrences).
+ */
+export function duplicationCanonicalSides(
+  fileA: string,
+  startLineA: number,
+  fileB: string,
+  startLineB: number,
+): readonly [readonly [string, number], readonly [string, number]] {
+  const pairs: Array<[string, number]> = [
+    [fileA, startLineA],
+    [fileB, startLineB],
+  ];
+  pairs.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
+  return [pairs[0], pairs[1]];
+}
+
 function computeDuplicationIdentity(
   fileA: string,
   fileB: string,
@@ -158,12 +182,8 @@ function computeDuplicationIdentity(
   startLineA: number,
   startLineB: number,
 ): FindingId {
-  const pairs: Array<[string, number]> = [
-    [fileA, startLineA],
-    [fileB, startLineB],
-  ];
-  pairs.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] - y[1]));
-  const input = `duplication\0v1\0${pairs[0][0]}\0${pairs[0][1]}\0${pairs[1][0]}\0${pairs[1][1]}\0${lines}`;
+  const [first, second] = duplicationCanonicalSides(fileA, startLineA, fileB, startLineB);
+  const input = `duplication\0v1\0${first[0]}\0${first[1]}\0${second[0]}\0${second[1]}\0${lines}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

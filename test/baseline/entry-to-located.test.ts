@@ -58,18 +58,13 @@ describe('entryToLocated', () => {
     });
   });
 
-  it('falls through to identity-only for kinds with no file/line locator', () => {
+  it('falls through to identity-only ONLY for line-independent locator-less kinds', () => {
+    // dep-vuln (advisory id) and secret-hmac (value HMAC) have
+    // line-independent identity, so they correctly carry no locator and pair
+    // by exact identity-hash. duplication is NOT here — its identity hashes
+    // exact start lines, so it must carry a line locator (asserted below).
     const cases: BaselineEntry[] = [
       { id: 'd1', kind: 'dep-vuln', package: 'lodash', advisoryId: 'GHSA-x' },
-      {
-        id: 'd2',
-        kind: 'duplication',
-        fileA: 'a',
-        fileB: 'b',
-        lines: 10,
-        startLineA: 1,
-        startLineB: 1,
-      },
       { id: 'd7', kind: 'secret-hmac', tool: 'gitleaks', rule: 'aws-token', hmac: 'h' },
     ];
     for (const entry of cases) {
@@ -79,6 +74,25 @@ describe('entryToLocated', () => {
       expect(out.line).toBeUndefined();
       expect(out.rule).toBeUndefined();
     }
+  });
+
+  it('gives duplication a line locator on the canonical representative side', () => {
+    // Line-dependent identity → must be relocatable. The locator side matches
+    // the identity's canonical ordering (sorted by file, then line) so a line
+    // shift relocates instead of false-flagging as net-new.
+    const out = entryToLocated({
+      id: 'd2',
+      kind: 'duplication',
+      fileA: 'b',
+      fileB: 'a',
+      lines: 10,
+      startLineA: 20,
+      startLineB: 5,
+    });
+    expect(out.id).toBe('d2');
+    expect(out.file).toBe('a'); // lexicographically smaller side
+    expect(out.line).toBe(5);
+    expect(out.rule).toBe('duplication');
   });
 
   it('carries file + kind (as rule) but no line for whole-file findings', () => {
@@ -103,6 +117,21 @@ describe('entryToLocated', () => {
       expect(out.line).toBeUndefined();
       expect(out.contentHash).toBeUndefined();
     }
+  });
+
+  it('gives a range-anchored coverage-gap a line locator at the range start', () => {
+    // A coverage-gap with no symbol hashes its line range → line-dependent →
+    // needs a line locator so a shift relocates. (Symbol-anchored gaps are
+    // line-independent and stay line-less, covered above.)
+    const out = entryToLocated({
+      id: 'cg',
+      kind: 'coverage-gap',
+      file: 'src/c.ts',
+      lineRange: [42, 60],
+    });
+    expect(out.file).toBe('src/c.ts');
+    expect(out.line).toBe(42);
+    expect(out.rule).toBe('coverage-gap');
   });
 
   it('entriesToLocated maps each element', () => {
