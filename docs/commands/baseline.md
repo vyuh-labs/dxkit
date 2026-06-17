@@ -149,6 +149,18 @@ manual intervention.
 > versions) keeps the anchor canonical. Use a local `--force` only for
 > the very first capture or a throwaway experiment.
 
+## Upgrades: identity-scheme migration
+
+Each baseline records the finding-identity scheme its ids were minted
+under (`identityScheme`). When a dxkit release changes that scheme, an
+old baseline can't be diffed against new-scheme findings — so the
+guardrail stops with a "run `vyuh-dxkit update`" message instead of
+flagging every existing finding as net-new. **`vyuh-dxkit update`
+migrates the baseline (and re-anchors your allowlist) automatically** —
+see [`update`](update.md#identity-scheme-migration-run-after-every-upgrade).
+The manual equivalent is `baseline create --force`. `ref-based` repos
+hold no committed baseline and need nothing.
+
 ## See also
 
 - [`guardrail`](guardrail.md) — diff a current scan against a baseline

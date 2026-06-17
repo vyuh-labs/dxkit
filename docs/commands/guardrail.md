@@ -57,6 +57,13 @@ fixtures, accepted risks), use the [allowlist](./allowlist.md) — the
 guardrail's block message prints the exact `allowlist add` command
 for every blocked finding.
 
+> **After a dxkit upgrade that changed the finding-identity scheme**, a
+> `committed-full` check stops with a "run `vyuh-dxkit update`" message
+> rather than diffing across schemes (which would flag every existing
+> finding as net-new). `vyuh-dxkit update` migrates the baseline +
+> allowlist automatically — see
+> [`update`](update.md#identity-scheme-migration-run-after-every-upgrade).
+
 ## Markdown output: PR-comment review
 
 `guardrail check --markdown` (used by the `dxkit-guardrails.yml`
