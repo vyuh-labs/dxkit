@@ -15,21 +15,41 @@
  * location-pair pass must too. The canonical-rule registry doesn't
  * apply to hygiene markers; the marker IS the canonical name.
  *
- * Whole-file findings (test-gap, coverage-gap, test-file-degradation,
- * god-file, stale-file, large-file) are file-anchored but carry no
- * line. They flow to the matcher's whole-file rename pass with `file`
- * populated and `kind` carried in `rule` — so a pure file rename
- * relocates them (instead of reading as removed+added → false net-new
- * debt), and two different whole-file kinds on the same renamed file
- * never cross-pair. The line-anchored passes skip them (no line); the
- * multiset pass still pairs them by exact identity-hash equality.
+ * Whole-file findings (test-gap, test-file-degradation, god-file,
+ * stale-file, large-file) are file-anchored but carry no line. They flow
+ * to the matcher's whole-file rename pass with `file` populated and `kind`
+ * carried in `rule` — so a pure file rename relocates them (instead of
+ * reading as removed+added → false net-new debt), and two different
+ * whole-file kinds on the same renamed file never cross-pair. The
+ * line-anchored passes skip them (no line); the multiset pass still pairs
+ * them by exact identity-hash equality.
  *
- * Kinds without any file/line locator (dep-vuln, duplication,
- * secret-hmac) fall through to the matcher's multiset pass — paired by
- * exact identity-hash equality, no locator metadata needed.
+ * THE RELOCATION INVARIANT (load-bearing — a regression test enforces it):
+ * if a finding's identity is sensitive to line position — i.e. shifting the
+ * finding down the file (holding its file + content constant) changes its
+ * identity hash — then this converter MUST give it a full `(file, line,
+ * rule)` locator, so the matcher's line-aware pass can relocate it through a
+ * `git diff` and not read benign churn (a comment inserted above it) as a
+ * removed+added pair → false net-new. A kind may be locator-less ONLY when
+ * its identity is line-INDEPENDENT.
+ *
+ * That is why:
+ *   - `duplication` carries a line locator: its identity hashes the block's
+ *     exact start lines, so it moves with the code. The locator uses the
+ *     CANONICAL representative side (`duplicationCanonicalSides`, the same
+ *     ordering the identity hash uses) so prior + current agree on which
+ *     side the matcher maps through the diff.
+ *   - `coverage-gap` is split: a SYMBOL-anchored gap is line-independent
+ *     (identity = `(file, symbol)`, survives vertical drift) → whole-file
+ *     locator; a RANGE-anchored gap (no symbol) is line-dependent → it gets
+ *     a line locator at the range start.
+ *   - `dep-vuln` and `secret-hmac` stay locator-less: their identities are
+ *     genuinely line-independent (advisory id; value HMAC), so the multiset
+ *     pass pairs them by exact identity-hash equality with no locator.
  */
 
 import { canonicalRuleFor } from '../analyzers/tools/fingerprint';
+import { duplicationCanonicalSides } from './finding-identity';
 import type { LocatedIdentity } from './git-aware-match';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry } from './types';
@@ -78,6 +98,14 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
         rule: entry.category,
       };
     case 'coverage-gap':
+      // A symbol-anchored gap has line-independent identity ((file,
+      // symbol)) → whole-file locator (no line). A range-anchored gap (no
+      // symbol) hashes its line range, so it's line-dependent and needs a
+      // line locator at the range start for relocation. (See the
+      // relocation invariant in the module header.)
+      return entry.symbol !== undefined
+        ? { id: entry.id, file: entry.file, rule: entry.kind }
+        : { id: entry.id, file: entry.file, line: entry.lineRange?.[0], rule: entry.kind };
     case 'test-gap':
     case 'test-file-degradation':
     case 'god-file':
@@ -90,9 +118,24 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // kinds on the same renamed file from cross-pairing. No line, so
       // the line-anchored passes correctly skip them.
       return { id: entry.id, file: entry.file, rule: entry.kind };
+    case 'duplication': {
+      // Line-dependent identity (hashes the block's exact start lines), so
+      // it MUST be relocatable — give it a line locator on the canonical
+      // representative side (same ordering the identity uses, so prior +
+      // current pick the same side across a shift). `kind` is the rule
+      // discriminator, as for the whole-file kinds above.
+      const [first] = duplicationCanonicalSides(
+        entry.fileA,
+        entry.startLineA,
+        entry.fileB,
+        entry.startLineB,
+      );
+      return { id: entry.id, file: first[0], line: first[1], rule: entry.kind };
+    }
     case 'dep-vuln':
-    case 'duplication':
     case 'secret-hmac':
+      // Line-independent identity (advisory id; value HMAC) → locator-less;
+      // the matcher's multiset pass pairs them by exact identity-hash.
       return { id: entry.id };
   }
 }
