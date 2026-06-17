@@ -270,6 +270,34 @@ The fingerprint is the durable contract between today's scan and
 tomorrow's guardrail check. Bypassing the canonical helpers means
 silently opting out of that contract.
 
+#### Identity-scheme versioning (migration contract)
+
+`identityFor` takes an `IdentitySchemeVersion` and can compute **any
+shipped scheme**, not just the current one (`CURRENT_IDENTITY_SCHEME`).
+That is what lets `src/baseline/migrate.ts` carry a repo's baseline +
+allowlist across an upgrade automatically (`vyuh-dxkit update`) instead
+of forcing a manual re-baseline + re-allowlist. Two rules keep that
+mechanism working — treat them as load-bearing:
+
+1. **Never delete a shipped scheme's id function.** When you change how a
+   kind is hashed, bump `IdentitySchemeVersion` (e.g. `'v2' → 'v3'`), add
+   the new branch in `identityFor`, and **keep the old formula** as a
+   versioned helper (the pattern: `computeFingerprintV1` retains the
+   pre-2.11 dep-vuln hash). A migration from an older scheme must be able
+   to reproduce its output byte-for-byte.
+2. **Keep every id input on the finding.** A scheme's id must be
+   recomputable from a current finding's fields + the baseline entry's
+   stored metadata (`baselineEntryToIdentityInput` is the inverse). Don't
+   drop a field an older scheme needs, or that scheme becomes
+   unmigratable. (`contentAnchor` is the allowed exception: it's not
+   stored on the entry because only the current scheme reads it and the
+   entry's `id` already IS the current id.)
+
+Then stamp `CURRENT_IDENTITY_SCHEME` on every artifact you write
+(`BaselineFile.identityScheme`, `AllowlistFile.identityScheme`) so a later
+dxkit can detect the gap, and the guardrail's scheme-mismatch guard +
+`update`'s auto-migration handle the rest with no new wiring.
+
 #### Fingerprint-discipline enforcement
 
 Four rules in `scripts/check-architecture.sh` + `test/`:
