@@ -200,6 +200,43 @@ describe('gitAwareMatch', () => {
     expect(result.persisted).toEqual([]);
   });
 
+  it('relocates a duplicate via content-hash when the base SHA is unreachable', () => {
+    // A duplicate block shifted down the file: its line-exact identity differs,
+    // and the base SHA is unreachable (shallow clone / force-pushed baseline),
+    // so the git-line pass is skipped. The content-hash pass must still pair
+    // the two — this is the protection that makes the relocation fix complete
+    // for the git-unavailable case, at parity with secret/code/hygiene.
+    const prior: LocatedIdentity[] = [
+      {
+        id: 'dup0prior0000000',
+        file: 'a.js',
+        line: 3,
+        rule: 'duplication',
+        contentHash: 'block00hash000000',
+      },
+    ];
+    const current: LocatedIdentity[] = [
+      {
+        id: 'dup0current00000',
+        file: 'a.js',
+        line: 6,
+        rule: 'duplication',
+        contentHash: 'block00hash000000',
+      },
+    ];
+    expect(prior[0].id).not.toBe(current[0].id);
+    const result = gitAwareMatch(prior, current, {
+      cwd: dir,
+      baseSha: '0000000000000000000000000000000000000000', // not in repo → git pass skipped
+    });
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(result.pairs).toHaveLength(1);
+    const [pair] = result.pairs;
+    expect(pair.status).toBe('persisted'); // same file → persisted, not relocated
+    expect(pair.reasons.some((r) => r.code === 'content-hash')).toBe(true);
+  });
+
   it('treats non-line-anchored findings via exact identity only', () => {
     writeFileSync(join(dir, 'a.ts'), lines('one'));
     const sha = commit(dir, 'initial');

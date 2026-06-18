@@ -47,18 +47,27 @@
 import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
+import { computeContentHashFromCommit } from '../content-hash';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
 
 export interface StaleAllowInput {
   readonly annotations: ReadonlyArray<InlineAllowlistOccurrence>;
   readonly aggregate: SecurityAggregate | null;
+  /** Repo + baseline commit. When present, each stale entry is stamped with a
+   * `contentHash` of the annotation's surrounding context, so the matcher's
+   * content-hash pass relocates it without git (the line-bucketed identity
+   * re-mints on a >window shift). Best-effort: omitted when absent or the file
+   * can't be read at the commit. */
+  readonly commit?: { readonly cwd: string; readonly commitSha: string };
 }
 
 /**
  * Build `stale-allow` entries from the annotation list + the
- * canonical security aggregate. Pure function — no I/O, no side
- * effects. Deterministic over equal inputs.
+ * canonical security aggregate. Deterministic over equal inputs; the
+ * only I/O is the best-effort `contentHash` read when `input.commit`
+ * is supplied (reading the annotation's context from the baseline
+ * commit, same as the secret/code producer).
  *
  * Returns an empty array when:
  *   - The annotation list is empty (nothing to check).
@@ -86,12 +95,21 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
       line: occ.line,
       category: occ.category,
     };
+    const contentHash = input.commit
+      ? (computeContentHashFromCommit(
+          input.commit.cwd,
+          input.commit.commitSha,
+          occ.file,
+          occ.line,
+        ) ?? undefined)
+      : undefined;
     out.push({
       id: identityFor(identityInput),
       kind: 'stale-allow',
       file: occ.file,
       line: occ.line,
       category: occ.category,
+      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
   return out;

@@ -441,6 +441,13 @@ export type BaselineEntry =
       lines: number;
       startLineA: number;
       startLineB: number;
+      /** 16-char hex hash of the normalized block content at the canonical
+       * representative side, stamped at baseline-create time. Lets the
+       * matcher's content-hash pass relocate the clone WITHOUT git (shallow
+       * clones, force-pushed baselines) — the git-line pass needs reachable
+       * history, this does not. Absent when the producer couldn't read the
+       * file. Same role as the secret/code/hygiene `contentHash`. */
+      contentHash?: string;
     }
   | {
       id: FindingId;
@@ -471,7 +478,18 @@ export type BaselineEntry =
   | { id: FindingId; kind: 'stale-file'; file: string; suffix: string }
   | { id: FindingId; kind: 'large-file'; file: string }
   | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string }
-  | { id: FindingId; kind: 'stale-allow'; file: string; line: number; category: string }
+  | {
+      id: FindingId;
+      kind: 'stale-allow';
+      file: string;
+      line: number;
+      category: string;
+      /** Content-hash of the annotation's surrounding context, so the matcher
+       * relocates it without git when a >window line shift re-mints the
+       * line-bucketed identity. Same role as the secret/code/hygiene field;
+       * absent when the file can't be read. */
+      contentHash?: string;
+    }
   | SanitizedBaselineEntry;
 
 /**

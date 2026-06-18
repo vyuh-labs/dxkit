@@ -3,7 +3,12 @@ import { describe, it, expect } from 'vitest';
 import { baselineEntryToIdentityInput } from '../../src/baseline/migrate';
 import { entryToLocated } from '../../src/baseline/entry-to-located';
 import { identityFor } from '../../src/baseline/finding-identity';
-import type { BaselineEntry, IdentityKind } from '../../src/baseline/types';
+import type { BaselineEntry } from '../../src/baseline/types';
+
+/** Every discriminant the BaselineEntry union takes (mirror of the
+ *  `IdentityKind` alias in producers/index.ts, inlined to avoid importing the
+ *  producer module into a pure-matcher test). */
+type IdentityKind = BaselineEntry['kind'];
 
 /**
  * THE MATCHER RELOCATION INVARIANT (the class-level guard).
@@ -113,13 +118,13 @@ const SAMPLES: ReadonlyArray<Sample> = [
   },
   {
     label: 'test-gap',
-    entry: { id: ID, kind: 'test-gap', file: 'a.js', risk: 'CRITICAL' },
-    shifted: { id: ID, kind: 'test-gap', file: 'a.js', risk: 'CRITICAL' },
+    entry: { id: ID, kind: 'test-gap', file: 'a.js', risk: 'critical' },
+    shifted: { id: ID, kind: 'test-gap', file: 'a.js', risk: 'critical' },
   },
   {
     label: 'hygiene',
-    entry: { id: ID, kind: 'hygiene', file: 'a.js', line: 10, marker: 'TODO' },
-    shifted: { id: ID, kind: 'hygiene', file: 'a.js', line: 10 + SHIFT, marker: 'TODO' },
+    entry: { id: ID, kind: 'hygiene', file: 'a.js', line: 10, marker: 'todo' },
+    shifted: { id: ID, kind: 'hygiene', file: 'a.js', line: 10 + SHIFT, marker: 'todo' },
   },
   {
     label: 'test-file-degradation',
@@ -234,4 +239,86 @@ describe('duplication relocation locator', () => {
     expect(located.line).toBe(5);
     expect(located.rule).toBe('duplication');
   });
+});
+
+describe('content-hash passthrough (git-independent relocation)', () => {
+  // The matcher's content-hash pass relocates a finding WITHOUT git history
+  // (shallow clone / force-pushed baseline) — but only if entryToLocated
+  // propagates the stamped contentHash to the LocatedIdentity. Dropping it
+  // silently (as stale-allow once did) leaves that kind unprotected whenever
+  // git is unavailable. Every kind whose entry can carry a contentHash must
+  // pass it through; this guards against the drop.
+  const HASH = 'feedfacefeedface';
+  const withHash: ReadonlyArray<{ label: string; entry: BaselineEntry }> = [
+    {
+      label: 'secret',
+      entry: {
+        id: ID,
+        kind: 'secret',
+        tool: 'gitleaks',
+        rule: 'aws-key',
+        file: 'a.js',
+        line: 10,
+        contentHash: HASH,
+      },
+    },
+    {
+      label: 'code',
+      entry: {
+        id: ID,
+        kind: 'code',
+        tool: 'semgrep',
+        rule: 'eval',
+        file: 'a.js',
+        line: 10,
+        contentHash: HASH,
+      },
+    },
+    {
+      label: 'config',
+      entry: {
+        id: ID,
+        kind: 'config',
+        tool: 'git',
+        rule: 'env-in-git',
+        file: '.env',
+        line: 0,
+        contentHash: HASH,
+      },
+    },
+    {
+      label: 'hygiene',
+      entry: { id: ID, kind: 'hygiene', file: 'a.js', line: 10, marker: 'todo', contentHash: HASH },
+    },
+    {
+      label: 'duplication',
+      entry: {
+        id: ID,
+        kind: 'duplication',
+        fileA: 'a.js',
+        fileB: 'b.js',
+        lines: 13,
+        startLineA: 10,
+        startLineB: 20,
+        contentHash: HASH,
+      },
+    },
+    {
+      label: 'stale-allow',
+      entry: {
+        id: ID,
+        kind: 'stale-allow',
+        file: 'a.js',
+        line: 10,
+        category: 'false-positive',
+        contentHash: HASH,
+      },
+    },
+  ];
+
+  for (const { label, entry } of withHash) {
+    it(`${label}: entryToLocated propagates the stamped contentHash`, () => {
+      expect(entryToLocated(entry).contentHash).toBe(HASH);
+    });
+  }
 });
