@@ -15,6 +15,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { LoopPreset } from './policy';
 
 /** Bump only on a breaking change to the event shape. */
 export const LEDGER_SCHEMA_VERSION = 1;
@@ -41,6 +42,10 @@ export interface LedgerEvent {
   readonly cwd: string;
   readonly branch: string;
   readonly commit: string;
+  /** Loop posture in force when the gate ran (`security-only` /
+   *  `full-debt`). Optional for forward/backward compat — absent on
+   *  events written before presets existed. */
+  readonly preset?: LoopPreset;
   /** Outcome of the dxkit guardrail check. */
   readonly guardrail_status: CheckStatus;
   /** Net-new findings that blocked completion (0 when guardrail passed). */

@@ -88,6 +88,13 @@ export interface RunGuardrailCheckOptions {
    *  `<cwd>/.dxkit/policy.json` is auto-loaded if it exists; otherwise
    *  the compiled-in defaults apply. */
   readonly policyPath?: string;
+  /** Pre-resolved policy override. When supplied, the orchestrator uses
+   *  it verbatim and skips disk resolution (`policyPath` /
+   *  `.dxkit/policy.json`). This is the seam the loop Stop-gate uses to
+   *  inject its loop-scoped preset policy (see
+   *  `src/loop/policy.ts:resolveLoopPolicy`) WITHOUT changing what the
+   *  CI guardrail resolves. CI / `baseline check` never set this. */
+  readonly policy?: BrownfieldPolicy;
   /** Forwarded to the underlying analyzers for per-tool timing logs. */
   readonly verbose?: boolean;
   /** Pre-resolved baseline mode. When supplied, the orchestrator
@@ -306,7 +313,9 @@ export async function runGuardrailCheck(
   options: RunGuardrailCheckOptions,
 ): Promise<GuardrailCheckResult> {
   const cwd = path.resolve(options.cwd);
-  const policy = resolvePolicy(options.policyPath, cwd);
+  // A pre-resolved `policy` (loop Stop-gate path) wins over disk
+  // resolution; otherwise resolve from `--policy` / `.dxkit/policy.json`.
+  const policy = options.policy ?? resolvePolicy(options.policyPath, cwd);
   const mode =
     options.resolvedMode ??
     resolveBaselineMode({
