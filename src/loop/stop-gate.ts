@@ -1,0 +1,327 @@
+/**
+ * `vyuh-dxkit hook stop-gate` — the Claude Code **Stop hook** body.
+ *
+ * Purpose: stop an autonomous loop from declaring "done" while the
+ * deterministic guardrail still reports net-new findings. When the gate
+ * blocks, it feeds the exact net-new findings back to the model so the
+ * loop can repair them and try to stop again.
+ *
+ * Claude Code Stop-hook contract used here:
+ *   - The hook receives a JSON payload on stdin (session_id, cwd,
+ *     stop_hook_active, optional agent fields).
+ *   - To BLOCK the stop AND have the model read an actionable message,
+ *     the hook prints `{"decision":"block","reason":"..."}` on stdout and
+ *     exits 0. (Exit code 2 also blocks, but its stderr reaches only the
+ *     operator, not the model — wrong for a repair loop, so it's reserved
+ *     here for operator-facing config failures.)
+ *   - `stop_hook_active` is true when the model is already continuing
+ *     because a prior Stop-gate blocked this turn. Claude Code caps
+ *     consecutive blocks, so an un-fixable failure can't loop forever;
+ *     we still keep blocking on net-new findings (the safety guarantee)
+ *     and rely on that cap as the backstop.
+ *
+ * Posture:
+ *   - Net-new findings → block every time (the model CAN fix these).
+ *   - Guardrail could not run (no baseline, dxkit error) → an operator/
+ *     preflight problem the model can't fix. Fail closed by surfacing it
+ *     once (exit 2, operator-visible) then allow on the next attempt to
+ *     avoid thrashing to the block cap. `DXKIT_LOOP_FAIL_OPEN=1` allows
+ *     immediately with a loud warning instead. Never a silent skip.
+ */
+import type { GuardrailJsonPayload } from '../baseline/check-renderers';
+import {
+  appendLedgerEvent,
+  buildLedgerEvent,
+  LEDGER_DIR,
+  type CheckStatus,
+  type LedgerEvent,
+} from './ledger';
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/** Subset of the Claude Code Stop-hook stdin payload we consume. */
+interface StopHookPayload {
+  readonly session_id?: string;
+  readonly cwd?: string;
+  readonly stop_hook_active?: boolean;
+  readonly agent_id?: string;
+  readonly agent_type?: string;
+}
+
+/** What the gate decided, before any process I/O. */
+export interface StopGateDecision {
+  /** 'allow' → exit 0 silent; 'block-model' → exit 0 + decision JSON;
+   *  'block-operator' → exit 2 + stderr. */
+  readonly outcome: 'allow' | 'block-model' | 'block-operator';
+  /** Message fed to the model (block-model) or operator (block-operator). */
+  readonly message: string;
+  /** Ledger event recorded for this decision. */
+  readonly event: LedgerEvent;
+}
+
+/** Read and parse the stdin hook payload; {} on any problem. */
+function readStdinPayload(): StopHookPayload {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(0, 'utf8');
+  } catch {
+    return {};
+  }
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw) as StopHookPayload;
+  } catch {
+    return {};
+  }
+}
+
+/** Blocking pairs (classifier blocks AND not waived by an allowlist). */
+function blockingPairs(json: GuardrailJsonPayload): GuardrailJsonPayload['pairs'] {
+  return json.pairs.filter((p) => p.blocks && p.suppressedByAllowlist === undefined);
+}
+
+/**
+ * Build the repair-friendly message the model reads when blocked. Lists
+ * each net-new finding with the location it must fix, and is explicit
+ * about the two anti-patterns (refresh baseline / fix grandfathered debt)
+ * so the loop stays scoped to what IT introduced.
+ */
+export function buildRepairMessage(json: GuardrailJsonPayload): string {
+  const blocking = blockingPairs(json);
+  const n = blocking.length;
+  const lines: string[] = [];
+  lines.push(
+    `dxkit blocked completion because this branch introduces ${n} net-new ` +
+      `finding${n === 1 ? '' : 's'}.`,
+  );
+  lines.push('');
+  lines.push('Do not refresh the baseline.');
+  lines.push('Do not fix unrelated grandfathered debt.');
+  lines.push('Fix only the net-new findings below, then try to stop again.');
+  lines.push('');
+  blocking.forEach((p, i) => {
+    const loc = p.file ? `${p.file}${p.line !== undefined ? `:${p.line}` : ''}` : '(no location)';
+    const sev = p.severity ? ` [${p.severity}]` : '';
+    lines.push(`${i + 1}. ${p.kind}${sev}`);
+    lines.push(`   location: ${loc}`);
+    const detail = p.reasons.find((r) => r.detail)?.detail;
+    if (detail) lines.push(`   reason: ${detail}`);
+  });
+  lines.push('');
+  lines.push(
+    `Full machine-readable detail: ${path.join(LEDGER_DIR, 'last-guardrail.json')} ` +
+      `(read it and fix only these net-new findings).`,
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Optional configured test command (DXKIT_LOOP_TEST_COMMAND). Runs only
+ * after the guardrail passes. Returns the status plus a short failure
+ * tail to surface in the block message. `not_configured` when unset.
+ */
+function runConfiguredTests(repoDir: string): { status: CheckStatus; tail: string } {
+  const cmd = process.env.DXKIT_LOOP_TEST_COMMAND;
+  if (!cmd || !cmd.trim()) return { status: 'not_configured', tail: '' };
+  try {
+    execSync(cmd, { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { status: 'pass', tail: '' };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    const out = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim();
+    const tail = out.split('\n').slice(-15).join('\n');
+    return { status: 'fail', tail };
+  }
+}
+
+/**
+ * Run the gate. Pure of stdout/exit — returns a decision the CLI wrapper
+ * turns into process output + exit code. `runCheck` is injected so tests
+ * can drive the gate without a real repo + baseline.
+ */
+export async function computeStopGate(
+  cwd: string,
+  payload: StopHookPayload,
+  runCheck: (repoDir: string) => Promise<GuardrailJsonPayload>,
+): Promise<StopGateDecision> {
+  const start = Date.now();
+  const repoDir = payload.cwd || cwd;
+  const stopActive = !!payload.stop_hook_active;
+  const failOpen = process.env.DXKIT_LOOP_FAIL_OPEN === '1';
+  const session = payload.session_id || '';
+  const agentFields = {
+    ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
+    ...(payload.agent_type ? { agent_type: payload.agent_type } : {}),
+  };
+
+  let json: GuardrailJsonPayload;
+  try {
+    json = await runCheck(repoDir);
+  } catch (err) {
+    // Guardrail could not run — a preflight/config problem (no baseline,
+    // dxkit error) the model cannot repair.
+    const msg = (err as Error).message || String(err);
+    const allow = failOpen || stopActive;
+    const event = buildLedgerEvent(repoDir, {
+      session_id: session,
+      ...agentFields,
+      cwd: repoDir,
+      guardrail_status: 'error',
+      net_new_findings: 0,
+      baseline_findings: 0,
+      files_changed: 0,
+      allowed: allow,
+      stop_hook_active: stopActive,
+      tests_status: 'skipped',
+      lint_status: 'not_configured',
+      typecheck_status: 'not_configured',
+      duration_ms: Date.now() - start,
+    });
+    if (allow) {
+      return {
+        outcome: 'allow',
+        event,
+        message:
+          `dxkit Stop-gate could not run the guardrail (${msg}). Allowing stop. ` +
+          `Fix the loop preflight (run \`vyuh-dxkit baseline create\` / ` +
+          `\`vyuh-dxkit loop doctor\`) before trusting unattended runs.`,
+      };
+    }
+    return {
+      outcome: 'block-operator',
+      event,
+      message:
+        `dxkit Stop-gate could not run the guardrail: ${msg}\n` +
+        `This is a loop preflight problem, not something the agent can fix. ` +
+        `Run \`vyuh-dxkit loop doctor\` / \`vyuh-dxkit baseline create\`, or set ` +
+        `DXKIT_LOOP_FAIL_OPEN=1 to allow stops when the gate can't run.`,
+    };
+  }
+
+  const blocking = blockingPairs(json);
+  const guardrailBlocks = blocking.length > 0;
+
+  // Guardrail decides first. If it blocks, don't bother running tests —
+  // the model must fix the findings regardless.
+  if (guardrailBlocks) {
+    const event = buildLedgerEvent(repoDir, {
+      session_id: session,
+      ...agentFields,
+      cwd: repoDir,
+      branch: json.current.branch,
+      commit: json.current.commitSha,
+      guardrail_status: 'fail',
+      net_new_findings: blocking.length,
+      baseline_findings: json.baseline.findingsCount,
+      files_changed: 0,
+      allowed: false,
+      stop_hook_active: stopActive,
+      tests_status: 'skipped',
+      lint_status: 'not_configured',
+      typecheck_status: 'not_configured',
+      duration_ms: Date.now() - start,
+    });
+    return { outcome: 'block-model', event, message: buildRepairMessage(json) };
+  }
+
+  // Guardrail passed — run the optional configured test command.
+  const tests = runConfiguredTests(repoDir);
+  if (tests.status === 'fail') {
+    const event = buildLedgerEvent(repoDir, {
+      session_id: session,
+      ...agentFields,
+      cwd: repoDir,
+      branch: json.current.branch,
+      commit: json.current.commitSha,
+      guardrail_status: 'pass',
+      net_new_findings: 0,
+      baseline_findings: json.baseline.findingsCount,
+      files_changed: 0,
+      allowed: false,
+      stop_hook_active: stopActive,
+      tests_status: 'fail',
+      lint_status: 'not_configured',
+      typecheck_status: 'not_configured',
+      duration_ms: Date.now() - start,
+    });
+    return {
+      outcome: 'block-model',
+      event,
+      message:
+        `dxkit allowed the guardrail but the configured test command failed.\n` +
+        `Fix the failure below, then try to stop again.\n\n${tests.tail}`,
+    };
+  }
+
+  // Clean stop.
+  const event = buildLedgerEvent(repoDir, {
+    session_id: session,
+    ...agentFields,
+    cwd: repoDir,
+    branch: json.current.branch,
+    commit: json.current.commitSha,
+    guardrail_status: 'pass',
+    net_new_findings: 0,
+    baseline_findings: json.baseline.findingsCount,
+    files_changed: 0,
+    allowed: true,
+    stop_hook_active: stopActive,
+    tests_status: tests.status,
+    lint_status: 'not_configured',
+    typecheck_status: 'not_configured',
+    duration_ms: Date.now() - start,
+  });
+  return { outcome: 'allow', event, message: '' };
+}
+
+/**
+ * CLI entry for `vyuh-dxkit hook stop-gate`. Reads the hook payload from
+ * stdin, runs the guardrail in-process, writes the ledger + last-guardrail
+ * snapshot, then emits the Stop-hook decision and exits.
+ */
+export async function runStopGate(cwd: string): Promise<void> {
+  const payload = readStdinPayload();
+  const repoDir = payload.cwd || cwd;
+
+  const runCheck = async (dir: string): Promise<GuardrailJsonPayload> => {
+    const { runGuardrailCheck } = await import('../baseline/check');
+    const { renderJson } = await import('../baseline/check-renderers');
+    const result = await runGuardrailCheck({ cwd: dir });
+    const json = renderJson(result);
+    // Persist the full machine-readable verdict so the model (and a human)
+    // can read the exact net-new findings the block message points to.
+    try {
+      const dir2 = path.join(dir, LEDGER_DIR);
+      fs.mkdirSync(dir2, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir2, 'last-guardrail.json'),
+        JSON.stringify(json, null, 2) + '\n',
+        'utf8',
+      );
+    } catch {
+      /* best-effort snapshot */
+    }
+    return json;
+  };
+
+  const decision = await computeStopGate(cwd, payload, runCheck);
+  appendLedgerEvent(repoDir, decision.event);
+
+  if (decision.outcome === 'block-model') {
+    // Exit 0 + decision JSON on stdout → blocks the stop and feeds the
+    // reason to the model so it repairs.
+    process.stdout.write(JSON.stringify({ decision: 'block', reason: decision.message }) + '\n');
+    process.exit(0);
+  }
+  if (decision.outcome === 'block-operator') {
+    // Exit 2 → blocks the stop; stderr reaches the operator (the model
+    // can't fix a preflight problem).
+    process.stderr.write(decision.message + '\n');
+    process.exit(2);
+  }
+  // allow: exit 0 lets the stop proceed. Surface any warning (config
+  // fail-open) on stderr so it isn't a silent skip.
+  if (decision.message) process.stderr.write(decision.message + '\n');
+  process.exit(0);
+}
