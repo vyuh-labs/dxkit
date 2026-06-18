@@ -215,7 +215,10 @@ const QUALITY_PRODUCER: BaselineProducer = {
   contributes: ['duplication', 'stale-file'],
   produce(ctx) {
     return [
-      ...duplicationToBaselineEntries(ctx.analysisResult.capabilities.duplication),
+      ...duplicationToBaselineEntries(ctx.analysisResult.capabilities.duplication, {
+        cwd: ctx.cwd,
+        commitSha: ctx.commitSha,
+      }),
       ...staleFilesToBaselineEntries(ctx.hygiene.staleFiles),
     ];
   },
@@ -244,6 +247,7 @@ const STALE_ALLOW_PRODUCER: BaselineProducer = {
     return staleAllowToBaselineEntries({
       annotations: ctx.inlineAllowlistAnnotations,
       aggregate: ctx.analysisResult.capabilities.securityAggregate ?? null,
+      commit: { cwd: ctx.cwd, commitSha: ctx.commitSha },
     });
   },
 };

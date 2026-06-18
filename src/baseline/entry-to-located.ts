@@ -29,20 +29,26 @@
  * finding down the file (holding its file + content constant) changes its
  * identity hash — then this converter MUST give it a full `(file, line,
  * rule)` locator, so the matcher's line-aware pass can relocate it through a
- * `git diff` and not read benign churn (a comment inserted above it) as a
- * removed+added pair → false net-new. A kind may be locator-less ONLY when
- * its identity is line-INDEPENDENT.
+ * `git diff`; AND, when the producer can read the file, the entry carries a
+ * `contentHash` that this converter passes through, so the matcher's
+ * git-INDEPENDENT content-hash pass relocates it on a shallow clone /
+ * force-pushed baseline too. Either way, benign churn (a comment inserted
+ * above it) is not read as a removed+added pair → false net-new. A kind may
+ * be locator-less ONLY when its identity is line-INDEPENDENT.
  *
  * That is why:
- *   - `duplication` carries a line locator: its identity hashes the block's
- *     exact start lines, so it moves with the code. The locator uses the
- *     CANONICAL representative side (`duplicationCanonicalSides`, the same
- *     ordering the identity hash uses) so prior + current agree on which
- *     side the matcher maps through the diff.
+ *   - `duplication` carries a line locator AND a contentHash: its identity
+ *     hashes the block's exact start lines, so it moves with the code. The
+ *     locator uses the CANONICAL representative side (`duplicationCanonicalSides`,
+ *     the same ordering the identity hash uses) so prior + current agree on
+ *     which side the matcher maps; the contentHash is taken on that same side.
+ *   - `stale-allow` carries a line locator AND a contentHash: its identity is
+ *     line-window-bucketed, so a shift past the window re-mints it.
  *   - `coverage-gap` is split: a SYMBOL-anchored gap is line-independent
  *     (identity = `(file, symbol)`, survives vertical drift) → whole-file
  *     locator; a RANGE-anchored gap (no symbol) is line-dependent → it gets
- *     a line locator at the range start.
+ *     a line locator at the range start. (Its producer is not wired yet; when
+ *     it lands it should also stamp a contentHash, like the kinds above.)
  *   - `dep-vuln` and `secret-hmac` stay locator-less: their identities are
  *     genuinely line-independent (advisory id; value HMAC), so the multiset
  *     pass pairs them by exact identity-hash equality with no locator.
@@ -90,12 +96,15 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // Annotation comments don't have a tool/rule pair — the
       // "rule" is the annotation's category. Reuse the field so
       // the matcher's location-pair pass can treat them like other
-      // source-anchored kinds.
+      // source-anchored kinds. The line-bucketed identity re-mints on a
+      // >window shift, so carry the contentHash for the git-independent
+      // pass too (parity with secret/code/hygiene).
       return {
         id: entry.id,
         file: entry.file,
         line: entry.line,
         rule: entry.category,
+        ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
       };
     case 'coverage-gap':
       // A symbol-anchored gap has line-independent identity ((file,
@@ -130,7 +139,16 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
         entry.fileB,
         entry.startLineB,
       );
-      return { id: entry.id, file: first[0], line: first[1], rule: entry.kind };
+      return {
+        id: entry.id,
+        file: first[0],
+        line: first[1],
+        rule: entry.kind,
+        // Content-hash fallback so the matcher relocates the clone even when
+        // git history is unavailable (shallow clone / force-pushed baseline),
+        // where the git-line pass is skipped.
+        ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
+      };
     }
     case 'dep-vuln':
     case 'secret-hmac':
