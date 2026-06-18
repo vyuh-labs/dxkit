@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-06-17
+
+### Guardrail: benign line shifts no longer read as net-new
+
+- **Fixed a guardrail false-positive where inserting lines above a duplicate
+  block flagged every duplicate as net-new debt.** Duplicate-block findings
+  carry an identity derived from their exact start lines, but the matcher was
+  not relocating them across a change — so a comment added near the top of a
+  file shifted the blocks and the guardrail reported them as new. Duplicate
+  findings (and range-anchored coverage gaps) are now relocated like every
+  other line-anchored finding, so routine churn no longer trips the gate.
+- **Closed the same gap for shallow clones and force-pushed baselines.**
+  Relocation across a change normally uses git history; where that history
+  isn't available, the matcher falls back to a content hash of the finding's
+  surroundings. Duplicate and orphaned-allowlist (`stale-allow`) findings now
+  carry that content hash too, matching the protection secret/code findings
+  already had — so the gate stays correct even on a depth-1 CI checkout.
+- **Hardened the matcher against this whole class of bug.** A finding whose
+  identity moves with line position must be relocatable; new contract tests
+  derive that property automatically for every finding kind and fail if a kind
+  is ever added (or changed) that can drift without a way to relocate it.
+- No baseline re-creation is needed — the finding identity is unchanged, so
+  existing baselines and allowlists keep matching. `vyuh-dxkit update` is a
+  no-op for this release beyond the version bump.
+
 ## [2.11.1] - 2026-06-17
 
 ### Line-aware passive context hook
