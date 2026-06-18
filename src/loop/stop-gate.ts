@@ -284,10 +284,15 @@ export async function runStopGate(cwd: string): Promise<void> {
   const payload = readStdinPayload();
   const repoDir = payload.cwd || cwd;
 
+  // Resolve the loop-scoped posture ONCE (preset → policy). This is the
+  // only place the loop preset is read; the CI guardrail never sees it.
+  const { resolveLoopPolicy } = await import('./policy');
+  const { policy, preset } = resolveLoopPolicy(repoDir);
+
   const runCheck = async (dir: string): Promise<GuardrailJsonPayload> => {
     const { runGuardrailCheck } = await import('../baseline/check');
     const { renderJson } = await import('../baseline/check-renderers');
-    const result = await runGuardrailCheck({ cwd: dir });
+    const result = await runGuardrailCheck({ cwd: dir, policy });
     const json = renderJson(result);
     // Persist the full machine-readable verdict so the model (and a human)
     // can read the exact net-new findings the block message points to.
@@ -306,7 +311,9 @@ export async function runStopGate(cwd: string): Promise<void> {
   };
 
   const decision = await computeStopGate(cwd, payload, runCheck);
-  appendLedgerEvent(repoDir, decision.event);
+  // Stamp the active preset onto the ledger line so the audit trail shows
+  // which posture was in force when the gate allowed/blocked.
+  appendLedgerEvent(repoDir, { ...decision.event, preset });
 
   if (decision.outcome === 'block-model') {
     // Exit 0 + decision JSON on stdout → blocks the stop and feeds the
