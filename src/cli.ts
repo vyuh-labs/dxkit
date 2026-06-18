@@ -2114,6 +2114,40 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'hook': {
+      // Claude Code lifecycle-hook bodies for the loop pack.
+      // positionals[1] = hook name (stop-gate | ...).
+      const hookName = positionals[1];
+      if (hookName === 'stop-gate') {
+        const { runStopGate } = await import('./loop/stop-gate');
+        await runStopGate(cwd);
+        break;
+      }
+      logger.fail(`Unknown hook: ${hookName ?? '(missing)'}. Available: vyuh-dxkit hook stop-gate`);
+      process.exit(1);
+      break;
+    }
+
+    case 'loop': {
+      // Loop-pack utilities. positionals[1] = subcommand (ledger | ...).
+      const sub = positionals[1];
+      if (sub === 'ledger') {
+        const { runLoopLedger } = await import('./loop/ledger-cli');
+        // positionals[2] = ledger action (show | summarize | clear); default show.
+        await runLoopLedger(cwd, positionals[2], {
+          json: !!values.json,
+          limit: values.limit as string | undefined,
+        });
+        break;
+      }
+      logger.fail(
+        `Unknown loop subcommand: ${sub ?? '(missing)'}. ` +
+          `Available: vyuh-dxkit loop ledger [show | summarize | clear]`,
+      );
+      process.exit(1);
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       printUsage();
