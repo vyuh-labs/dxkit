@@ -10,15 +10,18 @@ function tmpRepo(): string {
 function read(cwd: string, rel: string): string {
   return fs.readFileSync(path.join(cwd, rel), 'utf8');
 }
+// Fields are declared non-optional so the assertions below can dereference
+// them without strict-null noise; readJSON's cast is unchecked, so this only
+// shapes access, it does not validate. Tests read real runtime values.
 interface TestJson {
-  hooks?: {
-    Stop?: Array<{ hooks?: Array<{ command?: string }> }>;
-    PreToolUse?: Array<{ hooks?: Array<{ command?: string }> }>;
+  hooks: {
+    Stop: Array<{ hooks: Array<{ command: string }> }>;
+    PreToolUse: Array<{ hooks: Array<{ command: string }> }>;
   };
-  permissions?: { allow?: string[] };
-  loop?: { preset?: string };
-  baseline?: { mode?: string };
-  confidence?: { critical?: number };
+  permissions: { allow: string[] };
+  loop: { preset: string };
+  baseline: { mode: string };
+  confidence: { critical: number };
 }
 function readJSON(cwd: string, rel: string): TestJson {
   return JSON.parse(read(cwd, rel)) as TestJson;
