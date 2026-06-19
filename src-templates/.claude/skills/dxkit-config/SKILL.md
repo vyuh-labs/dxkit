@@ -109,6 +109,23 @@ Each finding-kind has `block` (exit 1) and `warn` (log only) lists. Adjust to yo
 
 Run `npx vyuh-dxkit guardrail check --policy=.dxkit/policy.json` to test the new policy. If no `policy.json` exists, dxkit uses the built-in defaults.
 
+### Switching the loop posture (`loop.preset`)
+
+A repo running autonomous coding loops behind the dxkit Stop-gate has a **loop-only** blocking posture under `loop.preset` in the same file:
+
+```json
+{
+  "loop": { "preset": "security-only" }
+}
+```
+
+| Preset | Loop blocks on |
+|---|---|
+| `security-only` (default) | net-new secrets + crit/high security + crit/high reachable dependency vulns; test-gap + quality only warn |
+| `full-debt` | every net-new finding, including test-gap + quality |
+
+This key is read **only by the Stop-gate** (`vyuh-dxkit hook stop-gate`) — your CI / PR guardrail always uses the full policy above, so changing the loop posture never weakens your CI gate. Edit it here, or run `npx vyuh-dxkit init --claude-loop --loop-preset full-debt`. Use `full-debt` only when you deliberately want an unattended loop to also close test/quality gaps (it can drive a long repair). For setting up or operating the loop, hand off to the **dxkit-loop** skill.
+
 ## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
 
 dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:

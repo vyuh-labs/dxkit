@@ -234,6 +234,8 @@ Report the results:
 - **All green** → "You're fully set up. dxkit will guard your next push. Run `vyuh-dxkit health` whenever you want to see scores."
 - **Remaining fixable gaps** → hand off to `dxkit-fix` for each one. Don't end with broken signals.
 
+If the customer plans to run **autonomous Claude Code loops** (the agent works unattended until it decides to stop), mention the loop pack as an optional add-on: `npx vyuh-dxkit init --claude-loop` registers a Stop-gate that won't let a loop finish while it has introduced net-new findings. It's opt-in (it registers a hook that blocks the agent from stopping), so offer it rather than installing it by default — and hand off to **dxkit-loop** to set it up and pick a posture.
+
 ## What dxkit-onboard can NOT do
 
 - **Auto-decide values-laden questions** — baseline lock-in (step 5), pre-commit opt-in (step 6), postinstall chaining (step 7), branch protection (step 8) all require explicit customer confirmation. Never silently execute these.

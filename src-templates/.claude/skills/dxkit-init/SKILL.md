@@ -28,6 +28,7 @@ Ask the user what they want, then pick the right invocation:
 | `--with-ci` | `.github/workflows/dxkit-guardrails.yml` (PR gate) | Yes |
 | `--with-baseline-refresh` | `.github/workflows/dxkit-baseline-refresh.yml` (post-merge regen) | Yes |
 | `--with-pr-review` | `.github/workflows/pr-review.yml` (AI PR review; needs `ANTHROPIC_API_KEY`) | No (still opt-in) |
+| `--claude-loop` | Stop-gate hook for autonomous loops (additive merge into `.claude/settings.json` + CLAUDE.md); implies the dxkit skills. Pair with `--loop-preset security-only\|full-debt` | No (opt-in — registers a hook that blocks the agent from stopping) |
 
 `--yes` accepts all prompts; `--force` overwrites existing files instead of writing `.dxkit` sidecars on conflict.
 
