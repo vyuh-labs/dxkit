@@ -2140,9 +2140,14 @@ export async function run(argv: string[]): Promise<void> {
         });
         break;
       }
+      if (sub === 'doctor') {
+        const { runLoopDoctor } = await import('./loop/doctor');
+        await runLoopDoctor(cwd, { json: !!values.json });
+        break;
+      }
       logger.fail(
         `Unknown loop subcommand: ${sub ?? '(missing)'}. ` +
-          `Available: vyuh-dxkit loop ledger [show | summarize | clear]`,
+          `Available: vyuh-dxkit loop ledger [show | summarize | clear], vyuh-dxkit loop doctor`,
       );
       process.exit(1);
       break;
