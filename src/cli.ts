@@ -2184,6 +2184,21 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'demo': {
+      // No-API, offline demonstrations. positionals[1] = demo name.
+      const which = positionals[1];
+      if (which === 'loop-guardrail') {
+        const { runLoopGuardrailDemo } = await import('./loop/demo');
+        await runLoopGuardrailDemo();
+        break;
+      }
+      logger.fail(
+        `Unknown demo: ${which ?? '(missing)'}. Available: vyuh-dxkit demo loop-guardrail`,
+      );
+      process.exit(1);
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       printUsage();
