@@ -230,6 +230,11 @@ function printUsage(): void {
     --with-deep-sast-refresh  Install .github/workflows/dxkit-deep-sast-refresh.yml (Snyk/CodeQL ingest; opt-in)
     --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
+    --claude-loop             Register the Stop-gate hook for autonomous coding
+                              loops (additive: merges into .claude/settings.json +
+                              CLAUDE.md, preserving your content). Implies dxkit skills.
+    --loop-preset <p>         Loop blocking posture: security-only (default) or
+                              full-debt. Only meaningful with --claude-loop.
     --detect                  Auto-detect stack, minimal prompts
     --yes                     Accept all defaults, no prompts
     --force                   Overwrite existing files (incl. existing hooks/
@@ -325,6 +330,9 @@ export async function run(argv: string[]): Promise<void> {
       'with-baseline-refresh': { type: 'boolean', default: false },
       'with-deep-sast-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
+      // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
+      'claude-loop': { type: 'boolean', default: false },
+      'loop-preset': { type: 'string' },
       // setup-branch-protection flags
       branch: { type: 'string' },
       'require-reviews': { type: 'string' },
@@ -447,7 +455,11 @@ export async function run(argv: string[]): Promise<void> {
       // first-install quiet); default-on under `--full` (matches the
       // rest of the ship surface — hooks/devcontainer/CI all opt-in
       // via flags but bundled under --full).
-      const wantDxkitAgents = !!values.full || !!values['with-dxkit-agents'];
+      // --claude-loop implies the dxkit skills so the dxkit-loop skill (and
+      // its siblings) land — the loop is most useful when the user can ask
+      // Claude to explain a block / switch presets conversationally.
+      const wantClaudeLoop = !!values['claude-loop'];
+      const wantDxkitAgents = !!values.full || !!values['with-dxkit-agents'] || wantClaudeLoop;
       const result = await generate(
         cwd,
         config,
@@ -522,6 +534,24 @@ export async function run(argv: string[]): Promise<void> {
           result: installPrReview(cwd, { force: !!values.force }),
         });
       }
+      // Loop pack (opt-in even under --full: it registers a Stop hook that
+      // blocks the agent from stopping, which is intrusive enough to be an
+      // explicit choice). Additive merge — preserves existing settings.json
+      // hooks + CLAUDE.md content.
+      if (wantClaudeLoop) {
+        const { installClaudeLoop } = await import('./loop/scaffold');
+        const rawPreset = values['loop-preset'];
+        if (rawPreset !== undefined && rawPreset !== 'security-only' && rawPreset !== 'full-debt') {
+          logger.fail(`Invalid --loop-preset: ${rawPreset}. Use security-only or full-debt.`);
+          process.exit(1);
+        }
+        shipResults.push({
+          label: 'Loop pack (Stop-gate)',
+          result: installClaudeLoop(cwd, {
+            preset: rawPreset as 'security-only' | 'full-debt' | undefined,
+          }),
+        });
+      }
       // Opt-in even under --full: the workflow is inert without a
       // SNYK_TOKEN secret + deepSast config, so shipping it by default
       // just clutters the Actions tab (same rationale as pr-review).
@@ -589,6 +619,7 @@ export async function run(argv: string[]): Promise<void> {
         withCiGuardrails: wantCi,
         withBaselineRefresh: wantBaselineRefresh,
         withPrReview: wantPrReview,
+        withClaudeLoop: wantClaudeLoop,
       });
 
       console.log('');
