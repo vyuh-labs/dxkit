@@ -132,6 +132,10 @@ export interface ManifestInstallFlags {
   withCiGuardrails: boolean;
   withBaselineRefresh: boolean;
   withPrReview: boolean;
+  /** Loop pack — Stop-gate hook in .claude/settings.json + CLAUDE.md loop
+   *  norm + .dxkit/policy.json loop.preset. Optional: absent on manifests
+   *  written before the loop pack existed (treated as not-installed). */
+  withClaudeLoop?: boolean;
 }
 
 export interface Manifest {

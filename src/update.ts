@@ -16,6 +16,7 @@ import {
 } from './ship-installers';
 import * as logger from './logger';
 import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
+import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
 
 /**
  * Re-exports the shared type so callers within the update module can
@@ -45,6 +46,7 @@ export function detectInstallFlags(cwd: string): InstallFlags {
       path.join(cwd, '.github', 'workflows', 'dxkit-baseline-refresh.yml'),
     ),
     withPrReview: fs.existsSync(path.join(cwd, '.github', 'workflows', 'pr-review.yml')),
+    withClaudeLoop: isClaudeLoopInstalled(cwd),
   };
 }
 
@@ -220,6 +222,13 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   }
   if (flags.withPrReview) {
     mergeShipResult(aggregate, installPrReview(cwd, { force }));
+  }
+  // Loop pack: refresh the Stop hook + CLAUDE.md loop block on repos that
+  // opted in. Additive + idempotent — re-running picks up loop-norm prose
+  // changes without disturbing the user's other hooks. Preset is read from
+  // the existing .dxkit/policy.json (preserved), so this never resets it.
+  if (flags.withClaudeLoop) {
+    mergeShipResult(aggregate, installClaudeLoop(cwd));
   }
 
   // Ignore files (.gitignore + .dxkit-ignore) — always refresh because
