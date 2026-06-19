@@ -19,6 +19,14 @@ Every Stop event is appended to an audit trail at `.dxkit/loop/ledger.jsonl`.
 
 The value is **predictability, not a new scanner**: the gate bounds the "loop shipped debt and never fixed it" failure mode to zero. It uses the same findings, baseline, and identity contract as the rest of dxkit — it does not detect anything new.
 
+## See it first (no setup)
+
+```bash
+# No API key, no Claude Code, no scanners — runs the real gate over an example
+# finding and shows the block → repair → clean flow offline.
+npx vyuh-dxkit demo loop-guardrail
+```
+
 ## Setup
 
 ```bash

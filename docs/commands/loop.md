@@ -83,6 +83,18 @@ security findings are bounded and must-fix.
 { "loop": { "preset": "full-debt" } }
 ```
 
+## `vyuh-dxkit demo loop-guardrail`
+
+A no-API, offline walkthrough — no Claude Code session, no key, no scanners. It
+drives the **real** gate code path (`buildRepairMessage` + the exit-0
+decision-block contract) over an example net-new finding, so you can see
+exactly what the gate feeds an agent — block, repair, clean — without setting
+anything up.
+
+```bash
+vyuh-dxkit demo loop-guardrail
+```
+
 ## `vyuh-dxkit loop doctor`
 
 Preflight for an unattended run. Verifies the loop is wired safely BEFORE
