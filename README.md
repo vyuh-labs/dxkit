@@ -24,7 +24,7 @@ deterministic check, on every stop, of whether this change introduced a new
 finding compared with a baseline.
 
 ```bash
-npx @vyuhlabs/dxkit demo loop-guardrail   # see it in 5 seconds, no API key, no setup
+npx -y @vyuhlabs/dxkit demo loop-guardrail   # see it in 5 seconds, no API key, no setup
 ```
 
 Local. Offline. No model in the gate. Existing debt stays grandfathered. Only
@@ -115,7 +115,7 @@ Blocked and repaired inside the same warm loop.
 See the gate with no API key, no Claude Code, and no setup:
 
 ```bash
-npx @vyuhlabs/dxkit demo loop-guardrail
+npx -y @vyuhlabs/dxkit demo loop-guardrail
 ```
 
 It runs the real gate over an example finding and shows what it feeds the

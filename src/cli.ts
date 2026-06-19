@@ -2185,16 +2185,16 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'demo': {
-      // No-API, offline demonstrations. positionals[1] = demo name.
+      // No-API, offline demonstrations. positionals[1] = demo name; bare
+      // `demo` defaults to the flagship loop-guardrail walkthrough so the
+      // launch command is as forgiving as possible.
       const which = positionals[1];
-      if (which === 'loop-guardrail') {
+      if (which === undefined || which === 'loop-guardrail') {
         const { runLoopGuardrailDemo } = await import('./loop/demo');
         await runLoopGuardrailDemo();
         break;
       }
-      logger.fail(
-        `Unknown demo: ${which ?? '(missing)'}. Available: vyuh-dxkit demo loop-guardrail`,
-      );
+      logger.fail(`Unknown demo: ${which}. Available: vyuh-dxkit demo loop-guardrail`);
       process.exit(1);
       break;
     }
