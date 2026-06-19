@@ -55,6 +55,7 @@ Once dxkit + its tools are installed, here's the command surface:
 | [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                               | < 5 sec                            |
 | [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                            | < 5 sec                            |
 | [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"                 | 5-30 sec                           |
+| [`loop doctor` / `loop ledger`](commands/loop.md)                | "Run a safe autonomous coding loop behind the Stop-gate"           | < 5 sec                            |
 | [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"          | 5-30 sec                           |
 | [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"       | 1-3 min                            |
 | [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"                | < 5 sec                            |

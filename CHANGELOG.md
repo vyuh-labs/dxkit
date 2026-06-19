@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-06-18
+
+### Loop pack — a deterministic Stop-gate for autonomous coding loops
+
+When Claude Code runs in an autonomous loop (it keeps working until it
+decides to stop), the new loop pack stops it from declaring "done" while it
+has introduced net-new findings. It re-runs the guardrail on every Stop and
+feeds any net-new findings back to the model for repair. The value is
+predictability, not new detection — it bounds the "loop shipped debt and
+never fixed it" failure mode using the findings, baseline, and identity
+contract dxkit already computes.
+
+- **`vyuh-dxkit init --claude-loop`** registers the Stop-gate hook. The
+  install is **additive**: it deep-merges the hook into an existing
+  `.claude/settings.json` (preserving your other hooks + permissions) and
+  appends a sentinel-delimited managed block to `CLAUDE.md` (never touching
+  your prose). Opt-in even under `--full`, because it registers a hook that
+  blocks the agent from stopping. Re-applied by `vyuh-dxkit update` on repos
+  that opted in.
+- **Loop-scoped presets.** A `loop.preset` in `.dxkit/policy.json` decides
+  what blocks the loop: `security-only` (default — net-new secrets +
+  crit/high security + reachable dependency vulns) or `full-debt` (also
+  blocks test-gap + quality). It is read **only by the Stop-gate**; your CI
+  / PR guardrail always uses the full policy, so the loop posture can't
+  silently weaken your CI gate. `security-only` is the default because a
+  block in a loop tells the model to *fix* the finding, and open-ended debt
+  (write tests / refactor until clear) would make an unattended agent grind.
+- **`vyuh-dxkit loop doctor`** — preflight that verifies a loop is wired
+  safely before an unattended run (baseline present, Stop hook registered,
+  guardrail runnable, posture). Catches the silent-failure class: an
+  unregistered hook never fires, so the loop would run with no gate and no
+  error. Exits non-zero so a CI loop-setup step can gate on it.
+- **`vyuh-dxkit loop ledger [show|summarize|clear]`** — an append-only audit
+  trail of every Stop event (`.dxkit/loop/ledger.jsonl`): blocked vs
+  allowed, net-new counts, and repaired-after-block sessions.
+- **New `dxkit-loop` skill** plus loop-aware updates to `dxkit-config`,
+  `dxkit-learn`, `dxkit-update`, `dxkit-onboard`, and `dxkit-init` so the
+  loop is set up and operated conversationally through Claude Code.
+- No baseline re-creation is needed; existing baselines and allowlists are
+  unaffected. The loop pack is opt-in — existing installs are unchanged
+  until they run `init --claude-loop`.
+
 ## [2.12.0] - 2026-06-17
 
 ### Guardrail: benign line shifts no longer read as net-new

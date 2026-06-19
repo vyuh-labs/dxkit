@@ -159,6 +159,25 @@ the most common candidate beyond `code` / `hygiene`):
 { "addedRequiresChangedLines": ["code", "hygiene", "duplication"] }
 ```
 
+## `loop.preset` — loop-scoped posture (not read by CI)
+
+A repo running the [loop pack](../commands/loop.md) carries a separate
+blocking posture under `loop.preset`:
+
+```json
+{ "loop": { "preset": "security-only" } }
+```
+
+| Preset                    | The Stop-gate blocks the loop on                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `security-only` (default) | net-new secrets + crit/high security + crit/high reachable dependency vulns; test-gap + quality only warn |
+| `full-debt`               | every net-new finding, including test-gap + quality                                                       |
+
+This key is read **only by the Stop-gate** (`vyuh-dxkit hook stop-gate`).
+The CI / PR `guardrail check` ignores it and always uses the block/warn
+policy above — so changing the loop posture never weakens your CI gate.
+Set it here or via `vyuh-dxkit init --claude-loop --loop-preset <p>`.
+
 ## Loading order
 
 1. `--policy <path>` flag on `guardrail check` (explicit)
