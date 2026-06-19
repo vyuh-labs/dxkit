@@ -152,6 +152,11 @@ const DXKIT_SKILLS = [
   // deltas) and a tailored reviewer checklist. The close of the
   // dxkit-feature / dxkit-action loop.
   'dxkit-pr',
+  // dxkit-loop: operate the autonomous-loop Stop-gate. Sets it up
+  // (init --claude-loop / loop doctor), explains a block, reads the
+  // ledger, and switches the security-only / full-debt posture. The
+  // operator surface for the deterministic preflight/postflight layer.
+  'dxkit-loop',
 ] as const;
 
 interface GenerateResult {

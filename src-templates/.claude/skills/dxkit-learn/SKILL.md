@@ -74,6 +74,23 @@ Two hooks ship under `.githooks/`:
 
 Activation is wired via `npm postinstall` so `npm install` after `git clone` sets `core.hooksPath = .githooks` automatically.
 
+## The loop pack (Stop-gate for autonomous loops)
+
+When Claude Code runs in an autonomous loop (it keeps working until it decides to stop), the loop pack adds a **Stop hook** that runs the guardrail every time the agent tries to stop. The same baseline + guardrail logic above, applied at a new moment:
+
+- **net-new findings → the gate blocks the stop** and feeds the findings back to the model to repair, then it tries to stop again;
+- **clean → the stop is allowed** (optionally after a configured test command passes);
+- **gate can't run (no baseline) → it surfaces that to the operator** once, then allows, so it never thrashes.
+
+Every Stop event is recorded in an append-only ledger at `.dxkit/loop/ledger.jsonl`.
+
+Two ideas worth understanding:
+
+- **Posture is loop-scoped.** `loop.preset` in `.dxkit/policy.json` (`security-only` default vs `full-debt`) decides what blocks the loop, and **only the Stop-gate reads it** — your CI / PR guardrail is unaffected. `security-only` is the default because in a loop a block tells the model to *fix* the finding; blocking on open-ended debt (write tests / refactor until clear) would make an unattended agent grind for a long time, while security findings are bounded and must-fix.
+- **The value is predictability, not new detection.** The gate bounds the "loop declared done with net-new debt" failure mode to zero using the findings dxkit already computes. It is not a new scanner.
+
+To set this up or operate it (register the hook, run the preflight, explain a block, read the ledger, switch posture), hand off to the **dxkit-loop** skill. `npx vyuh-dxkit init --claude-loop` wires it; `npx vyuh-dxkit loop doctor` verifies it's safe to run unattended.
+
 ## How to learn more
 
 - `npx vyuh-dxkit <subcommand> --help` — flag reference

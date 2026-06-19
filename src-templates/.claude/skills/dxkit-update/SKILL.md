@@ -181,6 +181,9 @@ Iterate optional steps in the plan:
 | "Configure dxkit" | `dxkit-config` |
 | "Set up hooks" | `dxkit-hooks` |
 | "Explain dxkit" | `dxkit-learn` |
+| "Set up / operate the loop gate" | `dxkit-loop` |
+
+**Loop pack on upgrade:** if the repo opted into the loop pack (`init --claude-loop`), `vyuh-dxkit update` refreshes its Stop hook + CLAUDE.md loop block automatically — additive and idempotent, and it never resets the chosen `loop.preset`. No separate step. For setting it up on a repo that doesn't have it yet, or operating it, hand off to **dxkit-loop**.
 
 If the customer asks something that spans skills (e.g. "update dxkit and then fix the new issues"), chain: dxkit-update first, then auto-invoke dxkit-fix on the post-upgrade doctor output.
 
