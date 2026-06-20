@@ -15,6 +15,9 @@ export default [
       // tmp/ holds gitignored ephemeral scripts (regression harness,
       // one-off migration scripts). Not part of the shipped code.
       'tmp/**',
+      // benchmarks/ holds standalone reproduction harnesses (Node .mjs scripts),
+      // not part of the shipped product code.
+      'benchmarks/**',
     ],
   },
   js.configs.recommended,

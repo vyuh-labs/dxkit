@@ -178,7 +178,7 @@ predictable.
 > dxkit catches every possible bug. The claim is narrower: for findings the
 > detector observes, dxkit gives the loop a deterministic net-new stop decision.
 
-Full methodology, raw artifacts, and the rest of the caveats are in
+Full methodology, reproducibility notes, artifact status, and caveats are in
 **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ## What dxkit is, and is not
@@ -259,7 +259,7 @@ npx @vyuhlabs/dxkit baseline create
 npx @vyuhlabs/dxkit loop doctor
 ```
 
-Methodology and raw artifacts: **[docs/benchmarks.md](docs/benchmarks.md)**.
+Methodology and caveats: **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ## Credits
 

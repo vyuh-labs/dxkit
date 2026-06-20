@@ -1,0 +1,4 @@
+{
+  "repoDir": "/absolute/path/to/your/checkout",
+  "pinnedCommit": "c5cb68a"
+}
