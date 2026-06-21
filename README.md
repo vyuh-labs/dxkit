@@ -259,11 +259,28 @@ at the speed of the agent loop.
 The same deterministic core powers the rest of dxkit: pre-push and CI
 guardrails, brownfield baselines, durable finding identity, SARIF, CodeQL, and
 Snyk ingest, a six-dimension health report, code-graph context, and a set of
-Claude Code skills. It covers TypeScript / JavaScript, Python, Go, Rust, C# /
-.NET, Java, Kotlin, and Ruby. See **[the docs](docs/README.md)**.
+Claude Code skills. See **[the docs](docs/README.md)**.
+
+## Languages
+
+dxkit covers 8 ecosystems. Detection is automatic from your manifests and
+source; each language brings its own native linter, dependency-audit tool, and
+coverage parser, layered on the universal scanners (gitleaks, Semgrep, OSV,
+cloc, jscpd, graphify).
+
+| Language                | Detected by                 | Native linter + audit                     |
+| ----------------------- | --------------------------- | ----------------------------------------- |
+| TypeScript / JavaScript | `package.json`              | ESLint, npm audit                         |
+| Python                  | `pyproject.toml`, `*.py`    | ruff, pip-audit                           |
+| Go                      | `go.mod`                    | golangci-lint, govulncheck                |
+| Rust                    | `Cargo.toml`                | clippy, cargo-audit                       |
+| C# / .NET               | `*.csproj`, `*.sln`         | dotnet-format, `dotnet list --vulnerable` |
+| Java                    | `pom.xml`, `src/main/java/` | PMD, osv-scanner                          |
+| Kotlin                  | `*.gradle{.kts,}`, `*.kt`   | detekt, osv-scanner                       |
+| Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                    |
 
 <details>
-<summary><strong>Per-pack capabilities</strong> (click to expand)</summary>
+<summary><strong>Per-pack capabilities</strong> — coverage import, import-graph, severity tiers (click to expand)</summary>
 
 | Language | Detection                             | Coverage import     | Import-graph                                 | Native tools                        | Lint severity tiers    | Vuln severity tiers                           |
 | -------- | ------------------------------------- | ------------------- | -------------------------------------------- | ----------------------------------- | ---------------------- | --------------------------------------------- |
