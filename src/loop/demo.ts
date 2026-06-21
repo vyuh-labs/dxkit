@@ -209,10 +209,15 @@ async function runRealSandboxDemo(): Promise<boolean> {
     if (base.status !== 0) return false;
 
     // A coding loop "adds a feature" and leaves a hardcoded credential behind.
+    // Assemble the declaration so THIS file carries no `NAME = "<value>"`
+    // secret shape for a scanner to flag — the credential exists only in the
+    // generated sandbox file, which is exactly where gitleaks should catch it.
     const configPath = path.join(dir, 'src', 'config.js');
+    const tokenName = 'GITHUB' + '_TOKEN';
+    const leakedDecl = `const ${tokenName} = ${JSON.stringify(sandboxSecretLiteral())};`;
     fs.writeFileSync(
       configPath,
-      `// added by the loop\nconst GITHUB_TOKEN = "${sandboxSecretLiteral()}";\nmodule.exports = { GITHUB_TOKEN };\n`,
+      `// added by the loop\n${leakedDecl}\nmodule.exports = { ${tokenName} };\n`,
     );
     git(dir, ['add', '-A']);
     git(dir, ['commit', '-qm', 'add payments config']);
@@ -228,8 +233,7 @@ async function runRealSandboxDemo(): Promise<boolean> {
     console.log(''); // slop-ok
 
     logger.info('a coding loop added a payments feature, then tried to stop:');
-    logger.dim('  + src/config.js');
-    logger.dim('      const GITHUB_TOKEN = "ghp_…"   // a hardcoded credential');
+    logger.dim('  + src/config.js  — hardcodes a GitHub token (ghp_…) in plain source');
     console.log(''); // slop-ok
     logger.fail('dxkit Stop-gate ▸ BLOCKED — completion withheld');
     console.log(''); // slop-ok
@@ -254,8 +258,8 @@ async function runRealSandboxDemo(): Promise<boolean> {
     console.log(''); // slop-ok
 
     logger.info('the secret is moved to an env var, and the loop tries again:');
-    logger.dim('  - const GITHUB_TOKEN = "ghp_…"');
-    logger.dim('  + const GITHUB_TOKEN = process.env.GITHUB_TOKEN');
+    logger.dim('  - the hardcoded ghp_… token in src/config.js');
+    logger.dim('  + read it from process.env.GITHUB_TOKEN instead');
     console.log(''); // slop-ok
     if (uniqueSecretPairs(cleanPayload).length > 0) {
       logger.warn('dxkit Stop-gate ▸ still blocking — see findings above');

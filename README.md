@@ -24,7 +24,7 @@ deterministic check, on every stop, of whether this change introduced a new
 finding compared with a baseline.
 
 ```bash
-npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # see it in 5 seconds, no API key, no setup
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # the real gate on a throwaway repo, no API key, no setup
 ```
 
 Local. Offline. No model in the gate. Existing debt stays grandfathered. Only
@@ -118,8 +118,10 @@ See the gate with no API key, no Claude Code, and no setup:
 npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
 ```
 
-It runs the real gate over an example finding and shows what it feeds the
-agent: block, repair, clean.
+It spins up a throwaway git repo, plants a real secret, and runs the real
+gate (gitleaks-backed) against it — block, repair, clean — in about 20
+seconds. Your own repo is never touched. (Without gitleaks installed it shows
+a clearly labelled illustration and how to run the real scan.)
 
 Wire it into your real Claude Code loop. The Stop hook runs dxkit on every
 stop, so install dxkit into the repo (this one command adds it as a
