@@ -4,6 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { buildLoopDoctorReport } from '../../src/loop/doctor';
+import { STOP_HOOK_COMMAND } from '../../src/loop/scaffold';
+import { resolveDxkitCli } from '../../src/self-invocation';
 
 function tmpRepo(git: boolean): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-loop-doctor-'));
@@ -26,6 +28,15 @@ function writeSettings(cwd: string, obj: unknown): void {
 function writeBaseline(cwd: string): void {
   fs.mkdirSync(path.join(cwd, '.dxkit', 'baselines'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.dxkit', 'baselines', 'main.json'), '{}');
+}
+
+/** Make `vyuh-dxkit` resolve project-locally (so the resolvability check
+ *  passes), exactly as `npm install` of the devDependency would. */
+function provisionLocalCli(cwd: string): void {
+  const bin = path.join(cwd, 'node_modules', '.bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'vyuh-dxkit'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(bin, 'vyuh-dxkit.cmd'), '@echo off\n');
 }
 
 function writeCommittedFullPolicy(cwd: string): void {
@@ -66,17 +77,35 @@ describe('loop doctor', () => {
     expect(statusOf(report, 'Stop-gate hook')).toBe('fail');
   });
 
-  it('passes baseline + hook checks when both are wired (committed mode)', () => {
+  it('passes baseline + hook checks when fully wired and dxkit resolves (committed mode)', () => {
     repo = tmpRepo(true);
     writeCommittedFullPolicy(repo);
     writeBaseline(repo);
     writeSettings(repo, {
-      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'npx vyuh-dxkit hook stop-gate' }] }] },
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }] }] },
     });
+    provisionLocalCli(repo);
     const report = buildLoopDoctorReport(repo);
     expect(statusOf(report, 'baseline')).toBe('pass');
-    expect(statusOf(report, 'Stop-gate hook')).toBe('pass');
+    expect(statusOf(report, 'Stop-gate hook registered')).toBe('pass');
+    expect(statusOf(report, 'Stop-gate hook resolvable')).toBe('pass');
     expect(report.ok).toBe(true);
+  });
+
+  it('fails the resolvable check when the hook is registered but dxkit does not resolve', () => {
+    repo = tmpRepo(true);
+    writeCommittedFullPolicy(repo);
+    writeBaseline(repo);
+    writeSettings(repo, {
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }] }] },
+    });
+    // Do NOT provision a local bin. Skip if this environment has a global
+    // vyuh-dxkit on PATH (then resolution legitimately succeeds).
+    if (resolveDxkitCli(repo).ok) return;
+    const report = buildLoopDoctorReport(repo);
+    expect(statusOf(report, 'Stop-gate hook registered')).toBe('pass');
+    expect(statusOf(report, 'Stop-gate hook resolvable')).toBe('fail');
+    expect(report.ok).toBe(false);
   });
 
   it('does not treat an unrelated Stop hook as the gate', () => {

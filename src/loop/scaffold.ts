@@ -18,10 +18,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ShipInstallResult } from '../ship-installers';
 import { DEFAULT_LOOP_PRESET, type LoopPreset } from './policy';
+import { dxkitCli } from '../self-invocation';
 
-/** The command Claude Code runs on Stop. Kept in one place so the
- *  installer, doctor, and any future tooling agree on the exact string. */
-export const STOP_HOOK_COMMAND = 'npx vyuh-dxkit hook stop-gate';
+/** The command Claude Code runs on Stop. Built from the canonical CLI
+ *  invocation (`src/self-invocation.ts`) so the installer, doctor, and any
+ *  future tooling agree on the exact string and the loop Stop hook is a
+ *  registered self-invocation surface (devDependency + doctor coverage). */
+export const STOP_HOOK_COMMAND = dxkitCli('hook stop-gate');
 
 /** Sentinel markers bounding the dxkit-managed region of CLAUDE.md. Only
  *  the text between them is ever rewritten. */

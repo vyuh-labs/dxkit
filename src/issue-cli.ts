@@ -29,7 +29,7 @@
  * NOTHING is submitted automatically. The CLI opens a URL with
  * query-string pre-fill; the customer reviews + edits + clicks
  * "Submit." All env data in the prefill is the kind already
- * visible in `npx vyuh-dxkit --version` — no source content, no
+ * visible in the dxkit CLI `--version` — no source content, no
  * customer-identifying paths beyond the project name.
  */
 

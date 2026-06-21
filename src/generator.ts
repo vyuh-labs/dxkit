@@ -5,6 +5,7 @@ import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { writeFile, copyFile, sha256 } from './files';
 import { activeLanguagesFromStack } from './languages';
+import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 
 function getTemplatesDir(): string {
@@ -39,7 +40,7 @@ function buildSettingsJson(config: ResolvedConfig): string {
     'Bash(git diff:*)',
     'Bash(git log:*)',
     'Bash(git branch:*)',
-    'Bash(npx vyuh-dxkit:*)',
+    `Bash(${dxkitCli()}:*)`,
     'Bash(./node_modules/.bin/vyuh-dxkit:*)',
     'Bash(vyuh-dxkit:*)',
   ];
@@ -74,7 +75,7 @@ function buildSettingsJson(config: ResolvedConfig): string {
               hooks: [
                 {
                   type: 'command',
-                  command: 'npx vyuh-dxkit context-hook',
+                  command: dxkitCli('context-hook'),
                 },
               ],
             },

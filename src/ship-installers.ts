@@ -635,6 +635,15 @@ export function installDxkitDevDependency(
     return result;
   }
 
+  // Never add dxkit as a dependency of dxkit itself. The dxkit repo runs its
+  // own generated artifacts against the local build, and a package declaring
+  // itself as a devDependency is invalid. (Only reachable when init/update
+  // runs inside this repo; no customer package is named DXKIT_PACKAGE.)
+  if (pkg.name === DXKIT_PACKAGE) {
+    result.skipped.push('package.json (devDependencies)');
+    return result;
+  }
+
   if (pkg.dependencies?.[DXKIT_PACKAGE] || pkg.devDependencies?.[DXKIT_PACKAGE]) {
     result.skipped.push('package.json (devDependencies)');
     return result;

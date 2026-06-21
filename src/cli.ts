@@ -31,6 +31,7 @@ import {
   installDxkitDevDependency,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
+import { dxkitCli, requiresResolvableCli } from './self-invocation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -275,11 +276,11 @@ function printUsage(): void {
                       Applies to: vulnerabilities, bom.
 
   ${logger.bold('Examples:')}
-    npx vyuh-dxkit init                  # Interactive
-    npx vyuh-dxkit init --detect         # Auto-detect, just DX
-    npx vyuh-dxkit init --full --yes     # Everything, no prompts
-    npx vyuh-dxkit init --detect --stealth  # Local-only, not committed
-    npx vyuh-dxkit update                # Re-generate from manifest
+    ${dxkitCli('init')}                  # Interactive
+    ${dxkitCli('init --detect')}         # Auto-detect, just DX
+    ${dxkitCli('init --full --yes')}     # Everything, no prompts
+    ${dxkitCli('init --detect --stealth')}  # Local-only, not committed
+    ${dxkitCli('update')}                # Re-generate from manifest
 `);
 }
 
@@ -562,12 +563,20 @@ export async function run(argv: string[]): Promise<void> {
         });
       }
 
-      // dxkit must resolve project-locally for the hooks + CI guardrail
-      // to run a pinned version (both prefer ./node_modules/.bin over a
-      // global). Add it to devDependencies whenever a surface that
-      // invokes it is installed. No-ops for non-Node repos and when the
-      // consumer already declares the dep.
-      if (wantHooks || wantCi) {
+      // dxkit must resolve project-locally so every installed self-invocation
+      // surface (Stop hook, context-hook, pre-push + CI guardrail) can run a
+      // pinned dxkit instead of 404-ing. The set of surfaces that imply this
+      // is derived from the one registry in src/self-invocation.ts — never a
+      // hand-maintained flag chain, which is what once dropped the loop Stop
+      // hook. No-ops for non-Node repos and when the dep is already declared.
+      if (
+        requiresResolvableCli({
+          claudeSettings: wantDxkitAgents,
+          claudeLoop: wantClaudeLoop,
+          gitHooks: wantHooks,
+          ciGuardrails: wantCi,
+        })
+      ) {
         shipResults.push({
           label: 'dxkit devDependency',
           result: installDxkitDevDependency(cwd, { force: !!values.force }),
@@ -1830,7 +1839,7 @@ export async function run(argv: string[]): Promise<void> {
           );
           logger.dim('  Findings in these categories will NOT be captured in the baseline.');
           logger.dim(
-            '  Install with `npx vyuh-dxkit tools install`, or if a tool IS installed but',
+            '  Install with `' + dxkitCli('tools install') + '`, or if a tool IS installed but',
           );
           logger.dim(
             '  not detected, point dxkit at it via .dxkit/tools.json (ask Claude: "fix dxkit").',
