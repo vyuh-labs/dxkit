@@ -45,6 +45,16 @@ the deterministic Stop-gate framing. The README loop quickstart installs
 dxkit first, and the demo command is pinned to `@latest` so a stale global or
 npx cache cannot run an older version that lacks the command.
 
+### Changed — `demo loop-guardrail` now runs a real sandbox scan
+
+The demo no longer prints a scripted scenario. When gitleaks is available it
+generates a throwaway git repo, runs the real `baseline create`, introduces a
+real hardcoded secret, and runs the real `guardrail check` — the same commands
+a user runs — so the block→repair→clean walkthrough is an actual scan, not a
+mock. Your repo is never touched. The fabricated "agent" dialogue is gone; when
+gitleaks is absent it shows a clearly-labelled illustration and how to run the
+real sandbox.
+
 ## [2.13.0] - 2026-06-18
 
 ### Loop pack — a deterministic Stop-gate for autonomous coding loops
