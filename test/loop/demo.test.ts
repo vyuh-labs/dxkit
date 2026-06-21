@@ -6,7 +6,7 @@ describe('loop guardrail demo', () => {
   it('produces the real repair message for the example net-new finding', () => {
     const { blockMessage } = renderLoopGuardrailDemo();
     // It must list the example finding with its location…
-    expect(blockMessage).toContain('src/payments.js:12');
+    expect(blockMessage).toContain('example/payments.js:12');
     expect(blockMessage).toContain('secret');
     // …and carry the loop norm (don't refresh baseline / don't fix unrelated debt).
     expect(blockMessage.toLowerCase()).toContain('do not refresh the baseline');
