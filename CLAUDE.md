@@ -539,6 +539,53 @@ Rule 9's `createHash` ban covering ingested identity:
    `src/ingest/snapshot.ts`. Annotate `// ingest-snapshot-ok` for a
    justified exception.
 
+### 14. Self-invoking artifacts flow through the canonical CLI helper + registry
+
+Several artifacts dxkit installs shell out to the dxkit CLI _after_
+install: the loop Stop hook, the `.claude` PreToolUse `context-hook`,
+the git pre-push guardrail hook, and the CI guardrail workflow. Each
+only works if `vyuh-dxkit` resolves in the user's environment (a
+project-local devDependency or a global install); otherwise
+`npx vyuh-dxkit …` 404s — `vyuh-dxkit` is a binary name, not a package.
+
+Two facts MUST derive from the one module `src/self-invocation.ts`,
+never from scattered literals or a hand-maintained flag chain:
+
+- **Invoke** the CLI via `dxkitCli('<subcommand>')` / `DXKIT_CLI` — the
+  single canonical invocation string. Every hook body, CI step, doctor
+  hint, and help example builds from it.
+- **Register** every artifact that auto-executes the CLI in
+  `SELF_INVOCATION_SURFACES`, declaring `installedWhen(flags)`. The
+  install + update devDependency wire-up reads `requiresResolvableCli`
+  (derived from the registry) instead of `wantHooks || wantCi`, and
+  `loop doctor` verifies the CLI actually resolves via `resolveDxkitCli`.
+
+Adding a surface is a one-line registry entry; it cannot silently
+forget the devDependency wire-up or the doctor check — the class of bug
+that shipped the loop Stop hook 404-ing on pure-npx installs (it was
+absent from both `||` chains).
+
+**Bad**: `command: 'npx vyuh-dxkit hook stop-gate'`,
+`fix.command: 'npx vyuh-dxkit baseline create'`, a new hook added to
+`.claude/settings.json` without a `SELF_INVOCATION_SURFACES` entry,
+`if (wantHooks || wantCi || wantClaudeLoop)` for the devDependency.
+
+**Good**: `command: dxkitCli('hook stop-gate')`,
+`requiresResolvableCli({ claudeLoop, gitHooks, ciGuardrails, claudeSettings })`,
+a registry entry whose `installedWhen` gates the new surface.
+
+#### Self-invocation enforcement
+
+- **`scripts/check-architecture.sh` Rule 14**: no raw `npx vyuh-dxkit`
+  string in `src/**/*.ts` outside `src/self-invocation.ts`. Annotate
+  `// self-invocation-ok` for a justified exception.
+- **`test/self-invocation-playbook.test.ts`**: contract (every surface
+  well-formed; every gating flag flips `requiresResolvableCli`) plus a
+  synthetic-surface injection test — if `requiresResolvableCli` ever
+  iterates a hardcoded subset instead of its registry argument, the
+  injected surface won't be picked up and the test fails. Mirror of
+  `recipe-playbook.test.ts` / `producer-playbook.test.ts`.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

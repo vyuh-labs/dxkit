@@ -10,8 +10,8 @@
  *
  *   (no flag, or `--yes`) — execute. Runs the three-step upgrade:
  *     1. `npm install @vyuhlabs/dxkit@<target>`     (binary)
- *     2. `npx vyuh-dxkit update`                    (scaffold refresh)
- *     3. `npx vyuh-dxkit doctor`                    (verify)
+ *     2. the dxkit `update` subcommand                (scaffold refresh)
+ *     3. the dxkit `doctor` subcommand                (verify)
  *   Then prints devcontainer-rebuild instructions if .devcontainer/
  *   was refreshed.
  *
@@ -24,6 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import { Manifest } from './types';
+import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 
 export type DeltaKind = 'none' | 'patch' | 'minor' | 'major' | 'downgrade';
@@ -42,7 +43,7 @@ export interface UpgradePlan {
   generatedAt: string;
   cwd: string;
   current: {
-    /** Installed binary version (from `npx vyuh-dxkit --version`). */
+    /** Installed binary version (from the dxkit CLI `--version`). */
     binary: string | null;
     /** Scaffold version recorded in manifest. */
     scaffold: string | null;
@@ -187,7 +188,7 @@ export function buildUpgradePlan(cwd: string, opts: UpgradeOpts = {}): UpgradePl
   // a binary upgrade (scaffold may need updating to match the new binary).
   if (latest) {
     steps.push({
-      command: 'npx vyuh-dxkit update',
+      command: dxkitCli('update'),
       purpose:
         'Refresh scaffold (.devcontainer, .githooks, .claude/skills, CI workflows) + ' +
         'migrate baseline & allowlist if the finding-identity scheme changed',
@@ -197,7 +198,7 @@ export function buildUpgradePlan(cwd: string, opts: UpgradeOpts = {}): UpgradePl
   // Step 3: verify with doctor.
   if (latest) {
     steps.push({
-      command: 'npx vyuh-dxkit doctor',
+      command: dxkitCli('doctor'),
       purpose: 'Verify operational health post-upgrade',
     });
   }

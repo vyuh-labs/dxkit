@@ -11,7 +11,7 @@
  *   2. **Inline example** — the exact annotation comment to paste
  *      when the finding has a stable single-line attachment point
  *      and the chosen category is inline-compatible.
- *   3. **CLI command** — the exact `npx vyuh-dxkit allowlist add`
+ *   3. **CLI command** — the exact `vyuh-dxkit allowlist add`
  *      invocation that handles the mutation without the developer
  *      typing annotation syntax.
  *
@@ -47,12 +47,13 @@ import {
   type AllowlistCategory,
 } from './categories';
 import { renderAnnotation } from './inline';
+import { dxkitCli } from '../self-invocation';
 
 /**
  * Subcommand string used in every `cliCommand` rendered by this
  * module. One place to update if the subcommand ever renames.
  */
-const ALLOWLIST_ADD_CMD = 'npx vyuh-dxkit allowlist add';
+const ALLOWLIST_ADD_CMD = dxkitCli('allowlist add');
 
 export interface BlockHint {
   /** Generic per-kind remediation text. Always present. */
@@ -147,7 +148,9 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
     case 'dep-vuln':
       return (
         'Upgrade the vulnerable dependency to the patched version. Run ' +
-        '`npx vyuh-dxkit vulnerabilities` to see the suggested install command ' +
+        '`' +
+        dxkitCli('vulnerabilities') +
+        '` to see the suggested install command ' +
         'for this ecosystem.'
       );
     case 'duplication':

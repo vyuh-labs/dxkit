@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import { resolveBaselineMode } from '../baseline/modes';
 import { resolveLoopPreset } from './policy';
 import { LEDGER_FILE } from './ledger';
+import { dxkitCli, resolveDxkitCli } from '../self-invocation';
 import * as logger from '../logger';
 
 /** Severity of one preflight check. `fail` = the loop is unsafe to run
@@ -147,7 +148,7 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
         : {
             fix: {
               hint: 'Capture the current state as the loop baseline; existing debt is locked in, only net-new findings block.',
-              command: 'npx vyuh-dxkit baseline create',
+              command: dxkitCli('baseline create'),
               skill: 'dxkit-init',
             },
           }),
@@ -169,11 +170,39 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
       : {
           fix: {
             hint: 'Register the Stop-gate hook in .claude/settings.json (additive — your existing hooks are preserved).',
-            command: 'npx vyuh-dxkit init --claude-loop',
+            command: dxkitCli('init --claude-loop'),
             skill: 'dxkit-loop',
           },
         }),
   });
+
+  // 3b. Stop hook RESOLVABLE. The registered hook invokes the dxkit CLI;
+  // verify it actually resolves here. A registered-but-unresolvable hook
+  // 404s on every Stop — the failure mode of a pure-npx install whose
+  // devDependency was never provisioned (or a non-Node repo with no global
+  // dxkit). Only meaningful once a hook is registered; if it isn't, the
+  // check above already fails.
+  if (hook) {
+    const res = resolveDxkitCli(cwd);
+    checks.push({
+      label: 'Stop-gate hook resolvable',
+      status: res.ok ? 'pass' : 'fail',
+      detail: res.ok
+        ? `\`vyuh-dxkit\` resolves (${
+            res.how === 'local' ? 'project-local node_modules/.bin' : 'global install'
+          }) — the hook can run`
+        : '`vyuh-dxkit` does not resolve — the Stop hook would fail on every Stop (dxkit is not installed here)',
+      ...(res.ok
+        ? {}
+        : {
+            fix: {
+              hint: 'Install dxkit so the Stop hook can run. The blessed path installs it as a devDependency; then `npm install` provisions it.',
+              command: 'npm install --save-dev @vyuhlabs/dxkit',
+              skill: 'dxkit-loop',
+            },
+          }),
+    });
+  }
 
   // 4. Active preset — informational. Surfaces the posture so an operator
   // knows what the loop will block on before trusting it unattended.
@@ -221,7 +250,7 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
         : {
             fix: {
               hint: 'Regenerate the code graph so orientation context matches current code.',
-              command: 'npx vyuh-dxkit explore graph',
+              command: dxkitCli('explore graph'),
               skill: 'dxkit-feature',
             },
           }),

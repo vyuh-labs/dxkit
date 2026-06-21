@@ -1016,6 +1016,39 @@ if [ -n "$RULE13_SNAP" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
+# dxkit CLI through ONE canonical helper, and every auto-running surface is
+# in ONE registry.
+#
+# What this prevents:
+#   A raw `npx vyuh-dxkit ...` literal in a hook body / CI step / doc hint is
+#   invisible to the self-invocation registry, so the install flow cannot
+#   know the surface needs a project-local dxkit and doctor cannot verify it
+#   resolves. That class shipped the loop Stop hook 404-ing on pure-npx
+#   installs (the dep was never declared, so `npx vyuh-dxkit` resolved to a
+#   non-existent package).
+#
+# Canonical replacement: dxkitCli('<subcommand>') / DXKIT_CLI from
+#   src/self-invocation.ts. New auto-executing surfaces ALSO register in
+#   SELF_INVOCATION_SURFACES so requiresResolvableCli() (install + update
+#   devDependency wire-up) and `loop doctor` pick them up automatically.
+#
+# Allowlist rationale:
+#   - src/self-invocation.ts itself: this IS the canonical site.
+RULE14_SELFINVOKE=$(grep -rn "npx vyuh-dxkit" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/self-invocation.ts:" \
+  | grep -v "// self-invocation-ok")
+if [ -n "$RULE14_SELFINVOKE" ]; then
+  echo "❌ Rule 14 violation: raw 'npx vyuh-dxkit' literal outside src/self-invocation.ts:"
+  echo "$RULE14_SELFINVOKE"
+  echo "   → Use dxkitCli('<subcommand>') / DXKIT_CLI from src/self-invocation.ts."
+  echo "   → Register new auto-running surfaces in SELF_INVOCATION_SURFACES so the"
+  echo "     devDependency wire-up + loop doctor cover them."
+  echo "   → Annotate '// self-invocation-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

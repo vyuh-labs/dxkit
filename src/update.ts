@@ -17,6 +17,7 @@ import {
 import * as logger from './logger';
 import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
 import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
+import { requiresResolvableCli } from './self-invocation';
 
 /**
  * Re-exports the shared type so callers within the update module can
@@ -210,11 +211,20 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
     mergeShipResult(aggregate, installCiGuardrails(cwd, { force }));
   }
   // Self-heal a missing project-local devDependency on upgrade. Pre-fix
-  // installs wired hooks/CI without declaring the package, so they fall
-  // back to a stale global. This adds it when absent (idempotent — skips
-  // when already declared, so a customer's pin is never repinned here;
-  // the actual version bump is `npm install @latest`, npm's job).
-  if (flags.withHooks || flags.withCiGuardrails) {
+  // installs wired self-invocation surfaces without declaring the package, so
+  // they fall back to a stale (or missing) global. The set of surfaces that
+  // imply the dep is derived from the one registry in src/self-invocation.ts
+  // (same source the init flow uses), so update can't drift from init. Adds
+  // it when absent (idempotent — skips when already declared, so a customer's
+  // pin is never repinned here; the version bump is `npm install`, npm's job).
+  if (
+    requiresResolvableCli({
+      claudeSettings: flags.withDxkitAgents,
+      claudeLoop: flags.withClaudeLoop,
+      gitHooks: flags.withHooks,
+      ciGuardrails: flags.withCiGuardrails,
+    })
+  ) {
     mergeShipResult(aggregate, installDxkitDevDependency(cwd, { force }));
   }
   if (flags.withBaselineRefresh) {

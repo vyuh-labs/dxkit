@@ -31,6 +31,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadGraph } from '../explore/load';
+import { dxkitCli } from '../self-invocation';
 
 /** Default vendor + report locations, relative to module + cwd. */
 const VENDOR_DIR = path.join(__dirname, 'vendor');
@@ -104,7 +105,7 @@ export function renderGraphTab(opts: GraphTabOptions): {
     return {
       html: renderEmptyState(
         'Interactive viewer skipped.',
-        `Graph data exists (\`.dxkit/reports/graph.json\`, ${communityCount} communities) but graphify's interactive viewer wasn't generated. Common causes: the graph exceeds graphify's 5000-node viewer cap, or the installed graphify is older than v0.5 (run \`npx vyuh-dxkit tools install\` to refresh).`,
+        `Graph data exists (\`.dxkit/reports/graph.json\`, ${communityCount} communities) but graphify's interactive viewer wasn't generated. Common causes: the graph exceeds graphify's 5000-node viewer cap, or the installed graphify is older than v0.5 (run \`${dxkitCli('tools install')}\` to refresh).`,
       ),
       navBadge: String(communityCount),
       hasData: false,
@@ -203,7 +204,7 @@ export function injectAggregateBanner(html: string, meta: GraphHtmlMeta): string
   <strong>Community-aggregated view.</strong>
   Each node is a Louvain cluster of related symbols, not an individual symbol — the full graph (${meta.totalNodes.toLocaleString()} symbols, ${meta.totalEdges.toLocaleString()} edges) exceeds vis.js's 5,000-node interactive cap.
   Showing ${meta.communities.toLocaleString()} communities; node size = member count.
-  Use <code style="background:rgba(255,255,255,0.18);padding:1px 5px;border-radius:3px;">npx vyuh-dxkit explore</code> to drill into a specific community.
+  Use <code style="background:rgba(255,255,255,0.18);padding:1px 5px;border-radius:3px;">${dxkitCli('explore')}</code> to drill into a specific community.
 </div>`;
   // Inject right after <body> so the banner sits above the canvas
   // without disturbing graphify's existing flex layout.
@@ -275,7 +276,11 @@ function buildSrcdocIframe(html: string): string {
 // ─── Empty-state rendering ───────────────────────────────────────────────────
 
 function emptyStateMessage(): string {
-  return 'Run `npx vyuh-dxkit health .` to generate the repo graph (graphify produces `.dxkit/reports/graph.json` + `graph.html` automatically), then reload this dashboard.';
+  return (
+    'Run `' +
+    dxkitCli('health .') +
+    '` to generate the repo graph (graphify produces `.dxkit/reports/graph.json` + `graph.html` automatically), then reload this dashboard.'
+  );
 }
 
 function renderEmptyState(headline: string, body: string): string {

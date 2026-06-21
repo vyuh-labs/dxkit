@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import { commandExists } from './analyzers/tools/runner';
 import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
+import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
@@ -306,7 +307,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
       : {
           fix: {
             hint: 'Run `vyuh-dxkit init` to scaffold the manifest + Agent DX surface.',
-            command: 'npx vyuh-dxkit init --full --yes',
+            command: dxkitCli('init --full --yes'),
             skill: 'dxkit-init',
           },
         }),
@@ -322,7 +323,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         : {
             fix: {
               hint: 'Fix the JSON syntax in `.vyuh-dxkit.json`, or regenerate via `vyuh-dxkit update --force`.',
-              command: 'npx vyuh-dxkit update --force',
+              command: dxkitCli('update --force'),
             },
           }),
     });
@@ -344,7 +345,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         : {
             fix: {
               hint: 'Re-run `vyuh-dxkit init --with-dxkit-agents --yes` to land the missing Agent DX files.',
-              command: 'npx vyuh-dxkit init --with-dxkit-agents --yes',
+              command: dxkitCli('init --with-dxkit-agents --yes'),
               skill: 'dxkit-init',
             },
           }),
@@ -377,7 +378,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
       : {
           fix: {
             hint: `${DXKIT_SKILL_NAMES.length - presentSkills.length} dxkit-* skill(s) missing. Re-run init or update.`,
-            command: 'npx vyuh-dxkit update',
+            command: dxkitCli('update'),
           },
         }),
   });
@@ -396,7 +397,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         : {
             fix: {
               hint: 'Per-language rule files missing. Re-run init or update.',
-              command: 'npx vyuh-dxkit update',
+              command: dxkitCli('update'),
             },
           }),
     });
@@ -419,7 +420,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         : {
             fix: {
               hint: 'Fix syntax errors in `.claude/settings.json`, or regenerate via `vyuh-dxkit update --force`.',
-              command: 'npx vyuh-dxkit update --force',
+              command: dxkitCli('update --force'),
             },
           }),
     });
@@ -480,7 +481,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
               hint: !hooksPathSet
                 ? 'Activate the pre-push hook so dxkit guards regressions before push.'
                 : 'The pre-push hook is wired but not executable, so git silently ignores it — no guardrail runs. Re-activate to restore the executable bit.',
-              command: 'npx vyuh-dxkit hooks activate',
+              command: dxkitCli('hooks activate'),
               skill: 'dxkit-hooks',
             },
           }),
@@ -545,7 +546,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
           : {
               fix: {
                 hint: "Capture today's state as the brownfield baseline. Existing findings get locked in; only net-new ones block thereafter.",
-                command: 'npx vyuh-dxkit baseline create',
+                command: dxkitCli('baseline create'),
                 skill: 'dxkit-init',
               },
             }),
@@ -611,7 +612,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       tier: 'operational',
       fix: {
         hint: 'Re-run scanner-tool install — pinned versions live in TOOL_DEFS.',
-        command: 'npx vyuh-dxkit tools install --yes',
+        command: dxkitCli('tools install --yes'),
         skill: 'dxkit-fix',
       },
     });
@@ -661,7 +662,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         : {
             fix: {
               hint: 'Scaffold the dxkit-guardrails GitHub Actions workflow so PRs run the guardrail check.',
-              command: 'npx vyuh-dxkit init --with-ci --yes',
+              command: dxkitCli('init --with-ci --yes'),
               skill: 'dxkit-init',
             },
           }),
@@ -683,7 +684,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         tier: 'operational',
         fix: {
           hint: 'Expired allowlist entries no longer suppress, so their findings block again. Prune the ones you no longer need, or re-add with a fresh expiry the ones still being worked.',
-          command: 'npx vyuh-dxkit allowlist prune',
+          command: dxkitCli('allowlist prune'),
           skill: 'dxkit-fix',
         },
       });
@@ -695,7 +696,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         tier: 'operational',
         fix: {
           hint: 'Allowlist entries are nearing expiry. Fix the underlying finding, extend the window, or let it lapse so the finding re-blocks.',
-          command: 'npx vyuh-dxkit allowlist audit',
+          command: dxkitCli('allowlist audit'),
           skill: 'dxkit-fix',
         },
       });
