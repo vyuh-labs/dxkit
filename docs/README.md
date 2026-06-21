@@ -1,7 +1,10 @@
 # DXKit User Guide
 
-Deterministic code-health analysis for 8 language ecosystems
-(Python, TypeScript, Go, Rust, C#, Kotlin, Java, Ruby).
+A Stop-gate for autonomous coding loops. dxkit baselines a repo's current
+findings and blocks only the net-new ones a change introduces, running
+locally with no model in the gate. The same deterministic core also powers
+code-health analysis across 8 language ecosystems (Python, TypeScript, Go,
+Rust, C#, Kotlin, Java, Ruby).
 
 ## Start here
 

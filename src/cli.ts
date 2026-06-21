@@ -135,7 +135,7 @@ function applyFailOnSeverity(
 
 function printUsage(): void {
   console.log(`
-  ${logger.bold('vyuh-dxkit')} v${VERSION} — AI-native developer experience toolkit for any codebase
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — a Stop-gate for autonomous coding loops that blocks net-new findings
 
   ${logger.bold('Usage:')}
     vyuh-dxkit init [options]    Install dxkit agent DX in this repo

@@ -69,7 +69,7 @@ Per-finding rows in detailed reports include:
 ```
 
 `Risk` is a composite 0-100 score (CVSS × EPSS × KEV × reachability).
-See [risk scoring](../reference/risk-scoring.md) when that page lands.
+See [the scoring guide](../SCORING.md) for how the composite is computed.
 
 ## Capability-driven, not language-hardcoded
 

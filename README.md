@@ -24,7 +24,7 @@ deterministic check, on every stop, of whether this change introduced a new
 finding compared with a baseline.
 
 ```bash
-npx -y @vyuhlabs/dxkit demo loop-guardrail   # see it in 5 seconds, no API key, no setup
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # see it in 5 seconds, no API key, no setup
 ```
 
 Local. Offline. No model in the gate. Existing debt stays grandfathered. Only
@@ -115,20 +115,22 @@ Blocked and repaired inside the same warm loop.
 See the gate with no API key, no Claude Code, and no setup:
 
 ```bash
-npx -y @vyuhlabs/dxkit demo loop-guardrail
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
 ```
 
 It runs the real gate over an example finding and shows what it feeds the
 agent: block, repair, clean.
 
-Wire it into your real Claude Code loop:
+Wire it into your real Claude Code loop. The Stop hook runs dxkit on every
+stop, so install dxkit into the repo (this one command adds it as a
+devDependency and registers the hook):
 
 ```bash
-npx @vyuhlabs/dxkit init --claude-loop   # registers the Stop hook (additive: your settings are kept)
-npx @vyuhlabs/dxkit baseline create      # grandfather today's findings
-npx @vyuhlabs/dxkit loop doctor          # verify the gate is wired safely
+npm init @vyuhlabs/dxkit -- --claude-loop --yes   # installs dxkit + registers the Stop hook (additive: your settings are kept)
+npx vyuh-dxkit baseline create      # grandfather today's findings
+npx vyuh-dxkit loop doctor          # verify the gate is wired safely and dxkit resolves
 # then run Claude Code as you normally would. The Stop-gate fires on every stop.
-npx @vyuhlabs/dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired-after-block
+npx vyuh-dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired-after-block
 ```
 
 ### Presets: what blocks the loop
@@ -141,25 +143,39 @@ full-debt      (opt-in)   also gates test gaps and maintainability regressions. 
 The default is `security-only`. The headline escape-rate benchmark used
 `full-debt` (it gated both the secret trap and the test-gap trap); the default
 install starts narrower so a first run does not trap users in expensive
-test-generation loops. Switch with `init --claude-loop --loop-preset full-debt`.
+test-generation loops. Switch with
+`npm init @vyuhlabs/dxkit -- --claude-loop --loop-preset full-debt`.
 
-## Graph context: reducing the exploration tail
+## Give the agent a map, not just a gate
 
-The Stop-gate controls what the loop is allowed to ship. The code graph helps
-control how far the loop wanders. When dxkit scaffolds a repo, it builds a code
-graph and feeds the agent structural context: callers, callees, and blast
-radius. The agent gets a map before it starts grepping through unfamiliar code.
+The Stop-gate controls what a loop is allowed to ship. The code graph controls
+how the agent does the work in between. When dxkit scaffolds a repo it builds a
+code graph and installs skills that drive real development off it, so the agent
+orients by querying structure instead of grepping and re-reading whole files.
 
-The honest result from our benchmarks is predictable spend, not guaranteed
-cheaper spend. On a large repo the median was roughly tied, but the worst-case
-session used about **57% fewer tokens** and the variance was **roughly halved**.
-On a small repo the overhead was about zero. The graph caps the expensive tail.
-It does not promise a lower average.
+- **Build a feature** (`dxkit-feature` skill): query the graph for where the
+  feature plugs in, what patterns already exist, and what the change will
+  touch, then implement against those patterns and run the analyzers on the
+  result before it stops.
+- **Fix a finding** (`dxkit-action` skill): take a flagged finding, pull its
+  callers, callees, and blast radius from the graph, repair it, and confirm the
+  change did not introduce something net-new.
+
+The agent gets callers, callees, and blast radius up front as a budget-bounded
+slice, not a pile of file reads. It is the same graph, the same baseline, and
+the same identity contract the gate already uses.
+
+What the benchmarks actually show is predictable spend, not guaranteed cheaper
+spend. On a large repo the median was roughly tied, the worst-case session used
+about **57% fewer tokens**, and the variance was **roughly halved**. On a small
+repo the overhead was about zero. The graph caps the expensive tail. It does
+not promise a lower average, and it does not make the agent write better code on
+its own.
 
 This is a different axis from detection. Snyk, SonarQube, and CodeQL tell you
 what is wrong. They do not give the agent a map of the code or bound how much it
 spends finding its way around. dxkit does both: the gate bounds what the loop
-ships, the graph bounds what the loop costs.
+ships, the graph bounds how the loop works.
 
 ## The numbers
 
@@ -253,10 +269,10 @@ so it does not inflate the Code Quality score.
 The deterministic tier runs offline, so you do not have to trust our numbers:
 
 ```bash
-npx @vyuhlabs/dxkit demo loop-guardrail   # the gate, end to end, no API key
-npx @vyuhlabs/dxkit init --claude-loop
-npx @vyuhlabs/dxkit baseline create
-npx @vyuhlabs/dxkit loop doctor
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # the gate, end to end, no API key
+npm init @vyuhlabs/dxkit -- --claude-loop --yes     # installs dxkit + registers the Stop hook
+npx vyuh-dxkit baseline create
+npx vyuh-dxkit loop doctor
 ```
 
 Methodology and caveats: **[docs/benchmarks.md](docs/benchmarks.md)**.
