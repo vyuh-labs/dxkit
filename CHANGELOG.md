@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-06-21
+
+### Fixed — the loop Stop hook could fail on every stop when dxkit was not installed
+
+The loop Stop hook (and the `.claude` PreToolUse context hook) invoke the
+dxkit CLI as `npx vyuh-dxkit …`. That only resolves when dxkit is installed
+in the repo (a devDependency or a global). When the loop was wired with a
+pure-`npx @vyuhlabs/dxkit init --claude-loop` flow — no install — the hook
+hit `npm error 404 'vyuh-dxkit' is not in this registry` on every stop,
+because `vyuh-dxkit` is a binary name, not a package. `loop doctor` reported
+the hook as wired even though it could not run.
+
+- **`init --claude-loop` and `update` now declare `@vyuhlabs/dxkit` as a
+  devDependency** whenever they install an artifact that invokes the CLI (the
+  Stop hook, the context hook, the pre-push guardrail, or the CI guardrail),
+  so `npx vyuh-dxkit` resolves to a project-local binary. Skipped for
+  non-Node repos and when the dependency is already declared.
+- **`loop doctor` now verifies the CLI actually resolves**, not just that the
+  hook string is present, and tells you to install dxkit when it does not.
+- **The recommended loop setup installs dxkit first** via
+  `npm init @vyuhlabs/dxkit -- --claude-loop --yes`, which adds the
+  devDependency and registers the hook in one step.
+
+### Changed — one canonical CLI invocation, one registry of self-invoking surfaces
+
+Every generated artifact that runs the dxkit CLI now builds its command from
+a single helper, and every such artifact is listed in one registry that
+drives the devDependency wire-up and the doctor checks. Adding a new
+auto-running surface can no longer silently skip either. Enforced by an
+architecture check and a registry-injection test.
+
+### Changed — positioning aligned to the Stop-gate
+
+The package description, CLI banner, npm keywords, and the docs now lead with
+the deterministic Stop-gate framing. The README loop quickstart installs
+dxkit first, and the demo command is pinned to `@latest` so a stale global or
+npx cache cannot run an older version that lacks the command.
+
 ## [2.13.0] - 2026-06-18
 
 ### Loop pack — a deterministic Stop-gate for autonomous coding loops
