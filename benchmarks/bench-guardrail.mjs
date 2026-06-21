@@ -53,13 +53,22 @@ const REGRESSIONS = [
   {
     name: 'secret-private-key',
     apply(repoDir) {
+      // The PEM markers are assembled at runtime from fragments so that this
+      // harness source is not itself a secret finding (which would block dxkit's
+      // own self-guardrail and trip any scanner run over this repository). The
+      // file written into the target repo contains the full, detectable marker.
+      const begin = ['-----BEGIN RSA', 'PRIVATE', 'KEY-----'].join(' ');
+      const end = ['-----END RSA', 'PRIVATE', 'KEY-----'].join(' ');
       fs.writeFileSync(
         path.join(repoDir, 'dxkit_bench_secret.js'),
-        '// embedded credential - gitleaks private-key rule matches the header\n' +
-          'const KEY = `-----BEGIN RSA PRIVATE KEY-----\n' +
+        '// embedded credential: gitleaks private-key rule matches the header\n' +
+          'const KEY = `' +
+          begin +
+          '\n' +
           'MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Q\n' +
           'uKUpRKfFLfRYC9AIKjbJTWit+Cqvj3Fx001wEAQABAkA=\n' +
-          '-----END RSA PRIVATE KEY-----`;\nmodule.exports = KEY;\n',
+          end +
+          '`;\nmodule.exports = KEY;\n',
       );
     },
   },
