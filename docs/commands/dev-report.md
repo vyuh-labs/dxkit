@@ -24,12 +24,12 @@ vyuh-dxkit dev-report [path] [options]
 
 ## What it shows
 
-| Section                 | Source                                                                                                                            |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Per-author summary      | `git log --author=*` aggregation: commits, insertions, deletions, files touched, first/last commit date                           |
-| Weekly velocity         | Commits + lines changed per ISO week. Empty weeks are filled with zeros so the trend is readable (D060 closure).                  |
-| Hot files               | Top files by commit count in the window, with autogen-file filtering applied (D061: no more `Form.Designer.cs` topping the list). |
-| Authoring concentration | bus-factor estimate per file                                                                                                      |
+| Section                 | Source                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Per-author summary      | `git log --author=*` aggregation: commits, insertions, deletions, files touched, first/last commit date                     |
+| Weekly velocity         | Commits + lines changed per ISO week. Empty weeks are filled with zeros so the trend is readable.                           |
+| Hot files               | Top files by commit count in the window, with autogen-file filtering applied (no more `Form.Designer.cs` topping the list). |
+| Authoring concentration | bus-factor estimate per file                                                                                                |
 
 ## Output
 

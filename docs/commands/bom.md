@@ -59,12 +59,12 @@ The detailed report's package-row table has columns `Risk | Severity
 ## Key conventions
 
 - **Risk column**: `**N.N**` when CVSS data is available; `—` when
-  no advisory had CVSS (post-D078: never `**0.0**` as a misleading
+  no advisory had CVSS (never `**0.0**` as a misleading
   stand-in)
 - **Reach column**: three-state (`✓` reachable, `✗` not reachable,
   blank = unknown)
-- **`totalAdvisories`** count = **unique fingerprints** (post-D076:
-  not sum-of-occurrences across multiple top-level deps)
+- **`totalAdvisories`** count = **unique fingerprints** (not
+  sum-of-occurrences across multiple top-level deps)
 
 ## XLSX output
 

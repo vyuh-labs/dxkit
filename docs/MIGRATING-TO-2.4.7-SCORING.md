@@ -142,7 +142,7 @@ that key off it.
 These are intentional changes anchored to industry methodology.
 Customer-facing markdown calls them out where they apply.
 
-### Security — D131 closure
+### Security
 
 Repos with at least one open HIGH or CRITICAL semgrep code finding
 now cap at score 79 (rating B) regardless of how clean the rest of

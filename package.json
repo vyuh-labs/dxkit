@@ -1,7 +1,7 @@
 {
   "name": "@vyuhlabs/dxkit",
   "version": "2.13.0",
-  "description": "AI-native developer experience toolkit for any codebase",
+  "description": "A Stop-gate for autonomous coding loops that blocks only net-new findings, running locally with no model in the gate",
   "license": "MIT",
   "author": "Vyuh Labs",
   "repository": {
@@ -96,8 +96,10 @@
     "security-scanning",
     "pre-commit-hooks",
     "ci-cd",
-    "codespaces",
-    "devcontainers",
+    "semgrep",
+    "snyk",
+    "codeql",
+    "sarif",
     "dxkit",
     "vyuh"
   ],

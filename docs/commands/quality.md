@@ -26,7 +26,7 @@ vyuh-dxkit quality [path] [options]
   orphan modules.
 - **Hygiene markers** — TODO / FIXME / HACK / console.log counts
   across the staged source tree.
-- **Comment ratio** — code-to-comment ratio (post-D073: filtered to
+- **Comment ratio** — code-to-comment ratio (filtered to
   pack-declared "source code" languages, not markup/data files).
 - **Slop score** — composite 0-100 metric that weights all of the
   above into one signal.

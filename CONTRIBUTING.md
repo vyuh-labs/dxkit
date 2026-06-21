@@ -1,9 +1,10 @@
 # Contributing to DXKit
 
-Thanks for your interest in improving `@vyuhlabs/dxkit`. DXKit is an
-analyzer-and-scaffolder for any repo: it runs deterministic analyses (health,
-security, test gaps, code quality, dev activity) against any codebase, and
-separately generates `.claude/` agents, commands, skills, and rules tuned to
+Thanks for your interest in improving `@vyuhlabs/dxkit`. DXKit is a Stop-gate
+for autonomous coding loops: it baselines a repo's current findings and blocks
+only the net-new ones a change introduces. The same deterministic core runs
+health, security, test-gap, code-quality, and dev-activity analyses against any
+codebase, and generates `.claude/` agents, commands, skills, and rules tuned to
 whatever language and framework you're working in.
 
 ## Repo layout
