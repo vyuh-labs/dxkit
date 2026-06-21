@@ -24,13 +24,17 @@ deterministic check, on every stop, of whether this change introduced a new
 finding compared with a baseline.
 
 ```bash
-npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # the real gate on a throwaway repo, no API key, no setup
+npm init @vyuhlabs/dxkit -- --claude-loop --yes   # install dxkit + register the Claude Code Stop hook
+npx vyuh-dxkit baseline create                    # grandfather today's findings
+npx vyuh-dxkit loop doctor                         # verify the gate is wired
 ```
 
-Local. Offline. No model in the gate. Existing debt stays grandfathered. Only
-net-new regressions block.
+The gate runs locally with no model: same input, same verdict, in seconds.
+Existing debt stays grandfathered; only net-new regressions block. Want to
+watch the flow first, on a sandbox dxkit creates? See the
+[walkthrough](#see-it-without-touching-your-repo).
 
-[Watch it block and repair](#watch-it-block-and-repair) · [Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-locally)
+[Watch it block and repair](#watch-it-block-and-repair) · [Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo)
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
@@ -110,30 +114,37 @@ checkout-service · loop behind the dxkit Stop-gate
 Recorded from a real run on a synthetic repo, shortened for readability.
 Blocked and repaired inside the same warm loop.
 
-## Try it locally
+## Try it on your repo
 
-See the gate with no API key, no Claude Code, and no setup:
-
-```bash
-npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
-```
-
-It spins up a throwaway git repo, plants a real secret, and runs the real
-gate (gitleaks-backed) against it — block, repair, clean — in about 20
-seconds. Your own repo is never touched. (Without gitleaks installed it shows
-a clearly labelled illustration and how to run the real scan.)
-
-Wire it into your real Claude Code loop. The Stop hook runs dxkit on every
-stop, so install dxkit into the repo (this one command adds it as a
-devDependency and registers the hook):
+The Stop hook runs dxkit on every stop, so install dxkit into the repo. This
+one command adds it as a devDependency and registers the hook additively — your
+existing `.claude` settings are preserved:
 
 ```bash
-npm init @vyuhlabs/dxkit -- --claude-loop --yes   # installs dxkit + registers the Stop hook (additive: your settings are kept)
+npm init @vyuhlabs/dxkit -- --claude-loop --yes
 npx vyuh-dxkit baseline create      # grandfather today's findings
 npx vyuh-dxkit loop doctor          # verify the gate is wired safely and dxkit resolves
 # then run Claude Code as you normally would. The Stop-gate fires on every stop.
 npx vyuh-dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired-after-block
 ```
+
+When the agent tries to stop, dxkit runs the net-new gate against the baseline.
+Existing findings are grandfathered; only findings this change introduced block.
+
+## See it without touching your repo
+
+Want the flow first, on a sandbox dxkit creates?
+
+```bash
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
+```
+
+This runs the **real** gate on a temporary fixture repo: baseline → introduce a
+net-new secret → BLOCK → repair → CLEAN, then it tears the fixture down. No API
+key and no Claude Code, and your own repo is never touched. It needs gitleaks
+installed and takes about 20 seconds; without gitleaks it shows a clearly
+labelled illustration instead. (It does a one-time `npx` download, so it is not
+fully offline — the gate itself is.)
 
 ### Presets: what blocks the loop
 
@@ -266,18 +277,21 @@ so it does not inflate the Code Quality score.
 
 </details>
 
-## Reproduce the benchmark
+## Reproduce the deterministic tier
 
-The deterministic tier runs offline, so you do not have to trust our numbers:
+The deterministic results — the net-new gate decision and the finding-identity
+matcher — reproduce offline, so you do not have to trust our numbers. This is
+separate from the agentic benchmark, which requires running real agent sessions.
+The harnesses live in `benchmarks/`:
 
 ```bash
-npx -y @vyuhlabs/dxkit@latest demo loop-guardrail   # the gate, end to end, no API key
-npm init @vyuhlabs/dxkit -- --claude-loop --yes     # installs dxkit + registers the Stop hook
-npx vyuh-dxkit baseline create
-npx vyuh-dxkit loop doctor
+node benchmarks/bench-guardrail.mjs config.json        # block/allow on seeded findings
+node benchmarks/bench-netnew-isolation.mjs config.json # net-new isolation under churn
+node benchmarks/bench-matcher.mjs config.json          # false net-new on line shifts + renames
 ```
 
-Methodology and caveats: **[docs/benchmarks.md](docs/benchmarks.md)**.
+See `benchmarks/README.md` to point them at a repo, and the full methodology,
+caveats, and artifact status in **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ## Credits
 
