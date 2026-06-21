@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "2.13.0",
+  "version": "2.13.1",
   "description": "A Stop-gate for autonomous coding loops that blocks only net-new findings, running locally with no model in the gate",
   "license": "MIT",
   "author": "Vyuh Labs",
