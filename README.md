@@ -80,12 +80,23 @@ Use dxkit if you let coding agents:
 ## Built on tools you already trust
 
 dxkit is an orchestration and enforcement layer, not another scanner. It runs
-established open source tools and treats their output as one stream:
+established open source tools and treats their output as one stream. Which tools
+run depends on the languages in your repo — dxkit covers **8 ecosystems**
+(TypeScript / JavaScript, Python, Go, Rust, C# / .NET, Java, Kotlin, Ruby).
+
+Universal, on every repo:
 
 - secrets: gitleaks
 - code patterns: Semgrep
-- dependency vulnerabilities: OSV and npm audit
-- duplication, size, and the code graph: jscpd, cloc, and graphify
+- dependency advisories: OSV.dev
+- size, duplication, and the code graph: cloc, jscpd, graphify
+
+Per language, dxkit adds that ecosystem's own linter and audit tool — for
+example npm audit + ESLint (JS / TS), pip-audit + ruff (Python), govulncheck +
+golangci-lint (Go), cargo-audit + clippy (Rust), `dotnet list --vulnerable`
+(C#), osv-scanner + PMD (Java), osv-scanner + detekt (Kotlin), and
+bundler-audit + RuboCop (Ruby). The full per-language matrix is in **Per-pack
+capabilities** below.
 
 For deep interprocedural analysis, it ingests findings from **Snyk Code** and
 **CodeQL** (or any SARIF file), fingerprints them the same way as native
