@@ -59,6 +59,7 @@ import { classify, resolvePolicy } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
 import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE } from './gather-scope';
+import { computeChangedFiles } from './changed-files';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
@@ -120,6 +121,17 @@ export interface RunGuardrailCheckOptions {
    * change what is gathered.
    */
   readonly scope?: GatherScope;
+  /**
+   * Incremental scanning (opt 3): when true, the CURRENT side's semgrep
+   * scans only files that changed vs the baseline's commit, instead of the
+   * whole tree. Sound for a net-new gate (semgrep is intraprocedural — a
+   * net-new code finding only appears in a changed file). The ref/baseline
+   * side stays full so it covers every file. Falls back to a full scan when
+   * the changed set can't be computed completely. Opt-in: only the loop
+   * Stop-gate sets it; CI / `baseline check` leave it false so their full
+   * report is unaffected.
+   */
+  readonly incremental?: boolean;
 }
 
 /**
@@ -366,7 +378,22 @@ export async function runGuardrailCheck(
   }
 
   const scope = options.scope ?? FULL_SCOPE;
-  const current = await gatherCurrentScan({ cwd, verbose: options.verbose, scope });
+  // Incremental scanning: scope the current side's semgrep to files that
+  // changed vs the baseline commit. `computeChangedFiles` returns null when
+  // it can't enumerate the changed set completely (base unreachable, git
+  // error) — that maps to `undefined` here, i.e. a full scan (the safe
+  // default). The ref/baseline side is NOT incremental: it must cover every
+  // file so the diff has a complete prior to match against.
+  const incrementalFiles =
+    options.incremental && baseline.repo.commitSha
+      ? (computeChangedFiles(cwd, baseline.repo.commitSha) ?? undefined)
+      : undefined;
+  const current = await gatherCurrentScan({
+    cwd,
+    verbose: options.verbose,
+    scope,
+    incrementalFiles,
+  });
 
   // In ref-based mode the prior side came from a detached worktree that
   // can't gather the build-artifact-dependent kinds; drop them from both

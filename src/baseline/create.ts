@@ -322,14 +322,30 @@ export async function gatherCurrentScan(options: {
    * cache (`partial: true` below).
    */
   readonly scope?: GatherScope;
+  /**
+   * Incremental scanning (opt 3): when set, semgrep scans ONLY these
+   * project-relative changed files. Makes the scan partial. Only the loop
+   * Stop-gate's current side sets it; the ref side is always full so the
+   * baseline covers every file. Sound by semgrep's intraprocedural nature
+   * (a net-new code finding only appears in a changed file).
+   */
+  readonly incrementalFiles?: ReadonlyArray<string>;
 }): Promise<CurrentScan> {
   const cwd = path.resolve(options.cwd);
   const scope = options.scope ?? FULL_SCOPE;
-  const partial = !isFullScope(scope);
+  // A scoped OR incrementally-scanned result is partial — it must never
+  // enter the shared cache where a later full `health` read would consume
+  // an incomplete codePatterns set.
+  const partial = !isFullScope(scope) || options.incrementalFiles !== undefined;
 
   const analysisResult = await readOrBuildAnalysisResult({
     cwd,
-    build: (innerCwd) => gatherAnalysisResultBody(innerCwd, { verbose: !!options.verbose, scope }),
+    build: (innerCwd) =>
+      gatherAnalysisResultBody(innerCwd, {
+        verbose: !!options.verbose,
+        scope,
+        incrementalFiles: options.incrementalFiles,
+      }),
     opts: { partial },
   });
   const aggregate = analysisResult.capabilities.securityAggregate;
