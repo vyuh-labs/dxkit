@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-06-22
+
+### Fixed
+
+- `init` and `update` now gitignore `.dxkit/loop/`, so the loop pack's runtime
+  output (the ledger and the last-guardrail snapshot) is no longer committed by
+  repos that use the Stop-gate. Latent since the loop pack shipped in 2.13.0.
+
+### Changed
+
+- `loop doctor` now validates the **actual** registered Stop hook command. It
+  understands both the `npx vyuh-dxkit` / installed-binary form (the binary must
+  resolve) and a local-build `node <script>` form (the script must exist),
+  instead of only the npx form. This lets a repo dogfood the gate against its own
+  build, and gives a correct verdict for any custom hook command.
+
 ## [2.13.1] - 2026-06-21
 
 ### Fixed — the loop Stop hook could fail on every stop when dxkit was not installed
