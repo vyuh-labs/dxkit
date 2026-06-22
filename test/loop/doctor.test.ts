@@ -89,6 +89,11 @@ describe('loop doctor', () => {
     expect(statusOf(report, 'baseline')).toBe('pass');
     expect(statusOf(report, 'Stop-gate hook registered')).toBe('pass');
     expect(statusOf(report, 'Stop-gate hook resolvable')).toBe('pass');
+    // The loop-scoped activation note surfaces so an operator does not assume
+    // interactive sessions are gated.
+    expect(statusOf(report, 'gate activation')).toBe('pass');
+    const activation = report.checks.find((c) => c.label.includes('gate activation'));
+    expect(activation?.detail).toMatch(/interactive turns no-op|forced active/);
     expect(report.ok).toBe(true);
   });
 

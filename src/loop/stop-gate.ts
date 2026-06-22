@@ -39,6 +39,12 @@ import {
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  loopGateActive,
+  workingTreeSignature,
+  readStateCache,
+  writeStateCache,
+} from './gate-cache';
 
 /** Subset of the Claude Code Stop-hook stdin payload we consume. */
 interface StopHookPayload {
@@ -47,6 +53,16 @@ interface StopHookPayload {
   readonly stop_hook_active?: boolean;
   readonly agent_id?: string;
   readonly agent_type?: string;
+  /**
+   * Active permission mode, when Claude Code includes it
+   * (`default` | `plan` | `acceptEdits` | `auto` | `dontAsk` |
+   * `bypassPermissions`). `bypassPermissions` is the canonical
+   * unattended/headless mode (`--dangerously-skip-permissions` /
+   * `--permission-mode bypassPermissions`), so it auto-activates the gate.
+   * Not guaranteed present on every event, so the env / sentinel remain the
+   * reliable override for guaranteed gating.
+   */
+  readonly permission_mode?: string;
 }
 
 /** What the gate decided, before any process I/O. */
@@ -284,10 +300,60 @@ export async function runStopGate(cwd: string): Promise<void> {
   const payload = readStdinPayload();
   const repoDir = payload.cwd || cwd;
 
+  // ── Loop-scoped activation. The Stop-gate is for UNATTENDED loops, where
+  // no human is reviewing each stop. An interactive turn — a person present,
+  // the agent stopping to ask a question — must not pay the guardrail cost.
+  // So the hook is an instant no-op allow unless the loop marks itself
+  // active (DXKIT_LOOP_ACTIVE=1, or a `.dxkit/loop/active` sentinel the loop
+  // runner drops). The CI guardrail still gates the branch either way.
+  if (!loopGateActive(repoDir, payload)) {
+    process.exit(0);
+  }
+
   // Resolve the loop-scoped posture ONCE (preset → policy). This is the
   // only place the loop preset is read; the CI guardrail never sees it.
   const { resolveLoopPolicy } = await import('./policy');
   const { policy, preset } = resolveLoopPolicy(repoDir);
+
+  // ── Fast path: replay the last verdict when the working tree is
+  // byte-identical to what was last gathered (a no-change stop — an
+  // interactive Q&A turn, or a re-stop after a block with no edit). Skips
+  // the full guardrail gather + tests entirely. Safe by construction: the
+  // signature captures every file the gather would see, so a cache hit is
+  // only ever a genuinely-identical tree and the cache can never skip a
+  // real net-new finding. Bypass with DXKIT_LOOP_NO_CACHE=1.
+  const signature = process.env.DXKIT_LOOP_NO_CACHE === '1' ? null : workingTreeSignature(repoDir);
+  const agentFields = {
+    ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
+    ...(payload.agent_type ? { agent_type: payload.agent_type } : {}),
+  };
+  if (signature) {
+    const cached = readStateCache(repoDir);
+    if (cached && cached.signature === signature) {
+      const event = buildLedgerEvent(repoDir, {
+        session_id: payload.session_id || '',
+        ...agentFields,
+        cwd: repoDir,
+        guardrail_status: cached.outcome === 'allow' ? 'pass' : 'fail',
+        net_new_findings: cached.netNew,
+        baseline_findings: cached.baselineFindings,
+        files_changed: 0,
+        allowed: cached.outcome === 'allow',
+        stop_hook_active: !!payload.stop_hook_active,
+        tests_status: 'skipped',
+        lint_status: 'not_configured',
+        typecheck_status: 'not_configured',
+        duration_ms: 0,
+        cached: true,
+      });
+      appendLedgerEvent(repoDir, { ...event, preset });
+      if (cached.outcome === 'block-model') {
+        process.stdout.write(JSON.stringify({ decision: 'block', reason: cached.message }) + '\n');
+        process.exit(0);
+      }
+      process.exit(0); // allow — clean stop replayed from cache
+    }
+  }
 
   const runCheck = async (dir: string): Promise<GuardrailJsonPayload> => {
     const { runGuardrailCheck } = await import('../baseline/check');
@@ -314,6 +380,20 @@ export async function runStopGate(cwd: string): Promise<void> {
   // Stamp the active preset onto the ledger line so the audit trail shows
   // which posture was in force when the gate allowed/blocked.
   appendLedgerEvent(repoDir, { ...decision.event, preset });
+
+  // Persist the verdict keyed on the tree signature so the next stop with
+  // an unchanged tree replays it instead of re-gathering. Only the
+  // tree-deterministic outcomes are cached; an operator/preflight failure
+  // is environment-dependent and must be re-tried.
+  if (signature && (decision.outcome === 'allow' || decision.outcome === 'block-model')) {
+    writeStateCache(repoDir, {
+      signature,
+      outcome: decision.outcome,
+      message: decision.message,
+      netNew: decision.event.net_new_findings,
+      baselineFindings: decision.event.baseline_findings,
+    });
+  }
 
   if (decision.outcome === 'block-model') {
     // Exit 0 + decision JSON on stdout → blocks the stop and feeds the

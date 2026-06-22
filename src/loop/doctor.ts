@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import { resolveBaselineMode } from '../baseline/modes';
 import { resolveLoopPreset } from './policy';
 import { LEDGER_FILE } from './ledger';
+import { loopGateActive } from './gate-cache';
 import { dxkitCli, resolveDxkitCli } from '../self-invocation';
 import * as logger from '../logger';
 
@@ -239,6 +240,24 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
       preset === 'security-only'
         ? 'blocks net-new secrets + crit/high security + reachable dep-vulns; test-gap + quality warn only'
         : 'blocks every net-new finding incl. test-gap + quality (can drive open-ended repair)',
+  });
+
+  // 4b. Loop-scoped activation — informational. The Stop-gate no-ops on
+  // interactive turns and runs only for unattended loops, so an operator
+  // should not assume an interactive session is gated. It auto-activates when
+  // Claude Code reports `permission_mode=bypassPermissions` (a headless run),
+  // or when forced via `DXKIT_LOOP_ACTIVE=1` / a `.dxkit/loop/active` sentinel.
+  const forcedActive = loopGateActive(cwd);
+  checks.push({
+    label: 'gate activation: loop-scoped',
+    status: 'pass',
+    detail: forcedActive
+      ? `forced active here (${
+          process.env.DXKIT_LOOP_ACTIVE === '1'
+            ? 'DXKIT_LOOP_ACTIVE=1'
+            : '.dxkit/loop/active sentinel'
+        }); unattended runs also auto-activate via permission_mode=bypassPermissions`
+      : 'interactive turns no-op; unattended runs auto-activate (permission_mode=bypassPermissions). For a hard guarantee, set DXKIT_LOOP_ACTIVE=1 or touch .dxkit/loop/active',
   });
 
   // 5. Postflight test command — optional. When unset the gate skips the

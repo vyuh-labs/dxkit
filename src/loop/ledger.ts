@@ -72,6 +72,13 @@ export interface LedgerEvent {
   readonly lint_status: CheckStatus;
   readonly typecheck_status: CheckStatus;
   readonly duration_ms: number;
+  /**
+   * True when this verdict was replayed from the tree-signature cache
+   * (the working tree was byte-identical to the last gather) rather than
+   * re-gathered. Optional for forward/backward compat — absent on events
+   * written before the cache existed, and on every freshly-gathered event.
+   */
+  readonly cached?: boolean;
 }
 
 /** Best-effort current branch; empty string when not derivable. */

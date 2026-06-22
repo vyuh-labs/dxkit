@@ -50,9 +50,20 @@
  */
 
 import { execFileSync } from 'child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { createHash } from 'crypto';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
+import { VERSION } from '../constants';
+import { CURRENT_IDENTITY_SCHEME } from './types';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
 
@@ -233,7 +244,98 @@ export async function gatherFromRef(opts: {
   readonly ref: string;
   readonly verbose?: boolean;
 }): Promise<CurrentScan> {
-  return withRefWorktree({ cwd: opts.cwd, ref: opts.ref }, async (worktreePath) => {
+  const sha = resolveRefToSha(opts.cwd, opts.ref);
+  if (sha === null) throw unreachableRefError(opts.cwd, opts.ref);
+
+  const key = refScanCacheKey(opts.cwd, sha);
+  const cached = readRefScanCache(opts.cwd, key);
+  if (cached) return cached;
+
+  const scan = await withRefWorktree({ cwd: opts.cwd, ref: opts.ref }, async (worktreePath) => {
     return gatherCurrentScan({ cwd: worktreePath, verbose: opts.verbose });
   });
+  writeRefScanCache(opts.cwd, key, scan);
+  return scan;
+}
+
+/**
+ * Content-addressed cache for ref-side gathers.
+ *
+ * A ref scan is a pure function of its inputs: the ref commit, the dxkit
+ * version, the identity scheme, and the salt. The loop Stop-gate fires the
+ * ref gather on every stop against an `origin/main` that rarely moves, so
+ * without this cache it re-scans an unchanged ref each time — the dominant
+ * cost of a ref-based gate. A cache hit is only ever a genuinely identical
+ * scan (the key captures every input that can change the findings), so the
+ * cache can never alter a guardrail verdict.
+ *
+ * Safety note: `gatherFromRef` returns a full `CurrentScan`, but the sole
+ * consumer (the ref-based branch of `runGuardrailCheck`) reads only the
+ * plain `findings`/`repoState`/`analysisMeta`/`tools`/`saltMode` fields,
+ * all of which JSON round-trip exactly. The cache file is JSON, lives under
+ * the already-gitignored `.dxkit/cache/`, and is bypassed entirely with
+ * `DXKIT_NO_REF_CACHE=1`. Bump `REF_SCAN_CACHE_FORMAT` if `CurrentScan`'s
+ * serialized shape changes.
+ */
+const REF_SCAN_CACHE_FORMAT = 1;
+const REF_SCAN_CACHE_DIR = path.join('.dxkit', 'cache', 'ref-scan');
+
+/** Hash of the file-mode salt, or a sentinel when absent. */
+function saltSignature(cwd: string): string {
+  try {
+    const buf = readFileSync(path.join(cwd, '.dxkit', 'salt'));
+    return createHash('sha256').update(buf).digest('hex').slice(0, 16); // fingerprint-helper-ok
+  } catch {
+    return 'no-salt';
+  }
+}
+
+/** Deterministic cache key over every input that can change a ref scan.
+ *  Exported for testing. */
+export function refScanCacheKey(cwd: string, sha: string): string {
+  const material = [
+    `fmt:${REF_SCAN_CACHE_FORMAT}`,
+    `sha:${sha}`,
+    `ver:${VERSION}`,
+    `scheme:${CURRENT_IDENTITY_SCHEME}`,
+    `salt:${saltSignature(cwd)}`,
+  ].join('\0');
+  return createHash('sha256').update(material).digest('hex').slice(0, 32); // fingerprint-helper-ok
+}
+
+/** Read a cached ref scan; null on miss, bypass, or any shape mismatch.
+ *  Exported for testing. */
+export function readRefScanCache(cwd: string, key: string): CurrentScan | null {
+  if (process.env.DXKIT_NO_REF_CACHE === '1') return null;
+  try {
+    const raw = readFileSync(path.join(cwd, REF_SCAN_CACHE_DIR, `${key}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as { format?: number; scan?: CurrentScan };
+    if (
+      parsed.format !== REF_SCAN_CACHE_FORMAT ||
+      !parsed.scan ||
+      !Array.isArray(parsed.scan.findings)
+    ) {
+      return null; // unexpected shape → gather fresh (safe default)
+    }
+    return parsed.scan;
+  } catch {
+    return null; // miss / unreadable / parse error → gather fresh (safe default)
+  }
+}
+
+/** Persist a ref scan keyed by its content address. Best-effort.
+ *  Exported for testing. */
+export function writeRefScanCache(cwd: string, key: string, scan: CurrentScan): void {
+  if (process.env.DXKIT_NO_REF_CACHE === '1') return;
+  try {
+    const dir = path.join(cwd, REF_SCAN_CACHE_DIR);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, `${key}.json`),
+      JSON.stringify({ format: REF_SCAN_CACHE_FORMAT, scan }) + '\n',
+      'utf8',
+    );
+  } catch {
+    /* A cache write must never break the gather. */
+  }
 }

@@ -47,7 +47,18 @@ jobs:
         run: |
           set +e
           node dist/index.js guardrail check --markdown > guardrail-report.md
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # Surface WHY it blocked in the job log itself (not just the PR
+          # comment), so a failure is diagnosable without leaving the run.
+          if [ "$code" -ne 0 ]; then
+            echo "::group::dxkit guardrail BLOCKED — net-new findings vs origin/main"
+            cat guardrail-report.md
+            echo "::endgroup::"
+            echo "::error::dxkit guardrail blocked: this branch introduced net-new findings vs origin/main (full report above and in the PR comment)."
+          else
+            echo "✓ dxkit guardrail passed — no net-new findings vs origin/main"
+          fi
 
       - name: Post PR comment
         if: always()

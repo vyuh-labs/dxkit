@@ -15,7 +15,7 @@ function read(cwd: string, rel: string): string {
 // shapes access, it does not validate. Tests read real runtime values.
 interface TestJson {
   hooks: {
-    Stop: Array<{ hooks: Array<{ command: string }> }>;
+    Stop: Array<{ hooks: Array<{ command: string; timeout?: number }> }>;
     PreToolUse: Array<{ hooks: Array<{ command: string }> }>;
   };
   permissions: { allow: string[] };
@@ -41,6 +41,8 @@ describe('loop scaffold (additive merges)', () => {
     expect(isClaudeLoopInstalled(repo)).toBe(true);
     const settings = readJSON(repo, '.claude/settings.json');
     expect(settings.hooks.Stop[0].hooks[0].command).toMatch(/hook stop-gate/);
+    // A generous timeout so a cold gather never surfaces as a "Stop hook error".
+    expect(settings.hooks.Stop[0].hooks[0].timeout).toBeGreaterThanOrEqual(300);
     expect(read(repo, 'CLAUDE.md')).toContain('Autonomous loop safety');
     expect(readJSON(repo, '.dxkit/policy.json').loop.preset).toBe('security-only');
     expect(r.installed).toContain(path.join('.claude', 'settings.json'));

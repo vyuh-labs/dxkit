@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.3] - 2026-06-22
+
+### Fixed — the loop Stop-gate no longer pays a full re-scan on every stop
+
+The Stop hook fires on **every** Claude Code stop, not only autonomous-loop
+turns, and it re-ran the full guardrail gather each time — including
+re-scanning an unchanged `origin/main` in ref-based mode. On a large repo that
+took long enough to surface as a Claude Code "Stop hook error" (a timeout),
+and it made interactive sessions in a loop-initialized repo slow. Two
+content-addressed caches and a timeout fix this, with no change to the gate's
+verdict:
+
+- **Tree-signature verdict cache.** When the working tree is byte-identical to
+  the last gather (an interactive Q&A turn, or a re-stop after a block with no
+  edit), the gate replays the previous verdict instead of re-gathering. The
+  signature captures HEAD, the comparison base, every tracked change vs HEAD,
+  and the contents of every untracked file, so a cache hit is only ever a
+  genuinely identical tree — the cache can never skip a real net-new finding.
+  Bypass with `DXKIT_LOOP_NO_CACHE=1`.
+- **Ref-side scan cache.** The `origin/main` (ref-based) gather is cached,
+  keyed on `(ref commit, dxkit version, identity scheme, salt)`, so an
+  unchanged ref is not re-scanned on every stop. Lives under the already-
+  gitignored `.dxkit/cache/`. Bypass with `DXKIT_NO_REF_CACHE=1`.
+- **Generous Stop-hook timeout.** `init --claude-loop` now installs the Stop
+  hook with a 600s timeout, so a cold first gather on a large repo finishes
+  instead of being killed and reported as an error.
+
+### Changed — the Stop-gate is now loop-scoped
+
+The Stop hook fires on every Claude Code stop, including interactive turns
+(when the agent stops to ask a question), so the gate ran on work where a
+human is already reviewing. The gate is for **unattended** loops, so it now
+no-ops instantly on a stop unless the run is unattended:
+
+- **Auto-detected, no config.** When Claude Code reports an unattended
+  `permission_mode` on the hook payload (`bypassPermissions`, what
+  `--dangerously-skip-permissions` / `--permission-mode bypassPermissions`
+  resolve to — the canonical way to run a headless loop), the gate activates
+  automatically. Interactive modes (`default` / `plan` / `acceptEdits`) never
+  trigger it.
+- **Explicit override.** Because `permission_mode` is not guaranteed on every
+  event, a loop that wants a hard gating guarantee sets `DXKIT_LOOP_ACTIVE=1`
+  in the launching environment, or drops a `.dxkit/loop/active` sentinel file.
+- Absent all of these, the Stop hook is an instant no-op allow — interactive
+  sessions are never slowed. The CI guardrail still gates the branch, so
+  interactive work is not left unprotected.
+
+This, together with the caches above, is what makes the Stop-gate
+unobtrusive: interactive turns do nothing, and an active unattended loop only
+re-gathers when the tree actually changed.
+
+### Changed — CI guardrail surfaces the block reason in the job log
+
+The CI guardrail workflow (`dxkit-guardrails.yml`) wrote its report to a PR
+comment but the job log showed only `exit 1`. It now prints the blocking
+findings into the log on failure — a collapsible group plus a GitHub error
+annotation — so a blocked PR is diagnosable from the Actions run itself, not
+only the comment.
+
 ## [2.13.2] - 2026-06-22
 
 ### Fixed

@@ -26,6 +26,16 @@ import { dxkitCli } from '../self-invocation';
  *  registered self-invocation surface (devDependency + doctor coverage). */
 export const STOP_HOOK_COMMAND = dxkitCli('hook stop-gate');
 
+/**
+ * Timeout (seconds) for the installed Stop hook. Claude Code's default
+ * hook timeout (60s) is too short for a cold first guardrail gather on a
+ * large repo — especially in ref-based mode, where the comparison side is
+ * scanned in a worktree — so the hook surfaces as a "Stop hook error" even
+ * though it would have finished. The verdict + ref-scan caches make warm
+ * gathers fast; this generous ceiling covers the cold case.
+ */
+export const STOP_HOOK_TIMEOUT_SECONDS = 600;
+
 /** Sentinel markers bounding the dxkit-managed region of CLAUDE.md. Only
  *  the text between them is ever rewritten. */
 const CLAUDE_BLOCK_START = '<!-- dxkit:loop:start -->';
@@ -36,11 +46,17 @@ const CLAUDE_BLOCK_END = '<!-- dxkit:loop:end -->';
  *  when the preset is switched without re-running init. */
 const CLAUDE_LOOP_NORM = `## Autonomous loop safety (dxkit)
 
-This repo runs coding loops behind the dxkit Stop-gate: when a loop tries
-to stop, \`vyuh-dxkit hook stop-gate\` re-runs the guardrail and blocks
-completion if the branch introduced net-new findings, handing them back
-for repair. Loop norms:
+This repo runs coding loops behind the dxkit Stop-gate: when an unattended
+loop tries to stop, \`vyuh-dxkit hook stop-gate\` re-runs the guardrail and
+blocks completion if the branch introduced net-new findings, handing them
+back for repair. Loop norms:
 
+- The gate runs only for UNATTENDED loops, so interactive sessions are not
+  slowed. A headless loop (\`claude --dangerously-skip-permissions\`, i.e.
+  \`permission_mode=bypassPermissions\`) auto-activates it — nothing to
+  configure. For a hard guarantee (\`permission_mode\` is not on every event),
+  export \`DXKIT_LOOP_ACTIVE=1\` or \`touch .dxkit/loop/active\` before
+  launching the agent. Interactive work is covered by your review + CI.
 - Fix the net-new finding the gate reports. Do NOT refresh the baseline to
   clear a block, and do NOT fix unrelated pre-existing debt — the gate
   only asks for what this branch introduced.
@@ -63,7 +79,7 @@ interface LoopScaffoldOpts {
 
 interface StopHookEntry {
   matcher?: string;
-  hooks?: Array<{ type?: string; command?: string }>;
+  hooks?: Array<{ type?: string; command?: string; timeout?: number }>;
 }
 interface ClaudeSettings {
   hooks?: { Stop?: StopHookEntry[]; [k: string]: unknown };
@@ -142,7 +158,9 @@ function mergeStopHook(cwd: string, result: ShipInstallResult): void {
 
 function stopEntry(): StopHookEntry {
   // Stop hooks take no matcher (unlike PreToolUse).
-  return { hooks: [{ type: 'command', command: STOP_HOOK_COMMAND }] };
+  return {
+    hooks: [{ type: 'command', command: STOP_HOOK_COMMAND, timeout: STOP_HOOK_TIMEOUT_SECONDS }],
+  };
 }
 
 /**
