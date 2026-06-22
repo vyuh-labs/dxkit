@@ -38,6 +38,7 @@ import {
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
 import { buildSecurityAggregateForHealth, gatherDepVulnsWithAvailability } from './security/gather';
+import { incrementalSemgrepProvider } from './tools/semgrep';
 import { gatherLicensesWithAvailability } from './licenses/gather';
 import { scoreTestsDimension } from './tests/shallow';
 import { scoreQualityDimension } from './quality/shallow';
@@ -114,6 +115,15 @@ export interface AnalyzeHealthOptions {
    * construction and is never written to the shared `AnalysisResult` cache.
    */
   scope?: GatherScope;
+  /**
+   * Incremental scanning (opt 3): when set, semgrep scans ONLY these
+   * project-relative changed files instead of the whole tree. Sound for a
+   * net-new gate because semgrep is intraprocedural — a net-new code
+   * finding can only appear in a changed file. Like `scope`, this makes the
+   * result partial (it never enters the shared cache). Only the loop
+   * Stop-gate sets it; CI / `health` leave it undefined (full scan).
+   */
+  incrementalFiles?: ReadonlyArray<string>;
 }
 
 /**
@@ -255,7 +265,7 @@ export async function gatherAnalysisResultBody(
   // providers the legacy path already ran are served from the dispatcher
   // cache (free). Scorers read capability-owned fields from this bundle.
   const capabilities = await timedAsync('capabilities', verbose, () =>
-    gatherCapabilityReport(repoPath, scope),
+    gatherCapabilityReport(repoPath, scope, options.incrementalFiles),
   );
 
   // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
@@ -396,7 +406,14 @@ function splitToolNames(tool: string): string[] {
 async function gatherCapabilityReport(
   cwd: string,
   scope: GatherScope = FULL_SCOPE,
+  incrementalFiles?: ReadonlyArray<string>,
 ): Promise<CapabilityReport> {
+  // Incremental scanning (opt 3): swap the full-tree semgrep provider for
+  // one bound to just the changed files. Same `source: 'semgrep'` identity,
+  // so the dispatcher's envelope/provenance handling is identical.
+  const codePatternsProviders = incrementalFiles
+    ? [incrementalSemgrepProvider(incrementalFiles)]
+    : providersFor(CODE_PATTERNS, cwd);
   // Vacuous outcomes for capabilities the scope skips. Each is byte-
   // identical to what the gather returns when no active pack supplies a
   // provider, so every downstream availability/aggregate branch treats a
@@ -467,7 +484,7 @@ async function gatherCapabilityReport(
     // "tool tried and failed silently" — the same dishonest-rendering
     // class as the lint case the LINT switch above closes.
     scope.codePatterns
-      ? defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd))
+      ? defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, codePatternsProviders)
       : Promise.resolve(emptyDispatch),
     scope.duplication
       ? defaultDispatcher.gatherWithProvenance(cwd, DUPLICATION, providersFor(DUPLICATION, cwd))

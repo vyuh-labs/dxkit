@@ -366,7 +366,11 @@ export async function runStopGate(cwd: string): Promise<void> {
   const runCheck = async (dir: string): Promise<GuardrailJsonPayload> => {
     const { runGuardrailCheck } = await import('../baseline/check');
     const { renderJson } = await import('../baseline/check-renderers');
-    const result = await runGuardrailCheck({ cwd: dir, policy, scope });
+    // `incremental: true` scopes the current side's semgrep to changed
+    // files (opt 3). Verdict-safe: semgrep is intraprocedural, so a net-new
+    // code finding only appears in a file the diff touched, and the scan
+    // falls back to full whenever the changed set can't be computed.
+    const result = await runGuardrailCheck({ cwd: dir, policy, scope, incremental: true });
     const json = renderJson(result);
     // Persist the full machine-readable verdict so the model (and a human)
     // can read the exact net-new findings the block message points to.

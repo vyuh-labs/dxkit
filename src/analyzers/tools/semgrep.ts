@@ -135,12 +135,33 @@ function collectRulesets(cwd: string): string[] {
  * separately, and so the wall-clock-deadline kill cleans up
  * grandchildren (semgrep's internal worker pool).
  */
-export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGatherOutcome> {
+export async function gatherSemgrepResult(
+  cwd: string,
+  opts: { readonly targetFiles?: ReadonlyArray<string> } = {},
+): Promise<CodePatternsGatherOutcome> {
   const status = findTool(TOOL_DEFS.semgrep, cwd);
   if (!status.available || !status.path) return { kind: 'unavailable', reason: 'not installed' };
 
   const rulesets = collectRulesets(cwd);
   if (rulesets.length === 0) return { kind: 'unavailable', reason: 'no rulesets' };
+
+  // Incremental mode (opt 3): scan only the explicitly-listed changed
+  // files instead of the whole tree. Sound because semgrep is
+  // intraprocedural (CLAUDE.md Rule 13) — every code finding is local to
+  // one file, so a NET-NEW finding can only appear in a file the diff
+  // touched. An empty list means nothing changed → a vacuous clean scan
+  // (running semgrep with no positional target would error).
+  const incremental = opts.targetFiles !== undefined;
+  const targets = (opts.targetFiles ?? []).map((f) => path.resolve(cwd, f));
+  if (incremental && targets.length === 0) {
+    const envelope: CodePatternsResult = {
+      schemaVersion: 1,
+      tool: 'semgrep',
+      findings: [],
+      suppressedCount: 0,
+    };
+    return { kind: 'success', envelope };
+  }
 
   const reportPath = path.join(os.tmpdir(), `dxkit-semgrep-${Date.now()}.json`);
   const args = ['scan'];
@@ -148,14 +169,19 @@ export async function gatherSemgrepResult(cwd: string): Promise<CodePatternsGath
   args.push('--json', '--quiet', '--output', reportPath);
   // getSemgrepExcludeFlags returns a single space-separated string
   // shaped for execSync (`--exclude foo --exclude bar`). Split it
-  // into the array form runDetached expects.
+  // into the array form runDetached expects. The exclude filters still
+  // apply in incremental mode (harmless — the changed-file list is
+  // already curated, and an excluded path simply gets filtered).
   const excludeFlagString = getSemgrepExcludeFlags(cwd);
   if (excludeFlagString) {
     for (const tok of excludeFlagString.split(/\s+/).filter((t) => t.length > 0)) {
       args.push(tok);
     }
   }
-  args.push(cwd);
+  // Positional scan target(s): the changed files in incremental mode, else
+  // the whole repo root.
+  if (incremental) args.push(...targets);
+  else args.push(cwd);
 
   const outcome = await runDetached(status.path, args, { cwd, timeoutMs: 300000 });
   let raw: string;
@@ -267,3 +293,29 @@ export const semgrepProvider: CapabilityProvider<CodePatternsResult> & {
     return gatherSemgrepResult(cwd);
   },
 };
+
+/**
+ * A semgrep code-patterns provider that scans ONLY the given changed files
+ * (opt 3 incremental scanning). Same `source: 'semgrep'` identity as the
+ * full provider so the dispatcher's envelope + provenance handling is
+ * identical — the only difference is the bound changed-file target list.
+ * Passed to `gatherWithProvenance` in place of `semgrepProvider` on the
+ * loop Stop-gate's current-side gather; every other caller keeps the full
+ * provider. Sound by the intraprocedural argument in `gatherSemgrepResult`.
+ */
+export function incrementalSemgrepProvider(
+  targetFiles: ReadonlyArray<string>,
+): CapabilityProvider<CodePatternsResult> & {
+  gatherOutcome(cwd: string): Promise<CodePatternsGatherOutcome>;
+} {
+  return {
+    source: 'semgrep',
+    async gather(cwd) {
+      const outcome = await gatherSemgrepResult(cwd, { targetFiles });
+      return outcome.kind === 'success' ? outcome.envelope : null;
+    },
+    async gatherOutcome(cwd) {
+      return gatherSemgrepResult(cwd, { targetFiles });
+    },
+  };
+}
