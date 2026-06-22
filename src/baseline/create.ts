@@ -25,13 +25,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { gatherAnalysisResultBody } from '../analyzers/health';
 import { readOrBuildAnalysisResult } from '../analyzers/cache';
-import { gatherHygieneMarkers } from '../analyzers/quality/gather';
-import { analyzeTestGaps } from '../analyzers/tests';
-import { emptyTestGapsReport } from '../analyzers/tests/types';
 import { type GatherScope, FULL_SCOPE, isFullScope } from './gather-scope';
-import type { HygieneSnapshot } from './producers';
-import { gatherGitleaksResult } from '../analyzers/tools/gitleaks';
-import type { GitleaksRawSecret } from '../analyzers/tools/gitleaks';
+import { gatherScopedProducerInputs } from './scoped-inputs';
 import { checkAllTools, findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { detect } from '../detect';
 import { coverageFromToolStatuses } from './coverage';
@@ -55,7 +50,6 @@ import { sanitizeFile } from './sanitize';
 import type { RichBaselineEntry } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
-import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -297,38 +291,17 @@ export interface CurrentScan {
  * Pure-orchestrator: each step has a single responsibility (analyze
  * → produce entries → resolve envelope metadata).
  */
-/** Vacuous hygiene snapshot for the scope-aware gather when a posture
- *  cannot block on `stale-file` / hygiene counts (`scope.hygiene === false`),
- *  so the hygiene grep is skipped. The `quality` producer reads
- *  `hygiene.staleFiles` and emits zero entries from the empty list. */
-const EMPTY_HYGIENE_SNAPSHOT: HygieneSnapshot = {
-  staleFiles: [],
-  todoCount: 0,
-  fixmeCount: 0,
-  hackCount: 0,
-  consoleLogCount: 0,
-  mixedLanguages: false,
-};
-
 export async function gatherCurrentScan(options: {
   readonly cwd: string;
   readonly verbose?: boolean;
-  /**
-   * Restrict the gather to the analyzers a scope needs. Defaults to
-   * `FULL_SCOPE`, so `createBaseline` and the CI guardrail gather
-   * everything unchanged. The loop Stop-gate passes a policy-derived scope
-   * so a `security-only` posture skips the analyzers it can never block on.
-   * A scoped scan is partial and never enters the shared `AnalysisResult`
-   * cache (`partial: true` below).
-   */
+  /** Restrict the gather to the analyzers a scope needs (defaults to
+   *  `FULL_SCOPE`). Only the loop Stop-gate passes a policy-derived scope;
+   *  `createBaseline` / CI gather everything. See `gather-scope.ts`. */
   readonly scope?: GatherScope;
-  /**
-   * Incremental scanning (opt 3): when set, semgrep scans ONLY these
-   * project-relative changed files. Makes the scan partial. Only the loop
-   * Stop-gate's current side sets it; the ref side is always full so the
-   * baseline covers every file. Sound by semgrep's intraprocedural nature
-   * (a net-new code finding only appears in a changed file).
-   */
+  /** Incremental scanning (opt 3): semgrep scans ONLY these changed files.
+   *  Loop Stop-gate's current side only; the ref side stays full. Sound by
+   *  semgrep's intraprocedural nature (a net-new code finding only appears
+   *  in a changed file). */
   readonly incrementalFiles?: ReadonlyArray<string>;
 }): Promise<CurrentScan> {
   const cwd = path.resolve(options.cwd);
@@ -371,24 +344,12 @@ export async function gatherCurrentScan(options: {
   // here (or earlier inside readOrBuildAnalysisResult) so producers
   // can be pure or near-pure consumers — adding a new producer
   // means extending this context with one more input, never
-  // adding another producer-specific block in this function.
-  // Each input feeds exactly one producer family; skip the gather when the
-  // scope can't block on that family (the producer then emits zero entries
-  // from the empty input, and the ref side is scoped identically so the
-  // diff stays balanced — see gather-scope.ts).
-  const testGapsReport = scope.testGaps
-    ? await analyzeTestGaps(cwd, { verbose: !!options.verbose })
-    : emptyTestGapsReport();
-  const hygieneMarkers = scope.hygiene ? gatherHygieneMarkers(cwd) : EMPTY_HYGIENE_SNAPSHOT;
-  const gitleaksOutcome = scope.secrets
-    ? gatherGitleaksResult(cwd)
-    : ({ kind: 'unavailable', reason: 'scoped out' } as const);
-  const rawSecrets: ReadonlyArray<GitleaksRawSecret> =
-    gitleaksOutcome.kind === 'success' ? gitleaksOutcome.rawSecrets : [];
-  // Inline `dxkit-allow:` annotations gathered from source so the
-  // stale-allow producer can flag orphans whose underlying findings
-  // are no longer present.
-  const inlineAllowlistAnnotations = gatherInlineAllowlistAnnotations(cwd);
+  // adding another producer-specific block in this function. The
+  // scope-aware analyzer inputs (test-gaps, hygiene, raw secrets,
+  // inline annotations) come from one helper that skips the gathers a
+  // scope can't block on (see scoped-inputs.ts).
+  const { testGapsReport, hygiene, rawSecrets, inlineAllowlistAnnotations } =
+    await gatherScopedProducerInputs(cwd, scope, !!options.verbose);
 
   const producerCtx: ProducerContext = {
     cwd,
@@ -396,7 +357,7 @@ export async function gatherCurrentScan(options: {
     salt,
     analysisResult,
     testGapsReport,
-    hygiene: hygieneMarkers,
+    hygiene,
     rawSecrets,
     inlineAllowlistAnnotations,
   };
