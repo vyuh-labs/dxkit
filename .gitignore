@@ -19,6 +19,7 @@ graphify-out/
 # ignored — each test constructs its own baseline inside a tmpdir.
 **/.dxkit/reports/
 **/.dxkit/cache/
+**/.dxkit/loop/
 **/.dxkit/salt
 test/fixtures/**/.dxkit/
 

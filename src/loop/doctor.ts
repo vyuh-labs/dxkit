@@ -76,27 +76,54 @@ function refResolves(cwd: string, ref: string): boolean {
 }
 
 /**
- * Does `.claude/settings.json` register the Stop-gate hook? Reads the
- * file defensively (absent / malformed → not registered) and looks for a
- * Stop hook whose command invokes `hook stop-gate`. This is the check
- * that catches the silent-failure class: a loop with no registered Stop
- * hook runs with no gate at all.
+ * The registered Stop-gate hook command, or null if none. Reads
+ * `.claude/settings.json` defensively (absent / malformed → null) and returns
+ * the first Stop hook command that invokes `hook stop-gate`. This is the check
+ * that catches the silent-failure class: a loop with no registered Stop hook
+ * runs with no gate at all.
  */
-function stopHookRegistered(cwd: string): boolean {
+function stopHookCommand(cwd: string): string | null {
   try {
     const raw = fs.readFileSync(path.join(cwd, '.claude', 'settings.json'), 'utf8');
     const parsed = JSON.parse(raw) as {
       hooks?: { Stop?: Array<{ hooks?: Array<{ command?: string }> }> };
     };
-    const stop = parsed.hooks?.Stop ?? [];
-    return stop.some((entry) =>
-      (entry.hooks ?? []).some(
-        (h) => typeof h.command === 'string' && /hook\s+stop-gate/.test(h.command),
-      ),
-    );
+    for (const entry of parsed.hooks?.Stop ?? []) {
+      for (const h of entry.hooks ?? []) {
+        if (typeof h.command === 'string' && /hook\s+stop-gate/.test(h.command)) return h.command;
+      }
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Does the registered Stop hook command actually resolve here? Handles both
+ * forms: the customer npx/binary form (the `vyuh-dxkit` binary must resolve),
+ * and a local-build / monorepo `node <path>.js` form (the script must exist) —
+ * the latter is how this repo dogfoods its own gate, mirroring the
+ * self-guardrail CI.
+ */
+function stopHookResolves(cwd: string, command: string): { ok: boolean; how: string } {
+  const nodeMatch = command.match(/\bnode\s+(\S+\.(?:js|mjs|cjs))\b/);
+  if (nodeMatch) {
+    const rel = nodeMatch[1];
+    const target = path.isAbsolute(rel) ? rel : path.join(cwd, rel);
+    return fs.existsSync(target)
+      ? { ok: true, how: `local script ${rel}` }
+      : { ok: false, how: `${rel} not found (build it first)` };
+  }
+  const res = resolveDxkitCli(cwd);
+  return {
+    ok: res.ok,
+    how: res.ok
+      ? res.how === 'local'
+        ? 'project-local node_modules/.bin'
+        : 'global install'
+      : 'not installed',
+  };
 }
 
 /** Build the structured preflight report (pure of process I/O). */
@@ -158,12 +185,13 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
   // 3. Stop hook registered. The safety guarantee is entirely contingent
   // on this — an unregistered hook never fires, so the loop runs with no
   // gate and no error.
-  const hook = stopHookRegistered(cwd);
+  const hookCmd = stopHookCommand(cwd);
+  const hook = !!hookCmd;
   checks.push({
     label: 'Stop-gate hook registered',
     status: hook ? 'pass' : 'fail',
     detail: hook
-      ? '.claude/settings.json invokes `vyuh-dxkit hook stop-gate` on Stop'
+      ? `.claude/settings.json invokes the gate on Stop (\`${hookCmd}\`)`
       : 'no Stop hook invoking the gate — the loop would run UNPROTECTED',
     ...(hook
       ? {}
@@ -182,21 +210,19 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
   // devDependency was never provisioned (or a non-Node repo with no global
   // dxkit). Only meaningful once a hook is registered; if it isn't, the
   // check above already fails.
-  if (hook) {
-    const res = resolveDxkitCli(cwd);
+  if (hookCmd) {
+    const res = stopHookResolves(cwd, hookCmd);
     checks.push({
       label: 'Stop-gate hook resolvable',
       status: res.ok ? 'pass' : 'fail',
       detail: res.ok
-        ? `\`vyuh-dxkit\` resolves (${
-            res.how === 'local' ? 'project-local node_modules/.bin' : 'global install'
-          }) — the hook can run`
-        : '`vyuh-dxkit` does not resolve — the Stop hook would fail on every Stop (dxkit is not installed here)',
+        ? `the hook command resolves (${res.how}) — it can run`
+        : `the hook command does not resolve (${res.how}) — it would fail on every Stop`,
       ...(res.ok
         ? {}
         : {
             fix: {
-              hint: 'Install dxkit so the Stop hook can run. The blessed path installs it as a devDependency; then `npm install` provisions it.',
+              hint: 'Make the Stop hook runnable: install dxkit as a devDependency (then `npm install`), or build the local dist if the hook runs `node dist/...`.',
               command: 'npm install --save-dev @vyuhlabs/dxkit',
               skill: 'dxkit-loop',
             },

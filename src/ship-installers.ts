@@ -440,6 +440,7 @@ const GITIGNORE_ENTRIES = [
   '.dxkit/reports/',
   '.dxkit/dashboard.html',
   '.dxkit/cache/',
+  '.dxkit/loop/',
   'graphify-out/',
 ];
 
