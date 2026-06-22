@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-06-22
+
+### Changed — the loop Stop-gate gathers far less work per stop
+
+After 2.13.3 made the gate cache-aware, two further optimizations cut what an
+unattended loop's `security-only` Stop-gate actually scans on every stop.
+Both are **opt-in** (only the loop Stop-gate enables them) and **verdict-
+preserving** — CI `baseline check`, `createBaseline`, and the `health` report
+are byte-identical and still render every warning. End-to-end on a 3,748-file
+repo with a realistic 2-file loop diff (separate processes), the security-only
+gather dropped from **42.8s → 11.3s (74%)** while still blocking the same
+net-new finding with identical blocking pairs.
+
+- **Preset-scoped gather.** A guardrail can only block on the finding kinds its
+  policy escalates, so a `security-only` posture no longer runs the analyzers
+  that feed only non-blockable kinds (jscpd, lint, coverage, cloc, test-gaps,
+  graphify, licenses). The scope is derived declaratively from the policy
+  (`scopeForPolicy`): a `full-debt` posture, CI, and `health` all resolve to
+  the full scan. A scoped result is partial by construction and never enters
+  the shared `AnalysisResult` cache. (~42.8s → 24.0s.)
+- **Incremental file-scoped scanning.** The current side's semgrep now scans
+  only the files that changed vs the baseline commit. Sound because semgrep is
+  intraprocedural — a net-new code finding can only appear in a file the diff
+  touched. The changed-file set is computed completely or falls back to a full
+  scan on any uncertainty (base unreachable, not a git repo), so a scan can
+  only ever over-cover, never under-cover. The ref/baseline side stays full.
+  (~24.0s → 11.3s.)
+
+Both behaviors are confined to the loop Stop-gate; nothing about the CI
+guardrail or the standalone reports changes.
+
 ## [2.13.3] - 2026-06-22
 
 ### Fixed — the loop Stop-gate no longer pays a full re-scan on every stop
