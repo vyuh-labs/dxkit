@@ -108,6 +108,36 @@ describe('loop doctor', () => {
     expect(report.ok).toBe(false);
   });
 
+  it('resolves a local-build `node <script>` hook when the script exists (self-hosted form)', () => {
+    repo = tmpRepo(true);
+    writeCommittedFullPolicy(repo);
+    writeBaseline(repo);
+    fs.mkdirSync(path.join(repo, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'dist', 'index.js'), '// built cli\n');
+    writeSettings(repo, {
+      hooks: {
+        Stop: [{ hooks: [{ type: 'command', command: 'node dist/index.js hook stop-gate' }] }],
+      },
+    });
+    const report = buildLoopDoctorReport(repo);
+    expect(statusOf(report, 'Stop-gate hook registered')).toBe('pass');
+    expect(statusOf(report, 'Stop-gate hook resolvable')).toBe('pass');
+  });
+
+  it('fails the resolvable check for a `node <script>` hook when the script is missing', () => {
+    repo = tmpRepo(true);
+    writeCommittedFullPolicy(repo);
+    writeBaseline(repo);
+    writeSettings(repo, {
+      hooks: {
+        Stop: [{ hooks: [{ type: 'command', command: 'node dist/index.js hook stop-gate' }] }],
+      },
+    });
+    const report = buildLoopDoctorReport(repo);
+    expect(statusOf(report, 'Stop-gate hook resolvable')).toBe('fail');
+    expect(report.ok).toBe(false);
+  });
+
   it('does not treat an unrelated Stop hook as the gate', () => {
     repo = tmpRepo(true);
     writeCommittedFullPolicy(repo);
