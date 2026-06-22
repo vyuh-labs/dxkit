@@ -198,6 +198,13 @@ predictable.
 | **Deterministic identity** | false "net-new" findings under churn | **100% catch / 0% false-block** on seeded gate tests; **0 false net-new** on tested line shifts and renames      |
 | **Graph context**          | large-repo exploration tails         | median roughly tied, but large-repo mean tokens **30% lower**, worst case **57% lower**, variance roughly halved |
 
+**Fixing in the loop is cheaper than fixing later.** A fourth arm of the
+loop-safety study measured the "detect on CI, fix later" model: deferring a
+net-new finding to a cold session cost **19–49% more tokens** (and up to 51% more
+turns) than repairing it inside the warm loop, because the cold fixer has to
+re-orient in a context it no longer holds. So the gate is not just safer than
+deferring, it is cheaper.
+
 > **Benchmark caveats:** the loop-safety study uses controlled synthetic tasks
 > plus real-repo validation, detector-backed findings, and Sonnet runs. It is
 > not a CVE corpus, not a claim of better detection, and not a guarantee that
@@ -294,9 +301,8 @@ so it does not inflate the Code Quality score.
 ## Reproduce the deterministic tier
 
 The deterministic results — the net-new gate decision and the finding-identity
-matcher — reproduce offline, so you do not have to trust our numbers. This is
-separate from the agentic benchmark, which requires running real agent sessions.
-The harnesses live in `benchmarks/`:
+matcher — reproduce offline with no API key, so you do not have to trust our
+numbers. These harnesses live in `benchmarks/`:
 
 ```bash
 node benchmarks/bench-guardrail.mjs config.json        # block/allow on seeded findings
@@ -304,8 +310,11 @@ node benchmarks/bench-netnew-isolation.mjs config.json # net-new isolation under
 node benchmarks/bench-matcher.mjs config.json          # false net-new on line shifts + renames
 ```
 
-See `benchmarks/README.md` to point them at a repo, and the full methodology,
-caveats, and artifact status in **[docs/benchmarks.md](docs/benchmarks.md)**.
+See `benchmarks/README.md` to point them at a repo. The agent-driven harnesses
+(loop safety, cost of deferral, gate-vs-LLM, and the graph-context sessions) need
+a model subscription or API key and are published under `benchmarks/agentic/`.
+Full methodology, the per-study reports, caveats, and repro steps:
+**[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ## Credits
 

@@ -3,6 +3,11 @@
 > A sanitized public report. The claim throughout is predictability rather than
 > reduction. Every headline number is presented with its caveats, and the claim
 > ledger and the "what this does not prove" section appear before the evidence.
+>
+> This page is the overview: the summary, the claim ledger, the shared
+> methodology, and a short section per study. Each study links to a detailed,
+> reproducible write-up under [`docs/benchmarks/`](./benchmarks/) with its full
+> method, verbatim prompts, raw result tables, caveats, and repro steps.
 
 ---
 
@@ -45,16 +50,17 @@ Each claim below is listed with its strength, its evidence, and the exact public
 wording we stand behind. This table is the place to start; the rest of the
 document is the supporting evidence.
 
-| Claim                                                 | Status          | Evidence                                           | Public wording                                              |
-| ----------------------------------------------------- | --------------- | -------------------------------------------------- | ----------------------------------------------------------- |
-| The Stop-gate prevents observed loop escapes          | Strong          | loop benchmark, 8 reps × 2 tasks                   | "0/16 observed escapes in our benchmark"                    |
-| Prompt-only self-check is insufficient                | Strong          | checklist arm, 9/16 escapes                        | "prompting reduced but did not eliminate escapes"           |
-| Gate identity is deterministic under tested churn     | Strong          | offline matcher benches                            | "0 false net-new on tested line-shift and rename cases"     |
-| LLM-as-gate has cost and reproducibility issues       | Strong          | gate-vs-LLM benchmark, 5 reps × 2 models × 2 repos | "an LLM can judge, but not cheaply or reproducibly in-loop" |
-| Graph context reduces observed large-repo token tails | Moderate–strong | Sonnet session study, 30 sessions                  | "lower mean, tail, and variance on a large repo"            |
-| Test-gap gating is safe as a default                  | Not claimed     | repair cost of 1.1M–1.6M tokens in validation      | default remains `security-only`; `full-debt` is opt-in      |
-| dxkit improves every agent session                    | Not claimed     | n/a                                                | do not say this                                             |
-| dxkit detects more vulnerabilities than scanners      | Not claimed     | n/a                                                | do not say this                                             |
+| Claim                                                 | Status          | Evidence                                           | Public wording                                                                               |
+| ----------------------------------------------------- | --------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| The Stop-gate prevents observed loop escapes          | Strong          | loop benchmark, 8 reps × 2 tasks                   | "0/16 observed escapes in our benchmark"                                                     |
+| Prompt-only self-check is insufficient                | Strong          | checklist arm, 9/16 escapes                        | "prompting reduced but did not eliminate escapes"                                            |
+| Fixing in the loop is cheaper than deferring it       | Moderate        | loop benchmark deferred arm, 8 reps × 2 tasks      | "deferring the same fix cost ~49% more on the test-gap task (mean); weak on the secret task" |
+| Gate identity is deterministic under tested churn     | Strong          | offline matcher benches                            | "0 false net-new on tested line-shift and rename cases"                                      |
+| LLM-as-gate has cost and reproducibility issues       | Strong          | gate-vs-LLM benchmark, 5 reps × 2 models × 2 repos | "an LLM can judge, but not cheaply or reproducibly in-loop"                                  |
+| Graph context reduces observed large-repo token tails | Moderate–strong | Sonnet session study, 30 sessions                  | "lower mean, tail, and variance on a large repo"                                             |
+| Test-gap gating is safe as a default                  | Not claimed     | repair cost of 1.1M–1.6M tokens in validation      | default remains `security-only`; `full-debt` is opt-in                                       |
+| dxkit improves every agent session                    | Not claimed     | n/a                                                | do not say this                                                                              |
+| dxkit detects more vulnerabilities than scanners      | Not claimed     | n/a                                                | do not say this                                                                              |
 
 ## What this does not prove
 
@@ -67,7 +73,10 @@ document is the supporting evidence.
   real-repo validation, not a CVE corpus.
 - The loop headline includes test-gap behavior, which belongs to the opt-in
   `full-debt` preset. The product default, `security-only`, gates secrets and
-  high-severity vulnerabilities (see study I).
+  high-severity vulnerabilities (see [Study I](./benchmarks/01-loop-safety.md)).
+- The cost-of-deferral signal is strong on the test-gap task and weak on the
+  secret task (a positive mean but a slightly negative median); see
+  [Study II](./benchmarks/02-cost-of-deferral.md).
 - Graph context does not guarantee fewer tokens in every session. The measured
   effect is lower mean, tail, and variance on large, connected tasks.
 - Opus session results are deferred. Session numbers are from Sonnet.
@@ -129,28 +138,24 @@ Models. We used Claude Sonnet 4.6 for agent-session runs, and added Claude Opus
 --output-format stream-json` and were parsed from the raw event stream.
 
 Substrates. Two real, public open-source repositories, each pinned to a commit.
+These benchmarks run on pinned public commits and characterize the agent's
+behavior under each tool, not the quality or security of these projects. dxkit is
+an independent project, not affiliated with or endorsed by OWASP, Strapi, or any
+benchmarked project; trademarks belong to their owners.
 
-- NodeGoat ([OWASP NodeGoat](https://github.com/OWASP/NodeGoat)) is a
-  deliberately vulnerable Node.js and Express training application of roughly 2k
-  lines (Apache-2.0), pinned at commit `c5cb68a`. Its vulnerabilities are
-  intentional and publicly documented, which makes it a clean target for a
-  net-new gate. The dxkit baseline contains 205 pre-existing findings. It is
-  referred to below as the "small app."
-- Strapi ([strapi/strapi](https://github.com/strapi/strapi)) is a large
-  TypeScript monorepo of roughly 574k lines (Yarn and Nx), pinned at commit
-  `dc49217`. Its code graph has 18,948 nodes and 20,012 edges. The dxkit baseline
-  contains 1,020 grandfathered brownfield items, which are overwhelmingly
-  test-gaps, duplication, and quality debt rather than vulnerabilities; this is
-  the pre-existing debt the gate grandfathers so that only regressions block. It
-  is referred to below as the "large monorepo."
+| Repository                                          | Pin       | License                                                             | Role           |
+| --------------------------------------------------- | --------- | ------------------------------------------------------------------- | -------------- |
+| [OWASP NodeGoat](https://github.com/OWASP/NodeGoat) | `c5cb68a` | Apache-2.0                                                          | small app      |
+| [strapi/strapi](https://github.com/strapi/strapi)   | `dc49217` | Community "MIT Expat"; `ee/` directories under a commercial license | large monorepo |
+
+- NodeGoat is a deliberately vulnerable Node.js/Express training app of roughly
+  2k lines; the dxkit baseline contains 205 pre-existing findings.
+- Strapi is a large TypeScript monorepo of roughly 574k lines; its code graph has
+  18,948 nodes and 20,012 edges, and the dxkit baseline contains 1,020
+  grandfathered brownfield items (overwhelmingly test-gaps, duplication, and
+  quality debt rather than vulnerabilities).
 - The loop-safety study also uses synthetic repositories: small and controlled,
   with one known finding injected per task.
-
-Independence and trademarks. dxkit is an independent project. It is not
-affiliated with or endorsed by OWASP, Strapi, or any benchmarked project, and
-trademarks belong to their owners. The benchmarks run on pinned public commits
-and characterize the agent's behavior under each tool, not the quality or
-security of these projects.
 
 Determinism tier. The gate-correctness benches run offline, with no API key,
 using seeded regressions together with clean and churn commits, and produce a
@@ -162,222 +167,98 @@ repetitions per case across 2 models and 2 repositories. Point estimates without
 repetitions are flagged as such.
 
 Process. Several headline claims were retracted mid-study once they were traced
-to harness bugs or to unlucky single draws; these are noted inline. The
-benchmarks also fed back into the product, and two findings shipped as releases.
+to harness bugs or to unlucky single draws; these are noted inline in the
+per-study docs. The benchmarks also fed back into the product, and two findings
+shipped as releases.
 
 ---
 
-## Findings
+## The studies
 
-### I. Loop safety and the Stop-gate
+Each study below has a detailed, reproducible write-up. The short version here is
+the question, the headline, and the method in one line; follow the link for the
+full method, verbatim prompts, raw tables, caveats, and repro steps.
 
-Question. How often does an autonomous loop ship net-new debt and declare itself
-done, and does a deterministic gate prevent this where a prompt does not?
+### I. Loop safety and the Stop-gate → [details](./benchmarks/01-loop-safety.md)
 
-Method. The harness is `bench-loop.mjs`, with four arms. The vanilla arm has no
-gate. The checklist arm has no gate, but the project prompt asks the agent to
-self-review for untested code and for secrets. The dxkit arm wires the Stop-gate
-hook together with a project norm. The deferred arm runs the vanilla loop and
-then uses a separate cold session to fix the debt, as a proxy for the
-detect-on-CI-fix-later model. We used two tasks, a test-gap trap and a
-secret-hardcode trap, with 8 repetitions each, on Sonnet 4.6. The metric is the
-final tree, measured by an identical post-hoc guardrail check: did the loop stop
-with net-new debt still present?
+**Question.** How often does an autonomous loop declare "done" while net-new debt
+is still in the tree, and does a deterministic gate prevent it where a prompt
+does not?
 
-Results (escape rate, where the loop ships net-new debt and never fixes it):
+**Headline.** Observed escapes: vanilla **11/16 (69%)**, checklist (prompt-only)
+**9/16 (56%)**, dxkit **0/16**. The dxkit arm blocked, the model repaired the
+specific finding, and the loop re-stopped clean.
 
-| arm                        | observed escapes |
-| -------------------------- | ---------------- |
-| vanilla                    | 11/16 (69%)      |
-| checklist (prompt-only)    | 9/16 (56%)       |
-| dxkit (deterministic gate) | 0/16 (observed)  |
+**Method.** `bench-loop.mjs`, four arms, two seeded traps (a test-gap and a
+secret), 8 reps each, Sonnet 4.6, with an identical post-hoc guardrail measuring
+the final tree. Validated on real NodeGoat.
 
-The deferred arm is excluded from this table because it intentionally fixes the
-debt in a separate cold session. It is used only for the cost-of-deferral
-comparison below.
+### II. Cost of deferral → [details](./benchmarks/02-cost-of-deferral.md)
 
-The checklist arm named both failure modes in the prompt and nonetheless shipped
-test-gaps in 7 of 8 runs and hardcoded secrets in 2 of 8. Prompting misses even
-what you explicitly ask for, whereas the gate is mechanical. The dxkit arm caught
-and repaired every net-new finding: it blocked, the model fixed the finding, and
-the loop re-stopped clean, with no thrashing.
+**Question.** A net-new finding gets fixed eventually; the choice is _when_. Is
+fixing it in the warm loop cheaper than deferring it to a cold session?
 
-Cost of deferral. Fixing inside the loop was cheaper than deferring to a cold
-session. The deferred arm cost 49% more tokens and 51% more turns on the test-gap
-task, and 19% more tokens on the secret task, because the cold fixer has to
-re-orient in a context it no longer holds.
+**Headline.** Holding the finding constant, deferring the test-gap repair to a
+cold session cost **~49% more in equivalent cost and ~51% more turns** (means).
+On the secret task the mean premium was ~19% but the signal is weak (the median
+is slightly negative). A conservative floor — real deferral costs more.
 
-Real-repo validation (the small app, NodeGoat, with 2 repetitions). The gate
-generalized from synthetic tasks to a real repository. It blocked on net-new
-test-gaps, the agent wrote real tests in an unfamiliar framework, and the loop
-re-stopped clean. That repair cost between 1.1M and 1.6M tokens, which is exactly
-why test-gap gating is opt-in (the `full-debt` preset) while `security-only`,
-covering secrets and high-severity vulnerabilities, is the default. The default
-is bounded, must-fix, and cheap to gate.
+**Method.** The `dxkit` (in-loop) and `deferred` (vanilla + cold fix) arms of
+`bench-loop.mjs`; both reach an identical clean final state, so this isolates the
+cost of _when_ the fix happens.
 
-Caveats. The synthetic tasks are small and detector-backed, not a CVE corpus. The
-secret-specific failure mode is model-dependent: Sonnet 4.6 is secret-secure by
-default on an obvious task, refusing to hardcode a live key in about 62% of runs,
-so the test-gap trap rather than the secret trap carries the headline. An earlier
-n=1 smoke test reported a deferral premium of about zero; the 8-repetition run
-corrected this to the 19% to 49% figures above.
+### III. The gate is correct and reproducible → [details](./benchmarks/03-gate-correctness.md)
 
----
+**Question.** Does the gate reliably block net-new regressions, pass clean
+changes, and grandfather pre-existing debt, every time?
 
-### II. The gate is correct and reproducible
+**Headline.** Confusion matrix tp 3 / fn 0 / tn 2 / fp 0 (catch 1, false-block 0)
+on both repos; exactly 1 net-new finding isolated against 205 / 1,020
+grandfathered items; **0 false regressions** on line-shift and rename churn. This
+is the **deterministic tier** — reproducible offline today, no API key.
 
-Question. Does the gate reliably block net-new regressions, pass clean changes,
-and grandfather pre-existing debt, every time?
+**Method.** Three offline harnesses already published in
+[`benchmarks/`](../benchmarks/): `bench-guardrail.mjs`,
+`bench-netnew-isolation.mjs`, `bench-matcher.mjs`. The matcher bench caught a 50%
+identity defect in 2.11.1 that 2.12.0 fixed as a class.
 
-Method. Three offline benches (no API key) on both real repositories.
-`bench-guardrail.mjs` seeds known regressions and clean edits and produces a
-confusion matrix. `bench-netnew-isolation.mjs` grandfathers all debt and then
-introduces exactly one finding. `bench-matcher.mjs` applies mechanical churn that
-adds no finding, namely comment-insert line shifts and file renames.
+### IV. Deterministic gate versus LLM-as-the-gate → [details](./benchmarks/04-gate-vs-llm.md)
 
-Results.
+**Question.** When asking "is my change safe to stop on?", should a deterministic
+gate answer, or should an LLM be the gate? (Gate vs gate, not scanner vs scanner.)
 
-- Catch 3/3 and false-block 0/2 on the seeded confusion matrix (tp3, fn0, tn2,
-  fp0): every seeded regression was blocked, and every clean edit passed.
-- Net-new isolation held in both repository cases. The gate isolated exactly the
-  one injected net-new finding: against 1,020 grandfathered items in the large
-  monorepo (Strapi), and against 205 grandfathered items in the small app
-  (NodeGoat), where the dirty scan therefore contains 206 findings in total, the
-  205 grandfathered items plus the one net-new finding.
-- Matcher robustness held on the large monorepo (Strapi), whose baseline
-  contains 15 duplication findings. Line-shift and rename churn produced 0 false
-  regressions, so all 15 duplications kept their identity. (On the small app the
-  same churn likewise produced 0 false regressions, over its 5 duplication
-  findings.)
+**Headline.** dxkit: **100% accuracy, 0 flips, $0**, no prompt growth, at every
+scale. The naive LLM false-blocked a pure rename and flip-flopped on a line shift
+(40% of reps); Sonnet missed a real regression at the 1,020 baseline; Opus held
+100% but cost ~6.5× Sonnet and grew with the baseline.
 
-These are controlled regression suites, not statistical estimates of scanner
-recall. They establish that the gate behaves correctly on the seeded cases, not
-that it would catch every possible regression in the wild.
+**Method.** `bench-llm-gate.mjs`, 10 seeded cases, 5 reps, Sonnet 4.6 + Opus 4.8,
+baselines of 1 / 205 / 1,020, ≈$51 total.
 
-Caveat. The matcher contained a 50% defect in version 2.11.1, a
-duplication-identity bug. The bench caught it, and version 2.12.0 fixed it as a
-class, with content-anchored identity and a property-based contract test over
-every finding kind. The benchmark drove the release.
+### V. Graph context and observed exploration tails → [details](./benchmarks/05-graph-context.md)
 
----
+**Question.** Does the passive code-graph context help a real agent session, net
+of the scaffold's overhead?
 
-### III. Deterministic gate versus LLM-as-the-gate
+**Headline.** On the large monorepo: median tokens roughly tied, **mean −30%,
+worst case −57%, variance roughly halved**. On the small app: overhead ≈ zero.
+The benefit is predictable tokens, not fewer tokens — and it is size-gated (54%
+of files in a slicing proxy were _not_ smaller).
 
-Question. When an agent or a CI pipeline asks "is my change safe?", should a
-deterministic gate answer, or should one ask an LLM to be the gate? This is a
-comparison of gate against gate, not of scanner against scanner.
+**Method.** `bench-context-efficiency.mjs` (200-symbol slicing proxy) and
+`bench-sessions.mjs` (30 real `claude -p` sessions, Sonnet 4.6).
 
-Method. The harness is `bench-llm-gate.mjs`, with 10 seeded cases (7 security
-regressions, 1 clean edit, and 2 pure-churn refactors), 5 repetitions, both
-models, and both repositories, for a total cost of about $51. There are three
-arms: dxkit's actual verdict; an LLM judging the diff naively, with no baseline;
-and an LLM judging the diff with the full prior-findings list as a steelman, at
-baseline sizes of 1, 205, and 1,020.
+### VI. When the graph pays: an Amdahl model → [details](./benchmarks/06-amdahl-model.md)
 
-Results.
+**Question.** Why does the graph benefit appear on large repos and vanish on
+small ones?
 
-- dxkit reached 100% accuracy with 0% flips across repetitions, at no LLM cost
-  and with no prompt-size growth as the baseline grows, at every scale.
-- The naive LLM false-blocked a pure file-rename refactor 50% of the time, across
-  both models and both repositories, and Sonnet flip-flopped on a line shift in
-  40% of repetitions, so determinism was empirically violated.
-- Sonnet with the 1,020-finding baseline missed a real open-redirect regression.
-  It caught this regression at smaller baselines and began over-grandfathering by
-  similarity as the list grew.
-- Cost grows with the baseline, a statefulness tax. Sonnet cost $0.22, $1.05, and
-  $4.35 per run at baseline sizes of 1, 205, and 1,020, and Opus cost about $28
-  per run at 1,020. The LLM-as-gate prompt grows with the baseline, whereas dxkit
-  stores baseline state outside the model context, so its verdict carries no LLM
-  cost and a prompt that does not grow with baseline size.
-- Opus held 100% accuracy where Sonnet slipped. A stronger model buys
-  scale-robustness at roughly 6.5 times the cost, and still without a
-  reproducibility guarantee.
+**Headline.** Model session savings as `f·(1 − 1/s) − O/T`: an infinite
+per-operation speedup caps whole-session savings at the orientation fraction `f`,
+and a fixed overhead `O/T` dominates on small repos (a forced-graph probe cost
+66% more on the small app). A falsifiable model, not yet numerically fit.
 
-Caveat. This is explicitly not a claim that the LLM gives wrong answers.
-Opus-with-baseline is an accurate gate. The defensible advantages are
-determinism, no LLM cost, and no prompt-size growth at scale. An earlier claim
-that the LLM decayed from 80% to 0% was retracted once it was traced to a harness
-bug.
-
----
-
-### IV. Graph context and observed exploration tails
-
-Question. Does the passive code-graph context actually help a real agent session,
-net of the scaffold's overhead?
-
-Method. `bench-context-efficiency.mjs` is a proxy measurement over 200 sampled
-symbols, comparing whole-file tokens against a `vyuh-dxkit context` slice.
-`bench-sessions.mjs` runs real `claude -p` sessions on a naive repository and on
-a dxkit-scaffolded repository that carries the 18,948-node graph and a passive
-hook, across 5 tasks, 2 arms, and 3 repetitions, for 30 sessions in total, with
-the hook firing in every session.
-
-Results.
-
-- Context slices were about 45% smaller than reading the whole file on average,
-  and up to about 34 times smaller on hot or large files, in the proxy
-  measurement.
-- On real sessions in the large monorepo (Strapi), median tokens were roughly
-  tied (123k against 154k), the mean was 30% lower (152k against 219k), the worst
-  case was 57% lower (281k against 652k, where the naive arm had a rabbit-hole
-  run and the dxkit arm had a lower observed worst case), and the variance was
-  roughly halved (a
-  coefficient of variation of 0.41 against 0.72).
-- On the small app the overhead was about zero, with identical mean tokens. The
-  scaffold tax is negligible, and the observed tail still tightens slightly.
-
-The claim is predictable tokens rather than fewer tokens. The benefit is a lower
-observed worst case, which is what matters most for an unattended loop. A 1-rep
-smoke test once reported a factor of 3.5, a naive outlier that we retracted; the
-same smoke test surfaced a stale scaffold whose hook never fired, which was
-fixed.
-
-Scope of this study. It measures token and cost behavior and hook firing, not
-independent task-success quality, so on its own it does not rule out the
-possibility of fewer tokens because of less useful work. Future runs should add
-blinded task-success scoring.
-
-Why does the benefit appear only on large repositories, and vanish or turn
-negative on small ones? The most likely explanation is Amdahl's law, developed in
-section V: graph savings are capped by how much of a session is orientation work,
-and on a small repository the fixed scaffold overhead swamps that small share. We
-treat this as a likely explanation rather than a confirmed one. The model is
-directionally consistent with these numbers, but its parameters (`f`, `O`, and
-`s`) have not yet been fit to the session traces, so it remains a hypothesis to
-be confirmed.
-
----
-
-### V. When the graph pays: an Amdahl model
-
-Large per-operation graph speedups, such as the often-cited figure of roughly 75
-times, do not automatically translate to whole-session savings. Model a session as
-orientation work (a fraction `f`, replaceable by graph queries at speedup `s`)
-plus a fixed scaffold overhead `O`, over total tokens `T`:
-
-```
-fractional session savings ≈ f·(1 − 1/s) − O/T
-```
-
-- Even an infinite graph speedup caps whole-session savings at `f`. If
-  orientation is 20% of a session, the ceiling is about 20%, not 75 times. The
-  75-times figure is `s`, a sub-operation asymptote.
-- On a small repository the fixed `O` over a small `T` dominates, so savings fall
-  to zero or go negative. A forced-graph probe cost 66% more on the small app.
-- On a large repository `O/T` is negligible and `f` is large, which gives the
-  30% lower mean and 57% lower tail reported above.
-
-There are three decoupled axes of graph value. The first is mean token
-efficiency, which is size-gated and often near zero. The second is variance and
-tail behavior, driven by navigability risk, which can be positive even when the
-mean is flat; this is the axis that matters for loops. The third is structural
-correctness and grounding, which is size-independent and lies outside tokens
-entirely. The firing rule that follows is to graph-orient only on large,
-well-connected, orientation-heavy work where the workflow actually substitutes
-queries for reads, and to read directly otherwise. This is a falsifiable model
-rather than a conclusion: `f`, `O`, and `s` are directionally consistent with the
-data but not yet numerically fit.
+**Method.** Analytical, explaining the Study V numbers. No harness.
 
 ---
 
@@ -427,26 +308,29 @@ dxkit focuses on that stop decision.
 - The Opus session arm is deferred, and session numbers are from Sonnet.
 - The Amdahl model is directional rather than a numerical fit.
 - Several sub-claims were retracted once they were traced to harness bugs or
-  single unlucky draws. They are documented rather than buried.
+  single unlucky draws. They are documented in the per-study docs rather than
+  buried.
 
 ---
 
-## Artifacts
+## Artifacts and reproducibility
 
-The three deterministic-tier harnesses are published in the
-[`benchmarks/`](../benchmarks/) directory of this repository:
-`bench-guardrail.mjs` (gate correctness), `bench-netnew-isolation.mjs` (net-new
-isolation), and `bench-matcher.mjs` (matcher robustness). They run offline, with
-no API key, against any git repository that has a dxkit baseline, and
-`benchmarks/README.md` documents how to reproduce the numbers above on the pinned
-NodeGoat and Strapi commits.
+The **deterministic tier** runs offline today, with no API key:
+[`benchmarks/`](../benchmarks/) holds `bench-guardrail.mjs`,
+`bench-netnew-isolation.mjs`, and `bench-matcher.mjs`, and `benchmarks/README.md`
+documents how to reproduce the [Study III](./benchmarks/03-gate-correctness.md)
+numbers on the pinned NodeGoat and Strapi commits.
 
-The agent-driven harnesses (loop safety, the LLM-as-gate comparison, and the
-graph-context sessions) require a model API or subscription and the pinned
-repository checkouts. Those harnesses and their raw traces will be published
-separately after redaction. Until then, the deterministic-tier numbers are
-reproducible today, and the loop, LLM, and session numbers should be read as
-trust-but-verify rather than as already-linked raw data.
+The **agent-driven harnesses** (loop safety, cost of deferral, gate-vs-LLM, and
+the graph-context sessions) require a model subscription or API key and the
+pinned checkouts. They are published under
+[`benchmarks/agentic/`](../benchmarks/agentic/) — `bench-loop.mjs`,
+`bench-llm-gate.mjs`, `bench-sessions.mjs`, and `bench-context-efficiency.mjs`,
+with `benchmarks/agentic/README.md` documenting the config schema, the pinned
+substrates, and the verbatim prompts. Because these are agent-in-the-loop
+measurements, the reproducible claims are the **relative** results between arms
+(escape rate, deferral premium, variance reduction, gate accuracy and flips), not
+exact token counts.
 
 ---
 
