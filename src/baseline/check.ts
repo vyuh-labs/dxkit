@@ -58,6 +58,7 @@ import type { ResolvedMode } from './modes';
 import { classify, resolvePolicy } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
 import { gatherFromRef } from './ref-baseline';
+import { type GatherScope, FULL_SCOPE } from './gather-scope';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
@@ -108,6 +109,17 @@ export interface RunGuardrailCheckOptions {
   /** Explicit CLI flag value for the ref (`--ref=<R>`). Only
    *  consulted when the resolved mode is `ref-based`. */
   readonly cliRef?: string;
+  /**
+   * Restrict both sides of the gather to the analyzers a scope needs.
+   * Defaults to `FULL_SCOPE`, so CI / `baseline check` gather everything
+   * and still render every warning. The loop Stop-gate passes a
+   * policy-derived scope (`scopeForPolicy`) so a `security-only` posture
+   * skips the analyzers it can never block on. Both the current side and
+   * the ref side are scoped identically so the cross-run diff stays
+   * balanced. Opt-in by construction: only callers that pass a scope
+   * change what is gathered.
+   */
+  readonly scope?: GatherScope;
 }
 
 /**
@@ -353,7 +365,8 @@ export async function runGuardrailCheck(
     }
   }
 
-  const current = await gatherCurrentScan({ cwd, verbose: options.verbose });
+  const scope = options.scope ?? FULL_SCOPE;
+  const current = await gatherCurrentScan({ cwd, verbose: options.verbose, scope });
 
   // In ref-based mode the prior side came from a detached worktree that
   // can't gather the build-artifact-dependent kinds; drop them from both
@@ -839,7 +852,12 @@ async function loadPriorSide(
     // mode. A missing ref here would be a programming error.
     throw new Error('ref-based baseline mode requires a resolved ref; got undefined.');
   }
-  const refScan = await gatherFromRef({ cwd, ref: mode.ref, verbose: options.verbose });
+  const refScan = await gatherFromRef({
+    cwd,
+    ref: mode.ref,
+    verbose: options.verbose,
+    scope: options.scope ?? FULL_SCOPE,
+  });
   const baseline: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     name: options.name ?? DEFAULT_BASELINE_NAME,

@@ -107,6 +107,16 @@ export interface ReadOrBuildOptions {
   /** Override the wall-clock used for `builtAt`. Tests use this to
    *  produce deterministic timestamps. Defaults to `new Date()`. */
   now?: () => Date;
+
+  /**
+   * This build is a SCOPED/partial gather (some analyzers skipped — see
+   * `GatherScope`). Its `AnalysisResult` is incomplete, so it must never
+   * enter the shared cache where a later FULL consumer (`health`) could
+   * read it as if complete. Set by the loop guardrail path; skips both the
+   * in-memory and on-disk cache for read AND write. The build still runs;
+   * only persistence is bypassed.
+   */
+  partial?: boolean;
 }
 
 // In-memory dedup across subcommands sharing a process. Keyed by the
@@ -148,6 +158,14 @@ export async function readOrBuildAnalysisResult(args: {
   const cacheDir = opts.cacheDir ?? path.join(provenance.cwd, CACHE_SUBDIR);
   const cacheKey = buildCacheKey(provenance);
 
+  // A scoped/partial gather must bypass the shared cache entirely — neither
+  // read (a full entry would mask the requested scope, but more importantly
+  // the inverse is the hazard) nor write (a partial result must never be
+  // served to a later full consumer). Build straight through.
+  if (opts.partial) {
+    return buildResult(cwd, build, provenance, opts.now);
+  }
+
   // In-memory short-circuit. Same provenance, same process: one rebuild.
   if (!opts.rescan) {
     const cached = inMemoryCache.get(cacheKey);
@@ -162,22 +180,7 @@ export async function readOrBuildAnalysisResult(args: {
       const fromDisk = readDiskCache(cacheDir, provenance);
       if (fromDisk) return fromDisk;
     }
-
-    // Build, stamp provenance, persist (when clean).
-    const body = await build(cwd);
-    const now = (opts.now ?? (() => new Date()))();
-    const result: AnalysisResult = {
-      ...body,
-      commitSha: provenance.commitSha,
-      branch: provenance.branch,
-      cwd: provenance.cwd,
-      builtAt: now.toISOString(),
-      dxkitVersion: provenance.dxkitVersion,
-      schemaVersion: ANALYSIS_RESULT_SCHEMA_VERSION,
-      ignoreFileMtime: provenance.ignoreFileMtime,
-      inputsDigest: provenance.inputsDigest,
-      workingTreeDirty: provenance.workingTreeDirty,
-    };
+    const result = await buildResult(cwd, build, provenance, opts.now);
     if (!provenance.workingTreeDirty) {
       writeDiskCache(cacheDir, result);
     }
@@ -189,6 +192,31 @@ export async function readOrBuildAnalysisResult(args: {
   // honest, don't poison subsequent calls with a rejected Promise.
   promise.catch(() => inMemoryCache.delete(cacheKey));
   return promise;
+}
+
+/** Build + stamp provenance into a complete `AnalysisResult`. No caching —
+ *  callers decide whether to persist. Shared by the cached and partial
+ *  (scope-bypass) paths so they produce byte-identical result envelopes. */
+async function buildResult(
+  cwd: string,
+  build: AnalysisResultBuilder,
+  provenance: ResolvedProvenance,
+  now?: () => Date,
+): Promise<AnalysisResult> {
+  const body = await build(cwd);
+  const stamp = (now ?? (() => new Date()))();
+  return {
+    ...body,
+    commitSha: provenance.commitSha,
+    branch: provenance.branch,
+    cwd: provenance.cwd,
+    builtAt: stamp.toISOString(),
+    dxkitVersion: provenance.dxkitVersion,
+    schemaVersion: ANALYSIS_RESULT_SCHEMA_VERSION,
+    ignoreFileMtime: provenance.ignoreFileMtime,
+    inputsDigest: provenance.inputsDigest,
+    workingTreeDirty: provenance.workingTreeDirty,
+  };
 }
 
 /** Test seam — drop in-memory dedup state between test cases. */

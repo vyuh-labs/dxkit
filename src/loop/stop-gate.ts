@@ -355,10 +355,18 @@ export async function runStopGate(cwd: string): Promise<void> {
     }
   }
 
+  // Scope the gather to the analyzers this posture can actually block on.
+  // A `security-only` loop skips jscpd / lint / coverage / cloc / test-gaps /
+  // graphify — they feed only kinds the policy can't act on, so skipping them
+  // cannot change the verdict (see src/baseline/gather-scope.ts). Both sides
+  // of the diff are scoped identically. `full-debt` derives FULL_SCOPE.
+  const { scopeForPolicy } = await import('../baseline/gather-scope');
+  const scope = scopeForPolicy(policy);
+
   const runCheck = async (dir: string): Promise<GuardrailJsonPayload> => {
     const { runGuardrailCheck } = await import('../baseline/check');
     const { renderJson } = await import('../baseline/check-renderers');
-    const result = await runGuardrailCheck({ cwd: dir, policy });
+    const result = await runGuardrailCheck({ cwd: dir, policy, scope });
     const json = renderJson(result);
     // Persist the full machine-readable verdict so the model (and a human)
     // can read the exact net-new findings the block message points to.
