@@ -701,3 +701,24 @@ vyuh-dxkit tools [list|install]   # Tool status & installation
 - `scripts/check-architecture.sh` — pre-commit + CI: enforces CLAUDE.md rules + LP-recipe rules
 - `test/languages-contract.test.ts` — pack contract tests (D009 closure)
 - `test/recipe-playbook.test.ts` — synthetic 6th-pack playbook (LP-architecture regression guard)
+
+<!-- dxkit:loop:start -->
+
+## Autonomous loop safety (dxkit dogfoods its own loop Stop-gate)
+
+This repo runs its own loop Stop-gate. The Claude Code Stop hook in
+`.claude/settings.json` invokes `node dist/index.js hook stop-gate` — the local
+build, mirroring how `dxkit-self-guardrail.yml` invokes `node dist/index.js`
+(this repo IS `@vyuhlabs/dxkit`, so `npx vyuh-dxkit` cannot resolve it). On every
+Stop it re-runs the guardrail (ref-based vs `origin/main`) and blocks completion
+if the change introduced net-new findings, handing them back for repair.
+
+- Build first (`npm run build`) so `dist/` exists, or the hook cannot run.
+- Posture is `loop.preset` in `.dxkit/policy.json` (`security-only`): net-new
+  secrets + crit/high security + reachable dep-vulns block; test-gap + quality
+  warn only.
+- Fix the net-new finding the gate reports. Do NOT refresh the baseline to clear
+  a block, and do NOT fix unrelated pre-existing debt.
+- `node dist/index.js loop doctor` verifies the wiring.
+
+<!-- dxkit:loop:end -->
