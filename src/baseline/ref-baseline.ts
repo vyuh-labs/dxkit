@@ -66,6 +66,7 @@ import { VERSION } from '../constants';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
+import { type GatherScope, FULL_SCOPE, scopeSignature } from './gather-scope';
 
 /**
  * Recoverable error from the ref-based gather path. Carries an
@@ -243,16 +244,20 @@ export async function gatherFromRef(opts: {
   readonly cwd: string;
   readonly ref: string;
   readonly verbose?: boolean;
+  /** Scope the ref-side gather identically to the current side so the
+   *  cross-run diff stays balanced. Defaults to `FULL_SCOPE`. */
+  readonly scope?: GatherScope;
 }): Promise<CurrentScan> {
   const sha = resolveRefToSha(opts.cwd, opts.ref);
   if (sha === null) throw unreachableRefError(opts.cwd, opts.ref);
 
-  const key = refScanCacheKey(opts.cwd, sha);
+  const scope = opts.scope ?? FULL_SCOPE;
+  const key = refScanCacheKey(opts.cwd, sha, scope);
   const cached = readRefScanCache(opts.cwd, key);
   if (cached) return cached;
 
   const scan = await withRefWorktree({ cwd: opts.cwd, ref: opts.ref }, async (worktreePath) => {
-    return gatherCurrentScan({ cwd: worktreePath, verbose: opts.verbose });
+    return gatherCurrentScan({ cwd: worktreePath, verbose: opts.verbose, scope });
   });
   writeRefScanCache(opts.cwd, key, scan);
   return scan;
@@ -291,14 +296,16 @@ function saltSignature(cwd: string): string {
 }
 
 /** Deterministic cache key over every input that can change a ref scan.
- *  Exported for testing. */
-export function refScanCacheKey(cwd: string, sha: string): string {
+ *  Includes the gather scope so a scoped ref scan is never reused for a
+ *  full request (or vice versa). Exported for testing. */
+export function refScanCacheKey(cwd: string, sha: string, scope: GatherScope = FULL_SCOPE): string {
   const material = [
     `fmt:${REF_SCAN_CACHE_FORMAT}`,
     `sha:${sha}`,
     `ver:${VERSION}`,
     `scheme:${CURRENT_IDENTITY_SCHEME}`,
     `salt:${saltSignature(cwd)}`,
+    `scope:${scopeSignature(scope)}`,
   ].join('\0');
   return createHash('sha256').update(material).digest('hex').slice(0, 32); // fingerprint-helper-ok
 }

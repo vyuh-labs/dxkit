@@ -116,3 +116,37 @@ export interface TestGapsReport {
   toolsUsed: string[];
   toolsUnavailable: string[];
 }
+
+/**
+ * A vacuous test-gaps report — no gaps, no test files. Used by the
+ * scope-aware guardrail gather when a posture cannot block on test-gap
+ * findings (`scope.testGaps === false`), so the expensive test-gap
+ * analyzer is skipped. The `tests` producer reads only `gaps` +
+ * `testFiles`, so it emits zero entries from this — the single source of
+ * truth for the empty shape, kept beside the type it mirrors.
+ */
+export function emptyTestGapsReport(): TestGapsReport {
+  return {
+    repo: '',
+    analyzedAt: '',
+    commitSha: '',
+    branch: '',
+    summary: {
+      testFiles: 0,
+      activeTestFiles: 0,
+      commentedOutFiles: 0,
+      effectiveCoverage: 0,
+      coverageSource: 'filename-match',
+      coverageFidelity: 'filename-match',
+      sourceFiles: 0,
+      untestedCritical: 0,
+      untestedHigh: 0,
+      untestedMedium: 0,
+      untestedLow: 0,
+    },
+    testFiles: [],
+    gaps: [],
+    toolsUsed: [],
+    toolsUnavailable: [],
+  };
+}

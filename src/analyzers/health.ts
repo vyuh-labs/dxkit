@@ -47,6 +47,7 @@ import { scoreMaintainabilityDimension } from './maintainability/shallow';
 import { scoreDxDimension } from './dx/shallow';
 import { computeOverall } from '../scoring';
 import { ScoreInput } from './types';
+import { type GatherScope, FULL_SCOPE } from '../baseline/gather-scope';
 
 /** Default values for all HealthMetrics fields. */
 export function defaultMetrics(): HealthMetrics {
@@ -104,6 +105,15 @@ export function defaultMetrics(): HealthMetrics {
 export interface AnalyzeHealthOptions {
   /** Print per-tool timing to stderr. */
   verbose?: boolean;
+  /**
+   * Restrict the gather to the analyzers a scope needs. Defaults to
+   * `FULL_SCOPE` (every analyzer), so the `health` report and CI guardrail
+   * are unaffected. The loop Stop-gate passes a policy-derived scope so a
+   * `security-only` posture skips the analyzers it can never block on (see
+   * `src/baseline/gather-scope.ts`). A scoped result is partial by
+   * construction and is never written to the shared `AnalysisResult` cache.
+   */
+  scope?: GatherScope;
 }
 
 /**
@@ -158,6 +168,7 @@ export async function gatherAnalysisResultBody(
   options: AnalyzeHealthOptions = {},
 ): Promise<AnalysisResultBody> {
   const verbose = !!options.verbose;
+  const scope = options.scope ?? FULL_SCOPE;
 
   // Step 1: Detect stack
   const stack = timed('detect', verbose, () => detect(repoPath));
@@ -183,7 +194,7 @@ export async function gatherAnalysisResultBody(
   // envelopes (`tools/parallel.ts`), so each tool shells out at most once
   // per analyzer run.
   const layer2 = await timedAsync('layer2 (parallel)', verbose, () =>
-    gatherLayer2Parallel(repoPath, verbose),
+    gatherLayer2Parallel(repoPath, verbose, scope),
   );
   mergeLayer2(metrics, layer2);
 
@@ -192,24 +203,32 @@ export async function gatherAnalysisResultBody(
   // sees the same values from both consumer paths — closes the
   // dual-Quality-formula drift class structurally. The standalone
   // analyzeQuality reads these straight off the cached AnalysisResult.
-  const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
-  metrics.todoCount = hygiene.todoCount;
-  metrics.fixmeCount = hygiene.fixmeCount;
-  metrics.hackCount = hygiene.hackCount;
-  // hygiene.consoleLogCount is intentionally NOT mirrored — Layer 2
-  // already populates metrics.consoleLogCount via the shared
-  // gatherDebugStatements helper, and both paths converge on the
-  // same number by construction.
-  metrics.staleFiles = hygiene.staleFiles.length;
-  metrics.mixedLanguages = hygiene.mixedLanguages;
-  const comments = timed('cloc (comment ratio)', verbose, () => gatherCommentRatio(repoPath));
-  metrics.commentRatio = comments.ratio;
+  // Hygiene markers feed Quality counts + `stale-file`; skipped under a
+  // scope that blocks on neither (the loop's security-only posture).
+  if (scope.hygiene) {
+    const hygiene = timed('hygiene (grep)', verbose, () => gatherHygieneMarkers(repoPath));
+    metrics.todoCount = hygiene.todoCount;
+    metrics.fixmeCount = hygiene.fixmeCount;
+    metrics.hackCount = hygiene.hackCount;
+    // hygiene.consoleLogCount is intentionally NOT mirrored — Layer 2
+    // already populates metrics.consoleLogCount via the shared
+    // gatherDebugStatements helper, and both paths converge on the
+    // same number by construction.
+    metrics.staleFiles = hygiene.staleFiles.length;
+    metrics.mixedLanguages = hygiene.mixedLanguages;
+  }
+  if (scope.cloc) {
+    const comments = timed('cloc (comment ratio)', verbose, () => gatherCommentRatio(repoPath));
+    metrics.commentRatio = comments.ratio;
+  }
 
   // Surface the coverage tool name in `toolsUsed` even though its data
   // lives under `capabilities.coverage`. `loadCoverage` and the COVERAGE
   // dispatcher share the same underlying providers — the call here is
   // served from the dispatcher cache when `gatherCapabilityReport` runs.
-  const coverage = await timedAsync('coverage', verbose, () => loadCoverage(repoPath));
+  const coverage = scope.coverage
+    ? await timedAsync('coverage', verbose, () => loadCoverage(repoPath))
+    : null;
   if (coverage) {
     metrics.toolsUsed.push(`coverage:${coverage.source}`);
   }
@@ -236,7 +255,7 @@ export async function gatherAnalysisResultBody(
   // providers the legacy path already ran are served from the dispatcher
   // cache (free). Scorers read capability-owned fields from this bundle.
   const capabilities = await timedAsync('capabilities', verbose, () =>
-    gatherCapabilityReport(repoPath),
+    gatherCapabilityReport(repoPath, scope),
   );
 
   // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
@@ -374,7 +393,23 @@ function splitToolNames(tool: string): string[] {
  * parallel — the descriptor aggregates are pure, and the dispatcher
  * isolates provider failures.
  */
-async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
+async function gatherCapabilityReport(
+  cwd: string,
+  scope: GatherScope = FULL_SCOPE,
+): Promise<CapabilityReport> {
+  // Vacuous outcomes for capabilities the scope skips. Each is byte-
+  // identical to what the gather returns when no active pack supplies a
+  // provider, so every downstream availability/aggregate branch treats a
+  // skipped capability exactly as it already treats "nothing to scan" —
+  // no new code path, no score drift on the full path.
+  const emptyDispatch = {
+    envelope: null,
+    attempted: [] as string[],
+    succeeded: [] as string[],
+    skipped: [] as string[],
+    skipReasons: {} as Record<string, string>,
+  };
+  const emptyAvail = { envelope: null, available: true, unavailableReason: '' };
   // D025b (2.4.7): depVulns gathers via `gatherDepVulnsWithAvailability`
   // (NOT the dispatcher) so the per-pack availability discriminant
   // survives to the health-side scorer. Health doesn't need the
@@ -395,17 +430,25 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     structuralOutcome,
     licensesWithAvail,
   ] = await Promise.all([
-    gatherDepVulnsWithAvailability(cwd),
+    scope.depVulns ? gatherDepVulnsWithAvailability(cwd) : Promise.resolve(emptyAvail),
     // gatherWithProvenance (not gather) so the cached LintResult.tool
     // can carry the "(not run: <packs>)" suffix when one of the
     // active packs returned null silently. Standalone analyzeQuality
     // reads the augmented label off the cached envelope — closes the
     // cross-process drift class where two surfaces could disagree on
     // whether a linter ran on a given pack.
-    defaultDispatcher.gatherWithProvenance(cwd, LINT, providersFor(LINT, cwd)),
-    defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd)),
-    defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd)),
-    defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd)),
+    scope.lint
+      ? defaultDispatcher.gatherWithProvenance(cwd, LINT, providersFor(LINT, cwd))
+      : Promise.resolve(emptyDispatch),
+    scope.coverage
+      ? defaultDispatcher.gather(cwd, COVERAGE, providersFor(COVERAGE, cwd))
+      : Promise.resolve(null),
+    scope.imports
+      ? defaultDispatcher.gather(cwd, IMPORTS, providersFor(IMPORTS, cwd))
+      : Promise.resolve(null),
+    scope.testFramework
+      ? defaultDispatcher.gather(cwd, TEST_FRAMEWORK, providersFor(TEST_FRAMEWORK, cwd))
+      : Promise.resolve(null),
     // gatherWithProvenance: the secret scan needs the same
     // attempted-vs-succeeded discriminant the code-patterns gather has,
     // so a failed secret scan caps the Security score (uncertainty)
@@ -413,7 +456,9 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     // symptom of the old silent path: a dxkit upgrade that merely
     // turned the secret scanners ON looked like a score drop
     // on an unchanged commit.
-    defaultDispatcher.gatherWithProvenance(cwd, SECRETS, providersFor(SECRETS, cwd)),
+    scope.secrets
+      ? defaultDispatcher.gatherWithProvenance(cwd, SECRETS, providersFor(SECRETS, cwd))
+      : Promise.resolve(emptyDispatch),
     // gatherWithProvenance so the cache builder can plumb per-capability
     // availability metadata for tools that may legitimately gather
     // attempted-but-failed (semgrep / jscpd / graphify under resource
@@ -421,10 +466,16 @@ async function gatherCapabilityReport(cwd: string): Promise<CapabilityReport> {
     // metrics.toolsUnavailable can't distinguish "tool didn't try" from
     // "tool tried and failed silently" — the same dishonest-rendering
     // class as the lint case the LINT switch above closes.
-    defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd)),
-    defaultDispatcher.gatherWithProvenance(cwd, DUPLICATION, providersFor(DUPLICATION, cwd)),
-    defaultDispatcher.gatherWithProvenance(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd)),
-    gatherLicensesWithAvailability(cwd),
+    scope.codePatterns
+      ? defaultDispatcher.gatherWithProvenance(cwd, CODE_PATTERNS, providersFor(CODE_PATTERNS, cwd))
+      : Promise.resolve(emptyDispatch),
+    scope.duplication
+      ? defaultDispatcher.gatherWithProvenance(cwd, DUPLICATION, providersFor(DUPLICATION, cwd))
+      : Promise.resolve(emptyDispatch),
+    scope.structural
+      ? defaultDispatcher.gatherWithProvenance(cwd, STRUCTURAL, providersFor(STRUCTURAL, cwd))
+      : Promise.resolve(emptyDispatch),
+    scope.licenses ? gatherLicensesWithAvailability(cwd) : Promise.resolve(emptyAvail),
   ]);
   const codePatterns = codePatternsOutcome.envelope;
   const duplication = duplicationOutcome.envelope;
