@@ -19,8 +19,9 @@ Three harnesses are included.
 
 The agent-driven studies in the report (loop safety, the LLM-as-gate comparison,
 and the graph-context sessions) require a model API or subscription and the
-pinned repository checkouts, and are not included here. Their harnesses and raw
-traces will be published separately after redaction.
+pinned repository checkouts. Their harnesses are published in
+[`agentic/`](agentic/) with their own README and verbatim prompts; see that
+directory for how to run them and which numbers each produces.
 
 ## Requirements
 

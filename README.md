@@ -63,7 +63,8 @@ check its own work only helped a little.
    so pre-existing issues are grandfathered and never block.
 2. **Run a deterministic Stop-gate on every stop.** A Claude Code Stop hook
    re-runs the guardrail against that baseline. Same input gives the same
-   verdict, in seconds, offline, with no model in the loop.
+   verdict in seconds, with no model in the loop. The stop decision itself runs
+   locally and calls no model; individual detectors keep their own requirements.
 3. **Feed net-new findings back to the agent.** If the change introduced a
    finding, the gate blocks the stop and hands the agent the exact finding to
    fix: do not refresh the baseline, do not touch unrelated debt, fix what this
@@ -77,6 +78,22 @@ Use dxkit if you let coding agents:
 - fix CI or review comments in loops,
 - touch brownfield repos that already carry debt,
 - or work where "new debt" matters more than "all debt."
+
+## What dxkit is, and is not
+
+**It is a deterministic verification layer.** It baselines today's findings,
+fingerprints them across churn, and blocks only net-new regressions.
+
+**It is not a scanner replacement.** It runs and ingests scanners (gitleaks,
+Semgrep, CodeQL, Snyk, SARIF) and makes their findings enforceable. It does not
+claim to find more bugs than they do.
+
+**It is not an LLM judge.** No model decides whether the gate passes. The model
+can repair findings. The gate itself is deterministic, and the prompt does not
+grow as the baseline grows.
+
+**It is not a guarantee of safe code.** It blocks detector-backed net-new
+findings it can observe. You still need tests, review, scanners, and judgment.
 
 ## Built on tools you already trust
 
@@ -192,18 +209,26 @@ ships, the graph bounds how the loop works.
 Three independent benchmark results, one theme: dxkit makes agent work more
 predictable.
 
-| Layer                      | What it bounds                       | Observed result                                                                                                  |
-| -------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| **Stop-gate**              | unsafe final state                   | vanilla loops escaped **11/16** times, prompt-only checklist escaped **9/16**, dxkit escaped **0/16**            |
-| **Deterministic identity** | false "net-new" findings under churn | **100% catch / 0% false-block** on seeded gate tests; **0 false net-new** on tested line shifts and renames      |
-| **Graph context**          | large-repo exploration tails         | median roughly tied, but large-repo mean tokens **30% lower**, worst case **57% lower**, variance roughly halved |
+| Layer                      | What it bounds                       | Observed result                                                                                                                     |
+| -------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Stop-gate**              | net-new detector-backed debt         | vanilla loops escaped **11/16** times, prompt-only checklist escaped **9/16**, dxkit escaped **0/16**                               |
+| **Deterministic identity** | false "net-new" findings under churn | caught **all 3** seeded regressions with **0/2** false blocks on clean edits; **0 false net-new** on tested line shifts and renames |
+| **Graph context**          | large-repo exploration tails         | median roughly tied, but large-repo mean tokens **30% lower**, worst case **57% lower**, variance roughly halved                    |
 
 **Fixing in the loop is cheaper than fixing later.** A fourth arm of the
-loop-safety study measured the "detect on CI, fix later" model: deferring a
-net-new finding to a cold session cost **19–49% more tokens** (and up to 51% more
-turns) than repairing it inside the warm loop, because the cold fixer has to
-re-orient in a context it no longer holds. So the gate is not just safer than
-deferring, it is cheaper.
+loop-safety study measured the "detect on CI, fix later" model: on the test-gap
+task, deferring a net-new finding to a cold session cost **~49% more in
+equivalent cost** and **~51% more turns** than repairing it inside the warm loop,
+because the cold fixer has to re-orient in a context it no longer holds. (The
+secret-task premium pointed the same way but was weak — mean +19%, median
+slightly negative — so we lean on the robust test-gap result.) So the gate is not
+just safer than deferring, it is plausibly cheaper too.
+
+**And the gate is fast enough to run on every stop.** dxkit 2.14.0 scopes the
+Stop-gate scan to the active preset's blockable finding kinds and re-scans only
+the changed files, reusing cached results for everything unchanged. The verdict
+is identical to a full scan; the cost is seconds per stop, not minutes, even on
+large repositories.
 
 > **Benchmark caveats:** the loop-safety study uses controlled synthetic tasks
 > plus real-repo validation, detector-backed findings, and Sonnet runs. It is
@@ -213,22 +238,6 @@ deferring, it is cheaper.
 
 Full methodology, reproducibility notes, artifact status, and caveats are in
 **[docs/benchmarks.md](docs/benchmarks.md)**.
-
-## What dxkit is, and is not
-
-**It is a deterministic verification layer.** It baselines today's findings,
-fingerprints them across churn, and blocks only net-new regressions.
-
-**It is not a scanner replacement.** It runs and ingests scanners (gitleaks,
-Semgrep, CodeQL, Snyk, SARIF) and makes their findings enforceable. It does not
-claim to find more bugs than they do.
-
-**It is not an LLM judge.** No model decides whether the gate passes. The model
-can repair findings. The gate itself is deterministic, and the prompt does not
-grow as the baseline grows.
-
-**It is not a guarantee of safe code.** It blocks detector-backed net-new
-findings it can observe. You still need tests, review, scanners, and judgment.
 
 ## Why not just Snyk, SonarQube, or CodeQL?
 
@@ -240,7 +249,7 @@ every time the agent tries to declare done.
 | Loop Stop-gate need                                         | dxkit | Cloud or CI scanners                   |
 | ----------------------------------------------------------- | ----- | -------------------------------------- |
 | Runs locally on every stop, in seconds                      | yes   | usually CI or cloud cadence            |
-| Can run without network or auth                             | yes   | usually requires network or auth       |
+| Deterministic verdict, no model in the gate                 | yes   | varies (some add an LLM judge)         |
 | Grandfathers existing debt                                  | yes   | tool-dependent                         |
 | Feeds the exact block reason back to the warm agent session | yes   | usually a human-facing dashboard or PR |
 

@@ -74,7 +74,7 @@ size-gating that [the Amdahl model](./06-amdahl-model.md) formalizes.
 | Statistic            | naive    | dxkit    | Delta            |
 | -------------------- | -------- | -------- | ---------------- |
 | median tokens        | 153,603  | 123,204  | roughly tied     |
-| mean tokens          | 219,249  | 152,056  | **−31%**         |
+| mean tokens          | 219,249  | 152,056  | **−30%**         |
 | worst case (max)     | 652,278  | 281,395  | **−57%**         |
 | coefficient of var.  | 0.72     | 0.41     | **~halved**      |
 
