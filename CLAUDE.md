@@ -709,10 +709,18 @@ vyuh-dxkit tools [list|install]   # Tool status & installation
 This repo runs its own loop Stop-gate. The Claude Code Stop hook in
 `.claude/settings.json` invokes `node dist/index.js hook stop-gate` — the local
 build, mirroring how `dxkit-self-guardrail.yml` invokes `node dist/index.js`
-(this repo IS `@vyuhlabs/dxkit`, so `npx vyuh-dxkit` cannot resolve it). On every
-Stop it re-runs the guardrail (ref-based vs `origin/main`) and blocks completion
-if the change introduced net-new findings, handing them back for repair.
+(this repo IS `@vyuhlabs/dxkit`, so `npx vyuh-dxkit` cannot resolve it). When
+active, it re-runs the guardrail (ref-based vs `origin/main`) on Stop and blocks
+completion if the change introduced net-new findings, handing them back for repair.
 
+- The gate is **loop-scoped** (2.13.3): it is an instant no-op on interactive
+  turns. It auto-activates when the Stop payload's `permission_mode` is
+  `bypassPermissions` (a headless `claude --dangerously-skip-permissions` run),
+  or when `DXKIT_LOOP_ACTIVE=1` / a `.dxkit/loop/active` sentinel is set. So an
+  ordinary interactive agent session here is NOT gated; run an unattended
+  self-improvement loop (or set `DXKIT_LOOP_ACTIVE=1`) to exercise it.
+  Interactive work is covered by review + the CI self-guardrail
+  (`dxkit-self-guardrail.yml`), which always runs.
 - Build first (`npm run build`) so `dist/` exists, or the hook cannot run.
 - Posture is `loop.preset` in `.dxkit/policy.json` (`security-only`): net-new
   secrets + crit/high security + reachable dep-vulns block; test-gap + quality

@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node dist/index.js hook stop-gate"
+            "command": "node dist/index.js hook stop-gate",
+            "timeout": 600
           }
         ]
       }
