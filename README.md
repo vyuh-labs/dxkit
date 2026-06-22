@@ -16,6 +16,7 @@ finding, and the agent repaired before stopping clean.
 <p align="center">
   <img src=".github/assets/loop-stop-gate-demo.gif" width="820" alt="dxkit's Stop-gate blocks a coding-agent loop on a net-new critical dependency vulnerability, the agent bumps the version, and the gate goes clean." />
 </p>
+<p align="center"><sub>Recorded from a real run on a synthetic repo, shortened for readability. Blocked and repaired inside the same warm loop.</sub></p>
 
 dxkit does not reinvent detection. It runs trusted open source scanners
 (gitleaks, Semgrep, OSV, npm audit, and more), and it can ingest results from
@@ -34,7 +35,7 @@ Existing debt stays grandfathered; only net-new regressions block. Want to
 watch the flow first, on a sandbox dxkit creates? See the
 [walkthrough](#see-it-without-touching-your-repo).
 
-[Watch it block and repair](#watch-it-block-and-repair) · [Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo)
+[Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo)
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
@@ -109,21 +110,6 @@ and inside the agent loop.
 | Detection | gitleaks, Semgrep, OSV, npm audit, Snyk, CodeQL, SARIF | Find issues                                             |
 | dxkit     | baseline, fingerprint matcher, Stop-gate, loop ledger  | Decide whether this change introduced something net-new |
 | Agent     | Claude Code or another coding loop                     | Repair the exact finding and try to stop again          |
-
-## Watch it block and repair
-
-```text
-checkout-service · loop behind the dxkit Stop-gate
-  task: add a debounce helper using lodash 4.17.4
-  claude ▸ Added a debounce helper using lodash 4.17.4. Done.
-  ✗ dxkit Stop-gate ▸ BLOCKED: 1 net-new finding
-       lodash 4.17.4: critical dependency vuln (GHSA-JF85-CPCP-J695)
-  claude ▸ Bumped lodash to 4.17.21 and re-checked. Done.
-  ✓ dxkit Stop-gate ▸ CLEAN  the loop may stop.
-```
-
-Recorded from a real run on a synthetic repo, shortened for readability.
-Blocked and repaired inside the same warm loop.
 
 ## Try it on your repo
 
