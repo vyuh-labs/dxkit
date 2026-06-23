@@ -80,9 +80,7 @@ const SUSPECT_VENDORED_TOKENS = [
 // analyzes the customer's repo via graphify (looking for files with
 // proxy-shape signatures — high class:method ratio, no autogen
 // header, anomalous file size), and proposes `.dxkit-ignore`
-// entries. Scoped in the next graphify session per user direction
-// 2026-05-17 — see `tmp/next-session-graphify-deep-dive.md` and
-// `tmp/graphify-capabilities-expansion.md`.
+// entries.
 
 /**
  * Check if a relative POSIX path contains a suspect-vendored token.

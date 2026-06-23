@@ -4,7 +4,7 @@
  * each subcommand handler stays a thin pipeline (parse args → call
  * queries → format output).
  *
- * Per the Sprint 0 design (`tmp/2.7-explore-cli-design.md`):
+ * Output contract:
  *   - JSON mode emits a stable envelope: command / args / meta / results
  *   - Markdown mode emits header → meta line → result block → footer hint
  *   - Adding fields later is additive; never mutate existing field

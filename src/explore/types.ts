@@ -4,7 +4,7 @@
  * future graph-consuming CLIs (2.8 context CLI, 2.8 reachability).
  *
  * The on-disk wire format at `.dxkit/reports/graph.json` is the
- * `GraphJson` shape (see schema doc tmp/2.7-graph-json-schema.md).
+ * `GraphJson` shape (defined below).
  * The loader at `./load.ts:loadGraph` validates the wire format
  * + returns a `Graph` (the same shape plus convenience indices
  * that don't need to live on disk).
@@ -112,8 +112,7 @@ export interface GraphMeta {
 }
 
 /**
- * The on-disk wire format. Matches the schema doc at
- * `tmp/2.7-graph-json-schema.md`. `schemaVersion` at root level
+ * The on-disk wire format. `schemaVersion` at root level
  * matches the existing `StructuralResult` envelope pattern.
  */
 export interface GraphJson {

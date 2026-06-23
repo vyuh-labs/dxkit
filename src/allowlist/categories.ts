@@ -10,8 +10,6 @@
  * allowlist file reader/writer, the inline-annotation parser, the
  * CLI, the block-time hint formatter, and the new `allowlistHits`
  * baseline producer.
- *
- * See tmp/2.6-allowlist-design.md for the design discussion.
  */
 
 import type { IdentityKind } from '../baseline/producers';

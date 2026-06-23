@@ -364,7 +364,7 @@ if __name__ == '__main__':
     # 2.7 Sprint 1: emit nodes / edges / communities / symbolIndex alongside
     # the aggregate metrics. Consumers (explore CLI, dashboard viz, future
     # 2.8 context CLI + reachability) read this via src/explore/load.ts.
-    # Schema contract documented in tmp/2.7-graph-json-schema.md.
+    # Schema contract: the GraphJson interface in src/explore/types.ts.
 
     # Determine class membership: a module-shaped node is a CLASS if it has
     # outbound 'method' edges to other nodes (it's the owner). A function-
