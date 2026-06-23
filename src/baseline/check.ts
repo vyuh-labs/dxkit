@@ -60,6 +60,7 @@ import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy
 import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
+import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
@@ -391,7 +392,33 @@ export async function runGuardrailCheck(
   // (non-incremental) callers stay on FULL_SCOPE so their full report and
   // every warning are unaffected. Both sides use the SAME scope so the
   // cross-run diff stays balanced.
-  const gatherScope = options.scope ?? (options.incremental ? scopeForPolicy(policy) : FULL_SCOPE);
+  let gatherScope = options.scope ?? (options.incremental ? scopeForPolicy(policy) : FULL_SCOPE);
+
+  // Incremental ref-based dep-audit skip. A net-new dependency vulnerability
+  // requires a manifest/lockfile change, so when the PR changed none the OSV
+  // audit on the ref side and the current side run over identical dependency
+  // sets against the SAME OSV snapshot — it cannot surface anything net-new.
+  // The audit is the dominant cost on large repos (the rest of a scoped gather
+  // is sub-second), so skipping it on both sides is the single biggest
+  // incremental win. Sound ONLY in ref-based mode: committed mode compares
+  // against an older baseline snapshot, where a newly-disclosed CVE on an
+  // unchanged dependency genuinely IS net-new and must still surface — so this
+  // never fires there (it is gated on `refIncrementalFiles`, which only exists
+  // in ref-based mode). Manifest patterns are pack-declared (Rule 6).
+  if (
+    gatherScope.depVulns &&
+    options.incremental &&
+    mode.mode === 'ref-based' &&
+    refIncrementalFiles &&
+    !changedFilesTouchDependencyManifest(refIncrementalFiles, detectActiveLanguages(cwd))
+  ) {
+    gatherScope = { ...gatherScope, depVulns: false };
+    if (options.verbose) {
+      process.stderr.write(
+        '    [incremental] no dependency manifest changed — skipping dep-vuln audit\n',
+      );
+    }
+  }
 
   // Load the prior side. Committed modes read from the baseline
   // file on disk; ref-based mode recomputes prior state by checking

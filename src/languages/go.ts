@@ -445,6 +445,7 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
 
 const goDepVulnsProvider: DepVulnsProvider = {
   source: 'go',
+  manifestPatterns: ['go.mod', 'go.sum'],
   async gather(cwd) {
     const outcome = await gatherGoDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

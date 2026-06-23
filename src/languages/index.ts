@@ -84,6 +84,55 @@ export function allSourceExtensions(): string[] {
 }
 
 /**
+ * Dependency-manifest / lockfile patterns declared by the given packs'
+ * `depVulns` capability, deduplicated. Pack-driven (Rule 6): each pack owns its
+ * patterns next to the audit they gate; this union grows as packs land.
+ */
+export function allDependencyManifestPatterns(packs: readonly LanguageSupport[]): string[] {
+  return [...new Set(packs.flatMap((l) => l.capabilities?.depVulns?.manifestPatterns ?? []))];
+}
+
+/**
+ * Does any changed-file path look like a dependency manifest/lockfile for one
+ * of the given (active) packs? Drives the incremental ref-based dep-audit skip
+ * in `runGuardrailCheck`: a net-new dependency vulnerability requires a
+ * manifest/lockfile change, so when this returns false the OSV audit can be
+ * skipped on both sides (sound in ref-based mode only — see DepVulnsProvider).
+ *
+ * Fail-safe: with no patterns to test (no active pack declares any), returns
+ * true — we cannot prove the PR is dependency-free, so we run the audit.
+ */
+export function changedFilesTouchDependencyManifest(
+  changedFiles: readonly string[],
+  packs: readonly LanguageSupport[],
+): boolean {
+  const patterns = allDependencyManifestPatterns(packs);
+  if (patterns.length === 0) return true;
+  return changedFiles.some((f) => patterns.some((p) => matchesManifestPattern(f, p)));
+}
+
+/**
+ * Match one repo-relative path against one manifest pattern (exported for
+ * tests). A multi-segment pattern matches a path equal to it or nested under
+ * any directory; a `*` glob matches on the basename; a bare name matches any
+ * file with that basename anywhere in the tree.
+ */
+export function matchesManifestPattern(filePath: string, pattern: string): boolean {
+  const norm = filePath.replace(/\\/g, '/');
+  const base = norm.slice(norm.lastIndexOf('/') + 1);
+  if (pattern.includes('/')) {
+    return norm === pattern || norm.endsWith('/' + pattern);
+  }
+  if (pattern.includes('*')) {
+    const re = new RegExp(
+      '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+    );
+    return re.test(base);
+  }
+  return base === pattern;
+}
+
+/**
  * The active packs that declare interprocedural deep-SAST support,
  * paired with their declaration (Rule 6). The engine resolver, the
  * CodeQL runner, and the `tools install` applicability guard read the

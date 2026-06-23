@@ -645,6 +645,9 @@ const RUBY_DEP_MANIFESTS = ['Gemfile.lock'];
 
 const rubyDepVulnsProvider: DepVulnsProvider = {
   source: 'ruby',
+  // osv-scanner audits Gemfile.lock; Gemfile / *.gemspec carry the dependency
+  // declarations, so include them for the incremental skip check.
+  manifestPatterns: [...RUBY_DEP_MANIFESTS, 'Gemfile', '*.gemspec'],
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
       cwd,

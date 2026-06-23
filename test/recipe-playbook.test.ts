@@ -39,6 +39,8 @@ import type { LanguageSupport } from '../src/languages';
 import {
   LANGUAGES,
   allAutogenSourcePatterns,
+  allDependencyManifestPatterns,
+  changedFilesTouchDependencyManifest,
   allDocCommentPatterns,
   allExportDetectionDeclarations,
   allModelPaths,
@@ -110,6 +112,19 @@ const mockPlaybookPack = {
       source: 'playbook-mock',
       async gather() {
         return null;
+      },
+    },
+    // Distinctive manifest patterns so the assertion verifies the synthetic
+    // pack's dependency-manifest contribution flows through the registry
+    // helpers that drive the incremental dep-audit skip (2.16).
+    depVulns: {
+      source: 'playbook-mock',
+      manifestPatterns: ['playbook.lock', '*.pbkproj'],
+      async gather() {
+        return null;
+      },
+      async gatherOutcome() {
+        return { kind: 'no-manifest', reason: 'mock' };
       },
     },
   },
@@ -206,6 +221,31 @@ describe('recipe playbook — synthetic pack', () => {
     expect(patterns).toContain('ServerCertificateValidationCallback'); // csharp
     expect(patterns).toContain('InsecureSkipVerify[[:space:]]*:[[:space:]]*true'); // go
     expect(patterns).toContain('NODE_TLS_REJECT_UNAUTHORIZED.*0'); // typescript
+  });
+
+  // 2.16: dependency-manifest pattern registry helper iterates every pack
+  // that declares the `depVulns` capability. Synthetic pack contributes
+  // `playbook.lock` / `*.pbkproj`; real packs' manifests should also flow so
+  // the incremental dep-audit skip stays empirically pack-driven (adding a
+  // pack auto-extends the skip's manifest awareness).
+  it('allDependencyManifestPatterns includes the mock pack patterns (2.16)', () => {
+    const patterns = allDependencyManifestPatterns([...LANGUAGES]);
+    expect(patterns).toContain('playbook.lock');
+    expect(patterns).toContain('*.pbkproj');
+    // Real packs' manifests also flow through (regression guard against the
+    // helper returning only the synthetic contribution).
+    expect(patterns).toContain('package.json'); // typescript
+    expect(patterns).toContain('go.mod'); // go
+    expect(patterns).toContain('*.csproj'); // csharp
+  });
+
+  it('changedFilesTouchDependencyManifest detects the mock pack manifest (2.16)', () => {
+    const packs = [...LANGUAGES];
+    // A changed synthetic manifest (nested in a monorepo) is detected.
+    expect(changedFilesTouchDependencyManifest(['services/a/playbook.lock'], packs)).toBe(true);
+    expect(changedFilesTouchDependencyManifest(['app/My.pbkproj'], packs)).toBe(true);
+    // A pure source-only change is NOT flagged → the dep audit may be skipped.
+    expect(changedFilesTouchDependencyManifest(['src/main.pbk', 'README.md'], packs)).toBe(false);
   });
 
   // 2.7 Sprint 1: exported-symbol detection registry helper iterates

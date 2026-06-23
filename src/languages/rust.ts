@@ -471,6 +471,7 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
 
 const rustDepVulnsProvider: DepVulnsProvider = {
   source: 'rust',
+  manifestPatterns: ['Cargo.toml', 'Cargo.lock'],
   async gather(cwd) {
     const outcome = await gatherRustDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
