@@ -37,9 +37,7 @@ npx vyuh-dxkit loop doctor                         # verify the gate is wired
 ```
 
 The stop verdict has no model in the path: same input, same verdict.
-Existing debt stays grandfathered; only net-new regressions block. Want to
-watch the flow first, on a sandbox dxkit creates? See the
-[fixture gate](#run-a-local-fixture-gate).
+Existing debt stays grandfathered; only net-new regressions block.
 
 [Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo) · [Run the fixture gate](#run-a-local-fixture-gate)
 
