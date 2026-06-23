@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-06-23
+
+### Changed — the guardrail gate skips dependency *remediation* enrichment
+
+`guardrail check` no longer runs the Tier-2 dependency **remediation** step —
+the structured `upgradePlan` produced by `osv-scanner fix`. That step exists
+only to suggest "upgrade X to Y" in the **reports** (`vulnerabilities`, `bom`,
+`health`); the gate never reads it, and finding identity explicitly excludes it
+(`fingerprint.ts`), so it cannot affect a verdict or a baseline match.
+
+Why it matters: `osv-scanner fix` resolves the dependency tree by running the
+**package manager** (`npm install`) on the scanned code. On a vulnerability-laden
+manifest that dominated latency — a 2-file PR on a small sample app took **191s**,
+and OWASP NodeGoat **~250s**, both timing out the hosted PR-gate. Profiling
+isolated it precisely: `npm audit` and `osv-scanner scan` are ~1–5s; the
+`osv-scanner fix` remediation (with `npm install`) was the ~120s/side cost. The
+same NodeGoat PR now gates in **~14s**, and a clean dep-change PR in **~6s**, with
+an **identical verdict** (still blocks net-new critical/high dependency vulns).
+
+This also closes a real **security** concern for hosted/agent scenarios: running
+`npm install` on untrusted PR code can execute arbitrary install scripts.
+Skipping the remediation step removes that from every guardrail path —
+including the **loop Stop-gate**, which previously ran `npm install` on stops
+that touched JS/TS dependencies.
+
+- **Scope:** affects only the guardrail/gate gather path (the new
+  `skipRemediation` flow, set by `runGuardrailCheck`). `health`,
+  `vulnerabilities`, `bom`, and `baseline create` keep the full remediation
+  enrichment. The remediation step is TS/JS-only (`osv-scanner fix`); other
+  packs derive `upgradePlan` from their own audit output without installing.
+- npm-audit's free-text "upgrade X to Y" advice (no install) still rides along
+  in the gate's repair hint.
+
+### Added — `guardrail check --untrusted` for hosted gates on attacker-controlled source
+
+A hosted PR gate scans code it does not control. Dependency audits must never
+**execute** that code. `--untrusted` enforces that: the Python pack stops using
+`pip-audit .` (project mode), whose PEP 517 build backend can run arbitrary
+project code, and instead audits a `requirements.txt` (which never builds) or
+reports the dependency audit unavailable with a "run dxkit locally" message —
+rather than building untrusted source. npm-audit and osv-scanner `scan`
+(TS/Java/Kotlin/Go/Rust/Ruby) are already read-only, so they're unaffected.
+
+- **Opt-in and off by default.** Without `--untrusted`, `buildPipAuditCommand`
+  is byte-identical to before, so reports, `baseline create`, CI, and the loop
+  Stop-gate on your own (trusted) repo keep full project-mode coverage.
+- Trade-off: in `--untrusted` mode a Python project with only a
+  `pyproject.toml`/`setup.py` (no `requirements.txt`) reports its dep audit
+  unavailable instead of building — a deliberate safety-over-coverage choice
+  for untrusted input, surfaced in the message.
+
 ## [2.16.0] - 2026-06-23
 
 ### Changed — `--incremental` skips the dependency audit when no manifest changed
