@@ -1,4 +1,4 @@
-# Study III — The gate is correct and reproducible
+# Study III: The gate is correct and reproducible
 
 > Detailed write-up for the study summarized in
 > [`docs/benchmarks.md`](../benchmarks.md). This is the **deterministic tier**:
@@ -8,7 +8,7 @@
 ## Question
 
 Does the gate reliably block net-new regressions, pass clean changes, and
-grandfather pre-existing debt — every time, with the same input yielding the same
+grandfather pre-existing debt, every time, with the same input yielding the same
 verdict?
 
 ## TL;DR
@@ -46,7 +46,7 @@ Seeds three known regressions (a SAST eval injection, a command injection, and a
 private-key secret) plus two clean edits, then builds a confusion matrix of the
 gate's verdicts.
 
-Result on both repositories: **tp 3, fn 0, tn 2, fp 0** — every seeded regression
+Result on both repositories: **tp 3, fn 0, tn 2, fp 0**, every seeded regression
 blocked, every clean edit passed. `catchRate` 1, `falseBlockRate` 0.
 
 ### 2. Net-new isolation (`bench-netnew-isolation.mjs`)
@@ -63,12 +63,12 @@ of the existing debt.
 The "fix-to-green tax" is the number of findings a developer would have to clear
 to get a green check: without a baseline, all pre-existing debt blocks (206 /
 1,021 items); with the dxkit baseline, only the single net-new finding blocks (1
-item). This is the brownfield value — only regressions block.
+item). This is the brownfield value, only regressions block.
 
 ### 3. Churn robustness (`bench-matcher.mjs`)
 
-Applies mechanical churn that introduces no finding — comment-insert line shifts
-and file renames — and checks that no existing finding is falsely re-flagged as
+Applies mechanical churn that introduces no finding, comment-insert line shifts
+and file renames, and checks that no existing finding is falsely re-flagged as
 net-new.
 
 Result: **`falseRegressionRate` 0** on both repositories. On Strapi this held
@@ -80,11 +80,11 @@ through the churn); on NodeGoat, over 5 duplication findings.
 - **These are seeded regression suites, not recall estimates.** They show the
   gate behaves correctly on the seeded cases, not that it catches every possible
   regression in the wild.
-- **The matcher had a 50% defect in dxkit 2.11.1** — a duplication-identity bug.
+- **The matcher had a 50% defect in dxkit 2.11.1**: a duplication-identity bug.
   This bench caught it: `bench-matcher.mjs` reported `falseRegressionRate` 0.5 on
   2.11.1. Version 2.12.0 fixed it as a class, with content-anchored identity and a
   property-based contract test over every finding kind, and the rate returned to
-  0. **The benchmark drove the release** — a worked example of the benchmark
+  0. **The benchmark drove the release**, a worked example of the benchmark
   suite functioning as a product feedback loop.
 
 ## Reproduce it

@@ -1,4 +1,4 @@
-# Study V — Graph context and observed exploration tails
+# Study V: Graph context and observed exploration tails
 
 > Detailed write-up for the study summarized in
 > [`docs/benchmarks.md`](../benchmarks.md). The analytical model that explains
@@ -7,7 +7,7 @@
 ## Question
 
 Does dxkit's passive code-graph context actually help a real agent session, net of
-the scaffold's overhead? And if so, on what axis — fewer tokens, or *more
+the scaffold's overhead? And if so, on what axis, fewer tokens, or *more
 predictable* tokens?
 
 ## TL;DR
@@ -15,7 +15,7 @@ predictable* tokens?
 The benefit is **predictable tokens, not fewer tokens**, and it is **size-gated**.
 
 - On a large monorepo (Strapi), real sessions showed a **30% lower mean**, a **57%
-  lower worst case**, and **variance roughly halved** — but a roughly tied median.
+  lower worst case**, and **variance roughly halved**, but a roughly tied median.
 - On a small app (NodeGoat), the mean was identical (overhead ≈ zero) and the tail
   tightened only slightly.
 - A token-slicing proxy saved **45% aggregate** tokens versus reading whole files,
@@ -28,9 +28,9 @@ bounds the cost and completeness tails, even when the average is flat.
 
 ## Substrate and pins
 
-- **strapi/strapi** (community MIT / `ee/` commercial), commit `dc49217` — the
+- **strapi/strapi** (community MIT / `ee/` commercial), commit `dc49217`, the
   large monorepo, code graph of 18,948 nodes and 20,012 edges.
-- **OWASP NodeGoat** (Apache-2.0), commit `c5cb68a` — the small app.
+- **OWASP NodeGoat** (Apache-2.0), commit `c5cb68a`, the small app.
 
 Model: Claude Sonnet 4.6. dxkit 2.13.0.
 
@@ -38,18 +38,18 @@ Model: Claude Sonnet 4.6. dxkit 2.13.0.
 
 Two harnesses:
 
-- **`bench-context-efficiency.mjs`** — a proxy measurement over 200 sampled
+- **`bench-context-efficiency.mjs`**: a proxy measurement over 200 sampled
   symbols, comparing whole-file token cost against a `vyuh-dxkit context` slice for
   the same symbol. Measures the slicing primitive in isolation, not a real
   session.
-- **`bench-sessions.mjs`** — real `claude -p --output-format stream-json` sessions
+- **`bench-sessions.mjs`**: real `claude -p --output-format stream-json` sessions
   on a naive checkout versus a dxkit-scaffolded checkout that carries the
   18,948-node graph and a passive PreToolUse context hook. 5 tasks × 2 arms × 3
   repetitions = 30 sessions per repository, with the hook confirmed firing in
   every dxkit-arm session.
 
 The metric is total session tokens (and its distribution), parsed from the raw
-event stream. This study measures token and cost behavior and hook firing — not
+event stream. This study measures token and cost behavior and hook firing, not
 independent task-success quality (see caveats).
 
 ## Results
@@ -69,7 +69,7 @@ of the slice's structural framing. The 45% aggregate is real but is carried by a
 minority of large, hot files where the slice is dramatically smaller. This is the
 size-gating that [the Amdahl model](./06-amdahl-model.md) formalizes.
 
-### Real sessions — large monorepo (Strapi, n=15 per arm)
+### Real sessions: large monorepo (Strapi, n=15 per arm)
 
 | Statistic            | naive    | dxkit    | Delta            |
 | -------------------- | -------- | -------- | ---------------- |
@@ -79,10 +79,10 @@ size-gating that [the Amdahl model](./06-amdahl-model.md) formalizes.
 | coefficient of var.  | 0.72     | 0.41     | **~halved**      |
 
 The naive arm had a rabbit-hole run (652k tokens); the dxkit arm's worst case was
-far lower. The mean and tail move while the median barely does — the signature of
+far lower. The mean and tail move while the median barely does, the signature of
 *variance reduction*, not average reduction.
 
-### Real sessions — small app (NodeGoat, n=15 per arm)
+### Real sessions: small app (NodeGoat, n=15 per arm)
 
 | Statistic           | naive    | dxkit    |
 | ------------------- | -------- | -------- |
@@ -91,19 +91,19 @@ far lower. The mean and tail move while the median barely does — the signature
 
 The means are identical: the scaffold tax is negligible and there is no
 average benefit to extract on a small, already-navigable app. The tail tightens
-only slightly. A separate forced-graph probe on NodeGoat — forcing graph use
-where direct reads would do — cost **66% more** (570k vs 343k tokens), a concrete
+only slightly. A separate forced-graph probe on NodeGoat, forcing graph use
+where direct reads would do, cost **66% more** (570k vs 343k tokens), a concrete
 illustration of overhead dominating on small work.
 
 ## Caveats and retractions
 
 - **Predictability, not reduction.** The claim is a lower observed worst case and
-  tighter variance on large, connected work — not fewer tokens in every session.
+  tighter variance on large, connected work, not fewer tokens in every session.
 - **This study does not score task-success quality.** It measures tokens, cost,
   and hook firing, so on its own it does not rule out "fewer tokens because of less
   useful work." Future runs should add blinded task-success scoring.
 - **Sonnet only; Opus session arm deferred.**
-- **A 1-rep smoke test once reported a 3.5× reduction** — a naive outlier we
+- **A 1-rep smoke test once reported a 3.5× reduction**: a naive outlier we
   retracted. The same smoke surfaced a stale scaffold whose hook never fired,
   which was then fixed.
 - **The proxy is a proxy.** It measures the slicing primitive, not a session; the
