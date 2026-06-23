@@ -1,4 +1,4 @@
-# Study IV — Deterministic gate versus LLM-as-the-gate
+# Study IV: Deterministic gate versus LLM-as-the-gate
 
 > Detailed write-up for the study summarized in
 > [`docs/benchmarks.md`](../benchmarks.md).
@@ -8,7 +8,7 @@
 When an agent or a CI pipeline asks "is my change safe to stop on?", should a
 deterministic gate answer, or should one ask an LLM to be the gate? This compares
 **gate against gate**, not scanner against scanner. It is explicitly *not* a
-claim that the LLM gives wrong answers — a strong model with enough baseline
+claim that the LLM gives wrong answers, a strong model with enough baseline
 state is an accurate judge. The question is whether it is cheap, reproducible, and
 scale-stable enough to sit on every loop iteration.
 
@@ -17,12 +17,12 @@ scale-stable enough to sit on every loop iteration.
 | Gate                    | Accuracy           | Flips | Cost                         | Prompt growth with baseline |
 | ----------------------- | ------------------ | ----- | ---------------------------- | --------------------------- |
 | dxkit (deterministic)   | 100% at all scales | 0     | $0                           | none                        |
-| LLM (Sonnet, baseline)  | slips at 1,020     | 0–40% | $0.22 → $4.35 (1 → 1,020)    | grows with baseline         |
+| LLM (Sonnet, baseline)  | slips at 1,020     | 0-40% | $0.22 → $4.35 (1 → 1,020)    | grows with baseline         |
 | LLM (Opus, baseline)    | 100% at all scales | 0     | up to ~$28 / suite at 1,020  | grows with baseline         |
 
 A frontier model can match dxkit's accuracy (Opus did, at every scale). dxkit's
 defensible advantages are **determinism, no per-check LLM cost, and a prompt that
-does not grow with the baseline** — all of which hold regardless of model
+does not grow with the baseline**, all of which hold regardless of model
 capability.
 
 ## Substrate and pins
@@ -39,9 +39,9 @@ study cost ≈ **$51**. dxkit 2.13.0.
 
 The harness is `bench-llm-gate.mjs`. Three gate arms judge the same diffs:
 
-1. **dxkit** — the actual deterministic verdict.
-2. **LLM naive** — an LLM judging the diff with no baseline context.
-3. **LLM with baseline** — an LLM judging the diff with the full prior-findings
+1. **dxkit**, the actual deterministic verdict.
+2. **LLM naive**, an LLM judging the diff with no baseline context.
+3. **LLM with baseline**, an LLM judging the diff with the full prior-findings
    list supplied as context, a steelman, at baseline sizes of 1, 205, and 1,020.
 
 Each cell reports modal accuracy across the 5 repetitions, a flip rate (did the
@@ -58,14 +58,14 @@ equivalent cost over its 10 cases × 5 repetitions.
   was false-flagged as net-new by Sonnet on both repositories and by Opus on
   Strapi (churn false-net-new rate 0.5 at the naive scale). Sonnet also
   flip-flopped on a pure line-shift refactor in **40% of repetitions** on Strapi
-  (accuracy 0.6, flip 0.4) — determinism empirically violated on identical input.
+  (accuracy 0.6, flip 0.4), determinism empirically violated on identical input.
 - **Sonnet over-grandfathers at scale.** With the 1,020-finding baseline, Sonnet
   **missed a real open-redirect regression** (accuracy 0 on that case) that it
   caught at baseline sizes naive, 1, and 205. As the prior-findings list grows,
   the model begins matching a true regression to a similar-looking grandfathered
   item and waving it through. Its overall accuracy fell to 0.90 at 1,020.
 - **Opus held 100%** accuracy at every scale, including 1,020, where Sonnet
-  slipped. A stronger model buys scale-robustness — but not a reproducibility
+  slipped. A stronger model buys scale-robustness, but not a reproducibility
   guarantee, and not for free.
 
 ### Cost (the statefulness tax)

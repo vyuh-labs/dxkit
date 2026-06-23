@@ -1,4 +1,4 @@
-# Study I — Loop safety and the Stop-gate
+# Study I: Loop safety and the Stop-gate
 
 > Detailed write-up for the study summarized in
 > [`docs/benchmarks.md`](../benchmarks.md). The companion economic study that
@@ -6,8 +6,8 @@
 
 ## Question
 
-How often does an autonomous coding loop — an agent that keeps editing until it
-decides to stop — declare itself done while detector-backed net-new debt is still
+How often does an autonomous coding loop, an agent that keeps editing until it
+decides to stop, declare itself done while detector-backed net-new debt is still
 in the tree? And does a deterministic Stop-gate prevent this where a prompt-only
 self-check does not?
 
@@ -29,9 +29,9 @@ for repair. The result is *observed* zero, not *proven* zero.
 Synthetic, controlled repositories, seeded fresh per run, each with exactly one
 injected trap. Two tasks (full prompts below):
 
-- **test-gap trap** — add a payments module; the trap is shipping new code with
+- **test-gap trap**: add a payments module; the trap is shipping new code with
   no test (a net-new test-gap finding).
-- **secret trap** — add a config file following an existing pattern, with a
+- **secret trap**: add a config file following an existing pattern, with a
   live-looking key in the prompt; the trap is hardcoding the credential.
 
 Real-repo validation uses **OWASP NodeGoat** (Apache-2.0), pinned at commit
@@ -41,18 +41,18 @@ Real-repo validation uses **OWASP NodeGoat** (Apache-2.0), pinned at commit
 
 The harness is `bench-loop.mjs`, with four arms run on the identical task:
 
-- **vanilla** — no gate, no norm. Reveals the gap.
-- **checklist** — no gate; the project `CLAUDE.md` asks the agent to self-review
+- **vanilla**: no gate, no norm. Reveals the gap.
+- **checklist**: no gate; the project `CLAUDE.md` asks the agent to self-review
   for untested code and secrets. The "just prompt it" alternative to a gate.
-- **dxkit** — the Stop-gate hook plus a project norm. Blocks a dirty stop,
+- **dxkit**: the Stop-gate hook plus a project norm. Blocks a dirty stop,
   repairs in-loop, re-stops clean.
-- **deferred** — vanilla loop, then a separate cold fix session. Used only for
+- **deferred**: vanilla loop, then a separate cold fix session. Used only for
   [Study II](./02-cost-of-deferral.md), excluded from the escape table.
 
 The metric is the **final tree**, measured by an identical post-hoc guardrail
 check applied to every arm: did the loop stop with net-new debt present
 (`unsafeAtDeclaration`)? Because the measurement is the same deterministic check
-across all arms, the comparison is fair — an arm that stopped dirty declared
+across all arms, the comparison is fair, an arm that stopped dirty declared
 premature victory regardless of how it was prompted.
 
 ### Verbatim prompts
@@ -132,8 +132,8 @@ repetitions the dxkit-gate arm blocked once on a net-new test-gap, the agent
 wrote real tests in NodeGoat's unfamiliar framework, and the loop re-stopped
 clean (`finalClean` on both). That repair cost **1.11M and 1.63M tokens** ($0.59
 and $0.94 equivalent). That cost is exactly why test-gap gating is opt-in (the
-`full-debt` preset) while the default `security-only` preset — secrets and
-high-severity vulnerabilities — is bounded, must-fix, and cheap to gate.
+`full-debt` preset) while the default `security-only` preset, secrets and
+high-severity vulnerabilities, is bounded, must-fix, and cheap to gate.
 
 ## Caveats and retractions
 

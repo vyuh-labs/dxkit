@@ -57,8 +57,8 @@ document is the supporting evidence.
 | Fixing in the loop is cheaper than deferring it       | Moderate        | loop benchmark deferred arm, 8 reps × 2 tasks      | "deferring the same fix cost ~49% more on the test-gap task (mean); weak on the secret task" |
 | Gate identity is deterministic under tested churn     | Strong          | offline matcher benches                            | "0 false net-new on tested line-shift and rename cases"                                      |
 | LLM-as-gate has cost and reproducibility issues       | Strong          | gate-vs-LLM benchmark, 5 reps × 2 models × 2 repos | "an LLM can judge, but not cheaply or reproducibly in-loop"                                  |
-| Graph context reduces observed large-repo token tails | Moderate–strong | Sonnet session study, 30 sessions                  | "lower mean, tail, and variance on a large repo"                                             |
-| Test-gap gating is safe as a default                  | Not claimed     | repair cost of 1.1M–1.6M tokens in validation      | default remains `security-only`; `full-debt` is opt-in                                       |
+| Graph context reduces observed large-repo token tails | Moderate-strong | Sonnet session study, 30 sessions                  | "lower mean, tail, and variance on a large repo"                                             |
+| Test-gap gating is safe as a default                  | Not claimed     | repair cost of 1.1M-1.6M tokens in validation      | default remains `security-only`; `full-debt` is opt-in                                       |
 | dxkit improves every agent session                    | Not claimed     | n/a                                                | do not say this                                                                              |
 | dxkit detects more vulnerabilities than scanners      | Not claimed     | n/a                                                | do not say this                                                                              |
 
@@ -201,7 +201,7 @@ fixing it in the warm loop cheaper than deferring it to a cold session?
 **Headline.** Holding the finding constant, deferring the test-gap repair to a
 cold session cost **~49% more in equivalent cost and ~51% more turns** (means).
 On the secret task the mean premium was ~19% but the signal is weak (the median
-is slightly negative). A conservative floor — real deferral costs more.
+is slightly negative). A conservative floor, real deferral costs more.
 
 **Method.** The `dxkit` (in-loop) and `deferred` (vanilla + cold fix) arms of
 `bench-loop.mjs`; both reach an identical clean final state, so this isolates the
@@ -215,7 +215,7 @@ changes, and grandfather pre-existing debt, every time?
 **Headline.** Confusion matrix tp 3 / fn 0 / tn 2 / fp 0 (catch 1, false-block 0)
 on both repos; exactly 1 net-new finding isolated against 205 / 1,020
 grandfathered items; **0 false regressions** on line-shift and rename churn. This
-is the **deterministic tier** — reproducible offline today, no API key.
+is the **deterministic tier**, reproducible offline today, no API key.
 
 **Method.** Three offline harnesses already published in
 [`benchmarks/`](../benchmarks/): `bench-guardrail.mjs`,
@@ -242,7 +242,7 @@ of the scaffold's overhead?
 
 **Headline.** On the large monorepo: median tokens roughly tied, **mean −30%,
 worst case −57%, variance roughly halved**. On the small app: overhead ≈ zero.
-The benefit is predictable tokens, not fewer tokens — and it is size-gated (54%
+The benefit is predictable tokens, not fewer tokens, and it is size-gated (54%
 of files in a slicing proxy were _not_ smaller).
 
 **Method.** `bench-context-efficiency.mjs` (200-symbol slicing proxy) and
@@ -324,7 +324,7 @@ numbers on the pinned NodeGoat and Strapi commits.
 The **agent-driven harnesses** (loop safety, cost of deferral, gate-vs-LLM, and
 the graph-context sessions) require a model subscription or API key and the
 pinned checkouts. They are published under
-[`benchmarks/agentic/`](../benchmarks/agentic/) — `bench-loop.mjs`,
+[`benchmarks/agentic/`](../benchmarks/agentic/), `bench-loop.mjs`,
 `bench-llm-gate.mjs`, `bench-sessions.mjs`, and `bench-context-efficiency.mjs`,
 with `benchmarks/agentic/README.md` documenting the config schema, the pinned
 substrates, and the verbatim prompts. Because these are agent-in-the-loop

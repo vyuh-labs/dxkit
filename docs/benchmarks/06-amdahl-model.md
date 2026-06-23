@@ -1,4 +1,4 @@
-# Study VI — When the graph pays: an Amdahl model
+# Study VI: When the graph pays: an Amdahl model
 
 > Detailed write-up for the model summarized in
 > [`docs/benchmarks.md`](../benchmarks.md). This is an analytical companion to the
@@ -10,8 +10,8 @@
 
 [Study V](./05-graph-context.md) found a 30% lower mean and 57% lower tail on a
 large monorepo, but zero benefit (and a 66%-more forced-graph probe) on a small
-app. Large per-operation graph speedups — the often-cited figure of roughly 75×
-for a single lookup — clearly do not translate into whole-session savings of that
+app. Large per-operation graph speedups, the often-cited figure of roughly 75×
+for a single lookup, clearly do not translate into whole-session savings of that
 magnitude. Why not?
 
 ## The model
@@ -34,7 +34,7 @@ This is Amdahl's law with a fixed-cost term. Three consequences follow directly.
 
 2. **On a small repository the fixed `O/T` term dominates and savings go
    negative.** When `T` is small, `O/T` is large, and `f` is small (a small app
-   needs little orientation), so the whole expression is negative — using the
+   needs little orientation), so the whole expression is negative, using the
    graph costs *more*. This is exactly the NodeGoat forced-graph probe: +66%.
 
 3. **On a large repository `O/T` is negligible and `f` is large.** Orientation is
@@ -48,13 +48,13 @@ This is Amdahl's law with a fixed-cost term. Three consequences follow directly.
 The model also separates three things that "does the graph help?" usually
 conflates:
 
-1. **Mean token efficiency** — size-gated, often near zero. This is what most
+1. **Mean token efficiency**, size-gated, often near zero. This is what most
    "token savings" benchmarks measure, and it is the *weakest* axis.
-2. **Variance and tail behavior** — driven by navigability risk, not average
+2. **Variance and tail behavior**, driven by navigability risk, not average
    cost. This can be strongly positive even when the mean is flat, because the
    graph removes the rabbit-hole runs. **This is the axis that matters for an
    unattended loop**, where the worst case sets the cost and completeness bound.
-3. **Structural correctness and grounding** — size-independent, and outside the
+3. **Structural correctness and grounding**, size-independent, and outside the
    token budget entirely. The graph can make the agent *right* about call
    relationships regardless of how many tokens it spends.
 
@@ -63,7 +63,7 @@ conflates:
 The model yields an operational rule: **graph-orient only on large,
 well-connected, orientation-heavy work where the workflow actually substitutes
 queries for reads; read directly otherwise.** dxkit's product behavior follows
-this — graph context is a complement that pays on large repos, not a universal
+this, graph context is a complement that pays on large repos, not a universal
 token-saver, and the documentation says so.
 
 ## Status: falsifiable, not yet fit

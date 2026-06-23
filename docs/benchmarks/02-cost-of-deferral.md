@@ -1,4 +1,4 @@
-# Study II — Cost of deferral: fixing in the loop versus fixing it later
+# Study II: Cost of deferral: fixing in the loop versus fixing it later
 
 > Detailed write-up for the study summarized in
 > [`docs/benchmarks.md`](../benchmarks.md). It shares the `bench-loop.mjs`
@@ -30,14 +30,14 @@ is a **floor**: the proxy defers by exactly one session, whereas real deferral
 Synthetic, controlled repositories seeded fresh per run (`bench-loop.mjs`
 `setupRepo`), each with one injected trap. Two tasks:
 
-- **test-gap trap** — "add a payments module" (a new `payments.js`); the trap is
+- **test-gap trap**: "add a payments module" (a new `payments.js`); the trap is
   that the agent ships new code with no test, a net-new test-gap finding.
-- **secret trap** — "add PayPal config following the existing Stripe pattern,"
+- **secret trap**: "add PayPal config following the existing Stripe pattern,"
   with a live-looking key in the prompt; the trap is hardcoding the credential.
 
 Model: Claude Sonnet 4.6. dxkit 2.13.0. 8 repetitions per task per arm. Runs
 executed through a Claude Max subscription, so dollar figures are the CLI's
-equivalent-cost estimates — valid for relative comparison between arms, not as
+equivalent-cost estimates, valid for relative comparison between arms, not as
 literal API-console charges.
 
 ## Method
@@ -87,7 +87,7 @@ the work is held constant. The premium is the extra cost of doing it cold.
 | secret   | turns           | 8.6             | 12.4            | +44%           | −8%              |
 
 The mechanism is re-orientation. The in-loop fixer still holds the context it
-just produced — the files it touched, the change it made, why the gate objected.
+just produced, the files it touched, the change it made, why the gate objected.
 The cold fixer has to rebuild that context from a one-line review note before it
 can fix anything. On the test-gap task, where the repair is non-trivial (write a
 real test for code you no longer remember writing), that rebuild dominates and
@@ -103,9 +103,9 @@ re-orientation cost is small and the signal is noisy.
   turns), which is positive under both mean and median. The secret-task number
   should be cited only as "directionally consistent, signal weak."
 - **It is a floor, not a ceiling.** The deferred arm fixes the finding in the
-  very next session with the exact finding handed to it. Real-world deferral —
+  very next session with the exact finding handed to it. Real-world deferral , 
   surfaced weeks later on CI, triaged by someone who never wrote the code, or not
-  fixed at all — is strictly more expensive. We do not measure that tail; we
+  fixed at all, is strictly more expensive. We do not measure that tail; we
   bound it from below.
 - **Equivalent cost, not API charges.** Runs were on a Max subscription; dollar
   figures are the CLI's equivalent-cost estimates and are used only for relative
