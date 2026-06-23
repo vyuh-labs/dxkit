@@ -115,4 +115,4 @@ vyuh-dxkit --help          # top-level command list
 vyuh-dxkit doctor          # diagnose missing tools or misconfig
 ```
 
-Issues + feedback: <https://github.com/anthropics/claude-code/issues>
+Issues + feedback: <https://github.com/vyuh-labs/dxkit/issues>

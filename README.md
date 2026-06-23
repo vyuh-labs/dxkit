@@ -1,11 +1,14 @@
 # dxkit
 
-**A deterministic Stop-gate for autonomous coding loops.**
+**A deterministic stop condition for AI coding agents.**
 
-Coding agents keep editing until they decide to stop. Tests and linters catch
-broken code, but they do not know whether the agent made the repo worse than
-the baseline. So loops can quietly ship new secrets, untested paths, and other
-detector-backed regressions, then report success.
+Autonomous coding loops need to answer a state question before they exit: did
+this change introduce detector-backed debt relative to the repository baseline?
+
+dxkit answers that question locally and reproducibly. It baselines existing
+findings, reruns trusted scanners at the stop boundary, and blocks only net-new
+findings with a concrete repair reason. A companion code graph gives the agent
+structural context while it works.
 
 In our loop benchmark, vanilla Claude Code-style loops stopped with net-new
 debt in **11 of 16 runs**. A prompt that told the agent to self-check still
@@ -30,7 +33,7 @@ npx vyuh-dxkit baseline create                    # grandfather today's findings
 npx vyuh-dxkit loop doctor                         # verify the gate is wired
 ```
 
-The gate runs locally with no model: same input, same verdict, in seconds.
+The stop verdict has no model in the path: same input, same verdict.
 Existing debt stays grandfathered; only net-new regressions block. Want to
 watch the flow first, on a sandbox dxkit creates? See the
 [walkthrough](#see-it-without-touching-your-repo).
