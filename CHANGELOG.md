@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-06-23
+
+### Added — `demo loop-guardrail` converts into setup
+
+After the offline walkthrough, `vyuh-dxkit demo loop-guardrail` now shows a next
+step tailored to where it was run, and offers to wire the Stop-gate in for you:
+
+- A **context-aware call to action.** A git repo with no dxkit yet gets the
+  wire-up sequence (`init --claude-loop` then `baseline create` then
+  `loop doctor`); an already-set-up repo gets just `loop doctor`; a non-repo
+  points you at your project. No more one-size-fits-all hint.
+- An **interactive opt-in**, offered only when it is safe to ask: in a git repo
+  with no dxkit yet, on a TTY. It defaults to **no**, never prompts in a piped or
+  CI run (so `npx ... | cat` and CI steps cannot block), and never touches a repo
+  that already has dxkit. On yes it runs the additive, reversible
+  `init --claude-loop` and stops there. You run `baseline create` yourself when
+  you are ready to grandfather today's debt.
+
+A `demo` still never silently changes your repo: the opt-in is the only thing
+that writes, and only with explicit consent.
+
 ## [2.17.0] - 2026-06-23
 
 ### Changed — the guardrail gate skips dependency *remediation* enrichment
