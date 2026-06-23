@@ -95,6 +95,16 @@ anything up.
 vyuh-dxkit demo loop-guardrail
 ```
 
+After the walkthrough it shows a **next step tailored to where you ran it**: a
+git repo with no dxkit yet gets the wire-up commands; an already-set-up repo gets
+`loop doctor`; a non-repo points you at your project. When you run it
+interactively (a TTY) inside a fresh git repo, it also **offers to wire the
+Stop-gate in for you** with one keystroke — that opt-in runs the additive
+`init --claude-loop` and is the only thing that writes anything. It defaults to
+**no**, never prompts in a piped or CI run, and never touches a repo that already
+has dxkit. It stops at `init`; you run `baseline create` yourself when you are
+ready to grandfather today's debt.
+
 ## `vyuh-dxkit loop doctor`
 
 Preflight for an unattended run. Verifies the loop is wired safely BEFORE

@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as readline from 'readline';
 import { execFileSync, spawnSync } from 'child_process';
 import type { GuardrailJsonPayload } from '../baseline/check-renderers';
 import { GUARDRAIL_JSON_SCHEMA } from '../baseline/check-renderers';
@@ -302,6 +303,104 @@ function printIllustration(reason: 'no-gitleaks' | 'sandbox-failed'): void {
   console.log(''); // slop-ok
 }
 
+/**
+ * The state of the directory the demo was invoked from, which decides the
+ * conversion call-to-action shown at the end:
+ *   - `initialized` — `.dxkit/` already exists here; the user is set up, so the
+ *     CTA is just "verify the wiring" rather than "set it up".
+ *   - `git`         — a git repo with no dxkit yet; the prime conversion case,
+ *     and the only state in which we offer the interactive opt-in.
+ *   - `non-git`     — not a git repo (often a throwaway `npx` dir); we can't
+ *     wire anything here, so the CTA points the user at their real project.
+ */
+export type DemoCwdState = 'initialized' | 'git' | 'non-git';
+
+/** True when `cwd` already has a `.dxkit/` directory (dxkit set up here). */
+function isDxkitInitialized(cwd: string): boolean {
+  return fs.existsSync(path.join(cwd, '.dxkit'));
+}
+
+/** True when `cwd` is inside a git work tree. Never throws. */
+function isGitRepo(cwd: string): boolean {
+  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  return r.status === 0 && (r.stdout ?? '').trim() === 'true';
+}
+
+/** Classify the invocation directory for the conversion CTA. Pure of output. */
+export function cwdState(cwd: string): DemoCwdState {
+  if (isDxkitInitialized(cwd)) return 'initialized';
+  if (isGitRepo(cwd)) return 'git';
+  return 'non-git';
+}
+
+/**
+ * The tailored "next steps" lines for a given cwd state. Pure (no I/O) so the
+ * exact guidance is unit-testable. The first line is a header; the rest are
+ * indented command hints. Commands are shown literally (the binary name, not
+ * `npx`) to match the rest of this file and dxkit's self-invocation rules.
+ */
+export function buildNextSteps(state: DemoCwdState): string[] {
+  switch (state) {
+    case 'initialized':
+      return [
+        'This repo already has dxkit set up.',
+        '  vyuh-dxkit loop doctor        verify the loop wiring is safe to run unattended',
+      ];
+    case 'git':
+      return [
+        'You are in a git repo. Wire the same Stop-gate in here:',
+        '  vyuh-dxkit init --claude-loop   add the Stop-gate hook + norms (additive, reversible)',
+        "  vyuh-dxkit baseline create      grandfather today's debt so only net-new blocks",
+        '  vyuh-dxkit loop doctor          verify it is safe to run unattended',
+      ];
+    case 'non-git':
+      return [
+        'Run the same Stop-gate in your project (it must be a git repo):',
+        '  cd <your-repo>',
+        '  npm init @vyuhlabs/dxkit -- --claude-loop   set up the loop (or: vyuh-dxkit init --claude-loop)',
+        "  vyuh-dxkit baseline create                  grandfather today's debt",
+      ];
+  }
+}
+
+/**
+ * Whether to offer the interactive "wire it up now?" opt-in. Pure so the gating
+ * is unit-testable. We only ever ask when ALL hold: we are in a git repo with
+ * no dxkit yet (`git` state), AND both stdin and stdout are TTYs. The TTY guard
+ * is essential: a piped or CI invocation (`npx ... | cat`, a CI step) must never
+ * block on a prompt. We never prompt in `initialized` (already set up) or
+ * `non-git` (nothing to wire here).
+ */
+export function shouldOfferInteractive(
+  state: DemoCwdState,
+  stdinIsTty: boolean,
+  stdoutIsTty: boolean,
+): boolean {
+  return state === 'git' && stdinIsTty === true && stdoutIsTty === true;
+}
+
+/** Ask a yes/no question on the TTY. Defaults to NO (anything but y/yes). */
+function promptYesNo(question: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`${question} [y/N] `, (answer) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+
+/** Print the tailored conversion CTA for the invocation directory. */
+function printNextSteps(state: DemoCwdState): void {
+  const [head, ...rest] = buildNextSteps(state);
+  logger.info(head);
+  for (const line of rest) logger.dim(line);
+}
+
 /** CLI entry for `vyuh-dxkit demo loop-guardrail`. */
 export async function runLoopGuardrailDemo(): Promise<void> {
   logger.header('vyuh-dxkit demo: loop guardrail');
@@ -318,8 +417,31 @@ export async function runLoopGuardrailDemo(): Promise<void> {
   } else {
     printIllustration(hasGitleaks ? 'sandbox-failed' : 'no-gitleaks');
   }
+  console.log(''); // slop-ok
 
-  logger.dim('Run the same gate on your repo:');
-  logger.dim('  npm init @vyuhlabs/dxkit -- --claude-loop --yes  →  vyuh-dxkit baseline create');
+  // Conversion: tailor the call-to-action to where the demo was run, and offer
+  // a one-keystroke opt-in ONLY when it is safe to ask (a git repo, on a TTY).
+  // A `demo` must never silently touch the user's repo, so the opt-in is the
+  // only thing that writes, it runs the additive `init`, and it defaults to NO.
+  const cwd = process.cwd();
+  const state = cwdState(cwd);
+  printNextSteps(state);
+
+  if (shouldOfferInteractive(state, !!process.stdin.isTTY, !!process.stdout.isTTY)) {
+    console.log(''); // slop-ok
+    const yes = await promptYesNo('Wire the Stop-gate into this repo now?');
+    if (yes) {
+      logger.dim('  running: vyuh-dxkit init --claude-loop --yes …');
+      const r = runCli(cwd, ['init', '--claude-loop', '--yes']);
+      console.log(''); // slop-ok
+      if (r.status === 0) {
+        logger.success('Stop-gate wired into this repo (init is additive and reversible).');
+        logger.dim("  Next: vyuh-dxkit baseline create   grandfather today's debt");
+        logger.dim('        vyuh-dxkit loop doctor        verify it is safe to run unattended');
+      } else {
+        logger.warn('init did not complete here. Run it yourself: vyuh-dxkit init --claude-loop');
+      }
+    }
+  }
   process.exit(0);
 }
