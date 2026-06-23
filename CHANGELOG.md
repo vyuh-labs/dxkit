@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-06-23
+
+### Changed — `--incremental` skips the dependency audit when no manifest changed
+
+`vyuh-dxkit guardrail check --incremental` now, in ref-based mode, **skips the
+OSV dependency-vulnerability audit entirely when the change touched no
+dependency manifest or lockfile.** This is the dominant latency win for the
+incremental path: profiling a 4-file documentation PR on this repo showed the
+dep audit accounting for ~100s of a ~119s scan (gitleaks was 0.4s; the rest of
+a secrets+deps scoped gather was sub-second) — and that audit ran twice (base
+and head) over an unchanged dependency set, so it could not surface anything
+net-new. The same end-to-end check now completes in **~7s**.
+
+The skip is **sound and verdict-preserving in ref-based mode only**: a net-new
+dependency vulnerability requires a manifest/lockfile change, and ref-based
+audits both sides against the *same* advisory snapshot, so an unchanged
+dependency is identical on both sides and never net-new. It deliberately does
+**not** apply to committed modes, where the baseline is an older snapshot and a
+newly-disclosed CVE on an unchanged dependency genuinely *is* net-new and must
+still surface. When the change *does* touch a manifest, the audit runs as before
+and net-new critical/high dependency vulnerabilities block normally.
+
+- **Manifest patterns are now a pack-declared fact** (CLAUDE.md Rule 6): each
+  language pack's `depVulns` capability declares a **required**
+  `manifestPatterns` field (its manifests + lockfiles). The skip consults the
+  active packs' union via `allDependencyManifestPatterns` /
+  `changedFilesTouchDependencyManifest`, so adding a language auto-extends the
+  skip's awareness. A pack that adds dependency auditing but omits the patterns
+  fails to compile **and** fails `test/languages-contract.test.ts`;
+  `test/recipe-playbook.test.ts` proves the union stays pack-driven via a
+  synthetic pack.
+
+Without `--incremental`, behavior is byte-identical to 2.15. `health`,
+`vulnerabilities`, and `committed-full`/`committed-sanitized` guardrail checks
+are unaffected.
+
 ## [2.15.0] - 2026-06-22
 
 ### Fixed — ref-based guardrail no longer false-blocks on `secret-hmac`
@@ -2224,8 +2260,8 @@ the .NET WinForms benchmark, the JS-heavy customer frontend). All vuln-scan + he
 
 C2.5 also surfaced a candidate drift: platform vuln-scan code-only
 `10H 7M` vs health `10H 10M`. HIGH agreed; MEDIUM differed by 3.
-Investigation via an in-process probe (`tmp/d109-probe.js` runs
-both analyzers sequentially in ONE node process, sharing the
+Investigation via an in-process probe (running both analyzers
+sequentially in ONE node process, sharing the
 dispatcher cache) showed identical aggregates: `{ high: 10,
 medium: 20 }` on both sides. **D109 is NOT a real defect** — the
 architecture is sound. The observed drift across separate
@@ -2323,8 +2359,7 @@ pre-release audit and fixed before ship.
   pattern (different attribute name) so BoM's legitimate per-package
   aggregation is unaffected.
 
-- **Recipe codification (G_v4_8 + G_v4_9 in
-  `tmp/recipe-v4-working-doc.md`)**. Two recipe-playbook
+- **Recipe codification (G_v4_8 + G_v4_9)**. Two recipe-playbook
   synthetic-pack assertions in `test/recipe-playbook.test.ts`
   (synthetic depVuln finding flows into `depBySeverity` +
   `dependencyAdvisoryUniqueCount`; cross-tool TLS-bypass collapses
@@ -2711,10 +2746,9 @@ conditions: G2-Opt2 typed-null capability (Swift consumer), G3
 BENCHMARK_LANGUAGES auto-edit (matrix > 8 packs), G7 pre-commit hook
 polish (multi-gate diagnosis cost).
 
-### Recipe v4 (working doc opened)
+### Recipe v4
 
-`tmp/recipe-v4-working-doc.md` (gitignored, ephemeral). Surfaced
-during 10k.2:
+Surfaced during 10k.2:
 
 - **G_v4_1** — scaffolder TEST_TEMPLATE conflates source-text vs
   tool-output parsers. Future contributors must re-derive the
@@ -2827,10 +2861,8 @@ at every commit in the 10-commit branch.
   validated end-to-end — the same scan that found bug #1 also
   surfaced #2 and #3 once we knew where to look.
 
-  **Forensic evidence preserved** at
-  `tmp/regression/2.4.4/dxkit/bom.json` (gitignored — 2.4.4 baseline
-  with under-reported BoM) vs `tmp/regression/2.4.5-fixed/dxkit/bom.json`
-  (full enumeration after the fix).
+  **Forensic evidence preserved** comparing the 2.4.4 baseline
+  (under-reported BoM) against the 2.4.5 fix (full enumeration).
 
 
 
@@ -2959,8 +2991,7 @@ recipe stress test #2 — fully dynamic language outside the JVM family.
 Then **2.5.0 (Phase 10i — fingerprints + exec summary across 8-language
 matrix)**. Phase 10j.2 (Swift/iOS) is **deferred to post-10rr / pre-3.0.0
 opportunistic slot** because Linux/WSL2 development can't validate the
-xcodeproj-shape majority without macOS access. See
-`tmp/phase-10k-backend-langs-roadmap.md` for the full phase plan.
+xcodeproj-shape majority without macOS access.
 
 ## [2.4.4] - 2026-04-27
 
@@ -3047,7 +3078,7 @@ output for non-Kotlin projects.
   Triage" risk scoring — caught during the regression-check pass
   on dxkit's own BoM diff. Cross-ecosystem.test.ts: 444s peak →
   174s wall-clock after Recipe v2 (-228s, 51% reduction). Closes
-  D010 (`tmp/known-defects.md`). (`src/languages/capabilities/index.ts`,
+  D010. (`src/languages/capabilities/index.ts`,
   `src/analyzers/{health,licenses,quality,security,tests}/...`)
 
 - **`JSCPD_PATTERN` was hardcoded** with `'ts,tsx,js,jsx,py,go,rs,cs'`
@@ -3246,8 +3277,7 @@ identical output before and after.
   `generic.ts`, `grep-secrets.ts`, `project-yaml.ts`, `constants.ts`,
   `tool-registry.ts`** — all per-language if-chains replaced with
   iteration over the `LANGUAGES` registry. 12 of the 14 LP-audit
-  items closed across these files (the audit doc lives in `tmp/` if
-  curious).
+  items closed across these files.
 
 ### Internal
 
