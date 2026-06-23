@@ -256,12 +256,26 @@ export async function gatherFromRef(opts: {
    *  scan. The set is part of the cache key so a scoped ref scan is never
    *  reused for a full request. */
   readonly incrementalFiles?: ReadonlyArray<string>;
+  /** Skip the Tier-2 dependency remediation enrichment on the ref side too,
+   *  matching the current side. The gate never reads `upgradePlan`, and the
+   *  enrichment runs the package manager (slow + unsafe on untrusted code). */
+  readonly skipRemediation?: boolean;
+  /** The scanned source may be untrusted: dep audits must not execute it
+   *  (e.g. Python drops `pip-audit .` project-build). Mirrors the current side. */
+  readonly untrusted?: boolean;
 }): Promise<CurrentScan> {
   const sha = resolveRefToSha(opts.cwd, opts.ref);
   if (sha === null) throw unreachableRefError(opts.cwd, opts.ref);
 
   const scope = opts.scope ?? FULL_SCOPE;
-  const key = refScanCacheKey(opts.cwd, sha, scope, opts.incrementalFiles);
+  const key = refScanCacheKey(
+    opts.cwd,
+    sha,
+    scope,
+    opts.incrementalFiles,
+    opts.skipRemediation,
+    opts.untrusted,
+  );
   const cached = readRefScanCache(opts.cwd, key);
   if (cached) return cached;
 
@@ -271,6 +285,8 @@ export async function gatherFromRef(opts: {
       verbose: opts.verbose,
       scope,
       incrementalFiles: opts.incrementalFiles,
+      skipRemediation: opts.skipRemediation,
+      untrusted: opts.untrusted,
     });
   });
   writeRefScanCache(opts.cwd, key, scan);
@@ -329,6 +345,8 @@ export function refScanCacheKey(
   sha: string,
   scope: GatherScope = FULL_SCOPE,
   incrementalFiles?: ReadonlyArray<string>,
+  skipRemediation?: boolean,
+  untrusted?: boolean,
 ): string {
   const material = [
     `fmt:${REF_SCAN_CACHE_FORMAT}`,
@@ -338,6 +356,8 @@ export function refScanCacheKey(
     `salt:${saltSignature(cwd)}`,
     `scope:${scopeSignature(scope)}`,
     `incr:${incrementalSignature(incrementalFiles)}`,
+    `remediation:${skipRemediation ? 'skip' : 'full'}`,
+    `untrusted:${untrusted ? 'yes' : 'no'}`,
   ].join('\0');
   return createHash('sha256').update(material).digest('hex').slice(0, 32); // fingerprint-helper-ok
 }

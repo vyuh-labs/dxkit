@@ -140,6 +140,15 @@ export interface RunGuardrailCheckOptions {
    * full report is unaffected.
    */
   readonly incremental?: boolean;
+  /**
+   * Treat the scanned source as untrusted (a hosted PR gate on
+   * attacker-controlled code): dependency audits must not execute it. The
+   * Python pack drops `pip-audit .` project mode (its build backend can run
+   * code) and audits only a requirements file. Exposed as
+   * `guardrail check --untrusted`; off by default (trusted local runs and the
+   * loop on your own repo keep full coverage).
+   */
+  readonly untrusted?: boolean;
 }
 
 /**
@@ -474,6 +483,13 @@ export async function runGuardrailCheck(
     verbose: options.verbose,
     scope,
     incrementalFiles,
+    // The guardrail verdict never reads dep `upgradePlan` (it's excluded from
+    // finding identity), so skip the Tier-2 remediation enrichment that runs
+    // the package manager — pure cost here, and unsafe on untrusted PR code.
+    skipRemediation: true,
+    // Hosted PR gates set --untrusted so dep audits never execute the scanned
+    // source (e.g. Python skips `pip-audit .` project-build).
+    untrusted: options.untrusted,
   });
 
   // In ref-based mode the prior side came from a detached worktree that
@@ -974,6 +990,11 @@ async function loadPriorSide(
     // to the changed files, scope the ref side to the SAME set (see the
     // `refIncrementalFiles` computation in `runGuardrailCheck`).
     incrementalFiles,
+    // Match the current side: skip the dep remediation enrichment (the gate
+    // never reads `upgradePlan`; the enrichment runs the package manager).
+    skipRemediation: true,
+    // Match the current side: never execute untrusted source during the audit.
+    untrusted: options.untrusted,
   });
   const baseline: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,

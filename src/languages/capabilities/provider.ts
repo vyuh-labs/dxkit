@@ -87,8 +87,35 @@ export interface CapabilityProvider<T extends CapabilityEnvelope> {
  * `gather()` is preserved for legacy/dispatcher consumers and isn't
  * invoked on the hot path.
  */
+/**
+ * Options that adjust how a dependency audit is gathered.
+ *
+ * `skipRemediation` drops the Tier-2 *remediation* enrichment — the structured
+ * `upgradePlan` produced by guided-remediation tools (e.g. `osv-scanner fix`,
+ * which resolves the dependency tree by running the package manager). The
+ * guardrail/gate path sets this: the block decision and finding identity never
+ * read `upgradePlan` (it's excluded from the fingerprint), so computing it there
+ * is pure cost — and for the TS pack it means running `npm install` on the
+ * scanned code, which is both slow and unsafe on an untrusted PR. Reports
+ * (health / vulnerabilities / bom) leave it unset and keep the full enrichment.
+ */
+export interface DepVulnGatherOptions {
+  readonly skipRemediation?: boolean;
+  /**
+   * The scanned source is possibly attacker-controlled (e.g. a hosted PR
+   * gate). Dep audits MUST NOT execute it — no project builds, no install
+   * hooks. The Python pack drops `pip-audit .` project mode (its PEP 517
+   * backend can run arbitrary code) and audits only a requirements file, or
+   * reports unavailable. npm-audit and osv-scanner `scan` are already
+   * read-only, so the TS/Java/etc. paths are unaffected. Set by the gate via
+   * `guardrail check --untrusted`; trusted local runs (reports, the loop on
+   * your own repo) leave it unset and keep full coverage.
+   */
+  readonly untrusted?: boolean;
+}
+
 export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
-  gatherOutcome(cwd: string): Promise<DepVulnGatherOutcome>;
+  gatherOutcome(cwd: string, opts?: DepVulnGatherOptions): Promise<DepVulnGatherOutcome>;
   /**
    * Filenames / patterns that identify this pack's dependency manifests and
    * lockfiles (e.g. `package.json`, `package-lock.json`, `*.csproj`,

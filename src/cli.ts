@@ -175,8 +175,8 @@ function printUsage(): void {
                                  per-kind counts. --kind drills into one kind. --json
                                  emits a schema-banner-wrapped payload.
     vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
-                               [--changed-only] [--incremental] [--policy <path>]
-                               [--mode=<mode>] [--ref=<ref>]
+                               [--changed-only] [--incremental] [--untrusted]
+                               [--policy <path>] [--mode=<mode>] [--ref=<ref>]
                                [--json | --markdown]
                                  Diff current scan against the named baseline; block on net-new
                                  regressions per brownfield policy. Exit code 1 when blocked.
@@ -187,6 +187,9 @@ function printUsage(): void {
                                  dependency-vuln audit entirely when no dependency manifest changed
                                  (a net-new dep vuln requires one). Same verdict, much faster.
                                  Falls back to a full scan on any doubt.
+                                 --untrusted treats the scanned source as attacker-controlled (a
+                                 hosted PR gate): dependency audits never execute it (e.g. Python
+                                 skips pip-audit project-build). Trusted local runs omit it.
     vyuh-dxkit hooks activate [path]
                                  Idempotently set core.hooksPath = .githooks. Wired into
                                  package.json postinstall by 'init --with-hooks' so every
@@ -323,6 +326,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-coverage': { type: 'boolean', default: false },
       'changed-only': { type: 'boolean', default: false },
       incremental: { type: 'boolean', default: false },
+      untrusted: { type: 'boolean', default: false },
       baseline: { type: 'string' },
       policy: { type: 'string' },
       markdown: { type: 'boolean', default: false },
@@ -2000,6 +2004,7 @@ export async function run(argv: string[]): Promise<void> {
           baselinePath: values.baseline as string | undefined,
           changedOnly: !!values['changed-only'],
           incremental: !!values.incremental,
+          untrusted: !!values.untrusted,
           policyPath: values.policy as string | undefined,
           verbose: !!values.verbose,
           cliMode: cliMode ?? undefined,
