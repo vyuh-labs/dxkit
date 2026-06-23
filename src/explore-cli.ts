@@ -3,7 +3,7 @@
  * The CLI (`src/cli.ts`) routes `case 'explore'` here; this module
  * dispatches the inner subcommand to the appropriate handler.
  *
- * Six subcommands per the Sprint 0 design (`tmp/2.7-explore-cli-design.md`):
+ * Six subcommands:
  *   - entry-points  — what does this repo do?
  *   - hot-files     — what's central? (top files by call in-degree)
  *   - file <path>   — drill into one file's neighborhood

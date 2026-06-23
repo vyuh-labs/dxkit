@@ -149,9 +149,8 @@ Today's shape: one directory under `src/analyzers/<name>/` with `types.ts`,
 
 ### Adding a new language
 
-Adding a language follows a **7-file recipe** (per Phase 10i.0-LP — see
-the LP roadmap docs in `tmp/` if curious about the architectural
-journey). The scaffolder writes most of it for you:
+Adding a language follows a **7-file recipe**. The scaffolder writes
+most of it for you:
 
 ```bash
 npm run new-lang kotlin "Kotlin (Android)"
