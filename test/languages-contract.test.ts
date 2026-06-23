@@ -260,6 +260,21 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
+  it('depVulns capability declares non-empty manifestPatterns (2.16)', () => {
+    const dep = lang.capabilities?.depVulns;
+    if (!dep) return; // a pack without dependency auditing is exempt
+    expect(
+      Array.isArray(dep.manifestPatterns) && dep.manifestPatterns.length > 0,
+      `${lang.id}: depVulns capability must declare non-empty manifestPatterns — the ` +
+        `incremental ref-based dep-audit skip cannot tell whether a PR touched this ` +
+        `pack's dependencies without them (CLAUDE.md Rule 6). Fill in the scaffolded list.`,
+    ).toBe(true);
+    for (const p of dep.manifestPatterns) {
+      expect(typeof p).toBe('string');
+      expect(p.length).toBeGreaterThan(0);
+    }
+  });
+
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);

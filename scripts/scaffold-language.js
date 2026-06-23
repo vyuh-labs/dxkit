@@ -314,6 +314,13 @@ export const ${id}: LanguageSupport = {
 
   // TODO(${id}): capability providers — see existing packs for examples.
   // capabilities: { depVulns, lint, coverage, imports, testFramework, licenses }
+  //
+  // If you add a \`depVulns\` provider, it MUST declare \`manifestPatterns\`
+  // (its dependency manifests + lockfiles, e.g. ['package.json',
+  // 'package-lock.json']). This is required by the DepVulnsProvider type AND
+  // asserted non-empty by test/languages-contract.test.ts — the incremental
+  // ref-based dep-audit skip needs it to tell whether a PR touched this pack's
+  // dependencies (CLAUDE.md Rule 6).
   capabilities: {},
 
   // TODO(${id}): exported-symbol detection reliability for the graphify

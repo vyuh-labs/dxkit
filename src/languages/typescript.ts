@@ -468,6 +468,13 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
 
 const tsDepVulnsProvider: DepVulnsProvider = {
   source: 'typescript',
+  manifestPatterns: [
+    'package.json',
+    'package-lock.json',
+    'npm-shrinkwrap.json',
+    'yarn.lock',
+    'pnpm-lock.yaml',
+  ],
   async gather(cwd) {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

@@ -89,6 +89,23 @@ export interface CapabilityProvider<T extends CapabilityEnvelope> {
  */
 export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
   gatherOutcome(cwd: string): Promise<DepVulnGatherOutcome>;
+  /**
+   * Filenames / patterns that identify this pack's dependency manifests and
+   * lockfiles (e.g. `package.json`, `package-lock.json`, `*.csproj`,
+   * `gradle/verification-metadata.xml`). Declared here, next to the audit it
+   * gates, so the fact lives in one place per language (CLAUDE.md Rule 6).
+   *
+   * Matched by the registry helper `changedFilesTouchDependencyManifest`:
+   * a bare name matches any file with that basename anywhere in the tree;
+   * a `*` is a glob on the basename; a multi-segment pattern matches a path
+   * suffix. Used to decide, in incremental ref-based mode, whether a PR could
+   * have introduced a net-new dependency vulnerability — if no changed file
+   * matches any active pack's pattern, the OSV audit is skipped (sound: a
+   * net-new dep vuln requires a manifest/lockfile change, and ref-based
+   * audits both sides against the same OSV snapshot, so an unchanged dep is
+   * identical on both sides and never net-new).
+   */
+  readonly manifestPatterns: readonly string[];
 }
 
 /**

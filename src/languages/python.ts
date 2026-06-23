@@ -503,6 +503,15 @@ async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
 
 const pyDepVulnsProvider: DepVulnsProvider = {
   source: 'python',
+  manifestPatterns: [
+    'pyproject.toml',
+    'setup.py',
+    'setup.cfg',
+    'requirements*.txt',
+    'Pipfile',
+    'Pipfile.lock',
+    'poetry.lock',
+  ],
   async gather(cwd) {
     const outcome = await gatherPyDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

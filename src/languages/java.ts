@@ -398,6 +398,15 @@ const JAVA_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-m
 
 const javaDepVulnsProvider: DepVulnsProvider = {
   source: 'java',
+  // osv-scanner audits JAVA_DEP_MANIFESTS; the build scripts carry the actual
+  // dependency declarations, so include them for the incremental skip check.
+  manifestPatterns: [
+    ...JAVA_DEP_MANIFESTS,
+    'build.gradle',
+    'build.gradle.kts',
+    'settings.gradle',
+    'settings.gradle.kts',
+  ],
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
     return outcome.kind === 'success' ? outcome.envelope : null;

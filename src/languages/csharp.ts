@@ -923,6 +923,13 @@ function hasCsharpProject(cwd: string): boolean {
 
 const csharpDepVulnsProvider: DepVulnsProvider = {
   source: 'csharp',
+  manifestPatterns: [
+    '*.csproj',
+    '*.sln',
+    'packages.lock.json',
+    'packages.config',
+    'Directory.Packages.props',
+  ],
   async gather(cwd) {
     const outcome = await gatherCsharpDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

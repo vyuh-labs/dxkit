@@ -283,6 +283,16 @@ const KOTLIN_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification
 
 const kotlinDepVulnsProvider: DepVulnsProvider = {
   source: 'kotlin',
+  // The osv-scanner audit keys off KOTLIN_DEP_MANIFESTS, but a Gradle
+  // dependency change shows up in the build scripts too — include them so the
+  // incremental skip never misses a dep edit.
+  manifestPatterns: [
+    ...KOTLIN_DEP_MANIFESTS,
+    'build.gradle',
+    'build.gradle.kts',
+    'settings.gradle',
+    'settings.gradle.kts',
+  ],
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
       cwd,

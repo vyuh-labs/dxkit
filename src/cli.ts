@@ -181,9 +181,12 @@ function printUsage(): void {
                                  Diff current scan against the named baseline; block on net-new
                                  regressions per brownfield policy. Exit code 1 when blocked.
                                  --mode/--ref mirror baseline create (override policy.json).
-                                 --incremental scopes semgrep to changed files (both sides in
-                                 ref-based mode) so the check scales with PR size, not repo size;
-                                 same verdict, much faster. Falls back to a full scan on any doubt.
+                                 --incremental scopes the scan to the change so the check scales
+                                 with PR size, not repo size: it scopes semgrep to changed files
+                                 (both sides in ref-based mode) AND, in ref-based mode, skips the
+                                 dependency-vuln audit entirely when no dependency manifest changed
+                                 (a net-new dep vuln requires one). Same verdict, much faster.
+                                 Falls back to a full scan on any doubt.
     vyuh-dxkit hooks activate [path]
                                  Idempotently set core.hooksPath = .githooks. Wired into
                                  package.json postinstall by 'init --with-hooks' so every

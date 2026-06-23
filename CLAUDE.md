@@ -48,12 +48,25 @@ Our code only stitches tools together and computes scores.
 
 Every language-specific concern (detection, tool list, semgrep rulesets,
 coverage parsing, import extraction/resolution, metric gathering, lint
-severity mapping, init-scaffold metadata) lives in a single
+severity mapping, dependency-manifest patterns, init-scaffold metadata)
+lives in a single
 `LanguageSupport` implementation in
 `src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby}.ts`. Dispatch everywhere
 goes through `detectActiveLanguages()` / `activeLanguagesFromStack()` /
 `activeLanguagesFromFlags()` / `getLanguage()` — never per-language
 `if (stack.languages.python)` chains in report code.
+
+Dependency-manifest patterns are a worked example: each pack's `depVulns`
+capability declares its manifests + lockfiles via the **required**
+`manifestPatterns` field on `DepVulnsProvider`, consumed through
+`allDependencyManifestPatterns()` / `changedFilesTouchDependencyManifest()`
+to drive the incremental ref-based dep-audit skip in
+`runGuardrailCheck` (skip the OSV audit when a PR changed no manifest — a
+net-new dep vuln requires one). A new pack that adds dep auditing but omits
+the patterns **fails to compile** (required field) and **fails
+`test/languages-contract.test.ts`** (non-empty assertion);
+`test/recipe-playbook.test.ts` proves the union stays pack-driven via a
+synthetic 6th pack.
 
 Reports, analyzers, generators, and tool registries **must not** grow
 language-specific branches. If you find yourself writing one, the right
@@ -628,8 +641,8 @@ Sequence for a new release:
    - "Is each commit independently meaningful, or are they WIP toward
      one outcome?" → if independent, rebase. If WIP, squash.
    - "Do any commit SHAs get referenced from elsewhere
-     (`tmp/recipe-vN-working-doc.md`, memory pointers, future
-     checkpoints)?" → if yes, rebase to preserve them.
+     (working docs, memory pointers, future checkpoints)?" → if yes,
+     rebase to preserve them.
 
 4. In the PR (or a follow-up), bump `package.json` + `package-lock.json` + add a `CHANGELOG.md` entry for the new version.
 5. After the release commit is on `main` and CI is green there:
