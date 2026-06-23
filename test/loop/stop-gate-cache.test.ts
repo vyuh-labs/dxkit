@@ -160,6 +160,17 @@ describe('ref-scan cache', () => {
     expect(refScanCacheKey(repo, 'sha-aaa')).not.toBe(refScanCacheKey(repo, 'sha-bbb'));
   });
 
+  it('incremental changed-file set is part of the key (scoped never reused for full or a different set)', () => {
+    const full = refScanCacheKey(repo, 'sha-aaa');
+    const incrA = refScanCacheKey(repo, 'sha-aaa', undefined, ['a.ts', 'b.ts']);
+    const incrB = refScanCacheKey(repo, 'sha-aaa', undefined, ['c.ts']);
+    // A scoped scan must not collide with a full scan or a different set.
+    expect(incrA).not.toBe(full);
+    expect(incrA).not.toBe(incrB);
+    // ...but is order-independent and stable for the same set.
+    expect(refScanCacheKey(repo, 'sha-aaa', undefined, ['b.ts', 'a.ts'])).toBe(incrA);
+  });
+
   it('write then read returns the cached scan', () => {
     const key = refScanCacheKey(repo, 'sha-aaa');
     writeRefScanCache(repo, key, minimalScan);

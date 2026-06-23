@@ -247,17 +247,31 @@ export async function gatherFromRef(opts: {
   /** Scope the ref-side gather identically to the current side so the
    *  cross-run diff stays balanced. Defaults to `FULL_SCOPE`. */
   readonly scope?: GatherScope;
+  /** Incremental scanning (opt 3): scope the ref side's semgrep to just
+   *  these changed files, exactly like the current side. In ref-based mode
+   *  the changed set is fully computable (`diff(ref, HEAD)`), so scoping
+   *  BOTH sides to the same files keeps the cross-run diff symmetric and
+   *  sound for the net-new gate (semgrep is intraprocedural — a net-new
+   *  code finding can only appear in a changed file). Omit for a full ref
+   *  scan. The set is part of the cache key so a scoped ref scan is never
+   *  reused for a full request. */
+  readonly incrementalFiles?: ReadonlyArray<string>;
 }): Promise<CurrentScan> {
   const sha = resolveRefToSha(opts.cwd, opts.ref);
   if (sha === null) throw unreachableRefError(opts.cwd, opts.ref);
 
   const scope = opts.scope ?? FULL_SCOPE;
-  const key = refScanCacheKey(opts.cwd, sha, scope);
+  const key = refScanCacheKey(opts.cwd, sha, scope, opts.incrementalFiles);
   const cached = readRefScanCache(opts.cwd, key);
   if (cached) return cached;
 
   const scan = await withRefWorktree({ cwd: opts.cwd, ref: opts.ref }, async (worktreePath) => {
-    return gatherCurrentScan({ cwd: worktreePath, verbose: opts.verbose, scope });
+    return gatherCurrentScan({
+      cwd: worktreePath,
+      verbose: opts.verbose,
+      scope,
+      incrementalFiles: opts.incrementalFiles,
+    });
   });
   writeRefScanCache(opts.cwd, key, scan);
   return scan;
@@ -295,10 +309,27 @@ function saltSignature(cwd: string): string {
   }
 }
 
+/** Stable signature of an incremental changed-file set (order-independent),
+ *  or a sentinel for a full (non-incremental) scan. Part of the cache key so
+ *  a scan scoped to one changed set is never reused for a different set or a
+ *  full request. */
+function incrementalSignature(incrementalFiles?: ReadonlyArray<string>): string {
+  if (incrementalFiles === undefined) return 'full';
+  if (incrementalFiles.length === 0) return 'incremental:empty';
+  const joined = [...incrementalFiles].sort().join('\n');
+  return `incremental:${createHash('sha256').update(joined).digest('hex').slice(0, 16)}`; // fingerprint-helper-ok
+}
+
 /** Deterministic cache key over every input that can change a ref scan.
  *  Includes the gather scope so a scoped ref scan is never reused for a
- *  full request (or vice versa). Exported for testing. */
-export function refScanCacheKey(cwd: string, sha: string, scope: GatherScope = FULL_SCOPE): string {
+ *  full request (or vice versa), and the incremental changed-file set so a
+ *  symmetric ref-based incremental scan keys distinctly. Exported for testing. */
+export function refScanCacheKey(
+  cwd: string,
+  sha: string,
+  scope: GatherScope = FULL_SCOPE,
+  incrementalFiles?: ReadonlyArray<string>,
+): string {
   const material = [
     `fmt:${REF_SCAN_CACHE_FORMAT}`,
     `sha:${sha}`,
@@ -306,6 +337,7 @@ export function refScanCacheKey(cwd: string, sha: string, scope: GatherScope = F
     `scheme:${CURRENT_IDENTITY_SCHEME}`,
     `salt:${saltSignature(cwd)}`,
     `scope:${scopeSignature(scope)}`,
+    `incr:${incrementalSignature(incrementalFiles)}`,
   ].join('\0');
   return createHash('sha256').update(material).digest('hex').slice(0, 32); // fingerprint-helper-ok
 }

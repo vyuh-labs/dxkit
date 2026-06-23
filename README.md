@@ -1,14 +1,16 @@
 # dxkit
 
-**A deterministic stop condition for AI coding agents.**
+**A deterministic stop condition and code-graph context layer for AI coding agents.**
 
-Autonomous coding loops need to answer a state question before they exit: did
-this change introduce detector-backed debt relative to the repository baseline?
+Autonomous coding loops face two control problems: orienting in the code while
+they make a change, and deciding whether that change made the repository worse
+before they stop.
 
-dxkit answers that question locally and reproducibly. It baselines existing
-findings, reruns trusted scanners at the stop boundary, and blocks only net-new
-findings with a concrete repair reason. A companion code graph gives the agent
-structural context while it works.
+dxkit addresses both. While the agent works, it provides a code graph of
+callers, callees, blast radius, and the files a change touches. Then, when the
+agent tries to stop, dxkit baselines existing findings, reruns trusted checks,
+and blocks only net-new detector-backed regressions with a concrete repair
+reason.
 
 In our loop benchmark, vanilla Claude Code-style loops stopped with net-new
 debt in **11 of 16 runs**. A prompt that told the agent to self-check still
@@ -23,9 +25,10 @@ finding, and the agent repaired before stopping clean.
 
 dxkit does not reinvent detection. It runs trusted open source scanners
 (gitleaks, Semgrep, OSV, npm audit, and more), and it can ingest results from
-Snyk and CodeQL. What it adds is the piece those tools were not built for: a
-deterministic check, on every stop, of whether this change introduced a new
-finding compared with a baseline.
+Snyk and CodeQL. What dxkit adds is the agent-loop layer around those tools: a
+per-stop, baseline-relative verdict of whether this change introduced a new
+finding, returned to the agent with the exact repair reason while the loop is
+still warm.
 
 ```bash
 npm init @vyuhlabs/dxkit -- --claude-loop --yes   # install dxkit + register the Claude Code Stop hook
@@ -36,9 +39,9 @@ npx vyuh-dxkit loop doctor                         # verify the gate is wired
 The stop verdict has no model in the path: same input, same verdict.
 Existing debt stays grandfathered; only net-new regressions block. Want to
 watch the flow first, on a sandbox dxkit creates? See the
-[walkthrough](#see-it-without-touching-your-repo).
+[fixture gate](#run-a-local-fixture-gate).
 
-[Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo)
+[Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo) · [Run the fixture gate](#run-a-local-fixture-gate)
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
@@ -51,24 +54,27 @@ watch the flow first, on a sandbox dxkit creates? See the
 
 ## The problem: loops do not know when they made things worse
 
-An autonomous loop runs until the agent decides it is done. The only checks in
-that loop today are tests and linters, and those catch broken code, not
-regressed code. There is no notion of "worse than the baseline." So an agent
-can add a feature, leave a new untested path or a hardcoded credential behind,
-run the tests, see green, and declare success.
+An autonomous loop runs until the agent decides it is done. The common checks in
+that loop (tests, linters, scanners, CI-style commands) usually answer whether
+something is broken or flagged. They do not, by themselves, maintain a
+brownfield baseline and answer the loop-level question: did this change
+introduce something net-new? So an agent can add a feature, leave a new untested
+path or a hardcoded credential behind, run the tests, see green, and declare
+success.
 
 In our benchmark this happened in most vanilla runs, and telling the agent to
 check its own work only helped a little.
 
 ## What dxkit does
 
-1. **Baseline today's debt.** `baseline create` records every current finding,
-   so pre-existing issues are grandfathered and never block.
-2. **Run a deterministic Stop-gate on every stop.** A Claude Code Stop hook
-   re-runs the guardrail against that baseline. Same input gives the same
-   verdict in seconds, with no model in the loop. The stop decision itself runs
-   locally and calls no model; individual detectors keep their own requirements.
-3. **Feed net-new findings back to the agent.** If the change introduced a
+1. **Build a structural code graph.** dxkit gives the agent callers, callees,
+   blast radius, and relevant files so it can orient before editing.
+2. **Baseline today's debt.** `baseline create` records current findings, so
+   pre-existing issues are grandfathered and never block.
+3. **Run a deterministic Stop-gate on every stop.** A Claude Code Stop hook
+   reruns the guardrail against that baseline. Same input gives the same
+   verdict; no model decides whether the gate passes.
+4. **Feed net-new findings back to the agent.** If the change introduced a
    finding, the gate blocks the stop and hands the agent the exact finding to
    fix: do not refresh the baseline, do not touch unrelated debt, fix what this
    branch introduced. The loop stops only when clean.
@@ -102,7 +108,7 @@ findings it can observe. You still need tests, review, scanners, and judgment.
 
 dxkit is an orchestration and enforcement layer, not another scanner. It runs
 established open source tools and treats their output as one stream. Which tools
-run depends on the languages in your repo — dxkit covers **8 ecosystems**
+run depends on the languages in your repo. dxkit covers **8 ecosystems**
 (TypeScript / JavaScript, Python, Go, Rust, C# / .NET, Java, Kotlin, Ruby).
 
 Universal, on every repo:
@@ -112,8 +118,8 @@ Universal, on every repo:
 - dependency advisories: OSV.dev
 - size, duplication, and the code graph: cloc, jscpd, graphify
 
-Per language, dxkit adds that ecosystem's own linter and audit tool — for
-example npm audit + ESLint (JS / TS), pip-audit + ruff (Python), govulncheck +
+Per language, dxkit adds that ecosystem's own linter and audit tool. For
+example, npm audit + ESLint (JS / TS), pip-audit + ruff (Python), govulncheck +
 golangci-lint (Go), cargo-audit + clippy (Rust), `dotnet list --vulnerable`
 (C#), osv-scanner + PMD (Java), osv-scanner + detekt (Kotlin), and
 bundler-audit + RuboCop (Ruby). The full per-language matrix is in **Per-pack
@@ -134,7 +140,7 @@ and inside the agent loop.
 ## Try it on your repo
 
 The Stop hook runs dxkit on every stop, so install dxkit into the repo. This
-one command adds it as a devDependency and registers the hook additively — your
+one command adds it as a devDependency and registers the hook additively, so your
 existing `.claude` settings are preserved:
 
 ```bash
@@ -148,9 +154,9 @@ npx vyuh-dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired
 When the agent tries to stop, dxkit runs the net-new gate against the baseline.
 Existing findings are grandfathered; only findings this change introduced block.
 
-## See it without touching your repo
+## Run a local fixture gate
 
-Want the flow first, on a sandbox dxkit creates?
+Want to see the Stop-gate before installing dxkit into your repo?
 
 ```bash
 npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
@@ -161,7 +167,7 @@ net-new secret → BLOCK → repair → CLEAN, then it tears the fixture down. N
 key and no Claude Code, and your own repo is never touched. It needs gitleaks
 installed and takes about 20 seconds; without gitleaks it shows a clearly
 labelled illustration instead. (It does a one-time `npx` download, so it is not
-fully offline — the gate itself is.)
+fully offline, though the gate itself is.)
 
 ### Presets: what blocks the loop
 
@@ -218,13 +224,13 @@ predictable.
 | **Deterministic identity** | false "net-new" findings under churn | caught **all 3** seeded regressions with **0/2** false blocks on clean edits; **0 false net-new** on tested line shifts and renames |
 | **Graph context**          | large-repo exploration tails         | median roughly tied, but large-repo mean tokens **30% lower**, worst case **57% lower**, variance roughly halved                    |
 
-**Fixing in the loop is cheaper than fixing later.** A fourth arm of the
+**Deferral has a re-orientation cost.** A fourth arm of the
 loop-safety study measured the "detect on CI, fix later" model: on the test-gap
 task, deferring a net-new finding to a cold session cost **~49% more in
 equivalent cost** and **~51% more turns** than repairing it inside the warm loop,
 because the cold fixer has to re-orient in a context it no longer holds. (The
-secret-task premium pointed the same way but was weak — mean +19%, median
-slightly negative — so we lean on the robust test-gap result.) So the gate is not
+secret-task premium pointed the same way but was weak (mean +19%, median
+slightly negative), so we lean on the robust test-gap result.) So the gate is not
 just safer than deferring, it is plausibly cheaper too.
 
 **And the gate is fast enough to run on every stop.** dxkit 2.14.0 scopes the
@@ -285,7 +291,7 @@ cloc, jscpd, graphify).
 | Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                    |
 
 <details>
-<summary><strong>Per-pack capabilities</strong> — coverage import, import-graph, severity tiers (click to expand)</summary>
+<summary><strong>Per-pack capabilities</strong>: coverage import, import-graph, severity tiers (click to expand)</summary>
 
 | Language | Detection                             | Coverage import     | Import-graph                                 | Native tools                        | Lint severity tiers    | Vuln severity tiers                           |
 | -------- | ------------------------------------- | ------------------- | -------------------------------------------- | ----------------------------------- | ---------------------- | --------------------------------------------- |
@@ -312,8 +318,8 @@ so it does not inflate the Code Quality score.
 
 ## Reproduce the deterministic tier
 
-The deterministic results — the net-new gate decision and the finding-identity
-matcher — reproduce offline with no API key, so you do not have to trust our
+The deterministic results (the net-new gate decision and the finding-identity
+matcher) reproduce offline with no API key, so you do not have to trust our
 numbers. These harnesses live in `benchmarks/`:
 
 ```bash

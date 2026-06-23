@@ -135,7 +135,7 @@ function applyFailOnSeverity(
 
 function printUsage(): void {
   console.log(`
-  ${logger.bold('vyuh-dxkit')} v${VERSION} — a Stop-gate for autonomous coding loops that blocks net-new findings
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
 
   ${logger.bold('Usage:')}
     vyuh-dxkit init [options]    Install dxkit agent DX in this repo
@@ -175,12 +175,15 @@ function printUsage(): void {
                                  per-kind counts. --kind drills into one kind. --json
                                  emits a schema-banner-wrapped payload.
     vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
-                               [--changed-only] [--policy <path>]
+                               [--changed-only] [--incremental] [--policy <path>]
                                [--mode=<mode>] [--ref=<ref>]
                                [--json | --markdown]
                                  Diff current scan against the named baseline; block on net-new
                                  regressions per brownfield policy. Exit code 1 when blocked.
                                  --mode/--ref mirror baseline create (override policy.json).
+                                 --incremental scopes semgrep to changed files (both sides in
+                                 ref-based mode) so the check scales with PR size, not repo size;
+                                 same verdict, much faster. Falls back to a full scan on any doubt.
     vyuh-dxkit hooks activate [path]
                                  Idempotently set core.hooksPath = .githooks. Wired into
                                  package.json postinstall by 'init --with-hooks' so every
@@ -316,6 +319,7 @@ export async function run(argv: string[]): Promise<void> {
       'no-fail-fast': { type: 'boolean', default: false },
       'with-coverage': { type: 'boolean', default: false },
       'changed-only': { type: 'boolean', default: false },
+      incremental: { type: 'boolean', default: false },
       baseline: { type: 'string' },
       policy: { type: 'string' },
       markdown: { type: 'boolean', default: false },
@@ -1992,6 +1996,7 @@ export async function run(argv: string[]): Promise<void> {
           name: values.name as string | undefined,
           baselinePath: values.baseline as string | undefined,
           changedOnly: !!values['changed-only'],
+          incremental: !!values.incremental,
           policyPath: values.policy as string | undefined,
           verbose: !!values.verbose,
           cliMode: cliMode ?? undefined,

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-06-22
+
+### Fixed — ref-based guardrail no longer false-blocks on `secret-hmac`
+
+In ref-based mode (the default for public repos), dxkit mints a locator-less
+`secret-hmac` companion alongside each located `secret` for cross-file
+relocation matching. On a fresh or shallow checkout the two sides of the diff
+can derive different salts, so the companions never match and read as net-new —
+a **false block**, even though the located `secret` twins match correctly.
+`secret-hmac` now joins `duplication` and `test-gap` in the set of kinds
+excluded from the ref-based diff (they can't be gathered comparably across a
+detached worktree). The located `secret` kind still gates net-new credentials;
+only the redundant companion is dropped. **Committed modes are unaffected.**
+
+### Added — opt-in `--incremental` for `guardrail check`
+
+`vyuh-dxkit guardrail check --incremental` scopes the gather to the analyzers
+the active policy can actually block on (reusing the loop Stop-gate's
+`scopeForPolicy`) and, in ref-based mode, scopes semgrep to the changed files
+on both sides. Same verdict, far less work — the check scales with PR size
+rather than repo size. **Opt-in and verdict-preserving:** without the flag,
+behavior is byte-identical to 2.14; it falls back to a full scan whenever the
+changed set can't be computed completely. The CLI flag exposes what the loop
+Stop-gate already did internally, so a ref-based CI guardrail (or a hosted
+PR-gate) can run the fast path too.
+
+### Changed — positioning: two pillars (context + gate)
+
+- README hero, package description, and `--help` tagline now lead with both
+  pillars: **"a deterministic stop condition and code-graph context layer for
+  AI coding agents."** The README opening + "What dxkit does" foreground the
+  code graph (callers, callees, blast radius) the agent uses *while making a
+  change*, then the deterministic stop-gate that blocks net-new regressions
+  *before it exits* — so the graph is no longer undersold as a footnote.
+
 ## [2.14.0] - 2026-06-22
 
 ### Changed — the loop Stop-gate gathers far less work per stop

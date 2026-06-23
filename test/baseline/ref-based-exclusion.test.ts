@@ -34,6 +34,26 @@ describe('partitionForRefBasedDiff', () => {
     expect(out.diffableCurrent.map((x) => x.tag)).toEqual(['c1']);
   });
 
+  it('ref-based mode: drops secret-hmac too (salt non-comparable across worktree), keeps located secret', () => {
+    // secret-hmac is the locator-less companion to each `secret`. On a fresh/
+    // shallow ref worktree the two sides can derive different salts, so the
+    // HMAC companions never match and read as net-new — a FALSE block. The
+    // located `secret` still gates the credential; the companion is dropped.
+    const prior = [f('secret', 'p1'), f('secret-hmac', 'p2')];
+    const current = [f('secret', 'c1'), f('secret-hmac', 'c2')];
+    const out = partitionForRefBasedDiff(prior, current, true);
+    expect(out.diffablePrior.map((x) => x.tag)).toEqual(['p1']);
+    expect(out.diffableCurrent.map((x) => x.tag)).toEqual(['c1']);
+  });
+
+  it('committed mode: secret-hmac is NOT dropped (salt is consistent there)', () => {
+    const prior = [f('secret', 'p1'), f('secret-hmac', 'p2')];
+    const current = [f('secret', 'c1'), f('secret-hmac', 'c2')];
+    const out = partitionForRefBasedDiff(prior, current, false);
+    expect(out.diffablePrior.map((x) => x.tag)).toEqual(['p1', 'p2']);
+    expect(out.diffableCurrent.map((x) => x.tag)).toEqual(['c1', 'c2']);
+  });
+
   it('ref-based mode: a worktree-unreliable kind on BOTH sides never reaches the diff (the bug it fixes)', () => {
     // The original bug: 15 duplication on current, 0 on prior (worktree
     // produced none) → all 15 flagged net-new. After exclusion neither side

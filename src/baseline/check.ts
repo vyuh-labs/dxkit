@@ -58,7 +58,7 @@ import type { ResolvedMode } from './modes';
 import { classify, resolvePolicy } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
 import { gatherFromRef } from './ref-baseline';
-import { type GatherScope, FULL_SCOPE } from './gather-scope';
+import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
@@ -122,14 +122,21 @@ export interface RunGuardrailCheckOptions {
    */
   readonly scope?: GatherScope;
   /**
-   * Incremental scanning (opt 3): when true, the CURRENT side's semgrep
-   * scans only files that changed vs the baseline's commit, instead of the
-   * whole tree. Sound for a net-new gate (semgrep is intraprocedural — a
-   * net-new code finding only appears in a changed file). The ref/baseline
-   * side stays full so it covers every file. Falls back to a full scan when
-   * the changed set can't be computed completely. Opt-in: only the loop
-   * Stop-gate sets it; CI / `baseline check` leave it false so their full
-   * report is unaffected.
+   * Incremental scanning (opt 3): when true, semgrep scans only files that
+   * changed vs the comparison base, instead of the whole tree. Sound for a
+   * net-new gate (semgrep is intraprocedural — a net-new code finding only
+   * appears in a changed file). Scope by mode:
+   *   - committed: only the CURRENT side is scoped (the prior side is the
+   *     on-disk, already-full baseline), against the baseline's commit.
+   *   - ref-based: the changed set is fully computable (`diff(ref, HEAD)`),
+   *     so BOTH the ref side and the current side are scoped to the SAME
+   *     set, keeping the cross-run diff symmetric. This makes a ref-based
+   *     guardrail (CI, pre-push, the hosted PR gate) scale with PR size
+   *     rather than repo size.
+   * Falls back to a full scan when the changed set can't be computed
+   * completely. Opt-in: the loop Stop-gate sets it, and `guardrail check
+   * --incremental` exposes it on the CLI; otherwise it stays false so the
+   * full report is unaffected.
    */
   readonly incremental?: boolean;
 }
@@ -257,10 +264,24 @@ export interface GuardrailCheckResult {
  * differed only here (duplication 15→0, test-gap 44→12). Excluded from
  * both sides in ref-based mode; committed-full (which captures them once
  * from a fully-provisioned tree) is the mode that gates them. (D-G4.)
+ *
+ * `secret-hmac` joins them for a different reason: it is an internal,
+ * locator-less companion to each located `secret`, identified by a
+ * salt-based HMAC of the secret value. The salt resolves from
+ * `.dxkit/salt` / `DXKIT_BASELINE_SALT` / root-SHA, and on a fresh or
+ * shallow checkout the two sides can derive different salts (the ref
+ * worktree and the working tree need not share the salt source), so the
+ * HMACs don't match across the diff and every companion reads as net-new —
+ * a FALSE block, even though the located `secret` twins match fine. The
+ * located `secret` kind still gates net-new credentials; the companion
+ * exists only for cross-file relocation matching, which a committed salt
+ * provides and ref-based does not. So it is matcher-assist only here and is
+ * excluded from the ref-based diff.
  */
 const REF_UNRELIABLE_KINDS: ReadonlySet<BaselineEntry['kind']> = new Set([
   'duplication',
   'test-gap',
+  'secret-hmac',
 ]);
 
 /**
@@ -350,12 +371,40 @@ export async function runGuardrailCheck(
       policyRef: policy.baseline?.ref,
     });
 
+  // Incremental scanning in ref-based mode: the changed set is the diff of
+  // the ref against the working HEAD, known upfront from `mode.ref`. We scope
+  // BOTH the ref side and the current side to this same set so the cross-run
+  // diff stays symmetric (sound for the net-new gate — semgrep is
+  // intraprocedural). `computeChangedFiles` returns null on any uncertainty,
+  // which maps to `undefined` here, i.e. a full scan (the safe default).
+  const refIncrementalFiles =
+    options.incremental && mode.mode === 'ref-based' && mode.ref
+      ? (computeChangedFiles(cwd, mode.ref) ?? undefined)
+      : undefined;
+
+  // Gather scope. Incremental mode mirrors the loop Stop-gate's fast path: it
+  // scopes the gather to the analyzers the policy can actually block on
+  // (opt 1, via the shared `scopeForPolicy`) IN ADDITION to the changed-files
+  // semgrep scoping (opt 3) — the dominant speed win is skipping the analyzers
+  // a `security-only` posture can never block on (lint, coverage, jscpd,
+  // structural, licenses). An explicit `options.scope` still wins; default
+  // (non-incremental) callers stay on FULL_SCOPE so their full report and
+  // every warning are unaffected. Both sides use the SAME scope so the
+  // cross-run diff stays balanced.
+  const gatherScope = options.scope ?? (options.incremental ? scopeForPolicy(policy) : FULL_SCOPE);
+
   // Load the prior side. Committed modes read from the baseline
   // file on disk; ref-based mode recomputes prior state by checking
   // out a git ref into a temporary worktree. Both paths produce a
   // `BaselineFile`-shaped value so the matcher / classifier
   // downstream stay mode-agnostic.
-  const { baseline, baselinePath } = await loadPriorSide(cwd, mode, options);
+  const { baseline, baselinePath } = await loadPriorSide(
+    cwd,
+    mode,
+    options,
+    refIncrementalFiles,
+    gatherScope,
+  );
 
   // A committed baseline minted under an older identity scheme cannot be
   // meaningfully diffed against the current one — every finding's id
@@ -377,17 +426,22 @@ export async function runGuardrailCheck(
     }
   }
 
-  const scope = options.scope ?? FULL_SCOPE;
-  // Incremental scanning: scope the current side's semgrep to files that
-  // changed vs the baseline commit. `computeChangedFiles` returns null when
-  // it can't enumerate the changed set completely (base unreachable, git
-  // error) — that maps to `undefined` here, i.e. a full scan (the safe
-  // default). The ref/baseline side is NOT incremental: it must cover every
-  // file so the diff has a complete prior to match against.
+  const scope = gatherScope;
+  // Incremental scanning: scope the current side's semgrep to changed files.
+  // `computeChangedFiles` returns null when it can't enumerate the changed
+  // set completely (base unreachable, git error) — that maps to `undefined`
+  // here, i.e. a full scan (the safe default).
+  //   - ref-based: reuse the set already computed from `mode.ref` above; the
+  //     ref/baseline side was scoped to the SAME set, keeping the diff
+  //     symmetric.
+  //   - committed: the prior side is the on-disk (full) baseline, so only the
+  //     current side is scoped, against the baseline's commit.
   const incrementalFiles =
-    options.incremental && baseline.repo.commitSha
-      ? (computeChangedFiles(cwd, baseline.repo.commitSha) ?? undefined)
-      : undefined;
+    mode.mode === 'ref-based'
+      ? refIncrementalFiles
+      : options.incremental && baseline.repo.commitSha
+        ? (computeChangedFiles(cwd, baseline.repo.commitSha) ?? undefined)
+        : undefined;
   const current = await gatherCurrentScan({
     cwd,
     verbose: options.verbose,
@@ -861,6 +915,8 @@ async function loadPriorSide(
   cwd: string,
   mode: ResolvedMode,
   options: RunGuardrailCheckOptions,
+  incrementalFiles?: ReadonlyArray<string>,
+  scope: GatherScope = FULL_SCOPE,
 ): Promise<{ baseline: BaselineFile; baselinePath?: string }> {
   if (mode.mode !== 'ref-based') {
     const baselinePath =
@@ -883,7 +939,14 @@ async function loadPriorSide(
     cwd,
     ref: mode.ref,
     verbose: options.verbose,
-    scope: options.scope ?? FULL_SCOPE,
+    // Same policy-derived scope as the current side (opt 1), so the cross-run
+    // diff stays balanced and the ref side skips the same non-blockable
+    // analyzers.
+    scope,
+    // Symmetric incremental scoping: when the caller scoped the current side
+    // to the changed files, scope the ref side to the SAME set (see the
+    // `refIncrementalFiles` computation in `runGuardrailCheck`).
+    incrementalFiles,
   });
   const baseline: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,
