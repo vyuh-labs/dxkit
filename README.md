@@ -77,6 +77,43 @@ check its own work only helped a little.
    fix: do not refresh the baseline, do not touch unrelated debt, fix what this
    branch introduced. The loop stops only when clean.
 
+## Why only net-new findings?
+
+Grandfathered does not mean accepted.
+
+dxkit blocks only net-new findings for two reasons: agent-loop attribution and
+brownfield adoption.
+
+First, an autonomous coding loop needs a scoped stop condition. When an agent
+tries to declare done, the relevant question is not "is this entire repository
+debt-free?" It is:
+
+> did this loop make the repository worse than the baseline?
+
+If the gate asks the agent to fix every pre-existing finding before it may stop,
+the repair target becomes noisy and unbounded. The agent may churn unrelated
+code, spend context on old debt, or refresh the baseline to escape. dxkit instead
+holds the loop accountable for the change it just made: fix what this branch
+introduced, do not touch unrelated debt, and do not move the baseline.
+
+Second, dxkit is designed for brownfield repositories. Existing debt may include
+hundreds or thousands of findings. If the first gate required a repo to reach
+zero findings, most teams could not adopt agentic development workflows until
+after a large cleanup project. That is backwards. The first control invariant is
+simpler and stricter:
+
+> this agent must not make the repository worse than the baseline.
+
+`baseline create` records the current state so existing findings remain visible
+and auditable, but they do not block the current loop. When an agent changes the
+repo, dxkit blocks only findings introduced by that change. This lets teams adopt
+agentic workflows immediately, prevent regression from day one, and pay down the
+old baseline as a separate, deliberate workstream.
+
+A baseline refresh is a governance action, not a repair action. If the Stop-gate
+blocks, the agent should fix the net-new finding it introduced and should not move the
+baseline.
+
 ## Who this is for
 
 Use dxkit if you let coding agents:
