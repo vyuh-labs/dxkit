@@ -22,6 +22,7 @@ import type { GuardrailJsonPayload } from '../baseline/check-renderers';
 import { GUARDRAIL_JSON_SCHEMA } from '../baseline/check-renderers';
 import { buildRepairMessage } from './stop-gate';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
+import { dxkitCli } from '../self-invocation';
 import * as logger from '../logger';
 
 type DemoPair = GuardrailJsonPayload['pairs'][number];
@@ -288,7 +289,9 @@ function printIllustration(reason: 'no-gitleaks' | 'sandbox-failed'): void {
   const { blockMessage } = renderLoopGuardrailDemo();
   if (reason === 'no-gitleaks') {
     logger.warn('gitleaks not installed — showing an illustration, not a real scan.');
-    logger.dim('  Install it (`vyuh-dxkit tools install`) and re-run to scan a real sandbox.');
+    logger.dim(
+      `  Install it (\`${dxkitCli('tools install')}\`) and re-run to scan a real sandbox.`,
+    );
   } else {
     logger.warn('Could not run the sandbox scan here — showing an illustration instead.');
   }
@@ -340,29 +343,38 @@ export function cwdState(cwd: string): DemoCwdState {
 /**
  * The tailored "next steps" lines for a given cwd state. Pure (no I/O) so the
  * exact guidance is unit-testable. The first line is a header; the rest are
- * indented command hints. Commands are shown literally (the binary name, not
- * `npx`) to match the rest of this file and dxkit's self-invocation rules.
+ * indented command hints.
+ *
+ * Invocation form matters: the `dxkitCli(...)` form resolves a project-local
+ * devDependency OR a global install, so it works after dxkit is present. But it
+ * CANNOT bootstrap a repo that has no dxkit yet (`vyuh-dxkit` is a binary, not a
+ * package, so the underlying npx call would 404). So for the bootstrap step we
+ * show the installer `npm init @vyuhlabs/dxkit`, and only the follow-up commands
+ * (which run after dxkit is installed) use `dxkitCli`.
  */
 export function buildNextSteps(state: DemoCwdState): string[] {
   switch (state) {
     case 'initialized':
+      // dxkit is already present here, so npx resolves it.
       return [
         'This repo already has dxkit set up.',
-        '  vyuh-dxkit loop doctor        verify the loop wiring is safe to run unattended',
+        `  ${dxkitCli('loop doctor')}   verify the loop wiring is safe to run unattended`,
       ];
     case 'git':
+      // No dxkit here yet: bootstrap with the installer, then the follow-ups
+      // run via npx against the freshly-installed devDependency.
       return [
         'You are in a git repo. Wire the same Stop-gate in here:',
-        '  vyuh-dxkit init --claude-loop   add the Stop-gate hook + norms (additive, reversible)',
-        "  vyuh-dxkit baseline create      grandfather today's debt so only net-new blocks",
-        '  vyuh-dxkit loop doctor          verify it is safe to run unattended',
+        '  npm init @vyuhlabs/dxkit -- --claude-loop   add the Stop-gate hook + norms (additive, reversible)',
+        `  ${dxkitCli('baseline create')}   grandfather today's debt so only net-new blocks`,
+        `  ${dxkitCli('loop doctor')}   verify it is safe to run unattended`,
       ];
     case 'non-git':
       return [
         'Run the same Stop-gate in your project (it must be a git repo):',
         '  cd <your-repo>',
-        '  npm init @vyuhlabs/dxkit -- --claude-loop   set up the loop (or: vyuh-dxkit init --claude-loop)',
-        "  vyuh-dxkit baseline create                  grandfather today's debt",
+        '  npm init @vyuhlabs/dxkit -- --claude-loop   set up the loop',
+        `  ${dxkitCli('baseline create')}   grandfather today's debt`,
       ];
   }
 }
@@ -431,15 +443,18 @@ export async function runLoopGuardrailDemo(): Promise<void> {
     console.log(''); // slop-ok
     const yes = await promptYesNo('Wire the Stop-gate into this repo now?');
     if (yes) {
-      logger.dim('  running: vyuh-dxkit init --claude-loop --yes …');
+      logger.dim(`  running: ${dxkitCli('init --claude-loop --yes')} …`);
       const r = runCli(cwd, ['init', '--claude-loop', '--yes']);
       console.log(''); // slop-ok
       if (r.status === 0) {
+        // init installed dxkit as a devDependency, so npx now resolves it.
         logger.success('Stop-gate wired into this repo (init is additive and reversible).');
-        logger.dim("  Next: vyuh-dxkit baseline create   grandfather today's debt");
-        logger.dim('        vyuh-dxkit loop doctor        verify it is safe to run unattended');
+        logger.dim(`  Next: ${dxkitCli('baseline create')}   grandfather today's debt`);
+        logger.dim(`        ${dxkitCli('loop doctor')}   verify it is safe to run unattended`);
       } else {
-        logger.warn('init did not complete here. Run it yourself: vyuh-dxkit init --claude-loop');
+        logger.warn(
+          'init did not complete here. Set it up with: npm init @vyuhlabs/dxkit -- --claude-loop',
+        );
       }
     }
   }

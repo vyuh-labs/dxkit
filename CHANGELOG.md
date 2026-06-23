@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.18.1] - 2026-06-23
+
+### Fixed — next-step hints now use a resolvable invocation
+
+Actionable "run this next" hints printed by the CLI (after `init`, in `doctor`,
+`tools`, the loop preflight, and elsewhere) referenced the bare `vyuh-dxkit`
+binary. After the common devDependency install (`npm init @vyuhlabs/dxkit`), that
+binary is not on the global PATH, so copy-pasting the hint failed with
+"command not found". Every actionable hint now routes through the canonical
+`npx vyuh-dxkit` invocation, which resolves a project-local devDependency or a
+global install, so the suggested command runs as-is. The demo's conversion CTA is
+fixed the same way: it shows `npm init @vyuhlabs/dxkit` to bootstrap a repo with
+no dxkit yet, and the `npx` form for the follow-up commands.
+
 ## [2.18.0] - 2026-06-23
 
 ### Added — `demo loop-guardrail` converts into setup

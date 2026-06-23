@@ -24,6 +24,7 @@
  */
 
 import * as fs from 'fs';
+import { dxkitCli } from './self-invocation';
 import * as path from 'path';
 import * as logger from './logger';
 import {
@@ -155,7 +156,7 @@ export async function runSetupBranchProtection(
       'No .github/workflows/dxkit-guardrails.yml found. Applying branch protection ' +
         'now would block every PR until that workflow exists.',
     );
-    logger.dim('  → Run `vyuh-dxkit init --with-ci --yes` first to scaffold the workflow.');
+    logger.dim(`  → Run \`${dxkitCli('init --with-ci --yes')}\` first to scaffold the workflow.`);
     process.exitCode = 1;
     return;
   }

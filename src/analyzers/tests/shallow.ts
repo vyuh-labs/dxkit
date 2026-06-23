@@ -17,6 +17,7 @@ import {
 } from '../../scoring';
 import type { CapabilityReport } from '../types';
 import { DimensionScore, ScoreInput } from '../types';
+import { dxkitCli } from '../../self-invocation';
 
 function coveragePercentFrom(c: CapabilityReport): number | null {
   const raw = c.coverage?.coverage.linePercent;
@@ -94,7 +95,7 @@ export function scoreTestsDimension(input: ScoreInput): DimensionScore {
           // dxkit's coverage subcommand — surface that explicitly so
           // "0% coverage" doesn't read as an indictment of the codebase.
           (m.testsPass === null && coveragePercent === null
-            ? ' Run `vyuh-dxkit coverage` to materialize test execution + coverage data.'
+            ? ` Run \`${dxkitCli('coverage')}\` to materialize test execution + coverage data.`
             : '') +
           (commentedCodeRatio !== null && commentedCodeRatio > 0.5
             ? ` Warning: ${(commentedCodeRatio * 100).toFixed(0)}% of source files appear to contain only comments.`

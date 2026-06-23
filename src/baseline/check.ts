@@ -39,6 +39,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { dxkitCli } from '../self-invocation';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
 import {
@@ -456,8 +457,8 @@ export async function runGuardrailCheck(
         `Baseline "${baseline.name}" was captured under finding-identity scheme ` +
           `${baselineScheme}, but this dxkit mints ${CURRENT_IDENTITY_SCHEME}. The identity ` +
           `scheme changed between versions; diffing across schemes would flag every existing ` +
-          `finding as net-new. Run \`vyuh-dxkit update\` to migrate the baseline + allowlist ` +
-          `automatically, or \`vyuh-dxkit baseline create --force\` to re-anchor manually.`,
+          `finding as net-new. Run \`${dxkitCli('update')}\` to migrate the baseline + allowlist ` +
+          `automatically, or \`${dxkitCli('baseline create --force')}\` to re-anchor manually.`,
       );
     }
   }
@@ -967,7 +968,7 @@ async function loadPriorSide(
     if (!fs.existsSync(baselinePath)) {
       throw new Error(
         `baseline file not found: ${baselinePath}. ` +
-          `Run \`vyuh-dxkit baseline create\` first to capture today's state.`,
+          `Run \`${dxkitCli('baseline create')}\` first to capture today's state.`,
       );
     }
     return { baseline: readBaselineFile(baselinePath), baselinePath };

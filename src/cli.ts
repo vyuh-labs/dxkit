@@ -661,7 +661,7 @@ export async function run(argv: string[]): Promise<void> {
       // dxkit is broken right after they installed it.
       if (shipResults.length > 0) {
         console.log(''); // slop-ok
-        logger.info("Next: run `vyuh-dxkit baseline create` to capture today's state.");
+        logger.info(`Next: run \`${dxkitCli('baseline create')}\` to capture today's state.`);
         logger.dim('   (without a baseline, your pre-push hook + CI guardrail have nothing to');
         logger.dim('    diff against and will fail-fast on the next push)');
       }

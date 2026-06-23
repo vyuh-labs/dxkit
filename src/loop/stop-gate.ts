@@ -39,6 +39,7 @@ import {
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { dxkitCli } from '../self-invocation';
 import {
   loopGateActive,
   workingTreeSignature,
@@ -200,8 +201,8 @@ export async function computeStopGate(
         event,
         message:
           `dxkit Stop-gate could not run the guardrail (${msg}). Allowing stop. ` +
-          `Fix the loop preflight (run \`vyuh-dxkit baseline create\` / ` +
-          `\`vyuh-dxkit loop doctor\`) before trusting unattended runs.`,
+          `Fix the loop preflight (run \`${dxkitCli('baseline create')}\` / ` +
+          `\`${dxkitCli('loop doctor')}\`) before trusting unattended runs.`,
       };
     }
     return {
@@ -210,7 +211,7 @@ export async function computeStopGate(
       message:
         `dxkit Stop-gate could not run the guardrail: ${msg}\n` +
         `This is a loop preflight problem, not something the agent can fix. ` +
-        `Run \`vyuh-dxkit loop doctor\` / \`vyuh-dxkit baseline create\`, or set ` +
+        `Run \`${dxkitCli('loop doctor')}\` / \`${dxkitCli('baseline create')}\`, or set ` +
         `DXKIT_LOOP_FAIL_OPEN=1 to allow stops when the gate can't run.`,
     };
   }

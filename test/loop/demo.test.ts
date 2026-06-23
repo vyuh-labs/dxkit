@@ -40,22 +40,35 @@ describe('demo conversion CTA — buildNextSteps', () => {
     expect(lines).not.toContain('init --claude-loop');
   });
 
-  it('git: shows the full wire-up sequence', () => {
+  it('git: bootstraps with the installer, then runs follow-ups via npx', () => {
     const lines = buildNextSteps('git').join('\n');
-    expect(lines).toContain('vyuh-dxkit init --claude-loop');
-    expect(lines).toContain('vyuh-dxkit baseline create');
-    expect(lines).toContain('vyuh-dxkit loop doctor');
+    // No dxkit here yet, so the bootstrap step is the installer, NOT `npx
+    // vyuh-dxkit init` (which would 404 — vyuh-dxkit is a binary, not a package).
+    expect(lines).toContain('npm init @vyuhlabs/dxkit -- --claude-loop');
+    expect(lines).not.toContain('vyuh-dxkit init --claude-loop');
+    // Follow-ups run after install, so they use the resolvable npx form.
+    expect(lines).toContain('npx vyuh-dxkit baseline create');
+    expect(lines).toContain('npx vyuh-dxkit loop doctor');
   });
 
-  it('non-git: points the user at their real project', () => {
+  it('non-git: points the user at their real project via the installer', () => {
     const lines = buildNextSteps('non-git').join('\n');
     expect(lines).toContain('must be a git repo');
     expect(lines).toContain('npm init @vyuhlabs/dxkit');
+    expect(lines).toContain('npx vyuh-dxkit baseline create');
   });
 
-  it('never prints a raw `npx vyuh-dxkit` invocation (self-invocation rule)', () => {
+  it('every printed dxkit command is resolvable (npx form or the installer), never a bare binary', () => {
+    // The bug this fixes: a devDependency install leaves `vyuh-dxkit` off the
+    // global PATH, so a bare `vyuh-dxkit <cmd>` hint does not resolve. Every
+    // command we print must be either the installer or the `npx vyuh-dxkit` form.
     for (const s of ['initialized', 'git', 'non-git'] as const) {
-      expect(buildNextSteps(s).join('\n')).not.toContain('npx vyuh-dxkit');
+      for (const line of buildNextSteps(s)) {
+        const m = line.match(/(?<![/@\w])vyuh-dxkit\s+\S/);
+        if (m) {
+          expect(line).toMatch(/npx vyuh-dxkit/);
+        }
+      }
     }
   });
 });
