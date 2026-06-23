@@ -1,9 +1,50 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   parsePipShowOutput,
   buildPyTopLevelDepIndex,
   parseRequirementsTxtTopLevels,
+  buildPipAuditCommand,
 } from '../src/languages/python';
+
+describe('buildPipAuditCommand (untrusted gate hardening)', () => {
+  const mk = (files: Record<string, string>): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-pyaudit-'));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    return dir;
+  };
+
+  it('trusted (default): uses project mode for a pyproject', () => {
+    const dir = mk({ 'pyproject.toml': '[project]\nname="x"\n' });
+    expect(buildPipAuditCommand(dir, 'pip-audit')).toBe('pip-audit . --format json');
+  });
+
+  it('trusted: uses requirements mode when only requirements.txt', () => {
+    const dir = mk({ 'requirements.txt': 'flask==1.0\n' });
+    expect(buildPipAuditCommand(dir, 'pip-audit')).toBe(
+      'pip-audit -r requirements.txt --format json',
+    );
+  });
+
+  it('untrusted: NEVER uses project mode (no `pip-audit .` build) for a pyproject', () => {
+    const dir = mk({ 'pyproject.toml': '[project]\nname="x"\n' });
+    const cmd = buildPipAuditCommand(dir, 'pip-audit', true);
+    // No requirements.txt → refuses (null) rather than building. Never `pip-audit .`.
+    expect(cmd).toBeNull();
+  });
+
+  it('untrusted: still audits a requirements.txt (no build needed)', () => {
+    const dir = mk({
+      'pyproject.toml': '[project]\nname="x"\n',
+      'requirements.txt': 'flask==1.0\n',
+    });
+    expect(buildPipAuditCommand(dir, 'pip-audit', true)).toBe(
+      'pip-audit -r requirements.txt --format json',
+    );
+  });
+});
 
 // `pip show` output is RFC-822-ish Key: Value blocks separated by '---'.
 // Fixtures match the real tool's emission pattern (trailing newline,

@@ -16,6 +16,7 @@ import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
+  DepVulnGatherOptions,
   DepVulnsProvider,
   LicensesProvider,
   LintProvider,
@@ -321,7 +322,10 @@ function loadTsTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * customer xlsx model: col 11 (Criticality) is per-package, col 12
  * (Vulnerability Issues) is per-advisory.
  */
-async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+async function gatherTsDepVulnsResult(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<DepVulnGatherOutcome> {
   if (!fileExists(cwd, 'package.json')) {
     return { kind: 'no-manifest', reason: 'no package.json' };
   }
@@ -448,7 +452,12 @@ async function gatherTsDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
     // the human-readable form for markdown); `upgradePlan` is the
     // agent-consumable form. Degrades silently when osv-scanner is
     // unavailable — zero enrichment, existing advice preserved.
-    if (findings.length > 0) {
+    //
+    // SKIPPED in the guardrail/gate path (`opts.skipRemediation`): the gate
+    // never reads `upgradePlan` and finding identity excludes it, so this is
+    // pure cost there — and `osv-scanner fix` runs `npm install` on the
+    // scanned code (slow + unsafe on an untrusted PR). Reports keep it.
+    if (findings.length > 0 && !opts?.skipRemediation) {
       const plans = await gatherOsvScannerFixPlans(cwd);
       enrichWithUpgradePlans(findings, plans);
     }
@@ -479,8 +488,8 @@ const tsDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherTsDepVulnsResult(cwd);
+  async gatherOutcome(cwd, opts) {
+    return gatherTsDepVulnsResult(cwd, opts);
   },
 };
 

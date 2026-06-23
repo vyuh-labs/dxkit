@@ -303,6 +303,8 @@ export async function gatherCurrentScan(options: {
    *  semgrep's intraprocedural nature (a net-new code finding only appears
    *  in a changed file). */
   readonly incrementalFiles?: ReadonlyArray<string>;
+  readonly skipRemediation?: boolean; // gate-only; see `DepVulnGatherOptions`
+  readonly untrusted?: boolean; // gate-only: untrusted source (no project builds)
 }): Promise<CurrentScan> {
   const cwd = path.resolve(options.cwd);
   const scope = options.scope ?? FULL_SCOPE;
@@ -318,6 +320,8 @@ export async function gatherCurrentScan(options: {
         verbose: !!options.verbose,
         scope,
         incrementalFiles: options.incrementalFiles,
+        skipRemediation: options.skipRemediation,
+        untrusted: options.untrusted,
       }),
     opts: { partial },
   });

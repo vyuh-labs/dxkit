@@ -37,6 +37,7 @@ import {
   TEST_FRAMEWORK,
 } from '../languages/capabilities/descriptors';
 import { providersFor } from '../languages/capabilities';
+import type { DepVulnGatherOptions } from '../languages/capabilities/provider';
 import { buildSecurityAggregateForHealth, gatherDepVulnsWithAvailability } from './security/gather';
 import { incrementalSemgrepProvider } from './tools/semgrep';
 import { gatherLicensesWithAvailability } from './licenses/gather';
@@ -124,6 +125,22 @@ export interface AnalyzeHealthOptions {
    * Stop-gate sets it; CI / `health` leave it undefined (full scan).
    */
   incrementalFiles?: ReadonlyArray<string>;
+  /**
+   * When true, skip the Tier-2 dependency *remediation* enrichment (structured
+   * `upgradePlan` via `osv-scanner fix`, which runs the package manager). The
+   * guardrail/gate path sets this: the verdict and finding identity never read
+   * `upgradePlan`, so it's pure cost there — and on the TS pack it means
+   * running `npm install` on the scanned code (slow + unsafe on an untrusted
+   * PR). Reports leave it unset and keep the full enrichment.
+   */
+  skipRemediation?: boolean;
+  /**
+   * The scanned source may be attacker-controlled (hosted PR gate). Dep audits
+   * must not execute it — e.g. the Python pack drops `pip-audit .` project mode
+   * (whose build backend can run code) and audits only a requirements file.
+   * Set by `guardrail check --untrusted`; trusted runs leave it unset.
+   */
+  untrusted?: boolean;
 }
 
 /**
@@ -265,7 +282,10 @@ export async function gatherAnalysisResultBody(
   // providers the legacy path already ran are served from the dispatcher
   // cache (free). Scorers read capability-owned fields from this bundle.
   const capabilities = await timedAsync('capabilities', verbose, () =>
-    gatherCapabilityReport(repoPath, scope, options.incrementalFiles),
+    gatherCapabilityReport(repoPath, scope, options.incrementalFiles, {
+      skipRemediation: options.skipRemediation,
+      untrusted: options.untrusted,
+    }),
   );
 
   // Synthesize per-pack tool names (eslint, npm-audit, ruff, pip-audit,
@@ -407,6 +427,7 @@ async function gatherCapabilityReport(
   cwd: string,
   scope: GatherScope = FULL_SCOPE,
   incrementalFiles?: ReadonlyArray<string>,
+  depVulnOpts?: DepVulnGatherOptions,
 ): Promise<CapabilityReport> {
   // Incremental scanning (opt 3): swap the full-tree semgrep provider for
   // one bound to just the changed files. Same `source: 'semgrep'` identity,
@@ -447,7 +468,7 @@ async function gatherCapabilityReport(
     structuralOutcome,
     licensesWithAvail,
   ] = await Promise.all([
-    scope.depVulns ? gatherDepVulnsWithAvailability(cwd) : Promise.resolve(emptyAvail),
+    scope.depVulns ? gatherDepVulnsWithAvailability(cwd, depVulnOpts) : Promise.resolve(emptyAvail),
     // gatherWithProvenance (not gather) so the cached LintResult.tool
     // can carry the "(not run: <packs>)" suffix when one of the
     // active packs returned null silently. Standalone analyzeQuality

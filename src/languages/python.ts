@@ -11,6 +11,7 @@ import { isMajorBump } from '../analyzers/tools/semver-bump';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
   CapabilityProvider,
+  DepVulnGatherOptions,
   DepVulnsProvider,
   LicensesProvider,
   LintProvider,
@@ -107,9 +108,20 @@ function hasPyFile(cwd: string): boolean {
  *   - requirements.txt          → `pip-audit -r requirements.txt`
  *   - Pipfile                   → unsupported by pip-audit natively; we
  *     return null rather than scan the wrong environment.
+ *
+ * `untrusted` (set by the guardrail gate on possibly-attacker-controlled
+ * source): project mode (`pip-audit .`) can build the project via its PEP 517
+ * backend, executing arbitrary code — never acceptable on untrusted input. In
+ * that mode we use only the non-building requirements path; if there's no
+ * requirements.txt we return null (unavailable) rather than build. Reports
+ * and the trusted local loop keep full project-mode coverage.
  */
-function buildPipAuditCommand(cwd: string, pipAuditPath: string): string | null {
-  if (fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py')) {
+export function buildPipAuditCommand(
+  cwd: string,
+  pipAuditPath: string,
+  untrusted?: boolean,
+): string | null {
+  if (!untrusted && (fileExists(cwd, 'pyproject.toml') || fileExists(cwd, 'setup.py'))) {
     return `${pipAuditPath} . --format json`;
   }
   if (fileExists(cwd, 'requirements.txt')) {
@@ -353,13 +365,24 @@ function loadPyTopLevelDepIndex(cwd: string): Map<string, string[]> {
  * Single source of truth for the python pack's dep-vuln gathering.
  * Consumed by `pyDepVulnsProvider` (capability dispatcher).
  */
-async function gatherPyDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+async function gatherPyDepVulnsResult(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<DepVulnGatherOutcome> {
   const pipAudit = findTool(TOOL_DEFS['pip-audit'], cwd);
   if (!pipAudit.available || !pipAudit.path) {
     return { kind: 'unavailable', reason: 'pip-audit not installed' };
   }
 
-  const cmd = buildPipAuditCommand(cwd, pipAudit.path);
+  const cmd = buildPipAuditCommand(cwd, pipAudit.path, opts?.untrusted);
+  if (opts?.untrusted && !cmd) {
+    return {
+      kind: 'unavailable',
+      reason:
+        'Python project audit needs a build (pyproject/setup.py) which is unsafe on untrusted ' +
+        'source; no requirements.txt to audit without building. Run dxkit locally for a full scan.',
+    };
+  }
   if (!cmd) {
     return { kind: 'no-manifest', reason: 'no pyproject.toml / setup.py / requirements.txt' };
   }
@@ -516,8 +539,8 @@ const pyDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherPyDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherPyDepVulnsResult(cwd);
+  async gatherOutcome(cwd, opts) {
+    return gatherPyDepVulnsResult(cwd, opts);
   },
 };
 

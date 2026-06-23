@@ -36,6 +36,7 @@ import {
 } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
 import type { DepVulnResult } from '../../languages/capabilities/types';
+import type { DepVulnGatherOptions } from '../../languages/capabilities/provider';
 
 // ─── dispatcher-driven secrets gather ────────────────────────────────────────
 
@@ -293,7 +294,10 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
  * polyglot repos where one pack activates but has nothing to scan are
  * a clean "we checked, found nothing here" state.
  */
-export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
+export async function gatherDepVulnsWithAvailability(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<{
   envelope: DepVulnResult | null;
   available: boolean;
   unavailableReason: string;
@@ -311,21 +315,22 @@ export async function gatherDepVulnsWithAvailability(cwd: string): Promise<{
   // it through `toolsUnavailable` without any consumer change.
   const outcomes = await Promise.allSettled(
     activePacks.map((l) =>
-      withDeadline(l.capabilities!.depVulns!.gatherOutcome(cwd), DEFAULT_PROVIDER_DEADLINE_MS).then(
-        (deadlineOutcome) => {
-          if (deadlineOutcome.stalled) {
-            const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
-            process.stderr.write(
-              `[dxkit] depVulns provider "${l.id}" stalled after >${seconds}s (deadline) — treating as unavailable\n`,
-            );
-            return {
-              kind: 'unavailable' as const,
-              reason: `stalled at >${seconds}s (deadline)`,
-            };
-          }
-          return deadlineOutcome.value;
-        },
-      ),
+      withDeadline(
+        l.capabilities!.depVulns!.gatherOutcome(cwd, opts),
+        DEFAULT_PROVIDER_DEADLINE_MS,
+      ).then((deadlineOutcome) => {
+        if (deadlineOutcome.stalled) {
+          const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
+          process.stderr.write(
+            `[dxkit] depVulns provider "${l.id}" stalled after >${seconds}s (deadline) — treating as unavailable\n`,
+          );
+          return {
+            kind: 'unavailable' as const,
+            reason: `stalled at >${seconds}s (deadline)`,
+          };
+        }
+        return deadlineOutcome.value;
+      }),
     ),
   );
   const successEnvelopes: DepVulnResult[] = [];

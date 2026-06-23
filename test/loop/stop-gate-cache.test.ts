@@ -171,6 +171,14 @@ describe('ref-scan cache', () => {
     expect(refScanCacheKey(repo, 'sha-aaa', undefined, ['b.ts', 'a.ts'])).toBe(incrA);
   });
 
+  it('skipRemediation is part of the key (a remediation-skipped scan never reused for a full one)', () => {
+    const full = refScanCacheKey(repo, 'sha-aaa', undefined, undefined, false);
+    const skipped = refScanCacheKey(repo, 'sha-aaa', undefined, undefined, true);
+    expect(skipped).not.toBe(full);
+    // default (undefined) matches the explicit `false` (full enrichment).
+    expect(refScanCacheKey(repo, 'sha-aaa')).toBe(full);
+  });
+
   it('write then read returns the cached scan', () => {
     const key = refScanCacheKey(repo, 'sha-aaa');
     writeRefScanCache(repo, key, minimalScan);
