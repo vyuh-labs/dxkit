@@ -19,20 +19,21 @@ confidence in [0, 1] and structured `reason` codes
 
 ```bash
 vyuh-dxkit guardrail check [path] [--name <n>] [--baseline <path>]
-                           [--changed-only] [--policy <path>]
+                           [--changed-only] [--incremental] [--policy <path>]
                            [--json | --markdown]
 ```
 
-| Option           | Effect                                                                                                               |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `path`           | Repo root to scan. Defaults to `.`                                                                                   |
-| `--name <n>`     | Baseline name (`.dxkit/baselines/<n>.json`). Default `main`                                                          |
-| `--baseline <p>` | Explicit baseline file path (overrides `--name`)                                                                     |
-| `--changed-only` | Drop new-side pairs whose anchor line falls outside the working-tree diff. Use in pre-commit hooks; skip in PR-gates |
-| `--policy <p>`   | Explicit `.dxkit/policy.json` override. Auto-discovers `<cwd>/.dxkit/policy.json` when omitted                       |
-| `--json`         | Emit `{ schema: 'dxkit.guardrail-check.v1', ... }` JSON                                                              |
-| `--markdown`     | Emit a markdown report (used by the PR-gate workflow to post a comment)                                              |
-| `--verbose`      | Print per-tool timing to stderr                                                                                      |
+| Option           | Effect                                                                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `path`           | Repo root to scan. Defaults to `.`                                                                                                                                                                                       |
+| `--name <n>`     | Baseline name (`.dxkit/baselines/<n>.json`). Default `main`                                                                                                                                                              |
+| `--baseline <p>` | Explicit baseline file path (overrides `--name`)                                                                                                                                                                         |
+| `--changed-only` | Drop new-side pairs whose anchor line falls outside the working-tree diff. Use in pre-commit hooks; skip in PR-gates                                                                                                     |
+| `--incremental`  | Scope the gather to the policy's blockable kinds and (ref-based) scope semgrep to changed files. Same verdict, scales with PR size not repo size; falls back to a full scan on any doubt. Opt-in; default is a full scan |
+| `--policy <p>`   | Explicit `.dxkit/policy.json` override. Auto-discovers `<cwd>/.dxkit/policy.json` when omitted                                                                                                                           |
+| `--json`         | Emit `{ schema: 'dxkit.guardrail-check.v1', ... }` JSON                                                                                                                                                                  |
+| `--markdown`     | Emit a markdown report (used by the PR-gate workflow to post a comment)                                                                                                                                                  |
+| `--verbose`      | Print per-tool timing to stderr                                                                                                                                                                                          |
 
 Exit code: `1` when the policy blocks any pair, `0` otherwise.
 
@@ -109,10 +110,10 @@ vyuh-dxkit guardrail check  # auto-discovers .dxkit/policy.json
 
 ### What gets installed
 
-| Flag                                    | Hook                   | When it fires      | Scope                                                                                  | Wall-clock                                                             |
-| --------------------------------------- | ---------------------- | ------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | full guardrail (every regression since baseline)                                       | scales with repo size (~3 min on a 500-file repo)                      |
-| `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `--changed-only` (just lines you touched) — but the underlying scan is still full-repo | same as pre-push today; incremental-scope work lands in a future phase |
+| Flag                                    | Hook                   | When it fires      | Scope                                                                                            | Wall-clock                                                                |
+| --------------------------------------- | ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | full guardrail (every regression since baseline)                                                 | scales with repo size (~3 min on a 500-file repo)                         |
+| `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `--changed-only` (just lines you touched); add `--incremental` to also scope the underlying scan | full scan today, or near-PR-size with `--incremental` (opt-in since 2.15) |
 
 The pre-commit hook is **opt-in** because re-running every analyzer on every commit is slow on large codebases. Pre-push amortises the same cost across the batch of commits in a push; CI runs the same check server-side as an unbypassable backstop. Customers on small/fast repos who want commit-time gating can opt in.
 
