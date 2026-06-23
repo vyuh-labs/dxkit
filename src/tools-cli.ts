@@ -18,6 +18,7 @@
  * - `vyuh-dxkit tools install --yes` → install all missing, no prompts
  */
 import * as readline from 'readline/promises';
+import { dxkitCli } from './self-invocation';
 import { stdin, stdout } from 'process';
 import { execSync } from 'child_process';
 import { detect } from './detect';
@@ -175,7 +176,7 @@ function showStatus(targetPath: string): ToolStatus[] {
     }
     if (globalMissing.length > 0) {
       logger.dim(
-        `${globalMissing.length} global tool${globalMissing.length === 1 ? '' : 's'} — run \`vyuh-dxkit tools install\` to install interactively.`,
+        `${globalMissing.length} global tool${globalMissing.length === 1 ? '' : 's'} — run \`${dxkitCli('tools install')}\` to install interactively.`,
       );
     }
   }
@@ -221,7 +222,7 @@ async function runInstall(
   // Validate single-tool name early so we fail fast with a useful message.
   if (options.toolName && !TOOL_DEFS[options.toolName]) {
     logger.fail(`Unknown tool: ${options.toolName}`);
-    logger.info('Run `vyuh-dxkit tools list` to see available tools.');
+    logger.info(`Run \`${dxkitCli('tools list')}\` to see available tools.`);
     process.exit(1);
   }
 
@@ -365,7 +366,7 @@ async function runInstall(
 
   if (installed > 0) {
     console.log('');
-    logger.dim('Run `vyuh-dxkit health` to use the newly installed tools.');
+    logger.dim(`Run \`${dxkitCli('health')}\` to use the newly installed tools.`);
   }
 }
 

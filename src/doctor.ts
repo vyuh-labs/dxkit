@@ -306,7 +306,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
       ? {}
       : {
           fix: {
-            hint: 'Run `vyuh-dxkit init` to scaffold the manifest + Agent DX surface.',
+            hint: `Run \`${dxkitCli('init')}\` to scaffold the manifest + Agent DX surface.`,
             command: dxkitCli('init --full --yes'),
             skill: 'dxkit-init',
           },
@@ -344,7 +344,7 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
         ? {}
         : {
             fix: {
-              hint: 'Re-run `vyuh-dxkit init --with-dxkit-agents --yes` to land the missing Agent DX files.',
+              hint: `Re-run \`${dxkitCli('init --with-dxkit-agents --yes')}\` to land the missing Agent DX files.`,
               command: dxkitCli('init --with-dxkit-agents --yes'),
               skill: 'dxkit-init',
             },
@@ -846,11 +846,11 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
     console.log(''); // slop-ok
     if (!hasManifest) {
       logger.dim(
-        '💡 Run `vyuh-dxkit init` to enable Agent DX features (skills, agents, slash commands). Reports CLI works without it.',
+        `💡 Run \`${dxkitCli('init')}\` to enable Agent DX features (skills, agents, slash commands). Reports CLI works without it.`,
       );
     } else {
       logger.dim(
-        '💡 Run `vyuh-dxkit update` to refresh missing Agent DX files (the manifest already exists).',
+        `💡 Run \`${dxkitCli('update')}\` to refresh missing Agent DX files (the manifest already exists).`,
       );
     }
   }

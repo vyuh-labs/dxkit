@@ -34,6 +34,7 @@
  */
 
 import * as fs from 'fs';
+import { dxkitCli } from '../self-invocation';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import * as logger from '../logger';
@@ -392,7 +393,7 @@ export async function runAllowlistList(cwd: string, opts: AllowlistListOpts): Pr
   }
 
   if (!file || file.entries.length === 0) {
-    logger.info(`No allowlist entries. Run \`vyuh-dxkit allowlist add\` to create one.`);
+    logger.info(`No allowlist entries. Run \`${dxkitCli('allowlist add')}\` to create one.`);
     return;
   }
   logger.info(

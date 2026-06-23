@@ -20,6 +20,7 @@
  * every developer.
  */
 import * as fs from 'fs';
+import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { parseSarif } from './ingest/sarif';
 import { fetchSnykCodeFindings } from './ingest/snyk-api';
@@ -256,5 +257,7 @@ function writeAndReport(
     `  critical:${bySev.critical || 0} high:${bySev.high || 0} medium:${bySev.medium || 0} low:${bySev.low || 0}`,
   );
   logger.dim('  Commit .dxkit/external/ so every scan + CI run sees these without a token.');
-  logger.dim('  Next: `vyuh-dxkit vulnerabilities --graph-context` to see them graph-linked.');
+  logger.dim(
+    `  Next: \`${dxkitCli('vulnerabilities --graph-context')}\` to see them graph-linked.`,
+  );
 }

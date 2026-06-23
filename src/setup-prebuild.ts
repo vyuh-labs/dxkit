@@ -20,6 +20,7 @@
  */
 
 import * as fs from 'fs';
+import { dxkitCli } from './self-invocation';
 import * as path from 'path';
 import * as logger from './logger';
 import {
@@ -95,7 +96,7 @@ export async function runSetupPrebuild(cwd: string, opts: SetupPrebuildOpts = {}
     logger.fail(
       'No .devcontainer/devcontainer.json found. Prebuilds need a devcontainer to build.',
     );
-    logger.dim('  → Run `vyuh-dxkit init --with-devcontainer --yes` first to scaffold one.');
+    logger.dim(`  → Run \`${dxkitCli('init --with-devcontainer --yes')}\` first to scaffold one.`);
     process.exitCode = 1;
     return;
   }

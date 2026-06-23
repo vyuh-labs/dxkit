@@ -96,7 +96,7 @@ describe('doctor (F-UX-1): two-tier framing', () => {
   it('DX tier scores zero on a bare repo and hints at `init`', () => {
     const r = runDoctor(bareTmp);
     expect(r.stdout).toMatch(/Agent DX:\s*0\/\d+/);
-    expect(r.stdout).toContain('Run `vyuh-dxkit init`');
+    expect(r.stdout).toContain('Run `npx vyuh-dxkit init`');
   });
 
   it('DX tier scores higher when scaffolding is present', () => {

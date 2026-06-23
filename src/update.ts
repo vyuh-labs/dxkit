@@ -17,7 +17,7 @@ import {
 import * as logger from './logger';
 import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
 import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
-import { requiresResolvableCli } from './self-invocation';
+import { requiresResolvableCli, dxkitCli } from './self-invocation';
 
 /**
  * Re-exports the shared type so callers within the update module can
@@ -117,7 +117,7 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
 
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   if (!fs.existsSync(manifestPath)) {
-    logger.fail('.vyuh-dxkit.json not found. Run `vyuh-dxkit init` first.');
+    logger.fail(`.vyuh-dxkit.json not found. Run \`${dxkitCli('init')}\` first.`);
     process.exit(1);
   }
 
@@ -316,7 +316,7 @@ async function migrateIdentityIfStale(cwd: string): Promise<void> {
   } catch (err) {
     logger.warn(
       `Identity migration could not complete: ${(err as Error).message}. ` +
-        `Run \`vyuh-dxkit baseline create --force\` and re-add fingerprint-based allowlist ` +
+        `Run \`${dxkitCli('baseline create --force')}\` and re-add fingerprint-based allowlist ` +
         `entries manually.`,
     );
   }
