@@ -1,0 +1,165 @@
+{
+  "repoDir": "./fastify",
+  "repoUrl": "https://github.com/fastify/fastify",
+  "oracle": "node --test <testFiles>  (resolved = exit 0); regression test injected from fixCommit AFTER the agent runs",
+  "models": {
+    "sonnet-vanilla": "claude-sonnet-4-6",
+    "opus-vanilla": "claude-opus-4-8"
+  },
+  "arms": [
+    "sonnet-vanilla",
+    "opus-vanilla"
+  ],
+  "reps": 2,
+  "instances": [
+    {
+      "instanceId": "36498f85a9",
+      "fixCommit": "36498f85a91cebc107282fe8128e08e48567bde0",
+      "parentCommit": "4e5a3631ec731fa9b82689e140b399f21a8b96fd",
+      "nSrc": 3,
+      "srcFiles": [
+        "fastify.js",
+        "lib/server.js",
+        "lib/symbols.js"
+      ],
+      "testFiles": [
+        "test/http2/closing.test.js"
+      ],
+      "subject": "fix: close http2 sessions on close server (#6137)",
+      "bugDescription": "When the Fastify server is closed via `fastify.close()`, open HTTP/2 sessions are not terminated. Active HTTP/2 client sessions linger and can keep the server from shutting down cleanly. Closing the server should also close its HTTP/2 sessions."
+    },
+    {
+      "instanceId": "970c575832",
+      "fixCommit": "970c575832521fff01cc018d928d84454811173b",
+      "parentCommit": "ab9dae462a138cd0d3c2d4e4e9e691b426fbbf9e",
+      "nSrc": 4,
+      "srcFiles": [
+        "lib/error-handler.js",
+        "lib/error-status.js",
+        "lib/handle-request.js",
+        "lib/wrap-thenable.js"
+      ],
+      "testFiles": [
+        "test/diagnostics-channel/error-status.test.js"
+      ],
+      "subject": "fix: set status code before publishing diagnostics error channel (#6412)",
+      "bugDescription": "When a request errors and the error is published to the `diagnostics_channel` error channel, the HTTP status code on the published message is not set yet, so subscribers observe an incorrect or unset status code. The response status code should be set before the error is published to the diagnostics channel."
+    },
+    {
+      "instanceId": "6d202c6203",
+      "fixCommit": "6d202c6203f33ceb709dbcf6311b2d7152a8a057",
+      "parentCommit": "10c69d153c6ee4a61878eabfb2a8f3ec34ab9c8c",
+      "nSrc": 3,
+      "srcFiles": [
+        "lib/error-handler.js",
+        "lib/handle-request.js",
+        "lib/symbols.js"
+      ],
+      "testFiles": [
+        "test/diagnostics-channel/async-error-handler.test.js"
+      ],
+      "subject": "fix: enable diagnostics tracking for async error handlers (#6458)",
+      "bugDescription": "Errors thrown from asynchronous error handlers are not tracked/published through the diagnostics channel, while errors from synchronous error handlers are. Async error handlers should produce the same diagnostics-channel tracking as synchronous ones."
+    },
+    {
+      "instanceId": "2bf4265b99",
+      "fixCommit": "2bf4265b991aa4c9a2d3886882be6f062338c7bc",
+      "parentCommit": "fc9eafddae37dea167d2affc26a29a04f9412047",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/reply.js"
+      ],
+      "testFiles": [
+        "test/http2/plain.test.js"
+      ],
+      "subject": "fix: chunk large HTTP/2 buffer replies (#6746)",
+      "bugDescription": "Sending a large Buffer as a reply over HTTP/2 does not transmit correctly because the buffer is not chunked for HTTP/2. Large Buffer replies over HTTP/2 should be chunked so they are delivered correctly."
+    },
+    {
+      "instanceId": "21b4c3c101",
+      "fixCommit": "21b4c3c101038030e552ad2cfcca3f43a349f464",
+      "parentCommit": "9bbf60978d013c26663b7be8031ecc12e6db12bd",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/request.js"
+      ],
+      "testFiles": [
+        "test/internals/request.test.js",
+        "test/trust-proxy.test.js"
+      ],
+      "subject": "fix: guard forwarded host and protocol on socket presence (#6684)",
+      "bugDescription": "Reading a request's forwarded host or protocol crashes when the underlying socket is not present (for example certain injected or proxied requests), because a socket is assumed to always exist. Accessing forwarded host/protocol should be safe when no socket is present."
+    },
+    {
+      "instanceId": "c06fc06d33",
+      "fixCommit": "c06fc06d33e66354cf6f5dc000b1ef2002a5eb96",
+      "parentCommit": "d1133d7eac09e075ccfd3b947f6a6e25d727d4d4",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/schemas.js"
+      ],
+      "testFiles": [
+        "test/schema-serialization.test.js"
+      ],
+      "subject": "fix: use ContentType parser for response schema lookup (#6685)",
+      "bugDescription": "When resolving the response serialization schema, Fastify does not consult the registered content-type parser to determine the content type, so responses with custom or parameterized content types are serialized with the wrong serializer. The response schema lookup should use the content-type parser."
+    },
+    {
+      "instanceId": "d9659819fb",
+      "fixCommit": "d9659819fbbc391d054f1aa4b49ce969a13610dd",
+      "parentCommit": "c2ba18c17769dacce61472ec0397560b3b4eebde",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/route.js"
+      ],
+      "testFiles": [
+        "test/throw.test.js"
+      ],
+      "subject": "fix: error.code not present on some routing errors (#6674) (#6678)",
+      "bugDescription": "When a route is registered with an array of HTTP methods and it duplicates an existing route, the thrown duplicate-route error is missing its `error.code` for some of the methods, only the first failing method is reported. All methods should be checked so the error carries the correct code."
+    },
+    {
+      "instanceId": "b4db85b665",
+      "fixCommit": "b4db85b665ac99a809c633b7564d49c8a4c2c5c9",
+      "parentCommit": "3653e7b92719061c6c2dfb4497d2d5b936509309",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/route.js"
+      ],
+      "testFiles": [
+        "test/router-options.test.js"
+      ],
+      "subject": "fix: avoid mutating shared routerOptions across instances (#6515)",
+      "bugDescription": "Registering routes mutates a shared router-options object, causing options to leak across separate Fastify instances / encapsulated contexts. Route registration should not mutate shared router options."
+    },
+    {
+      "instanceId": "d338dca5ab",
+      "fixCommit": "d338dca5ab24a4ce0175b4333efe46859ceaffab",
+      "parentCommit": "e1aee4b872aaeabbd4f7074794c1015a518f8d9a",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/validation.js"
+      ],
+      "testFiles": [
+        "test/validation-error-handling.test.js"
+      ],
+      "subject": "fix: consistent error handling for custom validators in async validation contexts (#6247)",
+      "bugDescription": "A custom validator that throws synchronously inside an asynchronous validation context (e.g. an async preValidation hook) causes an unhandled promise rejection instead of being routed to the error handler. Errors thrown by custom validators should be handled consistently in both synchronous and asynchronous validation contexts."
+    },
+    {
+      "instanceId": "dd02e428dd",
+      "fixCommit": "dd02e428ddbfe407a2d114d431e60a6a10335ea0",
+      "parentCommit": "810e3d548eeceb32c948a0fbfdd90d6d1e6098ce",
+      "nSrc": 1,
+      "srcFiles": [
+        "lib/head-route.js"
+      ],
+      "testFiles": [
+        "test/route.6.test.js",
+        "test/route.7.test.js"
+      ],
+      "subject": "fix: handle web stream payload in HEAD route (#6372)",
+      "bugDescription": "A HEAD route whose handler returns a web stream (ReadableStream) payload is not handled correctly. Web stream payloads should be supported for HEAD routes, including proper stream cancellation."
+    }
+  ]
+}

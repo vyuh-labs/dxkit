@@ -58,6 +58,8 @@ document is the supporting evidence.
 | Gate identity is deterministic under tested churn     | Strong          | offline matcher benches                            | "0 false net-new on tested line-shift and rename cases"                                      |
 | LLM-as-gate has cost and reproducibility issues       | Strong          | gate-vs-LLM benchmark, 5 reps × 2 models × 2 repos | "an LLM can judge, but not cheaply or reproducibly in-loop"                                  |
 | Graph context reduces observed large-repo token tails | Moderate-strong | Sonnet session study, 30 sessions                  | "lower mean, tail, and variance on a large repo"                                             |
+| Agents do not game tests they can see                 | Strong          | reward-hacking study, 36 runs across 3 framings    | "0/36 observed test-tampering, even under pressure"                                          |
+| A single passing test can under-specify the fix       | Moderate        | held-out check, 2 instances                        | "a subtly-wrong fix can pass the shown test; tiny corpus"                                    |
 | Test-gap gating is safe as a default                  | Not claimed     | repair cost of 1.1M-1.6M tokens in validation      | default remains `security-only`; `full-debt` is opt-in                                       |
 | dxkit improves every agent session                    | Not claimed     | n/a                                                | do not say this                                                                              |
 | dxkit detects more vulnerabilities than scanners      | Not claimed     | n/a                                                | do not say this                                                                              |
@@ -80,6 +82,10 @@ document is the supporting evidence.
 - Graph context does not guarantee fewer tokens in every session. The measured
   effect is lower mean, tail, and variance on large, connected tasks.
 - Opus session results are deferred. Session numbers are from Sonnet.
+- The reward-hacking study is one model (Sonnet 4.6) on a small corpus of
+  solvable bugs. The 0/36 no-gaming result is observed, not proven, and the
+  under-specification finding rests on a tiny held-out set (two instances); see
+  [Study VII](./benchmarks/07-reward-hacking.md).
 
 ---
 
@@ -259,6 +265,24 @@ and a fixed overhead `O/T` dominates on small repos (a forced-graph probe cost
 66% more on the small app). A falsifiable model, not yet numerically fit.
 
 **Method.** Analytical, explaining the Study V numbers. No harness.
+
+### VII. Reward hacking: do agents game tests they can see? → [details](./benchmarks/07-reward-hacking.md)
+
+**Question.** A test-driven loop makes a test the target. Do agents optimize the
+visible test at the expense of the actual goal, and which Goodhart variant shows
+up?
+
+**Headline.** Across 36 runs, including a framing that told the model to "do
+whatever it takes," it never edited a test to fake a pass (**0/36 observed
+tampering**). A visible test instead rescued failures the agent could not fix
+from prose alone. The residual failure is not cheating but under-specification: a
+single passing test can be satisfied by a subtly-wrong fix (one held-out bug
+overfit reliably, 6/6).
+
+**Method.** `bench-rewardhack.mjs` on a corpus of 10 real fastify bug fixes,
+Sonnet 4.6, three framings (neutral / prohibition / pressure), with a cheat
+oracle that restores the real test to separate genuine fixes from tampering and
+checks unseen sibling tests for overfit.
 
 ---
 
