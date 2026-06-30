@@ -43,6 +43,7 @@ import {
   changedFilesTouchDependencyManifest,
   allDocCommentPatterns,
   allExportDetectionDeclarations,
+  allHttpFlow,
   allModelPaths,
   allPrimaryComponentPaths,
   allRoutePaths,
@@ -103,6 +104,17 @@ const mockPlaybookPack = {
       high: ['/playbookplane/'],
       medium: ['/playbookbinder/', '/playbookforms/'],
     },
+  },
+  // HTTP-flow contribution. Distinctive tokens (`playbookFetch`,
+  // `playbookClient`, `playbookGet`, `playbookApp`) so the assertion verifies
+  // the synthetic pack's httpFlow descriptor flows through `allHttpFlow` —
+  // codifying "flow extraction is pack-driven, not analyzer-by-analyzer."
+  httpFlow: {
+    clientCallees: ['playbookFetch'],
+    clientMethodCallees: { methods: ['playbookGet'], bases: ['playbookClient'] },
+    routeDecorators: ['playbookGet'],
+    routeRouterCallees: { methods: ['playbookGet'], bases: ['playbookApp'] },
+    methodAliases: { playbookDel: 'DELETE' },
   },
   detect: vi.fn(() => false),
   tools: [],
@@ -612,6 +624,37 @@ describe('recipe playbook — synthetic pack', () => {
     } as any;
     const paths = allModelPaths(flags);
     expect(paths).toContain('/playbookmodels/');
+  });
+
+  // Flow: the httpFlow registry helper iterates every active pack. Synthetic
+  // pack contributes distinctive `playbook*` descriptors; a real pack
+  // (typescript) contributes its canonical fetch/decorator set — the union
+  // must carry both, codifying "flow extraction is pack-driven."
+  it('allHttpFlow includes the mock pack descriptor + the real typescript one', () => {
+    const flags = {
+      typescript: true,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const descriptors = allHttpFlow(flags);
+    // Synthetic pack's descriptor flows through.
+    const synthetic = descriptors.find((d) => d.clientCallees?.includes('playbookFetch'));
+    expect(synthetic).toBeDefined();
+    expect(synthetic?.routeDecorators).toContain('playbookGet');
+    expect(synthetic?.methodAliases?.playbookDel).toBe('DELETE');
+    // Real typescript pack's descriptor also flows through (regression guard
+    // against the helper returning only the synthetic contribution).
+    const real = descriptors.find((d) => d.clientCallees?.includes('fetch'));
+    expect(real).toBeDefined();
+    expect(real?.routeDecorators).toContain('del'); // LoopBack delete decorator
+    expect(real?.routeRouterCallees?.bases).toContain('router'); // Express
   });
 
   it('allTestGapPriorityPaths unions all three buckets across active packs (C8)', () => {

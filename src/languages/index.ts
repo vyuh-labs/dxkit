@@ -1,5 +1,11 @@
 import type { DetectedStack } from '../types';
-import type { ArchitecturalShape, DeepSastSupport, LanguageId, LanguageSupport } from './types';
+import type {
+  ArchitecturalShape,
+  DeepSastSupport,
+  HttpFlowSupport,
+  LanguageId,
+  LanguageSupport,
+} from './types';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -9,7 +15,13 @@ import { kotlin } from './kotlin';
 import { java } from './java';
 import { ruby } from './ruby';
 
-export type { ArchitecturalShape, LanguageId, LanguageSupport, LintSeverity } from './types';
+export type {
+  ArchitecturalShape,
+  HttpFlowSupport,
+  LanguageId,
+  LanguageSupport,
+  LintSeverity,
+} from './types';
 
 export const LANGUAGES: readonly LanguageSupport[] = [
   python,
@@ -372,6 +384,24 @@ export function allModelPaths(flags: DetectedStack['languages']): string[] {
       activeLanguagesFromFlags(flags).flatMap((l) => l.architecturalShape?.modelPaths ?? []),
     ),
   ];
+}
+
+/**
+ * Active packs' `httpFlow` descriptors (defined-only). Consumed by the
+ * cross-cutting flow extractor (`src/analyzers/flow/`): it resolves the
+ * per-file descriptor by the file's language and uses this union to decide
+ * whether flow extraction applies at all. Per Rule 6 the extractor never
+ * branches on language id or hardcodes a framework literal — every HTTP
+ * client/route construct it recognizes comes from a pack's descriptor here.
+ *
+ * `recipe-playbook.test.ts` asserts a synthetic pack's `httpFlow`
+ * contribution flows through this helper, codifying "flow extraction is
+ * pack-driven, not analyzer-by-analyzer."
+ */
+export function allHttpFlow(flags: DetectedStack['languages']): HttpFlowSupport[] {
+  return activeLanguagesFromFlags(flags)
+    .map((l) => l.httpFlow)
+    .filter((h): h is HttpFlowSupport => h !== undefined);
 }
 
 /**

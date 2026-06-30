@@ -342,6 +342,22 @@ export const ${id}: LanguageSupport = {
     strategy: 'TODO(${id}): describe how exported symbols are detected for this language',
   },
 
+  // TODO(${id}): OPTIONAL per-pack architectural descriptors — add the ones
+  // this language has a surface for (omit the rest). All flow through the
+  // \`all*\` registry helpers in src/languages/index.ts (CLAUDE.md Rule 6);
+  // see typescript.ts for worked examples. The recipe-playbook test asserts a
+  // pack's contributions reach each helper.
+  //   architecturalShape  — primary-component / route / model path conventions
+  //                         + vocabulary + test-gap taxonomy
+  //   httpFlow            — HTTP client callees + route decorators/routers, so
+  //                         the flow extractor (src/analyzers/flow/) maps this
+  //                         language's UI→API→handler integrations. Add it if
+  //                         the language has an HTTP client or web framework
+  //                         (e.g. Python requests/FastAPI, Go net-http/gin,
+  //                         Java Spring @GetMapping, C# ASP.NET [HttpGet]).
+  //   deepSast            — CodeQL / Snyk Code interprocedural engine support
+  //   callGraphReliability — how much to trust graphify's caller counts here
+
   // ─── LP-recipe metadata (populate every field) ─────────────────────────
 
   // Bash permission entries for .claude/settings.json. Cover the test/build/
