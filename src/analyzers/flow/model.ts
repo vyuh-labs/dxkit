@@ -1,0 +1,116 @@
+/**
+ * Flow model + the join — assemble extracted client calls and route
+ * declarations into a `FlowModel`, then bind each call to the route it targets
+ * on the normalized `(method, path)` key.
+ *
+ * The join is where consumed meets served. A binding carries a confidence in
+ * [0, 1] + a reason, mirroring the git-aware matcher's contract: an exact key
+ * match on a path with real static signal is full confidence; a path that is
+ * all placeholder (`/{var}`) carries no signal and is low confidence even when
+ * it happens to match a catch-all; a dynamic or unrouted call is unresolved.
+ * Confidence is what a gate thresholds on — only high-confidence bindings can
+ * block, which is what keeps the false-positive budget intact.
+ *
+ * Pure over its inputs (the file-extraction step that produces `FileFlow`s does
+ * the I/O); this module just structures + joins.
+ */
+
+import { extractFileFlow, type ClientCall, type FileFlow, type RouteEndpoint } from './extract';
+import type { NormalizeConfig } from './normalize';
+
+/**
+ * Why a call did or didn't bind to a route:
+ *   - `exact`            — matched a route on a path with real static signal;
+ *   - `placeholder-only` — matched, but the path is all `{var}` (no signal);
+ *   - `no-route`         — path resolved to an internal route shape, but no
+ *                          served route matches it;
+ *   - `external`         — the URL is an external/absolute address we don't
+ *                          serve (path is null), so it is not an internal binding.
+ */
+export type BindingReason = 'exact' | 'placeholder-only' | 'no-route' | 'external';
+
+/** One client call resolved (or not) against the served routes. */
+export interface FlowBinding {
+  readonly call: ClientCall;
+  readonly route: RouteEndpoint | null;
+  readonly confidence: number;
+  readonly reason: BindingReason;
+}
+
+/** The assembled flow: both surfaces plus the bindings between them. */
+export interface FlowModel {
+  readonly calls: readonly ClientCall[];
+  readonly routes: readonly RouteEndpoint[];
+  readonly bindings: readonly FlowBinding[];
+}
+
+/** A path made up entirely of `{var}` segments carries no static signal. */
+function isPlaceholderOnly(path: string): boolean {
+  return /^(\/\{var\})+$/.test(path);
+}
+
+/**
+ * Bind each client call to the route it targets, on the normalized
+ * `(method, path)` key. Routes are indexed once; each call resolves in O(1).
+ */
+export function joinFlow(
+  calls: readonly ClientCall[],
+  routes: readonly RouteEndpoint[],
+): FlowBinding[] {
+  const routeIndex = new Map<string, RouteEndpoint>();
+  for (const r of routes) routeIndex.set(`${r.method} ${r.path}`, r);
+
+  return calls.map((call): FlowBinding => {
+    if (call.path == null) return { call, route: null, confidence: 0, reason: 'external' };
+    const route = routeIndex.get(`${call.method} ${call.path}`) ?? null;
+    if (!route) return { call, route: null, confidence: 0, reason: 'no-route' };
+    if (isPlaceholderOnly(call.path)) {
+      return { call, route, confidence: 0.3, reason: 'placeholder-only' };
+    }
+    return { call, route, confidence: 1, reason: 'exact' };
+  });
+}
+
+/** Flatten per-file surfaces into one model + its bindings. */
+export function buildFlowModel(fileFlows: readonly FileFlow[]): FlowModel {
+  const calls = fileFlows.flatMap((f) => f.calls);
+  const routes = fileFlows.flatMap((f) => f.routes);
+  return { calls, routes, bindings: joinFlow(calls, routes) };
+}
+
+/**
+ * Extract + assemble a flow model from a set of files. `null` extractions
+ * (unparseable / engine unavailable) are skipped, never fatal.
+ */
+export async function extractFlowModel(
+  filePaths: readonly string[],
+  config?: NormalizeConfig,
+): Promise<FlowModel> {
+  const flows: FileFlow[] = [];
+  for (const path of filePaths) {
+    const flow = await extractFileFlow(path, config);
+    if (flow) flows.push(flow);
+  }
+  return buildFlowModel(flows);
+}
+
+/** Summary counts for a model (drives the `flow` preview + acceptance checks). */
+export interface FlowSummary {
+  readonly calls: number;
+  readonly routes: number;
+  readonly resolved: number;
+  readonly highConfidence: number;
+  readonly unresolved: number;
+}
+
+export function summarize(model: FlowModel): FlowSummary {
+  const resolved = model.bindings.filter((b) => b.route !== null).length;
+  const highConfidence = model.bindings.filter((b) => b.confidence >= 1).length;
+  return {
+    calls: model.calls.length,
+    routes: model.routes.length,
+    resolved,
+    highConfidence,
+    unresolved: model.calls.length - resolved,
+  };
+}
