@@ -136,6 +136,83 @@ export interface DeepSastSupport {
 }
 
 /**
+ * Per-pack HTTP-flow descriptors: how this language's source expresses
+ * outbound HTTP calls (the CONSUMED side) and inbound route declarations
+ * (the SERVED side). Declared by each language pack (Rule 6) and consumed
+ * through `allHttpFlow` in `src/languages/index.ts`; the cross-cutting flow
+ * extractor (`src/analyzers/flow/`) reads the active-pack union and never
+ * branches on language id or hardcodes framework literals (`fetch`,
+ * `@get`, `router.post`).
+ *
+ * These are SEMANTIC descriptors matched against the tree-sitter AST — not
+ * regexes over text (Rule 5). The extractor finds call expressions /
+ * decorators whose callee matches a descriptor, then reads the argument
+ * nodes for the method + URL. The descriptors say WHICH constructs are HTTP;
+ * the engine reads them structurally.
+ *
+ * URL normalization (host-helper stripping, `:id`/`{id}`/`${x}` → `{var}`,
+ * query stripping) is deliberately NOT here: host helpers are per-APP config
+ * (`flow.stripUrlPrefixes`), and param-form canonicalization is uniform
+ * across frameworks, so both live in the shared normalizer rather than in a
+ * per-language descriptor.
+ *
+ * These fields are exactly what is needed to extract axios + custom-wrapper
+ * client calls from a React frontend and LoopBack `@get`/`@post` + Express
+ * `router.<method>` routes — the union that, on a real axios → LoopBack stack,
+ * matched-or-beat a hand-tuned regex tool at higher precision.
+ *
+ * Optional — a pack with no HTTP surface (or none modeled yet) omits it,
+ * and the flow extractor sees the empty union for that language.
+ */
+export interface HttpFlowSupport {
+  /**
+   * Bare-callee identifiers that initiate an outbound HTTP request with the
+   * URL as the first argument. The canonical case is the Fetch API
+   * `fetch(url, opts)`. Method comes from the `opts.method` option (default
+   * GET). Matched on a `call_expression` whose `function` is an identifier
+   * in this list.
+   */
+  clientCallees?: string[];
+
+  /**
+   * Member-method client calls of the form `<base>.<method>(url, ...)`.
+   * `methods` are the property names that map to HTTP verbs
+   * (`get`/`post`/`put`/`delete`/`patch`); the verb is the method name.
+   * `bases`, when present, restricts which receiver identifiers count
+   * (`axios`, `http`, `api`, `client`, `request`, ...). When `bases` is
+   * omitted, any receiver whose `.<method>(...)` first argument is a
+   * path-like literal is treated as a client call — this covers
+   * app-specific wrappers (`requests.get('/x')`, `agent.Articles.del(...)`)
+   * that no fixed allowlist can enumerate; the path-like-literal filter
+   * keeps non-HTTP `.get`/`.delete` (lodash, Maps) out.
+   */
+  clientMethodCallees?: { methods: string[]; bases?: string[] };
+
+  /**
+   * Decorator-style route declarations: `@<name>('/path')` on a handler
+   * method (LoopBack `@get`, NestJS `@Post`). `<name>` maps to the HTTP
+   * verb; the first string/template argument is the route path. Matched on
+   * `decorator` nodes whose call callee is an identifier in this list.
+   */
+  routeDecorators?: string[];
+
+  /**
+   * Router-style route declarations: `<base>.<method>('/path', handler)`
+   * (Express `app.get(...)`, `router.post(...)`). `methods` map to verbs;
+   * `bases` are the receiver identifiers (`app`, `router`).
+   */
+  routeRouterCallees?: { methods: string[]; bases: string[] };
+
+  /**
+   * Canonicalize a matched method token to an uppercase HTTP verb where the
+   * token differs from the verb. The motivating alias is LoopBack's `del` →
+   * `DELETE`. Tokens absent from the map default to upper-casing
+   * (`get` → `GET`). Keys are lowercase method tokens.
+   */
+  methodAliases?: Record<string, string>;
+}
+
+/**
  * Everything dxkit needs to know about a language lives in one implementation
  * of this interface. See `src/languages/index.ts` for the registry.
  *
@@ -338,6 +415,18 @@ export interface LanguageSupport {
    * convention and no controllers/components vocabulary maps).
    */
   architecturalShape?: ArchitecturalShape;
+
+  /**
+   * HTTP-flow descriptors for this pack: how its source expresses outbound
+   * HTTP calls + inbound route declarations. Consumed through `allHttpFlow`
+   * in `src/languages/index.ts` by the cross-cutting flow extractor
+   * (`src/analyzers/flow/`) — never a per-language branch and never a
+   * hardcoded framework literal in the analyzer (Rule 6 + Rule 5).
+   *
+   * Optional — a pack with no modeled HTTP surface omits it; the extractor
+   * sees the empty union for that language. See `HttpFlowSupport`.
+   */
+  httpFlow?: HttpFlowSupport;
 
   /**
    * D073 (2.4.7): language names cloc emits in its `--json` output

@@ -1262,6 +1262,28 @@ export const typescript: LanguageSupport = {
     },
   },
 
+  // HTTP flow (CLAUDE.md Rule 6): how TS/JS source expresses outbound HTTP
+  // calls + route declarations, consumed by the flow extractor via
+  // `allHttpFlow`. CLIENT: the Fetch API plus any `<recv>.<verb>(url, ...)`
+  // member call whose first arg is a path-like literal — `bases` is omitted
+  // so axios, app-specific wrappers (`requests.get`, `agent.Articles.del`),
+  // and Angular's `this.http.get` all match; the path-like-literal filter in
+  // the engine keeps non-HTTP `.get`/`.delete` out. SERVED: decorator routes
+  // (LoopBack/NestJS `@get`/`@post`/`@del`) and Express `app`/`router`
+  // `.<verb>('/path', ...)`. `del` → DELETE is LoopBack's verb alias. This is
+  // the exact descriptor set validated by the bundled flow probe (axios React
+  // frontend → LoopBack/Express backend, match-or-beat at higher precision).
+  httpFlow: {
+    clientCallees: ['fetch'],
+    clientMethodCallees: { methods: ['get', 'post', 'put', 'delete', 'patch'] },
+    routeDecorators: ['get', 'post', 'put', 'patch', 'del', 'delete'],
+    routeRouterCallees: {
+      methods: ['get', 'post', 'put', 'delete', 'patch'],
+      bases: ['app', 'router'],
+    },
+    methodAliases: { del: 'DELETE' },
+  },
+
   clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
 
   detect(cwd) {
