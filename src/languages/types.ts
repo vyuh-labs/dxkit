@@ -429,6 +429,24 @@ export interface LanguageSupport {
   httpFlow?: HttpFlowSupport;
 
   /**
+   * Tree-sitter grammars this pack's source files parse with, keyed by file
+   * extension (with leading dot). Consumed by the canonical AST layer
+   * (`src/ast/`) — the platform's in-process, graphify-independent parser —
+   * which maps each LOGICAL grammar name to a concrete grammar artifact. Keep
+   * the names logical (`'typescript'`, `'tsx'`, `'javascript'`), not paths, so
+   * the AST engine stays swappable behind `src/ast/` without touching packs
+   * (Rule 6 + the same swap discipline graphify sits behind).
+   *
+   * One language can need several grammars by extension: a TypeScript project
+   * mixes `.ts` (typescript), `.tsx` (tsx), and `.js`/`.jsx` (javascript).
+   *
+   * Optional — a pack omits it until its grammar is wired; AST-based features
+   * (flow extraction, future graph building) simply skip that language's files
+   * until present. See `src/ast/` for the name → artifact resolution.
+   */
+  treeSitterGrammars?: Record<string, string>;
+
+  /**
    * D073 (2.4.7): language names cloc emits in its `--json` output
    * for this pack. cloc's per-language keys are NOT 1:1 with file
    * extensions — `.ts` and `.tsx` both report as `"TypeScript"`,

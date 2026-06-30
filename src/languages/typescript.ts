@@ -1284,6 +1284,18 @@ export const typescript: LanguageSupport = {
     methodAliases: { del: 'DELETE' },
   },
 
+  // Tree-sitter grammars by extension for the canonical AST layer (src/ast/).
+  // .tsx needs the tsx grammar (JSX-aware); .ts uses typescript; .js/.jsx/.mjs/
+  // .cjs use javascript. Logical names — src/ast/ resolves them to artifacts.
+  treeSitterGrammars: {
+    '.ts': 'typescript',
+    '.tsx': 'tsx',
+    '.js': 'javascript',
+    '.jsx': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
+  },
+
   clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
 
   detect(cwd) {
