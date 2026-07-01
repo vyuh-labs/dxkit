@@ -11,8 +11,8 @@
  * pack auto-extends the scan (Rule 6).
  */
 
-import { join } from 'path';
-import { LANGUAGES } from '../../languages';
+import { join, relative } from 'path';
+import { LANGUAGES, allFlowSourceExtensions } from '../../languages';
 import { walkSourceFiles } from '../tools/walk-source-files';
 import { extractFileFlow, type FileFlow } from './extract';
 import { buildFlowModel, type FlowModel } from './model';
@@ -26,17 +26,31 @@ export interface GatherFlowOptions {
   readonly specs?: readonly string[];
   /** Host-helper prefixes to strip during URL normalization (per-app config). */
   readonly stripUrlPrefixes?: readonly string[];
+  /**
+   * Relabel every extracted call / route `file` relative to this directory.
+   * Off by default (files keep their scanned absolute path — the M2 map/trace
+   * display form). The flow-binding identity contract (Rule 9) requires an
+   * environment-INDEPENDENT locator, so the gate and `flow refresh` set this to
+   * the repo root: a binding gathered from the working tree and the same file
+   * gathered from a detached worktree then share one relative `file`, and the
+   * committed `consumed.json` carries repo-relative paths that mean the same
+   * thing on any machine.
+   */
+  readonly relativeTo?: string;
 }
 
 /** Extensions of packs that can contribute flow (httpFlow + a grammar). */
 function flowExtensions(): string[] {
-  const exts = new Set<string>();
-  for (const pack of LANGUAGES) {
-    if (pack.httpFlow && pack.treeSitterGrammars) {
-      for (const ext of Object.keys(pack.treeSitterGrammars)) exts.add(ext);
-    }
-  }
-  return [...exts];
+  return allFlowSourceExtensions(LANGUAGES);
+}
+
+/** Relabel a file surface's call/route paths relative to `base`. */
+function relabelFileFlow(flow: FileFlow, base: string): FileFlow {
+  const rel = (f: string): string => relative(base, f);
+  return {
+    calls: flow.calls.map((c) => ({ ...c, file: rel(c.file) })),
+    routes: flow.routes.map((r) => ({ ...r, file: rel(r.file) })),
+  };
 }
 
 /** Walk + extract + assemble. Files that don't parse are skipped, never fatal. */
@@ -48,7 +62,7 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
   for (const root of opts.roots) {
     for (const rel of walkSourceFiles(root, { extensions })) {
       const flow = await extractFileFlow(join(root, rel), config);
-      if (flow) fileFlows.push(flow);
+      if (flow) fileFlows.push(opts.relativeTo ? relabelFileFlow(flow, opts.relativeTo) : flow);
     }
   }
 

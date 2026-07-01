@@ -911,11 +911,19 @@ export async function run(argv: string[]): Promise<void> {
         });
         break;
       }
+      // `flow refresh` → write the served/consumed contract snapshots the
+      // cross-repo integration gate reads.
+      if (subCommand === 'refresh') {
+        const { runFlowRefresh } = await import('./flow-cli');
+        await runFlowRefresh({ cwd, frontend, backend, specs, json: !!values.json });
+        break;
+      }
       logger.fail(`Unknown flow subcommand: ${subCommand}`);
       logger.info('Usage:');
       logger.info('  vyuh-dxkit flow [map] [--frontend <dir>] [--backend <dir>] [--specs <a,b>]');
       logger.info('  vyuh-dxkit flow trace "<METHOD> <path>"');
       logger.info('  vyuh-dxkit flow extract [--out <dir>]');
+      logger.info('  vyuh-dxkit flow refresh');
       process.exit(1);
       break;
     }

@@ -29,6 +29,8 @@ import * as logger from '../logger';
 import type { ClassifiedPair, EnvelopeDrift, GuardrailCheckResult } from './check';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
+import { describeBrokenIntegration } from '../analyzers/flow/gate';
+import type { FlowGateOutcome } from './flow-gate-check';
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
 
@@ -125,6 +127,8 @@ export function renderConsole(result: GuardrailCheckResult): string {
     lines.push('');
   }
 
+  lines.push(...formatFlowGate(result.flowGate));
+
   // Always show a summary footer — sets expectations for what
   // happens next (exit code, what to read on a fail).
   lines.push(logger.bold('Summary'));
@@ -156,13 +160,40 @@ export function renderConsole(result: GuardrailCheckResult): string {
   return lines.join('\n');
 }
 
+/**
+ * Console lines for the flow integration gate. Silent unless the gate produced
+ * findings — a skipped or clean gate adds no noise. Blocking breakages are
+ * grouped separately from warnings so the actionable set surfaces first.
+ */
+function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
+  if (!flow || flow.findings.length === 0) return [];
+  const out: string[] = [];
+  const blocking = flow.findings.filter((f) => f.verdict === 'block');
+  const warning = flow.findings.filter((f) => f.verdict === 'warn');
+  if (blocking.length > 0) {
+    out.push(logger.bold(`Flow breakage — blocking (${blocking.length})`));
+    for (const f of blocking) out.push(`  ${describeBrokenIntegration(f)}`);
+    out.push('');
+  }
+  if (warning.length > 0) {
+    out.push(logger.bold(`Flow breakage — warning (${warning.length})`));
+    for (const f of warning) out.push(`  ${describeBrokenIntegration(f)}`);
+    out.push('');
+  }
+  return out;
+}
+
 function verdictBanner(result: GuardrailCheckResult): string {
+  const flow = result.flowGate?.findings ?? [];
   if (result.blocks) {
-    const count = result.pairs.filter(isBlocking).length;
+    const count =
+      result.pairs.filter(isBlocking).length + flow.filter((f) => f.verdict === 'block').length;
     return logger.bold(`Guardrail BLOCKED — ${count} new regression${count === 1 ? '' : 's'}`);
   }
   if (result.warns) {
-    const count = result.pairs.filter((p) => p.classification.warns).length;
+    const count =
+      result.pairs.filter((p) => p.classification.warns).length +
+      flow.filter((f) => f.verdict === 'warn').length;
     return logger.bold(`Guardrail PASSED — ${count} warning${count === 1 ? '' : 's'}`);
   }
   return logger.bold('Guardrail PASSED');
@@ -341,6 +372,27 @@ export interface GuardrailJsonPayload {
     };
     readonly reasons: ReadonlyArray<MatchReason>;
   }>;
+  /** The flow integration gate — net-new UI→API breakages from the base↔HEAD
+   *  contract diff. Absent in committed modes (the gate runs only ref-based).
+   *  When present but `ran` is false, `skipped` says why (e.g. no flow-surface
+   *  change, no served-side truth). */
+  readonly flowGate?: {
+    readonly ran: boolean;
+    readonly skipped?: string;
+    readonly mode: string;
+    readonly blocks: boolean;
+    readonly warns: boolean;
+    readonly findings: ReadonlyArray<{
+      readonly id: string;
+      readonly method: string;
+      readonly path: string;
+      readonly file: string;
+      readonly line: number;
+      readonly confidence: number;
+      readonly reason: string;
+      readonly verdict: 'block' | 'warn';
+    }>;
+  };
 }
 
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
@@ -420,6 +472,27 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
         : {}),
       reasons: p.classification.reasons,
     })),
+    ...(result.flowGate !== undefined
+      ? {
+          flowGate: {
+            ran: result.flowGate.ran,
+            ...(result.flowGate.skipped !== undefined ? { skipped: result.flowGate.skipped } : {}),
+            mode: result.flowGate.mode,
+            blocks: result.flowGate.blocks,
+            warns: result.flowGate.warns,
+            findings: result.flowGate.findings.map((f) => ({
+              id: f.id,
+              method: f.method,
+              path: f.path,
+              file: f.file,
+              line: f.line,
+              confidence: f.confidence,
+              reason: f.reason,
+              verdict: f.verdict,
+            })),
+          },
+        }
+      : {}),
   };
 }
 
@@ -446,7 +519,17 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   const verdict = result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED';
   lines.push(`## Guardrail: ${verdict}`);
   lines.push('');
-  lines.push(summarySentence(result, blocking.length, warning.length, resolved.length));
+  const flow = result.flowGate?.findings ?? [];
+  const flowBlocking = flow.filter((f) => f.verdict === 'block').length;
+  const flowWarning = flow.filter((f) => f.verdict === 'warn').length;
+  lines.push(
+    summarySentence(
+      result,
+      blocking.length + flowBlocking,
+      warning.length + flowWarning,
+      resolved.length,
+    ),
+  );
   lines.push('');
 
   if (result.refExcludedKinds.length > 0) {
@@ -467,6 +550,8 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     for (const p of blocking) lines.push(markdownPairRow(p));
     lines.push('');
   }
+
+  lines.push(...markdownFlowGate(result.flowGate));
 
   if (suppressed.length > 0) {
     lines.push('<details>');
@@ -540,6 +625,41 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   );
 
   return lines.join('\n');
+}
+
+/**
+ * Markdown for the flow integration gate. Blocking breakages render as a
+ * top-level table (they fail the PR); warnings collapse into a `<details>`.
+ * Silent when the gate produced no findings.
+ */
+function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
+  if (!flow || flow.findings.length === 0) return [];
+  const out: string[] = [];
+  const blocking = flow.findings.filter((f) => f.verdict === 'block');
+  const warning = flow.findings.filter((f) => f.verdict === 'warn');
+  const row = (f: FlowGateOutcome['findings'][number]): string =>
+    `| ${escapeMd(`${f.method} ${f.path}`)} | ${escapeMd(f.reason)} | ` +
+    `${escapeMd(`${f.file}:${f.line}`)} | ${f.confidence.toFixed(2)} |`;
+  if (blocking.length > 0) {
+    out.push('### Broken integrations');
+    out.push('');
+    out.push('| Endpoint | Reason | Consumer | Confidence |');
+    out.push('|---|---|---|---|');
+    for (const f of blocking) out.push(row(f));
+    out.push('');
+  }
+  if (warning.length > 0) {
+    out.push('<details>');
+    out.push(`<summary>Integration warnings (${warning.length})</summary>`);
+    out.push('');
+    out.push('| Endpoint | Reason | Consumer | Confidence |');
+    out.push('|---|---|---|---|');
+    for (const f of warning) out.push(row(f));
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  return out;
 }
 
 /** Append ` (ref: <ref>)` to the mode label when running ref-based,

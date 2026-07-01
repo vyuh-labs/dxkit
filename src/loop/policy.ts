@@ -31,6 +31,7 @@ import {
   resolvePolicy,
 } from '../baseline/policy';
 import type { FindingStatus } from '../baseline/types';
+import type { FlowGateMode } from '../analyzers/flow/config';
 
 /**
  * The two shipped loop postures.
@@ -56,6 +57,14 @@ interface PresetDef {
   readonly block: ReadonlyArray<FindingStatus>;
   /** Per-kind escalation rules (see `BrownfieldBlockRules`). */
   readonly blockRules: BrownfieldBlockRules;
+  /**
+   * Posture for the flow integration gate. `security-only` WARNS on a net-new
+   * broken integration (like test-gap / quality — it isn't a security class,
+   * and a cross-repo integration false positive must never wedge an unattended
+   * loop); `full-debt` BLOCKS on it. Both keep the gate's own confidence gating
+   * (only exact bindings can block even under `block`).
+   */
+  readonly flowMode: FlowGateMode;
 }
 
 /** The security class: secrets, crit/high SAST, crit/high reachable dep
@@ -78,6 +87,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
     // Blocking comes solely from SECURITY_BLOCK_RULES.
     block: [],
     blockRules: SECURITY_BLOCK_RULES,
+    flowMode: 'warn',
   },
   'full-debt': {
     // Any net-new finding blocks (generic `added`), plus every escalation.
@@ -87,14 +97,17 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
       newUntestedChangedSource: true,
       newSevereQualityIssueInChangedFiles: true,
     },
+    flowMode: 'block',
   },
 });
 
 /** Resolved loop posture: the policy the Stop-gate hands to the guardrail,
- *  plus the preset name that produced it (recorded in the ledger). */
+ *  plus the preset name that produced it (recorded in the ledger) and the
+ *  flow-gate mode the preset dictates (passed as the guardrail's `flowMode`). */
 export interface ResolvedLoopPolicy {
   readonly policy: BrownfieldPolicy;
   readonly preset: LoopPreset;
+  readonly flowMode: FlowGateMode;
 }
 
 function isLoopPreset(v: unknown): v is LoopPreset {
@@ -143,6 +156,7 @@ export function resolveLoopPolicy(cwd: string): ResolvedLoopPolicy {
   const def = PRESETS[preset];
   return {
     preset,
+    flowMode: def.flowMode,
     policy: {
       ...base,
       block: def.block,

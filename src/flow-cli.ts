@@ -4,6 +4,7 @@
  * All analysis lives in `src/analyzers/flow/`; this file only wires I/O.
  */
 
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from './logger';
@@ -11,6 +12,13 @@ import { gatherFlowModel } from './analyzers/flow/gather';
 import { flowCsvFiles } from './analyzers/flow/csv';
 import { summarize, type FlowModel } from './analyzers/flow/model';
 import { buildFlowMap, buildFlowTrace } from './explore/flow-view';
+import { readFlowConfig } from './analyzers/flow/config';
+import {
+  buildConsumedContract,
+  buildServedContract,
+  writeConsumedContract,
+  writeServedContract,
+} from './analyzers/flow/contract';
 
 export interface FlowExtractOptions {
   readonly cwd: string;
@@ -29,20 +37,6 @@ export interface FlowViewOptions {
   readonly backend?: string;
   readonly specs?: string;
   readonly json?: boolean;
-}
-
-/** Host-helper strip prefixes from `.dxkit/policy.json:flow.stripUrlPrefixes`. */
-function readStripPrefixes(cwd: string): string[] {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
-    const prefixes = (JSON.parse(raw) as { flow?: { stripUrlPrefixes?: unknown } })?.flow
-      ?.stripUrlPrefixes;
-    return Array.isArray(prefixes)
-      ? prefixes.filter((p): p is string => typeof p === 'string')
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -72,12 +66,20 @@ function resolveRoots(opts: { cwd: string; frontend?: string; backend?: string }
   return roots;
 }
 
-/** Gather one flow model — shared by extract / map / trace. */
-async function gatherModel(opts: FlowViewOptions): Promise<FlowModel> {
+/** Gather one flow model — shared by extract / map / trace / refresh. Specs
+ *  come from BOTH the `--specs` flag and `.dxkit/policy.json:flow.specs`; strip
+ *  prefixes and other flow config come from that same policy section. */
+async function gatherModel(
+  opts: FlowViewOptions,
+  extra?: { relativeTo?: string },
+): Promise<FlowModel> {
+  const config = readFlowConfig(opts.cwd);
+  const policySpecs = config.specs.map((s) => path.resolve(opts.cwd, s));
   return gatherFlowModel({
     roots: resolveRoots(opts),
-    specs: splitPaths(opts.specs, opts.cwd),
-    stripUrlPrefixes: readStripPrefixes(opts.cwd),
+    specs: [...splitPaths(opts.specs, opts.cwd), ...policySpecs],
+    stripUrlPrefixes: config.stripUrlPrefixes,
+    ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
   });
 }
 
@@ -190,4 +192,57 @@ export async function runFlowTrace(opts: FlowViewOptions & { target: string }): 
     `Blast radius: ${br.directConsumers} direct consumer(s) in ${br.consumerFiles} file(s)` +
       (br.upstreamCallers ? `, ${br.upstreamCallers} upstream caller(s)` : ''),
   );
+}
+
+/** Current HEAD commit SHA, or undefined outside a git repo (best-effort). */
+function headCommitSha(cwd: string): string | undefined {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `vyuh-dxkit flow refresh` — write this repo's flow contract snapshots
+ * (`.dxkit/flow/served.json` + `consumed.json`). A backend commits `served.json`
+ * so a frontend in another repo can gate against it; a frontend commits
+ * `consumed.json` so a backend can see who still binds each route. A monorepo
+ * commits both (or neither — its guardrail computes both sides live). This is
+ * the one command that needs a full flow gather + write; the per-PR gate reads
+ * the committed snapshots (or gathers live in a monorepo) without a refresh.
+ */
+export async function runFlowRefresh(opts: FlowViewOptions): Promise<void> {
+  if (!opts.json) logger.header('vyuh-dxkit flow refresh');
+  // Repo-relative locators — the snapshots are committed + cross-repo, so a
+  // binding's `file` must mean the same thing on every machine (Rule 9).
+  const model = await gatherModel(opts, { relativeTo: opts.cwd });
+  const meta = {
+    schemaVersion: 1 as const,
+    generatedAt: new Date().toISOString(),
+    ...(headCommitSha(opts.cwd) !== undefined ? { commitSha: headCommitSha(opts.cwd) } : {}),
+  };
+  const served = buildServedContract(model, meta);
+  const consumed = buildConsumedContract(model, meta);
+  const servedPath = writeServedContract(opts.cwd, served);
+  const consumedPath = writeConsumedContract(opts.cwd, consumed);
+
+  if (opts.json) {
+    emitJson({
+      served: { path: servedPath, routes: served.routes.length },
+      consumed: { path: consumedPath, bindings: consumed.bindings.length },
+    });
+    return;
+  }
+  logger.success(
+    `served.json: ${served.routes.length} route(s) · consumed.json: ${consumed.bindings.length} binding(s)`,
+  );
+  logger.info(`  ${path.relative(opts.cwd, servedPath)}`);
+  logger.info(`  ${path.relative(opts.cwd, consumedPath)}`);
+  logger.info('');
+  logger.info('Commit these so the counterpart repo can gate against them.');
 }

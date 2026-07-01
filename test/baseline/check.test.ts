@@ -350,3 +350,55 @@ describe('runGuardrailCheck — identity-scheme migration guard', () => {
     await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(/scheme/i);
   }, 300_000);
 });
+
+describe('runGuardrailCheck — flow integration gate seam', () => {
+  // Proves the flow gate is actually folded into the top-level verdict — not
+  // just that the helper works in isolation. A monorepo fixture (backend route
+  // + frontend call) run ref-based against `main` with a net-new dead call must
+  // flip result.blocks and attach result.flowGate. Full pipeline (~15s).
+  function makeFlowRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-guardrail-flow-'));
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fx', version: '0.0.0' }));
+    writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\n");
+    writeFileSync(join(dir, 'server.ts'), "class C { @get('/articles') a() {} }\n");
+    execFileSync('git', ['add', '.'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: dir });
+    return dir;
+  }
+
+  let dir: string;
+  beforeEach(() => {
+    dir = makeFlowRepo();
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('folds a net-new broken integration into the top-level BLOCK verdict', async () => {
+    writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    expect(result.blocks).toBe(true);
+    expect(result.flowGate?.ran).toBe(true);
+    expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
+    // The finding surfaces in the JSON payload the CLI + Stop-gate consume.
+    const json = renderJson(result);
+    expect(json.flowGate?.findings.some((f) => f.path === '/dead')).toBe(true);
+    expect(json.verdict.blocks).toBe(true);
+  }, 300_000);
+
+  it('warn flowMode surfaces the breakage without blocking the build', async () => {
+    writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const result = await runGuardrailCheck({
+      cwd: dir,
+      cliMode: 'ref-based',
+      cliRef: 'main',
+      flowMode: 'warn',
+    });
+    expect(result.flowGate?.ran).toBe(true);
+    expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
+    // Flow warns, so IT does not block; the overall verdict isn't forced by flow.
+    expect(result.flowGate?.blocks).toBe(false);
+  }, 300_000);
+});

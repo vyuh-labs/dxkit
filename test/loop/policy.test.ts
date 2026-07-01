@@ -33,8 +33,11 @@ describe('loop policy presets', () => {
   });
 
   it('security-only does NOT block test-gap or quality, but DOES block the security class', () => {
-    const { preset, policy } = resolveLoopPolicy(repo);
+    const { preset, policy, flowMode } = resolveLoopPolicy(repo);
     expect(preset).toBe('security-only');
+    // Flow integration breakage warns (not a security class; a cross-repo false
+    // positive must never wedge an unattended loop).
+    expect(flowMode).toBe('warn');
     // No generic status-based block — debt findings (added) warn, never block.
     expect(policy.block).toEqual([]);
     // Open-ended debt off.
@@ -50,11 +53,13 @@ describe('loop policy presets', () => {
 
   it('full-debt blocks every net-new finding incl. test-gap + quality', () => {
     writePolicy(repo, { loop: { preset: 'full-debt' } });
-    const { preset, policy } = resolveLoopPolicy(repo);
+    const { preset, policy, flowMode } = resolveLoopPolicy(repo);
     expect(preset).toBe('full-debt');
     expect(policy.block).toEqual(['added']);
     expect(policy.blockRules.newUntestedChangedSource).toBe(true);
     expect(policy.blockRules.newSevereQualityIssueInChangedFiles).toBe(true);
+    // Full-debt blocks integration breakage too.
+    expect(flowMode).toBe('block');
   });
 
   it('reads loop.preset from .dxkit/policy.json', () => {

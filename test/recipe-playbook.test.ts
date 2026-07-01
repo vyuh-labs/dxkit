@@ -43,8 +43,10 @@ import {
   changedFilesTouchDependencyManifest,
   allDocCommentPatterns,
   allExportDetectionDeclarations,
+  allFlowSourceExtensions,
   allHttpFlow,
   allModelPaths,
+  changedFilesTouchFlowSurface,
   allPrimaryComponentPaths,
   allRoutePaths,
   allSourceExtensions,
@@ -116,6 +118,11 @@ const mockPlaybookPack = {
     routeRouterCallees: { methods: ['playbookGet'], bases: ['playbookApp'] },
     methodAliases: { playbookDel: 'DELETE' },
   },
+  // A grammar alongside httpFlow makes the synthetic pack flow-CAPABLE, so its
+  // extensions flow through `allFlowSourceExtensions` /
+  // `changedFilesTouchFlowSurface` — codifying "the flow-gate trigger is
+  // pack-driven, not a hardcoded extension list."
+  treeSitterGrammars: { '.pbk': 'playbook-lang' },
   detect: vi.fn(() => false),
   tools: [],
   semgrepRulesets: [],
@@ -655,6 +662,22 @@ describe('recipe playbook — synthetic pack', () => {
     expect(real).toBeDefined();
     expect(real?.routeDecorators).toContain('del'); // LoopBack delete decorator
     expect(real?.routeRouterCallees?.bases).toContain('router'); // Express
+  });
+
+  // Flow-gate trigger: the surface helpers iterate active packs (httpFlow +
+  // grammar). The synthetic pack contributes `.pbk`; the real typescript pack
+  // contributes `.ts`/`.tsx` — the union must carry both, and a changed file in
+  // either extension must trip the trigger. Codifies "the ref-based flow-gate
+  // skip is pack-driven, not a hardcoded extension list."
+  it('allFlowSourceExtensions + changedFilesTouchFlowSurface pick up the mock pack', () => {
+    const packs = [...LANGUAGES]; // LANGUAGES includes the injected synthetic pack (beforeAll)
+    const exts = allFlowSourceExtensions(packs);
+    expect(exts).toContain('.pbk'); // synthetic pack's flow extension
+    expect(exts).toContain('.ts'); // real typescript pack's
+    // A changed synthetic-flow source file trips the trigger.
+    expect(changedFilesTouchFlowSurface(['app/Widget.pbk'], packs)).toBe(true);
+    // A non-flow change does not.
+    expect(changedFilesTouchFlowSurface(['README.md'], packs)).toBe(false);
   });
 
   it('allTestGapPriorityPaths unions all three buckets across active packs (C8)', () => {
