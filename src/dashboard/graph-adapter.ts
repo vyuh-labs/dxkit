@@ -30,7 +30,7 @@
  */
 
 import { callersOf, calleesOf, communitiesQuery, nodesInFile } from '../explore/queries';
-import type { Graph, GraphEdge } from '../explore/types';
+import type { Graph } from '../explore/types';
 
 // ─── Cytoscape element shapes ────────────────────────────────────────────────
 //
@@ -276,12 +276,16 @@ export function adaptToTier2(graph: Graph, communityId: number): CytoscapeElemen
   // Aggregate edges to the file level. Walk every node in the
   // community + every outbound edge; bucket by (sourceFile,
   // targetFile, relation).
-  const edgeKey = (from: string, to: string, rel: GraphEdge['relation']) =>
+  // Tier 2 renders the STRUCTURAL file graph only. The `calls-endpoint`
+  // flow overlay (whose `to` is an endpoint, never a structural node) is
+  // not a file-to-file relation, so it is filtered out below.
+  type StructuralRelation = 'calls' | 'imports_from' | 'method';
+  const edgeKey = (from: string, to: string, rel: StructuralRelation) =>
     `${from}\x00${to}\x00${rel}`;
   type EdgeBucket = {
     from: string;
     to: string;
-    relation: GraphEdge['relation'];
+    relation: StructuralRelation;
     occurrences: number;
   };
   const edgeBuckets = new Map<string, EdgeBucket>();
@@ -291,7 +295,7 @@ export function adaptToTier2(graph: Graph, communityId: number): CytoscapeElemen
     if (!fromNode?.sourceFile) continue;
     const fromFile = fromNode.sourceFile;
     for (const e of graph.edgesFromNode.get(nodeId) ?? []) {
-      if (e.relation === 'method') continue;
+      if (e.relation !== 'calls' && e.relation !== 'imports_from') continue;
       const toNode = graph.nodeById.get(e.to);
       if (!toNode?.sourceFile) continue;
       const toFile = toNode.sourceFile;
