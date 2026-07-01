@@ -314,7 +314,7 @@ export async function runStopGate(cwd: string): Promise<void> {
   // Resolve the loop-scoped posture ONCE (preset → policy). This is the
   // only place the loop preset is read; the CI guardrail never sees it.
   const { resolveLoopPolicy } = await import('./policy');
-  const { policy, preset } = resolveLoopPolicy(repoDir);
+  const { policy, preset, flowMode } = resolveLoopPolicy(repoDir);
 
   // ── Fast path: replay the last verdict when the working tree is
   // byte-identical to what was last gathered (a no-change stop — an
@@ -371,7 +371,13 @@ export async function runStopGate(cwd: string): Promise<void> {
     // files (opt 3). Verdict-safe: semgrep is intraprocedural, so a net-new
     // code finding only appears in a file the diff touched, and the scan
     // falls back to full whenever the changed set can't be computed.
-    const result = await runGuardrailCheck({ cwd: dir, policy, scope, incremental: true });
+    const result = await runGuardrailCheck({
+      cwd: dir,
+      policy,
+      scope,
+      incremental: true,
+      flowMode,
+    });
     const json = renderJson(result);
     // Persist the full machine-readable verdict so the model (and a human)
     // can read the exact net-new findings the block message points to.

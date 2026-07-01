@@ -405,6 +405,49 @@ export function allHttpFlow(flags: DetectedStack['languages']): HttpFlowSupport[
 }
 
 /**
+ * Source-file extensions of packs that can contribute flow — those declaring
+ * BOTH an `httpFlow` descriptor and a tree-sitter grammar (extraction needs
+ * both). One source of truth (Rule 2) for the flow file walk and the
+ * changed-files flow-surface trigger. Pack-driven (Rule 6): a new flow pack
+ * auto-extends the set.
+ */
+export function allFlowSourceExtensions(packs: readonly LanguageSupport[]): string[] {
+  const exts = new Set<string>();
+  for (const pack of packs) {
+    if (pack.httpFlow && pack.treeSitterGrammars) {
+      for (const ext of Object.keys(pack.treeSitterGrammars)) exts.add(ext);
+    }
+  }
+  return [...exts];
+}
+
+/**
+ * Does any changed-file path touch a flow surface — a source file in a
+ * flow-capable pack's extension set, or a configured OpenAPI spec? Drives the
+ * incremental flow-gate trigger-skip in `runGuardrailCheck`: a net-new broken
+ * integration requires a change to a client call, a route declaration, or a
+ * spec, so when this returns false the ref-based gate is skipped entirely.
+ *
+ * Fail-safe returns false (skip) ONLY when there is genuinely nothing to gate:
+ * no flow-capable pack is active. With flow-capable packs present but no
+ * matching change, it also returns false — correctly, since the diff cannot
+ * have introduced a net-new binding. `specPaths` are repo-relative.
+ */
+export function changedFilesTouchFlowSurface(
+  changedFiles: readonly string[],
+  packs: readonly LanguageSupport[],
+  specPaths: readonly string[] = [],
+): boolean {
+  const exts = allFlowSourceExtensions(packs);
+  if (exts.length === 0) return false;
+  const specSet = new Set(specPaths.map((s) => s.replace(/\\/g, '/')));
+  return changedFiles.some((f) => {
+    const norm = f.replace(/\\/g, '/');
+    return exts.some((e) => norm.endsWith(e)) || specSet.has(norm);
+  });
+}
+
+/**
  * Per-bucket union of active packs' test-gap path patterns. Empty
  * arrays for any bucket no pack declares. Consumed by
  * `analyzers/tests/gather.ts:classifyRisk` to tier source files into

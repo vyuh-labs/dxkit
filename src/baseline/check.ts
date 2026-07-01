@@ -62,6 +62,9 @@ import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
+import { evaluateFlowGateForGuardrail } from './flow-gate-check';
+import type { FlowGateOutcome } from './flow-gate-check';
+import type { FlowGateMode } from '../analyzers/flow/config';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
@@ -150,6 +153,16 @@ export interface RunGuardrailCheckOptions {
    * loop on your own repo keep full coverage).
    */
   readonly untrusted?: boolean;
+  /**
+   * Loop-seam override for the flow integration gate's posture (`block` /
+   * `warn` / `off`), winning over `.dxkit/policy.json:flow.mode`. The loop
+   * Stop-gate derives it from the active preset (`security-only` → `warn`,
+   * `full-debt` → `block`) so an unattended loop doesn't wedge on a cross-repo
+   * integration false positive, while CI / `guardrail check` (which don't set
+   * it) honor the repo's configured mode. The gate runs only in ref-based mode
+   * regardless.
+   */
+  readonly flowMode?: FlowGateMode;
 }
 
 /**
@@ -261,6 +274,12 @@ export interface GuardrailCheckResult {
     readonly kind: BaselineEntry['kind'];
     readonly currentCount: number;
   }>;
+  /** The flow integration-gate pass — an additive, fail-open layer that flags
+   *  net-new UI→API breakage from a base↔HEAD contract diff. Runs only in
+   *  ref-based mode; `undefined` in committed modes (nothing to diff a base
+   *  flow model against). Its `blocks` / `warns` are folded into the top-level
+   *  verdict above. Renderers surface `findings` alongside the matched pairs. */
+  readonly flowGate?: FlowGateOutcome;
 }
 
 /**
@@ -638,6 +657,20 @@ export async function runGuardrailCheck(
   // and the renderer treats that as "delta unavailable."
   const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, baseline.repo.commitSha);
 
+  // The flow integration gate — an additive, fail-open pass over the same
+  // ref-based comparison. It runs its own base↔HEAD flow gather (independent of
+  // the finding matcher above) and never throws; its verdict folds into the
+  // top-level one. Runs only in ref-based mode.
+  const flowGate = await evaluateFlowGateForGuardrail({
+    cwd,
+    mode,
+    ...(options.flowMode !== undefined ? { modeOverride: options.flowMode } : {}),
+    ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+  });
+
+  const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
+  const baseWarns = options.changedOnly ? filteredWarns : warns;
+
   return {
     mode,
     ...(baselinePath !== undefined ? { baselinePath } : {}),
@@ -647,10 +680,11 @@ export async function runGuardrailCheck(
     pairs: filteredPairs,
     envelopeDrift,
     policy,
-    blocks: options.changedOnly ? filteredBlocks : blocks,
-    warns: options.changedOnly ? filteredWarns : warns,
+    blocks: baseBlocks || flowGate.blocks,
+    warns: baseWarns || flowGate.warns,
     allowlistDelta,
     refExcludedKinds,
+    ...(flowGate.ran || flowGate.skipped !== 'not-ref-based' ? { flowGate } : {}),
   };
 }
 
