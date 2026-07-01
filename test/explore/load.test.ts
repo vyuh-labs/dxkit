@@ -39,7 +39,7 @@ function writeGraphFixture(content: unknown) {
 }
 
 const validGraph = () => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   meta: {
     tool: 'graphify',
     graphifyVersion: '',
@@ -66,6 +66,7 @@ const validGraph = () => ({
   edges: [
     { from: 'n0', to: 'n1', relation: 'method' },
     { from: 'n1', to: 'n2', relation: 'calls' },
+    { from: 'n1', to: 'ep0', relation: 'calls-endpoint', fromFile: 'src/a.ts', fromLine: 6 },
   ],
   communities: [
     {
@@ -77,6 +78,18 @@ const validGraph = () => ({
     },
   ],
   symbolIndex: { foo: ['n1'], bar: ['n2'] },
+  endpoints: [
+    {
+      id: 'ep0',
+      kind: 'http-endpoint',
+      label: 'GET /articles/{var}',
+      method: 'GET',
+      path: '/articles/{var}',
+      via: 'spec',
+      handler: 'ArticleController.find',
+      sourceFile: 'openapi.json',
+    },
+  ],
 });
 
 describe('loadGraph', () => {
@@ -84,11 +97,62 @@ describe('loadGraph', () => {
     writeGraphFixture(validGraph());
     const g = loadGraph(tmpDir);
 
-    expect(g.schemaVersion).toBe(1);
+    expect(g.schemaVersion).toBe(2);
     expect(g.nodes).toHaveLength(3);
-    expect(g.edges).toHaveLength(2);
+    expect(g.edges).toHaveLength(3);
     expect(g.communities).toHaveLength(1);
     expect(Object.keys(g.symbolIndex)).toEqual(['foo', 'bar']);
+    expect(g.endpoints).toHaveLength(1);
+  });
+
+  it('builds endpointById + endpointByKey indices from the flow overlay', () => {
+    writeGraphFixture(validGraph());
+    const g = loadGraph(tmpDir);
+
+    expect(g.endpointById.size).toBe(1);
+    expect(g.endpointById.get('ep0')?.method).toBe('GET');
+    expect(g.endpointByKey.get('GET /articles/{var}')?.id).toBe('ep0');
+    expect(g.endpointByKey.get('POST /nope')).toBeUndefined();
+  });
+
+  it('indexes calls-endpoint edges into edgesFromNode / edgesToNode', () => {
+    writeGraphFixture(validGraph());
+    const g = loadGraph(tmpDir);
+
+    // The consumer's structural node links to the endpoint id.
+    const toEp = g.edgesToNode.get('ep0') ?? [];
+    expect(toEp).toHaveLength(1);
+    expect(toEp[0].relation).toBe('calls-endpoint');
+    expect(toEp[0].from).toBe('n1');
+    expect(toEp[0].fromFile).toBe('src/a.ts');
+    expect(toEp[0].fromLine).toBe(6);
+  });
+
+  it('migrates a v1 artifact (no endpoints field) forward to an empty overlay', () => {
+    const v1 = validGraph() as Record<string, unknown>;
+    v1.schemaVersion = 1;
+    delete v1.endpoints;
+    // Drop the v2-only calls-endpoint edge so the fixture is a clean v1 shape.
+    v1.edges = [
+      { from: 'n0', to: 'n1', relation: 'method' },
+      { from: 'n1', to: 'n2', relation: 'calls' },
+    ];
+    writeGraphFixture(v1);
+
+    const g = loadGraph(tmpDir);
+    expect(g.schemaVersion).toBe(1);
+    expect(g.endpoints).toEqual([]);
+    expect(g.endpointById.size).toBe(0);
+    expect(g.endpointByKey.size).toBe(0);
+  });
+
+  it('throws GraphCorruptError when endpoints is present but not an array', () => {
+    const bad = validGraph() as Record<string, unknown>;
+    bad.endpoints = { not: 'an array' };
+    writeGraphFixture(bad);
+
+    expect(() => loadGraph(tmpDir)).toThrow(GraphCorruptError);
+    expect(() => loadGraph(tmpDir)).toThrow(/endpoints/);
   });
 
   it('builds nodeById index keyed by node id', () => {

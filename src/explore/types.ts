@@ -15,8 +15,16 @@
 
 import type { LanguageId } from '../types';
 
-/** Current schema version. Bump on breaking change; loader handles migration. */
-export const GRAPH_SCHEMA_VERSION = 1;
+/**
+ * Current schema version. Bump on breaking change; loader handles migration.
+ *
+ * v2 (flow map): adds the `endpoints` overlay (`http-endpoint` nodes) and the
+ * `calls-endpoint` edge relation — the cross-boundary UI→API join the graph
+ * could not previously express. The overlay is purely additive: a v1 artifact
+ * migrates forward to an empty endpoint set, and the structural node/edge kinds
+ * are untouched, so every pre-flow query keeps working unchanged.
+ */
+export const GRAPH_SCHEMA_VERSION = 2;
 
 /**
  * Canonical disk location for the graph artifact, relative to cwd.
@@ -29,7 +37,7 @@ export const GRAPH_REPORT_PATH = '.dxkit/reports/graph.json';
 
 export type GraphNodeKind = 'function' | 'class' | 'method' | 'module';
 
-export type GraphEdgeRelation = 'calls' | 'imports_from' | 'method';
+export type GraphEdgeRelation = 'calls' | 'imports_from' | 'method' | 'calls-endpoint';
 
 export type ExportDetectionReliability = 'full' | 'partial' | 'unreliable';
 
@@ -57,6 +65,14 @@ export interface GraphNode {
  * for `calls` edges; `importedSymbol` only populated for
  * `imports_from` edges when graphify surfaces the per-symbol info
  * (today: omitted; reserved for future graphify extension).
+ *
+ * `fromFile` / `fromLine` are populated ONLY on `calls-endpoint` edges
+ * (the flow overlay): they carry the consuming call site's source
+ * coordinates directly on the edge. When graphify is present the flow
+ * writer resolves `from` to the enclosing structural node id (linking the
+ * consumer into the real call graph for multi-hop blast radius); when it
+ * is absent `from` is the empty string and these coordinates are the only
+ * consumer anchor — which is what keeps the flow map graphify-independent.
  */
 export interface GraphEdge {
   readonly from: string;
@@ -64,6 +80,33 @@ export interface GraphEdge {
   readonly relation: GraphEdgeRelation;
   readonly occurrences?: number;
   readonly importedSymbol?: string;
+  readonly fromFile?: string;
+  readonly fromLine?: number;
+}
+
+/**
+ * An HTTP endpoint a service serves — one per distinct `(method, path)`
+ * a backend exposes. The `to` end of every `calls-endpoint` edge. Lives
+ * in the separate `GraphJson.endpoints` overlay rather than in `nodes`,
+ * so the four structural node kinds (and every query that switches on
+ * them) stay untouched by the flow layer.
+ *
+ * `method` / `path` are the NORMALIZED join key (`GET`, `/articles/{var}`)
+ * — the same canonical form a client call reduces to, so the two sides
+ * meet on `${method} ${path}`. `via` records discovery provenance
+ * (source decorator, Express-style route call, or an ingested spec);
+ * `handler` is the best-effort handler symbol when known.
+ */
+export interface HttpEndpointNode {
+  readonly id: string;
+  readonly kind: 'http-endpoint';
+  readonly label: string;
+  readonly method: string;
+  readonly path: string;
+  readonly via: 'decorator' | 'router-call' | 'spec';
+  readonly handler: string | null;
+  readonly sourceFile: string;
+  readonly line?: number;
 }
 
 /**
@@ -114,6 +157,12 @@ export interface GraphMeta {
 /**
  * The on-disk wire format. `schemaVersion` at root level
  * matches the existing `StructuralResult` envelope pattern.
+ *
+ * `endpoints` is the v2 flow overlay: absent in a v1 artifact (the
+ * loader migrates it to `[]`), present-but-possibly-empty in v2. The
+ * `calls-endpoint` edges that reference these endpoints live in the
+ * normal `edges` array (relation-filtered, so they never leak into a
+ * structural `calls` / `imports_from` traversal).
  */
 export interface GraphJson {
   readonly schemaVersion: number;
@@ -122,6 +171,7 @@ export interface GraphJson {
   readonly edges: ReadonlyArray<GraphEdge>;
   readonly communities: ReadonlyArray<Community>;
   readonly symbolIndex: SymbolIndex;
+  readonly endpoints: ReadonlyArray<HttpEndpointNode>;
 }
 
 /**
@@ -138,4 +188,8 @@ export interface Graph extends GraphJson {
   readonly nodesByFile: ReadonlyMap<string, ReadonlyArray<GraphNode>>;
   readonly communityById: ReadonlyMap<number, Community>;
   readonly communityByNode: ReadonlyMap<string, Community>;
+  /** The flow overlay, indexed by endpoint id. */
+  readonly endpointById: ReadonlyMap<string, HttpEndpointNode>;
+  /** The flow overlay, indexed by the `${method} ${path}` join key. */
+  readonly endpointByKey: ReadonlyMap<string, HttpEndpointNode>;
 }

@@ -49,6 +49,7 @@ function makeGraph(nodes: GraphNode[], edges: GraphEdge[], communities: Communit
     edges,
     communities,
     symbolIndex: {},
+    endpoints: [],
   };
 
   return {
@@ -59,6 +60,8 @@ function makeGraph(nodes: GraphNode[], edges: GraphEdge[], communities: Communit
     nodesByFile,
     communityById,
     communityByNode,
+    endpointById: new Map(),
+    endpointByKey: new Map(),
   };
 }
 

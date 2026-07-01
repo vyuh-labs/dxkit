@@ -63,6 +63,7 @@ function makeGraph(
     edges,
     communities,
     symbolIndex,
+    endpoints: [],
   };
 
   return {
@@ -73,6 +74,8 @@ function makeGraph(
     nodesByFile,
     communityById,
     communityByNode,
+    endpointById: new Map(),
+    endpointByKey: new Map(),
   };
 }
 

@@ -20,6 +20,7 @@ import {
   type GraphEdge,
   type GraphJson,
   type GraphNode,
+  type HttpEndpointNode,
 } from './types';
 
 // Re-export for backwards-compat with consumers that import the path
@@ -112,8 +113,6 @@ function validateAndUpgrade(absPath: string, raw: unknown): GraphJson {
   if (v > GRAPH_SCHEMA_VERSION) {
     throw new GraphSchemaVersionError(absPath, v, GRAPH_SCHEMA_VERSION);
   }
-  // Future migrations: switch on v here when v2+ lands. Today v === 1
-  // is the only supported version; no migration needed.
 
   for (const key of ['meta', 'nodes', 'edges', 'communities', 'symbolIndex']) {
     if (!(key in obj)) {
@@ -129,8 +128,17 @@ function validateAndUpgrade(absPath: string, raw: unknown): GraphJson {
   if (!Array.isArray(obj.communities)) {
     throw new GraphCorruptError(absPath, '"communities" is not an array');
   }
+
+  // v1 → v2 migration: the flow overlay is purely additive, so a v1
+  // artifact (no `endpoints` field) migrates forward to an empty
+  // endpoint set. A v2 artifact must carry an array when present.
+  if ('endpoints' in obj && !Array.isArray(obj.endpoints)) {
+    throw new GraphCorruptError(absPath, '"endpoints" is not an array');
+  }
+  const endpoints = Array.isArray(obj.endpoints) ? obj.endpoints : [];
+
   // Trust the rest; runtime errors in queries surface deeper issues.
-  return raw as GraphJson;
+  return { ...(raw as GraphJson), endpoints: endpoints as HttpEndpointNode[] };
 }
 
 function indexGraph(json: GraphJson): Graph {
@@ -162,6 +170,13 @@ function indexGraph(json: GraphJson): Graph {
     for (const nid of c.nodeIds) communityByNode.set(nid, c);
   }
 
+  const endpointById = new Map<string, HttpEndpointNode>();
+  const endpointByKey = new Map<string, HttpEndpointNode>();
+  for (const ep of json.endpoints) {
+    endpointById.set(ep.id, ep);
+    endpointByKey.set(`${ep.method} ${ep.path}`, ep);
+  }
+
   return {
     ...json,
     nodeById,
@@ -170,5 +185,7 @@ function indexGraph(json: GraphJson): Graph {
     nodesByFile,
     communityById,
     communityByNode,
+    endpointById,
+    endpointByKey,
   };
 }
