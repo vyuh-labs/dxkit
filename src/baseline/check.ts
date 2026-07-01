@@ -358,6 +358,11 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     // not an active risk; the underlying suppressed finding is already
     // gone.
     'stale-allow': 'low',
+    // A net-new broken integration (a UI call that no longer resolves to a
+    // served route, or a served route a consumer still binds to that a PR
+    // removed). High severity — it is a runtime breakage the gate proves
+    // statically, on par with a security regression.
+    'flow-binding': 'high',
   });
 
 /**

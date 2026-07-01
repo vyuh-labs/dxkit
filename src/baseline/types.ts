@@ -122,7 +122,8 @@ export type IdentityInput =
   | StaleFileIdentityInput
   | LargeFileIdentityInput
   | SecretHmacIdentityInput
-  | StaleAllowIdentityInput;
+  | StaleAllowIdentityInput
+  | FlowBindingIdentityInput;
 
 /**
  * Content anchor for the secret/code/config identity schemes.
@@ -397,6 +398,23 @@ export interface StaleAllowIdentityInput {
 }
 
 /**
+ * A flow binding — a UI call site's dependency on a served `(method, path)`,
+ * the unit the integration gate grandfathers. Identity is exactly the triple
+ * `(method, path, file)`: the NORMALIZED join key (never the raw URL a tool
+ * captured) plus the consuming file dxkit read from its own AST pass. It is
+ * LINE-INDEPENDENT — the call can move anywhere in the file without re-minting
+ * — so a committed baseline keeps matching in CI. Deliberately not the graph's
+ * enclosing symbol: the flow layer is graphify-independent. (The line lives on
+ * the baseline entry as display metadata, not as an identity input.)
+ */
+export interface FlowBindingIdentityInput {
+  readonly kind: 'flow-binding';
+  readonly method: string;
+  readonly path: string;
+  readonly file: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -480,6 +498,21 @@ export type BaselineEntry =
   | { id: FindingId; kind: 'secret-hmac'; tool: string; rule: string; hmac: string }
   | {
       id: FindingId;
+      kind: 'flow-binding';
+      /** Normalized HTTP method + path — the canonical join key. Together with
+       * `file` these are the only identity inputs (Rule 9): all three are
+       * stored so identity is recomputable from the entry alone. */
+      method: string;
+      path: string;
+      /** Consuming file (the UI module that holds the call). */
+      file: string;
+      /** Representative call-site line — display metadata only (not hashed;
+       * identity is line-independent), so `show` / hints can point a human at
+       * the source. */
+      line: number;
+    }
+  | {
+      id: FindingId;
       kind: 'stale-allow';
       file: string;
       line: number;
@@ -536,7 +569,8 @@ export interface SanitizedBaselineEntry {
     | 'stale-file'
     | 'large-file'
     | 'secret-hmac'
-    | 'stale-allow';
+    | 'stale-allow'
+    | 'flow-binding';
   readonly sanitized: true;
 }
 

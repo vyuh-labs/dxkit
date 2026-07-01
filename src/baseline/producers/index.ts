@@ -180,6 +180,16 @@ export const DEFERRED_KINDS: Readonly<
       'inside an already-tested file remain invisible until Phase 3.5 lands.',
     landingPhase: 'Phase 3.5 (5 packs) / 2.6 (remaining)',
   },
+  'flow-binding': {
+    reason:
+      'the identity + baseline-entry shape ship ahead of the producer so the ' +
+      'integration gate can grandfather bindings the moment it lands. The gate ' +
+      'evaluates the affected scope of a diff against committed contract ' +
+      'snapshots (served.json / consumed.json) rather than a full-scan producer, ' +
+      'so the flow-binding entries are minted by the gate path, not baseline-create. ' +
+      'Substitute: none — net-new broken-integration detection is inert until the gate wires in.',
+    landingPhase: 'Flow M3 (the integration gate)',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────

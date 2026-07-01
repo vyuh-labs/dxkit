@@ -18,6 +18,7 @@ import {
   computeContentFingerprint,
   computeFingerprint,
   computeFingerprintV1,
+  computeFlowBindingFingerprint,
   lineWindowFor,
   SECRET_CANONICAL_RULE,
 } from '../analyzers/tools/fingerprint';
@@ -127,6 +128,11 @@ export function identityFor(
       return computeSecretHmacIdentity(input.tool, input.rule, input.hmac);
     case 'stale-allow':
       return computeStaleAllowIdentity(input.file, input.line, input.category);
+    case 'flow-binding':
+      // Version-independent + line-independent: hashes only the normalized
+      // (method, path, file) triple — all tool-independent + dxkit-derived
+      // (Rule 9). The call can move anywhere in the file without re-minting.
+      return computeFlowBindingFingerprint(input.method, input.path, input.file);
   }
 }
 

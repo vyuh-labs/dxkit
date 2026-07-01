@@ -116,6 +116,9 @@ export function baselineEntryToIdentityInput(entry: BaselineEntry): IdentityInpu
       return { kind: 'secret-hmac', tool: e.tool, rule: e.rule, hmac: e.hmac };
     case 'stale-allow':
       return { kind: 'stale-allow', file: e.file, line: e.line, category: e.category };
+    case 'flow-binding':
+      // Line is display-only metadata on the entry, never an identity input.
+      return { kind: 'flow-binding', method: e.method, path: e.path, file: e.file };
   }
 }
 

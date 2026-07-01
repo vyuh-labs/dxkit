@@ -55,6 +55,14 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     line: 42,
     category: 'test-fixture',
   },
+  'flow-binding': {
+    id: FP,
+    kind: 'flow-binding',
+    method: 'GET',
+    path: '/articles/{var}',
+    file: 'web/List.tsx',
+    line: 20,
+  },
 };
 
 const ALL_KINDS = Object.keys(ENTRIES) as BaselineEntry['kind'][];
