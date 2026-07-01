@@ -15,7 +15,7 @@
  */
 
 import type { DetectedStack } from '../types';
-import type { Community, Graph, GraphNode } from './types';
+import type { Community, Graph, GraphNode, HttpEndpointNode } from './types';
 
 // ─── Low-level primitives ────────────────────────────────────────────────────
 
@@ -1296,6 +1296,184 @@ export function fileLineContextQuery(
     callees,
     community,
     blastRadius: { callerFiles: summary.callerFiles.length, callers: fileCallers },
+  };
+}
+
+// ─── Flow queries (the v2 endpoint overlay: UI→API traceability) ──────────────
+
+/**
+ * One consumer of an endpoint — a client call site that binds to it. `nodeId` /
+ * `symbol` are present when the call was anchored onto a structural node (a base
+ * graph existed); otherwise only the source coordinates are known (the flow map
+ * is graphify-independent, so `file` + `line` are always populated from the
+ * `calls-endpoint` edge).
+ */
+export interface EndpointCaller {
+  file: string;
+  line?: number;
+  nodeId?: string;
+  symbol?: string;
+}
+
+/**
+ * Every UI surface that hits an endpoint — the `calls-endpoint` in-edges of the
+ * endpoint node, mapped to their consuming call sites. The core cross-boundary
+ * query the graph could not previously answer. Rule 12: relation-filtered edge
+ * traversal lives here, never re-walked by a consumer.
+ */
+export function endpointCallers(graph: Graph, endpointId: string): EndpointCaller[] {
+  const out: EndpointCaller[] = [];
+  for (const e of graph.edgesToNode.get(endpointId) ?? []) {
+    if (e.relation !== 'calls-endpoint') continue;
+    const node = e.from ? graph.nodeById.get(e.from) : undefined;
+    out.push({
+      file: e.fromFile ?? node?.sourceFile ?? '',
+      line: e.fromLine,
+      nodeId: node?.id,
+      symbol: node ? stripParens(node.label) : undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * Blast radius of an endpoint: the surface a change to it (delete, rename,
+ * verb-change) would touch. `directConsumers` / `consumerFiles` count the
+ * immediate UI call sites; `upstreamCallers` / `upstreamFiles` extend that
+ * transitively through the structural `calls` graph (which functions call the
+ * consuming ones), bounded by a visited set. Upstream counts are only as
+ * complete as the base graph — zero when graphify never ran, so consumers label
+ * them as best-effort.
+ */
+export interface FlowBlastRadius {
+  endpointId: string;
+  directConsumers: number;
+  consumerFiles: number;
+  upstreamCallers: number;
+  upstreamFiles: number;
+}
+
+export function flowBlastRadius(graph: Graph, endpointId: string): FlowBlastRadius {
+  const consumers = endpointCallers(graph, endpointId);
+  const consumerFiles = new Set<string>();
+  for (const c of consumers) if (c.file) consumerFiles.add(c.file);
+
+  // Transitive upstream over `calls` edges, seeded by the anchored consumer
+  // nodes. BFS with a visited set — bounded by the graph size.
+  const upstreamNodes = new Set<string>();
+  const upstreamFiles = new Set<string>();
+  const queue: string[] = [];
+  for (const c of consumers) if (c.nodeId) queue.push(c.nodeId);
+  const seen = new Set<string>(queue);
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const caller of callersOf(graph, id)) {
+      if (seen.has(caller.id)) continue;
+      seen.add(caller.id);
+      upstreamNodes.add(caller.id);
+      if (caller.sourceFile) upstreamFiles.add(caller.sourceFile);
+      queue.push(caller.id);
+    }
+  }
+
+  return {
+    endpointId,
+    directConsumers: consumers.length,
+    consumerFiles: consumerFiles.size,
+    upstreamCallers: upstreamNodes.size,
+    upstreamFiles: upstreamFiles.size,
+  };
+}
+
+/**
+ * The full trace for one endpoint: its served-side identity (handler +
+ * provenance) plus the consumed side (every UI call site). The UI→API→handler
+ * path in one object; the deeper handler→model hop is left to a future pass
+ * (the graph does not yet carry data-model edges). `found: false` when no
+ * endpoint has that id.
+ */
+export interface FlowTrace {
+  found: boolean;
+  endpoint?: HttpEndpointNode;
+  handler: string | null;
+  consumers: EndpointCaller[];
+  blastRadius: FlowBlastRadius;
+}
+
+export function flowTrace(graph: Graph, endpointId: string): FlowTrace {
+  const endpoint = graph.endpointById.get(endpointId);
+  if (!endpoint) {
+    return {
+      found: false,
+      handler: null,
+      consumers: [],
+      blastRadius: {
+        endpointId,
+        directConsumers: 0,
+        consumerFiles: 0,
+        upstreamCallers: 0,
+        upstreamFiles: 0,
+      },
+    };
+  }
+  return {
+    found: true,
+    endpoint,
+    handler: endpoint.handler,
+    consumers: endpointCallers(graph, endpointId),
+    blastRadius: flowBlastRadius(graph, endpointId),
+  };
+}
+
+/** One endpoint row of the flow map: the served route + how many UI surfaces
+ *  consume it. */
+export interface FlowMapEndpoint {
+  endpoint: HttpEndpointNode;
+  consumerCount: number;
+  consumerFiles: string[];
+}
+
+/**
+ * The whole flow map read from the graph: every served endpoint ranked by
+ * consumer count, plus the served-but-unconsumed set (endpoints no UI in this
+ * graph calls — a candidate dead route OR a cross-repo consumer not scanned, so
+ * surfaced separately, not as a defect). `totalBindings` counts the
+ * `calls-endpoint` edges. The integration-test-gap signal (endpoints with
+ * consumers but no covering test) composes on top of this in a later phase.
+ */
+export interface FlowMap {
+  endpoints: FlowMapEndpoint[];
+  unconsumedEndpoints: HttpEndpointNode[];
+  totalEndpoints: number;
+  totalBindings: number;
+}
+
+export function flowMapQuery(graph: Graph): FlowMap {
+  const rows: FlowMapEndpoint[] = [];
+  const unconsumed: HttpEndpointNode[] = [];
+  let totalBindings = 0;
+
+  for (const endpoint of graph.endpoints) {
+    const consumers = endpointCallers(graph, endpoint.id);
+    totalBindings += consumers.length;
+    const files = [...new Set(consumers.map((c) => c.file).filter(Boolean))].sort();
+    if (consumers.length === 0) {
+      unconsumed.push(endpoint);
+      continue;
+    }
+    rows.push({ endpoint, consumerCount: consumers.length, consumerFiles: files });
+  }
+
+  rows.sort(
+    (a, b) => b.consumerCount - a.consumerCount || a.endpoint.label.localeCompare(b.endpoint.label),
+  );
+  unconsumed.sort((a, b) => a.label.localeCompare(b.label));
+
+  return {
+    endpoints: rows,
+    unconsumedEndpoints: unconsumed,
+    totalEndpoints: graph.endpoints.length,
+    totalBindings,
   };
 }
 
