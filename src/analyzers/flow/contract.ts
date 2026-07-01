@@ -19,7 +19,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { dedupeServedRoutes, type FlowModel } from './model';
+import { dedupeServedRoutes, isPlaceholderOnlyPath, type FlowModel } from './model';
 
 /** Directory (relative to repo root) where flow contract snapshots live. */
 export const FLOW_DIR = path.join('.dxkit', 'flow');
@@ -36,12 +36,15 @@ export interface ServedRoute {
 
 /** One binding in the consumed-side inventory — a UI call site's dependency on
  *  a served `(method, path)`. `file` + the normalized key are the flow-binding
- *  identity inputs; `line` is display metadata (never hashed). */
+ *  identity inputs; `line` is display metadata (never hashed). `confidence` in
+ *  [0,1] is the path-specificity signal the gate thresholds on — a
+ *  placeholder-only path (`/{var}`) is too generic to block a build. */
 export interface ConsumedBinding {
   readonly method: string;
   readonly path: string;
   readonly file: string;
   readonly line: number;
+  readonly confidence: number;
 }
 
 interface SnapshotMeta {
@@ -97,7 +100,15 @@ export function buildConsumedContract(model: FlowModel, meta: SnapshotMeta): Con
     const key = `${call.method}\0${call.path}\0${call.file}`;
     const existing = byKey.get(key);
     if (!existing || call.line < existing.line) {
-      byKey.set(key, { method: call.method, path: call.path, file: call.file, line: call.line });
+      byKey.set(key, {
+        method: call.method,
+        path: call.path,
+        file: call.file,
+        line: call.line,
+        // A placeholder-only path carries no static signal → low confidence, so
+        // the gate warns rather than blocks on it.
+        confidence: isPlaceholderOnlyPath(call.path) ? 0.3 : 1,
+      });
     }
   }
   const bindings = [...byKey.values()].sort(

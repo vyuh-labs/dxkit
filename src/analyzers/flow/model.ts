@@ -44,8 +44,10 @@ export interface FlowModel {
   readonly bindings: readonly FlowBinding[];
 }
 
-/** A path made up entirely of `{var}` segments carries no static signal. */
-function isPlaceholderOnly(path: string): boolean {
+/** A path made up entirely of `{var}` segments carries no static signal. One
+ *  source of truth (Rule 2) for both the join's confidence and the gate's
+ *  confidence gating (a placeholder-only path is too generic to block on). */
+export function isPlaceholderOnlyPath(path: string): boolean {
   return /^(\/\{var\})+$/.test(path);
 }
 
@@ -64,7 +66,7 @@ export function joinFlow(
     if (call.path == null) return { call, route: null, confidence: 0, reason: 'external' };
     const route = routeIndex.get(`${call.method} ${call.path}`) ?? null;
     if (!route) return { call, route: null, confidence: 0, reason: 'no-route' };
-    if (isPlaceholderOnly(call.path)) {
+    if (isPlaceholderOnlyPath(call.path)) {
       return { call, route, confidence: 0.3, reason: 'placeholder-only' };
     }
     return { call, route, confidence: 1, reason: 'exact' };
