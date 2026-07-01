@@ -37,11 +37,13 @@ export interface ClientCall {
   readonly line: number;
 }
 
-/** An inbound route declaration found in source (the served side). */
+/** An inbound route a service serves (the served side). `via` records how it
+ *  was discovered: a source decorator, an Express-style route call, or an
+ *  ingested OpenAPI/spec document (preferred when available). */
 export interface RouteEndpoint {
   readonly method: HttpMethod;
   readonly path: string;
-  readonly via: 'decorator' | 'router-call';
+  readonly via: 'decorator' | 'router-call' | 'spec';
   readonly handler: string | null;
   readonly file: string;
   readonly line: number;
