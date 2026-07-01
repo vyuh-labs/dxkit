@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-06-30
+
+### Added — application-flow extraction (`flow extract`)
+
+`vyuh-dxkit flow extract` statically maps a frontend's HTTP calls to a backend's
+routes and writes the result as CSVs. It is the first slice of the Flow feature
+(UI to API traceability).
+
+- **AST-based, not regex.** A new in-process, graphify-independent tree-sitter
+  layer (`src/ast/`, web-tree-sitter/wasm) parses source; a per-language
+  `httpFlow` descriptor declares which constructs are HTTP clients and routes,
+  so no framework literal is hardcoded in the analyzer.
+- **Both sides plus the join.** It extracts outbound client calls
+  (fetch/axios/wrappers) and inbound routes (LoopBack/NestJS decorators, Express
+  app/router), canonicalizes URLs and route paths to a common shape, and binds
+  each call to the route it targets with a confidence score.
+- **OpenAPI when present.** An existing OpenAPI spec is consumed as the
+  authoritative served side (`--specs`), unioned with static extraction (spec
+  for authority, static for recall, since generated specs are often incomplete).
+- **Usage:** `flow extract [--frontend <dir>] [--backend <dir>] [--specs a.json,b.json] [--out <dir>]`;
+  writes `api_calls.csv`, `routes.csv`, `api_route_mapping.csv`. TypeScript and
+  JavaScript in this release; more languages follow.
+
 ## [2.18.1] - 2026-06-23
 
 ### Fixed — next-step hints now use a resolvable invocation
