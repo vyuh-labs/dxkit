@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-07-01
+
+### Added — native flow map + blast radius (`flow`, `flow trace`)
+
+The Flow feature's second slice makes UI→API traceability a first-class part of
+the code graph, so a change's cross-boundary blast radius is a query, not a
+guess.
+
+- **Graph schema v2 — the endpoint overlay.** `graph.json` now carries
+  `http-endpoint` nodes (one per served `(method, path)`) and `calls-endpoint`
+  edges (a UI call site → the endpoint it hits) — the cross-boundary join the
+  structural graph could not previously express. The overlay is purely additive:
+  a v1 artifact migrates forward to an empty overlay, and every pre-flow query is
+  untouched. The consuming call site's coordinates ride on the edge, so the map
+  works even where graphify never ran (a pure-frontend repo) — the flow layer
+  stays graphify-independent.
+- **`vyuh-dxkit flow`** writes the overlay and prints every endpoint with its
+  consuming UI surfaces, plus the served-but-unconsumed set (a dead-route or
+  cross-repo-consumer candidate — surfaced, not flagged as a defect).
+- **`vyuh-dxkit flow trace "<METHOD> <path>"`** shows one endpoint's handler,
+  every UI call site, and the change blast radius — direct consumers extended
+  transitively through the structural call graph.
+- Both take `--json`. New pure queries (`endpointCallers`, `flowTrace`,
+  `flowBlastRadius`, `flowMapQuery`) live in the canonical query module; the
+  overlay is regenerated each run (never accumulated).
+
+### Added — advisory file-size budget in the pre-commit slop check
+
+A warn-only, diff-scoped 500-LoC budget nudges when a changed source file
+sprawls, exempting the modules that are large by architectural mandate (language
+packs, the canonical query/registry modules, the CLI dispatch). It never blocks.
+
 ## [2.19.0] - 2026-06-30
 
 ### Added — application-flow extraction (`flow extract`)
