@@ -317,6 +317,9 @@ export async function run(argv: string[]): Promise<void> {
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
       all: { type: 'boolean', default: false },
+      frontend: { type: 'string' },
+      backend: { type: 'string' },
+      specs: { type: 'string' },
       'reports-dir': { type: 'string' },
       'json-dir': { type: 'string' },
       'project-name': { type: 'string' },
@@ -868,6 +871,27 @@ export async function run(argv: string[]): Promise<void> {
       await runToolsCommand(targetPath, subCommand, !!values.yes, {
         toolName,
         all: !!values.all,
+      });
+      break;
+    }
+
+    case 'flow': {
+      const subCommand = positionals[1];
+      if (subCommand !== 'extract') {
+        logger.fail(`Unknown flow subcommand: ${subCommand ?? '(none)'}`);
+        logger.info(
+          'Usage: vyuh-dxkit flow extract [--frontend <dir>] [--backend <dir>] [--specs <a.json,b.json>] [--out <dir>]',
+        );
+        process.exit(1);
+      }
+      const { runFlowExtract } = await import('./flow-cli');
+      await runFlowExtract({
+        cwd,
+        frontend: values.frontend as string | undefined,
+        backend: values.backend as string | undefined,
+        specs: values.specs as string | undefined,
+        out: values.out as string | undefined,
+        json: !!values.json,
       });
       break;
     }
