@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-07-01
+
+### Added — the integration gate (`flow refresh` + guardrail flow pass)
+
+The Flow feature's third slice turns UI→API traceability into a guardrail: a PR
+that net-new breaks an integration — a frontend call to an endpoint no backend
+serves, or a backend route removal a consumer still binds to — fails the check,
+the same way a net-new secret or CVE does.
+
+- **Net-new broken-integration gate.** The guardrail check now runs an additive,
+  fail-open flow pass over its ref-based `base↔HEAD` comparison. One algorithm
+  covers both directions (dead frontend call / removed backend route), because
+  both reduce to "a consumed binding whose `(method, path)` is not served."
+  Pre-existing breakage is grandfathered — only what the diff *newly* breaks is
+  surfaced. It never touches the existing finding matcher.
+- **Confidence-gated, false-positive-safe.** An exact, fully specified binding
+  blocks; a placeholder-only path (`/{var}`) warns. The gate self-skips when it
+  has no served-side truth to check against (a pure frontend with no committed
+  contract), so it can never false-block a repo it can't fully see, and it fails
+  open on any error.
+- **`vyuh-dxkit flow refresh`** writes the cross-repo contract snapshots
+  (`.dxkit/flow/served.json` + `consumed.json`). A backend publishes what it
+  serves; a frontend commits the counterpart's snapshot and gates against it —
+  so a split-repo setup needs a cross-repo fetch only at refresh time, never on
+  a developer's machine or in the per-check gate. A monorepo gates live against
+  its own routes and needs no snapshot.
+- **Posture.** `.dxkit/policy.json:flow.mode` (`block` / `warn` / `off`, default
+  `block`) governs the verdict; the loop preset overrides it (`security-only`
+  warns, `full-debt` blocks) so an unattended loop can't wedge on a cross-repo
+  false positive. Broken integrations render in the console, `--json`, and
+  PR-comment markdown, and count toward the verdict banner.
+- Runs only in ref-based mode (committed mode has no base flow model to diff);
+  a diff that touches no client call, route, or spec is skipped up front.
+  Binding identity is line-independent and environment-independent, so a
+  committed contract keeps matching when the check moves from a laptop to CI.
+
 ## [2.20.0] - 2026-07-01
 
 ### Added — native flow map + blast radius (`flow`, `flow trace`)
