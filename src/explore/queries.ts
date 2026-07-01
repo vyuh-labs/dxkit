@@ -1130,6 +1130,42 @@ export function enclosingSymbolFor(
   return best ? stripParens(best.label) : undefined;
 }
 
+/**
+ * Resolve the id of the structural node enclosing a source location —
+ * the node-id sibling of {@link enclosingSymbolFor}. Used by the flow
+ * writer to anchor the `from` end of a `calls-endpoint` edge onto the
+ * real call graph when graphify is present (so a UI→API edge composes
+ * with the structural `calls` edges for multi-hop blast radius). Returns
+ * `undefined` when the file declares no symbol at-or-above `line` AND has
+ * no module node (the writer then leaves `from` empty and relies on the
+ * edge's fromFile / fromLine coordinates, keeping the map
+ * graphify-independent).
+ *
+ * Prefers the nearest non-module declaration at-or-above `line`; falls
+ * back to the file's module node (a top-level call outside any symbol
+ * still anchors to its file). Graph traversal stays in this module
+ * (Rule 12).
+ */
+export function enclosingNodeIdFor(
+  graph: Graph,
+  sourceFile: string,
+  line: number,
+): string | undefined {
+  const nodes = graph.nodesByFile.get(sourceFile);
+  if (!nodes) return undefined;
+  let best: GraphNode | undefined;
+  let moduleFallback: GraphNode | undefined;
+  for (const n of nodes) {
+    if (n.kind === 'module') {
+      moduleFallback = n;
+      continue;
+    }
+    if (typeof n.line !== 'number' || n.line > line) continue;
+    if (best?.line === undefined || n.line > best.line) best = n;
+  }
+  return (best ?? moduleFallback)?.id;
+}
+
 // ─── File-line context query (the `context <file:line>` structural half) ─────
 
 /**
