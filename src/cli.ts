@@ -877,22 +877,46 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'flow': {
       const subCommand = positionals[1];
-      if (subCommand !== 'extract') {
-        logger.fail(`Unknown flow subcommand: ${subCommand ?? '(none)'}`);
-        logger.info(
-          'Usage: vyuh-dxkit flow extract [--frontend <dir>] [--backend <dir>] [--specs <a.json,b.json>] [--out <dir>]',
-        );
-        process.exit(1);
+      const frontend = values.frontend as string | undefined;
+      const backend = values.backend as string | undefined;
+      const specs = values.specs as string | undefined;
+
+      // `flow` / `flow map` → the traceability map (writes the graph overlay).
+      if (subCommand === undefined || subCommand === 'map') {
+        const { runFlowMap } = await import('./flow-cli');
+        await runFlowMap({ cwd, frontend, backend, specs, json: !!values.json });
+        break;
       }
-      const { runFlowExtract } = await import('./flow-cli');
-      await runFlowExtract({
-        cwd,
-        frontend: values.frontend as string | undefined,
-        backend: values.backend as string | undefined,
-        specs: values.specs as string | undefined,
-        out: values.out as string | undefined,
-        json: !!values.json,
-      });
+      // `flow trace "<METHOD> <path>"` → one endpoint's full trace.
+      if (subCommand === 'trace') {
+        const target = positionals.slice(2).join(' ').trim();
+        if (!target) {
+          logger.fail('Usage: vyuh-dxkit flow trace "<METHOD> <path>"');
+          process.exit(1);
+        }
+        const { runFlowTrace } = await import('./flow-cli');
+        await runFlowTrace({ cwd, frontend, backend, specs, json: !!values.json, target });
+        break;
+      }
+      // `flow extract` → the parity CSVs.
+      if (subCommand === 'extract') {
+        const { runFlowExtract } = await import('./flow-cli');
+        await runFlowExtract({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          out: values.out as string | undefined,
+          json: !!values.json,
+        });
+        break;
+      }
+      logger.fail(`Unknown flow subcommand: ${subCommand}`);
+      logger.info('Usage:');
+      logger.info('  vyuh-dxkit flow [map] [--frontend <dir>] [--backend <dir>] [--specs <a,b>]');
+      logger.info('  vyuh-dxkit flow trace "<METHOD> <path>"');
+      logger.info('  vyuh-dxkit flow extract [--out <dir>]');
+      process.exit(1);
       break;
     }
 

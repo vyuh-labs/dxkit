@@ -181,6 +181,16 @@ describe('writeFlowGraph', () => {
     expect(g.edgesToNode.get('ep0')?.[0].relation).toBe('calls-endpoint');
   });
 
+  it('is idempotent — re-running does not accumulate duplicate overlay edges', () => {
+    const m = model([call({ line: 20 })], [route()]);
+    writeFlowGraph(tmpDir, m);
+    writeFlowGraph(tmpDir, m); // second run reads the first run's overlay as base
+    const g = loadGraph(tmpDir);
+    // Exactly one endpoint + one calls-endpoint edge, not two.
+    expect(g.endpoints).toHaveLength(1);
+    expect(g.edges.filter((e) => e.relation === 'calls-endpoint')).toHaveLength(1);
+  });
+
   it('composes onto an existing graphify base already on disk', () => {
     // Seed a v1 graphify artifact, then merge the flow overlay onto it.
     const dir = path.join(tmpDir, path.dirname(GRAPH_REPORT_PATH));
