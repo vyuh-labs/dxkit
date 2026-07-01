@@ -1,0 +1,189 @@
+/**
+ * Cross-repo flow contract snapshots under `.dxkit/flow/`.
+ *
+ * The integration gate is cross-repo: each side publishes its inventory as a
+ * committed artifact the OTHER side gates against (mirror of the ingest
+ * snapshot pattern, CLAUDE.md Rule 13). A backend refreshes `served.json`
+ * (every `(method, path)` it serves); a frontend refreshes `consumed.json`
+ * (every binding it depends on). A repo commits the COUNTERPART's snapshot (or
+ * a monorepo computes both live), so the gate needs a cross-repo fetch/token
+ * only at refresh time — never on the developer's machine or in the per-stop
+ * gate.
+ *
+ * This module is the single reader/writer of `.dxkit/flow/`: confining the path
+ * here (arch-check enforced) stops the "different modules pick different
+ * defaults" drift class and keeps a future cross-repo fetch composing on one
+ * primitive. Snapshots carry only finding data (normalized method/path/file) —
+ * no token, no account id — so they are safe to commit.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { dedupeServedRoutes, type FlowModel } from './model';
+
+/** Directory (relative to repo root) where flow contract snapshots live. */
+export const FLOW_DIR = path.join('.dxkit', 'flow');
+export const SERVED_SNAPSHOT = 'served.json';
+export const CONSUMED_SNAPSHOT = 'consumed.json';
+
+/** One served endpoint in the served-side inventory. */
+export interface ServedRoute {
+  readonly method: string;
+  readonly path: string;
+  readonly handler: string | null;
+  readonly via: 'decorator' | 'router-call' | 'spec';
+}
+
+/** One binding in the consumed-side inventory — a UI call site's dependency on
+ *  a served `(method, path)`. `file` + the normalized key are the flow-binding
+ *  identity inputs; `line` is display metadata (never hashed). */
+export interface ConsumedBinding {
+  readonly method: string;
+  readonly path: string;
+  readonly file: string;
+  readonly line: number;
+}
+
+interface SnapshotMeta {
+  readonly schemaVersion: 1;
+  /** ISO timestamp, stamped by the caller so this module stays clock-free
+   *  (testability — mirror of ingest/snapshot.ts). */
+  readonly generatedAt: string;
+  /** Commit the snapshot was produced against, when known. */
+  readonly commitSha?: string;
+}
+
+export interface ServedContract extends SnapshotMeta {
+  readonly side: 'served';
+  readonly routes: ServedRoute[];
+}
+
+export interface ConsumedContract extends SnapshotMeta {
+  readonly side: 'consumed';
+  readonly bindings: ConsumedBinding[];
+}
+
+/** The `${method} ${path}` join key both sides meet on. */
+export function contractKey(method: string, routePath: string): string {
+  return `${method} ${routePath}`;
+}
+
+// ─── Build (from a flow model) ────────────────────────────────────────────────
+
+/**
+ * The served inventory: every distinct `(method, path)` this repo serves,
+ * deduped via the shared helper (spec wins). Sorted for byte-stable snapshots
+ * across runs (a committed artifact should not churn on extraction order).
+ */
+export function buildServedContract(model: FlowModel, meta: SnapshotMeta): ServedContract {
+  const routes = dedupeServedRoutes(model.routes)
+    .map((r) => ({ method: r.method, path: r.path, handler: r.handler, via: r.via }))
+    .sort(byMethodPath);
+  return { ...meta, side: 'served', routes };
+}
+
+/**
+ * The consumed inventory: every internal binding this repo depends on — each
+ * client call that resolved to an internal path (external/absolute URLs, whose
+ * `path` is null, are not internal integrations). Deduped by
+ * `(method, path, file)` — the flow-binding identity — so multiple call sites
+ * for one dependency collapse to one entry (the earliest line kept for
+ * display). Sorted for byte-stability.
+ */
+export function buildConsumedContract(model: FlowModel, meta: SnapshotMeta): ConsumedContract {
+  const byKey = new Map<string, ConsumedBinding>();
+  for (const call of model.calls) {
+    if (call.path == null) continue;
+    const key = `${call.method}\0${call.path}\0${call.file}`;
+    const existing = byKey.get(key);
+    if (!existing || call.line < existing.line) {
+      byKey.set(key, { method: call.method, path: call.path, file: call.file, line: call.line });
+    }
+  }
+  const bindings = [...byKey.values()].sort(
+    (a, b) => byMethodPath(a, b) || a.file.localeCompare(b.file),
+  );
+  return { ...meta, side: 'consumed', bindings };
+}
+
+function byMethodPath(
+  a: { method: string; path: string },
+  b: { method: string; path: string },
+): number {
+  return a.method.localeCompare(b.method) || a.path.localeCompare(b.path);
+}
+
+// ─── Persist ──────────────────────────────────────────────────────────────────
+
+/** Write the served snapshot (overwrite). Returns the file path. */
+export function writeServedContract(cwd: string, contract: ServedContract): string {
+  return writeSnapshot(cwd, SERVED_SNAPSHOT, contract);
+}
+
+/** Write the consumed snapshot (overwrite). Returns the file path. */
+export function writeConsumedContract(cwd: string, contract: ConsumedContract): string {
+  return writeSnapshot(cwd, CONSUMED_SNAPSHOT, contract);
+}
+
+function writeSnapshot(
+  cwd: string,
+  name: string,
+  contract: ServedContract | ConsumedContract,
+): string {
+  const dir = path.join(cwd, FLOW_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, JSON.stringify(contract, null, 2) + '\n', 'utf-8');
+  return file;
+}
+
+// ─── Load (fail-open) ───────────────────────────────────────────────────────
+
+/**
+ * Read the served snapshot from a repo root (default `.dxkit/flow/served.json`,
+ * or an explicit path for a counterpart's committed snapshot). Fail-open: a
+ * missing / unreadable / malformed file yields `undefined`, never a throw — the
+ * gate degrades to "no contract to check against", never an error.
+ */
+export function readServedContract(cwd: string, filePath?: string): ServedContract | undefined {
+  const raw = readJson(filePath ?? path.join(cwd, FLOW_DIR, SERVED_SNAPSHOT));
+  return isServed(raw) ? raw : undefined;
+}
+
+/** Read the consumed snapshot (see {@link readServedContract}). */
+export function readConsumedContract(cwd: string, filePath?: string): ConsumedContract | undefined {
+  const raw = readJson(filePath ?? path.join(cwd, FLOW_DIR, CONSUMED_SNAPSHOT));
+  return isConsumed(raw) ? raw : undefined;
+}
+
+/** The `${method} ${path}` keys a served contract exposes — the O(1) lookup the
+ *  gate uses to check whether a consumed binding still resolves. */
+export function servedKeySet(contract: ServedContract): Set<string> {
+  return new Set(contract.routes.map((r) => contractKey(r.method, r.path)));
+}
+
+function readJson(absPath: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function isServed(v: unknown): v is ServedContract {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as ServedContract).side === 'served' &&
+    Array.isArray((v as ServedContract).routes)
+  );
+}
+
+function isConsumed(v: unknown): v is ConsumedContract {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as ConsumedContract).side === 'consumed' &&
+    Array.isArray((v as ConsumedContract).bindings)
+  );
+}

@@ -1016,6 +1016,23 @@ if [ -n "$RULE13_SNAP" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# 13c (Flow M3): the cross-repo flow contract snapshots under `.dxkit/flow/`
+# are read/written only by src/analyzers/flow/contract.ts — the mirror of the
+# ingest-snapshot confinement. Keeps the served/consumed inventory (and a future
+# cross-repo fetch) composing on one primitive rather than drifting per module.
+RULE13_FLOW=$(grep -rnE "\.dxkit/flow|'\.dxkit',[[:space:]]*'flow'" src/ 2>/dev/null \
+  | grep -v "^src/analyzers/flow/contract.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v 'logger\.' \
+  | grep -v "// flow-contract-ok")
+if [ -n "$RULE13_FLOW" ]; then
+  echo "❌ Rule 13 violation: .dxkit/flow contract accessed outside src/analyzers/flow/contract.ts:"
+  echo "$RULE13_FLOW"
+  echo "   → Use read/writeServed|ConsumedContract() from src/analyzers/flow/contract.ts."
+  echo "   → Annotate '// flow-contract-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
 # dxkit CLI through ONE canonical helper, and every auto-running surface is
 # in ONE registry.
