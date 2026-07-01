@@ -71,6 +71,25 @@ export function joinFlow(
   });
 }
 
+/**
+ * Dedup served routes to one per distinct `(method, path)` — the canonical
+ * "what this repo serves" set. A route surfaced by both a spec and static
+ * extraction collapses to one, spec winning (authoritative handler +
+ * provenance). One source of truth (Rule 2) for the graph overlay's endpoint
+ * nodes AND the served contract snapshot.
+ */
+export function dedupeServedRoutes(routes: readonly RouteEndpoint[]): RouteEndpoint[] {
+  const byKey = new Map<string, RouteEndpoint>();
+  for (const route of routes) {
+    const key = `${route.method} ${route.path}`;
+    const existing = byKey.get(key);
+    if (!existing || (existing.via !== 'spec' && route.via === 'spec')) {
+      byKey.set(key, route);
+    }
+  }
+  return [...byKey.values()];
+}
+
 /** Flatten per-file surfaces into one model + its bindings. */
 export function buildFlowModel(fileFlows: readonly FileFlow[]): FlowModel {
   const calls = fileFlows.flatMap((f) => f.calls);

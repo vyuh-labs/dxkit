@@ -21,8 +21,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { FlowModel } from '../analyzers/flow/model';
-import type { RouteEndpoint } from '../analyzers/flow/extract';
+import { dedupeServedRoutes, type FlowModel } from '../analyzers/flow/model';
 import { tryLoadGraph } from './load';
 import { enclosingNodeIdFor } from './queries';
 import {
@@ -59,23 +58,13 @@ function endpointKey(method: string, routePath: string): string {
  * to answer "who calls this endpoint" by file. Pure over its inputs.
  */
 export function buildFlowContribution(model: FlowModel, base?: Graph): FlowContribution {
-  // Dedup routes → endpoint nodes, keyed by the normalized join key. A spec
-  // route supersedes a static one for the same key (authoritative handler).
-  const byKey = new Map<string, RouteEndpoint>();
-  for (const route of model.routes) {
-    const key = endpointKey(route.method, route.path);
-    const existing = byKey.get(key);
-    if (!existing || (existing.via !== 'spec' && route.via === 'spec')) {
-      byKey.set(key, route);
-    }
-  }
-
+  // Dedup routes → endpoint nodes, one per normalized join key (spec wins).
   const endpoints: HttpEndpointNode[] = [];
   const endpointIdByKey = new Map<string, string>();
   let idx = 0;
-  for (const [key, route] of byKey) {
+  for (const route of dedupeServedRoutes(model.routes)) {
     const id = `ep${idx++}`;
-    endpointIdByKey.set(key, id);
+    endpointIdByKey.set(endpointKey(route.method, route.path), id);
     endpoints.push({
       id,
       kind: 'http-endpoint',
