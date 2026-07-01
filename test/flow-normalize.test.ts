@@ -33,9 +33,7 @@ describe('flow normalizePath', () => {
   });
 
   it('strips configured host-helper prefixes (the per-app lever)', () => {
-    expect(normalizePath('`${Config.apiBase()}/widgets/icons`', cfg)).toBe(
-      '/widgets/icons',
-    );
+    expect(normalizePath('`${Config.apiBase()}/widgets/icons`', cfg)).toBe('/widgets/icons');
     expect(normalizePath('`${Config.userSvc()}/services/${id}`', cfg)).toBe('/services/{var}');
     // A dynamic base that is NOT a configured helper stays a {var} segment.
     expect(normalizePath('`${apiUrl}/distinct`', cfg)).toBe('/distinct');
@@ -43,9 +41,7 @@ describe('flow normalizePath', () => {
 
   it('drops the query string (params do not distinguish a route)', () => {
     expect(normalizePath('`/articles?${limit(10, page)}`')).toBe('/articles');
-    expect(normalizePath('`${Config.apiBase()}/things?filter=${filter}`', cfg)).toBe(
-      '/things',
-    );
+    expect(normalizePath('`${Config.apiBase()}/things?filter=${filter}`', cfg)).toBe('/things');
   });
 
   it('adds a leading slash for LoopBack decorators written without one', () => {
