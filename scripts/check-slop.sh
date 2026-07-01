@@ -8,6 +8,13 @@
 #   - New `: any` type annotations in TypeScript
 #   - New `debugger;` statements
 #
+# Warns (advisory, never blocks) when:
+#   - A changed source file exceeds the file-size budget (500 LoC) and is
+#     not one of the modules that is large by architectural mandate
+#     (language packs per Rule 6, queries.ts per Rule 12, tool-registry
+#     per Rule 1, the CLI dispatch). Diff-scoped: you only hear about a
+#     file when you are actually touching it, as a nudge to split it.
+#
 # Modes:
 #   (default, pre-commit)  scans `git diff --cached`
 #   (CI, PR job)           scans `git diff $DXKIT_SLOP_BASE...HEAD`
@@ -48,6 +55,38 @@ SOURCE=$(echo "$FILE_LIST" \
 
 if [ -z "$SOURCE" ]; then
   exit $ERRORS
+fi
+
+# ─── File-size budget (advisory, warn-only) ────────────────────────────────
+# Nudge when a changed file sprawls past the budget. Allowlisted modules are
+# large by architectural mandate — splitting them would violate a CLAUDE.md
+# rule (one file per language pack, one canonical query/registry module) — so
+# they are exempt. Never increments ERRORS: this warns, it does not block.
+SIZE_BUDGET=500
+is_size_exempt() {
+  case "$1" in
+    src/languages/*.ts) return 0 ;;              # Rule 6 — one file per pack
+    src/explore/queries.ts) return 0 ;;          # Rule 12 — canonical query module
+    src/analyzers/tools/tool-registry.ts) return 0 ;; # Rule 1 — canonical registry
+    src/cli.ts) return 0 ;;                       # CLI dispatch aggregator
+    *) return 1 ;;
+  esac
+}
+SIZE_WARNINGS=""
+for f in $SOURCE; do
+  [ -f "$f" ] || continue
+  case "$f" in *.ts | *.tsx) ;; *) continue ;; esac
+  is_size_exempt "$f" && continue
+  loc=$(wc -l <"$f" 2>/dev/null | tr -d ' ')
+  if [ -n "$loc" ] && [ "$loc" -gt "$SIZE_BUDGET" ]; then
+    SIZE_WARNINGS="${SIZE_WARNINGS}   ${f} (${loc} LoC)\n"
+  fi
+done
+if [ -n "$SIZE_WARNINGS" ]; then
+  echo "⚠️  File-size budget (${SIZE_BUDGET} LoC) — consider splitting (advisory, not blocking):"
+  printf "%b" "$SIZE_WARNINGS"
+  echo "   → Extract cohesive units into new modules, or exempt in scripts/check-slop.sh"
+  echo "     if the file is canonical single-source by a CLAUDE.md rule."
 fi
 
 # Helper: grep added lines (prefixed with + but not ++, the file header) for
