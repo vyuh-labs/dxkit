@@ -344,6 +344,44 @@ export function computeContentFingerprint(
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
+// ─── Flow-binding identity (the integration gate, Rule 9) ─────────────────────
+
+/**
+ * Tool-independent canonical rule for a flow binding — a UI call site's
+ * dependency on a served `(method, path)`. Every flow binding shares this
+ * constant (like secrets share `SECRET_CANONICAL_RULE`) because the finding is
+ * intrinsic ("this component depends on this endpoint"), never a per-tool
+ * classification.
+ */
+export const FLOW_BINDING_CANONICAL_RULE = 'canonical:flow-binding';
+
+/**
+ * Durable identity for a flow binding (the `flow-binding` kind — the unit the
+ * integration gate grandfathers). A binding IS "this consumer file depends on
+ * this `(method, path)`", so identity is exactly that triple — and nothing
+ * else. It is fully LINE-INDEPENDENT by construction (no line, no line-window
+ * bucket), which is strictly more robust than the v1 line-window scheme: the
+ * call can move anywhere in the file, be reformatted, or gain siblings above
+ * it, and the binding keeps its identity. Motion within a file simply is not a
+ * change to which endpoint the file depends on.
+ *
+ * Hashes only inputs dxkit derives itself (Rule 9) — the NORMALIZED join key
+ * (`GET`, `/articles/{var}`, never a tool's raw URL capture) and the consuming
+ * file dxkit read from its own AST pass — so a committed baseline keeps
+ * matching when the scan moves to CI. Multiple calls to the same endpoint from
+ * one file collapse to one identity, which is correct: the file depends on the
+ * endpoint once, however many call sites express it. A pure file rename is
+ * relocated by the matcher's whole-file rename pass (the file locator in
+ * `entryToLocated`), not by the hash.
+ *
+ * Deliberately NOT the graph's enclosing symbol: that would couple identity to
+ * graphify, and the flow layer is graphify-independent by design. Reusing
+ * `computeContentFingerprint` keeps every SHA-1 scheme in this one module.
+ */
+export function computeFlowBindingFingerprint(method: string, path: string, file: string): string {
+  return computeContentFingerprint(FLOW_BINDING_CANONICAL_RULE, file, `${method} ${path}`);
+}
+
 // ─── Secret HMAC primitive ───────────────────────────────────────────────────
 
 /**

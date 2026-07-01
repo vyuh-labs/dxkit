@@ -210,6 +210,13 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'Allowlisting THIS finding is not supported; the only remediation is ' +
         'to delete the annotation comment.'
       );
+    case 'flow-binding':
+      return (
+        'A UI call no longer resolves to a served route (or a route a consumer ' +
+        'still binds to was removed). Restore the endpoint, fix the call to match ' +
+        'the current route, or — if a cross-repo consumer the scan cannot see is ' +
+        'intended — allowlist with category=false-positive.'
+      );
   }
 }
 
@@ -234,6 +241,7 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'config':
     case 'hygiene':
     case 'stale-allow':
+    case 'flow-binding':
       return { file: entry.file, line: entry.line };
     case 'coverage-gap':
     case 'test-gap':

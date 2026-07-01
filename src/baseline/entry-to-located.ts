@@ -150,6 +150,13 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
         ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
       };
     }
+    case 'flow-binding':
+      // Line-INDEPENDENT identity ((method, path, file)) → whole-file locator,
+      // no line: the binding survives the call moving anywhere in the file. The
+      // `file` anchor lets the matcher's whole-file rename pass relocate it on a
+      // pure rename; the `${method} ${path}` join key is the rule discriminator
+      // so two distinct bindings in one renamed file don't cross-pair.
+      return { id: entry.id, file: entry.file, rule: `${entry.method} ${entry.path}` };
     case 'dep-vuln':
     case 'secret-hmac':
       // Line-independent identity (advisory id; value HMAC) → locator-less;

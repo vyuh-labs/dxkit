@@ -717,6 +717,47 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     },
     expected: 'changed',
   },
+
+  // ─── flow-binding (4) ─────────────────────────────────────────────────
+  {
+    name: 'flow-binding/clean — same method, path, file',
+    prior: { kind: 'flow-binding', method: 'GET', path: '/articles/{var}', file: 'web/List.tsx' },
+    current: { kind: 'flow-binding', method: 'GET', path: '/articles/{var}', file: 'web/List.tsx' },
+    expected: 'persisted',
+  },
+  {
+    name: 'flow-binding/verb change → identity changes',
+    // A call re-pointed from GET to DELETE is a different integration.
+    prior: { kind: 'flow-binding', method: 'GET', path: '/articles/{var}', file: 'web/List.tsx' },
+    current: {
+      kind: 'flow-binding',
+      method: 'DELETE',
+      path: '/articles/{var}',
+      file: 'web/List.tsx',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'flow-binding/path change → identity changes',
+    prior: { kind: 'flow-binding', method: 'GET', path: '/articles/{var}', file: 'web/List.tsx' },
+    current: { kind: 'flow-binding', method: 'GET', path: '/comments/{var}', file: 'web/List.tsx' },
+    expected: 'changed',
+  },
+  {
+    name: 'flow-binding/moving the call to a different consuming file → identity changes',
+    // Identity is line-INDEPENDENT (a call moving within a file persists), but
+    // the consuming FILE is an identity input: a different file is a different
+    // integration dependency. (A pure file rename is relocated by the matcher's
+    // whole-file rename pass, not the hash.)
+    prior: { kind: 'flow-binding', method: 'GET', path: '/articles/{var}', file: 'web/List.tsx' },
+    current: {
+      kind: 'flow-binding',
+      method: 'GET',
+      path: '/articles/{var}',
+      file: 'web/Detail.tsx',
+    },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -934,6 +975,7 @@ const EXPECTED_KINDS = [
   'large-file',
   'secret-hmac',
   'stale-allow',
+  'flow-binding',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

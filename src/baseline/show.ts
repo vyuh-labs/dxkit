@@ -214,6 +214,8 @@ function describeEntry(entry: BaselineEntry): string {
       return `[${entry.tool}/${entry.rule}]  hmac:${entry.hmac.slice(0, 12)}`;
     case 'stale-allow':
       return `${entry.file}:${entry.line}  [stale dxkit-allow:${entry.category}]`;
+    case 'flow-binding':
+      return `${entry.method} ${entry.path}  ← ${entry.file}:${entry.line}`;
   }
 }
 

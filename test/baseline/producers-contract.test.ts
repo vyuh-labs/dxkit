@@ -57,6 +57,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'large-file',
   'secret-hmac',
   'stale-allow',
+  'flow-binding',
 ];
 
 /** Compile-time exhaustiveness check — adding a new kind to

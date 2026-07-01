@@ -138,6 +138,11 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // accepted-risk or deferred (the marker IS the hygiene issue)
   hygiene: ['accepted-risk', 'deferred'],
 
+  // Broken integration: false-positive (a cross-repo consumer exists that the
+  // scan didn't see, so the binding isn't actually dead); otherwise
+  // accepted-risk or deferred
+  'flow-binding': ['false-positive', 'accepted-risk', 'deferred'],
+
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale
   // annotation" — allowlisting the warning that an annotation is
