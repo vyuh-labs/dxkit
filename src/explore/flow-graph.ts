@@ -123,11 +123,16 @@ export function buildFlowContribution(model: FlowModel, base?: Graph): FlowContr
 export function mergeFlowIntoGraph(base: Graph | undefined, model: FlowModel): GraphJson {
   const contribution = buildFlowContribution(model, base);
   if (base) {
+    // The overlay is REGENERATED each run, never accumulated: strip any
+    // calls-endpoint edges a previous flow run left on the base (endpoints are
+    // already replaced wholesale below), then append this run's fresh edges.
+    // Without this, re-running `flow` stacks duplicate bindings.
+    const structuralEdges = base.edges.filter((e) => e.relation !== 'calls-endpoint');
     return {
       schemaVersion: GRAPH_SCHEMA_VERSION,
       meta: base.meta,
       nodes: base.nodes,
-      edges: [...base.edges, ...contribution.edges],
+      edges: [...structuralEdges, ...contribution.edges],
       communities: base.communities,
       symbolIndex: base.symbolIndex,
       endpoints: contribution.endpoints,
