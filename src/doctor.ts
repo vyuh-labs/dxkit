@@ -9,6 +9,7 @@ import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
+import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 
 /**
  * Three-tier doctor:
@@ -64,6 +65,12 @@ export interface DoctorReport {
   generatedAt: string;
   cwd: string;
   checks: CheckResult[];
+  /** The flow-contract diagnosis (unresolved calls + reasons, unconsumed
+   *  routes, connection-resolution rung) — present only when the repo has a
+   *  UI→API surface. This is the "diagnose" surface folded into doctor; there
+   *  is no standalone `flow doctor`. Agent-legible so the dxkit-flow skill reads
+   *  it directly from `doctor --json`. */
+  flow?: FlowDiagnosis;
   summary: {
     reports: { pass: number; fail: number; status: 'ok' | 'fail' };
     dx: { pass: number; fail: number; status: 'ok' | 'partial' | 'absent' };
@@ -796,6 +803,9 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
     }
   }
 
+  // Flow contract diagnosis (only when the repo has a UI→API surface).
+  if (report.flow) renderFlowSection(report.flow);
+
   // Summary
   console.log(''); // slop-ok
   logger.header('Results');
@@ -858,6 +868,40 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
   console.log(''); // slop-ok
 }
 
+/** Render the flow-contract diagnosis section of `doctor`. A cap keeps the
+ *  console readable; `--json` always carries the full lists for an agent. */
+function renderFlowSection(flow: FlowDiagnosis): void {
+  const CAP = 10;
+  console.log(''); // slop-ok
+  logger.info('Flow contract (UI→API integration):');
+  logger.success(
+    `${flow.topology} — ${flow.calls} call(s) → ${flow.routes} route(s), ${flow.resolved} resolved`,
+  );
+  logger.dim(`  ${flow.connection.note}`);
+
+  if (flow.unresolved.length > 0) {
+    logger.warn(`${flow.unresolved.length} unresolved call(s):`);
+    for (const u of flow.unresolved.slice(0, CAP)) {
+      logger.dim(
+        `  • ${u.method} ${u.path ?? u.rawUrl} (${u.reason} → ${u.suggestion})  ${u.file}:${u.line}`,
+      );
+    }
+    if (flow.unresolved.length > CAP) logger.dim(`  … and ${flow.unresolved.length - CAP} more`);
+  }
+  if (flow.servedUnconsumed.length > 0) {
+    logger.warn(`${flow.servedUnconsumed.length} served route(s) no in-repo call consumes:`);
+    for (const r of flow.servedUnconsumed.slice(0, CAP)) {
+      logger.dim(`  • ${r.method} ${r.path}  ${r.file}:${r.line}`);
+    }
+    if (flow.servedUnconsumed.length > CAP) {
+      logger.dim(`  … and ${flow.servedUnconsumed.length - CAP} more`);
+    }
+  }
+  if (flow.unresolved.length === 0 && flow.servedUnconsumed.length === 0) {
+    logger.success('  Every call resolves and every route has a consumer.');
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Entry point
 // ────────────────────────────────────────────────────────────────────
@@ -880,7 +924,11 @@ export async function runDoctor(cwd: string, opts: { json?: boolean } = {}): Pro
     ...runOperationalChecks(cwd, hasManifest),
   ];
 
-  const report = buildReport(cwd, checks);
+  const base = buildReport(cwd, checks);
+  // Fold the flow-contract diagnosis into the report (absent on non-flow repos).
+  // Never fails doctor — diagnoseFlow is fail-open (returns null on any error).
+  const flow = await diagnoseFlow(cwd);
+  const report: DoctorReport = flow ? { ...base, flow } : base;
 
   if (opts.json) {
     // Logger is already in stderr mode (setJsonMode was called by cli.ts);
