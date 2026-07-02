@@ -664,6 +664,11 @@ export async function runGuardrailCheck(
   const flowGate = await evaluateFlowGateForGuardrail({
     cwd,
     mode,
+    // Same loaded allowlist + clock the matcher-pair suppression uses, so an
+    // active `flow-binding` entry waives a flow block exactly like any other
+    // finding kind (the per-finding escape hatch).
+    allowlist,
+    now,
     ...(options.flowMode !== undefined ? { modeOverride: options.flowMode } : {}),
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
   });

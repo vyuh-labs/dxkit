@@ -37,6 +37,8 @@ import {
 } from '../analyzers/flow/contract';
 import { evaluateFlowGate, type BrokenIntegration } from '../analyzers/flow/gate';
 import { readFlowConfig, type FlowGateMode } from '../analyzers/flow/config';
+import { findEntry, isEntryActive } from '../allowlist/file';
+import type { AllowlistFile } from '../allowlist/file';
 
 /** Why the gate produced no verdict, when it didn't run. */
 export type FlowGateSkip =
@@ -46,6 +48,16 @@ export type FlowGateSkip =
   | 'no-served-truth' // no served inventory (monorepo route set + snapshot both empty)
   | 'error'; // any failure — fail-open
 
+/** A broken integration that an active allowlist entry waived from the verdict.
+ *  Mirrors the matcher pairs' `suppressedByAllowlist`: the finding is still
+ *  surfaced (for audit), but it does not block or warn. */
+export interface FlowGateSuppression {
+  readonly finding: BrokenIntegration;
+  readonly fingerprint: string;
+  readonly category: string;
+  readonly expiresAt?: string;
+}
+
 /** Outcome of the flow gate pass, folded additively into the guardrail verdict. */
 export interface FlowGateOutcome {
   /** True when the gate actually evaluated a base↔HEAD comparison. */
@@ -54,12 +66,16 @@ export interface FlowGateOutcome {
   readonly skipped?: FlowGateSkip;
   /** The effective mode after the loop-seam override (block / warn / off). */
   readonly mode: FlowGateMode;
-  /** Net-new broken integrations. In `warn` mode every finding's verdict is
+  /** Net-new broken integrations that count toward the verdict (active — NOT
+   *  waived by an allowlist entry). In `warn` mode every finding's verdict is
    *  demoted to `warn` so renderers present them as warnings. */
   readonly findings: readonly BrokenIntegration[];
-  /** True when at least one finding blocks (only possible in `block` mode). */
+  /** Broken integrations an active allowlist entry accepted — surfaced for
+   *  audit, excluded from `blocks` / `warns`. */
+  readonly suppressed: readonly FlowGateSuppression[];
+  /** True when at least one active finding blocks (only possible in `block` mode). */
   readonly blocks: boolean;
-  /** True when at least one finding warns. */
+  /** True when at least one active finding warns. */
   readonly warns: boolean;
 }
 
@@ -68,7 +84,47 @@ export interface FlowGateOutcome {
 const GATE_META = { schemaVersion: 1 as const, generatedAt: '' };
 
 function skip(mode: FlowGateMode, reason: FlowGateSkip): FlowGateOutcome {
-  return { ran: false, skipped: reason, mode, findings: [], blocks: false, warns: false };
+  return {
+    ran: false,
+    skipped: reason,
+    mode,
+    findings: [],
+    suppressed: [],
+    blocks: false,
+    warns: false,
+  };
+}
+
+/**
+ * Partition net-new broken integrations into active (count toward the verdict)
+ * and allowlist-suppressed. A `flow-binding` allowlist entry whose fingerprint
+ * matches a finding's id, is the right kind, and is unexpired waives it —
+ * mirroring the matcher-pair suppression so "I reviewed and accepted this
+ * integration finding" is an honored, per-finding escape hatch (not just the
+ * global `flow.mode`). Expired entries do not waive — the finding re-blocks.
+ */
+function partitionByAllowlist(
+  findings: readonly BrokenIntegration[],
+  allowlist: AllowlistFile | null | undefined,
+  now: Date,
+): { active: BrokenIntegration[]; suppressed: FlowGateSuppression[] } {
+  if (!allowlist) return { active: [...findings], suppressed: [] };
+  const active: BrokenIntegration[] = [];
+  const suppressed: FlowGateSuppression[] = [];
+  for (const f of findings) {
+    const entry = findEntry(allowlist, f.id);
+    if (entry && entry.kind === 'flow-binding' && isEntryActive(entry, now)) {
+      suppressed.push({
+        finding: f,
+        fingerprint: entry.fingerprint,
+        category: entry.category,
+        ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
+      });
+    } else {
+      active.push(f);
+    }
+  }
+  return { active, suppressed };
 }
 
 /**
@@ -79,12 +135,18 @@ function skip(mode: FlowGateMode, reason: FlowGateSkip): FlowGateOutcome {
  * @param modeOverride the loop Stop-gate's posture-derived mode (the seam that
  *   lets `security-only` warn while `full-debt` blocks) — wins over the
  *   `.dxkit/policy.json:flow.mode` default.
+ * @param allowlist the loaded per-finding allowlist; an active `flow-binding`
+ *   entry matching a finding waives it from the verdict (the per-finding escape
+ *   hatch). Omit / null for no suppression.
+ * @param now the clock for allowlist-expiry checks (passed for testability).
  */
 export async function evaluateFlowGateForGuardrail(opts: {
   readonly cwd: string;
   readonly mode: ResolvedMode;
   readonly modeOverride?: FlowGateMode;
   readonly verbose?: boolean;
+  readonly allowlist?: AllowlistFile | null;
+  readonly now?: Date;
 }): Promise<FlowGateOutcome> {
   const cwd = path.resolve(opts.cwd);
   const config = readFlowConfig(cwd);
@@ -155,17 +217,25 @@ export async function evaluateFlowGateForGuardrail(opts: {
     // Apply the posture. `warn` demotes every finding so renderers show them as
     // warnings and nothing fails the build; `block` honors each per-finding
     // verdict (exact → block, placeholder → warn).
-    const findings =
+    const posture =
       gateMode === 'warn' ? found.map((f) => ({ ...f, verdict: 'warn' as const })) : found;
-    const blocks = gateMode === 'block' && findings.some((f) => f.verdict === 'block');
-    const warns = findings.some((f) => f.verdict === 'warn');
 
-    if (opts.verbose && findings.length > 0) {
+    // Per-finding allowlist suppression — an accepted integration finding is
+    // waived from the verdict but still surfaced for audit.
+    const { active, suppressed } = partitionByAllowlist(
+      posture,
+      opts.allowlist,
+      opts.now ?? new Date(),
+    );
+    const blocks = gateMode === 'block' && active.some((f) => f.verdict === 'block');
+    const warns = active.some((f) => f.verdict === 'warn');
+
+    if (opts.verbose && active.length > 0) {
       process.stderr.write(
-        `    [flow] ${findings.length} net-new broken integration(s) — ${blocks ? 'blocking' : 'warning'}\n`,
+        `    [flow] ${active.length} net-new broken integration(s) — ${blocks ? 'blocking' : 'warning'}\n`,
       );
     }
-    return { ran: true, mode: gateMode, findings, blocks, warns };
+    return { ran: true, mode: gateMode, findings: active, suppressed, blocks, warns };
   } catch {
     // Fail-open: a ref that can't be checked out, an unparseable tree, a git
     // error — none of these should fail the guardrail. The gate simply did not

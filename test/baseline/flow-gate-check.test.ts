@@ -15,6 +15,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
 import type { ResolvedMode } from '../../src/baseline/modes';
+import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
+import type { AllowlistFile } from '../../src/allowlist/file';
 
 function git(dir: string, args: string[]): void {
   execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
@@ -142,6 +144,75 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
   });
 });
 
+describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeFlowRepo();
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function allowlistFor(method: string, routePath: string, file: string, over = {}): AllowlistFile {
+    return {
+      schemaVersion: 'dxkit-allowlist/v1',
+      mode: 'full',
+      identityScheme: 'v2',
+      entries: [
+        {
+          fingerprint: computeFlowBindingFingerprint(method, routePath, file),
+          kind: 'flow-binding',
+          category: 'false-positive',
+          addedAt: '2026-01-01',
+          reason: 'served by a system dxkit cannot see',
+          addedBy: 'test',
+          ...over,
+        },
+      ],
+    } as AllowlistFile;
+  }
+
+  it('an active allowlist entry waives a flow block (per-finding escape hatch)', async () => {
+    writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const out = await evaluateFlowGateForGuardrail({
+      cwd: dir,
+      mode: refMode,
+      allowlist: allowlistFor('GET', '/dead', 'web/List.tsx'),
+    });
+    expect(out.ran).toBe(true);
+    expect(out.blocks).toBe(false); // waived
+    expect(out.findings).toEqual([]); // not counted
+    expect(out.suppressed).toHaveLength(1);
+    expect(out.suppressed[0]).toMatchObject({ category: 'false-positive' });
+    expect(out.suppressed[0].finding.path).toBe('/dead');
+  });
+
+  it('an EXPIRED allowlist entry does not waive — the finding re-blocks', async () => {
+    writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const out = await evaluateFlowGateForGuardrail({
+      cwd: dir,
+      mode: refMode,
+      now: new Date('2026-06-01'),
+      allowlist: allowlistFor('GET', '/dead', 'web/List.tsx', {
+        category: 'deferred',
+        expiresAt: '2020-01-01', // long past
+      }),
+    });
+    expect(out.blocks).toBe(true);
+    expect(out.suppressed).toEqual([]);
+    expect(out.findings.map((f) => f.path)).toContain('/dead');
+  });
+
+  it('an entry for a DIFFERENT binding does not waive this one', async () => {
+    writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const out = await evaluateFlowGateForGuardrail({
+      cwd: dir,
+      mode: refMode,
+      allowlist: allowlistFor('GET', '/other', 'web/List.tsx'), // wrong path → different id
+    });
+    expect(out.blocks).toBe(true);
+    expect(out.suppressed).toEqual([]);
+  });
+});
+
 describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
   it('skips when neither side has any served route (frontend-only, no snapshot)', async () => {
     // A repo that only makes calls and serves nothing — with no committed
@@ -181,7 +252,7 @@ describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
       writeFileSync(
         join(dir, '.dxkit', 'flow', 'served.json'),
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 'dxkit-allowlist/v1',
           generatedAt: '',
           side: 'served',
           routes: [{ method: 'GET', path: '/articles', handler: null, via: 'spec' }],

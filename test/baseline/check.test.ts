@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
+import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
 
 /**
  * End-to-end exercise of the guardrail-check orchestrator. The
@@ -400,5 +401,36 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
     // Flow warns, so IT does not block; the overall verdict isn't forced by flow.
     expect(result.flowGate?.blocks).toBe(false);
+  }, 300_000);
+
+  it('an allowlisted flow finding is waived from the top-level verdict', async () => {
+    writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
+    // Commit an allowlist accepting the /dead binding by its fingerprint — the
+    // guardrail's own loadAllowlist must honor it for flow, like any kind.
+    const fp = computeFlowBindingFingerprint('GET', '/dead', 'client.ts');
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'allowlist.json'),
+      JSON.stringify({
+        schemaVersion: 'dxkit-allowlist/v1',
+        mode: 'full',
+        identityScheme: 'v2',
+        entries: [
+          {
+            fingerprint: fp,
+            kind: 'flow-binding',
+            category: 'false-positive',
+            addedAt: '2026-01-01',
+            reason: 'served externally',
+            addedBy: 'test',
+          },
+        ],
+      }),
+    );
+    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    expect(result.flowGate?.ran).toBe(true);
+    expect(result.blocks).toBe(false); // the flow block was waived
+    expect(result.flowGate?.suppressed.map((s) => s.finding.path)).toContain('/dead');
+    expect(result.flowGate?.findings).toEqual([]);
   }, 300_000);
 });
