@@ -166,7 +166,9 @@ export function renderConsole(result: GuardrailCheckResult): string {
  * grouped separately from warnings so the actionable set surfaces first.
  */
 function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
-  if (!flow || flow.findings.length === 0) return [];
+  if (!flow) return [];
+  const suppressed = flow.suppressed ?? [];
+  if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
   const blocking = flow.findings.filter((f) => f.verdict === 'block');
   const warning = flow.findings.filter((f) => f.verdict === 'warn');
@@ -178,6 +180,15 @@ function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   if (warning.length > 0) {
     out.push(logger.bold(`Flow breakage — warning (${warning.length})`));
     for (const f of warning) out.push(`  ${describeBrokenIntegration(f)}`);
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push(logger.bold(`Flow breakage — suppressed by allowlist (${suppressed.length})`));
+    for (const s of suppressed) {
+      const exp = s.expiresAt ? `, expires ${s.expiresAt}` : '';
+      out.push(`  ${describeBrokenIntegration(s.finding)}`);
+      out.push(`    · allowlisted: ${s.category}${exp} (waived from the verdict)`);
+    }
     out.push('');
   }
   return out;
@@ -392,6 +403,18 @@ export interface GuardrailJsonPayload {
       readonly reason: string;
       readonly verdict: 'block' | 'warn';
     }>;
+    /** Broken integrations an active allowlist entry waived — excluded from
+     *  `blocks` / `warns`, surfaced for audit. */
+    readonly suppressed: ReadonlyArray<{
+      readonly id: string;
+      readonly method: string;
+      readonly path: string;
+      readonly file: string;
+      readonly line: number;
+      readonly reason: string;
+      readonly category: string;
+      readonly expiresAt?: string;
+    }>;
   };
 }
 
@@ -489,6 +512,16 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
               confidence: f.confidence,
               reason: f.reason,
               verdict: f.verdict,
+            })),
+            suppressed: (result.flowGate.suppressed ?? []).map((s) => ({
+              id: s.finding.id,
+              method: s.finding.method,
+              path: s.finding.path,
+              file: s.finding.file,
+              line: s.finding.line,
+              reason: s.finding.reason,
+              category: s.category,
+              ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}),
             })),
           },
         }
@@ -633,7 +666,9 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
  * Silent when the gate produced no findings.
  */
 function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
-  if (!flow || flow.findings.length === 0) return [];
+  if (!flow) return [];
+  const suppressed = flow.suppressed ?? [];
+  if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
   const blocking = flow.findings.filter((f) => f.verdict === 'block');
   const warning = flow.findings.filter((f) => f.verdict === 'warn');
@@ -655,6 +690,28 @@ function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
     out.push('| Endpoint | Reason | Consumer | Confidence |');
     out.push('|---|---|---|---|');
     for (const f of warning) out.push(row(f));
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push('<details>');
+    out.push(
+      `<summary>Integration findings suppressed by allowlist (${suppressed.length})</summary>`,
+    );
+    out.push('');
+    out.push('These would block/warn, but an active allowlist entry accepted them.');
+    out.push('');
+    out.push('| Endpoint | Reason | Consumer | Category | Expires |');
+    out.push('|---|---|---|---|---|');
+    for (const s of suppressed) {
+      const f = s.finding;
+      out.push(
+        `| ${escapeMd(`${f.method} ${f.path}`)} | ${escapeMd(f.reason)} | ` +
+          `${escapeMd(`${f.file}:${f.line}`)} | ${escapeMd(s.category)} | ` +
+          `${escapeMd(s.expiresAt ?? '—')} |`,
+      );
+    }
     out.push('');
     out.push('</details>');
     out.push('');
