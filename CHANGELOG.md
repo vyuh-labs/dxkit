@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.1] - 2026-07-01
+
+### Fixed — the flow gate now honors the per-finding allowlist
+
+A net-new broken integration could not be accepted per-finding: the
+`flow-binding` allowlist category and identity existed, but the guardrail's
+flow pass ran outside the matcher-pair suppression path, so an allowlist entry
+never actually waived a flow block. The only escape hatch was the global
+`flow.mode`. Now an active `flow-binding` allowlist entry (matched by
+fingerprint, kind-guarded, expiry-respected) waives the block exactly like any
+other finding kind — the finding is still surfaced as "suppressed by allowlist"
+in the console, `--json`, and PR-comment markdown, but no longer fails the
+build. Expired entries do not waive; the finding re-blocks.
+
+### Known limitation (tracked)
+
+The flow gate runs in **ref-based mode only**. In committed-baseline modes it
+skips (no committed prior flow side to diff against), so a repo pinned to
+`committed-full` is not yet flow-gated unless it sets `baseline.mode: ref-based`.
+A fix that recomputes the base flow model from the baseline's commit is planned.
+
 ## [2.21.0] - 2026-07-01
 
 ### Added — the integration gate (`flow refresh` + guardrail flow pass)
