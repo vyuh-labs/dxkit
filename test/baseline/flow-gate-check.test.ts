@@ -14,7 +14,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
-import type { ResolvedMode } from '../../src/baseline/modes';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
 import type { AllowlistFile } from '../../src/allowlist/file';
 
@@ -41,23 +40,13 @@ function makeFlowRepo(): string {
   return dir;
 }
 
-const refMode: ResolvedMode = {
-  mode: 'ref-based',
-  source: 'cli',
-  explanation: 'test',
-  ref: 'main',
-};
-
 describe('evaluateFlowGateForGuardrail — skip paths', () => {
-  it('skips when mode is not ref-based (committed mode)', async () => {
+  it('skips when no base commit is resolvable (no ref, no anchor SHA)', async () => {
     const dir = makeFlowRepo();
     try {
-      const out = await evaluateFlowGateForGuardrail({
-        cwd: dir,
-        mode: { mode: 'committed-full', source: 'cli', explanation: 'test' },
-      });
+      const out = await evaluateFlowGateForGuardrail({ cwd: dir });
       expect(out.ran).toBe(false);
-      expect(out.skipped).toBe('not-ref-based');
+      expect(out.skipped).toBe('no-base-ref');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -68,7 +57,7 @@ describe('evaluateFlowGateForGuardrail — skip paths', () => {
     try {
       const out = await evaluateFlowGateForGuardrail({
         cwd: dir,
-        mode: refMode,
+        baseRef: 'main',
         modeOverride: 'off',
       });
       expect(out.ran).toBe(false);
@@ -89,7 +78,7 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
   it('blocks a net-new call to a non-served endpoint', async () => {
     // Working tree adds a NEW call to a route nobody serves.
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, mode: refMode });
+    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
     expect(out.ran).toBe(true);
     expect(out.blocks).toBe(true);
     expect(out.findings.map((f) => f.path)).toContain('/dead');
@@ -102,7 +91,7 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
       cwd: dir,
-      mode: refMode,
+      baseRef: 'main',
       modeOverride: 'warn',
     });
     expect(out.ran).toBe(true);
@@ -113,9 +102,20 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
 
   it('passes clean when every call still resolves', async () => {
     // No change to the working tree — the one call still resolves.
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, mode: refMode });
+    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
     expect(out.blocks).toBe(false);
     expect(out.findings).toEqual([]);
+  });
+
+  it('gates against a raw commit SHA base (committed-mode anchor, not a branch ref)', async () => {
+    // Committed mode supplies the baseline's `repo.commitSha` — a bare commit,
+    // not a branch. The gate must run identically: diff HEAD against that commit.
+    const baseSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim();
+    writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: baseSha });
+    expect(out.ran).toBe(true);
+    expect(out.blocks).toBe(true);
+    expect(out.findings.map((f) => f.path)).toContain('/dead');
   });
 
   it('grandfathers a call that was already broken at base', async () => {
@@ -131,14 +131,14 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
     );
     const out = await evaluateFlowGateForGuardrail({
       cwd: dir,
-      mode: { ...refMode, ref: 'base2' },
+      baseRef: 'base2',
     });
     expect(out.findings).toEqual([]); // /legacy was broken before → not net-new
   });
 
   it('skips a diff that touches no flow surface (docs-only change)', async () => {
     writeFileSync(join(dir, 'README.md'), '# docs\n');
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, mode: refMode });
+    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
     expect(out.ran).toBe(false);
     expect(out.skipped).toBe('no-flow-surface-change');
   });
@@ -174,7 +174,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
       cwd: dir,
-      mode: refMode,
+      baseRef: 'main',
       allowlist: allowlistFor('GET', '/dead', 'web/List.tsx'),
     });
     expect(out.ran).toBe(true);
@@ -189,7 +189,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
       cwd: dir,
-      mode: refMode,
+      baseRef: 'main',
       now: new Date('2026-06-01'),
       allowlist: allowlistFor('GET', '/dead', 'web/List.tsx', {
         category: 'deferred',
@@ -205,7 +205,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
       cwd: dir,
-      mode: refMode,
+      baseRef: 'main',
       allowlist: allowlistFor('GET', '/other', 'web/List.tsx'), // wrong path → different id
     });
     expect(out.blocks).toBe(true);
@@ -229,7 +229,7 @@ describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
       git(dir, ['commit', '-q', '-m', 'base']);
       // HEAD adds another call — still no served side anywhere.
       writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/more');\n");
-      const out = await evaluateFlowGateForGuardrail({ cwd: dir, mode: refMode });
+      const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
       expect(out.ran).toBe(false);
       expect(out.skipped).toBe('no-served-truth');
     } finally {
@@ -266,7 +266,7 @@ describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
         join(dir, 'web', 'List.tsx'),
         "axios.get('/articles');\naxios.get('/ghost');\n",
       );
-      const out = await evaluateFlowGateForGuardrail({ cwd: dir, mode: refMode });
+      const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
       expect(out.ran).toBe(true);
       expect(out.blocks).toBe(true);
       // /ghost blocks; /articles resolved against the snapshot and did not.

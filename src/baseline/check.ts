@@ -657,13 +657,17 @@ export async function runGuardrailCheck(
   // and the renderer treats that as "delta unavailable."
   const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, baseline.repo.commitSha);
 
-  // The flow integration gate — an additive, fail-open pass over the same
-  // ref-based comparison. It runs its own base↔HEAD flow gather (independent of
-  // the finding matcher above) and never throws; its verdict folds into the
-  // top-level one. Runs only in ref-based mode.
+  // The flow integration gate — an additive, fail-open pass that runs its own
+  // base↔HEAD flow gather (independent of the finding matcher above) and never
+  // throws; its verdict folds into the top-level one. It needs only a base
+  // COMMIT to diff against: the resolved git ref in ref-based mode, or the
+  // committed baseline's anchor SHA in committed mode (flow-binding has no
+  // committed prior side — the base flow model is gathered fresh from that
+  // commit either way, so the gate works in both modes).
+  const flowBaseRef = mode.mode === 'ref-based' ? mode.ref : baseline.repo.commitSha;
   const flowGate = await evaluateFlowGateForGuardrail({
     cwd,
-    mode,
+    ...(flowBaseRef ? { baseRef: flowBaseRef } : {}),
     // Same loaded allowlist + clock the matcher-pair suppression uses, so an
     // active `flow-binding` entry waives a flow block exactly like any other
     // finding kind (the per-finding escape hatch).
@@ -689,7 +693,7 @@ export async function runGuardrailCheck(
     warns: baseWarns || flowGate.warns,
     allowlistDelta,
     refExcludedKinds,
-    ...(flowGate.ran || flowGate.skipped !== 'not-ref-based' ? { flowGate } : {}),
+    ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),
   };
 }
 
