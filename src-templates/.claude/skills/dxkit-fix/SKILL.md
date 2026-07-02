@@ -18,6 +18,8 @@ The skill consumes `npx vyuh-dxkit doctor --json` output. Doctor returns a struc
 
 The skill iterates `summary.fixable[]`, asks the customer for confirmation on each fix (with the command shown), runs it, then re-runs doctor at the end to verify everything closed.
 
+Doctor also carries an optional top-level `flow` field when the repo has a UI→API surface — a diagnosis of the integration contract (unresolved client calls with reasons + suggestions, served routes nobody consumes, and how the served side is resolved). This is **diagnostic, not an install fix**: it does not appear in `summary.fixable[]`, and dxkit-fix leaves it alone. It surfaces contract health (e.g. a call to a route no backend serves) rather than a broken-install signal.
+
 ## The repair loop
 
 ```

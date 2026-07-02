@@ -1,0 +1,175 @@
+/**
+ * Flow diagnosis — the "diagnose" surface, folded into `doctor` (there is no
+ * standalone `flow doctor`). Where the gate answers "did this PR break an
+ * integration?", diagnose answers "what is the current state of the contract?":
+ * which client calls do NOT resolve to a served route and why, which served
+ * routes nobody consumes, and how the served side is being resolved (the
+ * connection-resolution ladder).
+ *
+ * The output is deliberately agent-legible — `doctor --json` carries the whole
+ * `FlowDiagnosis`, so the `dxkit-flow` skill reads it as a thin consumer rather
+ * than scraping console prose. Reuses the shared extractor (Rule 2); fail-open
+ * (any error → `null`, and doctor simply omits the flow section).
+ */
+
+import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
+import { gatherFlowModel } from './gather';
+import { isPlaceholderOnlyPath, type FlowModel } from './model';
+import { readServedContract } from './contract';
+import { readWorkspace } from '../../workspace';
+import type { FlowTopology } from './setup';
+
+/** Why a client call did not cleanly bind to a served route. */
+export type UnresolvedReason = 'no-route' | 'external' | 'placeholder-only';
+
+/** The recommended next step for an unresolved call. `scaffold-resolver`
+ *  (extend extraction to an unsupported framework) is intentionally NOT emitted
+ *  here — an un-extracted call is absent, not unresolved; that path needs the
+ *  extension SDK. */
+export type FlowFixHint = 'add-route' | 'configure-participant' | 'adopt-spec' | 'annotate';
+
+/** One client call that does not resolve, plus the reason and the suggested fix. */
+export interface UnresolvedCall {
+  readonly method: string;
+  readonly rawUrl: string;
+  readonly path: string | null;
+  readonly file: string;
+  readonly line: number;
+  readonly reason: UnresolvedReason;
+  readonly suggestion: FlowFixHint;
+}
+
+/** A served route no client call binds to — a dead route, or a route consumed
+ *  only by a repo dxkit cannot see (a cross-repo consumer). */
+export interface UnconsumedRoute {
+  readonly method: string;
+  readonly path: string;
+  readonly file: string;
+  readonly line: number;
+}
+
+/** Which rung of the connection-resolution ladder produced the served set. */
+export type ConnectionRung =
+  | 'monorepo'
+  | 'committed-counterpart'
+  | 'configured-participants'
+  | 'unresolved';
+
+export interface FlowDiagnosis {
+  readonly topology: FlowTopology;
+  readonly calls: number;
+  readonly routes: number;
+  readonly resolved: number;
+  /** Client calls that do not cleanly bind, each with a reason + suggestion. */
+  readonly unresolved: readonly UnresolvedCall[];
+  /** Served routes with no consuming call (dead-route / cross-repo candidates). */
+  readonly servedUnconsumed: readonly UnconsumedRoute[];
+  readonly connection: { readonly rung: ConnectionRung; readonly note: string };
+}
+
+function suggestionFor(reason: UnresolvedReason, topology: FlowTopology): FlowFixHint {
+  switch (reason) {
+    case 'external':
+      return 'adopt-spec'; // add the external API's OpenAPI spec to verify it
+    case 'placeholder-only':
+      return 'annotate'; // too generic to verify — annotate if intentional
+    case 'no-route':
+      // A monorepo serves its own routes, so a miss is a missing/typo'd route;
+      // a consumer-only repo's provider lives elsewhere (configure it).
+      return topology === 'monorepo' ? 'add-route' : 'configure-participant';
+  }
+}
+
+/** Classify a binding into the unresolved tail, or `null` when it resolves. */
+function classifyUnresolved(
+  b: FlowModel['bindings'][number],
+  topology: FlowTopology,
+): UnresolvedCall | null {
+  let reason: UnresolvedReason | null = null;
+  if (b.reason === 'external') reason = 'external';
+  else if (b.reason === 'no-route') reason = 'no-route';
+  else if (b.reason === 'placeholder-only') reason = 'placeholder-only';
+  if (reason === null) return null; // 'exact' → resolved
+  return {
+    method: b.call.method,
+    rawUrl: b.call.rawUrl,
+    path: b.call.path,
+    file: b.call.file,
+    line: b.call.line,
+    reason,
+    suggestion: suggestionFor(reason, topology),
+  };
+}
+
+function resolveConnection(cwd: string, model: FlowModel): { rung: ConnectionRung; note: string } {
+  if (model.routes.length > 0) {
+    return { rung: 'monorepo', note: 'This repo serves the routes its calls target.' };
+  }
+  if (readServedContract(cwd)) {
+    return {
+      rung: 'committed-counterpart',
+      note: 'Resolving calls against the counterpart contract this repo commits.',
+    };
+  }
+  const ws = readWorkspace(cwd);
+  if (ws && ws.participants.length > 0) {
+    return {
+      rung: 'configured-participants',
+      note: `Configured participants: ${ws.participants.map((p) => p.name).join(', ')}.`,
+    };
+  }
+  return {
+    rung: 'unresolved',
+    note: 'No served side in this repo and no counterpart contract — the gate stays inert. Publish the provider contract or add a participant.',
+  };
+}
+
+/**
+ * Diagnose the repo's flow contract. Returns `null` (and doctor omits the flow
+ * section) when no flow-capable pack is active, when extraction finds nothing,
+ * or on any error.
+ */
+export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
+  if (allFlowSourceExtensions(detectActiveLanguages(cwd)).length === 0) return null;
+
+  let model: FlowModel;
+  try {
+    model = await gatherFlowModel({ roots: [cwd] });
+  } catch {
+    return null;
+  }
+
+  const calls = model.calls.length;
+  const routes = model.routes.length;
+  if (calls === 0 && routes === 0) return null;
+
+  const topology: FlowTopology =
+    calls > 0 && routes > 0 ? 'monorepo' : calls > 0 ? 'consumer-only' : 'provider-only';
+
+  const unresolved = model.bindings
+    .map((b) => classifyUnresolved(b, topology))
+    .filter((u): u is UnresolvedCall => u !== null);
+  const resolved = calls - unresolved.length;
+
+  // Served routes with no consuming binding. Consumed keys come from resolved
+  // bindings; the union with a committed counterpart's served set does NOT
+  // matter here — we only flag OUR served routes that nobody in scope calls.
+  const consumedKeys = new Set(
+    model.bindings
+      .filter((b) => b.route !== null)
+      .map((b) => `${b.route!.method} ${b.route!.path}`),
+  );
+  const servedUnconsumed: UnconsumedRoute[] = model.routes
+    .filter((r) => !consumedKeys.has(`${r.method} ${r.path}`) && !isPlaceholderOnlyPath(r.path))
+    .map((r) => ({ method: r.method, path: r.path, file: r.file, line: r.line }));
+
+  return {
+    topology,
+    calls,
+    routes,
+    resolved,
+    unresolved,
+    servedUnconsumed,
+    connection: resolveConnection(cwd, model),
+  };
+}
