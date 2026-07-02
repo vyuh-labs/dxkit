@@ -2,7 +2,8 @@ import { parseArgs } from 'node:util';
 import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
-import { promptForConfig } from './prompts';
+import { promptForConfig, promptFlowSetup } from './prompts';
+import { detectFlowTopology, applyFlowSetup } from './analyzers/flow/setup';
 import { runUpdate, writeInstallFlags } from './update';
 import { runDoctor } from './doctor';
 import { VERSION } from './constants';
@@ -245,6 +246,10 @@ function printUsage(): void {
                               CLAUDE.md, preserving your content). Implies dxkit skills.
     --loop-preset <p>         Loop blocking posture: security-only (default) or
                               full-debt. Only meaningful with --claude-loop.
+    --flow                    Set up the UI→API integration gate (warn posture),
+                              no prompt. Auto-offered interactively when init
+                              detects a UI→API surface.
+    --no-flow                 Skip flow setup even when a UI→API surface is detected.
     --detect                  Auto-detect stack, minimal prompts
     --yes                     Accept all defaults, no prompts
     --force                   Overwrite existing files (incl. existing hooks/
@@ -348,6 +353,10 @@ export async function run(argv: string[]): Promise<void> {
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
       'loop-preset': { type: 'string' },
+      // flow setup (folded into init; no standalone `flow init`).
+      // --flow forces it on (warn posture); --no-flow suppresses it.
+      flow: { type: 'boolean', default: false },
+      'no-flow': { type: 'boolean', default: false },
       // setup-branch-protection flags
       branch: { type: 'string' },
       'require-reviews': { type: 'string' },
@@ -575,6 +584,38 @@ export async function run(argv: string[]): Promise<void> {
           label: 'CI deep-SAST refresh workflow',
           result: installCiDeepSastRefresh(cwd, { force: !!values.force }),
         });
+      }
+
+      // Flow setup — folded into `init` (there is no standalone `flow init`).
+      // Detect a UI→API surface; if there is none, stay silent (zero burden on
+      // a library / CLI / data repo). Otherwise prompt for the gate posture
+      // (interactive, with a description of each) or take the gentle `warn`
+      // default (--flow / --yes / non-TTY). --no-flow suppresses it entirely.
+      if (!values['no-flow']) {
+        const detection = await detectFlowTopology(cwd);
+        if (detection.topology !== 'none') {
+          // Non-TTY without an explicit answer can't prompt — fall to the
+          // default rather than hang (mirrors how --yes is handled).
+          const flowYes = promptOpts.yes || !process.stdin.isTTY;
+          const decision = await promptFlowSetup(detection, {
+            yes: flowYes,
+            forceOn: !!values.flow,
+          });
+          const written = applyFlowSetup(cwd, decision);
+          shipResults.push({
+            label: 'Flow integration gate',
+            result: {
+              installed: written,
+              skipped: [],
+              sidecars: [],
+              notes: [
+                `Flow gate posture: ${decision.mode} ` +
+                  `(${detection.callCount} call(s) → ${detection.routeCount} route(s)). ` +
+                  `Change it in .dxkit/policy.json:flow.mode.`,
+              ],
+            },
+          });
+        }
       }
 
       // dxkit must resolve project-locally so every installed self-invocation

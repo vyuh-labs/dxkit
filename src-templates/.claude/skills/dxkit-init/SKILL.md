@@ -29,8 +29,13 @@ Ask the user what they want, then pick the right invocation:
 | `--with-baseline-refresh` | `.github/workflows/dxkit-baseline-refresh.yml` (post-merge regen) | Yes |
 | `--with-pr-review` | `.github/workflows/pr-review.yml` (AI PR review; needs `ANTHROPIC_API_KEY`) | No (still opt-in) |
 | `--claude-loop` | Stop-gate hook for autonomous loops (additive merge into `.claude/settings.json` + CLAUDE.md); implies the dxkit skills. Pair with `--loop-preset security-only\|full-debt` | No (opt-in — registers a hook that blocks the agent from stopping) |
+| `--flow` / `--no-flow` | Set up / suppress the UI→API integration gate. When `init` detects a UI→API surface it offers this automatically (interactive prompt for the posture); `--flow` forces it on with `warn`, `--no-flow` skips it. There is **no standalone `flow init`** — flow setup lives inside `init`. | Auto-offered when a UI→API surface is detected (silent otherwise) |
 
 `--yes` accepts all prompts; `--force` overwrites existing files instead of writing `.dxkit` sidecars on conflict.
+
+### The flow step (auto-detected)
+
+When `init` finds client HTTP calls and/or server routes, it offers the **integration gate**: a PR that breaks a UI→API binding (a call to an endpoint no backend serves, or a removed route a consumer still calls) fails the guardrail. Interactively it asks for the posture with a one-line description of each — `warn` (default, surfaces breaks without failing a build), `block` (fails on an exact break), `off` (scaffold config only). It also confirms the dominant base-URL helper to strip and any multiple backend services. On a repo with no UI→API surface (a library, a CLI) the step is silent. Re-run or adjust later with `init --flow`; tune the posture in `.dxkit/policy.json:flow.mode`.
 
 ## Steps
 
