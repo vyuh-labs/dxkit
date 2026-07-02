@@ -959,12 +959,20 @@ export async function run(argv: string[]): Promise<void> {
         await runFlowRefresh({ cwd, frontend, backend, specs, json: !!values.json });
         break;
       }
+      // `flow publish` → the multi-repo handshake: union every workspace
+      // participant's served routes into this repo's served.json.
+      if (subCommand === 'publish') {
+        const { runFlowPublish } = await import('./flow-cli');
+        await runFlowPublish({ cwd, frontend, backend, specs, json: !!values.json });
+        break;
+      }
       logger.fail(`Unknown flow subcommand: ${subCommand}`);
       logger.info('Usage:');
       logger.info('  vyuh-dxkit flow [map] [--frontend <dir>] [--backend <dir>] [--specs <a,b>]');
       logger.info('  vyuh-dxkit flow trace "<METHOD> <path>"');
       logger.info('  vyuh-dxkit flow extract [--out <dir>]');
       logger.info('  vyuh-dxkit flow refresh');
+      logger.info('  vyuh-dxkit flow publish   (multi-repo: union participants’ served routes)');
       process.exit(1);
       break;
     }

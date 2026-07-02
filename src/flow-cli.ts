@@ -19,6 +19,7 @@ import {
   writeConsumedContract,
   writeServedContract,
 } from './analyzers/flow/contract';
+import { publishFlow } from './analyzers/flow/publish';
 
 export interface FlowExtractOptions {
   readonly cwd: string;
@@ -245,4 +246,53 @@ export async function runFlowRefresh(opts: FlowViewOptions): Promise<void> {
   logger.info(`  ${path.relative(opts.cwd, consumedPath)}`);
   logger.info('');
   logger.info('Commit these so the counterpart repo can gate against them.');
+}
+
+/**
+ * `vyuh-dxkit flow publish` — the multi-repo handshake. Reads
+ * `.dxkit/workspace.json`, gathers every participant's served routes (from its
+ * local path, or pinned at a git ref), and writes this repo's `served.json` as
+ * the UNION of the whole mesh — so this repo's gate resolves calls against
+ * services it does not co-locate. With no participants it publishes this repo's
+ * own served/consumed (the monorepo case). See `flow refresh` for the
+ * single-repo snapshot without the mesh union.
+ */
+export async function runFlowPublish(opts: FlowViewOptions): Promise<void> {
+  if (!opts.json) logger.header('vyuh-dxkit flow publish');
+  const config = readFlowConfig(opts.cwd);
+  const commitSha = headCommitSha(opts.cwd);
+  const result = await publishFlow(opts.cwd, {
+    stripUrlPrefixes: config.stripUrlPrefixes,
+    specs: [
+      ...splitPaths(opts.specs, opts.cwd),
+      ...config.specs.map((s) => path.resolve(opts.cwd, s)),
+    ],
+    generatedAt: new Date().toISOString(),
+    ...(commitSha !== undefined ? { commitSha } : {}),
+  });
+
+  if (opts.json) {
+    emitJson({
+      servedPath: result.servedPath,
+      consumedPath: result.consumedPath,
+      totalServedRoutes: result.totalServedRoutes,
+      consumedBindings: result.consumedBindings,
+      contentHash: result.contentHash,
+      participants: result.participants,
+    });
+    return;
+  }
+
+  logger.success(
+    `Published mesh contract: ${result.totalServedRoutes} served route(s) across ${result.participants.length} participant(s) + this repo (hash ${result.contentHash}).`,
+  );
+  for (const p of result.participants) {
+    const detail =
+      p.source === 'missing' ? 'path not found — skipped' : `${p.routes} route(s) (${p.source})`;
+    logger.info(`  • ${p.name}: ${detail}`);
+  }
+  logger.info(`  ${path.relative(opts.cwd, result.servedPath)}`);
+  logger.info(`  ${path.relative(opts.cwd, result.consumedPath)}`);
+  logger.info('');
+  logger.info('Commit these so this repo can gate against the whole mesh offline.');
 }
