@@ -5,10 +5,15 @@
  * This is guardrail-integration glue, not analysis: it composes the pure flow
  * gate (`analyzers/flow/gate.ts`) with the ref-based gather primitive
  * (`withRefWorktree`, Rule 11) to answer "does this diff net-new break a UI→API
- * integration?" without touching the existing net-new finding matcher. The gate
- * runs only in ref-based mode, where a base↔HEAD comparison is well defined
- * (committed mode has no base flow model — flow-binding is a deferred baseline
- * kind, minted here ref-based rather than at baseline-create).
+ * integration?" without touching the existing net-new finding matcher.
+ *
+ * The gate is mode-agnostic: it needs only a base COMMIT to diff HEAD against,
+ * not a base baseline file. The caller supplies that commit — the resolved git
+ * ref in ref-based mode, or the committed baseline's anchor `repo.commitSha` in
+ * committed mode. Either way the base flow model is gathered fresh from a
+ * worktree at that commit, so flow-binding needs no committed prior side (it's a
+ * deferred baseline kind, minted here at gate time rather than at
+ * baseline-create). When no base commit is resolvable at all, the gate skips.
  *
  * Every failure path degrades to "did not gate" rather than an error: a
  * missing base ref, an unparseable tree, a repo with no server-side truth to
@@ -26,7 +31,6 @@ import * as path from 'path';
 import { changedFilesTouchFlowSurface, detectActiveLanguages } from '../languages';
 import { computeChangedFiles } from './changed-files';
 import { withRefWorktree } from './ref-baseline';
-import type { ResolvedMode } from './modes';
 import { gatherFlowModel } from '../analyzers/flow/gather';
 import {
   buildConsumedContract,
@@ -43,7 +47,7 @@ import type { AllowlistFile } from '../allowlist/file';
 /** Why the gate produced no verdict, when it didn't run. */
 export type FlowGateSkip =
   | 'off' // policy `flow.mode: off`
-  | 'not-ref-based' // committed mode — no base flow model to diff against
+  | 'no-base-ref' // no base commit resolvable (no ref, no baseline anchor SHA)
   | 'no-flow-surface-change' // the diff touched no client call / route / spec
   | 'no-served-truth' // no served inventory (monorepo route set + snapshot both empty)
   | 'error'; // any failure — fail-open
@@ -132,6 +136,11 @@ function partitionByAllowlist(
  * returned `blocks` / `warns` into the overall verdict and attaches the outcome
  * to the result for rendering.
  *
+ * @param baseRef the base commit to diff HEAD against — the resolved git ref in
+ *   ref-based mode, or the committed baseline's anchor `repo.commitSha` in
+ *   committed mode. Both yield a fresh base flow gather from a worktree at that
+ *   commit, so the gate works identically in either mode. When absent (no ref,
+ *   no baseline anchor), the gate skips.
  * @param modeOverride the loop Stop-gate's posture-derived mode (the seam that
  *   lets `security-only` warn while `full-debt` blocks) — wins over the
  *   `.dxkit/policy.json:flow.mode` default.
@@ -142,7 +151,7 @@ function partitionByAllowlist(
  */
 export async function evaluateFlowGateForGuardrail(opts: {
   readonly cwd: string;
-  readonly mode: ResolvedMode;
+  readonly baseRef?: string;
   readonly modeOverride?: FlowGateMode;
   readonly verbose?: boolean;
   readonly allowlist?: AllowlistFile | null;
@@ -153,8 +162,8 @@ export async function evaluateFlowGateForGuardrail(opts: {
   const gateMode = opts.modeOverride ?? config.mode;
 
   if (gateMode === 'off') return skip(gateMode, 'off');
-  if (opts.mode.mode !== 'ref-based' || !opts.mode.ref) return skip(gateMode, 'not-ref-based');
-  const ref = opts.mode.ref;
+  if (!opts.baseRef) return skip(gateMode, 'no-base-ref');
+  const ref = opts.baseRef;
 
   try {
     // Trigger-skip: a net-new broken integration requires a change to a client

@@ -433,4 +433,17 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     expect(result.flowGate?.suppressed.map((s) => s.finding.path)).toContain('/dead');
     expect(result.flowGate?.findings).toEqual([]);
   }, 300_000);
+
+  it('gates in committed mode against the baseline anchor commit (not only ref-based)', async () => {
+    // Committed mode has no committed prior flow side, but it DOES record the
+    // baseline's anchor `repo.commitSha`. The gate must diff HEAD against that
+    // commit — so a private repo on the default committed-full is flow-gated too.
+    await createBaseline({ cwd: dir });
+    writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'committed-full' });
+    expect(result.mode.mode).toBe('committed-full');
+    expect(result.flowGate?.ran).toBe(true);
+    expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
+    expect(result.blocks).toBe(true);
+  }, 300_000);
 });

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.2] - 2026-07-02
+
+### Fixed — the flow gate now runs in committed-baseline modes too
+
+The flow integration gate previously ran only in ref-based mode; in
+committed-full / committed-sanitized it skipped, so a repo pinned to
+`committed-full` (the default for private repos) got no flow gating unless it
+switched to `baseline.mode: ref-based`. The gate needs only a base *commit* to
+diff HEAD against, not a committed prior flow side — so it now uses the
+committed baseline's recorded anchor commit (`repo.commitSha`) as the base and
+gathers that side's flow model fresh from a worktree, exactly as ref-based mode
+gathers from its ref. Net-new broken integrations now block (or warn) the same
+way in every baseline mode. Fail-open, trigger-skip, no-served-truth self-skip,
+and per-finding allowlist suppression are all unchanged. When no base commit is
+resolvable at all (no ref and no baseline anchor), the gate skips as before.
+
 ## [2.21.1] - 2026-07-01
 
 ### Fixed — the flow gate now honors the per-finding allowlist
