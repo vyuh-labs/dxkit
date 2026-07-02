@@ -31,6 +31,8 @@ Don't use when:
 ```
 [1] State check       → is dxkit installed? scaffold present? baseline captured? hooks active?
 [2] Install if needed → npm init @vyuhlabs/dxkit OR npx vyuh-dxkit init --full --yes
+                        (init auto-offers the UI→API integration gate when it
+                         detects client calls + routes — pick a posture then)
 [3] Doctor            → npx vyuh-dxkit doctor (parse summary.fixable[])
 [4] Fix gaps          → dispatch through dxkit-fix for each fixable signal
 [5] Capture baseline  → npx vyuh-dxkit baseline create (with explicit secrets-warning)

@@ -79,3 +79,33 @@ export function readFlowConfig(cwd: string): FlowConfig {
         : DEFAULTS.blockThreshold,
   };
 }
+
+/**
+ * Write into `.dxkit/policy.json:flow`, merging the patch over the existing
+ * `flow` block and PRESERVING every other policy section (loop, baseline, …) —
+ * the same discipline `ensureLoopPreset` uses for `loop.preset`. This is the
+ * single writer of the flow policy section (Rule 2), paired with the reader
+ * above. Returns `true` if the file changed, `false` if it was already at the
+ * target (idempotent) or could not be parsed (malformed policy is left
+ * untouched — the caller reports it rather than clobbering hand-edits).
+ */
+export function writeFlowPolicy(
+  cwd: string,
+  patch: Partial<Pick<FlowConfig, 'mode' | 'stripUrlPrefixes' | 'specs'>>,
+): boolean {
+  const abs = path.join(cwd, '.dxkit', 'policy.json');
+  let policy: { flow?: Record<string, unknown>; [k: string]: unknown } = {};
+  if (fs.existsSync(abs)) {
+    try {
+      policy = JSON.parse(fs.readFileSync(abs, 'utf8'));
+    } catch {
+      return false; // malformed — leave it; caller surfaces the note
+    }
+  }
+  const nextFlow = { ...(policy.flow ?? {}), ...patch };
+  if (JSON.stringify(policy.flow ?? {}) === JSON.stringify(nextFlow)) return false;
+  policy.flow = nextFlow;
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify(policy, null, 2) + '\n', 'utf8');
+  return true;
+}
