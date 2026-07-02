@@ -28,6 +28,9 @@ export interface WorkspaceParticipant {
   readonly name: string;
   readonly path: string;
   readonly baseUrls?: readonly string[];
+  /** Git ref to pin the participant's contract at when publishing (e.g. `main`).
+   *  Omitted → gather from the participant's current working tree. */
+  readonly ref?: string;
 }
 
 /** A third-party API the system consumes but does not serve. `spec` (an
@@ -56,10 +59,15 @@ function stringList(v: unknown): string[] {
 
 function normalizeParticipant(v: unknown): WorkspaceParticipant | null {
   if (!v || typeof v !== 'object') return null;
-  const r = v as { name?: unknown; path?: unknown; baseUrls?: unknown };
+  const r = v as { name?: unknown; path?: unknown; baseUrls?: unknown; ref?: unknown };
   if (typeof r.name !== 'string' || typeof r.path !== 'string') return null;
   const baseUrls = stringList(r.baseUrls);
-  return { name: r.name, path: r.path, ...(baseUrls.length ? { baseUrls } : {}) };
+  return {
+    name: r.name,
+    path: r.path,
+    ...(baseUrls.length ? { baseUrls } : {}),
+    ...(typeof r.ref === 'string' ? { ref: r.ref } : {}),
+  };
 }
 
 function normalizeExternal(v: unknown): WorkspaceExternal | null {

@@ -54,6 +54,10 @@ interface SnapshotMeta {
   readonly generatedAt: string;
   /** Commit the snapshot was produced against, when known. */
   readonly commitSha?: string;
+  /** Change-detection digest of the contract's contents — lets a consumer see
+   *  that a published contract drifted (routes changed) even when the commit or
+   *  timestamp did not carry the signal. Set by `flow publish`. */
+  readonly contentHash?: string;
 }
 
 export interface ServedContract extends SnapshotMeta {
@@ -69,6 +73,26 @@ export interface ConsumedContract extends SnapshotMeta {
 /** The `${method} ${path}` join key both sides meet on. */
 export function contractKey(method: string, routePath: string): string {
   return `${method} ${routePath}`;
+}
+
+/**
+ * A short, stable content digest of a served route set. Lets a consumer detect
+ * that a published contract drifted (routes added/removed) even when the commit
+ * SHA or timestamp did not carry the signal. Non-cryptographic (FNV-1a): this
+ * is a change-detection digest, NOT a finding identity, so it deliberately does
+ * not route through the fingerprint helpers (Rule 9 governs identity, not this).
+ */
+export function servedContentHash(routes: readonly ServedRoute[]): string {
+  const canon = routes
+    .map((r) => contractKey(r.method, r.path))
+    .sort()
+    .join('\n');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < canon.length; i++) {
+    h ^= canon.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 // ─── Build (from a flow model) ────────────────────────────────────────────────

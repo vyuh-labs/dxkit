@@ -49,6 +49,14 @@ describe('workspace.json primitive', () => {
     });
   });
 
+  it('preserves an optional participant ref (git-ref pin for publish)', () => {
+    const ws = normalizeWorkspace({
+      participants: [{ name: 'backend', path: '../backend', ref: 'main' }],
+      external: [],
+    });
+    expect(ws?.participants[0]).toEqual({ name: 'backend', path: '../backend', ref: 'main' });
+  });
+
   it('normalizes away malformed entries but keeps well-formed ones', () => {
     const ws = normalizeWorkspace({
       participants: [
