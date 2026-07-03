@@ -177,3 +177,68 @@ describe('go.mapLintSeverity', () => {
     expect(map('some-random-linter')).toBe('low');
   });
 });
+
+describe('go.correctness', () => {
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['main.go'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck: go build ./... when a go.mod is present', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    expect(go.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'build',
+      bin: 'go',
+      args: ['build', './...'],
+    });
+  });
+
+  it('syntaxCheck: null without a go.mod (not a module)', () => {
+    expect(go.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('affectedTests: tests the changed packages on the affected surface', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    const cmd = go.correctness!.affectedTests(
+      ctx({
+        changedFiles: [
+          'internal/svc/svc.go',
+          'internal/svc/help.go',
+          'cmd/app/main.go',
+          'README.md',
+        ],
+      }),
+    );
+    expect(cmd?.bin).toBe('go');
+    // Unique package dirs of the changed .go files, as import specs.
+    expect(cmd?.args).toEqual(['test', './internal/svc', './cmd/app']);
+  });
+
+  it('affectedTests: a root-level .go change tests the current package', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    const cmd = go.correctness!.affectedTests(ctx({ changedFiles: ['main.go'] }));
+    expect(cmd?.args).toEqual(['test', '.']);
+  });
+
+  it('affectedTests: null on the affected surface when no .go changed', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    expect(go.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: whole module at full scope', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    expect(go.correctness!.affectedTests(ctx({ scope: 'full' }))?.args).toEqual(['test', './...']);
+  });
+
+  it('affectedTests: whole module when the diff is undeterminable (empty changedFiles)', () => {
+    fs.writeFileSync(path.join(tmp, 'go.mod'), 'module x\n');
+    expect(
+      go.correctness!.affectedTests(ctx({ changedFiles: [], scope: 'affected' }))?.args,
+    ).toEqual(['test', './...']);
+  });
+
+  it('affectedTests: null without a go.mod', () => {
+    expect(go.correctness!.affectedTests(ctx())).toBeNull();
+  });
+});
