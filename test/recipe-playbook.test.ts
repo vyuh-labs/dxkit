@@ -55,11 +55,13 @@ import {
   allTlsBypassPatterns,
   activeLanguagesFromFlags,
   activeLanguagesFromStack,
+  activeCorrectnessProviders,
   buildDevcontainerExtensions,
   buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
 } from '../src/languages';
+import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
@@ -123,6 +125,14 @@ const mockPlaybookPack = {
   // `changedFilesTouchFlowSurface` — codifying "the flow-gate trigger is
   // pack-driven, not a hardcoded extension list."
   treeSitterGrammars: { '.pbk': 'playbook-lang' },
+  // Correctness-floor contribution (2.23). Distinctive bin/labels so the
+  // assertion verifies the synthetic pack's provider flows through
+  // `activeCorrectnessProviders` + `runCorrectnessFloor` — codifying "the
+  // liveness floor is pack-driven, not analyzer-by-analyzer."
+  correctness: {
+    syntaxCheck: () => ({ label: 'playbook-typecheck', bin: 'playbookc-mock', args: ['--check'] }),
+    affectedTests: () => ({ label: 'playbook-tests', bin: 'playbookc-mock', args: ['test'] }),
+  },
   detect: vi.fn(() => false),
   tools: [],
   semgrepRulesets: [],
@@ -265,6 +275,31 @@ describe('recipe playbook — synthetic pack', () => {
     expect(changedFilesTouchDependencyManifest(['app/My.pbkproj'], packs)).toBe(true);
     // A pure source-only change is NOT flagged → the dep audit may be skipped.
     expect(changedFilesTouchDependencyManifest(['src/main.pbk', 'README.md'], packs)).toBe(false);
+  });
+
+  // 2.23: the correctness floor iterates `activeCorrectnessProviders`, so a
+  // synthetic pack that declares a `correctness` provider must be picked up by
+  // the registry helper AND surface its checks through `runCorrectnessFloor` —
+  // codifying "the liveness floor is pack-driven, not analyzer-by-analyzer."
+  // Catches "the runner stopped iterating the registry" empirically.
+  it('activeCorrectnessProviders + runCorrectnessFloor pick up the mock pack (2.23)', () => {
+    const packs = [...LANGUAGES];
+    const providers = activeCorrectnessProviders(packs);
+    expect(providers.some((p) => (p.id as string) === 'playbook')).toBe(true);
+    // The runner emits the synthetic pack's checks. Exec is injected, so no
+    // real toolchain runs — this proves dispatch, not execution.
+    const result = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['a.pbk'],
+      scope: 'affected',
+      packs,
+      exec: () => ({ available: true, code: 0, output: '' }),
+    });
+    const playbookChecks = result.checks
+      .filter((c) => (c.pack as string) === 'playbook')
+      .map((c) => c.label);
+    expect(playbookChecks).toContain('playbook-typecheck');
+    expect(playbookChecks).toContain('playbook-tests');
   });
 
   // 2.7 Sprint 1: exported-symbol detection registry helper iterates
