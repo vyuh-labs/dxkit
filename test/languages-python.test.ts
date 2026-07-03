@@ -213,3 +213,73 @@ describe('findPyProjectVenvPython', () => {
     }
   });
 });
+
+describe('python.correctness', () => {
+  /** Write a fake `.venv/bin/<name>` executable so the resolver + pytest gate
+   *  see a project interpreter with pytest installed. */
+  function installVenvBin(name: string): string {
+    const binDir = path.join(tmp, '.venv', 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const exe = path.join(binDir, name);
+    fs.writeFileSync(exe, '#!/bin/sh\n', { mode: 0o755 });
+    return exe;
+  }
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['app.py'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck: py_compile on the changed .py files via the venv python', () => {
+    const py = installVenvBin('python');
+    const cmd = python.correctness!.syntaxCheck(ctx({ changedFiles: ['app.py', 'README.md'] }));
+    expect(cmd).toEqual({ label: 'syntax', bin: py, args: ['-m', 'py_compile', 'app.py'] });
+  });
+
+  it('syntaxCheck: null when no .py changed (pytest import is the full-scope backstop)', () => {
+    installVenvBin('python');
+    expect(python.correctness!.syntaxCheck(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: null when the project has no pytest signal', () => {
+    installVenvBin('python');
+    installVenvBin('pytest');
+    // No pytest.ini / conftest.py / [tool.pytest] → not a pytest project.
+    expect(python.correctness!.affectedTests(ctx())).toBeNull();
+  });
+
+  it('affectedTests: runs the changed test modules on the affected surface', () => {
+    fs.writeFileSync(path.join(tmp, 'pytest.ini'), '[pytest]\n');
+    const py = installVenvBin('python');
+    installVenvBin('pytest');
+    const cmd = python.correctness!.affectedTests(
+      ctx({ changedFiles: ['src/app.py', 'tests/test_app.py'] }),
+    );
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: py,
+      args: ['-m', 'pytest', 'tests/test_app.py'],
+    });
+  });
+
+  it('affectedTests: null on the affected surface when no test module changed', () => {
+    fs.writeFileSync(path.join(tmp, 'pytest.ini'), '[pytest]\n');
+    installVenvBin('python');
+    installVenvBin('pytest');
+    expect(python.correctness!.affectedTests(ctx({ changedFiles: ['src/app.py'] }))).toBeNull();
+  });
+
+  it('affectedTests: whole suite at full scope', () => {
+    fs.writeFileSync(path.join(tmp, 'pytest.ini'), '[pytest]\n');
+    const py = installVenvBin('python');
+    installVenvBin('pytest');
+    const cmd = python.correctness!.affectedTests(ctx({ scope: 'full' }));
+    expect(cmd).toEqual({ label: 'affected-tests', bin: py, args: ['-m', 'pytest'] });
+  });
+
+  it('affectedTests: null (fail-open) when pytest is not installed in the env', () => {
+    fs.writeFileSync(path.join(tmp, 'pytest.ini'), '[pytest]\n');
+    installVenvBin('python'); // python present, but NO pytest sibling
+    expect(python.correctness!.affectedTests(ctx({ scope: 'full' }))).toBeNull();
+  });
+});

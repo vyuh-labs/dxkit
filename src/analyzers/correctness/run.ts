@@ -16,6 +16,8 @@
  */
 
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { commandExists } from '../tools/runner';
 import { activeCorrectnessProviders } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
@@ -23,6 +25,25 @@ import type {
   CorrectnessCommand,
   CorrectnessScope,
 } from '../../languages/capabilities/correctness';
+
+/**
+ * Is a command's `bin` runnable? A bare name is resolved on PATH (`tsc`,
+ * `cargo`, `npx`); a path-like `bin` (a pack that resolved an absolute
+ * interpreter — a project venv's `python`, a `findTool` path) is accepted when
+ * the file exists. Without the latter, a resolved-path bin would be wrongly
+ * treated as missing and the check skipped (fail-open on a tool that IS
+ * present) — so this keeps the fail-open gate honest for every pack.
+ */
+function binaryAvailable(bin: string): boolean {
+  if (bin.includes('/') || bin.includes(path.sep)) {
+    try {
+      return fs.statSync(bin).isFile();
+    } catch {
+      return false;
+    }
+  }
+  return commandExists(bin);
+}
 
 export type CorrectnessStatus =
   | 'pass'
@@ -73,7 +94,7 @@ const OUTPUT_TAIL = 4000; // cap captured output so a block message stays readab
  */
 export function makeCommandExec(timeoutMs?: number): CommandExec {
   return (cmd, cwd) => {
-    if (!commandExists(cmd.bin)) return { available: false, code: -1, output: '' };
+    if (!binaryAvailable(cmd.bin)) return { available: false, code: -1, output: '' };
     try {
       const out = execFileSync(cmd.bin, [...cmd.args], {
         cwd,

@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
-import { fileExists, run } from '../analyzers/tools/runner';
+import { commandExists, fileExists, run } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
@@ -17,6 +17,11 @@ import type {
   LintProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
+import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -819,6 +824,85 @@ const pyTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+/** The interpreter the floor runs — the project's venv python (absolute path,
+ *  so it uses the env that actually has pytest installed) when resolvable,
+ *  else `python3` / `python` on PATH. */
+function floorPython(cwd: string): string {
+  return findPyProjectVenvPython(cwd) ?? (commandExists('python3') ? 'python3' : 'python');
+}
+
+/** Is pytest actually installed for the resolved interpreter? A venv python
+ *  (`.../bin/python`) has a sibling `.../bin/pytest`; a PATH interpreter uses
+ *  a PATH `pytest`. Gating on this keeps a project WITHOUT pytest installed
+ *  fail-OPEN (the check is skipped) rather than a fail-CLOSED "No module named
+ *  pytest" that would block a developer who hasn't installed test deps. */
+function pytestInstalledFor(python: string): boolean {
+  if (python.includes('/') || python.includes(path.sep)) {
+    const pytestBin = path.join(path.dirname(python), 'pytest');
+    return isPyExecutable(pytestBin);
+  }
+  return commandExists('pytest');
+}
+
+/** A changed Python file that is a pytest test module (`test_*.py` /
+ *  `*_test.py`, or under a `tests/` directory) — the pack's file-level
+ *  affected-selection unit. */
+function isPyTestFile(rel: string): boolean {
+  const base = path.basename(rel);
+  return (
+    /^test_.*\.py$/.test(base) ||
+    /_test\.py$/.test(base) ||
+    /(^|\/)tests?\//.test(rel.replace(/\\/g, '/'))
+  );
+}
+
+/**
+ * The Python correctness floor.
+ *
+ * syntaxCheck: `python -m py_compile <changed .py>` — the universal, stdlib
+ * parse check (needs only an interpreter, catches exactly syntax errors, and
+ * cannot false-positive on lint the way `ruff` would). Runs on the changed
+ * `.py` files; on the full/undeterminable surface it returns null because the
+ * pytest run below imports every module and surfaces a syntax error on import.
+ *
+ * affectedTests: `python -m pytest`. Native impact-selection needs a plugin
+ * (pytest-testmon / pytest-picked) that cannot be reliably detected without
+ * running, so the honest v1 rung is FILE-LEVEL — the changed test modules on
+ * the fast surface, the whole suite at full scope. A source-only change with no
+ * changed test module is syntax-checked on the fast surface and fully tested in
+ * CI. (Documented ceiling; testmon-based per-test selection is a future upgrade.)
+ */
+const pyCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    const changedPy = ctx.changedFiles.filter((f) => f.endsWith('.py'));
+    if (changedPy.length === 0) return null; // full-scope backstop is the pytest import
+    const python = floorPython(ctx.cwd);
+    if (!binaryLike(python)) return null;
+    return { label: 'syntax', bin: python, args: ['-m', 'py_compile', ...changedPy] };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (gatherPyTestFrameworkResult(ctx.cwd) === null) return null; // no pytest project
+    const python = floorPython(ctx.cwd);
+    if (!pytestInstalledFor(python)) return null; // fail-open: pytest not installed here
+    const undeterminable = ctx.changedFiles.length === 0;
+    const changedTests = ctx.changedFiles.filter((f) => f.endsWith('.py') && isPyTestFile(f));
+    if (ctx.scope === 'affected' && !undeterminable) {
+      if (changedTests.length === 0) return null; // no changed test module → nothing to run
+      return { label: 'affected-tests', bin: python, args: ['-m', 'pytest', ...changedTests] };
+    }
+    // Full scope, or the diff was undeterminable → run the whole suite.
+    return { label: 'affected-tests', bin: python, args: ['-m', 'pytest'] };
+  },
+};
+
+/** A `bin` we can hand the runner: a bare name (resolved on PATH) or an
+ *  existing interpreter path. Mirrors the runner's own availability gate. */
+function binaryLike(bin: string): boolean {
+  if (bin.includes('/') || bin.includes(path.sep)) return isPyExecutable(bin);
+  return commandExists(bin);
+}
+
 /**
  * Raw shape emitted per-entry by `pip-licenses --format=json`. Fields are
  * pip-licenses's capitalised names; we map them to LicenseFinding below.
@@ -1080,6 +1164,8 @@ export const python: LanguageSupport = {
   semgrepRulesets: ['p/python'],
   // CodeQL `python` extractor (no build); Snyk Code supports Python.
   deepSast: { codeqlLanguage: 'python', snykCode: true },
+
+  correctness: pyCorrectnessProvider,
 
   capabilities: {
     depVulns: pyDepVulnsProvider,
