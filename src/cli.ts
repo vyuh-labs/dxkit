@@ -2306,9 +2306,31 @@ export async function run(argv: string[]): Promise<void> {
         await runLoopDoctor(cwd, { json: !!values.json });
         break;
       }
+      if (sub === 'snapshot') {
+        // Capture the correctness-floor entry snapshot — the already-broken set
+        // on the current (pristine) tree — so later Stops block only on
+        // NET-NEW failures. Run at loop activation, before the agent changes
+        // anything, or the recorded set won't be genuinely pre-existing.
+        const { captureFloorSnapshot } = await import('./loop/stop-gate');
+        const { describeCorrectnessFloor } = await import('./analyzers/correctness/run');
+        const result = captureFloorSnapshot(cwd);
+        if (result === null) {
+          logger.info(
+            'No active language pack provides a correctness floor — nothing to snapshot.',
+          );
+          break;
+        }
+        const failing = result.checks.filter((c) => c.status === 'fail').length;
+        logger.success(
+          `Captured correctness-floor entry snapshot (${result.checks.length} check(s), ` +
+            `${failing} already failing). ${describeCorrectnessFloor(result)}`,
+        );
+        break;
+      }
       logger.fail(
         `Unknown loop subcommand: ${sub ?? '(missing)'}. ` +
-          `Available: vyuh-dxkit loop ledger [show | summarize | clear], vyuh-dxkit loop doctor`,
+          `Available: vyuh-dxkit loop ledger [show | summarize | clear], ` +
+          `vyuh-dxkit loop doctor, vyuh-dxkit loop snapshot`,
       );
       process.exit(1);
       break;

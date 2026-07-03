@@ -24,7 +24,12 @@ import type {
   CorrectnessScope,
 } from '../../languages/capabilities/correctness';
 
-export type CorrectnessStatus = 'pass' | 'fail' | 'skipped-unavailable' | 'skipped-none';
+export type CorrectnessStatus =
+  | 'pass'
+  | 'fail'
+  | 'skipped-unavailable'
+  | 'skipped-timeout'
+  | 'skipped-none';
 
 export interface CorrectnessCheckResult {
   readonly pack: LanguageId;
@@ -43,10 +48,15 @@ export interface CorrectnessFloorResult {
   readonly blocks: boolean;
 }
 
-/** Outcome of running one command: `available:false` → the binary isn't on PATH
- *  (fail-open skip); otherwise `code` is the exit status and `output` its tail. */
+/** Outcome of running one command:
+ *  - `available:false` → the binary isn't on PATH (fail-open skip);
+ *  - `timedOut:true`   → the command exceeded its wall-clock budget. A SLOW
+ *    suite is not a BROKEN suite, so this is fail-OPEN (skipped), never a block
+ *    — the fast surface stays fast and CI (unbounded) is the backstop;
+ *  - otherwise `code` is the exit status and `output` its tail. */
 export interface CommandOutcome {
   readonly available: boolean;
+  readonly timedOut?: boolean;
   readonly code: number;
   readonly output: string;
 }
@@ -55,28 +65,52 @@ export type CommandExec = (cmd: CorrectnessCommand, cwd: string) => CommandOutco
 
 const OUTPUT_TAIL = 4000; // cap captured output so a block message stays readable
 
-/** Default exec: resolve on PATH, run, capture combined output tail. */
-export const defaultCommandExec: CommandExec = (cmd, cwd) => {
-  if (!commandExists(cmd.bin)) return { available: false, code: -1, output: '' };
-  try {
-    const out = execFileSync(cmd.bin, [...cmd.args], {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { available: true, code: 0, output: tail(out) };
-  } catch (e) {
-    const err = e as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string };
-    const combined = `${err.stdout ?? ''}${err.stderr ?? ''}`;
-    // A non-numeric status (spawn error, signal) is treated as a failure with
-    // code 1 — the binary existed (commandExists passed) but the run broke.
-    return {
-      available: true,
-      code: typeof err.status === 'number' ? err.status : 1,
-      output: tail(combined),
-    };
-  }
-};
+/**
+ * Build a command exec bounded by an optional per-command wall-clock timeout.
+ * On timeout the child is killed and the outcome is `timedOut` (fail-open),
+ * distinct from a non-zero exit (a real failure, fail-closed). `timeoutMs`
+ * undefined/0 → no timeout (CI, where the full suite is expected to run).
+ */
+export function makeCommandExec(timeoutMs?: number): CommandExec {
+  return (cmd, cwd) => {
+    if (!commandExists(cmd.bin)) return { available: false, code: -1, output: '' };
+    try {
+      const out = execFileSync(cmd.bin, [...cmd.args], {
+        cwd,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        ...(timeoutMs && timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGTERM' } : {}),
+      });
+      return { available: true, code: 0, output: tail(out) };
+    } catch (e) {
+      const err = e as {
+        status?: number;
+        code?: string;
+        signal?: string;
+        stdout?: Buffer | string;
+        stderr?: Buffer | string;
+      };
+      const combined = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      // execFileSync sets `code: 'ETIMEDOUT'` (and signal = killSignal) when it
+      // fired the timeout kill. Treat that as a fail-OPEN skip, not a failure —
+      // the run didn't finish, so it says nothing about correctness.
+      if (err.code === 'ETIMEDOUT') {
+        return { available: true, timedOut: true, code: -1, output: tail(combined) };
+      }
+      // A non-numeric status (spawn error, non-timeout signal) is treated as a
+      // failure with code 1 — the binary existed (commandExists passed) but the
+      // run broke.
+      return {
+        available: true,
+        code: typeof err.status === 'number' ? err.status : 1,
+        output: tail(combined),
+      };
+    }
+  };
+}
+
+/** Default exec: resolve on PATH, run unbounded, capture combined output tail. */
+export const defaultCommandExec: CommandExec = makeCommandExec();
 
 function tail(s: string): string {
   const t = s.trim();
@@ -89,6 +123,10 @@ export interface CorrectnessFloorOptions {
   readonly scope: CorrectnessScope;
   /** Active language packs (from `activeLanguagesFromStack` / `-Flags`). */
   readonly packs: readonly LanguageSupport[];
+  /** Per-command wall-clock budget (ms). A command that exceeds it is a
+   *  fail-OPEN skip, never a block — the fast surface stays fast, CI is the
+   *  backstop. Undefined → no timeout. Ignored when `exec` is injected. */
+  readonly timeoutMs?: number;
   /** Injected for tests; defaults to real PATH resolution + execFileSync. */
   readonly exec?: CommandExec;
 }
@@ -100,7 +138,7 @@ export interface CorrectnessFloorOptions {
  * failed.
  */
 export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessFloorResult {
-  const exec = opts.exec ?? defaultCommandExec;
+  const exec = opts.exec ?? makeCommandExec(opts.timeoutMs);
   const ctx = { cwd: opts.cwd, changedFiles: opts.changedFiles, scope: opts.scope };
   const checks: CorrectnessCheckResult[] = [];
 
@@ -111,6 +149,12 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       const outcome = exec(cmd, opts.cwd);
       if (!outcome.available) {
         checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-unavailable' });
+        continue;
+      }
+      if (outcome.timedOut) {
+        // Exceeded the budget — fail-OPEN. The run didn't finish, so it says
+        // nothing about correctness; CI (unbounded) is the backstop.
+        checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-timeout' });
         continue;
       }
       checks.push({
