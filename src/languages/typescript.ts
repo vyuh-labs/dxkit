@@ -23,6 +23,11 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
+import type {
   CoverageResult,
   DepVulnFinding,
   DepVulnGatherOutcome,
@@ -841,6 +846,117 @@ const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
 };
 
 /**
+ * Is a project-local CLI (`tsc`, `vitest`, `jest`) actually installed?
+ *
+ * The correctness floor gates every command on the local `node_modules/.bin`
+ * shim EXISTING, not merely on the package appearing in `package.json`. A dep
+ * that is declared but not installed (no `npm install` yet) returns false, so
+ * the floor SKIPS the check — fail-open. Emitting `npx --no-install tsc` for a
+ * missing binary would instead exit non-zero and fail-CLOSED, blocking a
+ * developer who simply hasn't installed dependencies locally. CI, where deps
+ * are installed, is the backstop for that case. The `.cmd` variant is npm's
+ * Windows shim.
+ */
+function hasLocalBin(cwd: string, bin: string): boolean {
+  return (
+    fileExists(cwd, path.join('node_modules', '.bin', bin)) ||
+    fileExists(cwd, path.join('node_modules', '.bin', `${bin}.cmd`))
+  );
+}
+
+/** The installed TS/JS test runner, vitest preferred then jest, or null. */
+function tsTestRunner(cwd: string): 'vitest' | 'jest' | null {
+  if (hasLocalBin(cwd, 'vitest')) return 'vitest';
+  if (hasLocalBin(cwd, 'jest')) return 'jest';
+  return null;
+}
+
+/**
+ * The project's own typecheck npm script, if it declares one — the two
+ * dominant conventions. Preferred over a bare `tsc` because it carries the
+ * project's exact flags and TypeScript project-references (`tsc -b`), the same
+ * command the project's CI runs. Mirrors how the coverage provider prefers a
+ * declared `test:coverage` script over inferring the runner.
+ */
+function tsTypecheckScript(cwd: string): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8')) as {
+      scripts?: Record<string, string>;
+    };
+    const scripts = pkg.scripts ?? {};
+    for (const name of ['typecheck', 'type-check']) {
+      if (typeof scripts[name] === 'string') return name;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The TS/JS correctness floor. `npx --no-install <tool>` is the portable
+ * invocation — npx resolves the project-local `.bin` shim cross-platform (a
+ * bare `tsc` is not on PATH, and a raw `.bin/tsc` symlink is not Windows-safe),
+ * and `--no-install` guarantees it never reaches the network.
+ */
+const tsCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    // Prefer the project's own typecheck script — it carries their exact
+    // compiler flags and project-references, the same command their CI runs.
+    const script = tsTypecheckScript(ctx.cwd);
+    if (script !== null) {
+      return { label: 'typecheck', bin: 'npm', args: ['run', script] };
+    }
+    // Otherwise, only a project that opts into TypeScript (has a tsconfig) with
+    // the compiler installed gets a typecheck floor. A pure-JS repo has no tsc
+    // stage — its syntax errors surface when the test runner loads the file.
+    // `--skipLibCheck` keeps errors INSIDE third-party / generated `.d.ts`
+    // files (which the developer cannot fix and which are not about their
+    // change) from spuriously blocking; it never suppresses an error in the
+    // developer's own source. A liveness floor asks "does my code compile",
+    // not "is every dependency's type declaration internally consistent".
+    if (!fileExists(ctx.cwd, 'tsconfig.json')) return null;
+    if (!hasLocalBin(ctx.cwd, 'tsc')) return null;
+    return {
+      label: 'typecheck',
+      bin: 'npx',
+      args: ['--no-install', 'tsc', '--noEmit', '--skipLibCheck'],
+    };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    const runner = tsTestRunner(ctx.cwd);
+    if (runner === null) return null; // no vitest/jest installed → nothing to run
+
+    // On the fast (affected) surface run only the tests the changed source
+    // files reach — native impact-selection both runners support. Fall back to
+    // the full suite at `full` scope, or when the diff was undeterminable
+    // (empty changedFiles → treat as full, per the contract). A non-empty diff
+    // that touched no TS/JS file (docs-only) skips — nothing to run.
+    const undeterminable = ctx.changedFiles.length === 0;
+    const changed = ctx.changedFiles.filter((f) => TS_JS_EXT.some((e) => f.endsWith(e)));
+    if (ctx.scope === 'affected' && !undeterminable && changed.length === 0) return null;
+    const affected = ctx.scope === 'affected' && changed.length > 0;
+
+    // `--passWithNoTests` keeps "no related test" a PASS, not a failure — a
+    // source change with no covering test is a coverage concern (the finding
+    // gate's job), not a liveness failure.
+    if (runner === 'vitest') {
+      const args = affected
+        ? ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', ...changed]
+        : ['--no-install', 'vitest', 'run', '--passWithNoTests'];
+      return { label: 'affected-tests', bin: 'npx', args };
+    }
+    // jest — `--findRelatedTests` consumes every following positional as its
+    // file list, so it stays last with the changed files as its arguments.
+    const args = affected
+      ? ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', ...changed]
+      : ['--no-install', 'jest', '--passWithNoTests'];
+    return { label: 'affected-tests', bin: 'npx', args };
+  },
+};
+
+/**
  * Enumerate TS/JS source files under cwd and pre-compute the pack's
  * per-file imports (raw specifiers) and resolved edges. Uses the
  * cross-platform `walkSourceFiles` walker; `includeTests` +
@@ -1309,6 +1425,8 @@ export const typescript: LanguageSupport = {
   // CodeQL's `javascript` extractor covers both JS and TS in one DB,
   // no build needed. Snyk Code supports JS/TS.
   deepSast: { codeqlLanguage: 'javascript', snykCode: true },
+
+  correctness: tsCorrectnessProvider,
 
   capabilities: {
     depVulns: tsDepVulnsProvider,

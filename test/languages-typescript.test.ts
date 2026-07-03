@@ -295,3 +295,106 @@ describe('buildTsTopLevelDepIndex', () => {
     expect(idx.get('b')).toEqual(['a']);
   });
 });
+
+describe('typescript.correctness', () => {
+  /** Write a fake `node_modules/.bin/<bin>` shim so `hasLocalBin` sees it. */
+  function installBin(bin: string): void {
+    const dir = path.join(tmp, 'node_modules', '.bin');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, bin), '#!/bin/sh\n');
+  }
+
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['src/a.ts'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck runs tsc --noEmit --skipLibCheck when tsconfig + tsc are present', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+    fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
+    installBin('tsc');
+    const cmd = typescript.correctness!.syntaxCheck(ctx());
+    expect(cmd).toEqual({
+      label: 'typecheck',
+      bin: 'npx',
+      args: ['--no-install', 'tsc', '--noEmit', '--skipLibCheck'],
+    });
+  });
+
+  it('syntaxCheck prefers the project typecheck script', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc -b' } }),
+    );
+    fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
+    installBin('tsc');
+    const cmd = typescript.correctness!.syntaxCheck(ctx());
+    expect(cmd).toEqual({ label: 'typecheck', bin: 'npm', args: ['run', 'typecheck'] });
+  });
+
+  it('syntaxCheck skips without a tsconfig (pure JS)', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+    installBin('tsc');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('syntaxCheck skips (fail-open) when tsc is not installed', () => {
+    fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('affectedTests: vitest related on the affected surface', () => {
+    installBin('vitest');
+    const cmd = typescript.correctness!.affectedTests(
+      ctx({ changedFiles: ['src/a.ts', 'README.md'] }),
+    );
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'npx',
+      args: ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', 'src/a.ts'],
+    });
+  });
+
+  it('affectedTests: vitest full suite at full scope', () => {
+    installBin('vitest');
+    const cmd = typescript.correctness!.affectedTests(ctx({ scope: 'full' }));
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'npx',
+      args: ['--no-install', 'vitest', 'run', '--passWithNoTests'],
+    });
+  });
+
+  it('affectedTests: full suite when the diff is undeterminable (empty changedFiles)', () => {
+    installBin('vitest');
+    const cmd = typescript.correctness!.affectedTests(ctx({ changedFiles: [], scope: 'affected' }));
+    expect(cmd?.args).toEqual(['--no-install', 'vitest', 'run', '--passWithNoTests']);
+  });
+
+  it('affectedTests: skips when no TS/JS file changed on the affected surface', () => {
+    installBin('vitest');
+    expect(typescript.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: jest --findRelatedTests with the file list last', () => {
+    installBin('jest');
+    const cmd = typescript.correctness!.affectedTests(ctx({ changedFiles: ['src/a.ts'] }));
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'npx',
+      args: ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', 'src/a.ts'],
+    });
+  });
+
+  it('affectedTests: prefers vitest over jest when both installed', () => {
+    installBin('vitest');
+    installBin('jest');
+    const cmd = typescript.correctness!.affectedTests(ctx());
+    expect(cmd?.args).toContain('vitest');
+  });
+
+  it('affectedTests: skips (fail-open) when no runner is installed', () => {
+    expect(typescript.correctness!.affectedTests(ctx())).toBeNull();
+  });
+});
