@@ -357,6 +357,31 @@ export const ${id}: LanguageSupport = {
   //                         Java Spring @GetMapping, C# ASP.NET [HttpGet]).
   //   deepSast            — CodeQL / Snyk Code interprocedural engine support
   //   callGraphReliability — how much to trust graphify's caller counts here
+  //   correctness         — the liveness floor (see the stub below)
+
+  // TODO(${id}): OPTIONAL correctness floor — the loop-safety liveness gate.
+  // Two PURE command builders; the runner (src/analyzers/correctness/run.ts)
+  // executes them and owns the fail-open/fail-closed + timeout policy — a pack
+  // NEVER shells out itself (CLAUDE.md Rule 6, arch-check enforced). Both return
+  // a { label, bin, args } command or null (skip). \`bin\` is resolved on PATH,
+  // or may be an absolute interpreter path the pack resolved itself. If you
+  // declare \`correctness\`, test/languages-contract.test.ts requires BOTH
+  // builders. syntaxCheck = the cheap "does it compile/parse" check every
+  // language can give; affectedTests = run the tests the change reaches (native
+  // impact-selection where the ecosystem supports it, else a coarser fallback
+  // with CI's full scope as the backstop). See typescript.ts / python.ts.
+  //
+  // correctness: {
+  //   syntaxCheck(ctx) {
+  //     // e.g. compile the changed files; return null when not applicable.
+  //     return null;
+  //   },
+  //   affectedTests(ctx) {
+  //     // ctx.scope === 'affected' → the changed subset (fast surface);
+  //     // 'full' (or empty ctx.changedFiles) → the whole suite (CI).
+  //     return null;
+  //   },
+  // },
 
   // ─── LP-recipe metadata (populate every field) ─────────────────────────
 
