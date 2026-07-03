@@ -599,6 +599,78 @@ a registry entry whose `installedWhen` gates the new surface.
   injected surface won't be picked up and the test fails. Mirror of
   `recipe-playbook.test.ts` / `producer-playbook.test.ts`.
 
+### 15. The correctness floor (liveness gate) is pack-declared, runner-executed
+
+The guardrail proves "no net-new FINDINGS" (secrets / CVEs / SAST /
+coverage / flow) but NOT "the code is VALID and RUNS". The correctness
+floor closes that gap: a **liveness** gate ("does this change still
+compile, and do the tests it affects still pass?") that runs before an
+autonomous loop may declare "done". A failing floor is a pass/fail
+SIGNAL, not a fingerprinted, grandfathered finding — there is no
+"grandfather a syntax error", so it sits OUTSIDE baseline/allowlist
+(contrast Rules 9–10).
+
+Every language-specific fact is pack-declared; the cross-cutting code
+never hardcodes a per-language command (mirror of Rule 6):
+
+- **Declared** per-pack in `src/languages/<id>.ts:correctness`
+  (optional `CorrectnessProvider`) as TWO pure command builders —
+  `syntaxCheck` (the cheap "does it compile/parse" check every language
+  can give) and `affectedTests` (run the tests the change reaches;
+  native impact-selection where the ecosystem supports it, else a
+  coarser fallback with CI's `full` scope as the backstop). Each returns
+  a `{ label, bin, args }` command or null. A pack NEVER shells out
+  itself.
+- **Dispatched** via `activeCorrectnessProviders(packs)` in
+  `src/languages/index.ts`.
+- **Executed** via the ONE canonical runner
+  `src/analyzers/correctness/run.ts:runCorrectnessFloor`, which owns the
+  load-bearing policy in one place: fail-CLOSED on a real failure
+  (non-zero exit blocks), fail-OPEN on infrastructure (missing binary /
+  timeout → skipped, never a block — a slow or un-installed toolchain is
+  not broken code; CI is the backstop). Command execution is injected
+  for tests.
+- **Diff-scoped, without a baseline artifact.** The loop Stop-gate
+  captures an ENTRY SNAPSHOT of the already-broken set on the pristine
+  tree at activation (`src/loop/floor-state.ts`, `vyuh-dxkit loop
+  snapshot`), then blocks only on failures NET-NEW vs that snapshot — a
+  pre-existing failure never blocks. This is testmon's insight (persist
+  last-known state) scoped to one loop, so a Stop never pays a git
+  worktree + install. Surfaces: loop Stop-gate (entry snapshot,
+  affected), pre-push (merge-base, affected), CI (full).
+
+**Bad**: a `tsc --noEmit` / `pytest` command string hardcoded in an
+analyzer; calling a pack's `syntaxCheck`/`affectedTests` builder outside
+the runner; a `src/analyzers/**/correctness.ts` that re-implements the
+fail-open/timeout policy; grandfathering a compile error into the
+baseline.
+
+**Good**: `for (const { provider } of activeCorrectnessProviders(...))`
+inside `run.ts`; a pack that returns `{ label, bin, args }` and lets the
+runner execute it; the Stop-gate calling `runCorrectnessFloor` +
+`netNewFloorFailures`.
+
+#### Correctness-floor enforcement
+
+1. **`scripts/check-architecture.sh` Rule (correctness floor)**: a
+   pack's `.syntaxCheck(` / `.affectedTests(` builder is only invoked
+   inside `src/analyzers/correctness/`. Annotate
+   `// correctness-runner-ok` for justified exceptions (rare).
+2. **`test/languages-contract.test.ts`**: a pack declaring
+   `correctness` MUST supply both builders, each returning a well-formed
+   `{ label, bin, args }` or null.
+3. **`test/recipe-playbook.test.ts`**: the synthetic pack declares a
+   `correctness` provider; the playbook asserts
+   `activeCorrectnessProviders` + `runCorrectnessFloor` pick it up —
+   catches "the runner stopped iterating the registry", the same way it
+   guards `depVulns` / `architecturalShape` / fingerprinting.
+
+The `npm run new-lang` scaffold emits a commented `correctness` stub so
+a new pack is prompted to implement it. `correctness` is optional today
+(TS/JS + Python shipped; other packs rolling out); once all eight
+declare it, the contract test tightens to REQUIRE it — the same
+optional-then-required arc `depVulns.manifestPatterns` followed.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local
