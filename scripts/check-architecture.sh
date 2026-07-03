@@ -734,6 +734,33 @@ if [ -n "$ROGUE_WORKTREE" ]; then
 fi
 
 # =============================================================================
+# Correctness floor (2.23): the liveness gate stays pack-driven.
+# =============================================================================
+#
+# A pack declares its floor as two pure command builders
+# (`correctness.syntaxCheck` / `correctness.affectedTests` in
+# src/languages/<id>.ts). The ONE place that invokes those builders — and
+# executes the resulting commands with the fail-open/closed + timeout policy —
+# is the canonical runner `src/analyzers/correctness/run.ts`. Every surface
+# (loop Stop-gate, pre-push, CI) calls `runCorrectnessFloor`, never a pack's
+# builder directly. This mirrors Rule 2 (one gather path) + Rule 12 (one query
+# point): bypassing the runner means re-implementing the fail-open/timeout
+# policy and silently drifting from the pack-driven contract.
+ROGUE_FLOOR=$(grep -rnE "\.(syntaxCheck|affectedTests)[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// correctness-runner-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/analyzers/correctness/")
+if [ -n "$ROGUE_FLOOR" ]; then
+  echo "❌ Correctness-floor rule violation: a pack's syntaxCheck()/affectedTests() builder"
+  echo "   invoked outside the canonical runner src/analyzers/correctness/run.ts:"
+  echo "$ROGUE_FLOOR"
+  echo "   → Call runCorrectnessFloor() from src/analyzers/correctness/run.ts instead;"
+  echo "     it owns command execution + the fail-open/fail-closed + timeout policy."
+  echo "   → Annotate '// correctness-runner-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Sprint 4 (2.5.2): dead template-condition detector.
 # =============================================================================
 #

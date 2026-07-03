@@ -275,6 +275,36 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
+  // Correctness floor (2.23): a pack that opts into the liveness gate MUST
+  // supply BOTH command builders. Each is a pure function returning a
+  // `{label,bin,args}` command or null — the runner never hardcodes a
+  // per-language command (CLAUDE.md Rule 6). A pack with `syntaxCheck` but no
+  // `affectedTests` (or vice-versa) is a half-wired provider that would
+  // silently gate only half the liveness signal.
+  it('correctness capability supplies both syntaxCheck and affectedTests if declared', () => {
+    const c = lang.correctness;
+    if (!c) return; // a pack without a liveness floor is exempt (dormant, no-op)
+    expect(
+      typeof c.syntaxCheck,
+      `${lang.id}: correctness provider must supply a syntaxCheck() builder`,
+    ).toBe('function');
+    expect(
+      typeof c.affectedTests,
+      `${lang.id}: correctness provider must supply an affectedTests() builder`,
+    ).toBe('function');
+    // Both builders must return null or a well-formed command for a trivial
+    // context — never throw, never return a malformed shape.
+    const ctx = { cwd: '/nonexistent-repo', changedFiles: [], scope: 'affected' as const };
+    for (const build of [c.syntaxCheck, c.affectedTests]) {
+      const cmd = build(ctx);
+      if (cmd !== null) {
+        expect(typeof cmd.label).toBe('string');
+        expect(typeof cmd.bin).toBe('string');
+        expect(Array.isArray(cmd.args)).toBe(true);
+      }
+    }
+  });
+
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);
