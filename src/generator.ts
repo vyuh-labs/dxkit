@@ -158,6 +158,12 @@ const DXKIT_SKILLS = [
   // ledger, and switches the security-only / full-debt posture. The
   // operator surface for the deterministic preflight/postflight layer.
   'dxkit-loop',
+  // dxkit-flow: configure/diagnose/fix the UI→API integration gate.
+  // Thin orchestration over the CLI — setup folds into `init --flow`,
+  // diagnose reads `doctor`'s flow section, fix repairs a net-new
+  // broken integration the guardrail flagged (never suppresses it),
+  // and the handshake mode drives `flow publish` for cross-repo meshes.
+  'dxkit-flow',
 ] as const;
 
 interface GenerateResult {

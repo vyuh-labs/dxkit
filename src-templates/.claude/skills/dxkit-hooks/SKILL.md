@@ -13,7 +13,7 @@ This skill handles the git-hook surface dxkit ships. Use it to install hooks, de
 
 `.githooks/pre-commit` (opt-in via `--with-precommit-hook`) — same guardrail check but on every commit. Slower on large repos (~1-3 min on 500+ file repos). Not in `--full` by default because the wall-clock cost gates adoption.
 
-Both run `npx vyuh-dxkit guardrail check`. The check exits 1 (blocking) on net-new findings vs. the baseline.
+Both run `npx vyuh-dxkit guardrail check`. The check exits 1 (blocking) on net-new findings vs. the baseline. The same check also runs the **flow integration gate** — a net-new broken UI→API integration (a call to an endpoint no backend serves, or a removed route a consumer still calls) blocks or warns per `.dxkit/policy.json:flow.mode`. To set up, diagnose, or repair that gate, hand off to the **dxkit-flow** skill.
 
 ## Installation
 
