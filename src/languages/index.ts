@@ -6,6 +6,7 @@ import type {
   LanguageId,
   LanguageSupport,
 } from './types';
+import type { CorrectnessProvider } from './capabilities/correctness';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -411,6 +412,20 @@ export function allHttpFlow(flags: DetectedStack['languages']): HttpFlowSupport[
  * changed-files flow-surface trigger. Pack-driven (Rule 6): a new flow pack
  * auto-extends the set.
  */
+/**
+ * Active packs that declare a correctness-floor provider, with their id. The
+ * correctness runner (`src/analyzers/correctness/`) iterates this union to build
+ * each pack's syntax + affected-test commands — never a per-language branch
+ * (Rule 6). A pack without a wired toolchain simply doesn't appear.
+ */
+export function activeCorrectnessProviders(
+  packs: readonly LanguageSupport[],
+): { id: LanguageId; provider: CorrectnessProvider }[] {
+  return packs
+    .filter((p) => p.correctness !== undefined)
+    .map((p) => ({ id: p.id, provider: p.correctness as CorrectnessProvider }));
+}
+
 export function allFlowSourceExtensions(packs: readonly LanguageSupport[]): string[] {
   const exts = new Set<string>();
   for (const pack of packs) {
