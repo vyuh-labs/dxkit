@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { computeStopGate, buildRepairMessage } from '../../src/loop/stop-gate';
+import {
+  computeStopGate,
+  buildRepairMessage,
+  buildFloorRepairMessage,
+  type FloorGateOutcome,
+} from '../../src/loop/stop-gate';
 import type { GuardrailJsonPayload } from '../../src/baseline/check-renderers';
+import type { CorrectnessCheckResult } from '../../src/analyzers/correctness/run';
 
 /**
  * The Stop-gate decides whether an autonomous loop may declare "done".
@@ -127,6 +133,110 @@ describe('computeStopGate', () => {
       expect(d.outcome).toBe('allow');
       expect(d.event.tests_status).toBe('pass');
     });
+  });
+
+  describe('correctness floor', () => {
+    const failCheck = (label: string): CorrectnessCheckResult => ({
+      pack: 'typescript',
+      label,
+      bin: 'npx',
+      status: 'fail',
+      output: 'error TS2322: not assignable',
+    });
+    const passCheck = (label: string): CorrectnessCheckResult => ({
+      pack: 'typescript',
+      label,
+      bin: 'npx',
+      status: 'pass',
+    });
+    const floor = (
+      checks: CorrectnessCheckResult[],
+      netNew: CorrectnessCheckResult[],
+    ): FloorGateOutcome => ({
+      result: {
+        ran: checks.some((c) => c.status === 'pass' || c.status === 'fail'),
+        checks,
+        blocks: checks.some((c) => c.status === 'fail'),
+      },
+      netNew,
+    });
+
+    it('blocks the model on a net-new floor failure with a repair message', async () => {
+      const tc = failCheck('typecheck');
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => floor([tc], [tc]),
+      );
+      expect(d.outcome).toBe('block-model');
+      expect(d.event.guardrail_status).toBe('pass');
+      expect(d.event.typecheck_status).toBe('fail');
+      expect(d.message).toContain('typescript typecheck');
+      expect(d.message).toContain('Do not refresh the floor snapshot');
+      expect(d.message).toContain('TS2322');
+    });
+
+    it('does NOT block on a pre-existing floor failure (empty net-new)', async () => {
+      const tc = failCheck('affected-tests');
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => floor([tc], []), // failing, but net-new is empty → grandfathered
+      );
+      expect(d.outcome).toBe('allow');
+    });
+
+    it('records floor pass status on a clean stop', async () => {
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => floor([passCheck('typecheck'), passCheck('affected-tests')], []),
+      );
+      expect(d.outcome).toBe('allow');
+      expect(d.event.typecheck_status).toBe('pass');
+      expect(d.event.tests_status).toBe('pass');
+    });
+
+    it('is a no-op when no pack provides a floor (null)', async () => {
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => null,
+      );
+      expect(d.outcome).toBe('allow');
+    });
+
+    it('does not consult the floor when the guardrail already blocks', async () => {
+      let floorCalled = false;
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([blockingPair()]),
+        () => {
+          floorCalled = true;
+          return null;
+        },
+      );
+      expect(d.outcome).toBe('block-model'); // guardrail block, not floor
+      expect(floorCalled).toBe(false);
+    });
+  });
+});
+
+describe('buildFloorRepairMessage', () => {
+  it('numbers each net-new failing check with its captured output', () => {
+    const msg = buildFloorRepairMessage([
+      { pack: 'typescript', label: 'typecheck', bin: 'npx', status: 'fail', output: 'error TS1005' },
+      { pack: 'go', label: 'build', bin: 'go', status: 'fail', output: 'undefined: Foo' },
+    ]);
+    expect(msg).toContain('introduces 2 net-new correctness failures');
+    expect(msg).toContain('1. typescript typecheck');
+    expect(msg).toContain('TS1005');
+    expect(msg).toContain('2. go build');
   });
 });
 

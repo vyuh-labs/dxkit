@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   runCorrectnessFloor,
   describeCorrectnessFloor,
+  makeCommandExec,
   type CommandExec,
 } from '../src/analyzers/correctness/run';
 import type { LanguageSupport } from '../src/languages/types';
@@ -76,6 +77,23 @@ describe('runCorrectnessFloor', () => {
     expect(r.checks[0].status).toBe('skipped-unavailable');
   });
 
+  it('fail-OPEN: a timed-out command is skipped, not failed (a slow suite is not a broken one)', () => {
+    const exec: CommandExec = (c) =>
+      c.bin === 'vitest'
+        ? { available: true, timedOut: true, code: -1, output: 'killed' }
+        : { available: true, code: 0, output: '' };
+    const r = runCorrectnessFloor({
+      ...base,
+      packs: [pack('ts', cmd('typecheck', 'tsc'), cmd('affected-tests', 'vitest'))],
+      exec,
+    });
+    expect(r.blocks).toBe(false); // timeout does NOT block
+    const at = r.checks.find((c) => c.label === 'affected-tests');
+    expect(at?.status).toBe('skipped-timeout');
+    // The typecheck still ran and passed, so the floor did run something.
+    expect(r.ran).toBe(true);
+  });
+
   it('skips a check a pack declines (null command)', () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: '' });
     const r = runCorrectnessFloor({
@@ -96,6 +114,25 @@ describe('runCorrectnessFloor', () => {
       exec,
     });
     expect(r.checks.map((c) => c.pack)).toEqual(['ts']);
+  });
+
+  it('makeCommandExec: a real command exceeding the budget reports timedOut (fail-open)', () => {
+    // `sleep 5` under a 200ms budget must be killed and reported as a timeout,
+    // NOT as a non-zero-exit failure.
+    const exec = makeCommandExec(200);
+    const out = exec({ label: 'slow', bin: 'sleep', args: ['5'] }, process.cwd());
+    expect(out.available).toBe(true);
+    expect(out.timedOut).toBe(true);
+  });
+
+  it('makeCommandExec: a fast command completes normally under the budget', () => {
+    const exec = makeCommandExec(10_000);
+    const out = exec(
+      { label: 'fast', bin: 'node', args: ['-e', 'process.exit(0)'] },
+      process.cwd(),
+    );
+    expect(out.timedOut).toBeFalsy();
+    expect(out.code).toBe(0);
   });
 
   it('describes a floor result', () => {
