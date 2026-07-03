@@ -126,6 +126,20 @@ A repo running autonomous coding loops behind the dxkit Stop-gate has a **loop-o
 
 This key is read **only by the Stop-gate** (`vyuh-dxkit hook stop-gate`) — your CI / PR guardrail always uses the full policy above, so changing the loop posture never weakens your CI gate. Edit it here, or run `npx vyuh-dxkit init --claude-loop --loop-preset full-debt`. Use `full-debt` only when you deliberately want an unattended loop to also close test/quality gaps (it can drive a long repair). For setting up or operating the loop, hand off to the **dxkit-loop** skill.
 
+### Switching the flow-gate posture (`flow.mode`)
+
+The UI→API integration gate has its own posture under `flow.mode` in the same file:
+
+```jsonc
+{ "flow": { "mode": "warn" } }  // warn (default) | block | off
+```
+
+- `warn` — surface net-new broken integrations as warnings, never fail a build.
+- `block` — fail the check on an exact break (confidence-gated: only fully-specified bindings block).
+- `off` — the gate does not run.
+
+The gate is additive and fail-open: it only fires when a change touches a client call / route / spec, and self-skips when there is no served-side truth to check against. Set it up with `npx vyuh-dxkit init --flow`, or hand off to the **dxkit-flow** skill for setup / diagnosis / repair.
+
 ## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
 
 dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:

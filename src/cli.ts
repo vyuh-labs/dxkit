@@ -481,9 +481,12 @@ export async function run(argv: string[]): Promise<void> {
       // via flags but bundled under --full).
       // --claude-loop implies the dxkit skills so the dxkit-loop skill (and
       // its siblings) land — the loop is most useful when the user can ask
-      // Claude to explain a block / switch presets conversationally.
+      // Claude to explain a block / switch presets conversationally. --flow
+      // does the same for the dxkit-flow skill: setting up the integration gate
+      // is most useful when Claude can then diagnose + repair a break with it.
       const wantClaudeLoop = !!values['claude-loop'];
-      const wantDxkitAgents = !!values.full || !!values['with-dxkit-agents'] || wantClaudeLoop;
+      const wantDxkitAgents =
+        !!values.full || !!values['with-dxkit-agents'] || wantClaudeLoop || !!values.flow;
       const result = await generate(
         cwd,
         config,
