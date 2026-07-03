@@ -6,6 +6,7 @@ import type {
   LintProvider,
 } from './capabilities/provider';
 import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
+import type { CorrectnessProvider } from './capabilities/correctness';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -488,6 +489,21 @@ export interface LanguageSupport {
    * intraprocedural tier).
    */
   deepSast?: DeepSastSupport;
+
+  /**
+   * The correctness-floor provider for this pack: how to compile/typecheck a
+   * change and run the tests it affects. Consumed by the correctness runner
+   * (`src/analyzers/correctness/`) through the registry helper
+   * `activeCorrectnessProviders` — never a per-language branch (Rule 6). The
+   * floor asks "does this still build + do affected tests pass?", a liveness
+   * question prior to the finding gate, and is default-on for the loop
+   * Stop-gate surface (an agent must not Stop on non-compiling / test-failing
+   * code).
+   *
+   * Optional — a pack without a wired toolchain omits it and contributes no
+   * floor checks (the runner sees the empty union for that language).
+   */
+  correctness?: CorrectnessProvider;
 
   /**
    * Tier a lint rule code into a severity bucket. Accepts `string | null |
