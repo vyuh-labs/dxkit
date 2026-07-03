@@ -220,6 +220,20 @@ will fail CI if missing):
 imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   with an async `gather(cwd)` method; return `null` when nothing to
   report. The dispatcher fans out across every pack.
+- **Correctness floor** (2.23) — `correctness?: CorrectnessProvider`,
+  the loop-safety liveness gate ("does this change still compile, and
+  do the tests it affects still pass?"). TWO pure command builders:
+  `syntaxCheck(ctx)` (the cheap compile/parse check every language can
+  give) and `affectedTests(ctx)` (the tests the change reaches — native
+  impact-selection where the ecosystem supports it, else a coarser
+  fallback with CI's `full` scope as the backstop). Each returns a
+  `{ label, bin, args }` command or `null`. A pack NEVER shells out
+  itself — the runner (`src/analyzers/correctness/run.ts`) executes the
+  command and owns the fail-open (missing tool / timeout → skip) vs
+  fail-closed (non-zero exit → block) policy. Optional today; the
+  contract test requires BOTH builders if you declare it. See
+  `typescript.ts` (`tsc --noEmit` + vitest/jest) and `python.ts`
+  (`py_compile` + pytest) for worked examples, and CLAUDE.md Rule 15.
 - **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
   `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
   `ruleFile?` (filename under `src-templates/.claude/rules/`),
