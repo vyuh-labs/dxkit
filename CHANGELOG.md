@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-07-02
+
+### Added — the flow feature becomes agent-operable (setup, diagnose, publish, repair)
+
+The UI→API integration gate now has the surfaces an agent (or a person) needs to
+configure, diagnose, and repair it — folded into the commands you already run so
+the CLI stays small.
+
+- **Setup folds into `init`.** There is no standalone `flow init`. When `init`
+  detects a UI→API surface (client calls and/or server routes) it offers the
+  integration gate and asks for the posture — `warn` (default), `block`, or
+  `off` — with a one-line description of each; a repo with no such surface stays
+  silent. `--flow` forces it on with `warn`; `--no-flow` skips it. The dominant
+  base-URL helper to strip and any multiple backend services are surfaced as
+  confirm prompts.
+- **`.dxkit/workspace.json`** — a new top-level participants primitive naming the
+  repos/services of a multi-repo system (path, optional git ref, base URLs).
+- **Diagnose folds into `doctor`.** There is no standalone `flow doctor`. When the
+  repo has a UI→API surface, `doctor` reports a flow-contract diagnosis — the
+  unresolved client calls (each with a reason and a suggested next step), the
+  served routes nobody consumes, and how the served side is resolved — and
+  `doctor --json` carries the whole `flow` object for an agent to read.
+- **`flow publish`** — the multi-repo handshake. Reads `workspace.json` and unions
+  every participant's served routes into this repo's `served.json`, so a consumer
+  repo gates its calls against a provider it does not co-locate. Participants are
+  gathered from a local path, optionally pinned at a git ref; fail-open per
+  participant. A content-hash on the snapshot lets a consumer detect drift.
+- **`dxkit-flow` skill** — the operator surface: setup, diagnose, fix (repair a
+  net-new broken integration a guardrail flagged — never suppress it), and the
+  cross-repo handshake. Thin orchestration over the CLI; `--flow` installs it.
+
 ## [2.21.2] - 2026-07-02
 
 ### Fixed — the flow gate now runs in committed-baseline modes too
