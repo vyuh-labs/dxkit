@@ -20,6 +20,11 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
+import type {
   CoverageResult,
   DepVulnFinding,
   DepVulnGatherOutcome,
@@ -879,6 +884,55 @@ const goLicensesProvider: LicensesProvider = {
   },
 };
 
+/** The distinct package directories of the changed `.go` files, as Go import
+ *  spec paths (`./pkg`, or `.` for a root-level file). Go's affected unit is
+ *  the package, so tests run per changed package directory. */
+function goChangedPackages(changedFiles: readonly string[]): string[] {
+  const dirs = new Set<string>();
+  for (const f of changedFiles) {
+    if (!f.endsWith('.go')) continue;
+    const dir = path.dirname(f).replace(/\\/g, '/');
+    dirs.add(dir === '.' ? '.' : `./${dir}`);
+  }
+  return [...dirs];
+}
+
+/**
+ * The Go correctness floor.
+ *
+ * syntaxCheck: `go build ./...` — the Go compiler IS the "does it compile / does
+ * it typecheck" check, and it is incremental (unchanged packages are cached),
+ * so building the whole module is both the honest answer and cheap on a warm
+ * cache. A cold build on a large module is bounded by the runner's timeout
+ * (fail-open → CI backstop).
+ *
+ * affectedTests: `go test`. Go's native affected unit is the PACKAGE, so on the
+ * fast surface we test the changed packages' directories; the whole module at
+ * full scope. `go test ./pkg` with no test files in that package is a pass (Go
+ * prints "no test files" and exits 0), so a source-only package change never
+ * false-blocks. (Package-level rung — Go has no per-test impact selection; a
+ * change to a package whose DEPENDENTS have tests is caught at full/CI scope.)
+ */
+const goCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!fileExists(ctx.cwd, 'go.mod')) return null; // not a module
+    // No `commandExists('go')` gate here — the runner fail-opens on a missing
+    // `go` binary (skipped-unavailable), so the pack only decides applicability.
+    return { label: 'build', bin: 'go', args: ['build', './...'] };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!fileExists(ctx.cwd, 'go.mod')) return null;
+    const undeterminable = ctx.changedFiles.length === 0;
+    if (ctx.scope === 'affected' && !undeterminable) {
+      const pkgs = goChangedPackages(ctx.changedFiles);
+      if (pkgs.length === 0) return null; // no changed .go → nothing to test
+      return { label: 'affected-tests', bin: 'go', args: ['test', ...pkgs] };
+    }
+    return { label: 'affected-tests', bin: 'go', args: ['test', './...'] };
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -940,6 +994,8 @@ export const go: LanguageSupport = {
   semgrepRulesets: ['p/gosec'],
   // CodeQL `go` extractor needs a build (autobuild); Snyk Code supports Go.
   deepSast: { codeqlLanguage: 'go', codeqlBuildRequired: true, snykCode: true },
+
+  correctness: goCorrectnessProvider,
 
   capabilities: {
     depVulns: goDepVulnsProvider,
