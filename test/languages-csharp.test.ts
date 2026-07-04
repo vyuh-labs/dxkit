@@ -195,3 +195,80 @@ describe('csharp registration', () => {
     expect(env!.extracted.get('A.cs')).toEqual(['System']);
   });
 });
+
+describe('csharp.correctness', () => {
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['src/App/Program.cs'],
+    scope: over.scope ?? ('affected' as const),
+  });
+  const writeSln = () =>
+    fs.writeFileSync(path.join(tmp, 'App.sln'), 'Microsoft Visual Studio Solution File\n');
+  const writeProj = (rel: string, isTest: boolean) => {
+    fs.mkdirSync(path.join(tmp, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, rel),
+      isTest
+        ? '<Project><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" /></ItemGroup></Project>'
+        : '<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>',
+    );
+  };
+
+  it('syntaxCheck: dotnet build when a build target exists', () => {
+    writeSln();
+    expect(csharp.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'build',
+      bin: 'dotnet',
+      args: ['build', '--nologo'],
+    });
+  });
+
+  it('syntaxCheck: null without a .sln/.csproj build target', () => {
+    expect(csharp.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('affectedTests: narrows to a single changed TEST project', () => {
+    writeSln();
+    writeProj('test/App.Tests/App.Tests.csproj', true);
+    const cmd = csharp.correctness!.affectedTests(
+      ctx({ changedFiles: ['test/App.Tests/FooTests.cs', 'README.md'] }),
+    );
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'dotnet',
+      args: ['test', 'test/App.Tests/App.Tests.csproj'],
+    });
+  });
+
+  it('affectedTests: whole solution when a non-test (source) project changed', () => {
+    writeSln();
+    writeProj('src/App/App.csproj', false);
+    const cmd = csharp.correctness!.affectedTests(ctx({ changedFiles: ['src/App/Program.cs'] }));
+    expect(cmd?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: whole solution at full scope', () => {
+    writeSln();
+    writeProj('test/App.Tests/App.Tests.csproj', true);
+    const cmd = csharp.correctness!.affectedTests(
+      ctx({ changedFiles: ['test/App.Tests/FooTests.cs'], scope: 'full' }),
+    );
+    expect(cmd?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: whole solution when the diff is undeterminable', () => {
+    writeSln();
+    expect(
+      csharp.correctness!.affectedTests(ctx({ changedFiles: [], scope: 'affected' }))?.args,
+    ).toEqual(['test']);
+  });
+
+  it('affectedTests: null on the affected surface when no .cs changed', () => {
+    writeSln();
+    expect(csharp.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: null without a build target', () => {
+    expect(csharp.correctness!.affectedTests(ctx())).toBeNull();
+  });
+});

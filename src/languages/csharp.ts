@@ -22,6 +22,11 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
+import type {
   CoverageResult,
   DepVulnFinding,
   DepVulnGatherOutcome,
@@ -1377,6 +1382,88 @@ const csharpLicensesProvider: LicensesProvider = {
   },
 };
 
+/** Does cwd have a build target `dotnet` can auto-discover (a `.sln`, or a
+ *  `.csproj` at the root)? Without one, `dotnet build`/`test` with no argument
+ *  can't tell what to build, so the floor skips rather than erroring. */
+function csharpHasBuildTarget(cwd: string): boolean {
+  try {
+    return fs.readdirSync(cwd).some((f) => f.endsWith('.sln') || f.endsWith('.csproj'));
+  } catch {
+    return false;
+  }
+}
+
+/** The nearest ancestor `.csproj` owning a changed file (repo-relative), or
+ *  null. C#'s affected unit is the project. */
+function csharpNearestProject(cwd: string, relFile: string): string | null {
+  let dir = path.dirname(relFile).replace(/\\/g, '/');
+  for (;;) {
+    try {
+      const entry = fs.readdirSync(path.join(cwd, dir)).find((f) => f.endsWith('.csproj'));
+      if (entry) return (dir === '.' ? entry : `${dir}/${entry}`).replace(/\\/g, '/');
+    } catch {
+      /* dir unreadable — keep walking up */
+    }
+    if (dir === '.' || dir === '') break;
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
+/** Is a `.csproj` a test project? Every .NET test project references
+ *  `Microsoft.NET.Test.Sdk`; also accept an explicit `<IsTestProject>` or a
+ *  known test framework, so `dotnet test <proj>` won't be aimed at a
+ *  non-test project (which would error "no tests"). */
+function csharpIsTestProject(cwd: string, relProj: string): boolean {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, relProj), 'utf-8');
+    return /Microsoft\.NET\.Test\.Sdk|<IsTestProject>\s*true|\b(xunit|nunit|MSTest)\b/i.test(raw);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The C# correctness floor.
+ *
+ * syntaxCheck: `dotnet build` — compiles the solution/project `dotnet`
+ * auto-discovers in cwd, reporting compile errors. Incremental via MSBuild's
+ * cache; a cold build is bounded by the runner's timeout (fail-open → CI).
+ *
+ * affectedTests: `dotnet test`. C#'s affected unit is the PROJECT. When the
+ * changed `.cs` files all belong to a SINGLE test project it narrows to
+ * `dotnet test <that.csproj>`; otherwise (a source project changed, or several
+ * projects) it runs the whole solution — `dotnet test` takes one target, so it
+ * can't union several projects, and a source change's dependent test project
+ * isn't cheaply resolvable. A change touching no `.cs` on the fast surface skips.
+ */
+const csharpCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!csharpHasBuildTarget(ctx.cwd)) return null;
+    return { label: 'build', bin: 'dotnet', args: ['build', '--nologo'] };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!csharpHasBuildTarget(ctx.cwd)) return null;
+    const undeterminable = ctx.changedFiles.length === 0;
+    const changedCs = ctx.changedFiles.filter((f) => f.endsWith('.cs'));
+    if (ctx.scope === 'affected' && !undeterminable) {
+      if (changedCs.length === 0) return null; // no .cs change
+      const projs = new Set(
+        changedCs.map((f) => csharpNearestProject(ctx.cwd, f)).filter((p): p is string => !!p),
+      );
+      if (projs.size === 1) {
+        const [proj] = [...projs];
+        if (csharpIsTestProject(ctx.cwd, proj)) {
+          return { label: 'affected-tests', bin: 'dotnet', args: ['test', proj] };
+        }
+      }
+      // else fall through to the whole solution (safe default)
+    }
+    return { label: 'affected-tests', bin: 'dotnet', args: ['test'] };
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -1523,6 +1610,8 @@ export const csharp: LanguageSupport = {
   semgrepRulesets: [],
   // CodeQL `csharp` extractor needs a build; Snyk Code supports C#.
   deepSast: { codeqlLanguage: 'csharp', codeqlBuildRequired: true, snykCode: true },
+
+  correctness: csharpCorrectnessProvider,
 
   capabilities: {
     depVulns: csharpDepVulnsProvider,
