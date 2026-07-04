@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.24.0] - 2026-07-04
+
+### Added — `vyuh-dxkit uninstall` (restore the pre-dxkit state)
+
+A clean, non-intrusive way to remove dxkit. Its one guarantee: after uninstall,
+the repo is back to its **exact pre-dxkit state** — every file dxkit created is
+gone, and every additive change dxkit made to a file you already had is reversed,
+leaving your own content byte-for-byte intact.
+
+- **Two kinds of footprint, handled differently.** Files dxkit created (`.dxkit/`,
+  the `dxkit-*` skills, `AGENTS.md`, the git hooks, the `dxkit-*` workflows,
+  `.dxkit-ignore`, `.vyuh-dxkit.json`) are removed. Additive merges into files you
+  already had — the `.gitignore` block, the `CLAUDE.md` loop block, the
+  `settings.json` hooks (`context-hook` / `stop-gate`), and the `package.json`
+  `@vyuhlabs/dxkit` devDependency + postinstall — are surgically reverted, keeping
+  your keys, prose, and formatting. JSON reverts preserve the file's original
+  indent + trailing-newline so there is no spurious diff.
+- **Manifest-driven + hash-guarded.** It reads the install manifest
+  (`.vyuh-dxkit.json`) for the authoritative created-file list, flags, and hashes.
+  A dxkit-created file you have since edited is surfaced and **skipped** (never
+  clobbered) unless you pass `--force`; the manifest is kept in that case so a
+  later `--force` run can still find it.
+- **`vyuh-dxkit uninstall [path] [--yes] [--keep-baselines] [--remove-devdep]
+  [--force] [--no-feedback] [--json]`** — dry-run by default (prints exactly what
+  it will remove/revert); `--yes` applies. `--keep-baselines` keeps the curated,
+  git-tracked artifacts (baselines, allowlist, `external/`). On completion it
+  offers a prefilled GitHub issue for optional feedback — nothing is sent
+  automatically, and `--no-feedback` skips it.
+- **`dxkit-uninstall` skill** — the graceful-exit surface for an agent.
+
+The reversal markers are imported from the installer modules, so a marker change
+breaks install and uninstall together (recipe symmetry); a test asserts every
+install surface and all four self-invocation surfaces have a removal path.
+
 ## [2.23.0] - 2026-07-04
 
 ### Added — the correctness floor (a loop-safety liveness gate)
