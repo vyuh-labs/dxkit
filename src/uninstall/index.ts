@@ -256,13 +256,18 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     });
   }
 
-  // 6. The manifest itself — always last.
+  // 6. The manifest itself — always last, and only when nothing was skipped.
+  //    If we skipped a user-edited dxkit file, keep the manifest so a later
+  //    `uninstall --force` can still find and remove it.
   if (exists(cwd, '.vyuh-dxkit.json')) {
+    const hasSkips = actions.some((a) => a.status === 'skip-modified');
     actions.push({
       kind: 'delete-file',
       target: '.vyuh-dxkit.json',
-      detail: 'the dxkit install manifest',
-      status: 'pending',
+      detail: hasSkips
+        ? 'the dxkit install manifest (kept — edited files were skipped)'
+        : 'the dxkit install manifest',
+      status: hasSkips ? 'skip-modified' : 'pending',
     });
   }
 
