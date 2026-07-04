@@ -16,7 +16,7 @@
  * land.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -370,6 +370,153 @@ describe('parsePmdOutput — real PMD 7.24.0 fixture', () => {
       medium: 0,
       low: 0,
     });
+  });
+});
+
+describe('java.correctness (shared JVM floor)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-jvfx-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['src/main/java/com/x/A.java'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  function writeMavenSingle(): void {
+    fs.writeFileSync(path.join(tmp, 'pom.xml'), '<project></project>\n');
+  }
+
+  function writeMavenMulti(): void {
+    fs.writeFileSync(
+      path.join(tmp, 'pom.xml'),
+      '<project><modules><module>svc-a</module><module>svc-b</module></modules></project>\n',
+    );
+    for (const m of ['svc-a', 'svc-b']) {
+      fs.mkdirSync(path.join(tmp, m, 'src', 'main', 'java'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, m, 'pom.xml'), '<project></project>\n');
+    }
+  }
+
+  function writeGradleMulti(): void {
+    fs.writeFileSync(path.join(tmp, 'settings.gradle'), "include(':svc-a', ':svc-b')\n");
+    fs.writeFileSync(path.join(tmp, 'build.gradle'), '// root\n');
+    for (const m of ['svc-a', 'svc-b']) {
+      fs.mkdirSync(path.join(tmp, m, 'src', 'main', 'java'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, m, 'build.gradle'), "apply plugin: 'java'\n");
+    }
+    // A wrapper makes the bin the absolute ./gradlew path.
+    fs.writeFileSync(path.join(tmp, 'gradlew'), '#!/bin/sh\n');
+  }
+
+  it('syntaxCheck: null with no JVM build manifest', () => {
+    expect(java.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('syntaxCheck: maven test-compile', () => {
+    writeMavenSingle();
+    expect(java.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'compile',
+      bin: 'mvn',
+      args: ['-q', '-B', 'test-compile'],
+    });
+  });
+
+  it('syntaxCheck: gradle testClasses via the absolute wrapper path', () => {
+    writeGradleMulti();
+    const cmd = java.correctness!.syntaxCheck(ctx())!;
+    expect(cmd.label).toBe('compile');
+    expect(cmd.bin).toBe(path.join(tmp, 'gradlew'));
+    expect(cmd.args).toEqual(['testClasses']);
+  });
+
+  it('affectedTests: null when no .java changed on the affected surface', () => {
+    writeMavenSingle();
+    expect(java.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: single-module maven runs the whole build', () => {
+    writeMavenSingle();
+    expect(java.correctness!.affectedTests(ctx())).toEqual({
+      label: 'affected-tests',
+      bin: 'mvn',
+      args: ['-q', '-B', 'test'],
+    });
+  });
+
+  it('affectedTests: maven narrows to the changed module via -pl -am', () => {
+    writeMavenMulti();
+    const cmd = java.correctness!.affectedTests(
+      ctx({ changedFiles: ['svc-a/src/main/java/com/x/A.java'] }),
+    );
+    expect(cmd?.args).toEqual(['-q', '-B', '-pl', 'svc-a', '-am', 'test']);
+  });
+
+  it('affectedTests: maven unions multiple changed modules', () => {
+    writeMavenMulti();
+    const cmd = java.correctness!.affectedTests(
+      ctx({
+        changedFiles: [
+          'svc-a/src/main/java/com/x/A.java',
+          'svc-b/src/main/java/com/y/B.java',
+          'README.md',
+        ],
+      }),
+    );
+    expect(cmd?.args).toEqual(['-q', '-B', '-pl', 'svc-a,svc-b', '-am', 'test']);
+  });
+
+  it('affectedTests: gradle narrows to the changed project path', () => {
+    writeGradleMulti();
+    const cmd = java.correctness!.affectedTests(
+      ctx({ changedFiles: ['svc-a/src/main/java/com/x/A.java'] }),
+    );
+    expect(cmd?.args).toEqual([':svc-a:test']);
+  });
+
+  it('affectedTests: a build-file change falls back to the whole build', () => {
+    writeMavenMulti();
+    const cmd = java.correctness!.affectedTests(
+      ctx({ changedFiles: ['svc-a/src/main/java/com/x/A.java', 'svc-a/pom.xml'] }),
+    );
+    expect(cmd?.args).toEqual(['-q', '-B', 'test']);
+  });
+
+  it('affectedTests: a root-level source change runs the whole build', () => {
+    writeMavenMulti();
+    // A .java at the root has no owning sub-module → never under-test.
+    const cmd = java.correctness!.affectedTests(ctx({ changedFiles: ['App.java'] }));
+    expect(cmd?.args).toEqual(['-q', '-B', 'test']);
+  });
+
+  it('affectedTests: full scope runs the whole build', () => {
+    writeMavenMulti();
+    expect(
+      java.correctness!.affectedTests(
+        ctx({ changedFiles: ['svc-a/src/main/java/com/x/A.java'], scope: 'full' }),
+      )?.args,
+    ).toEqual(['-q', '-B', 'test']);
+  });
+
+  it('affectedTests: undeterminable diff (empty changedFiles) runs the whole build', () => {
+    writeMavenSingle();
+    expect(java.correctness!.affectedTests(ctx({ changedFiles: [] }))?.args).toEqual([
+      '-q',
+      '-B',
+      'test',
+    ]);
+  });
+
+  it('declines entirely on an Android Gradle build', () => {
+    writeGradleMulti();
+    fs.writeFileSync(path.join(tmp, 'build.gradle'), "plugins { id 'com.android.application' }\n");
+    expect(java.correctness!.syntaxCheck(ctx())).toBeNull();
+    expect(java.correctness!.affectedTests(ctx())).toBeNull();
   });
 });
 
