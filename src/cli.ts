@@ -378,6 +378,9 @@ export async function run(argv: string[]): Promise<void> {
       surface: { type: 'string' },
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
+      'keep-baselines': { type: 'boolean', default: false },
+      'remove-devdep': { type: 'boolean', default: false },
+      'no-feedback': { type: 'boolean', default: false },
       'soon-days': { type: 'string' },
       'against-baseline': { type: 'boolean', default: false },
       'baseline-name': { type: 'string' },
@@ -2140,6 +2143,84 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail((err as Error).message);
         process.exit(1);
       }
+      break;
+    }
+
+    case 'uninstall': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { planUninstall, executeUninstall } = await import('./uninstall');
+      const opts = {
+        keepBaselines: !!values['keep-baselines'],
+        removeDevDependency: !!values['remove-devdep'],
+        force: !!values.force,
+      };
+      const plan = planUninstall(targetPath, opts);
+
+      if (values.json) {
+        await emitJson({ empty: plan.empty, warnings: plan.warnings, actions: plan.actions });
+        process.exit(0);
+      }
+
+      logger.header('vyuh-dxkit uninstall');
+      if (plan.empty) {
+        logger.info('No dxkit footprint found in this repo — nothing to remove.');
+        process.exit(0);
+      }
+
+      const active = plan.actions.filter((a) => a.status === 'pending');
+      logger.info(`Will restore the pre-dxkit state by ${active.length} change(s):`);
+      for (const a of active) {
+        const verb = a.kind.startsWith('revert')
+          ? 'revert'
+          : a.kind === 'git-config-unset'
+            ? 'unset'
+            : 'remove';
+        process.stdout.write(`  ${verb.padEnd(6)} ${a.target}  (${a.detail})\n`);
+      }
+      for (const w of plan.warnings) logger.warn(w);
+      if (!opts.removeDevDependency) {
+        logger.dim(
+          '  (package.json @vyuhlabs/dxkit devDependency kept — pass --remove-devdep to remove it)',
+        );
+      }
+
+      if (!values.yes) {
+        logger.info('');
+        logger.info(
+          `Dry run — nothing changed. Re-run with ${dxkitCli('uninstall --yes')} to apply.`,
+        );
+        process.exit(0);
+      }
+
+      const result = executeUninstall(targetPath, plan, opts);
+      logger.success(
+        `Removed ${result.removed.length}, reverted ${result.reverted.length}` +
+          (result.skipped.length
+            ? `, skipped ${result.skipped.length} (edited — use --force)`
+            : '') +
+          '. dxkit has been uninstalled.',
+      );
+
+      // Optional, skippable feedback — a prefilled GitHub issue the user opens
+      // themselves (no telemetry, no auto-submit).
+      if (!values['no-feedback']) {
+        const { buildIssueUrl, readDxkitVersion } = await import('./issue-cli');
+        const url = buildIssueUrl({
+          type: 'uninstall',
+          about: '',
+          dxkitVersion: readDxkitVersion(),
+          nodeVersion: process.version,
+          platform: process.platform,
+          arch: process.arch,
+        });
+        logger.info('');
+        logger.info(
+          'Mind sharing why? It genuinely helps. Open a prefilled issue (nothing is sent automatically):',
+        );
+        logger.dim(`  ${url}`);
+        logger.dim('  (skip with --no-feedback)');
+      }
+      process.exit(0);
       break;
     }
 

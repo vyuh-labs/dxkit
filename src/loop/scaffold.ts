@@ -38,8 +38,8 @@ export const STOP_HOOK_TIMEOUT_SECONDS = 600;
 
 /** Sentinel markers bounding the dxkit-managed region of CLAUDE.md. Only
  *  the text between them is ever rewritten. */
-const CLAUDE_BLOCK_START = '<!-- dxkit:loop:start -->';
-const CLAUDE_BLOCK_END = '<!-- dxkit:loop:end -->';
+export const CLAUDE_BLOCK_START = '<!-- dxkit:loop:start -->';
+export const CLAUDE_BLOCK_END = '<!-- dxkit:loop:end -->';
 
 /** Preset-agnostic loop norm. Points at `.dxkit/policy.json` as the
  *  source of truth for the active posture, so this prose stays correct
