@@ -2105,8 +2105,12 @@ export async function run(argv: string[]): Promise<void> {
         );
         process.exit(1);
       }
-      if (!values.json) logger.header('vyuh-dxkit guardrail check');
-      if (!values.json) logger.info(`Checking ${targetPath} against baseline...`);
+      // Suppress the console header/info in --json AND --markdown: both are
+      // machine-captured (piped to a file / a PR comment), so the ANSI-styled
+      // console chrome would leak into the report.
+      const quiet = !!values.json || !!values.markdown;
+      if (!quiet) logger.header('vyuh-dxkit guardrail check');
+      if (!quiet) logger.info(`Checking ${targetPath} against baseline...`);
       const startTime = Date.now();
       try {
         const result = await runGuardrailCheck({
@@ -2121,7 +2125,7 @@ export async function run(argv: string[]): Promise<void> {
           cliMode: cliMode ?? undefined,
           cliRef: values.ref as string | undefined,
         });
-        if (!values.json) logger.info(`Baseline ${result.mode.explanation}`);
+        if (!quiet) logger.info(`Baseline ${result.mode.explanation}`);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
           await emitJson(renderJson(result));
@@ -2362,7 +2366,7 @@ export async function run(argv: string[]): Promise<void> {
         // on the current (pristine) tree — so later Stops block only on
         // NET-NEW failures. Run at loop activation, before the agent changes
         // anything, or the recorded set won't be genuinely pre-existing.
-        const { captureFloorSnapshot } = await import('./loop/stop-gate');
+        const { captureFloorSnapshot } = await import('./loop/floor-gate');
         const { describeCorrectnessFloor } = await import('./analyzers/correctness/run');
         const result = captureFloorSnapshot(cwd);
         if (result === null) {

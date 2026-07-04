@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  computeStopGate,
-  buildRepairMessage,
-  buildFloorRepairMessage,
-  type FloorGateOutcome,
-} from '../../src/loop/stop-gate';
+import { computeStopGate, buildRepairMessage } from '../../src/loop/stop-gate';
+import { buildFloorRepairMessage, type FloorGateOutcome } from '../../src/loop/floor-gate';
 import type { GuardrailJsonPayload } from '../../src/baseline/check-renderers';
 import type { CorrectnessCheckResult } from '../../src/analyzers/correctness/run';
 
