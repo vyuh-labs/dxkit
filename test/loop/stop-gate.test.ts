@@ -230,7 +230,13 @@ describe('computeStopGate', () => {
 describe('buildFloorRepairMessage', () => {
   it('numbers each net-new failing check with its captured output', () => {
     const msg = buildFloorRepairMessage([
-      { pack: 'typescript', label: 'typecheck', bin: 'npx', status: 'fail', output: 'error TS1005' },
+      {
+        pack: 'typescript',
+        label: 'typecheck',
+        bin: 'npx',
+        status: 'fail',
+        output: 'error TS1005',
+      },
       { pack: 'go', label: 'build', bin: 'go', status: 'fail', output: 'undefined: Foo' },
     ]);
     expect(msg).toContain('introduces 2 net-new correctness failures');
