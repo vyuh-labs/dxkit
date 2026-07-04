@@ -642,3 +642,112 @@ describe('gatherRubyDepVulnsResult — manifest probe', () => {
     }
   });
 });
+
+describe('ruby.correctness', () => {
+  function tmpDir(): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ruby-corr-'));
+  }
+  const ctx = (
+    cwd: string,
+    over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {},
+  ) => ({
+    cwd,
+    changedFiles: over.changedFiles ?? ['lib/app.rb'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck: compiles each changed .rb via a ruby -e wrapper', () => {
+    const dir = tmpDir();
+    try {
+      const cmd = ruby.correctness!.syntaxCheck(
+        ctx(dir, { changedFiles: ['lib/a.rb', 'lib/b.rb', 'README.md'] }),
+      );
+      expect(cmd?.bin).toBe('ruby');
+      expect(cmd?.args[0]).toBe('-e');
+      expect(cmd?.args).toContain('lib/a.rb');
+      expect(cmd?.args).toContain('lib/b.rb');
+      expect(cmd?.args).not.toContain('README.md');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('syntaxCheck: null when no .rb changed', () => {
+    const dir = tmpDir();
+    try {
+      expect(ruby.correctness!.syntaxCheck(ctx(dir, { changedFiles: ['README.md'] }))).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: null when no test framework is detected', () => {
+    const dir = tmpDir();
+    try {
+      expect(ruby.correctness!.affectedTests(ctx(dir))).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: rspec runs the changed specs on the affected surface', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'rspec'\n");
+      const cmd = ruby.correctness!.affectedTests(
+        ctx(dir, { changedFiles: ['lib/a.rb', 'spec/a_spec.rb'] }),
+      );
+      expect(cmd).toEqual({ label: 'affected-tests', bin: 'rspec', args: ['spec/a_spec.rb'] });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: rspec runs the whole suite at full scope', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'rspec'\n");
+      const cmd = ruby.correctness!.affectedTests(ctx(dir, { scope: 'full' }));
+      expect(cmd).toEqual({ label: 'affected-tests', bin: 'rspec', args: [] });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: minitest loads the changed test files on the affected surface', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'minitest'\n");
+      const cmd = ruby.correctness!.affectedTests(
+        ctx(dir, { changedFiles: ['lib/a.rb', 'test/a_test.rb'] }),
+      );
+      expect(cmd?.bin).toBe('ruby');
+      expect(cmd?.args.slice(0, 2)).toEqual(['-Itest', '-Ilib']);
+      expect(cmd?.args).toContain('test/a_test.rb');
+      expect(cmd?.args).toContain('ARGV.each { |f| load f }');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: minitest globs the test tree at full scope', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'minitest'\n");
+      const cmd = ruby.correctness!.affectedTests(ctx(dir, { scope: 'full' }));
+      expect(cmd?.args.join(' ')).toContain('Dir.glob("test/**/*_test.rb")');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('affectedTests: null on the affected surface when no test file changed', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'minitest'\n");
+      expect(ruby.correctness!.affectedTests(ctx(dir, { changedFiles: ['lib/a.rb'] }))).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

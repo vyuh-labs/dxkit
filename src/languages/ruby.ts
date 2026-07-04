@@ -14,6 +14,11 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
+import type {
   CoverageResult,
   ImportsResult,
   LintGatherOutcome,
@@ -664,6 +669,70 @@ const rubyDepVulnsProvider: DepVulnsProvider = {
 
 // ─── Pack export ────────────────────────────────────────────────────────────
 
+/** A changed Ruby file that is a spec/test (`*_spec.rb`, `*_test.rb`,
+ *  `test_*.rb`) — the pack's file-level affected-selection unit. */
+function isRubyTestFile(rel: string): boolean {
+  const base = path.basename(rel);
+  return /_spec\.rb$/.test(base) || /_test\.rb$/.test(base) || /^test_.*\.rb$/.test(base);
+}
+
+/**
+ * The Ruby correctness floor.
+ *
+ * syntaxCheck: parse every changed `.rb`. `ruby -c` checks one file, so a tiny
+ * `-e` wrapper compiles each via `RubyVM::InstructionSequence.compile`, which
+ * raises `SyntaxError` (non-zero exit + the `file:line` message) on a parse
+ * error and is silent on success — the universal Ruby "does it parse" check,
+ * needing only an interpreter. Runs on the changed files; the full-scope
+ * backstop is the test run, which loads the code.
+ *
+ * affectedTests: FILE-LEVEL selection (Ruby has no native impact analysis; the
+ * honest rung, like Python's). RSpec runs the changed `*_spec.rb` (whole suite
+ * at full scope); minitest / test-unit loads the changed `*_test.rb` (bundled
+ * minitest's `at_exit` runs them), globbing `test/**` at full scope. A change
+ * touching no test file on the fast surface skips (the syntax check still runs;
+ * CI's full scope is the backstop).
+ */
+const rubyCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    const changedRb = ctx.changedFiles.filter((f) => f.endsWith('.rb'));
+    if (changedRb.length === 0) return null;
+    return {
+      label: 'syntax',
+      bin: 'ruby',
+      args: [
+        '-e',
+        'ARGV.each { |f| RubyVM::InstructionSequence.compile(File.read(f), f) }',
+        ...changedRb,
+      ],
+    };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    const fw = gatherRubyTestFrameworkResult(ctx.cwd);
+    if (fw === null) return null; // no test framework detected
+    const undeterminable = ctx.changedFiles.length === 0;
+    const changedTests = ctx.changedFiles.filter((f) => f.endsWith('.rb') && isRubyTestFile(f));
+    const affected = ctx.scope === 'affected' && !undeterminable;
+    if (affected && changedTests.length === 0) return null; // no changed test file
+
+    if (fw.name === 'rspec') {
+      // `rspec <specs>` on the fast surface; bare `rspec` runs the whole suite.
+      return {
+        label: 'affected-tests',
+        bin: 'rspec',
+        args: affected ? [...changedTests] : [],
+      };
+    }
+    // minitest / test-unit: `load` each test file so bundled minitest's at_exit
+    // runs it. `-Itest -Ilib` puts the conventional dirs on the load path.
+    const loadArgs = affected
+      ? ['-e', 'ARGV.each { |f| load f }', ...changedTests]
+      : ['-e', 'Dir.glob("test/**/*_test.rb").each { |f| load f }'];
+    return { label: 'affected-tests', bin: 'ruby', args: ['-Itest', '-Ilib', ...loadArgs] };
+  },
+};
+
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
@@ -743,6 +812,8 @@ export const ruby: LanguageSupport = {
   semgrepRulesets: ['p/ruby'],
   // CodeQL `ruby` extractor (no build); Snyk Code supports Ruby.
   deepSast: { codeqlLanguage: 'ruby', snykCode: true },
+
+  correctness: rubyCorrectnessProvider,
 
   capabilities: {
     imports: rubyImportsProvider,
