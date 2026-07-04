@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-07-04
+
+### Added — the correctness floor (a loop-safety liveness gate)
+
+The guardrail proves "no net-new findings" (secrets, CVEs, SAST, coverage). It
+does not prove the code still **compiles and its affected tests still pass** — so
+an autonomous agent loop can satisfy the finding gate while shipping code that
+does not build, and even a broken test that lifts coverage gets rewarded. The
+correctness floor closes that gap: a liveness check that asks "does this still
+build, and do the tests it affects still pass?" before an agent may declare
+"done". A failing floor is a pass/fail signal, not a fingerprinted, grandfathered
+finding (there is no "grandfather a syntax error"), so it sits outside the
+baseline and allowlist.
+
+- **Pack-declared, runner-executed** (CLAUDE.md Rule 15). Each language pack
+  declares two pure command builders — `syntaxCheck` (the cheap "does it
+  compile/parse" check) and `affectedTests` (run the tests the change reaches).
+  One runner owns the load-bearing policy in a single place: fail-CLOSED on a
+  real failure (a non-zero exit blocks), fail-OPEN on infrastructure (a missing
+  toolchain or a timeout is a skip, never a block — a slow or un-installed
+  toolchain is not broken code; CI is the backstop). A pack never shells out
+  itself.
+- **All 8 packs, verified against real toolchains**, at the affected granularity
+  each ecosystem natively supports:
+
+  | Pack | Compile | Affected-test granularity |
+  | --- | --- | --- |
+  | TypeScript / JavaScript | `tsc --noEmit` (or the project's typecheck script) | per-file (`vitest related` / `jest --findRelatedTests`) |
+  | Python | `py_compile` | per changed test file (pytest) |
+  | Go | `go build ./...` | changed package(s) |
+  | Rust | `cargo check` | changed crate(s) (`-p`) |
+  | C# / .NET | `dotnet build` | changed test project (`dotnet test <proj>`) |
+  | Java | Maven `test-compile` / Gradle `testClasses` | changed build module (Maven `-pl -am`, Gradle `:mod:test`) |
+  | Kotlin | Maven `test-compile` / Gradle `testClasses` | changed build module |
+  | Ruby | `ruby -c` per changed file | changed spec/test file (RSpec / minitest) |
+
+  A change whose dependents live in another package/module/crate is caught at
+  full/CI scope, not the fast affected surface. The two JVM packs share one
+  `jvm-build.ts` provider (Rule 2).
+- **Three surfaces, one adaptive resolver.** The loop Stop-gate runs the floor
+  by default (an agent must not stop on broken code), scoped to what the loop
+  introduced via a testmon-style entry snapshot, so a pre-existing failure never
+  blocks. The pre-push and CI surfaces are adaptive: when the repo already runs
+  its tests in its own CI, the floor defaults to opt-in there; when no test-CI is
+  detected it runs by default; when a CI exists but its test step is opaque it
+  fails toward on. Precedence: an explicit flag, then a `DXKIT_FLOOR_<SURFACE>`
+  env, then `.dxkit/policy.json` `correctness.surfaces.<surface>`, then the
+  adaptive default.
+- **`vyuh-dxkit floor check [--surface pre-push|ci] [--base <ref>]
+  [--correctness | --no-correctness]`** — the entry point the pre-push hook and
+  CI workflow call. It is baseline-independent, so a brand-new repo with no
+  baseline still gets push-time liveness. The installed pre-push hook runs it
+  before the baseline check; the CI guardrail workflow runs it (full scope) after
+  the finding gate.
+
+### Changed
+
+- `LanguageSupport.correctness` is now a required field: the capability shipped
+  optional and tightened once all eight packs declared it, so a new pack that
+  omits it fails to compile (not just at test time). The `new-lang` scaffold
+  wires a dormant provider so a fresh pack still compiles, with TODOs for the
+  real commands.
+
 ## [2.22.0] - 2026-07-02
 
 ### Added — the flow feature becomes agent-operable (setup, diagnose, publish, repair)
