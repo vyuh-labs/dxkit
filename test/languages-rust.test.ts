@@ -170,3 +170,102 @@ describe('rust.mapLintSeverity (clippy)', () => {
     expect(map('')).toBe('low');
   });
 });
+
+describe('rust.correctness', () => {
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['src/lib.rs'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck: cargo check when a Cargo.toml is present', () => {
+    fs.writeFileSync(path.join(tmp, 'Cargo.toml'), '[package]\nname="x"\n');
+    expect(rust.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'check',
+      bin: 'cargo',
+      args: ['check'],
+    });
+  });
+
+  it('syntaxCheck: null without a Cargo.toml', () => {
+    expect(rust.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('affectedTests: cargo test when a .rs changed on the affected surface', () => {
+    fs.writeFileSync(path.join(tmp, 'Cargo.toml'), '[package]\nname="x"\n');
+    expect(
+      rust.correctness!.affectedTests(ctx({ changedFiles: ['src/lib.rs', 'README.md'] })),
+    ).toEqual({
+      label: 'affected-tests',
+      bin: 'cargo',
+      args: ['test'],
+    });
+  });
+
+  it('affectedTests: null on the affected surface when no .rs changed', () => {
+    fs.writeFileSync(path.join(tmp, 'Cargo.toml'), '[package]\nname="x"\n');
+    expect(rust.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('affectedTests: cargo test at full scope', () => {
+    fs.writeFileSync(path.join(tmp, 'Cargo.toml'), '[package]\nname="x"\n');
+    expect(rust.correctness!.affectedTests(ctx({ scope: 'full' }))?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: cargo test when the diff is undeterminable (empty changedFiles)', () => {
+    fs.writeFileSync(path.join(tmp, 'Cargo.toml'), '[package]\nname="x"\n');
+    expect(
+      rust.correctness!.affectedTests(ctx({ changedFiles: [], scope: 'affected' }))?.args,
+    ).toEqual(['test']);
+  });
+
+  it('affectedTests: null without a Cargo.toml', () => {
+    expect(rust.correctness!.affectedTests(ctx())).toBeNull();
+  });
+
+  // Workspace mode: narrow to the changed members' crates via `-p <crate>`.
+  function writeWorkspace(): void {
+    fs.writeFileSync(
+      path.join(tmp, 'Cargo.toml'),
+      '[workspace]\nmembers = ["crates/alpha", "crates/beta"]\n',
+    );
+    for (const [dir, name] of [
+      ['crates/alpha', 'alpha'],
+      ['crates/beta', 'beta'],
+    ]) {
+      fs.mkdirSync(path.join(tmp, dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, dir, 'Cargo.toml'), `[package]\nname = "${name}"\n`);
+    }
+  }
+
+  it('affectedTests: narrows to the changed member crate (-p) in a workspace', () => {
+    writeWorkspace();
+    const cmd = rust.correctness!.affectedTests(ctx({ changedFiles: ['crates/alpha/src/lib.rs'] }));
+    expect(cmd?.args).toEqual(['test', '-p', 'alpha']);
+  });
+
+  it('affectedTests: unions multiple changed member crates', () => {
+    writeWorkspace();
+    const cmd = rust.correctness!.affectedTests(
+      ctx({ changedFiles: ['crates/alpha/src/lib.rs', 'crates/beta/src/main.rs', 'README.md'] }),
+    );
+    expect(cmd?.args).toEqual(['test', '-p', 'alpha', '-p', 'beta']);
+  });
+
+  it('affectedTests: falls back to the whole workspace when a .rs is unattributable', () => {
+    writeWorkspace();
+    // A .rs at the workspace root (virtual manifest, no [package]) can't be
+    // attributed to a named crate → run the whole workspace, never under-test.
+    const cmd = rust.correctness!.affectedTests(ctx({ changedFiles: ['build.rs'] }));
+    expect(cmd?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: workspace full scope runs the whole workspace', () => {
+    writeWorkspace();
+    expect(
+      rust.correctness!.affectedTests(
+        ctx({ changedFiles: ['crates/alpha/src/lib.rs'], scope: 'full' }),
+      )?.args,
+    ).toEqual(['test']);
+  });
+});

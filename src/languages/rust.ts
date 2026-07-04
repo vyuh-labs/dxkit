@@ -16,6 +16,11 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import type {
+  CorrectnessCommand,
+  CorrectnessContext,
+  CorrectnessProvider,
+} from './capabilities/correctness';
+import type {
   CoverageResult,
   DepVulnFinding,
   DepVulnGatherOutcome,
@@ -825,6 +830,111 @@ export function parseLcov(raw: string, sourceFile: string, cwd: string): Coverag
   };
 }
 
+/** Does the root `Cargo.toml` declare a `[workspace]` (multi-crate)? */
+function rustIsWorkspace(cwd: string): boolean {
+  try {
+    return /^\s*\[workspace\]/m.test(fs.readFileSync(path.join(cwd, 'Cargo.toml'), 'utf-8'));
+  } catch {
+    return false;
+  }
+}
+
+/** The `[package] name` declared in a Cargo.toml, or null (virtual manifest /
+ *  unreadable). Scoped to the `[package]` table by scanning line-by-line so a
+ *  `[dependencies] name = …` can't be mistaken for the crate name. */
+function rustCrateNameOf(cargoTomlAbs: string): string | null {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(cargoTomlAbs, 'utf-8');
+  } catch {
+    return null;
+  }
+  let inPackage = false;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (/^\[.*\]$/.test(t)) {
+      inPackage = t === '[package]';
+      continue;
+    }
+    if (inPackage) {
+      const m = t.match(/^name\s*=\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * The distinct workspace-member crate names owning the changed `.rs` files —
+ * each file's nearest ancestor `Cargo.toml` (not above `cwd`). Returns null when
+ * ANY changed `.rs` cannot be attributed to a named crate, so the caller falls
+ * back to the whole-workspace `cargo test` (never silently under-tests).
+ */
+function rustChangedCrates(cwd: string, changedFiles: readonly string[]): string[] | null {
+  const names = new Set<string>();
+  for (const f of changedFiles) {
+    if (!f.endsWith('.rs')) continue;
+    let dir = path.dirname(f).replace(/\\/g, '/');
+    let name: string | null = null;
+    // Walk up to (and including) the repo root looking for the owning manifest.
+    for (;;) {
+      const abs = path.join(cwd, dir, 'Cargo.toml');
+      if (fs.existsSync(abs)) {
+        name = rustCrateNameOf(abs);
+        break;
+      }
+      if (dir === '.' || dir === '') break;
+      dir = path.dirname(dir);
+    }
+    if (!name) return null; // unattributable → caller runs the whole workspace
+    names.add(name);
+  }
+  return [...names];
+}
+
+/**
+ * The Rust correctness floor.
+ *
+ * syntaxCheck: `cargo check` — compiles the crate/workspace WITHOUT producing
+ * binaries (the fast "does it compile + typecheck" path), incremental via
+ * cargo's cache. A cold check on a large workspace is bounded by the runner's
+ * timeout (fail-open → CI backstop).
+ *
+ * affectedTests: `cargo test`. Rust's native affected unit is the CRATE. A
+ * single-crate project runs `cargo test` (that crate). A workspace narrows to
+ * the changed members' crates via `-p <crate>` — falling back to the whole
+ * workspace when a changed `.rs` can't be attributed to a named crate, so it
+ * never silently under-tests. Full scope always runs the whole workspace.
+ * (Crate-level rung, like Go's package-level: a change whose DEPENDENTS live in
+ * another crate is caught at full/CI scope, not the affected surface.)
+ */
+const rustCorrectnessProvider: CorrectnessProvider = {
+  syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!fileExists(ctx.cwd, 'Cargo.toml')) return null; // not a cargo project
+    return { label: 'check', bin: 'cargo', args: ['check'] };
+  },
+
+  affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
+    if (!fileExists(ctx.cwd, 'Cargo.toml')) return null;
+    const undeterminable = ctx.changedFiles.length === 0;
+    if (ctx.scope === 'affected' && !undeterminable) {
+      if (!ctx.changedFiles.some((f) => f.endsWith('.rs'))) return null; // no .rs change
+      if (rustIsWorkspace(ctx.cwd)) {
+        const crates = rustChangedCrates(ctx.cwd, ctx.changedFiles);
+        if (crates && crates.length > 0) {
+          return {
+            label: 'affected-tests',
+            bin: 'cargo',
+            args: ['test', ...crates.flatMap((c) => ['-p', c])],
+          };
+        }
+        // else fall through to whole-workspace `cargo test` (safe default)
+      }
+    }
+    return { label: 'affected-tests', bin: 'cargo', args: ['test'] };
+  },
+};
+
 export const rust: LanguageSupport = {
   id: 'rust',
   displayName: 'Rust',
@@ -887,6 +997,8 @@ export const rust: LanguageSupport = {
   // CodeQL `rust` extractor is beta (no build). Snyk Code has no Rust
   // support today, so leave snykCode unset.
   deepSast: { codeqlLanguage: 'rust', codeqlBeta: true },
+
+  correctness: rustCorrectnessProvider,
 
   capabilities: {
     depVulns: rustDepVulnsProvider,
