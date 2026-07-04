@@ -120,6 +120,7 @@ describe('buildIssueUrl', () => {
       'bug',
       'feature-request',
       'docs',
+      'uninstall',
     ]);
   });
 

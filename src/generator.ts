@@ -164,6 +164,11 @@ const DXKIT_SKILLS = [
   // broken integration the guardrail flagged (never suppresses it),
   // and the handshake mode drives `flow publish` for cross-repo meshes.
   'dxkit-flow',
+  // dxkit-uninstall: cleanly remove all of dxkit from a repo, restoring the
+  // pre-dxkit state (reverse each additive merge, delete created files),
+  // dry-run first. Also captures optional, opt-in feedback via a prefilled
+  // GitHub issue. The graceful-exit surface.
+  'dxkit-uninstall',
 ] as const;
 
 interface GenerateResult {
