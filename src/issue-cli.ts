@@ -44,6 +44,7 @@ export const ISSUE_TYPES = [
   'bug',
   'feature-request',
   'docs',
+  'uninstall',
 ] as const;
 export type IssueType = (typeof ISSUE_TYPES)[number];
 
@@ -56,6 +57,7 @@ const LABEL_BY_TYPE: Readonly<Record<IssueType, string>> = Object.freeze({
   bug: 'bug',
   'feature-request': 'enhancement',
   docs: 'documentation',
+  uninstall: 'uninstall-feedback',
 });
 
 /** Per-type title prefix surfaced in the GitHub Issues list. */
@@ -65,6 +67,7 @@ const TITLE_PREFIX_BY_TYPE: Readonly<Record<IssueType, string>> = Object.freeze(
   bug: 'Bug',
   'feature-request': 'Feature request',
   docs: 'Docs',
+  uninstall: 'Uninstall feedback',
 });
 
 const ISSUES_BASE_URL = 'https://github.com/vyuh-labs/dxkit/issues/new';
@@ -183,7 +186,7 @@ function buildBody(input: BuildIssueUrlInput): string {
   return lines.join('\n');
 }
 
-function readDxkitVersion(): string {
+export function readDxkitVersion(): string {
   try {
     // Two possible locations: same package as this module (dev / source)
     // and `node_modules/@vyuhlabs/dxkit/package.json` (installed).

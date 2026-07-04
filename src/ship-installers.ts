@@ -435,8 +435,8 @@ export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInst
   return result;
 }
 
-const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
-const GITIGNORE_ENTRIES = [
+export const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
+export const GITIGNORE_ENTRIES = [
   '.dxkit/reports/',
   '.dxkit/dashboard.html',
   '.dxkit/cache/',
@@ -518,7 +518,7 @@ export function installIgnoreFiles(cwd: string, opts: InstallerOpts = {}): ShipI
  *     and emit a note asking the consumer to chain. Auto-chaining
  *     risks breaking their existing script's exit-code semantics.
  */
-const POSTINSTALL_CMD = 'vyuh-dxkit hooks activate';
+export const POSTINSTALL_CMD = 'vyuh-dxkit hooks activate';
 
 export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}): ShipInstallResult {
   const result = emptyResult();
@@ -587,7 +587,7 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
   return result;
 }
 
-const DXKIT_PACKAGE = '@vyuhlabs/dxkit';
+export const DXKIT_PACKAGE = '@vyuhlabs/dxkit';
 
 /**
  * Ensure `@vyuhlabs/dxkit` is in the consumer's package.json
