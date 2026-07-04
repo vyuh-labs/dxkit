@@ -81,6 +81,23 @@ jobs:
             echo "✓ dxkit guardrail passed — no net-new findings vs the baseline"
           fi
 
+      # Correctness floor (liveness) — full-scope: does the code compile + do
+      # the tests pass? Runs after the finding gate. ADAPTIVE: if this repo
+      # already runs its tests in its own CI workflow, this is a no-op here
+      # (opt-in). A missing language toolchain fail-opens (this workflow sets up
+      # node + the dxkit scanner tools, not every language runtime), so the
+      # floor is most meaningful on JS/TS repos and on repos with no test-CI;
+      # your own test job is the place for full-language coverage. Tune via
+      # .dxkit/policy.json correctness.surfaces.ci or DXKIT_FLOOR_CI.
+      - name: Run correctness floor
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" floor check --surface ci
+
       - name: Post PR comment
         if: always()
         env:

@@ -375,6 +375,9 @@ export async function run(argv: string[]): Promise<void> {
       'added-by': { type: 'string' },
       mode: { type: 'string' },
       ref: { type: 'string' },
+      surface: { type: 'string' },
+      correctness: { type: 'boolean' },
+      'no-correctness': { type: 'boolean' },
       'soon-days': { type: 'string' },
       'against-baseline': { type: 'boolean', default: false },
       'baseline-name': { type: 'string' },
@@ -2133,6 +2136,54 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail((err as Error).message);
         process.exit(1);
       }
+      break;
+    }
+
+    case 'floor': {
+      const subCommand = positionals[1];
+      if (subCommand !== 'check') {
+        logger.fail(
+          `Unknown floor subcommand: ${subCommand ?? '(missing)'}. ` +
+            `Available: vyuh-dxkit floor check [path] [--surface pre-push|ci] [--base <ref>] ` +
+            `[--correctness | --no-correctness] [--json]`,
+        );
+        process.exit(1);
+      }
+      const targetPath = resolveRepoPath(positionals[2]);
+      const surfaceRaw = (values.surface as string | undefined) ?? 'pre-push';
+      if (surfaceRaw !== 'pre-push' && surfaceRaw !== 'ci') {
+        logger.fail(`Unknown --surface value: ${surfaceRaw}. Expected one of: pre-push, ci.`);
+        process.exit(1);
+      }
+      // --correctness / --no-correctness → the explicit enable/disable override.
+      const flag = values.correctness ? true : values['no-correctness'] ? false : undefined;
+      const { runFloorForSurface } = await import('./analyzers/correctness/surface-run');
+      const outcome = runFloorForSurface({
+        surface: surfaceRaw,
+        cwd: targetPath,
+        base: values.base as string | undefined,
+        flag,
+      });
+      if (values.json) {
+        await emitJson({
+          surface: outcome.surface,
+          enabled: outcome.enabled,
+          ran: outcome.ran,
+          blocks: outcome.blocks,
+          reason: outcome.reason,
+          checks: outcome.result?.checks ?? [],
+        });
+      } else {
+        if (outcome.blocks) {
+          logger.fail(outcome.summary);
+          for (const c of outcome.result?.checks.filter((c) => c.status === 'fail') ?? []) {
+            if (c.output) process.stdout.write(`\n[${c.pack} ${c.label}]\n${c.output}\n`);
+          }
+        } else {
+          logger.success(outcome.summary);
+        }
+      }
+      process.exit(outcome.blocks ? 1 : 0);
       break;
     }
 
