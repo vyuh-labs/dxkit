@@ -203,16 +203,18 @@ blocks, and there is no baseline artifact to maintain).
       unless a test-CI is already detected; fail toward on when uncertain).
 - [ ] Pre-push (merge-base) and CI (full-scope) floor wiring.
 
-### Uninstall / clean removal (pre-3.0)
+### Uninstall / clean removal (2.24.0)
 
-- [ ] `vyuh-dxkit uninstall` + a `dxkit-uninstall` skill that non-intrusively
+- [x] `vyuh-dxkit uninstall` + a `dxkit-uninstall` skill that non-intrusively
       removes the full dxkit footprint (`.dxkit/`, installed skills and hooks,
       the git pre-push guardrail, the CI workflow, and the additive blocks dxkit
-      merged into `settings.json` / `CLAUDE.md` / `.gitignore`) by reversing each
-      installer, never a blanket wipe and never touching user code. Dry-run by
-      default with confirmation; deletes only dxkit-authored files. On removal it
-      offers to open a prefilled GitHub issue for feedback via the existing
-      `vyuh-dxkit issue` path, so nothing is ever sent without the user's action.
+      merged into `settings.json` / `CLAUDE.md` / `.gitignore` / `package.json`)
+      by reversing each installer, restoring the exact pre-dxkit state — never a
+      blanket wipe and never touching user content. Dry-run by default with
+      confirmation; manifest-driven and hash-guarded (an edited dxkit file is
+      skipped, not clobbered). On removal it offers to open a prefilled GitHub
+      issue for feedback via the existing `vyuh-dxkit issue` path, so nothing is
+      ever sent without the user's action.
 
 ## Future
 
