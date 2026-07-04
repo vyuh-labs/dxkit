@@ -177,6 +177,43 @@ author excluded, a bus-factor signal. Renders names + GitHub @handles, never ema
 - [ ] Per-ecosystem reliability gating: only mark a finding `reachable: false` when its language pack resolves imports reliably (TS / Python / Go). For packs whose import resolution is unreliable (C# namespaces ≠ package names, etc.), leave `reachable` unset rather than risk a false "unreachable" that hides a real vuln.
 - [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders). _Considered for 2.9.3 and deferred: the dependency table already discounts unreachable advisories 0.25× inside the composite `riskScore`, so this is a presentation refinement (a hard reachable-first sort tier + the summary lens) rather than new signal._
 
+## In progress — Correctness floor (loop-safety liveness gate, 2.23.0)
+
+The guardrail proves "no net-new findings" (secrets, CVEs, SAST, coverage). It
+does not prove the code still **compiles and its affected tests still pass**, so
+an autonomous agent loop can satisfy the finding gate while shipping code that
+does not build. The correctness floor closes that gap: a liveness check that runs
+before an agent may declare "done", blocking only on failures that are net-new
+versus an entry snapshot of the already-broken set (a pre-existing failure never
+blocks, and there is no baseline artifact to maintain).
+
+- [x] Pack-declared, runner-executed contract (`LanguageSupport.correctness`,
+      required field): each pack builds a `syntaxCheck` and an `affectedTests`
+      command; the runner owns the fail-closed-on-real-failure /
+      fail-open-on-infrastructure (missing toolchain, timeout) policy in one
+      place. No per-language command is hardcoded outside the pack (Rule 6).
+- [x] All 8 packs shipped and verified against real toolchains, at the affected
+      granularity each ecosystem supports: TS/JS and Python fine-grained;
+      Go package; Rust crate; C# project; Java and Kotlin build-module (one
+      shared Maven/Gradle provider); Ruby file-level compile + CI-full.
+- [x] Loop Stop-gate wired (entry-snapshot diff, affected scope, default-on) with
+      a per-command wall-clock budget so a slow suite degrades to a skip, not a
+      block.
+- [ ] Adaptive surface resolver for the CI and pre-push surfaces (default-on
+      unless a test-CI is already detected; fail toward on when uncertain).
+- [ ] Pre-push (merge-base) and CI (full-scope) floor wiring.
+
+### Uninstall / clean removal (pre-3.0)
+
+- [ ] `vyuh-dxkit uninstall` + a `dxkit-uninstall` skill that non-intrusively
+      removes the full dxkit footprint (`.dxkit/`, installed skills and hooks,
+      the git pre-push guardrail, the CI workflow, and the additive blocks dxkit
+      merged into `settings.json` / `CLAUDE.md` / `.gitignore`) by reversing each
+      installer, never a blanket wipe and never touching user code. Dry-run by
+      default with confirmation; deletes only dxkit-authored files. On removal it
+      offers to open a prefilled GitHub issue for feedback via the existing
+      `vyuh-dxkit issue` path, so nothing is ever sent without the user's action.
+
 ## Future
 
 ### Cross-agent reach (decision pending)
