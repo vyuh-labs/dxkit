@@ -34,8 +34,9 @@
  * these tests use real fixtures.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   kotlin,
@@ -272,5 +273,67 @@ describe('extractKotlinImportsRaw', () => {
 
   it('returns empty for files with no imports', () => {
     expect(extractKotlinImportsRaw('package com.example\n\nfun main() {}')).toEqual([]);
+  });
+});
+
+describe('kotlin.correctness (shared JVM floor)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-ktfx-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const ctx = (over: Partial<{ changedFiles: string[]; scope: 'affected' | 'full' }> = {}) => ({
+    cwd: tmp,
+    changedFiles: over.changedFiles ?? ['src/main/kotlin/com/x/A.kt'],
+    scope: over.scope ?? ('affected' as const),
+  });
+
+  it('syntaxCheck: gradle testClasses when a gradle manifest is present', () => {
+    fs.writeFileSync(path.join(tmp, 'build.gradle.kts'), '// root\n');
+    expect(kotlin.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'compile',
+      bin: 'gradle',
+      args: ['testClasses'],
+    });
+  });
+
+  it('affectedTests: a .kt change runs the whole build on a single-module project', () => {
+    fs.writeFileSync(path.join(tmp, 'build.gradle.kts'), '// root\n');
+    expect(kotlin.correctness!.affectedTests(ctx())?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: a .kts build-script change is treated as a relevant source change', () => {
+    fs.writeFileSync(path.join(tmp, 'build.gradle.kts'), '// root\n');
+    // `.kts` is a Kotlin source extension AND a build file — the build-file
+    // guard wins, so it falls back to the whole build (never under-tests).
+    const cmd = kotlin.correctness!.affectedTests(ctx({ changedFiles: ['build.gradle.kts'] }));
+    expect(cmd?.args).toEqual(['test']);
+  });
+
+  it('affectedTests: narrows to the changed module in a multi-module gradle build', () => {
+    fs.writeFileSync(path.join(tmp, 'settings.gradle.kts'), 'include(":svc-a")\n');
+    fs.writeFileSync(path.join(tmp, 'build.gradle.kts'), '// root\n');
+    fs.mkdirSync(path.join(tmp, 'svc-a', 'src', 'main', 'kotlin'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'svc-a', 'build.gradle.kts'), 'plugins { kotlin("jvm") }\n');
+    const cmd = kotlin.correctness!.affectedTests(
+      ctx({ changedFiles: ['svc-a/src/main/kotlin/com/x/A.kt'] }),
+    );
+    expect(cmd?.args).toEqual([':svc-a:test']);
+  });
+
+  it('affectedTests: null with no JVM build manifest and no .kt change', () => {
+    expect(kotlin.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
+  });
+
+  it('declines entirely on an Android Gradle build', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'build.gradle.kts'),
+      'plugins { id("com.android.application") }\n',
+    );
+    expect(kotlin.correctness!.syntaxCheck(ctx())).toBeNull();
+    expect(kotlin.correctness!.affectedTests(ctx())).toBeNull();
   });
 });

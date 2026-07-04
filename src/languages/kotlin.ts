@@ -9,6 +9,7 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
+import { isAndroidGradleBuild, jvmCorrectnessProvider } from './jvm-build';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -420,6 +421,19 @@ const kotlinTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
   },
 };
 
+// ─── Correctness floor (Maven/Gradle compile + module-affected tests) ──────
+//
+// Shared with the java pack via `jvmCorrectnessProvider` (CLAUDE.md Rule 2).
+// Kotlin contributes both source extensions (`.kt` for sources, `.kts` for
+// build/scratch scripts). An Android Gradle build declines — its variant-
+// specific `testDebugUnitTest` / `compileDebugKotlin` tasks aren't the standard
+// `test`/`testClasses` the shared commands run, so CI (variant-aware) backstops.
+
+const kotlinCorrectnessProvider = jvmCorrectnessProvider({
+  sourceExtensions: ['.kt', '.kts'],
+  declineWhen: isAndroidGradleBuild,
+});
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const kotlin: LanguageSupport = {
@@ -519,6 +533,8 @@ export const kotlin: LanguageSupport = {
     codeqlBeta: true,
     snykCode: true,
   },
+
+  correctness: kotlinCorrectnessProvider,
 
   capabilities: {
     depVulns: kotlinDepVulnsProvider,
