@@ -51,6 +51,7 @@ import {
   type CorrectnessCheckResult,
   type CorrectnessFloorResult,
 } from '../analyzers/correctness/run';
+import { resolveCorrectnessSurface } from '../analyzers/correctness/surface';
 import { detectActiveLanguages } from '../languages';
 import { computeChangedFiles } from '../baseline/changed-files';
 import { readFloorBaseline, writeFloorBaseline, netNewFloorFailures } from './floor-state';
@@ -156,6 +157,10 @@ function resolveFloorBase(repoDir: string): string {
  */
 export function buildFloorGate(repoDir: string): FloorGateOutcome | null {
   try {
+    // The loop Stop-gate is default-on, but an explicit flag / DXKIT_FLOOR_LOOP /
+    // policy can disable the floor here — resolve through the one canonical
+    // surface resolver so this default never drifts from the other surfaces.
+    if (!resolveCorrectnessSurface({ surface: 'loop-stop', cwd: repoDir }).enabled) return null;
     const packs = detectActiveLanguages(repoDir).filter((p) => p.correctness);
     if (packs.length === 0) return null;
     const base = resolveFloorBase(repoDir);
