@@ -357,31 +357,34 @@ export const ${id}: LanguageSupport = {
   //                         Java Spring @GetMapping, C# ASP.NET [HttpGet]).
   //   deepSast            — CodeQL / Snyk Code interprocedural engine support
   //   callGraphReliability — how much to trust graphify's caller counts here
-  //   correctness         — the liveness floor (see the stub below)
+  //   correctness         — the liveness floor (REQUIRED; wired below)
 
-  // TODO(${id}): OPTIONAL correctness floor — the loop-safety liveness gate.
-  // Two PURE command builders; the runner (src/analyzers/correctness/run.ts)
-  // executes them and owns the fail-open/fail-closed + timeout policy — a pack
-  // NEVER shells out itself (CLAUDE.md Rule 6, arch-check enforced). Both return
-  // a { label, bin, args } command or null (skip). \`bin\` is resolved on PATH,
-  // or may be an absolute interpreter path the pack resolved itself. If you
-  // declare \`correctness\`, test/languages-contract.test.ts requires BOTH
-  // builders. syntaxCheck = the cheap "does it compile/parse" check every
+  // REQUIRED(${id}): correctness floor — the loop-safety liveness gate. Two PURE
+  // command builders; the runner (src/analyzers/correctness/run.ts) executes
+  // them and owns the fail-open/fail-closed + timeout policy — a pack NEVER
+  // shells out itself (CLAUDE.md Rule 6 + Rule 15, arch-check enforced). Both
+  // return a { label, bin, args } command or null (skip). \`bin\` is resolved on
+  // PATH, or may be an absolute interpreter path the pack resolved itself. The
+  // field is REQUIRED on LanguageSupport — this scaffold wires a DORMANT (both
+  // builders return null) provider so the pack compiles; fill in real commands
+  // before ship. syntaxCheck = the cheap "does it compile/parse" check every
   // language can give; affectedTests = run the tests the change reaches (native
   // impact-selection where the ecosystem supports it, else a coarser fallback
-  // with CI's full scope as the backstop). See typescript.ts / python.ts.
-  //
-  // correctness: {
-  //   syntaxCheck(ctx) {
-  //     // e.g. compile the changed files; return null when not applicable.
-  //     return null;
-  //   },
-  //   affectedTests(ctx) {
-  //     // ctx.scope === 'affected' → the changed subset (fast surface);
-  //     // 'full' (or empty ctx.changedFiles) → the whole suite (CI).
-  //     return null;
-  //   },
-  // },
+  // with CI's full scope as the backstop). See typescript.ts / python.ts, and
+  // jvm-build.ts for a shared multi-build-system provider.
+  correctness: {
+    syntaxCheck(_ctx) {
+      // TODO(${id}): compile/typecheck the change, e.g.
+      //   return { label: 'compile', bin: '${id}', args: ['build'] };
+      return null;
+    },
+    affectedTests(_ctx) {
+      // TODO(${id}): run the tests the change reaches. ctx.scope === 'affected'
+      // → the changed subset (fast surface); 'full' (or empty ctx.changedFiles)
+      // → the whole suite (CI backstop).
+      return null;
+    },
+  },
 
   // ─── LP-recipe metadata (populate every field) ─────────────────────────
 

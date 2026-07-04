@@ -275,15 +275,22 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
-  // Correctness floor (2.23): a pack that opts into the liveness gate MUST
-  // supply BOTH command builders. Each is a pure function returning a
-  // `{label,bin,args}` command or null — the runner never hardcodes a
-  // per-language command (CLAUDE.md Rule 6). A pack with `syntaxCheck` but no
-  // `affectedTests` (or vice-versa) is a half-wired provider that would
-  // silently gate only half the liveness signal.
-  it('correctness capability supplies both syntaxCheck and affectedTests if declared', () => {
+  // Correctness floor (2.23): EVERY built-in pack MUST declare the liveness
+  // gate and supply BOTH command builders. The capability shipped optional
+  // (TS/JS + Python first) and tightened to REQUIRED once all eight packs
+  // declared it — the same optional-then-required arc `depVulns.manifestPatterns`
+  // followed. Each builder is a pure function returning a `{label,bin,args}`
+  // command or null — the runner never hardcodes a per-language command
+  // (CLAUDE.md Rule 6). A pack with `syntaxCheck` but no `affectedTests` (or
+  // vice-versa) is a half-wired provider that would silently gate only half the
+  // liveness signal. A NEW pack that omits `correctness` fails HERE.
+  it('declares a correctness provider with both syntaxCheck and affectedTests', () => {
     const c = lang.correctness;
-    if (!c) return; // a pack without a liveness floor is exempt (dormant, no-op)
+    expect(
+      c,
+      `${lang.id}: every pack must declare a correctness (liveness) provider`,
+    ).toBeDefined();
+    if (!c) return; // unreachable once the assertion above holds — narrows the type
     expect(
       typeof c.syntaxCheck,
       `${lang.id}: correctness provider must supply a syntaxCheck() builder`,
