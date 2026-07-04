@@ -51,6 +51,16 @@ else
   exit 1
 fi
 
+# Correctness floor (liveness) — does the change still compile + do the tests
+# it affects pass? This is independent of the baseline, so it runs even before
+# a baseline exists (a brand-new / greenfield repo still gets push-time
+# liveness). It is ADAPTIVE: on a repo that already runs its tests in CI it is
+# a no-op here (opt-in), and on a repo without a test-CI it runs by default.
+# A real failure blocks the push; a missing toolchain fail-opens (CI backstop).
+# Tune via .dxkit/policy.json correctness.surfaces.pre-push, DXKIT_FLOOR_PREPUSH,
+# or bypass everything with: git push --no-verify
+"${DXKIT}" floor check --surface pre-push
+
 BASELINE_NAME="${DXKIT_BASELINE_NAME:-main}"
 BASELINE_FILE=".dxkit/baselines/${BASELINE_NAME}.json"
 
