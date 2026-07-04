@@ -500,10 +500,15 @@ export interface LanguageSupport {
    * Stop-gate surface (an agent must not Stop on non-compiling / test-failing
    * code).
    *
-   * Optional — a pack without a wired toolchain omits it and contributes no
-   * floor checks (the runner sees the empty union for that language).
+   * REQUIRED. The capability shipped optional (TS/JS + Python first) and
+   * tightened to required once all eight built-in packs declared it — the same
+   * optional-then-required arc `depVulns.manifestPatterns` followed. A new pack
+   * that omits it fails to COMPILE here (not just at test time). A pack whose
+   * toolchain has no meaningful floor still supplies a provider whose builders
+   * return null (a dormant, no-op floor) rather than dropping the field — so the
+   * capability is always wired and the omission class of bug cannot recur.
    */
-  correctness?: CorrectnessProvider;
+  correctness: CorrectnessProvider;
 
   /**
    * Tier a lint rule code into a severity bucket. Accepts `string | null |

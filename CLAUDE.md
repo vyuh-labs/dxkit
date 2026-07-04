@@ -633,7 +633,7 @@ never hardcodes a per-language command (mirror of Rule 6):
 - **Diff-scoped, without a baseline artifact.** The loop Stop-gate
   captures an ENTRY SNAPSHOT of the already-broken set on the pristine
   tree at activation (`src/loop/floor-state.ts`, `vyuh-dxkit loop
-  snapshot`), then blocks only on failures NET-NEW vs that snapshot — a
+snapshot`), then blocks only on failures NET-NEW vs that snapshot — a
   pre-existing failure never blocks. This is testmon's insight (persist
   last-known state) scoped to one loop, so a Stop never pays a git
   worktree + install. Surfaces: loop Stop-gate (entry snapshot,
@@ -665,11 +665,18 @@ runner execute it; the Stop-gate calling `runCorrectnessFloor` +
    catches "the runner stopped iterating the registry", the same way it
    guards `depVulns` / `architecturalShape` / fingerprinting.
 
-The `npm run new-lang` scaffold emits a commented `correctness` stub so
-a new pack is prompted to implement it. `correctness` is optional today
-(TS/JS + Python shipped; other packs rolling out); once all eight
-declare it, the contract test tightens to REQUIRE it — the same
-optional-then-required arc `depVulns.manifestPatterns` followed.
+`correctness` is now REQUIRED. It shipped optional (TS/JS + Python
+first) and tightened once all eight built-in packs declared it — the
+same optional-then-required arc `depVulns.manifestPatterns` followed.
+The field is non-optional on `LanguageSupport`, so a new pack that
+omits it **fails to compile** (not just at test time); the contract
+test additionally asserts both builders are present and well-formed.
+The `npm run new-lang` scaffold wires a DORMANT provider (both builders
+return null) so a fresh pack compiles, with TODOs prompting the author
+to fill in real commands before ship. The two JVM packs (Java, Kotlin)
+share one `src/languages/jvm-build.ts` provider (Maven/Gradle, module-
+level affected) per Rule 2 — a worked example of a shared multi-build-
+system floor.
 
 ## Release procedure
 
