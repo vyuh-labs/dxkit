@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.31.0] - 2026-07-05
+
+### Fixed — the baseline refresh no longer deadlocks against branch protection
+
+The after-merge baseline-refresh workflow direct-pushed the recomputed anchor to
+the default branch with `[skip ci]`. On a protected branch — exactly the setup
+dxkit's own onboarding recommends (require the guardrails check + PR review) —
+that deadlocks: the push is rejected, a fresh commit has no passing checks, and
+`[skip ci]` guarantees it never gets them. dxkit's recommended protection broke
+dxkit's own automation.
+
+The fix decouples the anchor's **store** from the protected branch via a new
+`baseline.anchor` transport, keeping the refresh fast and automated:
+
+- **`branch`** (default when the branch is protected): the refresh direct-pushes
+  the anchor to a separate unprotected branch (`baseline.anchorRef`, default
+  `dxkit-baselines`); the guardrail check hydrates it from there. No push to
+  `main`, no PR, no deadlock.
+- **`cache`** (opt-in): the anchor is stored in the CI cache keyed by the base
+  SHA; a cold cache falls back to a live ref-based gather for that one check.
+- **`tree`** (unprotected default): today's direct-push-to-main refresh.
+
+The transport auto-selects from your protection posture and is overridable in
+`.dxkit/policy.json`. `ref-based` mode installs no refresh at all. Existing
+installs are unaffected until re-run; `vyuh-dxkit doctor` flags a bypassable
+guardrail either way.
+
+### Added — enforcement-path checks + config durability
+
+- **`vyuh-dxkit doctor` verifies the enforcement path, not just the wiring.** It
+  now warns when the guardrail is _bypassable_ — the workflow is present and
+  green but the default branch takes direct pushes, or nothing requires the
+  `dxkit-guardrails` check, so a PR can merge with the guardrail red.
+- **`vyuh-dxkit protect`** — a dry-run-by-default helper that requires the
+  `dxkit-guardrails` check + PR review on the default branch. It prints the exact
+  change and writes nothing unless you pass `--apply`.
+- **`loop.testCommand` in `.dxkit/policy.json`** — the loop's postflight test
+  command can now live in committed, reviewable policy, with
+  `DXKIT_LOOP_TEST_COMMAND` kept as the per-shell override.
+
+### Fixed — `init` re-runs preserve an evolved `flow.mode`
+
+Re-running `init` (e.g. `init --with-baseline-refresh --yes`) on an existing
+install silently reset a committed `flow.mode: "block"` back to `"warn"`. The
+non-interactive flow-setup now preserves an evolved posture instead of
+re-applying the gentle default.
+
 ## [2.30.0] - 2026-07-05
 
 ### Fixed — two "half-landed fix" bugs, and the harness that stops the class
