@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.25.0] - 2026-07-04
+
+### Added — the interactive flow console (`vyuh-dxkit flow console`)
+
+A self-contained, offline HTML artifact that renders the UI→API map plus a
+request runner per endpoint — the higher-value sibling of the flow CSVs. Where
+the gate says *which* integrations a change breaks, the console lets a reviewer
+or author *exercise* exactly what moved.
+
+- **Generated, not a general API client.** It is a renderer over the same
+  `FlowModel` the map and gate read (no new extraction). `vyuh-dxkit flow console`
+  writes `.dxkit/reports/flow-console.html`; `--diff <ref>` makes it PR-scoped —
+  only the endpoints the change touches, with any net-new broken integration
+  flagged by the existing flow gate.
+- **Load-bearing safety: dxkit makes zero HTTP calls.** It only assembles a
+  static document. The request runner calls *from the browser* when the user
+  opens the file and enters, at runtime, a Base URL (their dev/staging, never
+  prod) and an auth token. That token lives only in the open tab — never
+  committed, logged, baked into the artifact, or seen by dxkit or CI. The HTML
+  carries request templates only.
+- **PR attachment, no required infra.** The shipped guardrails workflow generates
+  the console scoped to the PR base, uploads it as a build artifact (only when the
+  diff touched an integration), and links it from the guardrail PR comment. The
+  step self-skips on a repo with no UI→API surface.
+- The `dxkit-flow` skill gains a `console` mode.
+
 ## [2.24.0] - 2026-07-04
 
 ### Added — `vyuh-dxkit uninstall` (restore the pre-dxkit state)
