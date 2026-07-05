@@ -48,7 +48,22 @@ export function detectInstallFlags(cwd: string): InstallFlags {
     ),
     withPrReview: fs.existsSync(path.join(cwd, '.github', 'workflows', 'pr-review.yml')),
     withClaudeLoop: isClaudeLoopInstalled(cwd),
+    withCiPushTrigger: guardrailsHasPushTrigger(cwd),
   };
+}
+
+/** Whether the installed guardrails workflow already carries the opt-in
+ *  `push:` trigger, so `update` (workspace-fallback path) preserves it. */
+function guardrailsHasPushTrigger(cwd: string): boolean {
+  try {
+    const wf = fs.readFileSync(
+      path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'),
+      'utf8',
+    );
+    return /^\s*push:/m.test(wf);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -208,7 +223,10 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
     mergeShipResult(aggregate, installHooksPostinstall(cwd, { force }));
   }
   if (flags.withCiGuardrails) {
-    mergeShipResult(aggregate, installCiGuardrails(cwd, { force }));
+    mergeShipResult(
+      aggregate,
+      installCiGuardrails(cwd, { force, pushTrigger: !!flags.withCiPushTrigger }),
+    );
   }
   // Self-heal a missing project-local devDependency on upgrade. Pre-fix
   // installs wired self-invocation surfaces without declaring the package, so

@@ -147,6 +147,9 @@ export interface ManifestInstallFlags {
    *  norm + .dxkit/policy.json loop.preset. Optional: absent on manifests
    *  written before the loop pack existed (treated as not-installed). */
   withClaudeLoop?: boolean;
+  /** Opt-in `push:[default-branch]` trigger on the guardrails workflow (a
+   *  post-hoc verdict for trunk-based/no-PR repos). Optional; absent = off. */
+  withCiPushTrigger?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

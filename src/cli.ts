@@ -355,6 +355,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-dxkit-agents': { type: 'boolean', default: false },
       'with-ci': { type: 'boolean', default: false },
       'with-baseline-refresh': { type: 'boolean', default: false },
+      'with-ci-push-trigger': { type: 'boolean', default: false },
       'with-deep-sast-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
@@ -530,6 +531,7 @@ export async function run(argv: string[]): Promise<void> {
       const wantDevcontainer = isFull || !!values['with-devcontainer'];
       const wantCi = isFull || !!values['with-ci'];
       const wantBaselineRefresh = isFull || !!values['with-baseline-refresh'];
+      const wantCiPushTrigger = !!values['with-ci-push-trigger'];
       // pr-review is opt-in even under --full because the workflow
       // is inert without `ANTHROPIC_API_KEY` + `ENABLE_AI_REVIEW=true`
       // configured separately. Shipping it by default just clutters
@@ -564,7 +566,10 @@ export async function run(argv: string[]): Promise<void> {
       if (wantCi) {
         shipResults.push({
           label: 'CI guardrails workflow',
-          result: installCiGuardrails(cwd, { force: !!values.force }),
+          result: installCiGuardrails(cwd, {
+            force: !!values.force,
+            pushTrigger: wantCiPushTrigger,
+          }),
         });
       }
       if (wantBaselineRefresh) {
@@ -707,6 +712,7 @@ export async function run(argv: string[]): Promise<void> {
         withDevcontainer: wantDevcontainer,
         withCiGuardrails: wantCi,
         withBaselineRefresh: wantBaselineRefresh,
+        withCiPushTrigger: wantCiPushTrigger,
         withPrReview: wantPrReview,
         withClaudeLoop: wantClaudeLoop,
       });

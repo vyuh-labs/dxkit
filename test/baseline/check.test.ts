@@ -55,6 +55,22 @@ describe('runGuardrailCheck (integration)', () => {
       rmSync(dir, { recursive: true, force: true });
     });
 
+    it('renderers surface an UNMEASURED dependency audit — fail-loud, no silent clean (#73)', async () => {
+      await createBaseline({ cwd: dir });
+      const base = await runGuardrailCheck({ cwd: dir });
+      // The guardrail sets depVulnsUnmeasured when a REQUESTED dep scan could not
+      // run (scanner absent). A pass must not then read as "no net-new dep vulns".
+      const unmeasured = { ...base, depVulnsUnmeasured: { reason: 'pip-audit not installed' } };
+      const md = renderMarkdown(unmeasured);
+      expect(md).toContain('Dependency audit UNMEASURED');
+      expect(md).toContain('pip-audit not installed');
+      expect(renderConsole(unmeasured)).toContain('UNMEASURED');
+      expect(renderJson(unmeasured).depVulnsUnmeasured?.reason).toBe('pip-audit not installed');
+      // The unmeasured signal is orthogonal to the verdict (it doesn't force a
+      // block); it makes the gap VISIBLE rather than silently clean.
+      expect(renderJson(base).depVulnsUnmeasured).toBeUndefined();
+    });
+
     it('reports no changes, then detects a new stale-file across check + renderers + explicit --baseline path', async () => {
       // Step 1: clean repo. Baseline + immediate check should
       // report no per-finding changes and no envelope drift —

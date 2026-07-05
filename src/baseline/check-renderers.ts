@@ -142,6 +142,14 @@ export function renderConsole(result: GuardrailCheckResult): string {
     `  Verdict:     ${result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED'}`,
   );
   lines.push(`  Exit code:   ${result.blocks ? 1 : 0}`);
+  if (result.depVulnsUnmeasured) {
+    lines.push('');
+    lines.push(
+      `  ⚠ Dependency audit UNMEASURED — ${result.depVulnsUnmeasured.reason}. A pass here ` +
+        `does not verify "no net-new dependency vulnerabilities"; run \`vyuh-dxkit tools ` +
+        `install\` so the scanner is present.`,
+    );
+  }
   if (result.refExcludedKinds.length > 0) {
     const detail = result.refExcludedKinds.map((e) => `${e.currentCount} ${e.kind}`).join(', ');
     lines.push('');
@@ -313,6 +321,9 @@ export interface GuardrailJsonPayload {
     readonly warns: boolean;
     readonly exitCode: 0 | 1;
   };
+  /** Present when the dependency-vuln scan was requested but could not run —
+   *  a pass is then NOT a clean bill of dependency health. */
+  readonly depVulnsUnmeasured?: { readonly reason: string };
   readonly baseline: {
     /** Absent when the run used `ref-based` mode (no on-disk
      *  baseline file). */
@@ -435,6 +446,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
   return {
     schema: GUARDRAIL_JSON_SCHEMA,
     verdict: { blocks: result.blocks, warns: result.warns, exitCode: result.blocks ? 1 : 0 },
+    ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     baseline: {
       ...(result.baselinePath !== undefined ? { path: result.baselinePath } : {}),
       name: result.baseline.name,
@@ -564,6 +576,16 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     ),
   );
   lines.push('');
+
+  if (result.depVulnsUnmeasured) {
+    lines.push(
+      `> ⚠️ **Dependency audit UNMEASURED** — ${result.depVulnsUnmeasured.reason}. ` +
+        `A pass here does **not** mean "no net-new dependency vulnerabilities": the scan ` +
+        `could not run, so zero dep findings are unverified. Install the scanner ` +
+        `(\`vyuh-dxkit tools install\`) so the dependency dimension is actually gated.`,
+    );
+    lines.push('');
+  }
 
   if (result.refExcludedKinds.length > 0) {
     const detail = result.refExcludedKinds.map((e) => `${e.currentCount} ${e.kind}`).join(', ');

@@ -470,8 +470,17 @@ function installWorkflow(
   return result;
 }
 
-export function installCiGuardrails(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+export function installCiGuardrails(
+  cwd: string,
+  opts: InstallerOpts & { pushTrigger?: boolean } = {},
+): ShipInstallResult {
   const ciSetup = renderCiRuntimeSetup(cwd);
+  // Opt-in `push:` trigger so a trunk-based/no-PR repo gets a POST-HOC verdict on
+  // its default branch (weaker than a blocking PR gate, but the coverage becomes
+  // VISIBLE not silent). Off by default (redundant + noisy for PR-gated repos).
+  const pushTrigger = opts.pushTrigger
+    ? `\n  push:\n    branches: [${detectDefaultBranch(cwd)}]`
+    : '';
   // Re-render when the detected stack's runtime-setup changed (a language was
   // added since install) even without --force — dxkit's own managed template.
   const stale = ciSetupOutOfDate(cwd, 'dxkit-guardrails.yml', ciSetup);
@@ -479,7 +488,7 @@ export function installCiGuardrails(cwd: string, opts: InstallerOpts = {}): Ship
     cwd,
     'dxkit-guardrails.yml',
     stale ? { ...opts, force: true } : opts,
-    { [CI_RUNTIME_SETUP_KEY]: ciSetup },
+    { [CI_RUNTIME_SETUP_KEY]: ciSetup, __DXKIT_CI_PUSH_TRIGGER__: pushTrigger },
   );
   if (stale && result.installed.length > 0) {
     result.notes.push('Refreshed the CI guardrails workflow for the current language stack.');

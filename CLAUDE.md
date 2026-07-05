@@ -131,7 +131,10 @@ time). `scripts/check-architecture.sh` bans a raw `npm install --save-dev` /
 
 Every language-specific concern (detection, tool list, semgrep rulesets,
 coverage parsing, import extraction/resolution, metric gathering, lint
-severity mapping, dependency-manifest patterns, init-scaffold metadata)
+severity mapping, dependency-manifest patterns, init-scaffold metadata,
+CI runtime setup via `ciSetup` — the GitHub Actions steps that install the
+pack's toolchain, unioned through `allCiSetupSteps` and rendered into the
+workflow templates, so CI is never Node-only)
 lives in a single
 `LanguageSupport` implementation in
 `src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby}.ts`. Dispatch everywhere

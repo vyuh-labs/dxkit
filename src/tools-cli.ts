@@ -193,15 +193,24 @@ function showStatus(targetPath: string): ToolStatus[] {
  * (dxkit wasn't init'd there) or the entry is already recorded. Best-effort:
  * a manifest write failure never fails the install.
  */
-function recordToolDep(cwd: string, pkg: string): void {
+export function recordToolDep(cwd: string, pkg: string): void {
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   try {
     const raw = fs.readFileSync(manifestPath, 'utf-8');
     const manifest = JSON.parse(raw) as Manifest;
-    const toolDeps = manifest.toolDeps ?? [];
-    if (toolDeps.some((d) => d.package === pkg && d.ecosystem === 'node')) return;
-    toolDeps.push({ package: pkg, ecosystem: 'node' });
-    manifest.toolDeps = toolDeps;
+    // Normalize to the {package, ecosystem} shape, dropping any legacy `install`
+    // string an older dxkit persisted here. Every executed/rendered install is
+    // already PM-aware; the stored npm-flavored text (`npm install --save-dev …`)
+    // was misleading canonical JSON on a non-npm repo and is derivable from
+    // {package, ecosystem} anyway. Re-run of `tools install` cleans a legacy file.
+    const normalized = (manifest.toolDeps ?? []).map((d) => ({
+      package: d.package,
+      ecosystem: 'node' as const,
+    }));
+    if (!normalized.some((d) => d.package === pkg)) {
+      normalized.push({ package: pkg, ecosystem: 'node' });
+    }
+    manifest.toolDeps = normalized;
     fs.writeFileSync(manifestPath, serializePreservingJson(raw, manifest), 'utf-8');
   } catch {
     // no manifest / unreadable / unwritable → nothing to record, never fatal

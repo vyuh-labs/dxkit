@@ -11,7 +11,7 @@ name: dxkit guardrails
 # removed / fixed) map to block/warn buckets there.
 
 on:
-  pull_request:
+  pull_request:__DXKIT_CI_PUSH_TRIGGER__
 
 permissions:
   contents: read
