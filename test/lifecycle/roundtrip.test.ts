@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -199,5 +200,82 @@ describe('load-bearing activation does not depend on a package-manager hook', ()
     cli(repo, 'init', '--with-hooks', '--yes');
     const hooksPath = git(repo, 'config', '--local', '--get', 'core.hooksPath').trim();
     expect(hooksPath).toBe('.githooks');
+  });
+});
+
+/**
+ * The UPDATE lane (2.33.0) — the untested seam. The install/uninstall lanes
+ * above never exercised `update`, the most-run command in a customer's life, so
+ * two whole-command failures shipped: update NO-OP'd its own dxkit-owned files
+ * (never delivering template fixes — #10) and --force CLOBBERED user-authored
+ * files (data loss — #11). These run the real CLI end-to-end and pin both halves
+ * on a real repo, the same way the round-trip pins uninstall.
+ */
+describe('update refreshes dxkit-owned files but never clobbers user files', () => {
+  const sha256 = (s: string): string => createHash('sha256').update(s, 'utf-8').digest('hex');
+
+  it('#10: a dxkit-owned, UNMODIFIED file is refreshed to the current template (not skipped)', () => {
+    write(repo, 'package.json', JSON.stringify({ name: 'upd', version: '1.0.0' }));
+    write(repo, 'src/index.ts', 'export const x = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+
+    cli(repo, 'init', '--full', '--yes');
+
+    // Simulate an OLDER install: a dxkit skill sits at a stale version the user
+    // never touched — on-disk content matches the manifest hash (dxkit owns it,
+    // unmodified), but differs from the template this dxkit version ships.
+    const skillRel = '.claude/skills/dxkit-learn/SKILL.md';
+    const skillAbs = join(repo, skillRel);
+    expect(existsSync(skillAbs)).toBe(true);
+    const STALE = '# stale dxkit-learn skill (older version)\n';
+    writeFileSync(skillAbs, STALE);
+    const mPath = join(repo, '.vyuh-dxkit.json');
+    const m = JSON.parse(readFileSync(mPath, 'utf8')) as {
+      files: Record<string, { hash: string | null; evolving: boolean; provenance: string }>;
+    };
+    m.files[skillRel] = { hash: sha256(STALE), evolving: false, provenance: 'created' };
+    writeFileSync(mPath, JSON.stringify(m, null, 2) + '\n');
+
+    // A DEFAULT update (no --force) must deliver the fix — this is the whole
+    // point of update, and exactly what #10 reported broken.
+    cli(repo, 'update');
+    expect(readFileSync(skillAbs, 'utf8')).not.toBe(STALE);
+  });
+
+  it('#10: a dxkit-managed workflow refreshes and the pre-push hook does NOT self-sidecar', () => {
+    write(repo, 'package.json', JSON.stringify({ name: 'upd2', version: '1.0.0' }));
+    write(repo, 'src/index.ts', 'export const x = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+
+    cli(repo, 'init', '--full', '--yes');
+
+    const wfAbs = join(repo, '.github/workflows/dxkit-guardrails.yml');
+    expect(existsSync(wfAbs)).toBe(true);
+    // A stale-but-dxkit-marked workflow (a real prior install keeps its marker).
+    writeFileSync(wfAbs, 'name: dxkit guardrails\n# STALE-MARKER\n');
+
+    cli(repo, 'update');
+
+    // Refreshed to the current template — the stale marker is gone.
+    expect(readFileSync(wfAbs, 'utf8')).not.toContain('STALE-MARKER');
+    // And dxkit's own pre-push hook was refreshed in place, not sidecar'd as if
+    // it were a user hook.
+    expect(existsSync(join(repo, '.githooks/pre-push'))).toBe(true);
+    expect(existsSync(join(repo, '.githooks/pre-push.dxkit'))).toBe(false);
+  });
+
+  it('#11: update --force NEVER overwrites a user-authored AGENTS.md', () => {
+    const agents = '# My Project\n\nProject-authored guidance the user maintains.\n';
+    write(repo, 'AGENTS.md', agents);
+    write(repo, 'package.json', JSON.stringify({ name: 'upd3', version: '1.0.0' }));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit brownfield');
+
+    cli(repo, 'init', '--full', '--yes'); // dxkit skips AGENTS.md → provenance 'skipped'
+    cli(repo, 'update', '--force'); // the reported data-loss trigger
+
+    expect(readFileSync(join(repo, 'AGENTS.md'), 'utf8')).toBe(agents);
   });
 });

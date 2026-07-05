@@ -248,11 +248,26 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
   for (const { name } of hookNames) {
     const destAbs = path.join(destDir, name);
     const huskyAbs = path.join(cwd, '.husky', name);
-    const conflict = fs.existsSync(destAbs) || fs.existsSync(huskyAbs);
-    if (conflict) anyConflict = true;
+
+    // dxkit's OWN hook (marker in the template header) is not a conflict — it's
+    // ours to REFRESH on update. Before this it self-sidecar'd, so a template
+    // fix never reached the installed hook (#10). A genuine USER hook — a husky
+    // hook, or a non-dxkit hook at .githooks/<name> — is the real conflict and
+    // must be preserved via a sidecar.
+    const destExists = fs.existsSync(destAbs);
+    let destIsDxkit = false;
+    if (destExists) {
+      try {
+        destIsDxkit = fs.readFileSync(destAbs, 'utf8').includes(`dxkit ${name} hook`);
+      } catch {
+        destIsDxkit = false;
+      }
+    }
+    const userConflict = fs.existsSync(huskyAbs) || (destExists && !destIsDxkit);
+    if (userConflict) anyConflict = true;
 
     const srcAbs = path.join(tmplDir, name);
-    if (conflict && !opts.force) {
+    if (userConflict && !opts.force) {
       // Always land the dxkit hook at .githooks/<name>.dxkit when
       // there's a conflict, even when the conflict is at a different
       // path (husky). The sidecar is the same regardless of where the
@@ -377,9 +392,17 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
     { name: 'install-agent-clis.sh', executable: true },
   ];
 
-  const hasExistingDevcontainer = fs.existsSync(path.join(destDir, 'devcontainer.json'));
+  const devcontainerPath = path.join(destDir, 'devcontainer.json');
+  const hasExistingDevcontainer = fs.existsSync(devcontainerPath);
+  // A devcontainer.json the USER authored (no dxkit marker) is never clobbered —
+  // not even under --force (the #11 data-loss class: --force replaced a project's
+  // own .devcontainer). dxkit's OWN devcontainer (marker present) still refreshes
+  // under --force. When dxkit sidecar'd at install time (the user already had
+  // one), the canonical path is theirs, so this correctly keeps sidecaring.
+  const existingIsUserOwned =
+    hasExistingDevcontainer && !isDxkitManagedDevcontainer(readFileSafe(devcontainerPath));
 
-  if (hasExistingDevcontainer && !opts.force) {
+  if (hasExistingDevcontainer && (!opts.force || existingIsUserOwned)) {
     // Stash the whole dxkit set under a reference dir so the
     // consumer can read it without it interfering with their own.
     // The reference devcontainer.json is rendered with the
@@ -440,6 +463,33 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
  * uses this for the consumer's default branch name; the PR-gate
  * workflow ships verbatim.
  */
+/**
+ * Is the workflow already on disk one dxkit MANAGES (vs a same-named file the
+ * user authored)? A dxkit-managed workflow is refreshed to the current template
+ * on `update` — that is what delivers template fixes (the #10 class: `update`
+ * used to treat its OWN unmodified workflow as "preserve" and never ship the
+ * fix). The heuristic recognizes existing installs without a migration: every
+ * dxkit workflow either names itself `dxkit …` or invokes the `vyuh-dxkit` CLI.
+ */
+function isDxkitManagedWorkflow(content: string): boolean {
+  return /^name:\s*dxkit\b/im.test(content) || content.includes('vyuh-dxkit');
+}
+
+/** Read a file, returning '' on any error (used only for ownership sniffing). */
+function readFileSafe(abs: string): string {
+  try {
+    return fs.readFileSync(abs, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** Is this devcontainer.json one dxkit generated (vs the user's own)? dxkit's
+ *  carries `"name": "dxkit dev environment"` and invokes `vyuh-dxkit`. */
+function isDxkitManagedDevcontainer(content: string): boolean {
+  return content.includes('dxkit dev environment') || content.includes('vyuh-dxkit');
+}
+
 function installWorkflow(
   cwd: string,
   fileName: string,
@@ -450,23 +500,34 @@ function installWorkflow(
   const result = emptyResult();
   const srcAbs = path.join(templatesDir(), '.github', 'workflows', fileName);
   const destAbs = path.join(cwd, '.github', 'workflows', destName);
+  const rel = path.relative(cwd, destAbs);
 
-  if (fs.existsSync(destAbs) && !opts.force) {
-    result.skipped.push(path.relative(cwd, destAbs));
-    return result;
+  // Render the final content first, so we can no-op when it already matches and
+  // decide ownership from what's actually on disk.
+  let content = fs.readFileSync(srcAbs, 'utf8');
+  for (const [key, value] of Object.entries(substitutions)) {
+    content = content.split(key).join(value);
+  }
+
+  if (fs.existsSync(destAbs)) {
+    const existing = fs.readFileSync(destAbs, 'utf8');
+    if (existing === content) {
+      // Already current — a no-op, not a spurious "updated".
+      result.skipped.push(rel);
+      return result;
+    }
+    // A dxkit-managed workflow is refreshed with the new template (that IS the
+    // point of update). A file the user put at this path is preserved unless
+    // --force explicitly re-applies.
+    if (!isDxkitManagedWorkflow(existing) && !opts.force) {
+      result.skipped.push(rel);
+      return result;
+    }
   }
 
   fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-  if (Object.keys(substitutions).length === 0) {
-    fs.copyFileSync(srcAbs, destAbs);
-  } else {
-    let content = fs.readFileSync(srcAbs, 'utf8');
-    for (const [key, value] of Object.entries(substitutions)) {
-      content = content.split(key).join(value);
-    }
-    fs.writeFileSync(destAbs, content, 'utf8');
-  }
-  result.installed.push(path.relative(cwd, destAbs));
+  fs.writeFileSync(destAbs, content, 'utf8');
+  result.installed.push(rel);
   return result;
 }
 

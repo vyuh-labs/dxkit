@@ -3,10 +3,19 @@ import * as path from 'path';
 import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
-import { writeFile, copyFile, sha256 } from './files';
+import { sha256 } from './files';
 import { activeLanguagesFromStack } from './languages';
 import { dxkitCli } from './self-invocation';
+import { decideUpdateDisposition } from './update-disposition';
 import * as logger from './logger';
+
+/**
+ * Files the user extends rather than owns outright — a full template overwrite
+ * always destroys their additions (a Stop hook in settings.json, project prose
+ * in CLAUDE.md / AGENTS.md). Update refreshes these only while unmodified;
+ * once user-edited they are preserved even under --force.
+ */
+const USER_MERGE_TARGETS = new Set(['.claude/settings.json', 'CLAUDE.md', 'AGENTS.md']);
 
 function getTemplatesDir(): string {
   return path.join(__dirname, '..', 'templates');
@@ -203,52 +212,99 @@ export async function generate(
     },
   };
 
-  const opts = (evolving: boolean) => ({ force, evolving, skipIfExists: !force });
+  // On UPDATE (or a re-init over an existing install) the prior manifest tells
+  // us, per file, whether dxkit owns it and what dxkit last wrote — so we can
+  // REFRESH dxkit-owned files that shipped fixes while NEVER clobbering files
+  // the user owns (the #10 / #11 class). On a fresh init (no prior manifest) we
+  // fall back to the historical skip-if-exists behavior, unchanged.
+  let priorManifest: Manifest | null = null;
+  try {
+    const mp = path.join(targetDir, '.vyuh-dxkit.json');
+    if (fs.existsSync(mp)) priorManifest = JSON.parse(fs.readFileSync(mp, 'utf-8')) as Manifest;
+  } catch {
+    priorManifest = null;
+  }
 
-  function track(
-    outputPath: string,
+  function trackWritten(
+    rel: string,
+    writeResult: 'created' | 'overwritten',
     content: string | null,
-    writeResult: string,
     evolving: boolean,
   ) {
-    const rel = path.relative(targetDir, outputPath);
     if (writeResult === 'created') result.created.push(rel);
-    else if (writeResult === 'skipped') result.skipped.push(rel);
-    else if (writeResult === 'overwritten') result.overwritten.push(rel);
-
-    // Provenance is what uninstall trusts to decide what it may remove. A
-    // SKIPPED file already existed — the user owns it — so we record that fact
-    // and store no hash (the hash would be dxkit's template, not the user's
-    // content, and mistaking one for the other is how --force could delete a
-    // project's own AGENTS.md / CLAUDE.md).
-    const provenance =
-      writeResult === 'created'
-        ? 'created'
-        : writeResult === 'overwritten'
-          ? 'overwritten'
-          : 'skipped';
+    else result.overwritten.push(rel);
     result.manifest.files[rel] = {
-      hash: provenance === 'skipped' ? null : evolving ? null : content ? sha256(content) : null,
+      hash: evolving ? null : content ? sha256(content) : null,
       evolving,
-      provenance,
+      provenance: writeResult,
     };
+  }
+
+  function trackSkipped(rel: string, evolving: boolean) {
+    result.skipped.push(rel);
+    // Carry the prior lineage forward so uninstall still knows what dxkit owns;
+    // an existing file dxkit never tracked becomes a user-owned 'skipped' entry
+    // (never a stored hash — the hash would be dxkit's template, not the user's
+    // content, and mistaking one for the other is how --force deleted a
+    // project's own AGENTS.md / CLAUDE.md before this).
+    result.manifest.files[rel] = priorManifest?.files[rel] ?? {
+      hash: null,
+      evolving,
+      provenance: 'skipped',
+    };
+  }
+
+  /**
+   * Write one managed file, honoring provenance on update. `copyFrom` set → copy
+   * that file; otherwise write `content`. Returns nothing — it tracks the result.
+   */
+  function applyManaged(
+    outputPath: string,
+    content: string,
+    evolving: boolean,
+    copyFrom: string | null,
+  ) {
+    const rel = path.relative(targetDir, outputPath);
+    const exists = fs.existsSync(outputPath);
+
+    const decision =
+      priorManifest === null
+        ? // Fresh init — the historical skip-if-exists semantics, verbatim.
+          exists && (evolving || !force)
+          ? 'skip'
+          : 'write'
+        : decideUpdateDisposition({
+            exists,
+            evolving,
+            priorEntry: priorManifest.files[rel],
+            onDiskHash: () => sha256(fs.readFileSync(outputPath, 'utf-8')),
+            force,
+            userMergeTarget: USER_MERGE_TARGETS.has(rel),
+          });
+
+    if (decision === 'skip') {
+      trackSkipped(rel, evolving);
+      return;
+    }
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    if (copyFrom) fs.copyFileSync(copyFrom, outputPath);
+    else fs.writeFileSync(outputPath, content, 'utf-8');
+    trackWritten(rel, exists ? 'overwritten' : 'created', content || null, evolving);
   }
 
   async function writeTemplate(templatePath: string, outputRel: string, evolving = false) {
     const raw = readTemplate(templatePath);
     const processed = processTemplate(raw, variables, conditions);
-    const outputPath = path.join(targetDir, outputRel);
-    const res = await writeFile(outputPath, processed, opts(evolving));
-    track(outputPath, processed, res, evolving);
+    applyManaged(path.join(targetDir, outputRel), processed, evolving, null);
   }
 
   function copyStatic(templatePath: string, outputRel: string, evolving = false) {
     const srcPath = path.join(templatesDir, templatePath);
     if (!fs.existsSync(srcPath)) return;
-    const outputPath = path.join(targetDir, outputRel);
-    const res = copyFile(srcPath, outputPath, opts(evolving));
-    const content = evolving ? null : fs.readFileSync(srcPath, 'utf-8');
-    track(outputPath, content, res, evolving);
+    // For a non-evolving copy we hash the source content; an evolving copy stores
+    // no hash (pass '' so trackWritten records null).
+    const content = evolving ? '' : fs.readFileSync(srcPath, 'utf-8');
+    applyManaged(path.join(targetDir, outputRel), content, evolving, srcPath);
   }
 
   if (withDxkitAgents) {
@@ -271,9 +327,7 @@ export async function generate(
     // gcloud/pulumi/docker entries that referenced generic skills that
     // no longer ship.
     const settingsContent = buildSettingsJson(config);
-    const settingsPath = path.join(targetDir, '.claude', 'settings.json');
-    const settingsRes = await writeFile(settingsPath, settingsContent, opts(false));
-    track(settingsPath, settingsContent, settingsRes, false);
+    applyManaged(path.join(targetDir, '.claude', 'settings.json'), settingsContent, false, null);
     logger.success('.claude/settings.json');
 
     // The six dxkit-specific skills. Each ships as a single SKILL.md
