@@ -21,6 +21,48 @@ Do NOT rewrite the command string, JSON parsing, or error handling in a new file
 **Bad**: Copy-pasting the graphify Python script into parallel.ts
 **Good**: Calling `gatherGraphifyMetrics()` from parallel.ts
 
+#### One concept, one code path (2.30 — the recurring-bug fix)
+
+The most persistent dogfood-bug class is a special case of Rule 2: **one concept
+is computed in two independent code paths, a fix lands in the path you're
+editing, and the sibling keeps misbehaving.** Real instances: the `env-in-git`
+metric count vs its per-finding producer (a fix to exempt `.env.example` reached
+only the count); a placeholder-secret filter added to the gitleaks provider but
+not the `grep-secrets` fallback; `flow.stripUrlPrefixes` threaded into the map +
+gate gathers but not the diagnose + detect gathers. Each shipped because the
+duplicate path was in a different file/layer and nothing forced a single entry
+point.
+
+When a concept has multiple consumers, give it ONE entry point and route every
+consumer through it (canonical examples added in 2.30):
+
+- committed env-file detection → `trackedEnvFiles` in
+  `src/analyzers/security/env-files.ts` (the only `git ls-files .env`);
+- a repo's flow model WITH its policy config applied → `gatherRepoFlowModel` in
+  `src/analyzers/flow/gather.ts` (loads `stripUrlPrefixes` / `specs` itself, so a
+  surface cannot forget them); the raw `gatherFlowModel` is only for
+  explicit-config callers (the two-ref gate, cross-repo publish, the map CLI);
+- benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
+  (Rule 5's benign module), consulted by BOTH secret detectors.
+
+`scripts/check-architecture.sh` gates the first two (a second `git ls-files
+.env` or a config-less `gatherFlowModel` on a single-repo surface fails CI).
+
+#### The fixture-repo ANALYSIS harness (`test/fixtures-analysis.test.ts`)
+
+dxkit's own self-guardrail runs on dxkit's repo, which has no `.env.example`, no
+base-URL-helper flow calls, no catch-all routes — so it is structurally BLIND to
+the shapes real repos have, which is why the class above kept reaching users.
+The fix is the analysis analog of the install/uninstall lifecycle net
+(`test/lifecycle/`): minimal per-stack fixtures under `test/fixtures/analysis/`
+that dxkit runs its user-facing gathers on, asserting cross-cutting invariants.
+It is deliberately a MATRIX (TS + Python + Go), not one Payload/Next.js repo —
+the language-agnostic invariants (`.env.example` is not a finding; a placeholder
+secret is dropped) must hold on every stack, so a fix that only works for one
+overfits and fails here. A new language pack adds a fixture dir + a row and
+inherits the checks. When you fix an analysis bug a customer reports, add a
+fixture that reproduces it — that is what makes the guardrail see it.
+
 ### 3. Language facts come from detect.ts
 
 Anything that varies by language (semgrep rulesets, file extensions, test patterns)
