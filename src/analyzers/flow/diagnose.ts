@@ -13,7 +13,7 @@
  */
 
 import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
-import { gatherFlowModel } from './gather';
+import { gatherRepoFlowModel } from './gather';
 import { isPlaceholderOnlyPath, type FlowModel } from './model';
 import { readServedContract } from './contract';
 import { readWorkspace } from '../../workspace';
@@ -134,7 +134,7 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
 
   let model: FlowModel;
   try {
-    model = await gatherFlowModel({ roots: [cwd] });
+    model = await gatherRepoFlowModel(cwd);
   } catch {
     return null;
   }

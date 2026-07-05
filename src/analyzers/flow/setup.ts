@@ -14,7 +14,7 @@
  */
 
 import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
-import { gatherFlowModel } from './gather';
+import { gatherRepoFlowModel } from './gather';
 import { isPlaceholderOnlyPath } from './model';
 import { writeFlowPolicy, type FlowGateMode } from './config';
 import { writeWorkspace, type WorkspaceParticipant } from '../../workspace';
@@ -60,7 +60,7 @@ export async function detectFlowTopology(cwd: string): Promise<FlowDetection> {
 
   let model;
   try {
-    model = await gatherFlowModel({ roots: [cwd] });
+    model = await gatherRepoFlowModel(cwd);
   } catch {
     return NONE;
   }
