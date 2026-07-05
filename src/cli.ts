@@ -4,6 +4,7 @@ import { detect } from './detect';
 import { generate } from './generator';
 import { promptForConfig, promptFlowSetup } from './prompts';
 import { detectFlowTopology, applyFlowSetup } from './analyzers/flow/setup';
+import { existingFlowMode } from './analyzers/flow/config';
 import { runUpdate, writeInstallFlags } from './update';
 import { runDoctor } from './doctor';
 import { VERSION } from './constants';
@@ -618,6 +619,10 @@ export async function run(argv: string[]): Promise<void> {
           const decision = await promptFlowSetup(detection, {
             yes: flowYes,
             forceOn: !!values.flow,
+            // Preserve a posture the user already evolved (a committed
+            // `flow.mode: "block"`) instead of re-applying the gentle `warn`
+            // default on this additive re-run.
+            currentMode: existingFlowMode(cwd),
           });
           const written = applyFlowSetup(cwd, decision);
           shipResults.push({

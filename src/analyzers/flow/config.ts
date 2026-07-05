@@ -81,6 +81,28 @@ export function readFlowConfig(cwd: string): FlowConfig {
 }
 
 /**
+ * The `flow.mode` EXPLICITLY set in `.dxkit/policy.json`, or `undefined` when the
+ * file is absent/malformed, has no `flow` block, or carries no valid `mode`.
+ *
+ * Unlike `readFlowConfig().mode` — which collapses "unset" into the `block`
+ * default — this distinguishes "the user chose a posture" from "no posture set
+ * yet". The init flow-setup step needs that distinction to PRESERVE an evolved
+ * choice on a re-run rather than re-apply its gentle `warn` default: the class of
+ * bug where `init --yes` on an existing install silently reset a committed
+ * `flow.mode: "block"` back to `"warn"` (policy.json is the exact file the docs
+ * invite users to tune).
+ */
+export function existingFlowMode(cwd: string): FlowGateMode | undefined {
+  try {
+    const text = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
+    const raw = (JSON.parse(text) as { flow?: RawFlow })?.flow;
+    return raw && isMode(raw.mode) ? raw.mode : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Write into `.dxkit/policy.json:flow`, merging the patch over the existing
  * `flow` block and PRESERVING every other policy section (loop, baseline, …) —
  * the same discipline `ensureLoopPreset` uses for `loop.preset`. This is the

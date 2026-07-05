@@ -32,20 +32,29 @@ async function confirm(
  * a repo with none never reaches here, so init stays silent on non-flow repos.
  *
  * Non-interactive (`--yes` / `--detect`, or `forceOn` from `--flow`) takes the
- * gentle default: `warn` posture plus the dominant host-helper strip-prefix.
- * Interactive lets the user pick the posture (with a one-line description of
- * each) and confirm the auto-detected strip-prefix + services.
+ * gentle default on a FRESH setup — `warn` posture plus the dominant host-helper
+ * strip-prefix — but on a RE-RUN of an already-configured repo it preserves the
+ * user's evolved config verbatim (`options.currentMode`), so an additive
+ * `init --yes` never silently downgrades a committed `flow.mode: "block"` back to
+ * `"warn"`. Interactive lets the user pick the posture (defaulting the prompt to
+ * the existing one) and confirm the auto-detected strip-prefix + services.
  */
 export async function promptFlowSetup(
   detection: FlowDetection,
-  options: { yes: boolean; forceOn: boolean },
+  options: { yes: boolean; forceOn: boolean; currentMode?: FlowGateMode },
 ): Promise<FlowSetupDecision> {
   const defaultPrefixes = detection.suggestedStripPrefixes.slice(0, 1);
 
-  // Non-interactive default: warn + the dominant strip-prefix, no participants
-  // (recording multiple services is an explicit interactive confirm).
+  // Non-interactive: on an already-configured repo PRESERVE the evolved posture
+  // and leave its strip-prefixes untouched (an empty list makes applyFlowSetup
+  // omit the key, so the writer's shallow merge keeps what's on disk — never a
+  // regeneration). Only a FRESH setup (no mode set yet) takes the gentle `warn`
+  // default + the dominant strip-prefix. Participants stay an explicit
+  // interactive confirm either way.
   if (options.yes || options.forceOn) {
-    return { mode: 'warn', stripUrlPrefixes: defaultPrefixes };
+    return options.currentMode
+      ? { mode: options.currentMode, stripUrlPrefixes: [] }
+      : { mode: 'warn', stripUrlPrefixes: defaultPrefixes };
   }
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
@@ -67,7 +76,7 @@ export async function promptFlowSetup(
     console.log('    warn   surface broken integrations as warnings (recommended)'); // slop-ok
     console.log('    block  fail the check on an exact broken integration (confidence-gated)'); // slop-ok
     console.log('    off    scaffold config only, do not gate yet'); // slop-ok
-    const mode = await selectMode(rl, 'Posture?', 'warn');
+    const mode = await selectMode(rl, 'Posture?', options.currentMode ?? 'warn');
 
     let stripUrlPrefixes: string[] = [];
     if (detection.suggestedStripPrefixes.length > 0) {
