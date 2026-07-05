@@ -62,6 +62,7 @@ import {
   dominantVocabulary,
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
+import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
@@ -119,6 +120,15 @@ const mockPlaybookPack = {
     routeDecorators: ['playbookGet'],
     routeRouterCallees: { methods: ['playbookGet'], bases: ['playbookApp'] },
     methodAliases: { playbookDel: 'DELETE' },
+    // File-convention routing (2.28): distinctive tokens so the assertion
+    // verifies the synthetic pack's fileRoutes descriptor drives the SHARED
+    // path algebra (`deriveFileRoutePath`) — codifying "file-route derivation
+    // is pack-driven, not hardcoded to Next.js's `route`/`app` names."
+    fileRoutes: {
+      handlerFile: 'playbookroute',
+      baseDirs: ['playbookapp'],
+      methodExports: ['GET', 'POST'],
+    },
   },
   // A grammar alongside httpFlow makes the synthetic pack flow-CAPABLE, so its
   // extensions flow through `allFlowSourceExtensions` /
@@ -697,6 +707,43 @@ describe('recipe playbook — synthetic pack', () => {
     expect(real).toBeDefined();
     expect(real?.routeDecorators).toContain('del'); // LoopBack delete decorator
     expect(real?.routeRouterCallees?.bases).toContain('router'); // Express
+    // File-convention routing flows through the same union (2.28): the
+    // synthetic pack's fileRoutes descriptor is present, and the real
+    // typescript pack's Next.js App Router descriptor is too.
+    expect(synthetic?.fileRoutes?.handlerFile).toBe('playbookroute');
+    expect(real?.fileRoutes?.handlerFile).toBe('route');
+    expect(real?.fileRoutes?.baseDirs).toContain('app');
+  });
+
+  // File-route path algebra: the SHARED deriver consumes any pack's descriptor,
+  // proving the route-group / dynamic-segment rules aren't hardcoded to Next.js.
+  // The synthetic pack's own `playbookapp` base + `playbookroute` handler derive
+  // a route through the identical code path the real TS pack uses.
+  it('deriveFileRoutePath derives routes from the synthetic pack descriptor', () => {
+    const flags = {
+      typescript: false,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const synthetic = allHttpFlow(flags).find((d) => d.fileRoutes?.handlerFile === 'playbookroute');
+    expect(synthetic?.fileRoutes).toBeDefined();
+    const fr = synthetic!.fileRoutes!;
+    // Literal + dynamic + route-group all handled by the shared algebra, driven
+    // purely off the synthetic pack's declared base/handler names.
+    expect(deriveFileRoutePath('playbookapp/widgets/playbookroute.pbk', fr)).toBe('/widgets');
+    expect(deriveFileRoutePath('playbookapp/widgets/[id]/playbookroute.pbk', fr)).toBe(
+      '/widgets/{var}',
+    );
+    expect(deriveFileRoutePath('playbookapp/(group)/things/playbookroute.pbk', fr)).toBe('/things');
+    // A non-handler file under the base derives nothing.
+    expect(deriveFileRoutePath('playbookapp/widgets/other.pbk', fr)).toBeNull();
   });
 
   // Flow-gate trigger: the surface helpers iterate active packs (httpFlow +

@@ -31,7 +31,7 @@ export interface ServedRoute {
   readonly method: string;
   readonly path: string;
   readonly handler: string | null;
-  readonly via: 'decorator' | 'router-call' | 'spec';
+  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
 }
 
 /** One binding in the consumed-side inventory — a UI call site's dependency on

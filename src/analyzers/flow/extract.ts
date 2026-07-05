@@ -25,6 +25,7 @@ import { getLanguage } from '../../languages';
 import type { HttpFlowSupport, LanguageId } from '../../languages/types';
 import { parseFile, walk, type Node } from '../../ast/parse';
 import { normalizeMethod, normalizePath, type HttpMethod, type NormalizeConfig } from './normalize';
+import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
 
 /** An outbound HTTP call found in source (the consumed side). */
 export interface ClientCall {
@@ -38,12 +39,14 @@ export interface ClientCall {
 }
 
 /** An inbound route a service serves (the served side). `via` records how it
- *  was discovered: a source decorator, an Express-style route call, or an
- *  ingested OpenAPI/spec document (preferred when available). */
+ *  was discovered: a source decorator, an Express-style route call, a
+ *  file-convention route handler (Next.js App Router / SvelteKit — the URL is
+ *  derived from the file's location), or an ingested OpenAPI/spec document
+ *  (preferred when available). */
 export interface RouteEndpoint {
   readonly method: HttpMethod;
   readonly path: string;
-  readonly via: 'decorator' | 'router-call' | 'spec';
+  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
   readonly handler: string | null;
   readonly file: string;
   readonly line: number;
@@ -159,9 +162,37 @@ export function extractFromTree(
   hf: HttpFlowSupport,
   file: string,
   config?: NormalizeConfig,
+  relPath?: string,
 ): FileFlow {
   const calls: ClientCall[] = [];
   const routes: RouteEndpoint[] = [];
+
+  // ── file-convention routes (Next.js App Router / SvelteKit) ──
+  // The served URL is derived from the handler file's LOCATION, so this needs
+  // the repo-relative path (`relPath`), falling back to `file` when the caller
+  // has only the scanned path. Additive to the in-source walk below: a route
+  // handler can also make outbound calls, and both surfaces are recorded.
+  if (hf.fileRoutes) {
+    const routePath = deriveFileRoutePath(relPath ?? file, hf.fileRoutes, config);
+    if (routePath) {
+      for (const { name, line: exportLine } of exportedMethodNames(
+        root,
+        hf.fileRoutes.methodExports,
+      )) {
+        const method = normalizeMethod(name, hf.methodAliases);
+        if (method) {
+          routes.push({
+            method,
+            path: routePath,
+            via: 'file-route',
+            handler: name,
+            file,
+            line: exportLine,
+          });
+        }
+      }
+    }
+  }
 
   const clientCallees = new Set(hf.clientCallees ?? []);
   const methodCallMethods = new Set(hf.clientMethodCallees?.methods ?? []);
@@ -276,12 +307,13 @@ export function extractFromTree(
 export async function extractFileFlow(
   filePath: string,
   config?: NormalizeConfig,
+  relPath?: string,
 ): Promise<FileFlow | null> {
   const parsed = await parseFile(filePath);
   if (!parsed) return null;
   const hf = httpFlowFor(parsed.languageId);
   if (!hf) return { calls: [], routes: [] };
-  return extractFromTree(parsed.tree.rootNode, hf, filePath, config);
+  return extractFromTree(parsed.tree.rootNode, hf, filePath, config, relPath);
 }
 
 function httpFlowFor(languageId: LanguageId): HttpFlowSupport | undefined {

@@ -165,6 +165,54 @@ export interface DeepSastSupport {
  * Optional — a pack with no HTTP surface (or none modeled yet) omits it,
  * and the flow extractor sees the empty union for that language.
  */
+/**
+ * File-convention routing: how a pack's framework serves a route from a file's
+ * LOCATION on disk rather than an in-source decorator or router call. Next.js
+ * App Router (`app/**` `/route.ts` exporting `GET`/`POST`), SvelteKit
+ * (`src/routes/**` `/+server.ts`), and Next.js Pages Router (`pages/api/**`)
+ * all fit this shape — the served URL is derived from the directory path and
+ * the HTTP verb is an exported symbol's name.
+ *
+ * The pack declares only what is genuinely framework-specific — the handler
+ * filename, the routing base directories, an optional fixed URL prefix, and the
+ * verb-named exports. The uniform "file-route path algebra" (route groups,
+ * `[param]` / `[[...catch-all]]` dynamics, private `_`-segments, parallel
+ * `@`-slots) lives centrally in `src/analyzers/flow/file-routes.ts`, the same
+ * Rule 6 boundary the URL normalizer draws — those conventions are shared
+ * across every file-route framework, so they are not a per-pack fact.
+ */
+export interface FileRouteSupport {
+  /**
+   * Basename (without extension) of a route-handler file — Next.js App Router
+   * `'route'`, SvelteKit `'+server'`. Use `'*'` when EVERY file under a base
+   * serves a route (Next.js Pages Router `pages/api`, where the filename itself
+   * becomes the last path segment and `index` collapses to its directory).
+   * Matched against the file's basename with its extension removed.
+   */
+  handlerFile: string;
+
+  /**
+   * Repo-relative directory prefixes under which routing begins; the URL path
+   * is derived from the segments AFTER the matched base. The longest (most
+   * specific) matching base wins, so `['src/app', 'app']` prefers `src/app`.
+   */
+  baseDirs: string[];
+
+  /**
+   * Fixed URL prefix prepended to every derived path — for a base whose own
+   * name is part of the served URL (`pages/api` serves under `/api`). Optional;
+   * App Router / SvelteKit omit it because the base directory is not served.
+   */
+  urlPrefix?: string;
+
+  /**
+   * Named exports whose name IS an HTTP verb (`GET`, `POST`, `PUT`, `PATCH`,
+   * `DELETE`, `HEAD`, `OPTIONS`). The export's name is the method. Matched
+   * against `export function GET`, `export const GET =`, and `export { GET }`.
+   */
+  methodExports: string[];
+}
+
 export interface HttpFlowSupport {
   /**
    * Bare-callee identifiers that initiate an outbound HTTP request with the
@@ -211,6 +259,16 @@ export interface HttpFlowSupport {
    * (`get` → `GET`). Keys are lowercase method tokens.
    */
   methodAliases?: Record<string, string>;
+
+  /**
+   * File-convention routing (Next.js App Router / SvelteKit / Pages Router):
+   * routes served by a handler file's LOCATION, not an in-source decorator or
+   * router call. The extractor derives the served URL from the file's directory
+   * and reads verb-named exports for the methods. See {@link FileRouteSupport}.
+   *
+   * Optional — a pack whose frameworks route only in-source omits it.
+   */
+  fileRoutes?: FileRouteSupport;
 }
 
 /**

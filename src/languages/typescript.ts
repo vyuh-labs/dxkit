@@ -1398,6 +1398,17 @@ export const typescript: LanguageSupport = {
       bases: ['app', 'router'],
     },
     methodAliases: { del: 'DELETE' },
+    // File-convention routing: Next.js App Router serves each `route.ts` under
+    // `app/` (or `src/app/`) with the verb as an exported function name
+    // (`export async function GET`). The shared file-route algebra
+    // (`src/analyzers/flow/file-routes.ts`) handles route groups `(payload)`,
+    // dynamic `[id]`, and catch-all `[[...slug]]` — this descriptor supplies
+    // only the framework-specific handler filename, bases, and verb exports.
+    fileRoutes: {
+      handlerFile: 'route',
+      baseDirs: ['src/app', 'app'],
+      methodExports: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
+    },
   },
 
   // Tree-sitter grammars by extension for the canonical AST layer (src/ast/).
