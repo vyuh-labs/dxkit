@@ -8,6 +8,7 @@ import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 
@@ -511,7 +512,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       tier: 'operational',
       fix: {
         hint: 'Declare dxkit as a project-local devDependency so the hooks + CI guardrail run a pinned version instead of a global (or missing) one.',
-        command: 'npm install --save-dev @vyuhlabs/dxkit',
+        command: addDevCommand(detectPackageManager(cwd), '@vyuhlabs/dxkit'),
         skill: 'dxkit-fix',
       },
     });

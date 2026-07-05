@@ -26,7 +26,10 @@ const shim = require('../packages/create-dxkit/index.js') as {
     pathMod?: typeof path,
   ) => { changed: boolean; reason: string };
   extractNpmLogPath: (text: string | null | undefined) => string | null;
-  formatInstallFailure: (opts?: { stderrChunks?: string[] }) => string;
+  formatInstallFailure: (opts?: { stderrChunks?: string[]; pm?: string }) => string;
+  detectPackageManager: (cwd: string, fsMod?: typeof fs, pathMod?: typeof path) => string;
+  pmBin: (pm: string, platform?: NodeJS.Platform) => string;
+  installArgs: (pm: string) => string[];
 };
 
 let tmp: string;
@@ -225,5 +228,60 @@ describe('npmBin / npxBin', () => {
   it('returns plain names on darwin', () => {
     expect(shim.npmBin('darwin')).toBe('npm');
     expect(shim.npxBin('darwin')).toBe('npx');
+  });
+});
+
+describe('detectPackageManager (shim self-contained copy)', () => {
+  it('detects each PM from its lockfile', () => {
+    const cases: Array<[string, string]> = [
+      ['pnpm-lock.yaml', 'pnpm'],
+      ['yarn.lock', 'yarn'],
+      ['bun.lockb', 'bun'],
+      ['package-lock.json', 'npm'],
+    ];
+    for (const [lockfile, pm] of cases) {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), 'create-dxkit-pm-'));
+      fs.writeFileSync(path.join(d, lockfile), '');
+      expect(shim.detectPackageManager(d), lockfile).toBe(pm);
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the packageManager field when no lockfile, else defaults to npm', () => {
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ packageManager: 'pnpm@9' }));
+    expect(shim.detectPackageManager(tmp)).toBe('pnpm');
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'create-dxkit-pm-'));
+    expect(shim.detectPackageManager(bare)).toBe('npm');
+    fs.rmSync(bare, { recursive: true, force: true });
+  });
+});
+
+describe('installArgs / pmBin (shim)', () => {
+  it('builds the right dev-dep add args per PM', () => {
+    expect(shim.installArgs('npm')).toEqual([
+      'install',
+      '--save-dev',
+      '--no-audit',
+      '@vyuhlabs/dxkit',
+    ]);
+    expect(shim.installArgs('pnpm')).toEqual(['add', '-D', '@vyuhlabs/dxkit']);
+    expect(shim.installArgs('yarn')).toEqual(['add', '-D', '@vyuhlabs/dxkit']);
+    expect(shim.installArgs('bun')).toEqual(['add', '-d', '@vyuhlabs/dxkit']);
+  });
+
+  it('pmBin is plain on posix and .cmd/.exe on win32', () => {
+    expect(shim.pmBin('pnpm', 'linux')).toBe('pnpm');
+    expect(shim.pmBin('pnpm', 'win32')).toBe('pnpm.cmd');
+    expect(shim.pmBin('bun', 'win32')).toBe('bun.exe');
+  });
+});
+
+describe('formatInstallFailure — PM-aware', () => {
+  it('names the actual PM and omits the npm debug-log guidance for non-npm', () => {
+    const pnpm = shim.formatInstallFailure({ stderrChunks: ['ERR_PNPM'], pm: 'pnpm' });
+    expect(pnpm).toContain('pnpm reported:');
+    expect(pnpm).not.toMatch(/npm cache `_logs`/);
+    const npm = shim.formatInstallFailure({ stderrChunks: ['ERESOLVE'], pm: 'npm' });
+    expect(npm).toContain('npm reported:');
   });
 });
