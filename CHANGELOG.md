@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-07-05
+
+### Fixed — package-manager awareness (from first-real-repo dogfood feedback)
+
+dxkit assumed npm everywhere. On a pnpm project that surfaced as a first-touch
+crash and a trail of npm-only hints. dxkit now detects the repo's
+package manager from its lockfile (pnpm / yarn / bun / npm, falling back to the
+`packageManager` field) and phrases every install accordingly.
+
+- **`npm init @vyuhlabs/dxkit` no longer crashes in pnpm/yarn/bun repos.** The
+  bootstrap detected npm unconditionally and ran `npm install`, which errors out
+  in a pnpm workspace. It now adds `@vyuhlabs/dxkit` with the repo's own PM
+  (`pnpm add -D` / `yarn add -D` / `bun add -d` / `npm install --save-dev`); the
+  `--legacy-peer-deps` retry is correctly npm-only.
+- **Install suggestions + executed tool installs are PM-aware.** `doctor` and
+  `tools` now print `pnpm add -D …` / `pnpm install` etc. for your repo, and a
+  node devDependency tool (e.g. `@vitest/coverage-v8`) installs with your PM.
+- **`--yes` already existed** for `tools install` (unattended CI/agent runs);
+  it is now documented in the usage text.
+
+### Fixed — the Next.js rule template activates on any layout
+
+The bundled `.claude/rules/nextjs.md` scoped its `paths:` to `frontend/**` and told
+you to build in `frontend/`. On a single-Next.js-app-at-root repo that matched no
+files, so the rule never activated (installed but inert). Its `paths:` now match
+Next.js files at any depth (App Router, Pages Router, components — root, `src/`,
+`frontend/`, or a monorepo), and the build guidance is package-manager-agnostic.
+
+### Fixed — `uninstall` completeness + discoverability
+
+- **Skills no longer survive an uninstall on repos installed under an older
+  version.** A pre-2.24 manifest didn't record the `dxkit-*` skills, so
+  `uninstall` (which reads the manifest) left all of them behind. It now sweeps
+  `.claude/skills/dxkit-*` by the unambiguous prefix even when an older manifest
+  omits them; your own non-`dxkit-` skills are untouched.
+- **`.gitignore` revert is byte-exact.** It no longer collapses a pre-existing
+  blank line elsewhere in the file — only dxkit's appended block (plus the one
+  separator line it added) is removed.
+- **After `--remove-devdep`, dxkit prints the right "now run install" command**
+  for your PM to prune the lockfile, with a pnpm release-age ordering note.
+- **`uninstall` is now listed in `--help`** and in the `issue --type` list.
+
+### Notes
+
+- **Upgrading in place from ≤2.22 with `--with-hooks`?** Those versions installed
+  `.githooks/pre-push` without setting `core.hooksPath`, so the hook was inert.
+  2.25.0+ wires `core.hooksPath` via a postinstall step; `vyuh-dxkit doctor`
+  flags "hook present but hooksPath unset" and `vyuh-dxkit hooks activate`
+  repairs it.
+- **A package manager's release-age policy can hold back `@latest`.** pnpm's
+  `minimumReleaseAge`, for example, can silently resolve `@vyuhlabs/dxkit@latest`
+  to an older version than what's published. If a feature you expect is missing,
+  check your PM's release-age setting or pin the version explicitly.
+
 ## [2.25.0] - 2026-07-04
 
 ### Added — the interactive flow console (`vyuh-dxkit flow console`)

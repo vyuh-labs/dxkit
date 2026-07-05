@@ -39,6 +39,8 @@ npx vyuh-dxkit loop doctor                         # verify the gate is wired
 The stop verdict has no model in the path: same input, same verdict.
 Existing debt stays grandfathered; only net-new regressions block.
 
+> The agent-facing pieces (the skills like `dxkit-onboard` and `dxkit-fix`, the Stop-gate, and "ask Claude to fix dxkit" guidance) activate when your agent session is **rooted in the repo**, meaning it started from the repo directory. Open your agent there, not in a parent folder.
+
 [Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo) · [Run the fixture gate](#run-a-local-fixture-gate)
 
 <p>
