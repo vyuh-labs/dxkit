@@ -29,7 +29,7 @@ npx vyuh-dxkit uninstall --yes
 
 Useful flags:
 
-- `--remove-devdep` — also remove the `@vyuhlabs/dxkit` devDependency + postinstall from `package.json` (kept by default so a lockfile install doesn't break mid-cleanup; run `npm install` afterward if you use it).
+- `--remove-devdep` — also remove the `@vyuhlabs/dxkit` devDependency + postinstall from `package.json` (kept by default so a lockfile install doesn't break mid-cleanup). After it edits `package.json`, run your package manager's install to prune the lockfile — the CLI prints the exact command for your PM (`npm ci` / `pnpm install` / `yarn install` / `bun install`).
 - `--keep-baselines` — keep the curated, git-tracked artifacts (`.dxkit/baselines/`, the allowlist, `.dxkit/external/`) and remove only the runtime state. Use this if you want to pause dxkit but keep your grandfathered debt inventory.
 - `--force` — also remove dxkit-created files you have edited (default: skip + warn).
 - `--no-feedback` — skip the feedback prompt.
@@ -44,6 +44,12 @@ git status        # after `uninstall --yes`, dxkit's changes are gone
 ```
 
 If you had committed dxkit's files (baselines, workflows), those show as deletions to commit — that is expected; uninstall only edits the working tree, never git history.
+
+## Package-manager notes
+
+- **After `--remove-devdep`, run your PM's install** to prune the lockfile (the CLI prints the exact command). Non-npm repos need their own PM — `pnpm install` / `yarn install` / `bun install`, not `npm install`.
+- **pnpm with a release-age policy** (`minimumReleaseAge`): if your `pnpm-workspace.yaml` has a `minimumReleaseAgeExclude` entry for `@vyuhlabs/dxkit`, keep it until AFTER `pnpm install` prunes dxkit from the lockfile, THEN remove the exclusion and `pnpm install` again. Removing it first makes the stale lockfile fail `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` before it can prune. (That exclusion was added by pnpm, not dxkit, so uninstall does not touch it.)
+- **`@vitest/coverage-v8`**: if you ran `vyuh-dxkit tools install`, it may have added this devDependency for `vyuh-dxkit coverage`. It is not part of dxkit's install manifest, so uninstall leaves it — remove it by hand if you don't want it (`<pm> remove @vitest/coverage-v8`).
 
 ## The feedback prompt (optional, opt-in)
 
