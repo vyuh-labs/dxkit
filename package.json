@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "2.29.0",
+  "version": "2.30.0",
   "description": "A deterministic stop condition and code-graph context layer for AI coding agents: gives agents a code graph to make changes, then blocks only net-new detector-backed regressions at the stop boundary, with no model in the gate.",
   "license": "MIT",
   "author": "Vyuh Labs",
