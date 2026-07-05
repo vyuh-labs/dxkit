@@ -536,6 +536,15 @@ export const java: LanguageSupport = {
   cliBinaries: ['java', 'mvn', 'pmd'],
 
   // Java 17 is current LTS as of 2026-04 with very wide deployment.
+  ciSetup: {
+    steps: [
+      {
+        name: 'Set up Java',
+        uses: 'actions/setup-java@v4',
+        with: { distribution: 'temurin', 'java-version': '17' },
+      },
+    ],
+  },
   defaultVersion: '17',
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/java:1',

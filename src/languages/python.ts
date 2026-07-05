@@ -1180,6 +1180,15 @@ export const python: LanguageSupport = {
 
   permissions: ['Bash(python3:*)', 'Bash(pytest:*)', 'Bash(ruff:*)'],
   ruleFile: 'python.md',
+  ciSetup: {
+    steps: [
+      {
+        name: 'Set up Python',
+        uses: 'actions/setup-python@v5',
+        with: { 'python-version': '3.12' },
+      },
+    ],
+  },
   defaultVersion: '3.12',
   cliBinaries: ['python3', 'ruff'],
   devcontainerFeature: {

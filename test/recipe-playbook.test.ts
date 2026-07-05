@@ -44,6 +44,7 @@ import {
   allDocCommentPatterns,
   allExportDetectionDeclarations,
   allFlowSourceExtensions,
+  allCiSetupSteps,
   allHttpFlow,
   allModelPaths,
   changedFilesTouchFlowSurface,
@@ -109,6 +110,19 @@ const mockPlaybookPack = {
       high: ['/playbookplane/'],
       medium: ['/playbookbinder/', '/playbookforms/'],
     },
+  },
+  // CI runtime-setup contribution (2.32). Distinctive action ref + version so
+  // the assertion verifies the synthetic pack's ciSetup flows through
+  // `allCiSetupSteps` into the workflow — codifying "CI runtime setup is
+  // pack-driven, not a Node-only hardcode."
+  ciSetup: {
+    steps: [
+      {
+        name: 'Set up Playbook',
+        uses: 'playbook/setup-playbook@v9',
+        with: { 'playbook-version': '9.9.9' },
+      },
+    ],
   },
   // HTTP-flow contribution. Distinctive tokens (`playbookFetch`,
   // `playbookClient`, `playbookGet`, `playbookApp`) so the assertion verifies
@@ -426,6 +440,28 @@ describe('recipe playbook — synthetic pack', () => {
     const fakeConfig = makeFakeConfig({ playbook: false });
     const conditions = buildConditions(fakeConfig);
     expect(conditions.IF_PLAYBOOK).toBe(false);
+  });
+
+  // CI runtime setup (2.32): the workflow templater unions each active pack's
+  // ciSetup via allCiSetupSteps. The synthetic pack's distinctive step must flow
+  // through — codifying "CI runtime setup is pack-driven, not Node-only."
+  it('allCiSetupSteps includes the mock pack ciSetup step (stack-aware CI is pack-driven)', () => {
+    const flags = {
+      typescript: false,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const steps = allCiSetupSteps(flags);
+    const synthetic = steps.find((s) => s.uses === 'playbook/setup-playbook@v9');
+    expect(synthetic).toBeDefined();
+    expect(synthetic?.with?.['playbook-version']).toBe('9.9.9');
   });
 
   // ─── activeLanguagesFromFlags (LP.7) ──────────────────────────────────────

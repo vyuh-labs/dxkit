@@ -16,7 +16,12 @@ import { execFileSync } from 'child_process';
 import { makeExecutable, serializePreservingJson } from './files';
 import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
-import { buildDevcontainerExtensions, buildDevcontainerFeatures } from './languages';
+import {
+  buildDevcontainerExtensions,
+  buildDevcontainerFeatures,
+  allCiSetupSteps,
+} from './languages';
+import type { CiSetupStep } from './languages/types';
 import { VERSION } from './constants';
 import {
   resolveBaselineMode,
@@ -117,6 +122,59 @@ function emptyResult(): ShipInstallResult {
 
 function templatesDir(): string {
   return path.join(__dirname, '..', 'templates');
+}
+
+/** Placeholder (with its trailing newline) substituted with the detected stack's
+ *  CI runtime-setup steps. Newline-in-key so a Node-only repo's empty render
+ *  removes the whole line instead of leaving a blank one. */
+const CI_RUNTIME_SETUP_KEY = '__DXKIT_CI_RUNTIME_SETUP__\n';
+
+/** Render one CiSetupStep as YAML at the workflow's 6-space step indent. */
+function renderCiSetupStep(step: CiSetupStep): string {
+  const lines = [`      - name: ${step.name}`, `        uses: ${step.uses}`];
+  if (step.with && Object.keys(step.with).length > 0) {
+    lines.push('        with:');
+    for (const [k, v] of Object.entries(step.with)) lines.push(`          ${k}: '${v}'`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The CI runtime-setup block for the repo's DETECTED stack — the GitHub Actions
+ * steps installing each active pack's language toolchain (Rule 6, unioned via
+ * `allCiSetupSteps`) so a non-Node repo's native dep scanner can install and its
+ * correctness floor can run. Empty on a Node-only repo (Node is dxkit's own
+ * runtime, already in the template). Trailing newline so the block sits cleanly
+ * before the next step; empty stays empty so the placeholder line vanishes.
+ */
+export function renderCiRuntimeSetup(cwd: string): string {
+  let steps: CiSetupStep[] = [];
+  try {
+    steps = allCiSetupSteps(detect(cwd).languages);
+  } catch {
+    steps = [];
+  }
+  return steps.length === 0 ? '' : steps.map(renderCiSetupStep).join('\n') + '\n';
+}
+
+/**
+ * True when an already-installed workflow's CI runtime-setup block is STALE vs
+ * the freshly-rendered one — e.g. a language was added since install, so a setup
+ * step is missing. Lets `update` re-render a dxkit-managed workflow that would
+ * otherwise be skipped (mirrors the anchor-transport migration). Fresh install
+ * (file absent) → false; a Node-only render (no steps) → false.
+ */
+function ciSetupOutOfDate(cwd: string, destName: string, rendered: string): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(cwd, '.github', 'workflows', destName), 'utf8');
+  } catch {
+    return false;
+  }
+  return rendered
+    .split('\n')
+    .filter((l) => l.trim().startsWith('uses:'))
+    .some((l) => !content.includes(l.trim()));
 }
 
 /**
@@ -413,7 +471,20 @@ function installWorkflow(
 }
 
 export function installCiGuardrails(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
-  return installWorkflow(cwd, 'dxkit-guardrails.yml', opts);
+  const ciSetup = renderCiRuntimeSetup(cwd);
+  // Re-render when the detected stack's runtime-setup changed (a language was
+  // added since install) even without --force — dxkit's own managed template.
+  const stale = ciSetupOutOfDate(cwd, 'dxkit-guardrails.yml', ciSetup);
+  const result = installWorkflow(
+    cwd,
+    'dxkit-guardrails.yml',
+    stale ? { ...opts, force: true } : opts,
+    { [CI_RUNTIME_SETUP_KEY]: ciSetup },
+  );
+  if (stale && result.installed.length > 0) {
+    result.notes.push('Refreshed the CI guardrails workflow for the current language stack.');
+  }
+  return result;
 }
 
 /** The single destination filename for the baseline-refresh workflow, whatever
@@ -550,7 +621,11 @@ export function installCiBaselineRefresh(
     cwd,
     REFRESH_TEMPLATE_BY_TRANSPORT[plan.transport],
     effectiveOpts,
-    { __DXKIT_DEFAULT_BRANCH__: defaultBranch, __DXKIT_ANCHOR_REF__: plan.anchorRef },
+    {
+      __DXKIT_DEFAULT_BRANCH__: defaultBranch,
+      __DXKIT_ANCHOR_REF__: plan.anchorRef,
+      [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    },
     REFRESH_WORKFLOW_DEST,
   );
   if (result.installed.length > 0) {
