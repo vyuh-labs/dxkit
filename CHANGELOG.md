@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-07-05
+
+### Fixed — install/uninstall lifecycle reliability (root-cause pass)
+
+A round of real-repo dogfood feedback traced to one gap: dxkit had deep unit
+coverage but no test of its own most important promise — *restore the exact
+pre-dxkit state, on any repo*. This release fixes the root causes and adds a
+real-repo lifecycle harness so the promise is a continuously-checked invariant.
+
+- **No more data loss on uninstall.** The install manifest now records
+  `provenance` (`created` / `overwritten` / `skipped`) per file. A pre-existing
+  `AGENTS.md` / `CLAUDE.md` dxkit merely kept is recorded as `skipped`, so
+  `uninstall` (even `--force`) will never delete a file the project authored.
+  This also fixes the manifest being left behind after uninstall.
+- **The pre-push hook is no longer inert under pnpm.** `init` now activates
+  `core.hooksPath` itself instead of relying on a `postinstall` script that
+  `pnpm add` may skip. The postinstall wiring stays as a re-apply on clone.
+- **`package.json` edits preserve formatting.** Adding the dxkit devDependency
+  no longer reformats a compact or tab-indented `package.json` — a change
+  uninstall could never cleanly undo. Install and uninstall share one
+  format-preserving JSON serializer.
+- **`tools install` no longer disowns what it installs.** A node devDependency
+  it adds on dxkit's behalf (e.g. `@vitest/coverage-v8`) is recorded in the
+  manifest and removed by `uninstall --remove-devdep`.
+- **`init` sequences its next-step advice** — it points at `tools install` then
+  `baseline create`, so the very next step it suggests doesn't fail.
+- **Docs:** `--detect` is no longer mislabeled as a dry-run preview; the pnpm
+  `minimumReleaseAge` uninstall note is corrected (dxkit does not write that
+  exclusion).
+
+### Added — real-repo lifecycle test harness
+
+`test/lifecycle/` runs the built CLI through `init → uninstall` on realistic
+throwaway git repos and asserts the working tree returns byte-identical to the
+pre-dxkit commit — the net that turns "a user finds it weeks later" into "the PR
+fails". It reproduced every fix above as a failing test first.
+
 ## [2.26.0] - 2026-07-05
 
 ### Fixed — package-manager awareness (from first-real-repo dogfood feedback)

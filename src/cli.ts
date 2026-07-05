@@ -723,9 +723,15 @@ export async function run(argv: string[]): Promise<void> {
       // dxkit is broken right after they installed it.
       if (shipResults.length > 0) {
         console.log(''); // slop-ok
-        logger.info(`Next: run \`${dxkitCli('baseline create')}\` to capture today's state.`);
-        logger.dim('   (without a baseline, your pre-push hook + CI guardrail have nothing to');
-        logger.dim('    diff against and will fail-fast on the next push)');
+        // Sequence matters: `baseline create` refuses to write an incomplete
+        // baseline when a scanner is missing (e.g. the coverage tool), so point
+        // at `tools install` FIRST — otherwise the very next step init suggests
+        // fails, right after install.
+        logger.info(
+          `Next: run \`${dxkitCli('tools install')}\`, then \`${dxkitCli('baseline create')}\` to capture today's state.`,
+        );
+        logger.dim('   (tools install provisions the scanners baseline needs; without a baseline,');
+        logger.dim('    your pre-push hook + CI guardrail have nothing to diff against)');
       }
 
       console.log(''); // slop-ok

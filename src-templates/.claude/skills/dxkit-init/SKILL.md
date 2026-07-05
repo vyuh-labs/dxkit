@@ -39,11 +39,14 @@ When `init` finds client HTTP calls and/or server routes, it offers the **integr
 
 ## Steps
 
-1. **Detect the stack** before installing — let the user confirm:
+1. **Install with stack auto-detection** — `--detect` auto-detects the stack and
+   installs with minimal prompts:
    ```bash
    npx vyuh-dxkit init --detect
    ```
-   This auto-detects and previews what `init --full` would do without writing anything.
+   Note: `--detect` INSTALLS (it is not a dry-run preview). To see the detected
+   stack without installing, run a read-only analyzer first (e.g. `npx
+   vyuh-dxkit health .`), or inspect the plan from a throwaway checkout.
 
 2. **Run init**:
    ```bash

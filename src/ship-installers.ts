@@ -13,7 +13,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { makeExecutable } from './files';
+import { makeExecutable, serializePreservingJson } from './files';
+import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
 import { buildDevcontainerExtensions, buildDevcontainerFeatures } from './languages';
 import { VERSION } from './constants';
@@ -209,9 +210,28 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
         '`sh .githooks/<name>.dxkit` line to each existing hook to chain them.',
     );
   }
-  result.notes.push(
-    'Activate the hooks: `git config core.hooksPath .githooks` (one-time, per clone).',
-  );
+  // Activate the hooks HERE, directly, rather than relying on the postinstall
+  // script — a package manager (pnpm add, in particular) may skip the root
+  // postinstall, which would ship the pre-push guardrail inert. `activateHooks`
+  // is idempotent and refuses to clobber a custom `core.hooksPath` (husky /
+  // lefthook / a personal setting), so it is safe to always run. The
+  // postinstall wiring remains as a belt-and-suspenders re-apply on clone.
+  const activation = activateHooks(cwd);
+  if (activation.activated) {
+    result.notes.push('Activated the hooks (`core.hooksPath = .githooks`).');
+  } else if (activation.previousValue && activation.previousValue !== '.githooks') {
+    result.notes.push(
+      `Left your existing \`core.hooksPath = ${activation.previousValue}\` untouched; ` +
+        'chain the dxkit hooks from it (see the sidecar note above).',
+    );
+  } else {
+    // Activation couldn't run (e.g. not a git repo yet) — give the one-time
+    // command so the pre-push guardrail never ships silently inert.
+    result.notes.push(
+      'Activate the hooks with `git config core.hooksPath .githooks` ' +
+        '(dxkit does this automatically when run inside a git repo).',
+    );
+  }
   if (!opts.withPrecommit) {
     result.notes.push(
       'pre-commit hook NOT installed (default). The full guardrail re-runs every analyzer ' +
@@ -563,8 +583,7 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
     // a husky bootstrap, etc.) silently leaves the pre-push guardrail
     // inactive — exactly the gap that lets pushes bypass the check.
     pkg.scripts = { ...(pkg.scripts ?? {}), postinstall: `${existing} && ${POSTINSTALL_CMD}` };
-    const trailing = raw.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailing, 'utf-8');
+    fs.writeFileSync(pkgPath, serializePreservingJson(raw, pkg), 'utf-8');
     result.installed.push('package.json (postinstall)');
     result.notes.push(
       `Chained \`${POSTINSTALL_CMD}\` after your existing postinstall so dxkit hooks activate ` +
@@ -575,14 +594,12 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
 
   pkg.scripts = { ...(pkg.scripts ?? {}), postinstall: POSTINSTALL_CMD };
 
-  // Preserve trailing newline if the original had one — many editors
-  // and linters expect it.
-  const trailingNewline = raw.endsWith('\n') ? '\n' : '';
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailingNewline, 'utf-8');
+  fs.writeFileSync(pkgPath, serializePreservingJson(raw, pkg), 'utf-8');
   result.installed.push('package.json (postinstall)');
   result.notes.push(
-    'Wired `vyuh-dxkit hooks activate` into package.json postinstall — every clone + `npm install` ' +
-      'will activate `core.hooksPath = .githooks` automatically. (Manual one-time activation no longer needed.)',
+    'Wired `vyuh-dxkit hooks activate` into package.json postinstall so future clones + ' +
+      'installs re-activate `core.hooksPath = .githooks` automatically. (init already activated ' +
+      'the hooks for this checkout — no manual step needed.)',
   );
   return result;
 }
@@ -658,8 +675,7 @@ export function installDxkitDevDependency(
   const spec = VERSION && VERSION !== '0.0.0' ? `^${VERSION}` : 'latest';
   pkg.devDependencies = { ...(pkg.devDependencies ?? {}), [DXKIT_PACKAGE]: spec };
 
-  const trailingNewline = raw.endsWith('\n') ? '\n' : '';
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + trailingNewline, 'utf-8');
+  fs.writeFileSync(pkgPath, serializePreservingJson(raw, pkg), 'utf-8');
   result.installed.push('package.json (devDependencies)');
   result.notes.push(
     `Added ${DXKIT_PACKAGE}@${spec} to devDependencies — run \`npm install\` to provision it so the ` +
