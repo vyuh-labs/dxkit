@@ -157,6 +157,36 @@ describe('install/uninstall round-trip restores the exact pre-dxkit state', () =
   });
 });
 
+describe('re-running init preserves an evolved .dxkit/policy.json (no config clobber)', () => {
+  it('an additive init --yes keeps a committed flow.mode: block', () => {
+    // Round-5 data-loss bug: `init` re-runs flow setup on every invocation and,
+    // under --yes, hard-defaulted flow.mode back to "warn" — silently resetting
+    // a posture the user had committed as "block". policy.json is the exact file
+    // the docs invite tuning, so a re-run must preserve it (or skip), never
+    // regenerate. A flow-capable monorepo (client call + served route) is what
+    // makes init reach the flow-setup step at all.
+    write(repo, 'package.json', JSON.stringify({ name: 'fx', version: '1.0.0' }));
+    write(repo, 'web/List.tsx', "axios.get('/articles');\n");
+    write(repo, 'api/ctrl.ts', "class C { @get('/articles') a() {} }\n");
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit flow');
+
+    cli(repo, 'init', '--yes');
+    const policyPath = join(repo, '.dxkit', 'policy.json');
+    const p1 = JSON.parse(readFileSync(policyPath, 'utf8')) as { flow?: { mode?: string } };
+    expect(p1.flow?.mode).toBe('warn'); // fresh setup: gentle default
+
+    // The user evolves the posture to block — exactly what the docs tell them to.
+    p1.flow = { ...p1.flow, mode: 'block' };
+    writeFileSync(policyPath, JSON.stringify(p1, null, 2) + '\n');
+
+    // Re-run init with an additive flag (the reviewer's `--with-baseline-refresh`).
+    cli(repo, 'init', '--with-baseline-refresh', '--yes');
+    const p2 = JSON.parse(readFileSync(policyPath, 'utf8')) as { flow?: { mode?: string } };
+    expect(p2.flow?.mode).toBe('block'); // preserved, not clobbered back to warn
+  });
+});
+
 describe('load-bearing activation does not depend on a package-manager hook', () => {
   it('init --with-hooks activates core.hooksPath itself (not via postinstall)', () => {
     write(repo, 'package.json', JSON.stringify({ name: 'hooks', version: '1.0.0' }));

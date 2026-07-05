@@ -15,8 +15,10 @@ import {
   servicesFromRoutes,
   detectFlowTopology,
   applyFlowSetup,
+  type FlowDetection,
 } from '../src/analyzers/flow/setup';
-import { readFlowConfig, writeFlowPolicy } from '../src/analyzers/flow/config';
+import { readFlowConfig, writeFlowPolicy, existingFlowMode } from '../src/analyzers/flow/config';
+import { promptFlowSetup } from '../src/prompts';
 import { readWorkspace } from '../src/workspace';
 import type { ClientCall } from '../src/analyzers/flow/extract';
 import type { RouteEndpoint } from '../src/analyzers/flow/extract';
@@ -143,6 +145,95 @@ describe('applyFlowSetup', () => {
     });
     expect(written).toContain('.dxkit/workspace.json');
     expect(readWorkspace(dir)?.participants.map((p) => p.name)).toEqual(['api', 'userserver']);
+  });
+});
+
+describe('existingFlowMode', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-flowexisting-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('returns the explicit posture when the policy sets one', () => {
+    writeFlowPolicy(dir, { mode: 'block' });
+    expect(existingFlowMode(dir)).toBe('block');
+  });
+  it('returns undefined when there is no policy file', () => {
+    expect(existingFlowMode(dir)).toBeUndefined();
+  });
+  it('returns undefined when the policy has no flow block or an invalid mode', () => {
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'policy.json'),
+      JSON.stringify({ loop: { preset: 'security-only' } }),
+    );
+    expect(existingFlowMode(dir)).toBeUndefined(); // no flow block
+    writeFileSync(join(dir, '.dxkit', 'policy.json'), JSON.stringify({ flow: { mode: 'bogus' } }));
+    expect(existingFlowMode(dir)).toBeUndefined(); // unknown posture ignored
+  });
+});
+
+describe('promptFlowSetup preserves an evolved posture on a non-interactive re-run', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-flowreinit-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const detection = (suggested: string[] = []): FlowDetection => ({
+    topology: 'monorepo',
+    callCount: 1,
+    routeCount: 1,
+    resolvedCount: 1,
+    suggestedStripPrefixes: suggested,
+    detectedServices: [],
+  });
+
+  it('a fresh --yes setup takes the gentle warn default + detected prefix', async () => {
+    const d = await promptFlowSetup(detection(['${Config.api()}']), {
+      yes: true,
+      forceOn: false,
+      currentMode: existingFlowMode(dir), // undefined — fresh
+    });
+    expect(d.mode).toBe('warn');
+    expect(d.stripUrlPrefixes).toEqual(['${Config.api()}']);
+  });
+
+  it('a --yes re-run keeps a committed flow.mode:block (does not downgrade to warn)', async () => {
+    // This is the exact round-5 repro: init writes warn, the user evolves to
+    // block, an additive re-run must not reset it.
+    writeFlowPolicy(dir, { mode: 'block' });
+    const d = await promptFlowSetup(detection(['${Config.api()}']), {
+      yes: true,
+      forceOn: false,
+      currentMode: existingFlowMode(dir),
+    });
+    applyFlowSetup(dir, d);
+    expect(readFlowConfig(dir).mode).toBe('block'); // preserved
+  });
+
+  it('a --yes re-run leaves an evolved stripUrlPrefixes untouched even when detection suggests one', async () => {
+    writeFlowPolicy(dir, { mode: 'block', stripUrlPrefixes: ['${Config.custom()}'] });
+    const d = await promptFlowSetup(detection(['${Config.detected()}']), {
+      yes: true,
+      forceOn: false,
+      currentMode: existingFlowMode(dir),
+    });
+    applyFlowSetup(dir, d);
+    const cfg = readFlowConfig(dir);
+    expect(cfg.mode).toBe('block');
+    expect(cfg.stripUrlPrefixes).toEqual(['${Config.custom()}']); // not replaced by detection
+  });
+
+  it('forceOn (--flow) also preserves an existing posture rather than forcing warn', async () => {
+    writeFlowPolicy(dir, { mode: 'block' });
+    const d = await promptFlowSetup(detection(), {
+      yes: false,
+      forceOn: true,
+      currentMode: existingFlowMode(dir),
+    });
+    expect(d.mode).toBe('block');
   });
 });
 
