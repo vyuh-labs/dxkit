@@ -43,6 +43,10 @@ export interface SetupBranchProtectionOpts {
   requireReviews?: number;
   /** Force overwrite of existing required checks. Default merge. */
   force?: boolean;
+  /** Preview only: print the exact change and DO NOT write to the repo. This is
+   *  the default for `vyuh-dxkit protect` (dxkit never silently reconfigures a
+   *  repo's settings — you apply explicitly with `--apply` / `--yes`). */
+  dryRun?: boolean;
 }
 
 /** Shape of GitHub's branch protection payload — partial subset we touch. */
@@ -186,6 +190,21 @@ export async function runSetupBranchProtection(
   }
 
   const payload = buildPayload(existing, opts);
+
+  if (opts.dryRun) {
+    console.log(''); // slop-ok
+    logger.info(`Would apply to ${owner}/${repo}#${branch} (dry run — no changes written):`);
+    logger.dim(
+      `  → required status checks: [${payload.required_status_checks?.contexts.join(', ')}]`,
+    );
+    logger.dim(
+      `  → required PR review approvals: ${payload.required_pull_request_reviews?.required_approving_review_count ?? 0}`,
+    );
+    console.log(''); // slop-ok
+    logger.info(`Re-run with \`${dxkitCli('protect --apply')}\` to write these settings.`);
+    return;
+  }
+
   logger.info(
     `Applying protection: required checks = [${payload.required_status_checks?.contexts.join(', ')}]; ` +
       `reviews required = ${payload.required_pull_request_reviews?.required_approving_review_count ?? 0}.`,

@@ -52,6 +52,7 @@ import {
   floorLedgerStatuses,
   type FloorGateOutcome,
 } from './floor-gate';
+import { resolveLoopTestCommand } from './policy';
 
 /** Subset of the Claude Code Stop-hook stdin payload we consume. */
 interface StopHookPayload {
@@ -145,7 +146,7 @@ export function buildRepairMessage(json: GuardrailJsonPayload): string {
  * tail to surface in the block message. `not_configured` when unset.
  */
 function runConfiguredTests(repoDir: string): { status: CheckStatus; tail: string } {
-  const cmd = process.env.DXKIT_LOOP_TEST_COMMAND;
+  const cmd = resolveLoopTestCommand(repoDir);
   if (!cmd || !cmd.trim()) return { status: 'not_configured', tail: '' };
   try {
     execSync(cmd, { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

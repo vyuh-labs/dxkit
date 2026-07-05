@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { resolveBaselineMode } from '../baseline/modes';
-import { resolveLoopPreset } from './policy';
+import { resolveLoopPreset, resolveLoopTestCommand } from './policy';
 import { LEDGER_FILE } from './ledger';
 import { loopGateActive } from './gate-cache';
 import { dxkitCli, resolveDxkitCli } from '../self-invocation';
@@ -262,20 +262,24 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
   });
 
   // 5. Postflight test command — optional. When unset the gate skips the
-  // post-pass test run; that is a real reduction in coverage, so warn.
-  const testCmd = process.env.DXKIT_LOOP_TEST_COMMAND;
+  // post-pass test run; that is a real reduction in coverage, so warn. Resolved
+  // from DXKIT_LOOP_TEST_COMMAND OR the durable .dxkit/policy.json loop.testCommand.
+  const testCmd = resolveLoopTestCommand(cwd);
+  const source = process.env.DXKIT_LOOP_TEST_COMMAND?.trim()
+    ? 'DXKIT_LOOP_TEST_COMMAND'
+    : '.dxkit/policy.json loop.testCommand';
   checks.push({
     label: 'postflight test command',
     status: testCmd && testCmd.trim() ? 'pass' : 'warn',
     detail:
       testCmd && testCmd.trim()
-        ? `DXKIT_LOOP_TEST_COMMAND set (${testCmd.trim().slice(0, 60)})`
-        : 'DXKIT_LOOP_TEST_COMMAND unset — the gate will not run tests after the guardrail passes',
+        ? `set via ${source} (${testCmd.trim().slice(0, 60)})`
+        : 'unset — the gate will not run tests after the guardrail passes',
     ...(testCmd && testCmd.trim()
       ? {}
       : {
           fix: {
-            hint: 'Optionally export DXKIT_LOOP_TEST_COMMAND so the gate also blocks completion on a failing test suite.',
+            hint: 'Set loop.testCommand in .dxkit/policy.json (durable) or export DXKIT_LOOP_TEST_COMMAND so the gate also blocks completion on a failing test suite.',
           },
         }),
   });
