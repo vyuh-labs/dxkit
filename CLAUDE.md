@@ -57,9 +57,32 @@ consumer through it (canonical examples added in 2.30):
   explicit-config callers (the two-ref gate, cross-repo publish, the map CLI);
 - benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
   (Rule 5's benign module), consulted by BOTH secret detectors.
+- what dxkit OWNS vs what the user owns, for a managed file → the manifest's
+  `provenance` (`created`/`overwritten`/`skipped`) + `hash`. BOTH the update
+  write path (`decideUpdateDisposition` in `src/update-disposition.ts`, consumed
+  by the generator) and `uninstall` (`src/uninstall/`) read them — so `update`
+  refreshes a dxkit-owned unmodified file yet never clobbers a user file, on the
+  same model uninstall uses. The recurring shape here (2.33): a fix landed in
+  uninstall's provenance handling but update decided on "exists?" + `--force`
+  alone, so it no-op'd its own fixes AND `--force` deleted user files. When you
+  touch how a managed file is written or removed, both paths consult the same
+  fields.
+- effective branch protection → `classifyEnforcement` in `src/enforcement.ts`
+  reads BOTH mechanisms (classic `/branches/{b}/protection` AND repository
+  rulesets `/rules/branches/{b}`) and unions them. Reading only one (the class
+  that shipped: a ruleset-protected branch 404s the classic endpoint and read as
+  "unprotected") is the bug — every consumer (`doctor`, the anchor-transport
+  selector, `protect`) reads this one classifier.
+- which dependency scanner can read this repo → `detectLockfile`
+  (`src/package-manager.ts`). A scanner must be pointed at a lockfile it
+  understands (`npm audit` needs an npm lockfile; a pnpm/yarn/bun lockfile routes
+  to the shared lockfile-aware `gatherOsvScannerDepVulnsResult`). Selecting a
+  scanner without consulting the present lockfile is the bug.
 
 `scripts/check-architecture.sh` gates the first two (a second `git ls-files
-.env` or a config-less `gatherFlowModel` on a single-repo surface fails CI).
+.env` or a config-less `gatherFlowModel` on a single-repo surface fails CI). The
+`update` provenance lane is pinned by `test/lifecycle/` (the update lane) and the
+`test/update-disposition.test.ts` branch matrix.
 
 #### The fixture-repo ANALYSIS harness (`test/fixtures-analysis.test.ts`)
 
