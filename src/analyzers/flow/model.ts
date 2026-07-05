@@ -16,18 +16,22 @@
  */
 
 import { extractFileFlow, type ClientCall, type FileFlow, type RouteEndpoint } from './extract';
-import type { NormalizeConfig } from './normalize';
+import { catchAllStaticPrefix, isCatchAllPath, type NormalizeConfig } from './normalize';
 
 /**
  * Why a call did or didn't bind to a route:
  *   - `exact`            — matched a route on a path with real static signal;
+ *   - `catch-all`        — matched a wildcard route (`/api/{*}` from `[...slug]`,
+ *                          Express `/*`, Spring `/**`) on its static prefix; the
+ *                          call IS served, but via a splat rather than a literal
+ *                          route, so confidence sits below an exact match;
  *   - `placeholder-only` — matched, but the path is all `{var}` (no signal);
  *   - `no-route`         — path resolved to an internal route shape, but no
  *                          served route matches it;
  *   - `external`         — the URL is an external/absolute address we don't
  *                          serve (path is null), so it is not an internal binding.
  */
-export type BindingReason = 'exact' | 'placeholder-only' | 'no-route' | 'external';
+export type BindingReason = 'exact' | 'catch-all' | 'placeholder-only' | 'no-route' | 'external';
 
 /** One client call resolved (or not) against the served routes. */
 export interface FlowBinding {
@@ -60,18 +64,53 @@ export function joinFlow(
   routes: readonly RouteEndpoint[],
 ): FlowBinding[] {
   const routeIndex = new Map<string, RouteEndpoint>();
-  for (const r of routes) routeIndex.set(`${r.method} ${r.path}`, r);
+  // Catch-all routes, grouped by method, each with its static prefix. A concrete
+  // call that misses the exact index falls back to the LONGEST-prefix catch-all
+  // for its method — a splat route (`/api/{*}` from `[...slug]`, Express `/*`,
+  // Spring `/**`) genuinely serves every path under its prefix.
+  const catchAllsByMethod = new Map<HttpMethodKey, { route: RouteEndpoint; prefix: string }[]>();
+  for (const r of routes) {
+    routeIndex.set(`${r.method} ${r.path}`, r);
+    if (isCatchAllPath(r.path)) {
+      const list = catchAllsByMethod.get(r.method) ?? [];
+      list.push({ route: r, prefix: catchAllStaticPrefix(r.path) });
+      catchAllsByMethod.set(r.method, list);
+    }
+  }
 
   return calls.map((call): FlowBinding => {
     if (call.path == null) return { call, route: null, confidence: 0, reason: 'external' };
     const route = routeIndex.get(`${call.method} ${call.path}`) ?? null;
-    if (!route) return { call, route: null, confidence: 0, reason: 'no-route' };
-    if (isPlaceholderOnlyPath(call.path)) {
-      return { call, route, confidence: 0.3, reason: 'placeholder-only' };
+    if (route) {
+      if (isPlaceholderOnlyPath(call.path)) {
+        return { call, route, confidence: 0.3, reason: 'placeholder-only' };
+      }
+      return { call, route, confidence: 1, reason: 'exact' };
     }
-    return { call, route, confidence: 1, reason: 'exact' };
+    const catchAll = bestCatchAllMatch(call.path, catchAllsByMethod.get(call.method));
+    if (catchAll) return { call, route: catchAll, confidence: 0.7, reason: 'catch-all' };
+    return { call, route: null, confidence: 0, reason: 'no-route' };
   });
 }
+
+/** The most-specific catch-all route whose static prefix covers `callPath`
+ *  (`/api` covers `/api/x` and `/api/x/y`), or null. Longest prefix wins so a
+ *  nested `/api/v2/{*}` beats `/api/{*}`; a root catch-all (`''` prefix) matches
+ *  anything. Not applied to an all-placeholder call (no static signal to align). */
+function bestCatchAllMatch(
+  callPath: string,
+  candidates: { route: RouteEndpoint; prefix: string }[] | undefined,
+): RouteEndpoint | null {
+  if (!candidates || isPlaceholderOnlyPath(callPath)) return null;
+  let best: { route: RouteEndpoint; prefix: string } | null = null;
+  for (const c of candidates) {
+    const covers = c.prefix === '' || callPath === c.prefix || callPath.startsWith(c.prefix + '/');
+    if (covers && (!best || c.prefix.length > best.prefix.length)) best = c;
+  }
+  return best?.route ?? null;
+}
+
+type HttpMethodKey = RouteEndpoint['method'];
 
 /**
  * Dedup served routes to one per distinct `(method, path)` — the canonical
