@@ -11,6 +11,8 @@ import {
   enrichWithUpgradePlans,
   gatherOsvScannerFixPlans,
 } from '../analyzers/tools/osv-scanner-fix';
+import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
+import { detectLockfile } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -334,6 +336,43 @@ async function gatherTsDepVulnsResult(
   if (!fileExists(cwd, 'package.json')) {
     return { kind: 'no-manifest', reason: 'no package.json' };
   }
+
+  // Scanner selection is LOCKFILE-AWARE: `npm audit` can only resolve versions
+  // from an npm lockfile (`package-lock.json` / `npm-shrinkwrap.json`). On a
+  // pnpm/yarn/bun repo it errors and emits unparseable output — the dimension
+  // silently collapsed to UNMEASURED before this. So we route by the lockfile
+  // that is actually present: npm lockfile → npm-audit (richest for npm); any
+  // other lockfile → osv-scanner, which reads pnpm-lock.yaml / yarn.lock / bun
+  // natively (the same lockfile-aware path java/kotlin/ruby already use).
+  const lock = detectLockfile(cwd);
+  if (!lock) {
+    return {
+      kind: 'unavailable',
+      reason:
+        'no lockfile to audit (package-lock.json / pnpm-lock.yaml / yarn.lock); ' +
+        'run your package manager install to generate one',
+    };
+  }
+  if (lock.pm !== 'npm') {
+    // osv-scanner's npm ecosystem covers pnpm/yarn/bun lockfiles. Point it at the
+    // detected lockfile only, so a repo with a stray package-lock.json isn't
+    // double-scanned.
+    return gatherOsvScannerDepVulnsResult(cwd, 'typescript', 'npm', [lock.lockfile]);
+  }
+
+  return gatherTsDepVulnsViaNpmAudit(cwd, opts);
+}
+
+/**
+ * npm-audit dep-vuln gathering — the npm-lockfile path of the selector above.
+ * Reached only when a `package-lock.json` / `npm-shrinkwrap.json` is present
+ * (npm audit needs one), so the osv-scanner-fix enrichment's package-lock.json
+ * assumption below holds.
+ */
+async function gatherTsDepVulnsViaNpmAudit(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<DepVulnGatherOutcome> {
   const auditRaw = run('npm audit --json 2>&1', cwd, 60000);
   if (!auditRaw) return { kind: 'unavailable', reason: 'npm audit produced no output' };
   try {

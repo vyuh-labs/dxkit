@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   detectPackageManager,
+  detectLockfile,
   addDevPrefix,
   addDevCommand,
   provisionCommand,
@@ -37,6 +38,44 @@ describe('detectPackageManager', () => {
     writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ packageManager: 'yarn@4.0.0' }));
     expect(detectPackageManager(dir)).toBe('pnpm');
+  });
+});
+
+describe('detectLockfile (dep-scanner selection input, #15)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-lock-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('returns null when no lockfile is present (package.json alone is not enough to audit)', () => {
+    writeFileSync(join(dir, 'package.json'), '{"name":"x"}');
+    expect(detectLockfile(dir)).toBeNull();
+  });
+
+  it('reports the present lockfile and its owning PM', () => {
+    const cases: Array<[string, string]> = [
+      ['pnpm-lock.yaml', 'pnpm'],
+      ['yarn.lock', 'yarn'],
+      ['bun.lock', 'bun'],
+      ['package-lock.json', 'npm'],
+      ['npm-shrinkwrap.json', 'npm'],
+    ];
+    for (const [lockfile, pm] of cases) {
+      const d = mkdtempSync(join(tmpdir(), 'dxkit-lock-'));
+      writeFileSync(join(d, lockfile), '');
+      expect(detectLockfile(d), lockfile).toEqual({ pm, lockfile });
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it('a pnpm lockfile is selected even when a stray package-lock.json also exists', () => {
+    // The bug's shape: both lockfiles present, both scanners "found". Selection
+    // must pick the PM that actually provisioned the repo, so the scanner reads
+    // a lockfile it understands.
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
+    writeFileSync(join(dir, 'package-lock.json'), '');
+    expect(detectLockfile(dir)).toEqual({ pm: 'pnpm', lockfile: 'pnpm-lock.yaml' });
   });
 
   it('falls back to the packageManager field when no lockfile', () => {

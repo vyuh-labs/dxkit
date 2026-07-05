@@ -71,6 +71,29 @@ describe('runGuardrailCheck (integration)', () => {
       expect(renderJson(base).depVulnsUnmeasured).toBeUndefined();
     });
 
+    it('UNMEASURED remediation is reason-aware — absent vs present-but-unusable (#15)', async () => {
+      await createBaseline({ cwd: dir });
+      const base = await runGuardrailCheck({ cwd: dir });
+
+      // Scanner genuinely absent → "tools install" is the right fix.
+      const absent = { ...base, depVulnsUnmeasured: { reason: 'osv-scanner not installed' } };
+      expect(renderConsole(absent)).toContain('tools install');
+      expect(renderMarkdown(absent)).toContain('tools install');
+
+      // Scanner PRESENT but the repo has no lockfile → don't tell the user to
+      // reinstall; tell them to generate a lockfile.
+      const noLock = {
+        ...base,
+        depVulnsUnmeasured: { reason: 'no lockfile to audit (package-lock.json / pnpm-lock.yaml)' },
+      };
+      expect(renderConsole(noLock)).not.toContain('tools install');
+      expect(renderConsole(noLock).toLowerCase()).toContain('lockfile');
+
+      // Scanner ran and failed at runtime → not an install problem either.
+      const failed = { ...base, depVulnsUnmeasured: { reason: 'npm audit parse error: boom' } };
+      expect(renderConsole(failed)).not.toContain('tools install');
+    });
+
     it('reports no changes, then detects a new stale-file across check + renderers + explicit --baseline path', async () => {
       // Step 1: clean repo. Baseline + immediate check should
       // report no per-finding changes and no envelope drift —

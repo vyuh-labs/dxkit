@@ -58,6 +58,24 @@ function isBlocking(p: ClassifiedPair): boolean {
  * Render the check result as a human-readable text block. Returns a
  * single multi-line string; callers route it to stdout.
  */
+/**
+ * The remediation clause for an UNMEASURED dependency dimension — honest about
+ * WHY the scan didn't run. "run tools install" is correct only when the scanner
+ * is genuinely absent; on a scanner that IS present but couldn't run (a missing
+ * lockfile, a runtime failure) it sends the user down the wrong path (the bug:
+ * a present osv-scanner told to "install the scanner"). Branch on the reason.
+ */
+export function depVulnsUnmeasuredRemediation(reason: string): string {
+  const r = reason.toLowerCase();
+  if (/not installed|not present|not found|no scanner/.test(r)) {
+    return 'Run `vyuh-dxkit tools install` so the scanner is present.';
+  }
+  if (/no lockfile|no manifest|generate one/.test(r)) {
+    return 'Generate a lockfile (run your package manager install) so the scanner can resolve dependency versions.';
+  }
+  return 'The scanner is present but did not produce a result — investigate the reason above rather than reinstalling.';
+}
+
 export function renderConsole(result: GuardrailCheckResult): string {
   const lines: string[] = [];
 
@@ -146,8 +164,8 @@ export function renderConsole(result: GuardrailCheckResult): string {
     lines.push('');
     lines.push(
       `  ⚠ Dependency audit UNMEASURED — ${result.depVulnsUnmeasured.reason}. A pass here ` +
-        `does not verify "no net-new dependency vulnerabilities"; run \`vyuh-dxkit tools ` +
-        `install\` so the scanner is present.`,
+        `does not verify "no net-new dependency vulnerabilities". ` +
+        depVulnsUnmeasuredRemediation(result.depVulnsUnmeasured.reason),
     );
   }
   if (result.refExcludedKinds.length > 0) {
@@ -581,8 +599,8 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push(
       `> ⚠️ **Dependency audit UNMEASURED** — ${result.depVulnsUnmeasured.reason}. ` +
         `A pass here does **not** mean "no net-new dependency vulnerabilities": the scan ` +
-        `could not run, so zero dep findings are unverified. Install the scanner ` +
-        `(\`vyuh-dxkit tools install\`) so the dependency dimension is actually gated.`,
+        `could not run, so zero dep findings are unverified. ` +
+        depVulnsUnmeasuredRemediation(result.depVulnsUnmeasured.reason),
     );
     lines.push('');
   }
