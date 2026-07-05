@@ -39,6 +39,7 @@ const PROTECTED: EnforcementState = {
   probed: true,
   directPushBlocked: true,
   guardrailRequired: true,
+  guardrailContextLegacyOnly: false,
   rulesetGoverned: false,
 };
 const UNPROTECTED: EnforcementState = {
@@ -46,6 +47,7 @@ const UNPROTECTED: EnforcementState = {
   probed: true,
   directPushBlocked: false,
   guardrailRequired: false,
+  guardrailContextLegacyOnly: false,
   rulesetGoverned: false,
 };
 const UNKNOWN: EnforcementState = {
@@ -53,6 +55,7 @@ const UNKNOWN: EnforcementState = {
   probed: false,
   directPushBlocked: false,
   guardrailRequired: false,
+  guardrailContextLegacyOnly: false,
   rulesetGoverned: false,
 };
 
@@ -171,6 +174,52 @@ describe('classifyEnforcement', () => {
     expect(s.guardrailRequired).toBe(true);
     expect(s.rulesetGoverned).toBe(true);
   });
+  // Legacy check-name recognition (#16). The pre-fix workflow emitted the job
+  // id `guardrail`; a protection requiring it must still read as "guardrail
+  // required" (not BYPASSABLE), flagged legacy-only so doctor prompts a rename.
+  it('a legacy `guardrail` classic context counts as required, flagged legacy-only', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({ classic: { required_status_checks: { contexts: ['guardrail'] } } }),
+    );
+    expect(s.guardrailRequired).toBe(true);
+    expect(s.guardrailContextLegacyOnly).toBe(true);
+  });
+  it('a legacy `guardrail` ruleset context counts as required, flagged legacy-only', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({
+        classic: null,
+        rules: [
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [{ context: 'guardrail' }] },
+          },
+        ],
+      }),
+    );
+    expect(s.guardrailRequired).toBe(true);
+    expect(s.guardrailContextLegacyOnly).toBe(true);
+  });
+  it('the canonical `dxkit-guardrails` context is NOT legacy-only', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({ classic: { required_status_checks: { contexts: ['dxkit-guardrails'] } } }),
+    );
+    expect(s.guardrailRequired).toBe(true);
+    expect(s.guardrailContextLegacyOnly).toBe(false);
+  });
+  it('both canonical + legacy present → required, not legacy-only', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({
+        classic: { required_status_checks: { contexts: ['guardrail', 'dxkit-guardrails'] } },
+      }),
+    );
+    expect(s.guardrailRequired).toBe(true);
+    expect(s.guardrailContextLegacyOnly).toBe(false);
+  });
+
   it('ref-integrity-only ruleset rules (non_fast_forward) do NOT count as a push block', () => {
     const s = classifyEnforcement('main', reads({ rules: [{ type: 'non_fast_forward' }] }));
     expect(s.directPushBlocked).toBe(false);

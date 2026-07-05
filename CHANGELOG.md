@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.34.0] - 2026-07-05
+
+### Fixed — the guardrail's required-status-check name matches what the workflow emits
+
+dxkit's guardrails workflow reported a check-run named `guardrail` (GitHub
+derived it from the job id, which had no explicit `name:`), but dxkit's
+enforcement code, `protect`, and docs all expected the check to be called
+`dxkit-guardrails`. So on a correctly-protected repo `doctor` reported the
+guardrail as "BYPASSABLE", and `protect` configured a required status check that
+could never be satisfied (it would block every PR).
+
+- **The workflow's guardrail job now has an explicit `name: dxkit-guardrails`**,
+  so the emitted status-check context matches the name `protect` writes and
+  `classifyEnforcement` matches. This is now a single source of truth pinned by
+  `test/enforcement-check-name.test.ts` — the template's job name and the code's
+  `GUARDRAIL_CHECK` can no longer silently drift (the class of bug).
+- **Legacy recognition + migration.** A protection still requiring the old
+  `guardrail` context is recognized as "guardrail required" (it no longer reads
+  as BYPASSABLE), and `doctor` flags it: the workflow now emits
+  `dxkit-guardrails`, so the required check should be renamed. `protect` drops the
+  stale `guardrail` context when it rewrites classic protection.
+
+**Migration note:** if you configured a branch protection or ruleset to require a
+status check named `guardrail`, update it to require `dxkit-guardrails` after this
+release — otherwise PRs will block on a check name the workflow no longer reports.
+`vyuh-dxkit doctor` will tell you if this applies to your repo.
+
 ## [2.33.0] - 2026-07-05
 
 The "update-path + real-repo-shape correctness" release. Every fix here closed a
