@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.30.0] - 2026-07-05
+
+### Fixed — two "half-landed fix" bugs, and the harness that stops the class
+
+Two recent fixes reached one of their code paths but not a sibling — the same
+shape of bug several times over. Both are now closed, and the underlying reason
+is addressed with a new test harness rather than another one-off patch.
+
+- **`.env.example` is no longer reported as a committed secret.** The 2.29 fix
+  exempted it in the env-in-git *metric count* but not the *per-finding
+  producer*; both now read one canonical `trackedEnvFiles` detector.
+- **`flow.stripUrlPrefixes` is applied on every flow surface.** `init` wrote the
+  detected base-URL helper to policy, and the map + gate honored it — but `flow`
+  diagnosis and topology detection re-gathered without it, so those calls stayed
+  unresolved. All single-repo flow surfaces now go through one
+  `gatherRepoFlowModel` entry point that loads the policy itself.
+
+### Added — fixture-repo analysis harness
+
+dxkit's self-guardrail runs on dxkit's own repo, which has none of the shapes
+that trip real projects (`.env.example`, base-URL-helper calls, catch-all
+routes) — so it could not catch the bugs above. A new harness runs dxkit's
+analysis on a MATRIX of minimal fixtures (TypeScript, Python, Go) and asserts
+cross-cutting invariants on each. It is not a single framework's fixture: the
+language-agnostic checks must hold on every stack, and a new language pack adds a
+fixture directory and inherits them. An architecture rule now also forbids a
+second `git ls-files .env` or a policy-less flow gather, so these duplicate paths
+cannot silently reappear.
+
 ## [2.29.0] - 2026-07-05
 
 ### Flow — catch-all routes and base-URL-helper calls now resolve
