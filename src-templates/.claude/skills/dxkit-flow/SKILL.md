@@ -68,11 +68,27 @@ When the provider a call targets lives in another repo, the gate needs that repo
 
   `flow refresh` writes just this repo's snapshots; `flow publish` unions the whole mesh so this repo resolves calls to services it does not co-locate. Commit the result.
 
+### console — an interactive HTML artifact a reviewer can exercise
+
+Generate a self-contained HTML console of the flow — the UI→API map plus a request runner per endpoint — so an author or reviewer can *exercise* exactly what a change touched, not just read that it broke.
+
+```
+npx vyuh-dxkit flow console                 → full map → .dxkit/reports/flow-console.html
+npx vyuh-dxkit flow console --diff <ref>    → PR-scoped: only endpoints the change touches,
+                                              with any net-new broken integration flagged
+npx vyuh-dxkit flow console --json           → { outPath, scope, broken, ... } for the agent to read
+```
+
+- **It is diff-scoped in `--diff` mode** (the reviewer sees the three integrations this PR moves, not the whole app), and the gate marks the ones this change net-new breaks — the same findings `guardrail check` reports, made tangible.
+- **Safety is load-bearing and unconditional:** dxkit generates the document statically and makes **zero** HTTP calls. The request runner calls FROM THE BROWSER when the user opens the file and enters, at runtime, a Base URL (their dev/staging, never prod) and an auth token. That token lives only in the open tab — it is never committed, logged, baked into the artifact, or seen by dxkit or CI. Point it at a dev/staging origin that allows the page's origin (CORS).
+- In CI the console is generated diff-scoped, uploaded as a build artifact, and linked from the guardrail PR comment — no server, no required infra. It complements the gate (enforcement); it is a reviewer-ergonomics aid, not itself a gate.
+
 ## What lives where
 
 | Artifact | Role |
 |---|---|
 | `.dxkit/policy.json:flow` | posture (`mode`) + URL strip-prefixes + specs |
+| `.dxkit/reports/flow-console.html` | the generated interactive console (git-ignored output) |
 | `.dxkit/workspace.json` | the participants (name, path, ref, base URLs) of a multi-repo system |
 | `.dxkit/flow/served.json` / `consumed.json` | the committed contract snapshots the gate reads |
 

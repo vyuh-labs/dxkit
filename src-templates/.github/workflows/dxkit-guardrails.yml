@@ -98,6 +98,36 @@ jobs:
           fi
           "${DXKIT}" floor check --surface ci
 
+      # Interactive flow console (design §E) — a self-contained HTML artifact
+      # scoped to THIS PR: the UI→API map + a browser-side request runner for the
+      # integrations the diff touches, with any net-new break flagged. dxkit
+      # generates it statically and makes no HTTP call; the runner calls from the
+      # reviewer's browser with a Base URL + token they enter, never committed.
+      # Self-skips (produces nothing to upload) on a repo with no UI→API surface.
+      - name: Generate flow console
+        id: console
+        if: always()
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          set +e
+          "${DXKIT}" flow console --diff "${{ github.event.pull_request.base.sha }}" \
+            --out flow-console.html --json > console.json 2>/dev/null
+          set -e
+          eps=$(node -e "try{const j=require('./console.json');process.stdout.write(String((j.shownEndpoints||0)+(j.broken||0)))}catch(e){process.stdout.write('0')}" 2>/dev/null || echo 0)
+          echo "endpoints=$eps" >> "$GITHUB_OUTPUT"
+
+      - name: Upload flow console
+        if: always() && steps.console.outputs.endpoints != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flow-console
+          path: flow-console.html
+          if-no-files-found: ignore
+
       - name: Post PR comment
         if: always()
         env:
@@ -111,6 +141,12 @@ jobs:
             printf '%s\n' "$MARKER"
             cat guardrail-report.md
           } > comment.md
+          # Link the flow console artifact when this PR touched an integration.
+          if [ "${{ steps.console.outputs.endpoints }}" != "0" ] && [ -f flow-console.html ]; then
+            printf '\n\n---\n📊 **[Interactive flow console](%s)** — download from this run'"'"'s **Artifacts** to exercise the %s integration(s) this PR touches (UI→API map + request runner; your auth stays in the browser).\n' \
+              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              "${{ steps.console.outputs.endpoints }}" >> comment.md
+          fi
           existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" \
             | head -n1)
