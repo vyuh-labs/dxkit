@@ -27,34 +27,31 @@ export interface ReversalResult {
 export const STEALTH_HEADER = '# dxkit (stealth mode — local only, not committed)';
 
 /**
- * Remove a dxkit block from `.gitignore`. The installer writes each block as
- * `\n<HEADER>\n<entries…>\n` (a header line followed by its entries, up to the
- * next blank line or EOF). We strip from the header line through the run of
- * non-blank lines that follows it, leaving every other line — including the
- * user's own entries — untouched.
+ * Remove a dxkit block from `.gitignore`, byte-exactly. The installer appends
+ * each block as `'\n' + HEADER + '\n' + entries.join('\n') + '\n'` — one
+ * separator blank line, the header, its entries, a trailing newline. The
+ * reversal removes EXACTLY that: the header + the contiguous non-blank entry
+ * lines below it, plus the single blank line immediately above the header (the
+ * separator dxkit prepended). It performs no global whitespace collapse, so a
+ * user's own blank lines elsewhere in the file are preserved byte-for-byte —
+ * the guarantee the skill promises.
  */
 export function stripGitignoreBlock(content: string, header: string): ReversalResult {
   const lines = content.split('\n');
-  const out: string[] = [];
-  let changed = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === header) {
-      changed = true;
-      // Skip the header and the contiguous non-blank entry lines under it.
-      i++;
-      while (i < lines.length && lines[i].trim() !== '') i++;
-      // `i` now points at the blank line (or EOF); the for-loop's i++ consumes
-      // that blank separator so we don't leave a double blank behind.
-      continue;
-    }
-    out.push(lines[i]);
-  }
-  if (!changed) return { changed: false, content };
-  // Collapse a leading blank the block may have left, and trailing blanks.
-  let result = out
-    .join('\n')
-    .replace(/^\n+/, '')
-    .replace(/\n{3,}/g, '\n\n');
+  const headerIdx = lines.findIndex((l) => l.trim() === header);
+  if (headerIdx === -1) return { changed: false, content };
+
+  // The block spans the header through the contiguous non-blank entry lines.
+  let end = headerIdx + 1;
+  while (end < lines.length && lines[end].trim() !== '') end++;
+
+  // Remove the one separator blank line the installer prepended above the
+  // header — but only that one, never a user's blank two lines up.
+  let start = headerIdx;
+  if (start > 0 && lines[start - 1].trim() === '') start--;
+
+  const kept = [...lines.slice(0, start), ...lines.slice(end)];
+  let result = kept.join('\n');
   if (result.trim() === '') result = '';
   return { changed: true, content: result };
 }

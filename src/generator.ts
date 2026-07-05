@@ -95,7 +95,7 @@ function buildSettingsJson(config: ResolvedConfig): string {
  * skill content references the canonical `vyuh-dxkit` CLI surface
  * and doesn't need per-project variables).
  */
-const DXKIT_SKILLS = [
+export const DXKIT_SKILLS = [
   'dxkit-learn',
   'dxkit-init',
   'dxkit-config',

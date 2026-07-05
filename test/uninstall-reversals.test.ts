@@ -46,6 +46,8 @@ describe('stripGitignoreBlock — preserves user entries', () => {
   });
 
   it('stripAllGitignoreBlocks removes both runtime + stealth blocks', () => {
+    // Realistic installer output: the user's `node_modules/\n`, then each block
+    // appended as `'\n' + HEADER + '\n' + entries + '\n'` (trailing newline).
     const content = [
       'node_modules/',
       '',
@@ -55,10 +57,11 @@ describe('stripGitignoreBlock — preserves user entries', () => {
       STEALTH_HEADER,
       '.dxkit/',
       '.vyuh-dxkit.json',
+      '',
     ].join('\n');
     const { changed, content: out } = stripAllGitignoreBlocks(content);
     expect(changed).toBe(true);
-    expect(out).toBe('node_modules/\n');
+    expect(out).toBe('node_modules/\n'); // byte-exact restore of the pre-dxkit file
   });
 });
 
@@ -177,5 +180,22 @@ describe('stripPackageJsonDxkit', () => {
   it('no-op when dxkit is absent', () => {
     const parsed = { devDependencies: { react: '^18.0.0' } };
     expect(stripPackageJsonDxkit(parsed).changed).toBe(false);
+  });
+});
+
+describe('stripGitignoreBlock — byte-exact (no collapse of user blanks)', () => {
+  it('preserves a pre-existing double blank line elsewhere in the file', () => {
+    const original = 'dist\n\n\n# Playwright\ntest-results\n';
+    // installer appends: '\n' + HEADER + '\n' + entries + '\n'
+    const installed = original + '\n' + GITIGNORE_HEADER + '\n.dxkit/reports\n.dxkit/loop\n';
+    const out = stripGitignoreBlock(installed, GITIGNORE_HEADER);
+    expect(out.changed).toBe(true);
+    expect(out.content).toBe(original); // byte-for-byte
+  });
+
+  it('removes exactly one separator blank above the header, not a user blank two lines up', () => {
+    const original = 'node_modules\n\n';
+    const installed = original + '\n' + GITIGNORE_HEADER + '\n.dxkit/reports\n';
+    expect(stripGitignoreBlock(installed, GITIGNORE_HEADER).content).toBe(original);
   });
 });
