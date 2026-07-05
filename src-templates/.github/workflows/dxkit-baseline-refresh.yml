@@ -38,9 +38,17 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install dxkit
+      - name: Install dependencies + dxkit
         run: |
-          if [ -f package-lock.json ]; then
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
             npm ci
           elif [ -f package.json ]; then
             npm install
@@ -55,6 +63,13 @@ jobs:
           else
             vyuh-dxkit tools install --yes
           fi
+          # Put every ecosystem's tool-bin dir on PATH so the correct native dep
+          # scanner is found (osv-scanner/pip-audit → ~/.local/bin, govulncheck →
+          # ~/go/bin, cargo-audit → ~/.cargo/bin); else the audit falls back to a
+          # wrong-artifact scanner and the baseline drifts from the gate.
+          for d in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
 
       - name: Recompute baseline
         run: |

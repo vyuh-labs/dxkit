@@ -51,6 +51,25 @@ doctor` flags a bypassable guardrail either way.
   command can now live in committed, reviewable policy, with
   `DXKIT_LOOP_TEST_COMMAND` kept as the per-shell override.
 
+### Fixed — CI audits the dependency tree the repo actually ships
+
+The CI workflow templates installed dependencies with a hardcoded `npm` step and
+did not put the scanner bin directories on `$GITHUB_PATH`. On a non-npm repo that
+meant the guardrail could audit a **fabricated npm resolution** (e.g. a pnpm repo
+got a different, invented tree) and, with the native scanner not on PATH, fall
+back to a wrong-artifact scanner — producing phantom drift warnings and, worse,
+potentially missing a real vuln in the tree the repo ships.
+
+- **Package-manager-aware install.** The guardrails + baseline-refresh workflows
+  now install with the repo's package manager (pnpm / yarn / bun / npm, via
+  corepack) so the audit and the correctness floor see the real tree.
+- **Registry-derived scanner PATH.** `tools install` now exports every tool bin
+  directory dxkit knows about — `getSystemPaths()` + each tool's `probePaths` —
+  to `$GITHUB_PATH`, so the per-language native scanner (osv-scanner, pip-audit,
+  govulncheck, cargo-audit) is found instead of an npm-audit fallback. Because it
+  reads the same sources `findTool` probes, a new language pack's scanner is
+  covered with no workflow edit.
+
 ### Fixed — `init` re-runs preserve an evolved `flow.mode`
 
 Re-running `init` (e.g. `init --with-baseline-refresh --yes`) on an existing

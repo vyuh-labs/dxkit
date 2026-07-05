@@ -12,6 +12,19 @@ Every external tool (cloc, gitleaks, semgrep, graphify, jscpd, ruff, etc.) MUST 
 
 Builtins (grep, find, wc, git, node) are exempt — they're always available.
 
+**CI tool discoverability is registry-derived, never a hardcoded PATH.** The
+places a tool binary can live are declared once — `getSystemPaths()` plus each
+tool's `probePaths` in the registry — and `findTool` probes them. The CI PATH
+export (`exportToolPathsToGithubEnv`, run at the end of `tools install`) reads
+the SAME sources and writes them to `$GITHUB_PATH`, so the per-language dep audit
+finds its native scanner (osv-scanner / pip-audit / govulncheck / cargo-audit)
+in a workflow step instead of silently falling back to a wrong-artifact scanner.
+A new language pack that installs a scanner to a new directory declares it in the
+tool's `probePaths` (already required for detection) and is thereby covered in CI
+automatically — do NOT hardcode a per-ecosystem bin dir in a workflow template.
+`test/tool-paths-ci.test.ts` pins that every tool `probePath` appears in the
+export.
+
 ### 2. Never duplicate tool invocation logic
 
 Each tool has ONE gather function (e.g., `gatherGraphifyMetrics` in `tools/graphify.ts`).
