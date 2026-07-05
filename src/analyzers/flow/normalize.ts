@@ -46,6 +46,33 @@ export interface NormalizeConfig {
 const PLACEHOLDER = '{var}';
 
 /**
+ * The canonical CATCH-ALL / splat marker — a trailing wildcard that serves
+ * every path under its static prefix (Next.js `[...slug]`, Express `/*`, Spring
+ * `/**`, Rails `/*path`, FastAPI/Starlette `{p:path}` all reduce to this). It is
+ * distinct from `{var}` (a single dynamic segment) because the JOIN treats it
+ * differently: a `{var}` matches exactly one segment on the exact key, a `{*}`
+ * prefix-matches any depth (see `catchAllStaticPrefix` + the join in `model.ts`).
+ * Only served routes ever carry it — a client call targets a concrete path.
+ */
+export const CATCHALL = '{*}';
+
+/** Does a normalized route path end in the catch-all marker (a prefix matcher)? */
+export function isCatchAllPath(path: string): boolean {
+  return path === '/' + CATCHALL || path.endsWith('/' + CATCHALL);
+}
+
+/**
+ * The static prefix a catch-all route serves — the path with its trailing
+ * `/{*}` removed. `/api/{*}` → `/api` (serves `/api/anything`); a root catch-all
+ * `/{*}` → `''` (serves everything). Used by the join to prefix-match a concrete
+ * client call against a wildcard route.
+ */
+export function catchAllStaticPrefix(path: string): string {
+  if (path === '/' + CATCHALL) return '';
+  return path.slice(0, -('/' + CATCHALL).length);
+}
+
+/**
  * Canonicalize a raw URL / route literal to a comparable path, or `null` for
  * an external absolute URL or empty / non-path input. A path that is entirely
  * dynamic (`${x}`) normalizes faithfully to `/{var}` rather than being
@@ -105,9 +132,20 @@ export function normalizePath(
   const q = s.indexOf('?');
   if (q !== -1) s = s.slice(0, q);
 
-  // 6. canonicalize path params
+  // 6a. catch-all / splat forms → the {*} marker (a prefix matcher). Must run
+  //     BEFORE the single-segment collapse below so FastAPI's `{p:path}` and
+  //     Next.js `[...slug]` do not degrade to a one-segment `{var}`.
+  s = s.replace(/\{[A-Za-z0-9_]+:path\}/g, CATCHALL); // FastAPI/Starlette {file_path:path}
+  s = s.replace(/\[\[?\.\.\.[^\]]+\]\]?/g, CATCHALL); // Next.js [...slug] / [[...slug]]
+  s = s.replace(/\*\*/g, CATCHALL); // Spring /**
+  s = s.replace(/(?<=\/)\*[A-Za-z0-9_]*/g, CATCHALL); // Express /*, Rails /*path
+
+  // 6b. canonicalize single-segment path params (leaving the {*} marker intact).
+  //     The single `[id]` rule runs AFTER the catch-all `[...slug]` rule above so
+  //     a catch-all is not misconsumed as a one-segment param.
   s = s.replace(/:[A-Za-z0-9_]+/g, PLACEHOLDER); // Express/Rails :id
-  s = s.replace(/\{[^}]*\}/g, PLACEHOLDER); // OpenAPI/LoopBack {id} (and already-{var})
+  s = s.replace(/\[[^\]]+\]/g, PLACEHOLDER); // Next.js file-route [id]
+  s = s.replace(/\{[^}]*\}/g, (m) => (m === CATCHALL ? CATCHALL : PLACEHOLDER)); // {id}, keep {*}
 
   // 7. single leading slash
   if (!s.startsWith('/')) s = '/' + s;
@@ -116,8 +154,8 @@ export function normalizePath(
   // 8. trailing slash
   if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
 
-  // 9. require a real path head
-  if (!/^\/([A-Za-z]|\{var\})/.test(s)) return null;
+  // 9. require a real path head (a literal, a single-segment {var}, or a catch-all {*})
+  if (!/^\/([A-Za-z]|\{var\}|\{\*\})/.test(s)) return null;
   return s;
 }
 

@@ -29,7 +29,7 @@
 
 import type { Node } from '../../ast/parse';
 import type { FileRouteSupport } from '../../languages/types';
-import { normalizePath, type NormalizeConfig } from './normalize';
+import { normalizePath, CATCHALL, type NormalizeConfig } from './normalize';
 
 /** A route group / layout segment: an entire segment wrapped in parentheses,
  *  organizational only (`(payload)`, `(marketing)`) — dropped from the URL. */
@@ -40,7 +40,7 @@ const PARALLEL_SLOT = /^@/;
 const CATCH_ALL = /^\[\[?\.\.\.[^\]]+\]\]?$/;
 /** A single dynamic segment (`[id]`). */
 const DYNAMIC = /^\[.+\]$/;
-/** The placeholder every dynamic segment canonicalizes to (matches normalize.ts). */
+/** The placeholder a single dynamic segment canonicalizes to (matches normalize.ts). */
 const PLACEHOLDER = '{var}';
 
 function toPosix(p: string): string {
@@ -73,7 +73,9 @@ function findBaseEnd(segments: readonly string[], baseDirs: readonly string[]): 
 /**
  * Canonicalize one directory segment to its URL contribution:
  *   - `''` → drop (route group / parallel slot: not part of the URL);
- *   - `'{var}'` → dynamic / catch-all segment;
+ *   - `'{*}'` → catch-all segment (`[...slug]`) — a prefix matcher (the shared
+ *     `CATCHALL` marker, distinct from a single dynamic segment);
+ *   - `'{var}'` → single dynamic segment (`[id]`);
  *   - `null` → the whole route is NOT served (a private `_`-segment opts the
  *     subtree out of routing);
  *   - otherwise the literal segment.
@@ -81,7 +83,8 @@ function findBaseEnd(segments: readonly string[], baseDirs: readonly string[]): 
 function classifySegment(seg: string): string | null {
   if (seg.startsWith('_')) return null; // private subtree — not routable
   if (ROUTE_GROUP.test(seg) || PARALLEL_SLOT.test(seg)) return ''; // organizational
-  if (CATCH_ALL.test(seg) || DYNAMIC.test(seg)) return PLACEHOLDER;
+  if (CATCH_ALL.test(seg)) return CATCHALL; // [...slug] → prefix matcher
+  if (DYNAMIC.test(seg)) return PLACEHOLDER; // [id] → single dynamic segment
   return seg;
 }
 

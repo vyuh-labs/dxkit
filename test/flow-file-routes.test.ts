@@ -64,13 +64,15 @@ describe('flow file-routes — Next.js App Router served side', () => {
     expect(keys).toEqual(['POST /api/form-submissions']);
   });
 
-  it('canonicalizes [id] dynamic and [[...slug]] catch-all segments to {var}', async () => {
+  it('canonicalizes [id] to a single {var} and [[...slug]] catch-all to {*}', async () => {
     expect(await routeKeys(`export function GET() {}`, 'app/api/users/[id]/route.ts')).toEqual([
       'GET /api/users/{var}',
     ]);
+    // A catch-all is a PREFIX matcher (`{*}`), distinct from a single dynamic
+    // `{var}` — the join prefix-matches it against concrete client calls.
     expect(
       await routeKeys(`export async function POST() {}`, 'app/(payload)/api/[[...slug]]/route.ts'),
-    ).toEqual(['POST /api/{var}']);
+    ).toEqual(['POST /api/{*}']);
   });
 
   it('recognizes `export const GET` and `export { POST }` forms', async () => {
