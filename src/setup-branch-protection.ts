@@ -35,7 +35,12 @@ import {
   resolveDefaultBranch,
   resolveOwnerRepo,
 } from './setup-gh';
-import { classifyEnforcement, probeEnforcementReads, GUARDRAIL_CHECK } from './enforcement';
+import {
+  classifyEnforcement,
+  probeEnforcementReads,
+  GUARDRAIL_CHECK,
+  LEGACY_GUARDRAIL_CHECK,
+} from './enforcement';
 
 export interface SetupBranchProtectionOpts {
   /** Branch to protect. Defaults to the repo's default branch. */
@@ -97,8 +102,12 @@ function buildPayload(
   existing: ProtectionPayload | null,
   opts: SetupBranchProtectionOpts,
 ): ProtectionPayload {
-  // Existing required checks — preserve, then ensure dxkit-guardrails is in the set.
-  const existingChecks = existing?.required_status_checks?.contexts ?? [];
+  // Existing required checks — preserve, then ensure dxkit-guardrails is in the
+  // set. Drop the LEGACY `guardrail` context if present: the workflow no longer
+  // emits it, so leaving it required would block every PR on a phantom check.
+  const existingChecks = (existing?.required_status_checks?.contexts ?? []).filter(
+    (c) => c !== LEGACY_GUARDRAIL_CHECK,
+  );
   const mergedChecks = opts.force
     ? [REQUIRED_CHECK]
     : [...new Set([...existingChecks, REQUIRED_CHECK])];

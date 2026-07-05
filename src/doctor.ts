@@ -730,6 +730,23 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
             }),
       });
 
+      // 6b-2. Stale required-check NAME. The protection requires the legacy
+      // `guardrail` context, but the current workflow emits `dxkit-guardrails`
+      // (the job got an explicit name). GitHub will then block every PR on a
+      // required check that never appears. Distinct from BYPASSABLE — here the
+      // guardrail IS required, just under a name the workflow no longer produces.
+      if (enf.guardrailContextLegacyOnly) {
+        checks.push({
+          label: `'${enf.branch}' protection requires the legacy 'guardrail' check — the workflow now emits 'dxkit-guardrails'`,
+          ok: false,
+          tier: 'operational',
+          fix: {
+            hint: `Your branch protection / ruleset requires a status check named 'guardrail', but dxkit's guardrails workflow now reports 'dxkit-guardrails'. Update the required status check to 'dxkit-guardrails' (Settings → Rules, or Branch protection) — otherwise PRs block on a check that never runs.`,
+            skill: 'dxkit-init',
+          },
+        });
+      }
+
       // 6c. Deadlocking refresh workflow: a legacy 'tree' baseline-refresh
       // direct-pushes the anchor to the protected branch. That push is rejected,
       // and its [skip ci] commit can never earn the required checks — so the

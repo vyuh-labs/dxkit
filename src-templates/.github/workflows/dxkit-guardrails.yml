@@ -19,6 +19,13 @@ permissions:
 
 jobs:
   guardrail:
+    # The job `name:` IS the status-check context GitHub reports and that a
+    # ruleset / branch protection must require. It must equal dxkit's
+    # GUARDRAIL_CHECK ('dxkit-guardrails') — the name `protect` writes and
+    # `classifyEnforcement` matches. Without an explicit name GitHub used the job
+    # id ('guardrail'), which nothing dxkit configured ever matched. The
+    # invariant is pinned by test/enforcement-check-name.test.ts.
+    name: dxkit-guardrails
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

@@ -36,9 +36,33 @@
 import * as path from 'path';
 import { ghApi, ghCliAvailable, resolveDefaultBranch, GhError } from './setup-gh';
 
-/** The guardrail status check dxkit installs + expects a protected branch to
- *  require. Kept in sync with `setup-branch-protection.ts`. */
+/**
+ * The status-check CONTEXT dxkit's guardrails workflow emits and that a
+ * protected branch must require. This is the SINGLE SOURCE OF TRUTH for that
+ * name: the workflow template sets its guardrail job's `name:` to this value, so
+ * the check-run GitHub reports (and a ruleset must require) is exactly this
+ * string. `protect` writes it; `classifyEnforcement` matches it.
+ *
+ * The invariant "the workflow emits GUARDRAIL_CHECK" is pinned by
+ * `test/enforcement-check-name.test.ts` (it parses the template's job name) — the
+ * guard against the class of bug where the emitted context drifts from the name
+ * the code/`protect`/docs expect (the job had no explicit `name:`, so GitHub used
+ * the job id `guardrail`, and nothing required-checkable matched
+ * `dxkit-guardrails`).
+ */
 export const GUARDRAIL_CHECK = 'dxkit-guardrails';
+
+/**
+ * The context dxkit's workflow emitted BEFORE the job got an explicit `name:`
+ * (GitHub derived it from the job id `guardrail`). A branch protected against
+ * that older workflow requires `guardrail`; it is still recognized as "the dxkit
+ * guardrail is required" so an existing setup doesn't read as BYPASSABLE, and
+ * `doctor` flags the rename so the ruleset can be migrated to GUARDRAIL_CHECK.
+ */
+export const LEGACY_GUARDRAIL_CHECK = 'guardrail';
+
+/** Every context string that means "dxkit's guardrail check is required". */
+const GUARDRAIL_CONTEXTS: readonly string[] = [GUARDRAIL_CHECK, LEGACY_GUARDRAIL_CHECK];
 
 /** Minimal subset of GitHub's CLASSIC branch-protection payload dxkit reads. */
 interface ClassicProtection {
@@ -83,10 +107,16 @@ export interface EnforcementState {
    *  ruleset) requires a PR and/or passing status checks, so a bare `git push`
    *  is rejected. */
   readonly directPushBlocked: boolean;
-  /** The `dxkit-guardrails` check is a REQUIRED status check on `branch` (via
+  /** The dxkit guardrail check is a REQUIRED status check on `branch` (via
    *  classic protection or a ruleset), i.e. the guardrail actually gates merges
-   *  rather than running informationally. */
+   *  rather than running informationally. True for EITHER the canonical
+   *  `dxkit-guardrails` context or the legacy `guardrail` one. */
   readonly guardrailRequired: boolean;
+  /** The guardrail is required ONLY under the legacy `guardrail` context, not the
+   *  canonical `dxkit-guardrails` the current workflow emits — so once the
+   *  workflow update lands, that requirement matches a check that no longer
+   *  appears and would block PRs. `doctor` surfaces this as a migration action. */
+  readonly guardrailContextLegacyOnly: boolean;
   /** A repository RULESET governs `branch` (at least one effective rule). When
    *  true, `protect` must not create a conflicting classic rule — the guardrail
    *  belongs in the ruleset. */
@@ -105,20 +135,30 @@ function classicBlocksDirectPush(classic: ClassicProtection | null): boolean {
   return requiresChecks || requiresPr;
 }
 
-function classicRequiresGuardrail(classic: ClassicProtection | null): boolean {
-  return (classic?.required_status_checks?.contexts ?? []).includes(GUARDRAIL_CHECK);
-}
-
 function rulesBlockDirectPush(rules: EffectiveRule[]): boolean {
   return rules.some((r) => r.type != null && PUSH_BLOCKING_RULE_TYPES.has(r.type));
 }
 
-function rulesRequireGuardrail(rules: EffectiveRule[]): boolean {
-  return rules.some(
-    (r) =>
-      r.type === 'required_status_checks' &&
-      (r.parameters?.required_status_checks ?? []).some((c) => c.context === GUARDRAIL_CHECK),
-  );
+/**
+ * The set of dxkit guardrail contexts (canonical + legacy) a protection actually
+ * requires — collected across classic protection AND every ruleset
+ * required_status_checks rule. Empty when the guardrail isn't required at all.
+ */
+function requiredGuardrailContexts(
+  classic: ClassicProtection | null,
+  rules: EffectiveRule[],
+): Set<string> {
+  const found = new Set<string>();
+  for (const ctx of classic?.required_status_checks?.contexts ?? []) {
+    if (GUARDRAIL_CONTEXTS.includes(ctx)) found.add(ctx);
+  }
+  for (const r of rules) {
+    if (r.type !== 'required_status_checks') continue;
+    for (const c of r.parameters?.required_status_checks ?? []) {
+      if (c.context && GUARDRAIL_CONTEXTS.includes(c.context)) found.add(c.context);
+    }
+  }
+  return found;
 }
 
 /**
@@ -142,20 +182,29 @@ export function classifyEnforcement(
       probed: false,
       directPushBlocked: false,
       guardrailRequired: false,
+      guardrailContextLegacyOnly: false,
       rulesetGoverned: false,
     };
   }
   const directPushBlocked =
     classicBlocksDirectPush(reads.classic) || rulesBlockDirectPush(reads.rules);
-  const guardrailRequired =
-    classicRequiresGuardrail(reads.classic) || rulesRequireGuardrail(reads.rules);
+  const guardrailContexts = requiredGuardrailContexts(reads.classic, reads.rules);
+  const guardrailRequired = guardrailContexts.size > 0;
+  const guardrailContextLegacyOnly = guardrailRequired && !guardrailContexts.has(GUARDRAIL_CHECK);
   const rulesetGoverned = reads.rulesKnown && reads.rules.length > 0;
 
   const sawProtection = directPushBlocked || guardrailRequired || rulesetGoverned;
   const bothRead = reads.classicKnown && reads.rulesKnown;
   const probed = sawProtection || bothRead;
 
-  return { branch, probed, directPushBlocked, guardrailRequired, rulesetGoverned };
+  return {
+    branch,
+    probed,
+    directPushBlocked,
+    guardrailRequired,
+    guardrailContextLegacyOnly,
+    rulesetGoverned,
+  };
 }
 
 const CACHE = new Map<string, EnforcementState>();
