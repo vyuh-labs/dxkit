@@ -20,6 +20,16 @@ import {
   writeServedContract,
 } from './analyzers/flow/contract';
 import { publishFlow } from './analyzers/flow/publish';
+import {
+  buildFlowConsole,
+  type ConsoleEndpoint,
+  type FlowConsoleInput,
+} from './analyzers/flow/console';
+import { computeChangedFiles } from './baseline/changed-files';
+import { evaluateFlowGateForGuardrail } from './baseline/flow-gate-check';
+import { loadAllowlist } from './allowlist/file';
+import { readVisNetworkBundle } from './dashboard/vendor';
+import { readDxkitVersion } from './issue-cli';
 
 export interface FlowExtractOptions {
   readonly cwd: string;
@@ -192,6 +202,164 @@ export async function runFlowTrace(opts: FlowViewOptions & { target: string }): 
   logger.info(
     `Blast radius: ${br.directConsumers} direct consumer(s) in ${br.consumerFiles} file(s)` +
       (br.upstreamCallers ? `, ${br.upstreamCallers} upstream caller(s)` : ''),
+  );
+}
+
+/** Default on-disk location for the generated console artifact. */
+const CONSOLE_REPORT_REL = path.join('.dxkit', 'reports', 'flow-console.html');
+
+export interface FlowConsoleOptions extends FlowViewOptions {
+  /** Base ref to scope the console to (and gate against). Absent → full map. */
+  readonly diff?: string;
+  /** Output HTML path (default `.dxkit/reports/flow-console.html`). */
+  readonly out?: string;
+  /** Skip the broken-integration gate pass even in diff scope. */
+  readonly noGate?: boolean;
+}
+
+/**
+ * `vyuh-dxkit flow console` — generate the self-contained interactive HTML
+ * console (design §E): the UI→API map plus a browser-side request runner per
+ * endpoint. A renderer over the same `FlowModel` the map/gate read; dxkit makes
+ * no HTTP call, it only writes the document.
+ *
+ * With `--diff <ref>` the console is PR-scoped: only endpoints the change
+ * touches are shown, and the integration gate marks any net-new broken bindings
+ * so a reviewer can exercise exactly what moved. Without it, the full map.
+ */
+export async function runFlowConsole(opts: FlowConsoleOptions): Promise<void> {
+  if (!opts.json) logger.header('vyuh-dxkit flow console');
+
+  // Diff scope: the files this change touched (or null → can't scope → full).
+  // Computed BEFORE the overlay write below so dxkit's own `graph.json` output
+  // never leaks into the changed set.
+  let scope: 'full' | 'diff' = opts.diff ? 'diff' : 'full';
+  let changedSet: Set<string> | null = null;
+  let diffFileCount: number | undefined;
+  if (opts.diff) {
+    const changed = computeChangedFiles(opts.cwd, opts.diff);
+    if (changed) {
+      changedSet = new Set(changed);
+      diffFileCount = changed.length;
+    } else {
+      scope = 'full'; // base unreachable / not a git repo → don't fake a scope
+    }
+  }
+
+  // Repo-relative locators — diff scoping matches `computeChangedFiles` (which
+  // reports repo-relative paths) and the artifact is portable across machines
+  // (Rule 9 pattern, as `flow refresh`).
+  const model = await gatherModel(opts, { relativeTo: opts.cwd });
+  const map = buildFlowMap(opts.cwd, model);
+  const isAffected = (sourceFile: string, consumerFiles: readonly string[]): boolean =>
+    changedSet !== null &&
+    (changedSet.has(sourceFile) || consumerFiles.some((f) => changedSet!.has(f)));
+
+  // Gate: net-new broken integrations for this change (diff scope only).
+  const broken: ConsoleEndpoint[] = [];
+  if (scope === 'diff' && opts.diff && !opts.noGate) {
+    try {
+      const outcome = await evaluateFlowGateForGuardrail({
+        cwd: opts.cwd,
+        baseRef: opts.diff,
+        allowlist: loadAllowlist(opts.cwd),
+      });
+      if (outcome.ran) {
+        for (const f of outcome.findings) {
+          broken.push({
+            id: f.id,
+            method: f.method,
+            path: f.path,
+            via: 'call-site',
+            handler: null,
+            sourceFile: f.file,
+            line: f.line,
+            consumerCount: 1,
+            consumerFiles: [f.file],
+            affected: true,
+            broken: { reason: f.reason, verdict: f.verdict },
+          });
+        }
+      }
+    } catch {
+      // Fail-open: the console is a reviewer aid, never itself a gate.
+    }
+  }
+
+  const consumed: ConsoleEndpoint[] = map.endpoints.map((e) => ({
+    id: e.endpoint.id,
+    method: e.endpoint.method,
+    path: e.endpoint.path,
+    via: e.endpoint.via,
+    handler: e.endpoint.handler,
+    sourceFile: e.endpoint.sourceFile,
+    line: e.endpoint.line,
+    consumerCount: e.consumerCount,
+    consumerFiles: e.consumerFiles,
+    affected: isAffected(e.endpoint.sourceFile, e.consumerFiles),
+  }));
+  const unconsumed: ConsoleEndpoint[] = map.unconsumedEndpoints.map((ep) => ({
+    id: ep.id,
+    method: ep.method,
+    path: ep.path,
+    via: ep.via,
+    handler: ep.handler,
+    sourceFile: ep.sourceFile,
+    line: ep.line,
+    consumerCount: 0,
+    consumerFiles: [],
+    affected: isAffected(ep.sourceFile, []),
+  }));
+
+  const shownEndpoints = scope === 'diff' ? consumed.filter((e) => e.affected) : consumed;
+  const shownUnconsumed = scope === 'diff' ? unconsumed.filter((e) => e.affected) : unconsumed;
+
+  const bundle = readVisNetworkBundle() ?? '';
+  const input: FlowConsoleInput = {
+    repoName: path.basename(path.resolve(opts.cwd)),
+    generatedAt: new Date().toISOString(),
+    dxkitVersion: readDxkitVersion(),
+    scope,
+    baseRef: scope === 'diff' ? opts.diff : undefined,
+    diffFileCount,
+    endpoints: shownEndpoints,
+    unconsumed: shownUnconsumed,
+    broken,
+    totals: { endpoints: map.totalEndpoints, bindings: map.totalBindings },
+    visNetworkBundle: bundle,
+  };
+  const html = buildFlowConsole(input);
+  const outPath = path.resolve(opts.cwd, opts.out ?? CONSOLE_REPORT_REL);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, html);
+
+  if (opts.json) {
+    emitJson({
+      outPath,
+      scope,
+      totalEndpoints: map.totalEndpoints,
+      shownEndpoints: shownEndpoints.length + shownUnconsumed.length,
+      broken: broken.length,
+      bindings: map.totalBindings,
+      hasGraph: !!bundle,
+    });
+    return;
+  }
+
+  const scopeNote =
+    scope === 'diff'
+      ? `scoped to ${diffFileCount ?? '?'} changed file(s) vs ${opts.diff}`
+      : 'full map';
+  logger.success(
+    `Flow console written (${scopeNote}): ${map.totalEndpoints} endpoint(s), ${broken.length} net-new break(s).`,
+  );
+  logger.info(`  ${path.relative(opts.cwd, outPath)}`);
+  logger.info('');
+  logger.info(
+    'Open it in a browser, enter a dev/staging Base URL + token, and exercise the calls.',
+  );
+  logger.info(
+    'Auth stays in your tab — dxkit generated this page statically and makes no requests.',
   );
 }
 

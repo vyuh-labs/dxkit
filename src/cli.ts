@@ -386,6 +386,9 @@ export async function run(argv: string[]): Promise<void> {
       'baseline-name': { type: 'string' },
       snyk: { type: 'boolean', default: false },
       out: { type: 'string' },
+      // flow console flags: scope to a diff base + optionally skip the gate pass
+      diff: { type: 'string' },
+      'no-gate': { type: 'boolean', default: false },
       // issue flags
       type: { type: 'string' },
       about: { type: 'string' },
@@ -961,6 +964,22 @@ export async function run(argv: string[]): Promise<void> {
         });
         break;
       }
+      // `flow console` → the interactive HTML console (map + request runner).
+      // `--diff <ref>` scopes it to the change and marks net-new breaks.
+      if (subCommand === 'console') {
+        const { runFlowConsole } = await import('./flow-cli');
+        await runFlowConsole({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          diff: values.diff as string | undefined,
+          out: values.out as string | undefined,
+          noGate: !!values['no-gate'],
+          json: !!values.json,
+        });
+        break;
+      }
       // `flow refresh` → write the served/consumed contract snapshots the
       // cross-repo integration gate reads.
       if (subCommand === 'refresh') {
@@ -980,6 +999,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.info('  vyuh-dxkit flow [map] [--frontend <dir>] [--backend <dir>] [--specs <a,b>]');
       logger.info('  vyuh-dxkit flow trace "<METHOD> <path>"');
       logger.info('  vyuh-dxkit flow extract [--out <dir>]');
+      logger.info('  vyuh-dxkit flow console [--diff <ref>] [--out <file>] [--no-gate]');
       logger.info('  vyuh-dxkit flow refresh');
       logger.info('  vyuh-dxkit flow publish   (multi-repo: union participants’ served routes)');
       process.exit(1);
