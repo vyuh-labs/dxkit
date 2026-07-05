@@ -23,6 +23,7 @@ import { stdin, stdout } from 'process';
 import { execSync } from 'child_process';
 import { detect } from './detect';
 import { DetectedStack } from './types';
+import { detectPackageManager, provisionCommand, pmAwareDevInstall } from './package-manager';
 import * as logger from './logger';
 import {
   TOOL_DEFS,
@@ -100,9 +101,7 @@ function formatStatusLine(s: ToolStatus): string {
   // Project-local tools (F-UX-3): annotate so users don't confuse a
   // missing dev-dep with a missing system tool.
   const scopeNote =
-    s.requirement.installScope === 'project-local'
-      ? ' \x1b[2m(project-local — `npm ci`)\x1b[0m'
-      : '';
+    s.requirement.installScope === 'project-local' ? ' \x1b[2m(project-local dev-dep)\x1b[0m' : '';
   return `  \x1b[31m✗\x1b[0m ${name}  ${layer}  ${forStack}  \x1b[2mmissing\x1b[0m${scopeNote}`;
 }
 
@@ -170,8 +169,9 @@ function showStatus(targetPath: string): ToolStatus[] {
     const globalMissing = missing.filter((s) => s.requirement.installScope !== 'project-local');
 
     if (projectLocalMissing.length > 0) {
+      const provision = provisionCommand(detectPackageManager(targetPath));
       logger.dim(
-        `${projectLocalMissing.length} project-local tool${projectLocalMissing.length === 1 ? '' : 's'} (${projectLocalMissing.map((s) => s.name).join(', ')}) — run \`npm ci\` (or \`npm install\`) in this repo to provision them from package.json devDependencies.`,
+        `${projectLocalMissing.length} project-local tool${projectLocalMissing.length === 1 ? '' : 's'} (${projectLocalMissing.map((s) => s.name).join(', ')}) — run \`${provision}\` in this repo to provision them from package.json devDependencies.`,
       );
     }
     if (globalMissing.length > 0) {
@@ -294,11 +294,18 @@ async function runInstall(
         results.push({ name: s.name, status: 'skipped', msg: 'no install command' });
         continue;
       }
-      const cmd = getInstallCommand(def);
-      if (cmd === 'builtin' || cmd === 'builtin (npm)' || cmd === 'builtin (dotnet SDK)') {
+      const rawCmd = getInstallCommand(def);
+      if (rawCmd === 'builtin' || rawCmd === 'builtin (npm)' || rawCmd === 'builtin (dotnet SDK)') {
         results.push({ name: s.name, status: 'skipped', msg: 'builtin' });
         continue;
       }
+      // A node devDep tool (e.g. @vitest/coverage-v8) installs INTO the user's
+      // repo, so its `npm install --save-dev …` must match the repo's PM — else
+      // it fails the way create-dxkit did on a pnpm project. Tools installed
+      // into an isolated dxkit dir (no nodePackage) keep their npm command.
+      const cmd = def.nodePackage
+        ? pmAwareDevInstall(rawCmd, detectPackageManager(targetPath))
+        : rawCmd;
 
       console.log('');
       console.log(`  ${logger.bold(s.name)} — ${def.description}`);

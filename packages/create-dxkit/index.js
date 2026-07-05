@@ -9,21 +9,29 @@
  *
  * Responsibilities, in order:
  *   1. Seed a minimal `package.json` if the cwd doesn't have one
- *      (else `npm install --save-dev` would write to the global one).
- *   2. Run `npm install --save-dev @vyuhlabs/dxkit`. On peer-dep
- *      ERESOLVE, retry once with `--legacy-peer-deps`.
+ *      (else the dev-dep install would write to the global one).
+ *   2. Detect the repo's package manager from its lockfile (pnpm / yarn
+ *      / bun / npm) and add `@vyuhlabs/dxkit` as a devDependency with
+ *      THAT PM — running `npm install` in a pnpm repo crashes npm. On an
+ *      npm peer-dep ERESOLVE, retry once with `--legacy-peer-deps`.
  *   3. Forward the user's args (or `--full --yes` if none) to
  *      `vyuh-dxkit init`.
  *
  * Zero runtime dependencies — keeps the install surface as narrow as
  * possible so a customer hitting this for the first time doesn't pull
- * a transitive that conflicts with their tree.
+ * a transitive that conflicts with their tree. That is also why the
+ * package-manager detection is a small self-contained copy of
+ * `src/package-manager.ts` rather than an import: this shim is a
+ * separate published package and cannot depend on the main one.
  */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+
+/** The package this bootstrap installs. */
+const PKG = '@vyuhlabs/dxkit';
 
 // ── Pure helpers (exported for unit tests) ──────────────────────────
 
@@ -67,6 +75,56 @@ function npmBin(platform = process.platform) {
 }
 function npxBin(platform = process.platform) {
   return platform === 'win32' ? 'npx.cmd' : 'npx';
+}
+
+/**
+ * Detect the repo's package manager — lockfile first (it reflects what actually
+ * provisioned node_modules), then the `packageManager` field (corepack), else
+ * npm. Self-contained copy of `src/package-manager.ts:detectPackageManager`
+ * (this shim can't import from the main package). `fsMod`/`pathMod` are
+ * injectable for unit tests.
+ */
+function detectPackageManager(cwd, fsMod = fs, pathMod = path) {
+  const has = (f) => fsMod.existsSync(pathMod.join(cwd, f));
+  if (has('pnpm-lock.yaml')) return 'pnpm';
+  if (has('yarn.lock')) return 'yarn';
+  if (has('bun.lockb') || has('bun.lock')) return 'bun';
+  if (has('package-lock.json')) return 'npm';
+  try {
+    const pkg = JSON.parse(fsMod.readFileSync(pathMod.join(cwd, 'package.json'), 'utf8'));
+    if (typeof pkg.packageManager === 'string') {
+      const name = pkg.packageManager.split('@')[0].trim();
+      if (name === 'pnpm' || name === 'yarn' || name === 'bun' || name === 'npm') return name;
+    }
+  } catch {
+    // no/invalid package.json → fall through to npm
+  }
+  return 'npm';
+}
+
+/** Platform-aware executable name for a package manager. The JS PMs ship as
+ *  `.cmd` shims on Windows; bun ships as `bun.exe`. */
+function pmBin(pm, platform = process.platform) {
+  if (platform !== 'win32') return pm;
+  return pm === 'bun' ? 'bun.exe' : `${pm}.cmd`;
+}
+
+/**
+ * The args that add `@vyuhlabs/dxkit` as a devDependency with the given PM.
+ * `--no-audit` (npm) suppresses the host project's vuln tally mid-install —
+ * those numbers describe the customer's own deps, not anything dxkit added.
+ */
+function installArgs(pm) {
+  switch (pm) {
+    case 'pnpm':
+      return ['add', '-D', PKG];
+    case 'yarn':
+      return ['add', '-D', PKG];
+    case 'bun':
+      return ['add', '-d', PKG];
+    default:
+      return ['install', '--save-dev', '--no-audit', PKG];
+  }
 }
 
 /**
@@ -125,30 +183,36 @@ function extractNpmLogPath(text) {
  * log when one is named, and offers the npx-init escape hatch that
  * doesn't need a successful `npm install` at all.
  *
- * @param {{ stderrChunks?: string[] }} opts
+ * @param {{ stderrChunks?: string[], pm?: string }} opts
  */
 function formatInstallFailure(opts = {}) {
   const stderrChunks = (opts.stderrChunks || []).filter((s) => s && s.length > 0);
+  const pm = opts.pm || 'npm';
   const lines = [];
 
   const combined = stderrChunks.join('\n');
   if (combined.length > 0) {
-    lines.push('npm reported:');
+    lines.push(`${pm} reported:`);
     lines.push(combined.trimEnd());
     lines.push('');
   }
 
-  const logPath = extractNpmLogPath(combined);
-  if (logPath) {
-    lines.push(`Full npm error log: ${logPath}`);
-  } else {
-    lines.push(
-      'npm wrote the failure detail to its debug log — see the ' +
-        '"complete log of this run" path npm printed above, under ' +
-        'your npm cache `_logs/` directory.',
-    );
+  // Only npm routes its failure detail to a `_logs/*-debug.log` and prints a
+  // "complete log of this run" pointer; the other PMs surface the cause on
+  // stderr directly (already shown above).
+  if (pm === 'npm') {
+    const logPath = extractNpmLogPath(combined);
+    if (logPath) {
+      lines.push(`Full npm error log: ${logPath}`);
+    } else {
+      lines.push(
+        'npm wrote the failure detail to its debug log — see the ' +
+          '"complete log of this run" path npm printed above, under ' +
+          'your npm cache `_logs/` directory.',
+      );
+    }
+    lines.push('');
   }
-  lines.push('');
   lines.push('Could not install @vyuhlabs/dxkit. Common causes:');
   lines.push('  • a private-registry auth or proxy issue (check the log above),');
   lines.push("  • an unresolved peer-dep conflict in this folder's package.json,");
@@ -168,6 +232,9 @@ module.exports = {
   ensurePackageJson,
   npmBin,
   npxBin,
+  detectPackageManager,
+  pmBin,
+  installArgs,
   persistLegacyPeerDeps,
   extractNpmLogPath,
   formatInstallFailure,
@@ -195,55 +262,53 @@ if (require.main === module) {
     return spawnSync(cmd, args, { stdio: ['inherit', 'inherit', 'pipe'], shell: false });
   }
 
-  // `--no-audit` keeps npm from printing "N vulnerabilities" at the end of
-  // a successful install. Those numbers describe the HOST project's deps,
-  // not anything dxkit introduced — surfacing them mid-install made
-  // customers think dxkit added them. `vyuh-dxkit vulnerabilities`
-  // is the right surface for dep-vuln triage anyway.
-  const INSTALL_BASE = ['install', '--save-dev', '--no-audit', '@vyuhlabs/dxkit'];
+  // Detect the repo's package manager from its lockfile and install with THAT
+  // PM — `npm install` in a pnpm repo crashes npm ("Cannot read properties of
+  // null"). The dev-dep add args (`--no-audit` etc.) come from `installArgs`.
+  const pm = detectPackageManager(cwd);
+  const addArgs = installArgs(pm);
 
-  console.log('Installing @vyuhlabs/dxkit as devDependency...'); // slop-ok
+  console.log(`Installing ${PKG} as a devDependency with ${pm}...`); // slop-ok
 
-  // Attempt 1: strict peer-dep resolution. On a clean tree this works in
-  // one shot; on most non-trivial customer repos there's at least one
-  // peer-dep mismatch (eslint 8↔10, react cross-pkg, etc.) that fails
-  // here.
-  const attempt1 = runCaptureStderr(npmBin(), INSTALL_BASE);
+  // Attempt 1: strict resolution. On a clean tree this works in one shot; on a
+  // non-trivial npm repo there's often a peer-dep mismatch (eslint 8↔10, react
+  // cross-pkg, etc.) that fails here — hence the legacy-peer-deps retry below.
+  const attempt1 = runCaptureStderr(pmBin(pm), addArgs);
   let rc = attempt1.status;
   let usedLegacy = false;
   let attempt2 = null;
 
-  if (rc !== 0) {
+  // The `--legacy-peer-deps` retry is npm-specific — pnpm / yarn / bun are
+  // lenient on peer deps by default, so a failure there is a real error, not a
+  // strictness knob to relax.
+  if (rc !== 0 && pm === 'npm') {
     console.log('Peer-dep conflict detected. Retrying with --legacy-peer-deps...'); // slop-ok
-    // Attempt 2: capture stderr too. The earlier version inherited
-    // stderr here, so when this leg failed its npm error was never
-    // captured and the customer saw "Resolve the npm error above" with
-    // nothing above (D158). Capturing lets us surface the real cause —
-    // including the npm debug-log path, where modern npm puts ERESOLVE /
-    // registry / auth detail.
-    attempt2 = runCaptureStderr(npmBin(), [...INSTALL_BASE, '--legacy-peer-deps']);
+    // Capture stderr here too, so a second failure surfaces the real cause
+    // (including the npm debug-log path) rather than an empty error wall.
+    attempt2 = runCaptureStderr(pmBin(pm), [...addArgs, '--legacy-peer-deps']);
     rc = attempt2.status;
     usedLegacy = true;
   }
 
   if (rc !== 0) {
-    // Both attempts failed. Surface every captured stderr + the npm
+    // Both attempts failed. Surface every captured stderr + (for npm) the
     // debug-log path, and offer the npx-init escape hatch that needs no
-    // successful `npm install`. See `formatInstallFailure`.
+    // successful install. See `formatInstallFailure`.
     const toStr = (b) => (b ? b.toString() : '');
     process.stderr.write(
       '\n' +
         formatInstallFailure({
           stderrChunks: [toStr(attempt1.stderr), attempt2 ? toStr(attempt2.stderr) : ''],
+          pm,
         }) +
         '\n',
     );
     process.exit(rc ?? 1);
   }
 
-  // Install succeeded. If we had to fall back to --legacy-peer-deps,
-  // persist that choice so the customer's next `npm install` doesn't
-  // re-hit the same ERESOLVE wall without us in the loop to recover.
+  // Install succeeded. If we had to fall back to --legacy-peer-deps (npm only),
+  // persist that choice so the customer's next `npm install` doesn't re-hit the
+  // same ERESOLVE wall without us in the loop to recover.
   if (usedLegacy) {
     const result = persistLegacyPeerDeps(cwd);
     if (result.changed) {
