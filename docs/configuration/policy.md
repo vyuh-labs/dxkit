@@ -78,12 +78,39 @@ visibility-derived defaults (`gh repo view --json visibility` →
 }
 ```
 
-| Field  | Type     | Effect                                                                                                                                      |
-| ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode` | `string` | `committed-full`, `committed-sanitized`, or `ref-based`. See [baseline modes](../commands/baseline.md#modes) for the disclosure trade-offs. |
-| `ref`  | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
+| Field       | Type     | Effect                                                                                                                                      |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`      | `string` | `committed-full`, `committed-sanitized`, or `ref-based`. See [baseline modes](../commands/baseline.md#modes) for the disclosure trade-offs. |
+| `ref`       | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
+| `anchor`    | `string` | Where a committed anchor is stored: `tree`, `branch`, or `cache`. See "Anchor transport" below. Auto-selected when omitted.                 |
+| `anchorRef` | `string` | Branch that stores the anchor when `anchor` is `branch`. Default `dxkit-baselines`. Must NOT be a protection-covered branch.                |
 
 CLI `--mode` / `--ref` flags override the policy fields.
+
+### Anchor transport (committed modes)
+
+The after-merge refresh keeps a committed anchor current. If the anchor lives on
+your default branch and that branch is protected (dxkit's own onboarding
+recommends requiring the guardrails check + PR review), a direct-push refresh
+deadlocks — the push is rejected, and a `[skip ci]` commit can never earn the
+required checks. `anchor` decouples the store from the protected branch so the
+refresh stays fast and automated:
+
+| Value    | Where the anchor lives                                                        | Use when                                                                          |
+| -------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `tree`   | committed on the default branch; refreshed by a direct push                   | the default branch is unprotected (direct pushes allowed)                         |
+| `branch` | a separate unprotected branch (`anchorRef`); the check hydrates it from there | **default when the branch is protected** — no push to `main`, no PR, no deadlock  |
+| `cache`  | the CI cache keyed by the base SHA; no git write at all                       | a rule protects _every_ branch (so even the side branch can't be pushed); CI-only |
+
+Omit `anchor` and dxkit picks per your protection posture (`branch` on a
+protected default branch, else `tree`; `tree` when protection can't be probed,
+so it never silently reconfigures a repo). `ref-based` mode has no committed
+anchor, so no refresh workflow is installed at all.
+
+Run `vyuh-dxkit doctor` to check whether your guardrail is actually _enforced_
+(a required check on a protected branch) rather than merely wired, and
+`vyuh-dxkit protect` (dry-run by default; `--apply` to write) to require the
+`dxkit-guardrails` check + PR review.
 
 ## Finding statuses
 
@@ -177,6 +204,20 @@ This key is read **only by the Stop-gate** (`vyuh-dxkit hook stop-gate`).
 The CI / PR `guardrail check` ignores it and always uses the block/warn
 policy above — so changing the loop posture never weakens your CI gate.
 Set it here or via `vyuh-dxkit init --claude-loop --loop-preset <p>`.
+
+### `loop.testCommand` — the postflight test command
+
+After the guardrail passes, the Stop-gate can run the tests your change affects
+and block completion if they fail. Configure that command durably here:
+
+```json
+{ "loop": { "testCommand": "pnpm test:int" } }
+```
+
+`DXKIT_LOOP_TEST_COMMAND` still works as a per-shell override and takes
+precedence, but an env var is the easiest part of the loop config to silently
+lose (per-shell, per-machine) — committing it to policy keeps it durable and
+reviewable. `vyuh-dxkit loop doctor` shows which source (if any) supplied it.
 
 ## Loading order
 

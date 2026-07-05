@@ -508,7 +508,10 @@ export function installCiBaselineRefresh(
   if (!plan.install) {
     const result = emptyResult();
     result.skipped.push(`.github/workflows/${REFRESH_WORKFLOW_DEST}`);
-    result.notes.push(`baseline-refresh workflow not installed — ${plan.reason}.`, ...plan.guidance);
+    result.notes.push(
+      `baseline-refresh workflow not installed — ${plan.reason}.`,
+      ...plan.guidance,
+    );
     return result;
   }
 
