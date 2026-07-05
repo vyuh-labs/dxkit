@@ -1,0 +1,74 @@
+name: dxkit baseline refresh
+
+# Anchor transport: CACHE. After a merge to the default branch (or weekly / on
+# demand), recompute the committed baseline anchor and store it in the GitHub
+# Actions cache keyed by the merged commit SHA — NO git write at all.
+#
+# Why: branch protection covers branches, not the Actions cache, so this never
+# needs to push anywhere — it sidesteps the push-to-protected-main deadlock
+# without an extra branch. The guardrail check restores the anchor for the PR's
+# base SHA; a cold cache (eviction / first run) falls back to a live re-gather
+# for that one check.
+#
+# Trade-offs vs the 'branch' transport: caches evict after 7 idle days, are
+# scoped (a cache written on the default branch is readable by PRs into it), and
+# are not available to fork PRs or to a local `guardrail check`. Prefer 'branch'
+# unless a rule protects every branch.
+
+on:
+  push:
+    branches: [__DXKIT_DEFAULT_BRANCH__]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dxkit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+
+      - name: Recompute baseline
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" baseline create --force
+
+      - name: Store anchor in the Actions cache
+        uses: actions/cache/save@v4
+        with:
+          path: .dxkit/baselines
+          # Keyed by the merged commit SHA so a PR whose base is this commit
+          # restores exactly this anchor. The guardrail check restores by
+          # base SHA with the `dxkit-baseline-` prefix as the fallback.
+          key: dxkit-baseline-${{ github.sha }}

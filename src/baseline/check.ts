@@ -56,8 +56,9 @@ import { gitAwareMatch } from './git-aware-match';
 import type { LocatedIdentity } from './git-aware-match';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
-import { classify, resolvePolicy } from './policy';
-import type { BrownfieldPolicy, ClassifyContext, ClassifyResult } from './policy';
+import { classify, resolvePolicy, loadPolicyFromCwd } from './policy';
+import type { BrownfieldPolicy, ClassifyContext, ClassifyResult, BaselineSection } from './policy';
+import { hydrateAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
@@ -1003,6 +1004,16 @@ function readChangedLineSet(
  * the matcher needs to compute git-aware diffs + envelope drift
  * against the current scan.
  */
+/** Best-effort read of the `baseline` policy section (for the anchor transport);
+ *  undefined when the policy is absent/unreadable. */
+function safeBaselineSection(cwd: string): BaselineSection | undefined {
+  try {
+    return loadPolicyFromCwd(cwd).baseline;
+  } catch {
+    return undefined;
+  }
+}
+
 async function loadPriorSide(
   cwd: string,
   mode: ResolvedMode,
@@ -1014,10 +1025,15 @@ async function loadPriorSide(
     const baselinePath =
       options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
     if (!fs.existsSync(baselinePath)) {
-      throw new Error(
-        `baseline file not found: ${baselinePath}. ` +
-          `Run \`${dxkitCli('baseline create')}\` first to capture today's state.`,
-      );
+      // `anchor: 'branch'` transport keeps the committed anchor on a separate
+      // unprotected branch, not in the tree — hydrate it before giving up.
+      const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, safeBaselineSection(cwd));
+      if (!hydrated) {
+        throw new Error(
+          `baseline file not found: ${baselinePath}. ` +
+            `Run \`${dxkitCli('baseline create')}\` first to capture today's state.`,
+        );
+      }
     }
     return { baseline: readBaselineFile(baselinePath), baselinePath };
   }

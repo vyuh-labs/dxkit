@@ -84,6 +84,59 @@ export const BASELINE_MODES: ReadonlyArray<BaselineMode> = Object.freeze([
   'ref-based',
 ]);
 
+/**
+ * WHERE a committed baseline's anchor is stored — see
+ * `BaselineSection.anchor` for the full rationale. Decouples the store from the
+ * protected default branch so the after-merge refresh stays fast + automated
+ * without a direct push to `main`.
+ *
+ *   - `'tree'`   — committed into the default-branch working tree (direct-push
+ *                  refresh; valid only when direct pushes are allowed).
+ *   - `'branch'` — a separate unprotected branch (`anchorRef`); refresh
+ *                  direct-pushes there, checks hydrate from it.
+ *   - `'cache'`  — the CI cache keyed by the main SHA; no git write, CI-only.
+ */
+export type BaselineAnchor = 'tree' | 'branch' | 'cache';
+
+/** Canonical enumeration of the anchor transports. */
+export const BASELINE_ANCHORS: ReadonlyArray<BaselineAnchor> = Object.freeze([
+  'tree',
+  'branch',
+  'cache',
+]);
+
+/** Default branch storing the anchor when `anchor: 'branch'`. Must NOT be a
+ *  protection-covered branch. */
+export const DEFAULT_ANCHOR_REF = 'dxkit-baselines';
+
+/**
+ * Resolve WHERE a committed baseline's anchor should live — the pure decision,
+ * kept beside `resolveBaselineMode` (Rule 11: baseline-config resolution has one
+ * home). `null` means "no committed anchor at all" (ref-based mode: every check
+ * re-gathers from a ref, so nothing is stored).
+ *
+ * Precedence: an explicit `policyAnchor` wins; otherwise the default follows the
+ * protection posture — a PROTECTED default branch cannot take the `'tree'`
+ * direct push, so it defaults to `'branch'`; an unprotected branch keeps the
+ * simplest `'tree'`. `directPushBlocked === undefined` means "protection
+ * unknown" (no gh / no access) → keep `'tree'` (fail-open: never silently
+ * reconfigure a repo we could not probe; doctor surfaces the risk instead).
+ */
+export function resolveAnchorTransport(input: {
+  mode: BaselineMode;
+  policyAnchor?: BaselineAnchor;
+  directPushBlocked?: boolean;
+}): BaselineAnchor | null {
+  if (input.mode === 'ref-based') return null;
+  if (input.policyAnchor) return input.policyAnchor;
+  return input.directPushBlocked === true ? 'branch' : 'tree';
+}
+
+/** True for a valid anchor transport string. */
+export function isBaselineAnchor(v: unknown): v is BaselineAnchor {
+  return v === 'tree' || v === 'branch' || v === 'cache';
+}
+
 /** Where the resolver picked the mode from. Surfaced to the
  *  runtime log + doctor + agent skills so customers see WHY
  *  `committed-full` was picked over `ref-based`. */

@@ -25,7 +25,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { BaselineMode } from './modes';
+import type { BaselineMode, BaselineAnchor } from './modes';
 import type { FindingSeverity, FindingStatus, MatchPair, MatchReason } from './types';
 
 /**
@@ -50,6 +50,28 @@ export interface BaselineSection {
    *  the resolver probes `origin/HEAD` and falls back to
    *  `'origin/main'`. */
   readonly ref?: string;
+  /**
+   * WHERE the committed anchor lives, for committed modes. It decouples the
+   * baseline store from the protected default branch so the after-merge refresh
+   * can stay fast + automated without a direct push to `main` (which branch
+   * protection rejects — see `enforcement.ts`).
+   *
+   *   - `'tree'` (default when the branch is unprotected): the anchor is
+   *     committed into the working tree on the default branch and refreshed by a
+   *     direct push. Simplest; only valid when direct pushes are allowed.
+   *   - `'branch'` (default when the default branch is protected): the anchor
+   *     lives on a separate unprotected branch (`anchorRef`, default
+   *     `dxkit-baselines`). The refresh direct-pushes THERE (allowed — protection
+   *     targets `main`), and each check hydrates the anchor from it. Fast,
+   *     automated, no PR, no deadlock.
+   *   - `'cache'`: the anchor is stored in the CI cache keyed by the main SHA;
+   *     no git write at all. A cold cache falls back to a live re-gather for that
+   *     one check. CI-only (a local run cannot read the CI cache).
+   */
+  readonly anchor?: BaselineAnchor;
+  /** Branch that stores the anchor when `anchor: 'branch'`. Default
+   *  `'dxkit-baselines'`. Must NOT be a protection-covered branch. */
+  readonly anchorRef?: string;
 }
 
 /**

@@ -56,6 +56,28 @@ jobs:
             vyuh-dxkit tools install --yes
           fi
 
+      # Baseline anchor transport (committed modes only; see .dxkit/policy.json
+      # baseline.anchor). 'tree' = anchor committed in the repo; 'branch' = dxkit
+      # hydrates it from the side branch itself during the check; 'cache' = restore
+      # it here from the Actions cache the refresh job wrote for this base commit.
+      - name: Detect baseline anchor transport
+        id: anchor
+        run: |
+          T=tree
+          if [ -f .dxkit/policy.json ]; then
+            T=$(node -e "try{const a=(require('./.dxkit/policy.json').baseline||{}).anchor;process.stdout.write(a||'tree')}catch(e){process.stdout.write('tree')}")
+          fi
+          echo "transport=$T" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached baseline anchor
+        if: steps.anchor.outputs.transport == 'cache'
+        uses: actions/cache/restore@v4
+        with:
+          path: .dxkit/baselines
+          key: dxkit-baseline-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            dxkit-baseline-
+
       # Capture the markdown report regardless of exit code so we can
       # post it as a PR comment even when the guardrail blocks.
       - name: Run guardrail check
@@ -66,8 +88,16 @@ jobs:
           else
             DXKIT=vyuh-dxkit
           fi
+          # Cache transport with a cold cache (eviction / first run): fall back to
+          # a live ref-based gather for this one run rather than error on a missing
+          # anchor. 'branch'/'tree' always have an anchor by check time.
+          EXTRA=""
+          if [ "${{ steps.anchor.outputs.transport }}" = "cache" ] && ! ls .dxkit/baselines/*.json >/dev/null 2>&1; then
+            echo "cache miss — falling back to a ref-based gather for this run"
+            EXTRA="--mode ref-based"
+          fi
           set +e
-          "${DXKIT}" guardrail check --markdown > guardrail-report.md
+          "${DXKIT}" guardrail check $EXTRA --markdown > guardrail-report.md
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           # Surface WHY it blocked in the job log itself (not only the PR
