@@ -1060,6 +1060,27 @@ if [ -n "$RULE13_FLOW" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# 13d (Flow 2.28 file-routes): file-convention routing (Next.js App Router,
+# SvelteKit, Pages Router) is pack-DECLARED, framework-general in the engine.
+# The handler filename (`route`, `+server`) and routing base dirs (`app`,
+# `src/app`, `pages/api`) are per-framework facts that MUST come from a pack's
+# `httpFlow.fileRoutes` descriptor (Rule 6) — never a literal inside
+# src/analyzers/flow/. The shared path algebra in file-routes.ts encodes only
+# the framework-GENERAL conventions (route groups, `[param]`, catch-all). A
+# hardcoded `'route'`/`'+server'`/`'src/app'`/`'pages/api'` string here would
+# re-hardcode the exact Next.js coupling this capability exists to remove.
+RULE13_FILEROUTES=$(grep -rnE "'(route|\+server|src/app|pages/api|route\.(ts|js))'" src/analyzers/flow/ 2>/dev/null \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// file-route-ok")
+if [ -n "$RULE13_FILEROUTES" ]; then
+  echo "❌ Rule 13d violation: hardcoded file-route framework literal in src/analyzers/flow/:"
+  echo "$RULE13_FILEROUTES"
+  echo "   → Declare handler filename + base dirs in a pack's httpFlow.fileRoutes"
+  echo "     (src/languages/<id>.ts); the engine consumes them via the descriptor."
+  echo "   → Annotate '// file-route-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
 # dxkit CLI through ONE canonical helper, and every auto-running surface is
 # in ONE registry.

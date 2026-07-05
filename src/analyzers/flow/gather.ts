@@ -61,7 +61,10 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
 
   for (const root of opts.roots) {
     for (const rel of walkSourceFiles(root, { extensions })) {
-      const flow = await extractFileFlow(join(root, rel), config);
+      // `rel` (root-relative) is what file-convention routing derives its URL
+      // from — the routing base (`app`, `src/app`) is relative to the scanned
+      // participant root, not the absolute path or the repo-root relabel.
+      const flow = await extractFileFlow(join(root, rel), config, rel);
       if (flow) fileFlows.push(opts.relativeTo ? relabelFileFlow(flow, opts.relativeTo) : flow);
     }
   }
