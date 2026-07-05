@@ -195,6 +195,13 @@ Existing findings are grandfathered; only findings this change introduced block.
 > `minimumReleaseAge`, a just-published dxkit is blocked until it ages in. Add
 > the package to `minimumReleaseAgeExclude` first so the install resolves — this
 > is your supply-chain policy, so dxkit does not edit that file for you.
+>
+> **Upgrading** on such a repo: keep the exclusion in place across the bump. If
+> you swap a pinned old version for the new one _before_ installing, the stale
+> lockfile entry violates the policy mid-install and can leave `node_modules` on
+> the new version while your manifests still reference the old one (a broken
+> bin). Exclude the package (not a version), run the upgrade, and you're done —
+> no version juggling.
 
 ## Run a local fixture gate
 

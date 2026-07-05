@@ -25,6 +25,7 @@ import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import { Manifest } from './types';
 import { dxkitCli } from './self-invocation';
+import { detectPackageManager, addDevCommand } from './package-manager';
 import * as logger from './logger';
 
 export type DeltaKind = 'none' | 'patch' | 'minor' | 'major' | 'downgrade';
@@ -178,7 +179,10 @@ export function buildUpgradePlan(cwd: string, opts: UpgradeOpts = {}): UpgradePl
   if (delta !== 'none' || (scaffold && binary && scaffold !== binary)) {
     if (latest) {
       steps.push({
-        command: `npm install @vyuhlabs/dxkit@${latest}`,
+        // dxkit is a devDependency — the install command must match the repo's
+        // package manager (a raw `npm install` fails / mis-resolves on a
+        // pnpm/yarn/bun repo).
+        command: addDevCommand(detectPackageManager(cwd), `@vyuhlabs/dxkit@${latest}`),
         purpose: `Install dxkit binary ${binary ?? '(missing)'} → ${latest}`,
       });
     }
