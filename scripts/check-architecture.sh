@@ -1081,6 +1081,30 @@ if [ -n "$RULE13_FILEROUTES" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# PM-awareness (2.26 → 2.29): a node devDependency install command shown to or
+# run by a user MUST match the repo's package manager (pnpm/yarn/bun/npm), or it
+# fails the way create-dxkit did on a pnpm repo. The canonical npm form lives in
+# ONE of two places — `src/package-manager.ts` (which rewrites it per PM via
+# `pmAwareDevInstall`/`addDevPrefix`) and the `TOOL_DEFS` registry (whose
+# `install` strings are rendered PM-aware at display time). A raw
+# `npm install --save-dev` / `npm i -D` literal anywhere else is a PM-blind
+# command string — the class of bug that shipped an npm-only doctor hint + tool
+# descriptor on pnpm repos. Route it through `src/package-manager.ts`.
+RULE_PM_DEVINSTALL=$(grep -rnE "npm (install|i) (--save-dev|-D)" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/package-manager.ts:" \
+  | grep -v "^src/analyzers/tools/tool-registry.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// pm-aware-ok")
+if [ -n "$RULE_PM_DEVINSTALL" ]; then
+  echo "❌ PM-awareness violation: raw 'npm install --save-dev' literal outside the PM module:"
+  echo "$RULE_PM_DEVINSTALL"
+  echo "   → Build the command via pmAwareDevInstall()/addDevCommand() from src/package-manager.ts"
+  echo "     so it matches the repo's package manager (pnpm/yarn/bun/npm)."
+  echo "   → Annotate '// pm-aware-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
 # dxkit CLI through ONE canonical helper, and every auto-running surface is
 # in ONE registry.
