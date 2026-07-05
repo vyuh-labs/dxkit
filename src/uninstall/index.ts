@@ -204,9 +204,33 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   }
 
   // 2. Delete generator-created files from the manifest (except merge targets).
+  const recorded = new Set(Object.keys(manifest?.files ?? {}));
   for (const [rel, entry] of Object.entries(manifest?.files ?? {})) {
     if (MERGE_TARGETS.has(rel)) continue;
     del(rel, 'dxkit-created file', entry.evolving, entry.hash);
+  }
+
+  // 2b. Resilience sweep for `.claude/skills/dxkit-*`. A manifest written by an
+  //     older dxkit (before skills were recorded) omits them, so the loop above
+  //     misses them and the skills survive an uninstall — a repo that
+  //     "uninstalled" dxkit still advertises its skills to every agent session.
+  //     Every `dxkit-`-prefixed skill dir is unambiguously dxkit's, so remove
+  //     any that the manifest did NOT already account for (recorded ones keep
+  //     their hash-guarded per-file handling above + empty-dir pruning).
+  const skillsRoot = '.claude/skills';
+  if (exists(cwd, skillsRoot)) {
+    for (const name of safeReaddir(path.join(cwd, skillsRoot))) {
+      if (!name.startsWith('dxkit-')) continue;
+      const dir = `${skillsRoot}/${name}`;
+      if (!statIsDir(cwd, dir)) continue;
+      if (recorded.has(`${dir}/SKILL.md`)) continue; // handled by the manifest loop
+      actions.push({
+        kind: 'delete-dir',
+        target: dir,
+        detail: 'dxkit skill (not recorded by an older manifest)',
+        status: 'pending',
+      });
+    }
   }
 
   // 3. Delete gated ship-installer artifacts by flag / presence.

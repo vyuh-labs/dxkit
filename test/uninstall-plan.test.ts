@@ -200,3 +200,55 @@ describe('recipe symmetry — every install surface has a removal path', () => {
     expect(targets).toContain('.github/workflows/dxkit-guardrails.yml');
   });
 });
+
+describe('planUninstall — skills resilience for older manifests', () => {
+  it('removes .claude/skills/dxkit-* dirs even when the manifest did not record them', () => {
+    // Simulate a repo installed by an OLDER dxkit whose manifest omits skills.
+    write('.claude/skills/dxkit-learn/SKILL.md', '# learn');
+    write('.claude/skills/dxkit-flow/SKILL.md', '# flow');
+    write('.claude/skills/my-own-skill/SKILL.md', '# not dxkit'); // must be preserved
+    write(
+      '.vyuh-dxkit.json',
+      JSON.stringify({
+        version: '2.22.0',
+        mode: 'committed-full',
+        generatedAt: 't',
+        config: {},
+        files: {}, // no skills recorded — the older-manifest bug
+        installFlags: ALL_FLAGS,
+      }),
+    );
+
+    const plan = planUninstall(tmp);
+    const targets = plan.actions.filter((a) => a.status === 'pending').map((a) => a.target);
+    expect(targets).toContain('.claude/skills/dxkit-learn');
+    expect(targets).toContain('.claude/skills/dxkit-flow');
+    expect(targets).not.toContain('.claude/skills/my-own-skill');
+
+    executeUninstall(tmp, plan);
+    expect(exists('.claude/skills/dxkit-learn')).toBe(false);
+    expect(exists('.claude/skills/dxkit-flow')).toBe(false);
+    expect(exists('.claude/skills/my-own-skill')).toBe(true); // user skill untouched
+  });
+
+  it('does not double-remove skills the manifest DID record (hash-guarded path wins)', () => {
+    write('.claude/skills/dxkit-learn/SKILL.md', '# learn');
+    const hash = sha256('# learn');
+    write(
+      '.vyuh-dxkit.json',
+      JSON.stringify({
+        version: '2.26.0',
+        mode: 'committed-full',
+        generatedAt: 't',
+        config: {},
+        files: { '.claude/skills/dxkit-learn/SKILL.md': { hash, evolving: false } },
+        installFlags: ALL_FLAGS,
+      }),
+    );
+    const plan = planUninstall(tmp);
+    // Recorded as the SKILL.md file, not a duplicate delete-dir.
+    const learnActions = plan.actions.filter((a) => a.target.includes('dxkit-learn'));
+    expect(learnActions).toHaveLength(1);
+    expect(learnActions[0].target).toBe('.claude/skills/dxkit-learn/SKILL.md');
+  });
+});

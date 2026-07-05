@@ -141,6 +141,12 @@ function printUsage(): void {
   ${logger.bold('Usage:')}
     vyuh-dxkit init [options]    Install dxkit agent DX in this repo
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
+    vyuh-dxkit uninstall [options]
+                                 Remove dxkit, restoring the exact pre-dxkit state:
+                                 delete files dxkit created + surgically revert its
+                                 additive merges (.gitignore / CLAUDE.md / settings.json
+                                 / package.json). Dry-run by default; --yes applies.
+                                 [--keep-baselines] [--remove-devdep] [--force]
     vyuh-dxkit doctor            Verify setup
     vyuh-dxkit health [path]     Run deterministic health analysis
     vyuh-dxkit vulnerabilities [path]  Run deep security scan
@@ -221,8 +227,8 @@ function printUsage(): void {
     vyuh-dxkit issue --type=<type> [--about=<text>] [--fingerprint=<id>] [--no-browser]
                                  Open a pre-filled GitHub Issue against vyuh-labs/dxkit.
                                  Types: false-positive, missing-finding, bug,
-                                 feature-request, docs. Nothing is submitted until
-                                 you click "Submit" in your browser.
+                                 feature-request, docs, uninstall. Nothing is submitted
+                                 until you click "Submit" in your browser.
 
   ${logger.bold('Init options:')}
     --dx-only                 Just .claude/ + CLAUDE.md (default)
@@ -2220,6 +2226,23 @@ export async function run(argv: string[]): Promise<void> {
             : '') +
           '. dxkit has been uninstalled.',
       );
+
+      // When we edited package.json (devDep removed), the lockfile is now stale.
+      // Point the user at their PM's install so the prune completes. pnpm has an
+      // extra wrinkle when a release-age policy pinned dxkit — see the skill.
+      if (opts.removeDevDependency && result.reverted.includes('package.json')) {
+        const { detectPackageManager, provisionCommand } = await import('./package-manager');
+        const pm = detectPackageManager(targetPath);
+        logger.info('');
+        logger.info(
+          `package.json changed — run \`${provisionCommand(pm)}\` to prune @vyuhlabs/dxkit from your lockfile.`,
+        );
+        if (pm === 'pnpm') {
+          logger.dim(
+            '  (pnpm + a release-age policy: keep any minimumReleaseAgeExclude for dxkit until AFTER this install prunes it, then remove it and install again.)',
+          );
+        }
+      }
 
       // Optional, skippable feedback — a prefilled GitHub issue the user opens
       // themselves (no telemetry, no auto-submit).
