@@ -99,6 +99,30 @@ describe('install/uninstall round-trip restores the exact pre-dxkit state', () =
     expect(readFileSync(pkgPath, 'utf8')).not.toMatch(/coverage-v8/);
   });
 
+  it('preserves a TAB-indented package.json byte-for-byte across the round-trip', () => {
+    // 2.27.0 root cause: init reformatted package.json (compact/tab → 2-space
+    // pretty), a change uninstall could not undo. `serializePreservingJson`
+    // detects the original style; the compact + 2-space branches are covered by
+    // the scenarios above, this pins the TAB branch — a real style dxkit must
+    // not silently rewrite to spaces on a devDep add.
+    const tabPkg = '{\n\t"name": "tabbed",\n\t"version": "1.0.0"\n}\n';
+    write(repo, 'package.json', tabPkg);
+    write(repo, 'src/index.ts', 'export const x = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit tab-indented');
+
+    cli(repo, 'init', '--with-dxkit-agents', '--yes');
+    // If init added a devDep it must have kept the tab indentation (no diff on
+    // the pre-existing lines); if it touched package.json at all, the style
+    // holds. Either way the round-trip must land byte-clean.
+    const afterInit = readFileSync(join(repo, 'package.json'), 'utf8');
+    if (afterInit !== tabPkg) expect(afterInit).toMatch(/\n\t"/); // still tab-indented
+
+    cli(repo, 'uninstall', '--yes', '--remove-devdep');
+    expect(readFileSync(join(repo, 'package.json'), 'utf8')).toBe(tabPkg);
+    expect(porcelain(repo)).toBe('');
+  });
+
   it('NEVER claims a pre-existing AGENTS.md / CLAUDE.md as dxkit-created (data-loss guard)', () => {
     // These files predate dxkit — the project authored them.
     const agents = '# My Project\n\nProject-authored agent guidance.\n';

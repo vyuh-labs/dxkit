@@ -154,9 +154,10 @@ function copyAdditive(
  * matching hook (via .githooks/ or .husky/), emits a `.dxkit`
  * sidecar instead and prints merge instructions.
  *
- * Customer still needs to run `git config core.hooksPath .githooks`
- * to activate. We don't run it for them — that's a global git config
- * mutation outside dxkit's purview.
+ * Activation (`git config core.hooksPath .githooks`) happens here directly
+ * via `activateHooks` (idempotent; refuses to clobber a custom hooksPath such
+ * as husky's) rather than relying on a postinstall script — pnpm skips the
+ * dxkit devDependency's postinstall, which would ship the guardrail inert.
  *
  * Why pre-commit is opt-in: see `InstallerOpts.withPrecommit`.
  */
