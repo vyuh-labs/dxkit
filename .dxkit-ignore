@@ -12,3 +12,10 @@
 # source — they are test artifacts. Excluding them prevents false
 # positives in dxkit's self-health-check.
 test/fixtures/benchmarks/
+
+# Analysis fixtures (2.30). Minimal example repos (TS/Python/Go) the
+# fixture-analysis harness copies + scans; they contain deliberate
+# `.env.example` files, placeholder secrets, and un-tested source used
+# to assert invariants. Test artifacts, not dxkit's source — excluding
+# them keeps the self-scan (and the self-guardrail) clean.
+test/fixtures/analysis/
