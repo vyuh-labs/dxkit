@@ -1010,6 +1010,9 @@ export const go: LanguageSupport = {
 
   permissions: ['Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)'],
   ruleFile: 'go.md',
+  ciSetup: {
+    steps: [{ name: 'Set up Go', uses: 'actions/setup-go@v5', with: { 'go-version': '1.24.0' } }],
+  },
   defaultVersion: '1.24.0',
   cliBinaries: ['go', 'golangci-lint'],
   devcontainerFeature: {

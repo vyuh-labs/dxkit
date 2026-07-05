@@ -41,6 +41,24 @@ export interface LanguagePackCapabilities {
  * (rust, today) omits the whole field; a pack with vocabulary but no
  * test-gap taxonomy can declare just `vocabulary`.
  */
+/**
+ * One GitHub Actions step that sets up a language toolchain in CI. Declared
+ * structurally (not raw YAML) so the templater renders it safely and a synthetic
+ * pack can be asserted through it. `uses` is a pinned action ref
+ * (`actions/setup-go@v5`); `with` is its inputs (`{ 'go-version': '1.22' }`),
+ * typically fed from the pack's `defaultVersion`.
+ */
+export interface CiSetupStep {
+  readonly name: string;
+  readonly uses: string;
+  readonly with?: Readonly<Record<string, string>>;
+}
+
+/** A pack's CI runtime setup — the ordered steps unioned into the workflow. */
+export interface CiSetupSupport {
+  readonly steps: ReadonlyArray<CiSetupStep>;
+}
+
 export interface ArchitecturalShape {
   /**
    * Path patterns identifying "primary architecture" files for this
@@ -474,6 +492,22 @@ export interface LanguageSupport {
    * convention and no controllers/components vocabulary maps).
    */
   architecturalShape?: ArchitecturalShape;
+
+  /**
+   * CI runtime setup for this pack: the GitHub Actions steps that install the
+   * language toolchain the CI guardrail needs so that (a) the pack's native dep
+   * scanner (pip-audit, govulncheck, cargo-audit, …) can be provisioned and (b)
+   * the correctness floor can compile + run affected tests. Consumed by the
+   * workflow templater through the registry helper `allCiSetupSteps` (Rule 6:
+   * one pack-declared source, unioned across active packs — never a per-language
+   * setup chain baked into a workflow). Without it the CI workflow set up only
+   * Node, so a non-Node repo's scanner could not install and its floor silently
+   * fail-opened. Version comes from the pack's `defaultVersion`.
+   *
+   * Optional — a pack whose toolchain the runner already provides (Node, for the
+   * dxkit CLI itself) omits it; consumers see the empty union.
+   */
+  ciSetup?: CiSetupSupport;
 
   /**
    * HTTP-flow descriptors for this pack: how its source expresses outbound

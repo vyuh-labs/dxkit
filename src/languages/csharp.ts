@@ -1640,6 +1640,11 @@ export const csharp: LanguageSupport = {
     'Bash(dotnet run:*)',
   ],
   ruleFile: 'csharp.md',
+  ciSetup: {
+    steps: [
+      { name: 'Set up .NET', uses: 'actions/setup-dotnet@v4', with: { 'dotnet-version': '8.0' } },
+    ],
+  },
   defaultVersion: '8.0',
   cliBinaries: ['dotnet'],
   devcontainerFeature: {

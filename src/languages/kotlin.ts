@@ -556,6 +556,17 @@ export const kotlin: LanguageSupport = {
   permissions: ['Bash(./gradlew:*)', 'Bash(gradle:*)', 'Bash(detekt:*)'],
   ruleFile: 'kotlin.md',
   cliBinaries: ['gradle', 'detekt'],
+  ciSetup: {
+    // Kotlin/JVM runs on the JDK; shares `actions/setup-java` with the Java pack
+    // (deduped by `uses` in allCiSetupSteps, so a Java+Kotlin repo sets it up once).
+    steps: [
+      {
+        name: 'Set up Java (Kotlin/JVM)',
+        uses: 'actions/setup-java@v4',
+        with: { distribution: 'temurin', 'java-version': '17' },
+      },
+    ],
+  },
   defaultVersion: '2.0.21',
   // No first-party Kotlin devcontainer feature on ghcr.io/devcontainers
   // — the canonical Android/JVM tooling for a Kotlin project is a JDK

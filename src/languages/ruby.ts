@@ -837,6 +837,9 @@ export const ruby: LanguageSupport = {
 
   cliBinaries: ['ruby', 'bundle'],
 
+  ciSetup: {
+    steps: [{ name: 'Set up Ruby', uses: 'ruby/setup-ruby@v1', with: { 'ruby-version': '3.3.0' } }],
+  },
   defaultVersion: '3.3.0',
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/ruby:1',

@@ -1013,6 +1013,9 @@ export const rust: LanguageSupport = {
 
   permissions: ['Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(cargo clippy:*)'],
   ruleFile: 'rust.md',
+  ciSetup: {
+    steps: [{ name: 'Set up Rust', uses: 'dtolnay/rust-toolchain@stable' }],
+  },
   defaultVersion: 'stable',
   cliBinaries: ['rustc', 'cargo'],
   devcontainerFeature: {

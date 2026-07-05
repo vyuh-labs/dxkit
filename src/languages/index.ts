@@ -1,6 +1,7 @@
 import type { DetectedStack } from '../types';
 import type {
   ArchitecturalShape,
+  CiSetupStep,
   DeepSastSupport,
   HttpFlowSupport,
   LanguageId,
@@ -354,6 +355,29 @@ export function allPrimaryComponentPaths(flags: DetectedStack['languages']): str
       ),
     ),
   ];
+}
+
+/**
+ * Union of every active pack's `ciSetup.steps` — the language-runtime setup the
+ * CI guardrail workflow needs so a non-Node repo's native dep scanner can
+ * install and its correctness floor can run. Deduplicated by `uses` (two active
+ * packs on the same toolchain — Java + Kotlin both `setup-java` — set it up
+ * once). Consumed by the workflow templater (`ship-installers`) at install time
+ * to render the `__DXKIT_CI_RUNTIME_SETUP__` block from the DETECTED stack, so
+ * the workflow never carries a per-language setup chain (Rule 6). Node's own
+ * setup stays in the template as dxkit's CLI runtime; this adds the project's.
+ */
+export function allCiSetupSteps(flags: DetectedStack['languages']): CiSetupStep[] {
+  const seen = new Set<string>();
+  const out: CiSetupStep[] = [];
+  for (const l of activeLanguagesFromFlags(flags)) {
+    for (const step of l.ciSetup?.steps ?? []) {
+      if (seen.has(step.uses)) continue;
+      seen.add(step.uses);
+      out.push(step);
+    }
+  }
+  return out;
 }
 
 /**
