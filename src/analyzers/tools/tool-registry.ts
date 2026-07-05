@@ -163,6 +163,39 @@ function getSystemPaths(): string[] {
   return paths;
 }
 
+/**
+ * When running inside GitHub Actions (`$GITHUB_PATH` is set), append every tool
+ * bin directory dxkit knows about — the canonical `getSystemPaths()` PLUS every
+ * tool's declared `probePaths` — to `$GITHUB_PATH`. This makes the scanners a
+ * `tools install` just provisioned discoverable BY NAME in later workflow steps,
+ * so the per-language dep audit finds its native scanner (osv-scanner, pip-audit,
+ * govulncheck, cargo-audit, …) instead of silently falling back to a
+ * wrong-artifact one and drifting from the baseline.
+ *
+ * It is the registry-derived, recipe-safe counterpart to `findTool`: it reads
+ * the SAME sources `findTool` probes, so a NEW language pack whose scanner
+ * installs to a new directory (declared via its tool's `probePaths`) is covered
+ * automatically, with no workflow edit. That closes the class where a hardcoded
+ * PATH list in the CI workflow silently omitted a pack's scanner. No-op off CI.
+ * Returns the directories exported (for tests / logging).
+ */
+export function exportToolPathsToGithubEnv(): string[] {
+  const dirs = [
+    ...getSystemPaths(),
+    ...Object.values(TOOL_DEFS).flatMap((d) => d.probePaths ?? []),
+  ];
+  const unique = [...new Set(dirs)];
+  const githubPath = process.env.GITHUB_PATH;
+  if (githubPath) {
+    try {
+      fs.appendFileSync(githubPath, unique.join('\n') + '\n', 'utf8');
+    } catch {
+      /* best-effort — never fail an install over a PATH export */
+    }
+  }
+  return unique;
+}
+
 /** Run a command with short timeout, return stdout or empty string. */
 function quickRun(cmd: string): string {
   try {

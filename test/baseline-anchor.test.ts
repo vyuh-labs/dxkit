@@ -24,6 +24,7 @@ import {
   baselineRefreshInstallPlan,
   installCiBaselineRefresh,
   detectInstalledRefreshTransport,
+  installCiGuardrails,
 } from '../src/ship-installers';
 import { hydrateAnchorFromBranch } from '../src/baseline/anchor';
 
@@ -234,6 +235,49 @@ describe('installCiBaselineRefresh — content per transport (anti-recurrence)',
     // Same transport → installWorkflow skips the existing file, no migration note.
     expect(r.installed).toHaveLength(0);
     expect(r.notes.join('\n')).not.toMatch(/Migrated/);
+  });
+});
+
+describe('CI workflow templates audit the right artifact (item #3 anti-recurrence)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-wfpm-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const read = (name: string): string =>
+    readFileSync(join(dir, '.github', 'workflows', name), 'utf8');
+
+  // Every workflow that installs deps + runs the dep audit must (a) install with
+  // the repo's package manager (not a hardcoded npm that fabricates a tree) and
+  // (b) put the scanner bin dirs on PATH so the audit finds its native scanner
+  // rather than falling back to a wrong-artifact one.
+  const auditWorkflows: Array<[string, () => void]> = [
+    ['dxkit-guardrails.yml', () => installCiGuardrails(dir)],
+    [
+      'dxkit-baseline-refresh.yml',
+      () =>
+        installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: PROTECTED }),
+    ],
+  ];
+
+  it.each(auditWorkflows)('%s is package-manager-aware (not npm-only)', (name, install) => {
+    install();
+    const yml = read(name);
+    expect(yml).toContain('pnpm install --frozen-lockfile');
+    expect(yml).toContain('yarn install');
+    expect(yml).toContain('bun install');
+    // The npm path survives as a branch, but must not be the ONLY install form.
+    expect(yml).toMatch(/if \[ -f pnpm-lock\.yaml \]/);
+  });
+
+  it.each(auditWorkflows)('%s puts the scanner bin dirs on $GITHUB_PATH', (name, install) => {
+    install();
+    const yml = read(name);
+    expect(yml).toContain('GITHUB_PATH');
+    expect(yml).toContain('.local/bin');
+    expect(yml).toContain('go/bin');
+    expect(yml).toContain('.cargo/bin');
   });
 });
 

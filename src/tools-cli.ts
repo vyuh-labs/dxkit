@@ -35,6 +35,7 @@ import {
   getInstallEnv,
   checkAllTools,
   buildRequiredTools,
+  exportToolPathsToGithubEnv,
   ToolStatus,
 } from './analyzers/tools/tool-registry';
 
@@ -404,6 +405,12 @@ async function runInstall(
     console.log('');
     logger.dim(`Run \`${dxkitCli('health')}\` to use the newly installed tools.`);
   }
+
+  // In CI, make every tool bin dir dxkit knows about discoverable by name in
+  // later workflow steps, so the per-language dep audit finds its native scanner
+  // instead of falling back to a wrong-artifact one. Registry-derived, so a new
+  // language pack's scanner dir is covered with no workflow edit. No-op off CI.
+  exportToolPathsToGithubEnv();
 }
 
 export async function runToolsCommand(

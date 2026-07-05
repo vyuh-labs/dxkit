@@ -31,12 +31,24 @@ jobs:
         with:
           node-version: '22'
 
-      # Install dxkit. Prefers a project-local install (devDependencies)
-      # so the version is pinned alongside the project. Falls back to a
-      # global install for non-JS projects.
-      - name: Install dxkit
+      # Install the project's deps with ITS package manager so the guardrail
+      # audits the dependency tree the repo actually SHIPS — not a fabricated npm
+      # resolution (a bare `npm install` on a pnpm repo invents a different tree,
+      # so the audit both flags phantom vulns and can miss real ones). corepack
+      # ships with Node and provides pnpm/yarn with no extra setup action, honoring
+      # the repo's `packageManager` field; bun is fetched only when its lockfile is
+      # present. A project-local dxkit devDependency is installed along the way.
+      - name: Install dependencies + dxkit
         run: |
-          if [ -f package-lock.json ]; then
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
             npm ci
           elif [ -f package.json ]; then
             npm install
@@ -55,6 +67,15 @@ jobs:
           else
             vyuh-dxkit tools install --yes
           fi
+          # Put every ecosystem's tool-bin dir on PATH so the correct NATIVE dep
+          # scanner is found for whatever language this repo is — osv-scanner /
+          # pip-audit in ~/.local/bin, govulncheck in ~/go/bin, cargo-audit in
+          # ~/.cargo/bin. Without this the audit can't find its scanner and
+          # silently falls back to a wrong-artifact one (e.g. npm-audit on a pnpm
+          # repo), drifting from the baseline. Language-agnostic on purpose.
+          for d in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
 
       # Baseline anchor transport (committed modes only; see .dxkit/policy.json
       # baseline.anchor). 'tree' = anchor committed in the repo; 'branch' = dxkit
