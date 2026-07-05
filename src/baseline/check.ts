@@ -281,6 +281,14 @@ export interface GuardrailCheckResult {
    *  flow model against). Its `blocks` / `warns` are folded into the top-level
    *  verdict above. Renderers surface `findings` alongside the matched pairs. */
   readonly flowGate?: FlowGateOutcome;
+  /** Set when the CURRENT dependency-vulnerability scan could not run — the
+   *  scanner was absent / timed out / failed — AND the scan was actually
+   *  REQUESTED this run (not incrementally skipped because no manifest changed,
+   *  and not a stack with nothing to scan). A silent zero dep-vulns then does
+   *  NOT mean "no net-new dep vulns", so renderers surface this prominently: the
+   *  pass is not a clean bill of dependency health. `undefined` when the audit
+   *  ran or was legitimately not requested. */
+  readonly depVulnsUnmeasured?: { readonly reason: string };
 }
 
 /**
@@ -695,6 +703,18 @@ export async function runGuardrailCheck(
     allowlistDelta,
     refExcludedKinds,
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),
+    // Fail-loud: a dep scan that was REQUESTED but could not run must not read as
+    // a clean "no net-new dep vulns" — surface it. Incrementally-skipped scans
+    // (scope.depVulns false) and nothing-to-scan stacks are legitimately silent.
+    ...(scope.depVulns && !current.aggregate.provenance.depVulns.available
+      ? {
+          depVulnsUnmeasured: {
+            reason:
+              current.aggregate.provenance.depVulns.unavailableReason ||
+              'dependency scanner unavailable',
+          },
+        }
+      : {}),
   };
 }
 

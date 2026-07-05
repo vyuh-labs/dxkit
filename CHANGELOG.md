@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.32.0] - 2026-07-05
+
+### Added — stack-aware CI (the CI guardrail works for every language)
+
+The CI guardrail + baseline-refresh workflows set up only Node, so on a Go /
+Python / Rust / JVM / Ruby / C# repo the pack's native dependency scanner had no
+toolchain to install against and the correctness floor silently fail-opened.
+
+- **Pack-declared CI runtime setup.** A new `LanguageSupport.ciSetup` capability
+  declares each pack's GitHub Actions setup step(s); the workflow templater
+  unions the active packs (via `allCiSetupSteps`) and renders the language
+  toolchain into the guardrails + baseline-refresh workflows at install time,
+  from the detected stack. JVM packs share `setup-java`; a polyglot repo gets all
+  its runtimes; a Node-only repo renders nothing (Node is dxkit's own runtime).
+  `update` re-renders when a language is added after install.
+
+### Added — fail-loud dependency audit
+
+When a dependency scan was requested but its scanner could not run (absent /
+timed out / failed), the guardrail now surfaces a prominent **"Dependency audit
+UNMEASURED"** notice in its console + PR-comment + JSON output. A pass no longer
+reads as a clean bill of dependency health when the scan did not actually run.
+Incrementally-skipped scans and nothing-to-scan stacks stay legitimately silent.
+
+### Added — opt-in `push:` guardrails trigger
+
+`vyuh-dxkit init --with-ci-push-trigger` adds a `push:` trigger on the default
+branch to the guardrails workflow, so trunk-based / no-PR repos get a post-hoc
+verdict on main. Off by default (redundant + noisy for PR-gated repos).
+
+### Fixed — no npm-flavored install string in the manifest
+
+`tools install` now normalizes `.vyuh-dxkit.json` tool deps to
+`{package, ecosystem}`, dropping any legacy `"install": "npm install --save-dev …"`
+string an older dxkit persisted (misleading canonical JSON on a non-npm repo).
+
 ## [2.31.0] - 2026-07-05
 
 ### Fixed — the baseline refresh no longer deadlocks against branch protection
