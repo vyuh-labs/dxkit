@@ -144,6 +144,35 @@ export function resolveLoopPreset(cwd: string): LoopPreset {
   return readPresetFromPolicyFile(cwd) ?? DEFAULT_LOOP_PRESET;
 }
 
+/** Read `loop.testCommand` from `.dxkit/policy.json`. Best-effort → undefined. */
+function readTestCommandFromPolicyFile(cwd: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, DEFAULT_POLICY_FILENAME), 'utf8');
+    const parsed = JSON.parse(raw) as { loop?: { testCommand?: unknown } };
+    const cmd = parsed.loop?.testCommand;
+    return typeof cmd === 'string' && cmd.trim().length > 0 ? cmd : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the loop's postflight test command — the command the Stop-gate runs to
+ * prove the change still passes the tests it affects. Precedence:
+ *   1. `DXKIT_LOOP_TEST_COMMAND` env var (per-shell / CI override).
+ *   2. `.dxkit/policy.json` → `loop.testCommand` (committed + reviewable).
+ *   3. undefined (no postflight test command configured).
+ *
+ * The env var stays the override, but committing the command to policy makes it
+ * durable: an env var is the easiest part of the loop config to silently lose
+ * (per-shell, per-machine), which left the postflight test step quietly unset.
+ */
+export function resolveLoopTestCommand(cwd: string): string | undefined {
+  const env = process.env.DXKIT_LOOP_TEST_COMMAND;
+  if (typeof env === 'string' && env.trim().length > 0) return env;
+  return readTestCommandFromPolicyFile(cwd);
+}
+
 /**
  * Build the loop-scoped policy: the repo's base `BrownfieldPolicy`
  * (confidence thresholds, baseline mode, drift handling preserved) with

@@ -367,6 +367,8 @@ export async function run(argv: string[]): Promise<void> {
       // setup-branch-protection flags
       branch: { type: 'string' },
       'require-reviews': { type: 'string' },
+      // `protect` applies changes only with --apply (dry-run by default)
+      apply: { type: 'boolean', default: false },
       // setup-prebuild flags (branch reused above)
       regions: { type: 'string' },
       // upgrade flags
@@ -2333,6 +2335,20 @@ export async function run(argv: string[]): Promise<void> {
         branch: values.branch as string | undefined,
         requireReviews: requireReviewsRaw ? parseInt(requireReviewsRaw, 10) : undefined,
         force: !!values.force,
+      });
+      break;
+    }
+
+    case 'protect': {
+      // Friendly alias for setup-branch-protection, dry-run by DEFAULT: dxkit
+      // never silently writes a repo's settings. `--apply` / `--yes` applies.
+      const { runSetupBranchProtection } = await import('./setup-branch-protection');
+      const requireReviewsRaw = values['require-reviews'] as string | undefined;
+      await runSetupBranchProtection(cwd, {
+        branch: values.branch as string | undefined,
+        requireReviews: requireReviewsRaw ? parseInt(requireReviewsRaw, 10) : undefined,
+        force: !!values.force,
+        dryRun: !(values.apply || values.yes),
       });
       break;
     }

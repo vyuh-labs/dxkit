@@ -8,6 +8,7 @@ import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { detectEnforcement } from './enforcement';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
@@ -675,6 +676,40 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
             },
           }),
     });
+  }
+
+  // 6b. Enforcement PATH — not just the wiring. The guardrails workflow can be
+  // present + green while REAL enforcement is zero: if the default branch takes
+  // direct pushes, or nothing REQUIRES the dxkit-guardrails check, a PR (or a
+  // commit) can land without the guardrail ever blocking. Only meaningful once
+  // the workflow exists; stays silent when gh can't answer (probed === false),
+  // so it never fails a check on "we couldn't tell".
+  if (
+    hasManifest &&
+    fs.existsSync(path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'))
+  ) {
+    const enf = detectEnforcement(cwd);
+    if (enf.probed) {
+      const enforced = enf.directPushBlocked && enf.guardrailRequired;
+      checks.push({
+        label: enforced
+          ? `guardrail enforced on '${enf.branch}' (protected + required check)`
+          : `guardrail is BYPASSABLE on '${enf.branch}' — it runs but does not block merges`,
+        ok: enforced,
+        tier: 'operational',
+        ...(enforced
+          ? {}
+          : {
+              fix: {
+                hint: !enf.directPushBlocked
+                  ? `'${enf.branch}' takes direct pushes, so commits (and PRs) can land without the guardrail. Protect the branch and require the dxkit-guardrails check.`
+                  : `'${enf.branch}' is protected but does not require the dxkit-guardrails check, so a PR can merge with the guardrail red. Add it as a required status check.`,
+                command: dxkitCli('protect'),
+                skill: 'dxkit-init',
+              },
+            }),
+      });
+    }
   }
 
   // 7. Allowlist suppression hygiene. An expired entry no longer

@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { DEFAULT_LOOP_PRESET, resolveLoopPolicy, resolveLoopPreset } from '../../src/loop/policy';
+import {
+  DEFAULT_LOOP_PRESET,
+  resolveLoopPolicy,
+  resolveLoopPreset,
+  resolveLoopTestCommand,
+} from '../../src/loop/policy';
 
 function tmpRepo(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-loop-policy-'));
@@ -30,6 +35,34 @@ describe('loop policy presets', () => {
   it('defaults to security-only when nothing is configured', () => {
     expect(resolveLoopPreset(repo)).toBe('security-only');
     expect(DEFAULT_LOOP_PRESET).toBe('security-only');
+  });
+
+  describe('resolveLoopTestCommand precedence', () => {
+    const savedCmd = process.env.DXKIT_LOOP_TEST_COMMAND;
+    afterEach(() => {
+      if (savedCmd === undefined) delete process.env.DXKIT_LOOP_TEST_COMMAND;
+      else process.env.DXKIT_LOOP_TEST_COMMAND = savedCmd;
+    });
+
+    it('is undefined when neither env nor policy sets it', () => {
+      delete process.env.DXKIT_LOOP_TEST_COMMAND;
+      expect(resolveLoopTestCommand(repo)).toBeUndefined();
+    });
+    it('reads the durable policy field when the env var is unset', () => {
+      delete process.env.DXKIT_LOOP_TEST_COMMAND;
+      writePolicy(repo, { loop: { testCommand: 'pnpm test:int' } });
+      expect(resolveLoopTestCommand(repo)).toBe('pnpm test:int');
+    });
+    it('the env var overrides the policy field', () => {
+      writePolicy(repo, { loop: { testCommand: 'pnpm test:int' } });
+      process.env.DXKIT_LOOP_TEST_COMMAND = 'npm test';
+      expect(resolveLoopTestCommand(repo)).toBe('npm test');
+    });
+    it('ignores a blank/whitespace policy value', () => {
+      delete process.env.DXKIT_LOOP_TEST_COMMAND;
+      writePolicy(repo, { loop: { testCommand: '   ' } });
+      expect(resolveLoopTestCommand(repo)).toBeUndefined();
+    });
   });
 
   it('security-only does NOT block test-gap or quality, but DOES block the security class', () => {
