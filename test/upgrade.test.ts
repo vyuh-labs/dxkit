@@ -6,6 +6,9 @@
  * JSON-mode schema that dxkit-update consumes.
  */
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { classifyDelta, buildUpgradePlan } from '../src/upgrade';
 
 describe('classifyDelta', () => {
@@ -81,9 +84,27 @@ describe('buildUpgradePlan: schema invariants', () => {
     });
     const required = plan.steps.filter((s) => !s.optional);
     expect(required.length).toBe(3);
-    expect(required[0].command).toContain('npm install @vyuhlabs/dxkit@');
+    // dxkit is a devDependency — /tmp has no lockfile so the PM resolves to npm.
+    expect(required[0].command).toContain('npm install --save-dev @vyuhlabs/dxkit@');
     expect(required[1].command).toContain('vyuh-dxkit update');
     expect(required[2].command).toContain('vyuh-dxkit doctor');
+  });
+
+  it('the binary-upgrade step is PM-aware — pnpm repo gets `pnpm add -D` (#14)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-upg-pm-'));
+    try {
+      writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 6.0\n');
+      const plan = buildUpgradePlan(dir, {
+        target: '99.99.99',
+        _readBinary: () => '2.5.1',
+        _readLatest: () => '99.99.99',
+      });
+      const step = plan.steps.find((s) => !s.optional);
+      expect(step?.command).toContain('pnpm add -D @vyuhlabs/dxkit@99.99.99');
+      expect(step?.command).not.toContain('npm install');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('warns about major-version jumps', () => {
