@@ -9,6 +9,7 @@
  */
 import * as fs from 'fs';
 import { run } from '../tools/runner';
+import { trackedEnvFiles } from './env-files';
 import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from '../tools/deadline';
 import { enrichEpss, extractCveId } from '../tools/epss';
 import { spanHash, stampFingerprints } from '../tools/fingerprint';
@@ -101,21 +102,20 @@ export function gatherFileFindings(cwd: string): SecurityFinding[] {
     }
   }
 
-  // .env tracked in git
-  const envFiles = run('git ls-files .env .env.*', cwd);
-  if (envFiles) {
-    for (const f of envFiles.split('\n').filter((l) => l.trim())) {
-      findings.push({
-        severity: 'high',
-        category: 'config',
-        cwe: 'CWE-798',
-        rule: 'env-in-git',
-        title: `.env file tracked in git: ${f}`,
-        file: f,
-        line: 0,
-        tool: 'git',
-      });
-    }
+  // .env tracked in git — via the canonical detector shared with the metric
+  // count, so `.env.example` / `.env.template` conventions are excluded in ONE
+  // place (a real `.env` / `.env.production` still surfaces).
+  for (const f of trackedEnvFiles(cwd)) {
+    findings.push({
+      severity: 'high',
+      category: 'config',
+      cwe: 'CWE-798',
+      rule: 'env-in-git',
+      title: `.env file tracked in git: ${f}`,
+      file: f,
+      line: 0,
+      tool: 'git',
+    });
   }
 
   return findings;

@@ -11,12 +11,13 @@
  * pack auto-extends the scan (Rule 6).
  */
 
-import { join, relative } from 'path';
+import { join, relative, resolve } from 'path';
 import { LANGUAGES, allFlowSourceExtensions } from '../../languages';
 import { walkSourceFiles } from '../tools/walk-source-files';
 import { extractFileFlow, type FileFlow } from './extract';
 import { buildFlowModel, type FlowModel } from './model';
 import { loadOpenApiRoutes } from './spec-source';
+import { readFlowConfig } from './config';
 import type { NormalizeConfig } from './normalize';
 
 export interface GatherFlowOptions {
@@ -73,4 +74,29 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
   // join indexes routes by (method, path), so a duplicate collapses).
   const specRoutes = (opts.specs ?? []).flatMap((spec) => loadOpenApiRoutes(spec));
   return buildFlowModel([...fileFlows, { calls: [], routes: specRoutes }]);
+}
+
+/**
+ * Gather a repo's flow model with its POLICY CONFIG applied — the canonical
+ * entry point for every single-repo flow surface (map, diagnose, topology
+ * detection). It reads `.dxkit/policy.json:flow` itself, so a caller cannot
+ * forget to thread `stripUrlPrefixes` / `specs` (the class of bug that left the
+ * configured base-URL-helper strip unapplied on the diagnose + detect paths,
+ * while the map + gate paths threaded it). The raw `gatherFlowModel` is reserved
+ * for callers that supply config explicitly — the two-ref gate, and cross-repo
+ * publish — where the config comes from somewhere other than this repo's policy.
+ *
+ * `roots` defaults to `[cwd]`; pass an override for a multi-root scan.
+ */
+export async function gatherRepoFlowModel(
+  cwd: string,
+  opts: { roots?: readonly string[]; relativeTo?: string } = {},
+): Promise<FlowModel> {
+  const config = readFlowConfig(cwd);
+  return gatherFlowModel({
+    roots: opts.roots ?? [cwd],
+    specs: config.specs.map((s) => resolve(cwd, s)),
+    stripUrlPrefixes: config.stripUrlPrefixes,
+    ...(opts.relativeTo !== undefined ? { relativeTo: opts.relativeTo } : {}),
+  });
 }

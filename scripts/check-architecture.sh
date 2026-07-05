@@ -1105,6 +1105,52 @@ if [ -n "$RULE_PM_DEVINSTALL" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# One-concept-one-path (2.30): a recurring dogfood class was "one concept
+# computed in two independent code paths; a fix lands in one, the sibling still
+# misbehaves" (env-in-git count vs per-finding producer; flow config threaded in
+# map/gate but not diagnose/detect). Two consolidations, each gated so the
+# duplicate can't silently reappear.
+
+# (a) Committed env-file detection has ONE command. `git ls-files .env` lives
+#     only in src/analyzers/security/env-files.ts; both the metric count and the
+#     per-finding producer read `trackedEnvFiles` from there (so exempting
+#     `.env.example` is decided once).
+RULE_ENVFILES=$(grep -rnE "git ls-files[[:space:]]+\.env" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/analyzers/security/env-files.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// env-files-ok")
+if [ -n "$RULE_ENVFILES" ]; then
+  echo "❌ One-concept violation: 'git ls-files .env' outside src/analyzers/security/env-files.ts:"
+  echo "$RULE_ENVFILES"
+  echo "   → Read trackedEnvFiles() from src/analyzers/security/env-files.ts (it exempts"
+  echo "     .env.example / .env.template via the benign module — decided once)."
+  echo "   → Annotate '// env-files-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# (b) A single-repo flow surface loads its policy config through ONE entry point
+#     (`gatherRepoFlowModel`), so it cannot forget `stripUrlPrefixes` / `specs`.
+#     The raw `gatherFlowModel` primitive is reserved for callers that supply
+#     config from elsewhere — the flow module itself, the two-ref gate, the
+#     cross-repo publish, and the map CLI (which merges CLI + policy specs).
+RULE_FLOWGATHER=$(grep -rn "gatherFlowModel(" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/analyzers/flow/gather.ts:" \
+  | grep -v "^src/baseline/flow-gate-check.ts:" \
+  | grep -v "^src/analyzers/flow/publish.ts:" \
+  | grep -v "^src/flow-cli.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// flow-gather-ok")
+if [ -n "$RULE_FLOWGATHER" ]; then
+  echo "❌ One-concept violation: raw gatherFlowModel() on a single-repo surface:"
+  echo "$RULE_FLOWGATHER"
+  echo "   → Use gatherRepoFlowModel(cwd) from src/analyzers/flow/gather.ts — it loads"
+  echo "     .dxkit/policy.json:flow so the base-URL strip + specs are always applied."
+  echo "   → Annotate '// flow-gather-ok' for a justified explicit-config caller."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
 # dxkit CLI through ONE canonical helper, and every auto-running surface is
 # in ONE registry.
