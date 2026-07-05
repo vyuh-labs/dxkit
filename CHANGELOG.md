@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.33.0] - 2026-07-05
+
+The "update-path + real-repo-shape correctness" release. Every fix here closed a
+class that only appears in the seam between dxkit and a real customer repo — a
+GitHub ruleset, a pnpm lockfile, an `update` over user-authored files — shapes
+dxkit's own repo and the unit suite never exercise.
+
+### Fixed — `update` is now provenance-aware (no more no-ops, no more data loss)
+
+`vyuh-dxkit update` decided per file purely on "does it exist?" + `--force`,
+which produced two whole-command failures:
+
+- **It no longer no-ops its own files.** A dxkit-owned file the user hasn't
+  touched is now REFRESHED to the current template, so a shipped fix (a template,
+  a skill, the guardrails workflow, the pre-push hook) actually reaches the repo
+  on a plain `update`. Before, dxkit treated its own unmodified files as
+  "user-evolved, preserve" and never delivered the fix.
+- **`--force` no longer clobbers user files.** A file the user authored (recorded
+  `provenance: 'skipped'`, or never tracked) is preserved even under `--force` —
+  including a project's own `AGENTS.md` / `CLAUDE.md` and a Stop hook in
+  `.claude/settings.json` (`settings.json` / `CLAUDE.md` / `AGENTS.md` are also
+  protected from `--force` overwrite once user-edited). The disposition mirrors
+  `uninstall`'s provenance model (both read the same manifest `provenance` +
+  `hash`), via the shared `decideUpdateDisposition`.
+- Dxkit-managed workflows refresh in place and the pre-push hook no longer
+  self-sidecars as if it were user-authored. Summary text is honest under
+  `--force` (no "pass --force" when already forced).
+
+### Fixed — branch-protection detection is ruleset-aware
+
+Detection read only the classic `/branches/{b}/protection` endpoint, which 404s
+on a branch protected by a repository RULESET (GitHub's current mechanism) — so a
+protected repo read as UNPROTECTED. The fallout: the baseline-refresh anchor
+auto-selected the deadlocking `tree` transport, `doctor` emitted a false
+"BYPASSABLE" (or nothing), and `protect` errored. dxkit now reads BOTH mechanisms
+(classic protection AND `/rules/branches/{b}`) and unions them, in the single
+`classifyEnforcement` source that every consumer already reads. `doctor` prints
+an explicit ✓/not-verified line either way, and `protect` no longer writes a
+classic rule that would conflict with an existing ruleset.
+
+### Fixed — dependency-scanner selection is lockfile-aware
+
+On a pnpm/yarn/bun repo the TypeScript pack ran `npm audit` unconditionally,
+which cannot read a non-npm lockfile — so the dependency dimension collapsed to
+UNMEASURED. Selection now consults the present lockfile (`detectLockfile`) and
+routes a non-npm lockfile to `osv-scanner`, the lockfile-aware path the Java /
+Kotlin / Ruby packs already share. The 2.32 UNMEASURED hint is now reason-aware:
+it says "run `tools install`" only when the scanner is genuinely absent, not when
+it is present but couldn't run.
+
+### Fixed — `upgrade --plan` binary-install step is PM-aware
+
+The plan printed `npm install @vyuhlabs/dxkit@…` on a pnpm/yarn/bun repo; it now
+renders the repo's package manager (`pnpm add -D`, etc.).
+
+### Changed — the real-repo lifecycle net now covers `update`
+
+`test/lifecycle/` exercised install + uninstall but never `update` — the lane
+where the above shipped. It now drives the real CLI end-to-end over an older
+install with user-authored files, asserting dxkit-owned files refresh AND user
+files survive (default and `--force`). Docs: the pnpm release-age note now covers
+the upgrade transition.
+
 ## [2.32.0] - 2026-07-05
 
 ### Added — stack-aware CI (the CI guardrail works for every language)
