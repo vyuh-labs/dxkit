@@ -178,17 +178,33 @@ describe('installDevcontainer', () => {
     expect(result.notes.some((n) => n.includes('dxkit-reference'))).toBe(true);
   });
 
-  it('force overrides existing devcontainer.json', () => {
+  it('force refreshes a dxkit-OWNED devcontainer.json', () => {
     fs.mkdirSync(path.join(tmp, '.devcontainer'), { recursive: true });
+    // A stale-but-dxkit-marked devcontainer (what a real prior install left).
     fs.writeFileSync(
       path.join(tmp, '.devcontainer/devcontainer.json'),
-      JSON.stringify({ name: 'existing' }),
+      JSON.stringify({ name: 'dxkit dev environment', stale: true }),
     );
 
     const result = installDevcontainer(tmp, { force: true });
     expect(result.installed).toContain('.devcontainer/devcontainer.json');
     const final = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
     expect(final).toContain('dxkit dev environment');
+    expect(final).not.toContain('"stale"');
+  });
+
+  it('force NEVER overwrites a USER-authored devcontainer.json (#11 data-loss guard)', () => {
+    fs.mkdirSync(path.join(tmp, '.devcontainer'), { recursive: true });
+    const userJson = JSON.stringify({ name: 'existing', image: 'custom:latest' });
+    fs.writeFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), userJson);
+
+    const result = installDevcontainer(tmp, { force: true });
+    // Preserved verbatim; dxkit's version lands only as a sidecar reference.
+    expect(fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8')).toBe(
+      userJson,
+    );
+    expect(result.sidecars).toContain('.devcontainer/.dxkit-reference/devcontainer.json');
+    expect(result.installed).not.toContain('.devcontainer/devcontainer.json');
   });
 
   it('renders only Node + GitHub CLI features on an empty (no-stack) repo', () => {

@@ -275,7 +275,9 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   }
   if (aggregate.skipped.length) {
     logger.warn(
-      `Skipped: ${aggregate.skipped.length} file(s) (preserved — pass --force to overwrite)`,
+      force
+        ? `Skipped: ${aggregate.skipped.length} file(s) (preserved — these are yours; --force re-applies dxkit-owned templates but never overwrites user-authored files)`
+        : `Skipped: ${aggregate.skipped.length} file(s) (preserved — pass --force to re-apply dxkit-owned templates you've edited)`,
     );
   }
   for (const note of aggregate.notes) logger.dim(note);
@@ -290,7 +292,7 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   await migrateIdentityIfStale(cwd);
 
   console.log(''); // slop-ok
-  logger.success('Update complete. Evolved files (gotchas, conventions) preserved.');
+  logger.success('Update complete. dxkit-owned files refreshed; your files preserved.');
 }
 
 /**

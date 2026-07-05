@@ -233,20 +233,36 @@ describe('vyuh-dxkit update: end-to-end refresh', () => {
     expect(r.stdout).toContain('withHooks');
   });
 
-  it('update with --force refreshes the devcontainer.json (picks up per-stack extensions)', () => {
-    // Mutate the devcontainer.json to a stale shape so we can verify
-    // refresh actually overwrote it.
+  it('update with --force refreshes a dxkit-owned devcontainer.json (picks up per-stack extensions)', () => {
+    // Mutate to a stale-but-still-dxkit-marked shape (a real stale dxkit
+    // devcontainer keeps its marker) so refresh recognizes it as ours.
     const dcPath = path.join(tmp, '.devcontainer', 'devcontainer.json');
-    fs.writeFileSync(dcPath, '{ "name": "stale" }\n');
+    fs.writeFileSync(dcPath, '{ "name": "dxkit dev environment", "stale": true }\n');
 
     const r = runCli(tmp, ['update', '--force']);
     expect(r.exitCode).toBe(0);
 
-    // After --force update, the file should be regenerated and contain
-    // the canonical dxkit shape.
+    // After --force update, the file should be regenerated to the canonical shape.
     const refreshed = fs.readFileSync(dcPath, 'utf-8');
     expect(refreshed).toContain('dxkit dev environment');
     expect(refreshed).not.toContain('"stale"');
+  });
+
+  it('update --force NEVER clobbers a USER-authored devcontainer.json (#11 data-loss guard)', () => {
+    // The user has their own devcontainer at the canonical path (no dxkit
+    // marker). Even --force must preserve it and sidecar dxkit's version.
+    const dcPath = path.join(tmp, '.devcontainer', 'devcontainer.json');
+    const userContent = '{ "name": "my own devcontainer", "image": "custom:latest" }\n';
+    fs.writeFileSync(dcPath, userContent);
+
+    const r = runCli(tmp, ['update', '--force']);
+    expect(r.exitCode).toBe(0);
+
+    expect(fs.readFileSync(dcPath, 'utf-8')).toBe(userContent);
+    // dxkit's version lands as a sidecar reference instead.
+    expect(
+      fs.existsSync(path.join(tmp, '.devcontainer', '.dxkit-reference', 'devcontainer.json')),
+    ).toBe(true);
   });
 
   it('update completes without errors on a real init-tree (smoke)', () => {
