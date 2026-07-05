@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.29.0] - 2026-07-05
+
+### Flow — catch-all routes and base-URL-helper calls now resolve
+
+A client call to a route served by a **catch-all** (`app/api/[...slug]/route.ts`,
+Express `/api/*`, Spring `/api/**`, Rails `*path`, FastAPI `{p:path}`) used to
+show as unresolved, because the join matched only exact paths. Catch-all routes
+now normalize to a distinct `/{prefix}/{*}` marker and the join **prefix-matches**
+concrete calls against them — so a `POST /api/form-submissions` binds the
+Payload catch-all it actually hits. An exact literal route still wins over a
+covering catch-all, and the longest matching prefix wins among catch-alls. A new
+cross-framework matching corpus (`test/flow-matching-corpus.test.ts`) pins the
+behavior so future language packs inherit it.
+
+### Fixed — fewer security false positives on template repos
+
+- **`.env.example` / `.env.template` / `.env.sample` are no longer counted as
+  committed secrets** — those are intentional conventions; a real `.env` /
+  `.env.production` still counts.
+- **Obvious placeholder secret values are dropped**, not flagged:
+  `password: 'password'`, `apiKey = 'your-api-key'`, `<your-key>`, `${VAR}`,
+  repeated-character runs. The heuristics are deliberately narrow to never
+  suppress a real credential. Both live in one benign-conventions module every
+  secret / env detector consults.
+- **Install hints and the tool descriptor now match your package manager.** A
+  `loop doctor` fix hint and the `tools list` install command render as `pnpm
+  add -D` / `yarn add -D` / `bun add -d` on those repos instead of always `npm
+  install --save-dev` (the executed install was already PM-aware).
+
+### Docs
+
+- README quickstart notes the pnpm `minimumReleaseAge` step for a fresh release.
+
 ## [2.28.0] - 2026-07-05
 
 ### Added — file-convention route detection (Next.js App Router & friends)
