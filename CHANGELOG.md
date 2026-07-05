@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.28.0] - 2026-07-05
+
+### Added — file-convention route detection (Next.js App Router & friends)
+
+The flow feature's served side now understands routes served by a handler
+file's **location** on disk, not just in-source decorators (`@get`) and router
+calls (`app.get`). A Next.js App Router repo previously reported "0 routes" —
+every client call showed as unresolved — because `app/**/route.ts` handlers are
+a file convention, not an AST pattern. They are now first-class served routes.
+
+- **Pack-declared, framework-general.** A new `httpFlow.fileRoutes` capability
+  lets a language pack declare the handler filename (`route`, `+server`), the
+  routing base directories (`app`, `src/app`), an optional URL prefix, and the
+  verb-named exports (`GET`/`POST`/…). The shared path algebra — route groups
+  `(payload)`, dynamic `[id]`, catch-all `[[...slug]]`, private `_` segments,
+  parallel `@` slots — lives centrally, so the same seam extends to SvelteKit,
+  Remix, and the Pages Router without new engine code. The TypeScript pack ships
+  the Next.js App Router descriptor.
+- A derived route joins client calls through the exact same normalized
+  `(method, path)` key as every other route, so the integration gate,
+  cross-repo contract, and flow map pick them up unchanged.
+
+### Fixed
+
+- The install/uninstall lifecycle net now also pins the tab-indented
+  `package.json` case, closing the last untested branch of the 2.27.0
+  format-preservation fix.
+
 ## [2.27.0] - 2026-07-05
 
 ### Fixed — install/uninstall lifecycle reliability (root-cause pass)
