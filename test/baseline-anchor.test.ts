@@ -204,6 +204,33 @@ describe('installCiBaselineRefresh — content per transport (anti-recurrence)',
     expect(r.installed).toHaveLength(0);
     expect(r.skipped).toContain('.github/workflows/dxkit-baseline-refresh.yml');
   });
+
+  it('auto-migrates a legacy tree workflow to branch when the repo is now protected (no --force)', () => {
+    // Simulate a 2.30 install: the old direct-push-to-main (tree) workflow.
+    installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: UNPROTECTED });
+    expect(dest()).toContain('git push');
+    expect(dest()).not.toContain(DEFAULT_ANCHOR_REF);
+    // The branch becomes protected; a plain re-run (no force) must MIGRATE the
+    // deadlocking workflow to the branch transport, not skip it.
+    const r = installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+    });
+    expect(r.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
+    expect(r.notes.join('\n')).toMatch(/Migrated the baseline-refresh workflow from the 'tree'/);
+    expect(dest()).toContain(`ANCHOR="${DEFAULT_ANCHOR_REF}"`);
+  });
+
+  it('does NOT rewrite an up-to-date workflow (migration fires only on a transport change)', () => {
+    installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: PROTECTED });
+    const r = installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+    });
+    // Same transport → installWorkflow skips the existing file, no migration note.
+    expect(r.installed).toHaveLength(0);
+    expect(r.notes.join('\n')).not.toMatch(/Migrated/);
+  });
 });
 
 describe('hydrateAnchorFromBranch', () => {

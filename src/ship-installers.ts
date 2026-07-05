@@ -480,6 +480,26 @@ export function baselineRefreshInstallPlan(
   return { install: true, transport, anchorRef };
 }
 
+/**
+ * Classify the anchor transport of an ALREADY-installed refresh workflow by its
+ * content shape, so an `update` / re-`init` can migrate a stale variant. Returns
+ * null when no refresh workflow is installed (nothing to migrate). The legacy
+ * pre-transport workflow (a bare push to the default branch) reads as `tree`.
+ */
+function detectInstalledRefreshTransport(cwd: string): BaselineAnchor | null {
+  const abs = path.join(cwd, '.github', 'workflows', REFRESH_WORKFLOW_DEST);
+  let content: string;
+  try {
+    content = fs.readFileSync(abs, 'utf8');
+  } catch {
+    return null; // not installed
+  }
+  if (content.includes('actions/cache/save')) return 'cache';
+  if (content.includes('origin "${ANCHOR}"')) return 'branch';
+  if (content.includes('git push')) return 'tree';
+  return null;
+}
+
 /** Best-effort read of the `baseline` policy section (undefined when
  *  absent/unreadable, so visibility-/protection-derived defaults apply). */
 function readPolicyBaselineSection(cwd: string) {
@@ -516,14 +536,29 @@ export function installCiBaselineRefresh(
   }
 
   const defaultBranch = detectDefaultBranch(cwd);
+  // Auto-migrate a dxkit-managed refresh workflow whose transport no longer
+  // matches the resolved one — e.g. a 2.30 install whose 'tree' workflow now
+  // deadlocks because the branch became protected (or an upgrade from a
+  // pre-transport version). This overwrites even without an explicit --force
+  // because it is dxkit's OWN template and the stale variant is broken; it fires
+  // ONLY on a real transport change, so it never churns an up-to-date file.
+  const installedTransport = detectInstalledRefreshTransport(cwd);
+  const migrating = installedTransport !== null && installedTransport !== plan.transport;
+  const effectiveOpts = migrating ? { ...opts, force: true } : opts;
   const result = installWorkflow(
     cwd,
     REFRESH_TEMPLATE_BY_TRANSPORT[plan.transport],
-    opts,
+    effectiveOpts,
     { __DXKIT_DEFAULT_BRANCH__: defaultBranch, __DXKIT_ANCHOR_REF__: plan.anchorRef },
     REFRESH_WORKFLOW_DEST,
   );
   if (result.installed.length > 0) {
+    if (migrating) {
+      result.notes.push(
+        `Migrated the baseline-refresh workflow from the '${installedTransport}' transport to ` +
+          `'${plan.transport}' (branch protection changed, or upgraded from a pre-transport version).`,
+      );
+    }
     if (plan.transport === 'branch') {
       result.notes.push(
         `baseline-refresh uses the '${plan.transport}' anchor transport: the recomputed anchor is ` +

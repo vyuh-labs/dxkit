@@ -31,8 +31,10 @@ The fix decouples the anchor's **store** from the protected branch via a new
 
 The transport auto-selects from your protection posture and is overridable in
 `.dxkit/policy.json`. `ref-based` mode installs no refresh at all. Existing
-installs are unaffected until re-run; `vyuh-dxkit doctor` flags a bypassable
-guardrail either way.
+installs **auto-migrate** on the next `vyuh-dxkit update` (or `init`): a legacy
+direct-push workflow on a now-protected branch is rewritten to the `branch`
+transport, and only ever when the transport actually changed. `vyuh-dxkit
+doctor` flags a bypassable guardrail either way.
 
 ### Added — enforcement-path checks + config durability
 
