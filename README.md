@@ -191,6 +191,11 @@ npx vyuh-dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired
 When the agent tries to stop, dxkit runs the net-new gate against the baseline.
 Existing findings are grandfathered; only findings this change introduced block.
 
+> **pnpm with a release-age policy?** If your `pnpm-workspace.yaml` sets
+> `minimumReleaseAge`, a just-published dxkit is blocked until it ages in. Add
+> the package to `minimumReleaseAgeExclude` first so the install resolves — this
+> is your supply-chain policy, so dxkit does not edit that file for you.
+
 ## Run a local fixture gate
 
 Want to see the Stop-gate before installing dxkit into your repo?

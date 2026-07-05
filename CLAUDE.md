@@ -44,6 +44,34 @@ Before writing a regex or grep pattern, check if an established tool handles it:
 
 Our code only stitches tools together and computes scores.
 
+#### Benign-convention false positives live in one module (2.29)
+
+Convention-based false positives — an `.env.example` (not a leaked `.env`), a
+placeholder secret value (`password: 'password'`, `apiKey = 'your-api-key'`,
+`<your-key>`) — are decided by ONE source of truth,
+`src/analyzers/security/benign.ts` (`isExampleEnvFile`, `isPlaceholderSecret`).
+Every secret / env detector consults it — BOTH secret scanners (the gitleaks
+provider AND the `grep-secrets` generic-credential fallback) plus the env-in-git
+count — so the floor is fixed once and a new pack's secret patterns inherit the
+exemptions. When you add a secret detector, wire it to `isPlaceholderSecret` too
+(the class of bug: a second detector that skips the module silently
+re-introduces the floor — this shipped once, caught by the self-guardrail). Do
+NOT inline a `.env.example` string or a placeholder-value list in an analyzer —
+extend the module. Bias the predicates toward false NEGATIVES (never suppress a
+real credential). `test/security-benign.test.ts` + `test/grep-secrets.test.ts`
+pin the cases.
+
+#### Package-manager commands route through `src/package-manager.ts` (2.26 → 2.29)
+
+Any node devDependency install command shown to or run by a user MUST match the
+repo's package manager (pnpm/yarn/bun/npm) — a raw `npm install --save-dev` on a
+pnpm repo is the class of bug that shipped a 404-ing create-dxkit and npm-only
+doctor hints. Build the command via `addDevCommand` / `pmAwareDevInstall`
+(the canonical npm form lives only in `TOOL_DEFS`, rendered PM-aware at display
+time). `scripts/check-architecture.sh` bans a raw `npm install --save-dev` /
+`npm i -D` literal outside `src/package-manager.ts` + the tool registry
+(annotate `// pm-aware-ok` for a justified exception).
+
 ### 6. Language capabilities live in one file per language
 
 Every language-specific concern (detection, tool list, semgrep rulesets,
