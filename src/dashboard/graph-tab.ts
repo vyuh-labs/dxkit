@@ -32,9 +32,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadGraph } from '../explore/load';
 import { dxkitCli } from '../self-invocation';
+import { VENDOR_DIR, readVisNetworkBundle } from './vendor';
 
-/** Default vendor + report locations, relative to module + cwd. */
-const VENDOR_DIR = path.join(__dirname, 'vendor');
+/** Default report location, relative to cwd. (Vendor dir lives in `vendor.ts`.) */
 const GRAPH_HTML_REL = path.join('.dxkit', 'reports', 'graph.html');
 
 /** Options accepted by the tab renderer. */
@@ -153,13 +153,7 @@ export function renderGraphTab(opts: GraphTabOptions): {
   };
 }
 
-// ─── Vendor + HTML manipulation ──────────────────────────────────────────────
-
-function readVisNetworkBundle(vendorDir: string): string | undefined {
-  const file = path.join(vendorDir, 'vis-network.min.js');
-  if (!fs.existsSync(file)) return undefined;
-  return fs.readFileSync(file, 'utf-8');
-}
+// ─── HTML manipulation ───────────────────────────────────────────────────────
 
 /** Sidecar metadata produced by the graphify gather. */
 interface GraphHtmlMeta {
