@@ -30,6 +30,28 @@ describe('typescript.detect', () => {
   });
 });
 
+describe('typescript depVulns — lockfile-aware scanner selection (#15)', () => {
+  const depVulns = typescript.capabilities!.depVulns!;
+
+  it('no package.json → no-manifest', async () => {
+    const out = await depVulns.gatherOutcome!(tmp);
+    expect(out.kind).toBe('no-manifest');
+  });
+
+  it('package.json but NO lockfile → unavailable with a lockfile hint, never an npm-audit run', async () => {
+    // The pre-fix path ran `npm audit` unconditionally and collapsed to a parse
+    // error. Now selection routes on the present lockfile: none → an honest
+    // "generate a lockfile", not a misleading npm-audit failure.
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+    const out = await depVulns.gatherOutcome!(tmp);
+    expect(out.kind).toBe('unavailable');
+    if (out.kind === 'unavailable') {
+      expect(out.reason).toMatch(/no lockfile/i);
+      expect(out.reason).not.toMatch(/npm audit/i);
+    }
+  });
+});
+
 describe('extractTsImportsRaw', () => {
   const run = extractTsImportsRaw;
 

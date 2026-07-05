@@ -49,6 +49,33 @@ export function detectPackageManager(cwd: string): PackageManager {
   return packageManagerField(cwd) ?? 'npm';
 }
 
+/** The lockfile filename(s) each PM writes, most-specific first. One source of
+ *  truth for "the file a lockfile-aware tool should be pointed at" (mirrors the
+ *  detection order in `detectPackageManager`). */
+const LOCKFILES: Record<PackageManager, string[]> = {
+  pnpm: ['pnpm-lock.yaml'],
+  yarn: ['yarn.lock'],
+  bun: ['bun.lock', 'bun.lockb'],
+  npm: ['package-lock.json', 'npm-shrinkwrap.json'],
+};
+
+/**
+ * The lockfile actually present in the repo (first match, PM-priority order),
+ * with the PM that owns it — or null when no lockfile exists. Dependency-scanner
+ * selection consults this so it never runs a scanner against a lockfile it
+ * cannot read (e.g. `npm audit` needs `package-lock.json`; on a pnpm repo the
+ * scanner must instead read `pnpm-lock.yaml`).
+ */
+export function detectLockfile(cwd: string): { pm: PackageManager; lockfile: string } | null {
+  const order: PackageManager[] = ['pnpm', 'yarn', 'bun', 'npm'];
+  for (const pm of order) {
+    for (const f of LOCKFILES[pm]) {
+      if (existsSync(join(cwd, f))) return { pm, lockfile: f };
+    }
+  }
+  return null;
+}
+
 /** The command PREFIX that adds a dev dependency with the given PM (no package
  *  yet). `npm install --save-dev` is the token dxkit historically hardcoded, so
  *  it is also the substring other install strings are rewritten from. */
