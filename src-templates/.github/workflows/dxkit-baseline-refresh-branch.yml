@@ -1,0 +1,88 @@
+name: dxkit baseline refresh
+
+# Anchor transport: BRANCH. After a merge to the default branch (or weekly / on
+# demand), recompute the committed baseline anchor and direct-push it to a
+# SEPARATE unprotected branch (__DXKIT_ANCHOR_REF__) — never to the protected
+# default branch.
+#
+# Why: when the default branch is protected (dxkit's onboarding recommends
+# requiring the guardrails check + PR review), the original push-to-main refresh
+# deadlocks — the push is rejected and a [skip ci] commit can never earn the
+# required checks. Pushing the anchor to an unprotected side branch sidesteps
+# that entirely: it stays fast and fully automated (no PR, no human), and the
+# guardrail check hydrates the anchor from this branch at check time.
+#
+# No [skip ci] / paths-ignore loop guard is needed: this workflow triggers on
+# pushes to the default branch, and its own output goes to __DXKIT_ANCHOR_REF__,
+# a different branch — so it never re-triggers itself.
+#
+# NOTE: assumes branch protection targets the default branch specifically (the
+# common case), NOT all branches. If a rule covers __DXKIT_ANCHOR_REF__ too, the
+# push is rejected — switch to the 'cache' anchor transport instead.
+
+on:
+  push:
+    branches: [__DXKIT_DEFAULT_BRANCH__]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dxkit
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+
+      - name: Recompute baseline
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" baseline create --force
+
+      - name: Push anchor to the unprotected side branch
+        run: |
+          if git diff --quiet -- .dxkit/baselines/; then
+            echo "Baseline unchanged — nothing to refresh."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ANCHOR="__DXKIT_ANCHOR_REF__"
+          # Reset the side branch to the current commit plus the refreshed anchor,
+          # then force-push it. It carries only what the guardrail reads back:
+          # .dxkit/baselines/. Force is safe — this branch is dxkit-owned.
+          git checkout -B "${ANCHOR}"
+          git add .dxkit/baselines/
+          git commit -m "chore(baseline): refresh anchor"
+          git push --force origin "${ANCHOR}"
+          echo "Anchor pushed to '${ANCHOR}'. The guardrail check hydrates it from there."

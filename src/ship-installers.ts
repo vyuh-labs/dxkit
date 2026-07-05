@@ -18,6 +18,15 @@ import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
 import { buildDevcontainerExtensions, buildDevcontainerFeatures } from './languages';
 import { VERSION } from './constants';
+import {
+  resolveBaselineMode,
+  resolveAnchorTransport,
+  DEFAULT_ANCHOR_REF,
+  type BaselineMode,
+  type BaselineAnchor,
+} from './baseline/modes';
+import { loadPolicyFromCwd } from './baseline/policy';
+import { detectEnforcement, type EnforcementState } from './enforcement';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -378,10 +387,11 @@ function installWorkflow(
   fileName: string,
   opts: InstallerOpts,
   substitutions: Readonly<Record<string, string>> = {},
+  destName: string = fileName,
 ): ShipInstallResult {
   const result = emptyResult();
   const srcAbs = path.join(templatesDir(), '.github', 'workflows', fileName);
-  const destAbs = path.join(cwd, '.github', 'workflows', fileName);
+  const destAbs = path.join(cwd, '.github', 'workflows', destName);
 
   if (fs.existsSync(destAbs) && !opts.force) {
     result.skipped.push(path.relative(cwd, destAbs));
@@ -406,16 +416,129 @@ export function installCiGuardrails(cwd: string, opts: InstallerOpts = {}): Ship
   return installWorkflow(cwd, 'dxkit-guardrails.yml', opts);
 }
 
-export function installCiBaselineRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
-  const defaultBranch = detectDefaultBranch(cwd);
-  const result = installWorkflow(cwd, 'dxkit-baseline-refresh.yml', opts, {
-    __DXKIT_DEFAULT_BRANCH__: defaultBranch,
+/** The single destination filename for the baseline-refresh workflow, whatever
+ *  the anchor transport. Keeping ONE filename means uninstall + update (which key
+ *  off this name) need no per-variant wiring — the transport is the file's
+ *  CONTENT, chosen at install time. */
+const REFRESH_WORKFLOW_DEST = 'dxkit-baseline-refresh.yml';
+
+/** Source template per anchor transport (all copied to REFRESH_WORKFLOW_DEST). */
+const REFRESH_TEMPLATE_BY_TRANSPORT: Record<BaselineAnchor, string> = {
+  tree: 'dxkit-baseline-refresh.yml',
+  branch: 'dxkit-baseline-refresh-branch.yml',
+  cache: 'dxkit-baseline-refresh-cache.yml',
+};
+
+export type RefreshInstallPlan =
+  | { install: false; reason: string; guidance: string[] }
+  | { install: true; transport: BaselineAnchor; anchorRef: string };
+
+/**
+ * Decide WHETHER and in WHICH transport to install the after-merge baseline
+ * refresh. The workflow exists only to keep a COMMITTED anchor current, so:
+ *
+ *   - **ref-based mode** → skip entirely: no committed anchor exists (each check
+ *     re-gathers from origin/main), so there is nothing to refresh.
+ *   - **committed mode** → install, but the transport (`tree` / `branch` /
+ *     `cache`) decouples the store from the protected default branch so the
+ *     direct-push refresh never deadlocks (`resolveAnchorTransport`): a protected
+ *     branch defaults to `branch` (push the anchor to an unprotected side branch)
+ *     rather than `tree` (push to the protected branch — rejected).
+ *
+ * Mode / protection / policy-anchor are injectable for tests.
+ */
+export function baselineRefreshInstallPlan(
+  cwd: string,
+  opts: {
+    mode?: BaselineMode;
+    enforcement?: EnforcementState;
+    policyAnchor?: BaselineAnchor;
+    anchorRef?: string;
+  } = {},
+): RefreshInstallPlan {
+  const section = readPolicyBaselineSection(cwd);
+  const mode = opts.mode ?? resolveBaselineMode({ cwd, policyMode: section?.mode }).mode;
+  if (mode === 'ref-based') {
+    return {
+      install: false,
+      reason: 'ref-based baseline mode keeps no committed anchor to refresh',
+      guidance: [
+        'Every guardrail check re-gathers the prior side from origin/main, so there is no',
+        'baseline file to keep current — the refresh workflow is not needed in this mode.',
+      ],
+    };
+  }
+  const enforcement = opts.enforcement ?? detectEnforcement(cwd);
+  const policyAnchor = opts.policyAnchor ?? section?.anchor;
+  const transport =
+    resolveAnchorTransport({
+      mode,
+      ...(policyAnchor !== undefined ? { policyAnchor } : {}),
+      ...(enforcement.probed ? { directPushBlocked: enforcement.directPushBlocked } : {}),
+    }) ?? 'tree';
+  const anchorRef = opts.anchorRef ?? section?.anchorRef ?? DEFAULT_ANCHOR_REF;
+  return { install: true, transport, anchorRef };
+}
+
+/** Best-effort read of the `baseline` policy section (undefined when
+ *  absent/unreadable, so visibility-/protection-derived defaults apply). */
+function readPolicyBaselineSection(cwd: string) {
+  try {
+    return loadPolicyFromCwd(cwd).baseline;
+  } catch {
+    return undefined;
+  }
+}
+
+export function installCiBaselineRefresh(
+  cwd: string,
+  opts: InstallerOpts & {
+    baselineMode?: BaselineMode;
+    enforcement?: EnforcementState;
+    policyAnchor?: BaselineAnchor;
+    anchorRef?: string;
+  } = {},
+): ShipInstallResult {
+  const plan = baselineRefreshInstallPlan(cwd, {
+    ...(opts.baselineMode !== undefined ? { mode: opts.baselineMode } : {}),
+    ...(opts.enforcement !== undefined ? { enforcement: opts.enforcement } : {}),
+    ...(opts.policyAnchor !== undefined ? { policyAnchor: opts.policyAnchor } : {}),
+    ...(opts.anchorRef !== undefined ? { anchorRef: opts.anchorRef } : {}),
   });
-  if (result.installed.length > 0 && defaultBranch !== 'main') {
-    result.notes.push(
-      `baseline-refresh workflow targets the '${defaultBranch}' branch (detected from your repo). ` +
-        `Edit the workflow's \`branches:\` trigger if you want a different one.`,
-    );
+  if (!plan.install) {
+    const result = emptyResult();
+    result.skipped.push(`.github/workflows/${REFRESH_WORKFLOW_DEST}`);
+    result.notes.push(`baseline-refresh workflow not installed — ${plan.reason}.`, ...plan.guidance);
+    return result;
+  }
+
+  const defaultBranch = detectDefaultBranch(cwd);
+  const result = installWorkflow(
+    cwd,
+    REFRESH_TEMPLATE_BY_TRANSPORT[plan.transport],
+    opts,
+    { __DXKIT_DEFAULT_BRANCH__: defaultBranch, __DXKIT_ANCHOR_REF__: plan.anchorRef },
+    REFRESH_WORKFLOW_DEST,
+  );
+  if (result.installed.length > 0) {
+    if (plan.transport === 'branch') {
+      result.notes.push(
+        `baseline-refresh uses the '${plan.transport}' anchor transport: the recomputed anchor is ` +
+          `pushed to the unprotected '${plan.anchorRef}' branch (not '${defaultBranch}'), so branch ` +
+          `protection never blocks it. Ensure '${plan.anchorRef}' is NOT covered by a protection rule.`,
+      );
+    } else if (plan.transport === 'cache') {
+      result.notes.push(
+        `baseline-refresh uses the 'cache' anchor transport: the anchor is stored in the Actions ` +
+          `cache (no git write). A cold cache falls back to a live re-gather. CI-only.`,
+      );
+    }
+    if (defaultBranch !== 'main') {
+      result.notes.push(
+        `Workflow targets the '${defaultBranch}' branch (detected from your repo). ` +
+          `Edit its \`branches:\` trigger to change it.`,
+      );
+    }
   }
   return result;
 }
