@@ -35,6 +35,7 @@ import {
   resolveDefaultBranch,
   resolveOwnerRepo,
 } from './setup-gh';
+import { classifyEnforcement, probeEnforcementReads, GUARDRAIL_CHECK } from './enforcement';
 
 export interface SetupBranchProtectionOpts {
   /** Branch to protect. Defaults to the repo's default branch. */
@@ -64,7 +65,7 @@ interface ProtectionPayload {
   restrictions: null;
 }
 
-const REQUIRED_CHECK = 'dxkit-guardrails';
+const REQUIRED_CHECK = GUARDRAIL_CHECK;
 
 function readExistingProtection(
   cwd: string,
@@ -163,6 +164,36 @@ export async function runSetupBranchProtection(
     logger.dim(`  → Run \`${dxkitCli('init --with-ci --yes')}\` first to scaffold the workflow.`);
     process.exitCode = 1;
     return;
+  }
+
+  // Read the branch's EFFECTIVE enforcement first (classic protection AND
+  // repository rulesets). Two things depend on it:
+  //   - if the guardrail is already required, there's nothing to do;
+  //   - if a RULESET governs the branch, dxkit must not write a conflicting
+  //     classic protection rule — the check belongs in the ruleset, which dxkit
+  //     won't silently rewrite. Point the user at it instead.
+  try {
+    const state = classifyEnforcement(branch, probeEnforcementReads(cwd, branch));
+    if (state.guardrailRequired) {
+      logger.success(
+        `${owner}/${repo}#${branch} already requires the ${REQUIRED_CHECK} check — nothing to do.`,
+      );
+      return;
+    }
+    if (state.rulesetGoverned) {
+      console.log(''); // slop-ok
+      logger.warn(`${owner}/${repo}#${branch} is governed by a repository ruleset.`);
+      logger.dim(
+        `  → dxkit will not create a conflicting classic branch-protection rule alongside it.`,
+      );
+      logger.dim(`  → Add '${REQUIRED_CHECK}' to that ruleset's required status checks:`);
+      logger.dim(`     https://github.com/${owner}/${repo}/settings/rules`);
+      return;
+    }
+  } catch (e) {
+    // Fail-open: if we couldn't read enforcement (gh error, no scope), fall
+    // through to the classic path below, which does its own guarded read.
+    if (!(e instanceof GhError)) throw e;
   }
 
   logger.info(`Resolving existing protection on ${owner}/${repo}#${branch}...`);

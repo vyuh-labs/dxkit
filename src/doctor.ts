@@ -690,8 +690,27 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     fs.existsSync(path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'))
   ) {
     const enf = detectEnforcement(cwd);
-    if (enf.probed) {
+    if (!enf.probed) {
+      // Print an explicit line so "couldn't verify" is never indistinguishable
+      // from "verified enforced" (the silent-skip bug). Fail-open: an unknown
+      // answer never fails the check — dxkit can't read protection when gh is
+      // absent/unauthenticated or the token lacks repo read scope.
+      checks.push({
+        label: `guardrail enforcement on '${enf.branch}' — not verified (gh unavailable or lacks repo read access)`,
+        ok: true,
+        tier: 'operational',
+      });
+    } else {
       const enforced = enf.directPushBlocked && enf.guardrailRequired;
+      // A repository ruleset (not classic protection) governs the branch: the
+      // guardrail belongs IN the ruleset, so `dxkit protect` (which writes a
+      // classic rule) is the wrong repair — point the user at the ruleset.
+      const rulesetHint = enf.rulesetGoverned && enf.directPushBlocked && !enf.guardrailRequired;
+      const hint = !enf.directPushBlocked
+        ? `'${enf.branch}' takes direct pushes, so commits (and PRs) can land without the guardrail. Protect the branch and require the dxkit-guardrails check.`
+        : rulesetHint
+          ? `'${enf.branch}' is protected by a repository ruleset that does not require the dxkit-guardrails check, so a PR can merge with the guardrail red. Add 'dxkit-guardrails' to that ruleset's required status checks (Settings → Rules → Rulesets).`
+          : `'${enf.branch}' is protected but does not require the dxkit-guardrails check, so a PR can merge with the guardrail red. Add it as a required status check.`;
       checks.push({
         label: enforced
           ? `guardrail enforced on '${enf.branch}' (protected + required check)`
@@ -702,10 +721,10 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
           ? {}
           : {
               fix: {
-                hint: !enf.directPushBlocked
-                  ? `'${enf.branch}' takes direct pushes, so commits (and PRs) can land without the guardrail. Protect the branch and require the dxkit-guardrails check.`
-                  : `'${enf.branch}' is protected but does not require the dxkit-guardrails check, so a PR can merge with the guardrail red. Add it as a required status check.`,
-                command: dxkitCli('protect'),
+                hint,
+                // A ruleset repair is manual (dxkit won't write a conflicting
+                // classic rule), so no auto-command in that case.
+                ...(rulesetHint ? {} : { command: dxkitCli('protect') }),
                 skill: 'dxkit-init',
               },
             }),
