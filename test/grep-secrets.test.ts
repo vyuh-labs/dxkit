@@ -125,6 +125,29 @@ describe('gatherGrepSecretsResult (gitleaks-absent fallback)', () => {
     expect(result!.findings).toHaveLength(0);
   });
 
+  it('suppresses placeholder / demo values via the benign-conventions module', () => {
+    // The grep fallback consults the SAME benign module as the gitleaks
+    // provider — a placeholder value is not a finding in either detector.
+    // Build the genuine value at runtime so THIS committed test file carries no
+    // flaggable secret literal of its own (only placeholders, which the filter
+    // suppresses) — the tmp fixture below still gets a real credential.
+    const genuine = ['super', 'secret', '123'].join('-');
+    fs.writeFileSync(
+      path.join(tmp, 'seed.ts'),
+      [
+        "const password = 'password';", // exact placeholder
+        "const apiKey = 'your-api-key';", // your- template
+        "const secret = '<your-token>';", // bracketed placeholder
+        `const token = '${genuine}';`, // a genuine value still flags
+      ].join('\n') + '\n',
+    );
+    const result = gatherGrepSecretsResult(tmp);
+    expect(result).not.toBeNull();
+    expect(result!.findings).toHaveLength(1); // only the genuine value survives
+    expect(result!.findings[0].rule).toBe('hardcoded-secret');
+    expect(result!.suppressedCount).toBeGreaterThanOrEqual(3);
+  });
+
   it('honors .dxkit-suppressions.json for gitleaks rule ids', () => {
     fs.writeFileSync(
       path.join(tmp, 'bad.ts'),

@@ -31,6 +31,7 @@ import * as path from 'path';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { applySuppressions, loadSuppressions } from './suppressions';
 import { walkSourceFiles } from './walk-source-files';
+import { isPlaceholderSecret } from '../security/benign';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
@@ -95,6 +96,7 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
   // fingerprints identically whether gitleaks or this grep fallback found
   // it, and across environments. So this gather carries no content anchor.
   const raw: SecretFinding[] = [];
+  let placeholderDropped = 0;
   for (const rel of files) {
     let content: string;
     try {
@@ -116,6 +118,14 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
       for (const sp of patterns) {
         const m = lines[i].match(sp.regex);
         if (m) {
+          // Drop an obvious placeholder / demo value (`password: 'password'`,
+          // `apiKey = 'your-api-key'`). The benign-conventions module is the ONE
+          // source of truth every secret detector consults — gitleaks and this
+          // grep fallback alike — so the false-positive floor is fixed once.
+          if (m[1] && isPlaceholderSecret(m[1])) {
+            placeholderDropped++;
+            break;
+          }
           raw.push({
             file: rel,
             line: i + 1,
@@ -142,7 +152,7 @@ export function gatherGrepSecretsResult(cwd: string): SecretsResult | null {
     schemaVersion: 1,
     tool: 'grep-secrets',
     findings: kept,
-    suppressedCount: suppressed.length,
+    suppressedCount: suppressed.length + placeholderDropped,
   };
 }
 

@@ -6,7 +6,8 @@
  */
 import { HealthMetrics } from '../types';
 import type { DetectedStack } from '../../types';
-import { run, countLines, fileExists } from './runner';
+import { run, fileExists } from './runner';
+import { isExampleEnvFile } from '../security/benign';
 import { walkSourceFiles, countLineMatches, countDirectories } from './walk-source-files';
 import { gatherDebugStatements } from './debug-statements';
 import {
@@ -211,7 +212,14 @@ export function gatherGenericMetrics(
     includeTests: true,
     includeAutogen: true,
   }).length;
-  const envFilesInGit = countLines('git ls-files .env .env.*', cwd);
+  // Committed env files, EXCLUDING the `.env.example` / `.env.template` /
+  // `.env.sample` conventions — those are intentional and near-universal, not a
+  // leaked `.env`. The benign-conventions module (one source of truth) decides
+  // which basenames are examples; a real `.env` / `.env.production` still counts.
+  const envFilesInGit = (run('git ls-files .env .env.*', cwd) ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !isExampleEnvFile(l)).length;
   // D034 (2.4.7): TLS-bypass detection derives from the pack registry.
   // D074 (2.4.7): skipComments closes the "vuln-scan rendered a
   // `// NODE_TLS_REJECT_UNAUTHORIZED=0` comment as a HIGH finding"

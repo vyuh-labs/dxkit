@@ -16,6 +16,7 @@ import { findTool, TOOL_DEFS } from './tool-registry';
 import { isExcludedPath } from './exclusions';
 import { toProjectRelative } from './paths';
 import { applySuppressions, loadSuppressions } from './suppressions';
+import { isPlaceholderSecret } from '../security/benign';
 import type { CapabilityProvider } from '../../languages/capabilities/provider';
 import type { SecretFinding, SecretsResult } from '../../languages/capabilities/types';
 
@@ -179,7 +180,15 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
 
   // Gitleaks --no-git scans everything on disk (ignores .gitignore), so
   // we re-apply the resolved exclusion set via isExcludedPath().
-  const filteredCombined = combined.filter((c) => !isExcludedPath(cwd, c.finding.file));
+  const pathFiltered = combined.filter((c) => !isExcludedPath(cwd, c.finding.file));
+
+  // Drop obvious placeholder / demo values (`password: 'password'`, `apiKey =
+  // 'your-api-key'`, `<your-secret>`). These are the false-positive floor every
+  // template repo starts with; the benign-conventions module (one source of
+  // truth) decides what counts as a placeholder. Counted as suppressed for
+  // transparency, never silently dropped.
+  const placeholderDropped = pathFiltered.filter((c) => isPlaceholderSecret(c.secret));
+  const filteredCombined = pathFiltered.filter((c) => !isPlaceholderSecret(c.secret));
 
   // Apply `.dxkit-suppressions.json` so known-false positives don't count.
   const suppressions = loadSuppressions(cwd);
@@ -189,6 +198,7 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     (c) => c.finding.rule,
     (c) => c.finding.file,
   );
+  const suppressedCount = suppressed.length + placeholderDropped.length;
 
   // Per-occurrence secret identity is (canonicalRule, file, ordinal),
   // assembled in the aggregator — value- and salt-free, so it stays stable
@@ -200,7 +210,7 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     schemaVersion: 1,
     tool: 'gitleaks',
     findings: kept.map((c) => ({ ...c.finding })),
-    suppressedCount: suppressed.length,
+    suppressedCount,
   };
   const rawSecrets: GitleaksRawSecret[] = kept.map((c) => ({
     file: c.finding.file,
@@ -208,7 +218,7 @@ function computeGitleaksOutcome(cwd: string): SecretsGatherOutcome {
     rule: c.finding.rule,
     secret: c.secret,
   }));
-  return { kind: 'success', envelope, suppressedCount: suppressed.length, rawSecrets };
+  return { kind: 'success', envelope, suppressedCount, rawSecrets };
 }
 
 /**
