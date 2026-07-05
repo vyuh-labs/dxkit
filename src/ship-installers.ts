@@ -482,11 +482,12 @@ export function baselineRefreshInstallPlan(
 
 /**
  * Classify the anchor transport of an ALREADY-installed refresh workflow by its
- * content shape, so an `update` / re-`init` can migrate a stale variant. Returns
- * null when no refresh workflow is installed (nothing to migrate). The legacy
- * pre-transport workflow (a bare push to the default branch) reads as `tree`.
+ * content shape, so an `update` / re-`init` can migrate a stale variant and
+ * `doctor` can warn about a deadlocking one. Returns null when no refresh
+ * workflow is installed. The legacy pre-transport workflow (a bare push to the
+ * default branch) reads as `tree` — the one that deadlocks on a protected branch.
  */
-function detectInstalledRefreshTransport(cwd: string): BaselineAnchor | null {
+export function detectInstalledRefreshTransport(cwd: string): BaselineAnchor | null {
   const abs = path.join(cwd, '.github', 'workflows', REFRESH_WORKFLOW_DEST);
   let content: string;
   try {

@@ -41,7 +41,9 @@ doctor` flags a bypassable guardrail either way.
 - **`vyuh-dxkit doctor` verifies the enforcement path, not just the wiring.** It
   now warns when the guardrail is _bypassable_ — the workflow is present and
   green but the default branch takes direct pushes, or nothing requires the
-  `dxkit-guardrails` check, so a PR can merge with the guardrail red.
+  `dxkit-guardrails` check, so a PR can merge with the guardrail red. It also
+  flags a legacy direct-push refresh workflow that will _deadlock_ on a protected
+  branch, pointing at `vyuh-dxkit update` to migrate it.
 - **`vyuh-dxkit protect`** — a dry-run-by-default helper that requires the
   `dxkit-guardrails` check + PR review on the default branch. It prints the exact
   change and writes nothing unless you pass `--apply`.

@@ -9,6 +9,7 @@ import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
+import { detectInstalledRefreshTransport } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
@@ -709,6 +710,24 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
               },
             }),
       });
+
+      // 6c. Deadlocking refresh workflow: a legacy 'tree' baseline-refresh
+      // direct-pushes the anchor to the protected branch. That push is rejected,
+      // and its [skip ci] commit can never earn the required checks — so the
+      // refresh fails on every merge and the anchor can never update. Fires only
+      // when the branch is actually protected AND the installed variant is 'tree'.
+      if (enf.directPushBlocked && detectInstalledRefreshTransport(cwd) === 'tree') {
+        checks.push({
+          label: `baseline-refresh workflow will DEADLOCK on protected '${enf.branch}' (direct-push variant)`,
+          ok: false,
+          tier: 'operational',
+          fix: {
+            hint: `The installed refresh workflow pushes the anchor straight to '${enf.branch}', which branch protection rejects — so it fails every run and the anchor can never update. Run update to migrate it to a protection-safe anchor transport (or delete it if you use ref-based mode).`,
+            command: dxkitCli('update'),
+            skill: 'dxkit-init',
+          },
+        });
+      }
     }
   }
 

@@ -20,7 +20,11 @@ import {
   isBaselineAnchor,
 } from '../src/baseline/modes';
 import { classifyEnforcement, type EnforcementState } from '../src/enforcement';
-import { baselineRefreshInstallPlan, installCiBaselineRefresh } from '../src/ship-installers';
+import {
+  baselineRefreshInstallPlan,
+  installCiBaselineRefresh,
+  detectInstalledRefreshTransport,
+} from '../src/ship-installers';
 import { hydrateAnchorFromBranch } from '../src/baseline/anchor';
 
 const PROTECTED: EnforcementState = {
@@ -230,6 +234,30 @@ describe('installCiBaselineRefresh — content per transport (anti-recurrence)',
     // Same transport → installWorkflow skips the existing file, no migration note.
     expect(r.installed).toHaveLength(0);
     expect(r.notes.join('\n')).not.toMatch(/Migrated/);
+  });
+});
+
+describe('detectInstalledRefreshTransport', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-detecttransport-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('returns null when no refresh workflow is installed', () => {
+    expect(detectInstalledRefreshTransport(dir)).toBeNull();
+  });
+  it('classifies each installed variant by its content shape', () => {
+    installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: UNPROTECTED });
+    expect(detectInstalledRefreshTransport(dir)).toBe('tree');
+    installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: PROTECTED });
+    expect(detectInstalledRefreshTransport(dir)).toBe('branch');
+    installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+      policyAnchor: 'cache',
+    });
+    expect(detectInstalledRefreshTransport(dir)).toBe('cache');
   });
 });
 
