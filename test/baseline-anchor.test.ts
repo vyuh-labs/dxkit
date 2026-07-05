@@ -19,7 +19,13 @@ import {
   DEFAULT_ANCHOR_REF,
   isBaselineAnchor,
 } from '../src/baseline/modes';
-import { classifyEnforcement, type EnforcementState } from '../src/enforcement';
+import {
+  classifyEnforcement,
+  detectEnforcement,
+  clearEnforcementCache,
+  type EnforcementState,
+  type EnforcementReads,
+} from '../src/enforcement';
 import {
   baselineRefreshInstallPlan,
   installCiBaselineRefresh,
@@ -33,18 +39,21 @@ const PROTECTED: EnforcementState = {
   probed: true,
   directPushBlocked: true,
   guardrailRequired: true,
+  rulesetGoverned: false,
 };
 const UNPROTECTED: EnforcementState = {
   branch: 'main',
   probed: true,
   directPushBlocked: false,
   guardrailRequired: false,
+  rulesetGoverned: false,
 };
 const UNKNOWN: EnforcementState = {
   branch: 'main',
   probed: false,
   directPushBlocked: false,
   guardrailRequired: false,
+  rulesetGoverned: false,
 };
 
 describe('resolveAnchorTransport', () => {
@@ -91,31 +100,133 @@ describe('isBaselineAnchor', () => {
 });
 
 describe('classifyEnforcement', () => {
-  it('an unprobed answer is "unknown", never a false "unprotected"', () => {
-    const s = classifyEnforcement('main', null, false);
+  const reads = (r: Partial<EnforcementReads>): EnforcementReads => ({
+    classic: null,
+    classicKnown: true,
+    rules: [],
+    rulesKnown: true,
+    ...r,
+  });
+
+  it('nothing readable → "unknown", never a false "unprotected"', () => {
+    const s = classifyEnforcement('main', null);
     expect(s.probed).toBe(false);
     expect(s.directPushBlocked).toBe(false);
     expect(s.guardrailRequired).toBe(false);
+    expect(s.rulesetGoverned).toBe(false);
   });
-  it('no protection rule (404 → null) → not blocked, guardrail not required', () => {
-    const s = classifyEnforcement('main', null, true);
+  it('both mechanisms read, neither protects → confidently unprotected', () => {
+    const s = classifyEnforcement('main', reads({}));
     expect(s.probed).toBe(true);
     expect(s.directPushBlocked).toBe(false);
     expect(s.guardrailRequired).toBe(false);
+    expect(s.rulesetGoverned).toBe(false);
   });
-  it('required status checks block direct pushes; dxkit-guardrails presence is detected', () => {
+
+  // Classic branch protection
+  it('classic required status checks block direct pushes; dxkit-guardrails is detected', () => {
     const s = classifyEnforcement(
       'main',
-      { required_status_checks: { contexts: ['dxkit-guardrails', 'build'] } },
-      true,
+      reads({ classic: { required_status_checks: { contexts: ['dxkit-guardrails', 'build'] } } }),
     );
     expect(s.directPushBlocked).toBe(true);
     expect(s.guardrailRequired).toBe(true);
+    expect(s.rulesetGoverned).toBe(false);
   });
-  it('a required PR review alone blocks direct pushes (guardrail may still be absent)', () => {
-    const s = classifyEnforcement('main', { required_pull_request_reviews: {} }, true);
+  it('a classic required PR review alone blocks direct pushes (guardrail may be absent)', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({ classic: { required_pull_request_reviews: {} } }),
+    );
     expect(s.directPushBlocked).toBe(true);
     expect(s.guardrailRequired).toBe(false);
+  });
+
+  // Repository RULESETS — the ruleset-blind bug (#12). A ruleset-protected repo
+  // 404s the classic endpoint (classic: null) but the rules endpoint sees it.
+  it('a ruleset pull_request rule blocks direct pushes and marks the branch ruleset-governed', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({ classic: null, rules: [{ type: 'pull_request' }] }),
+    );
+    expect(s.probed).toBe(true);
+    expect(s.directPushBlocked).toBe(true);
+    expect(s.guardrailRequired).toBe(false);
+    expect(s.rulesetGoverned).toBe(true);
+  });
+  it('a ruleset required_status_checks rule detects the dxkit-guardrails context (nested shape)', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({
+        classic: null,
+        rules: [
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [{ context: 'dxkit-guardrails' }] },
+          },
+        ],
+      }),
+    );
+    expect(s.directPushBlocked).toBe(true);
+    expect(s.guardrailRequired).toBe(true);
+    expect(s.rulesetGoverned).toBe(true);
+  });
+  it('ref-integrity-only ruleset rules (non_fast_forward) do NOT count as a push block', () => {
+    const s = classifyEnforcement('main', reads({ rules: [{ type: 'non_fast_forward' }] }));
+    expect(s.directPushBlocked).toBe(false);
+    // still ruleset-governed — protect must not fight it
+    expect(s.rulesetGoverned).toBe(true);
+    expect(s.probed).toBe(true);
+  });
+
+  // Partial reads — a non-admin can read rulesets but not classic protection.
+  it('a blocking ruleset with classic unread is still a definitive "protected"', () => {
+    const s = classifyEnforcement('main', {
+      classic: null,
+      classicKnown: false,
+      rules: [{ type: 'pull_request' }],
+      rulesKnown: true,
+    });
+    expect(s.probed).toBe(true);
+    expect(s.directPushBlocked).toBe(true);
+  });
+  it('no protection seen but a mechanism was unreadable → unknown, not "unprotected"', () => {
+    const s = classifyEnforcement('main', {
+      classic: null,
+      classicKnown: true,
+      rules: [],
+      rulesKnown: false,
+    });
+    expect(s.probed).toBe(false);
+    expect(s.directPushBlocked).toBe(false);
+  });
+});
+
+describe('detectEnforcement (probe wiring + fail-open)', () => {
+  beforeEach(() => clearEnforcementCache());
+  afterEach(() => clearEnforcementCache());
+
+  it('routes an injected probe through the classifier', () => {
+    const s = detectEnforcement(join(tmpdir(), 'dxkit-enf-a'), {
+      probe: () => ({
+        classic: null,
+        classicKnown: true,
+        rules: [{ type: 'pull_request' }],
+        rulesKnown: true,
+      }),
+    });
+    expect(s.directPushBlocked).toBe(true);
+    expect(s.rulesetGoverned).toBe(true);
+  });
+
+  it('a throwing probe fails open to unknown (never a false "unprotected")', () => {
+    const s = detectEnforcement(join(tmpdir(), 'dxkit-enf-b'), {
+      probe: () => {
+        throw new Error('gh boom');
+      },
+    });
+    expect(s.probed).toBe(false);
+    expect(s.directPushBlocked).toBe(false);
   });
 });
 
