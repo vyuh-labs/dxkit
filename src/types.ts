@@ -112,6 +112,17 @@ export interface FileEntry {
 export interface ManifestFileEntry {
   hash: string | null;
   evolving: boolean;
+  /**
+   * How dxkit related to this path at install time:
+   *   - `created`     — dxkit wrote the file (it did not exist before).
+   *   - `overwritten` — dxkit replaced a pre-existing file (only with --force).
+   *   - `skipped`     — the file already existed and dxkit kept the user's
+   *                     version. The user OWNS it; dxkit must never delete it,
+   *                     and `hash` is null (dxkit doesn't know its content).
+   * Optional — absent on manifests written before 2.27; uninstall falls back to
+   * the pre-provenance behavior (treat any entry as dxkit's) for those.
+   */
+  provenance?: 'created' | 'overwritten' | 'skipped';
 }
 
 /**
@@ -138,12 +149,26 @@ export interface ManifestInstallFlags {
   withClaudeLoop?: boolean;
 }
 
+/** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf
+ *  (e.g. a coverage scanner). Recorded so uninstall can OWN it — a dxkit-driven
+ *  install whose artifact dxkit then disowns would break the "exact pre-dxkit
+ *  state" guarantee. `ecosystem` drives how uninstall removes it. */
+export interface ManifestToolDep {
+  /** Package/coordinate name (e.g. `@vitest/coverage-v8`). */
+  package: string;
+  /** Which ecosystem's manifest it landed in (`node` → package.json devDeps). */
+  ecosystem: 'node';
+}
+
 export interface Manifest {
   version: string;
   mode: GenerationMode;
   generatedAt: string;
   config: ResolvedConfig;
   files: Record<string, ManifestFileEntry>;
+  /** Tools `tools install` added on dxkit's behalf. Optional — absent until a
+   *  tool is installed, or on manifests written before 2.27. */
+  toolDeps?: ManifestToolDep[];
   /**
    * Optional — present on manifests written by dxkit 2.5.2 or later.
    * Older manifests fall back to workspace detection in `update`.

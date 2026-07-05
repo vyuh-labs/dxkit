@@ -216,9 +216,21 @@ export async function generate(
     else if (writeResult === 'skipped') result.skipped.push(rel);
     else if (writeResult === 'overwritten') result.overwritten.push(rel);
 
+    // Provenance is what uninstall trusts to decide what it may remove. A
+    // SKIPPED file already existed — the user owns it — so we record that fact
+    // and store no hash (the hash would be dxkit's template, not the user's
+    // content, and mistaking one for the other is how --force could delete a
+    // project's own AGENTS.md / CLAUDE.md).
+    const provenance =
+      writeResult === 'created'
+        ? 'created'
+        : writeResult === 'overwritten'
+          ? 'overwritten'
+          : 'skipped';
     result.manifest.files[rel] = {
-      hash: evolving ? null : content ? sha256(content) : null,
+      hash: provenance === 'skipped' ? null : evolving ? null : content ? sha256(content) : null,
       evolving,
+      provenance,
     };
   }
 

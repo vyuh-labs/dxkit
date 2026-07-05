@@ -18,11 +18,14 @@
  * - `vyuh-dxkit tools install --yes` → install all missing, no prompts
  */
 import * as readline from 'readline/promises';
+import * as fs from 'fs';
+import * as path from 'path';
 import { dxkitCli } from './self-invocation';
 import { stdin, stdout } from 'process';
 import { execSync } from 'child_process';
 import { detect } from './detect';
-import { DetectedStack } from './types';
+import { DetectedStack, type Manifest } from './types';
+import { serializePreservingJson } from './files';
 import { detectPackageManager, provisionCommand, pmAwareDevInstall } from './package-manager';
 import * as logger from './logger';
 import {
@@ -183,6 +186,27 @@ function showStatus(targetPath: string): ToolStatus[] {
   return statuses;
 }
 
+/**
+ * Append a dxkit-installed node devDependency to the install manifest so
+ * `vyuh-dxkit uninstall` can remove it. No-op when the repo has no manifest
+ * (dxkit wasn't init'd there) or the entry is already recorded. Best-effort:
+ * a manifest write failure never fails the install.
+ */
+function recordToolDep(cwd: string, pkg: string): void {
+  const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
+  try {
+    const raw = fs.readFileSync(manifestPath, 'utf-8');
+    const manifest = JSON.parse(raw) as Manifest;
+    const toolDeps = manifest.toolDeps ?? [];
+    if (toolDeps.some((d) => d.package === pkg && d.ecosystem === 'node')) return;
+    toolDeps.push({ package: pkg, ecosystem: 'node' });
+    manifest.toolDeps = toolDeps;
+    fs.writeFileSync(manifestPath, serializePreservingJson(raw, manifest), 'utf-8');
+  } catch {
+    // no manifest / unreadable / unwritable → nothing to record, never fatal
+  }
+}
+
 async function confirm(rl: readline.Interface, question: string): Promise<boolean> {
   const answer = await rl.question(`  ${question} [Y/n]: `);
   if (!answer.trim()) return true;
@@ -336,6 +360,11 @@ async function runInstall(
         const recheck = findTool(def, targetPath);
         if (recheck.available) {
           results.push({ name: s.name, status: 'installed' });
+          // A project-local node devDep landed in the user's package.json on
+          // dxkit's behalf — record it so uninstall OWNS it (a dxkit-driven
+          // install dxkit then disowns breaks the "exact pre-dxkit state"
+          // promise). Global/isolated tools (no nodePackage) aren't recorded.
+          if (def.nodePackage) recordToolDep(targetPath, def.nodePackage);
           logger.success(`${s.name} installed (${recheck.source})`);
         } else {
           results.push({

@@ -7,6 +7,30 @@ export function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf-8').digest('hex');
 }
 
+/**
+ * Re-serialize `obj` to JSON while preserving the ORIGINAL text's formatting —
+ * its indentation (tabs vs N spaces) and whether it ended with a newline, and
+ * whether it was compact (single-line) at all. This is the one source of truth
+ * (Rule 2) for every additive JSON edit dxkit makes to a file the user owns
+ * (`package.json` devDep / postinstall on install; the inverse on uninstall).
+ *
+ * Why it matters: a naive `JSON.stringify(obj, null, 2)` REFORMATS the whole
+ * file, so adding one devDependency rewrites a compact or tab-indented
+ * `package.json` into 2-space-pretty — a change dxkit can never cleanly undo,
+ * because the original style is already lost by uninstall time. Preserving the
+ * style keeps the "exact pre-dxkit state" promise for surgical edits.
+ */
+export function serializePreservingJson(original: string, obj: unknown): string {
+  const trailing = original.endsWith('\n') ? '\n' : '';
+  // Compact: no internal newline in the trimmed source → keep it single-line.
+  if (original.trim().length > 0 && !original.trim().includes('\n')) {
+    return JSON.stringify(obj) + trailing;
+  }
+  const m = original.match(/\n([ \t]+)"/);
+  const indent = m ? (m[1][0] === '\t' ? '\t' : m[1].length) : 2;
+  return JSON.stringify(obj, null, indent) + trailing;
+}
+
 export async function writeFile(
   outputPath: string,
   content: string,

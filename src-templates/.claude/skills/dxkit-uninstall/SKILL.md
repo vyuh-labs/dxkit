@@ -48,7 +48,7 @@ If you had committed dxkit's files (baselines, workflows), those show as deletio
 ## Package-manager notes
 
 - **After `--remove-devdep`, run your PM's install** to prune the lockfile (the CLI prints the exact command). Non-npm repos need their own PM — `pnpm install` / `yarn install` / `bun install`, not `npm install`.
-- **pnpm with a release-age policy** (`minimumReleaseAge`): if your `pnpm-workspace.yaml` has a `minimumReleaseAgeExclude` entry for `@vyuhlabs/dxkit`, keep it until AFTER `pnpm install` prunes dxkit from the lockfile, THEN remove the exclusion and `pnpm install` again. Removing it first makes the stale lockfile fail `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` before it can prune. (That exclusion was added by pnpm, not dxkit, so uninstall does not touch it.)
+- **pnpm with a release-age policy** (`minimumReleaseAge`): if your `pnpm-workspace.yaml` has a `minimumReleaseAgeExclude` entry for `@vyuhlabs/dxkit` (you or an earlier dxkit added it so a just-published dxkit could install at all), keep it until AFTER `pnpm install` prunes dxkit from the lockfile, THEN remove the exclusion and `pnpm install` again. Removing it first makes the stale lockfile fail `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` before it can prune. Uninstall surfaces this entry in its plan but does not edit your `pnpm-workspace.yaml`.
 - **`@vitest/coverage-v8`**: if you ran `vyuh-dxkit tools install`, it may have added this devDependency for `vyuh-dxkit coverage`. It is not part of dxkit's install manifest, so uninstall leaves it — remove it by hand if you don't want it (`<pm> remove @vitest/coverage-v8`).
 
 ## The feedback prompt (optional, opt-in)

@@ -164,7 +164,10 @@ function entryInvokes(entry: unknown, re: RegExp): boolean {
  *     suffix, or dropping the whole `postinstall` key when it was the sole cmd).
  * Nothing else is touched. Returns which pieces were removed for reporting.
  */
-export function stripPackageJsonDxkit(parsed: JsonRecord): {
+export function stripPackageJsonDxkit(
+  parsed: JsonRecord,
+  extraDevDeps: readonly string[] = [],
+): {
   changed: boolean;
   result: JsonRecord;
   removedDevDep: boolean;
@@ -174,13 +177,22 @@ export function stripPackageJsonDxkit(parsed: JsonRecord): {
   let removedDevDep = false;
   let removedPostinstall = false;
 
+  // The dxkit devDep plus any node tools `tools install` added on dxkit's
+  // behalf (recorded in the manifest) — all removed so the round-trip is clean.
+  const toRemove = [DXKIT_PACKAGE, ...extraDevDeps];
   const dev = obj.devDependencies as JsonRecord | undefined;
-  if (dev && typeof dev === 'object' && DXKIT_PACKAGE in dev) {
+  if (dev && typeof dev === 'object') {
     const nextDev = { ...dev };
-    delete nextDev[DXKIT_PACKAGE];
-    removedDevDep = true;
-    if (Object.keys(nextDev).length === 0) delete obj.devDependencies;
-    else obj.devDependencies = nextDev;
+    for (const name of toRemove) {
+      if (name in nextDev) {
+        delete nextDev[name];
+        removedDevDep = true;
+      }
+    }
+    if (removedDevDep) {
+      if (Object.keys(nextDev).length === 0) delete obj.devDependencies;
+      else obj.devDependencies = nextDev;
+    }
   }
 
   const scripts = obj.scripts as JsonRecord | undefined;

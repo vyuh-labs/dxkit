@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 
-import { sha256 } from '../files';
+import { sha256, serializePreservingJson } from '../files';
 import { detectInstallFlags, type InstallFlags } from '../update';
 import { ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME } from '../allowlist/file';
 import type { Manifest } from '../types';
@@ -78,6 +78,13 @@ function readManifest(cwd: string): Manifest | null {
 
 function exists(cwd: string, rel: string): boolean {
   return fs.existsSync(path.join(cwd, rel));
+}
+
+/** Node package names `tools install` recorded as dxkit-added devDeps — the set
+ *  uninstall also strips from package.json (under --remove-devdep) so a
+ *  dxkit-driven tool install doesn't outlive the uninstall. */
+function nodeToolDeps(manifest: Manifest | null): string[] {
+  return (manifest?.toolDeps ?? []).filter((d) => d.ecosystem === 'node').map((d) => d.package);
 }
 
 /** Ship-installer artifacts keyed by install flag (not in manifest.files — the
@@ -145,9 +152,13 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   }
   if (exists(cwd, 'CLAUDE.md')) {
     const claudeEntry = manifest?.files['CLAUDE.md'];
+    // dxkit MADE the file only when it created it — a `skipped` entry means the
+    // user's own CLAUDE.md that dxkit merely appended a loop block to. Legacy
+    // manifests (no provenance) keep the pre-2.27 behavior of trusting the hash.
+    const claudeMadeByDxkit = !!claudeEntry && claudeEntry.provenance !== 'skipped';
     const current = read(cwd, 'CLAUDE.md');
     const stripped = stripClaudeLoopBlock(current);
-    if (claudeEntry && claudeEntry.hash && sha256(stripped.content) === claudeEntry.hash) {
+    if (claudeMadeByDxkit && claudeEntry!.hash && sha256(stripped.content) === claudeEntry!.hash) {
       // dxkit created the whole file, and stripping dxkit's own loop block leaves
       // exactly the recorded dxkit shim (no user edits) → remove the whole file
       // (pre-dxkit state had no CLAUDE.md).
@@ -157,7 +168,7 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
         detail: 'dxkit-created Claude config',
         status: 'pending',
       });
-    } else if (claudeEntry && stripped.changed) {
+    } else if (claudeMadeByDxkit && stripped.changed) {
       // dxkit created it but the user has since edited the shim → keep their
       // version, remove only dxkit's loop block; surface that we kept the file.
       actions.push({
@@ -169,8 +180,9 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
       warnings.push(
         'CLAUDE.md was created by dxkit but you edited it — kept your version, removed only the loop block',
       );
-    } else if (!claudeEntry && stripped.changed) {
-      // The user's own pre-existing CLAUDE.md that dxkit only appended to.
+    } else if (stripped.changed) {
+      // The user's own pre-existing CLAUDE.md that dxkit only appended to
+      // (no manifest entry, or a `skipped` one) — strip only the loop block.
       actions.push({
         kind: 'revert-claude',
         target: 'CLAUDE.md',
@@ -181,7 +193,10 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   }
   if (exists(cwd, '.claude/settings.json')) {
     const parsed = tryJson(read(cwd, '.claude/settings.json'));
-    const dxkitCreated = !!manifest?.files['.claude/settings.json'];
+    const settingsEntry = manifest?.files['.claude/settings.json'];
+    // Created only when dxkit wrote the whole file; a `skipped`/absent entry
+    // means a pre-existing settings.json dxkit merged its hooks into → revert.
+    const dxkitCreated = !!settingsEntry && settingsEntry.provenance !== 'skipped';
     if (parsed && stripSettingsDxkit(parsed, { dxkitCreated }).changed) {
       actions.push({
         kind: 'revert-settings',
@@ -193,20 +208,26 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   }
   if (opts.removeDevDependency && exists(cwd, 'package.json')) {
     const parsed = tryJson(read(cwd, 'package.json'));
-    if (parsed && stripPackageJsonDxkit(parsed).changed) {
+    const tools = nodeToolDeps(manifest);
+    if (parsed && stripPackageJsonDxkit(parsed, tools).changed) {
+      const toolNote = tools.length ? ` + ${tools.length} tool devDep(s)` : '';
       actions.push({
         kind: 'revert-package',
         target: 'package.json',
-        detail: 'remove @vyuhlabs/dxkit devDependency + postinstall',
+        detail: `remove @vyuhlabs/dxkit devDependency + postinstall${toolNote}`,
         status: 'pending',
       });
     }
   }
 
   // 2. Delete generator-created files from the manifest (except merge targets).
+  //    A `skipped` entry is a file that PRE-EXISTED dxkit — the user owns it, so
+  //    it is never deleted (deleting it would be silent data loss; a --force
+  //    that removed a project's own AGENTS.md is exactly the bug this guards).
   const recorded = new Set(Object.keys(manifest?.files ?? {}));
   for (const [rel, entry] of Object.entries(manifest?.files ?? {})) {
     if (MERGE_TARGETS.has(rel)) continue;
+    if (entry.provenance === 'skipped') continue;
     del(rel, 'dxkit-created file', entry.evolving, entry.hash);
   }
 
@@ -350,23 +371,27 @@ export function executeUninstall(
         const original = read(cwd, '.claude/settings.json');
         const parsed = tryJson(original)!;
         const manifest = readManifest(cwd);
-        const dxkitCreated = !!manifest?.files['.claude/settings.json'];
+        const settingsEntry = manifest?.files['.claude/settings.json'];
+        const dxkitCreated = !!settingsEntry && settingsEntry.provenance !== 'skipped';
         const { result, isDxkitOnly } = stripSettingsDxkit(parsed, { dxkitCreated });
         if (isDxkitOnly) {
           rm(abs);
           pruneEmptyParents(cwd, abs);
         } else {
-          fs.writeFileSync(abs, serializePreserving(original, result), 'utf-8');
+          fs.writeFileSync(abs, serializePreservingJson(original, result), 'utf-8');
         }
         reverted.push(a.target);
         break;
       }
       case 'revert-package': {
         const original = read(cwd, 'package.json');
-        const { result } = stripPackageJsonDxkit(tryJson(original)!);
+        const { result } = stripPackageJsonDxkit(
+          tryJson(original)!,
+          nodeToolDeps(readManifest(cwd)),
+        );
         // Preserve the file's original indent + trailing-newline style so the
         // reverted file is byte-identical to its pre-dxkit content (git-clean).
-        fs.writeFileSync(abs, serializePreserving(original, result), 'utf-8');
+        fs.writeFileSync(abs, serializePreservingJson(original, result), 'utf-8');
         reverted.push(a.target);
         break;
       }
@@ -388,15 +413,6 @@ export function executeUninstall(
 
 function read(cwd: string, rel: string): string {
   return fs.readFileSync(path.join(cwd, rel), 'utf-8');
-}
-/** Re-serialize `obj` matching `original`'s indentation and trailing-newline
- *  style, so a surgical JSON revert leaves the file byte-identical to how the
- *  user's editor/tooling would have written it (no spurious git diff). */
-function serializePreserving(original: string, obj: unknown): string {
-  const m = original.match(/\n([ \t]+)"/);
-  const indent = m ? (m[1][0] === '\t' ? '\t' : m[1].length) : 2;
-  const json = JSON.stringify(obj, null, indent);
-  return original.endsWith('\n') ? json + '\n' : json;
 }
 function tryJson(s: string): Record<string, unknown> | null {
   try {
