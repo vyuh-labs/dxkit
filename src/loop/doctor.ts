@@ -21,6 +21,7 @@ import { resolveLoopPreset } from './policy';
 import { LEDGER_FILE } from './ledger';
 import { loopGateActive } from './gate-cache';
 import { dxkitCli, resolveDxkitCli } from '../self-invocation';
+import { addDevCommand, detectPackageManager } from '../package-manager';
 import * as logger from '../logger';
 
 /** Severity of one preflight check. `fail` = the loop is unsafe to run
@@ -223,8 +224,8 @@ export function buildLoopDoctorReport(cwd: string): LoopDoctorReport {
         ? {}
         : {
             fix: {
-              hint: 'Make the Stop hook runnable: install dxkit as a devDependency (then `npm install`), or build the local dist if the hook runs `node dist/...`.',
-              command: 'npm install --save-dev @vyuhlabs/dxkit',
+              hint: 'Make the Stop hook runnable: install dxkit as a devDependency, or build the local dist if the hook runs `node dist/...`.',
+              command: addDevCommand(detectPackageManager(cwd), '@vyuhlabs/dxkit'),
               skill: 'dxkit-loop',
             },
           }),

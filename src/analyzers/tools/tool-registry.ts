@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { activeLanguagesFromFlags } from '../../languages';
+import { detectPackageManager, pmAwareDevInstall } from '../../package-manager';
 import { resolveInDirs, resolveOnPath } from './runner';
 import { loadToolsConfig } from './tools-config';
 import { DetectedStack, ToolRequirement } from '../../types';
@@ -1169,6 +1170,22 @@ export function buildRequiredTools(languages: DetectedStack['languages']): ToolR
 /** Check status of all required tools for a stack. */
 export function checkAllTools(languages: DetectedStack['languages'], cwd?: string): ToolStatus[] {
   const required = buildRequiredTools(languages);
+  // Render a node-devDep tool's `install` descriptor in the repo's package
+  // manager, so a human copy-pasting it from `tools list` on a pnpm/yarn/bun
+  // repo gets the right command (the EXECUTED install is already PM-aware in
+  // tools-cli). Detected once — a display concern, npm when there's no cwd.
+  const pm = cwd ? detectPackageManager(cwd) : 'npm';
+  const pmAware = (status: ToolStatus): ToolStatus => {
+    const def = TOOL_DEFS[status.name];
+    if (!def?.nodePackage) return status;
+    return {
+      ...status,
+      requirement: {
+        ...status.requirement,
+        install: pmAwareDevInstall(status.requirement.install, pm),
+      },
+    };
+  };
   return required.map((req) => {
     const def = TOOL_DEFS[req.name];
     if (!def) {
@@ -1181,6 +1198,6 @@ export function checkAllTools(languages: DetectedStack['languages'], cwd?: strin
         requirement: { ...req, binaries: [req.name], installCommands: {} },
       };
     }
-    return findTool(def, cwd);
+    return pmAware(findTool(def, cwd));
   });
 }
