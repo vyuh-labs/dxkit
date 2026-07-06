@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 
 import { sha256, serializePreservingJson } from '../files';
 import { detectInstallFlags, type InstallFlags } from '../update';
+import { managedGatedArtifacts } from '../managed-artifacts';
 import { ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME } from '../allowlist/file';
 import type { Manifest } from '../types';
 import {
@@ -85,28 +86,6 @@ function exists(cwd: string, rel: string): boolean {
  *  dxkit-driven tool install doesn't outlive the uninstall. */
 function nodeToolDeps(manifest: Manifest | null): string[] {
   return (manifest?.toolDeps ?? []).filter((d) => d.ecosystem === 'node').map((d) => d.package);
-}
-
-/** Ship-installer artifacts keyed by install flag (not in manifest.files — the
- *  generator's `track()` covers only its own templates). */
-function gatedArtifacts(flags: InstallFlags): string[] {
-  const out: string[] = [];
-  if (flags.withHooks) out.push('.githooks/pre-push');
-  if (flags.withPrecommit) out.push('.githooks/pre-commit');
-  if (flags.withCiGuardrails) out.push('.github/workflows/dxkit-guardrails.yml');
-  if (flags.withBaselineRefresh) out.push('.github/workflows/dxkit-baseline-refresh.yml');
-  if (flags.withPrReview) out.push('.github/workflows/pr-review.yml');
-  // deep-sast refresh is opt-in and not tracked in installFlags — detect by file.
-  out.push('.github/workflows/dxkit-deep-sast-refresh.yml');
-  if (flags.withDevcontainer) {
-    out.push(
-      '.devcontainer/devcontainer.json',
-      '.devcontainer/post-create.sh',
-      '.devcontainer/install-agent-clis.sh',
-    );
-  }
-  out.push('.dxkit-ignore');
-  return out;
 }
 
 /** Build the ordered uninstall plan without touching the filesystem. */
@@ -254,8 +233,10 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     }
   }
 
-  // 3. Delete gated ship-installer artifacts by flag / presence.
-  for (const rel of gatedArtifacts(flags)) {
+  // 3. Delete gated ship-installer artifacts by flag / presence. The list is
+  //    derived from the managed-artifact registry (the same source update and
+  //    init read), so a surface can't be removed here yet forgotten by update.
+  for (const rel of managedGatedArtifacts(flags)) {
     if (exists(cwd, rel)) del(rel, 'dxkit-installed artifact');
   }
 

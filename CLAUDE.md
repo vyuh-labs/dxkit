@@ -78,11 +78,31 @@ consumer through it (canonical examples added in 2.30):
   understands (`npm audit` needs an npm lockfile; a pnpm/yarn/bun lockfile routes
   to the shared lockfile-aware `gatherOsvScannerDepVulnsResult`). Selecting a
   scanner without consulting the present lockfile is the bug.
+- the set of optional SHIP surfaces dxkit installs (CI workflows, git hooks,
+  the devcontainer, the loop pack, the dxkit devDependency, the ignore files) →
+  `MANAGED_SHIP_SURFACES` in `src/managed-artifacts.ts`. These are NOT recorded
+  in `manifest.files` (the generator's provenance covers only its own
+  templates), so their lifecycle is registry-driven: uninstall's
+  `managedGatedArtifacts`, update's `refreshManagedSurfaces`, and the legacy
+  `detectInstallFlags` fallback ALL iterate this one list. The recurring shape
+  here: a surface wired independently in each path drifts — the deep-SAST
+  refresh workflow shipped installed + uninstalled but NEVER refreshed by
+  update (it had no flag and no entry in update's loop). Adding a surface is one
+  registry entry; it cannot silently skip update or uninstall. Files that dxkit
+  MERGES into (`.gitignore`, `package.json`, `.claude/settings.json`,
+  `CLAUDE.md`) are reverted by `src/uninstall/reversals.ts`, a separate
+  centralized mechanism — a merge-only surface carries an empty `artifacts` list.
 
 `scripts/check-architecture.sh` gates the first two (a second `git ls-files
-.env` or a config-less `gatherFlowModel` on a single-repo surface fails CI). The
-`update` provenance lane is pinned by `test/lifecycle/` (the update lane) and the
-`test/update-disposition.test.ts` branch matrix.
+.env` or a config-less `gatherFlowModel` on a single-repo surface fails CI) and
+the managed-artifact registry (Rule 15: a module that writes a `.github/workflows`
+/ `.githooks` / `.devcontainer` artifact outside `src/ship-installers.ts` fails
+CI; annotate `// managed-write-ok` for a read-only exception). The `update`
+provenance lane is pinned by `test/lifecycle/` (the update lane) and the
+`test/update-disposition.test.ts` branch matrix; the ship-surface registry is
+pinned by `test/managed-artifacts-playbook.test.ts` (synthetic-surface injection
+— asserts uninstall + update both pick up a newly-registered surface, mirror of
+`recipe-playbook.test.ts`).
 
 #### The fixture-repo ANALYSIS harness (`test/fixtures-analysis.test.ts`)
 

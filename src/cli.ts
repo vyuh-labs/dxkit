@@ -715,6 +715,10 @@ export async function run(argv: string[]): Promise<void> {
         withCiPushTrigger: wantCiPushTrigger,
         withPrReview: wantPrReview,
         withClaudeLoop: wantClaudeLoop,
+        // Stamp the deep-SAST flag so `update` refreshes the workflow (it used
+        // to have no flag → update never refreshed it) and uninstall removes it
+        // by flag rather than only by presence.
+        withDeepSastRefresh: !!values['with-deep-sast-refresh'],
       });
 
       console.log('');

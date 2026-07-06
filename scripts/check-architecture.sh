@@ -1184,6 +1184,49 @@ if [ -n "$RULE14_SELFINVOKE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Rule 15 (managed-artifact lifecycle class-fix): a module that WRITES a managed
+# ship artifact — a CI workflow (.github/workflows), a git hook (.githooks), or
+# the devcontainer (.devcontainer) — must do so through src/ship-installers.ts,
+# whose surfaces are registered in src/managed-artifacts.ts:MANAGED_SHIP_SURFACES.
+#
+# What this prevents:
+#   These artifacts are NOT tracked in manifest.files, so their update-refresh
+#   and uninstall-removal are driven by the managed-artifact registry. A new
+#   installer that writes a workflow/hook/devcontainer directly (bypassing the
+#   registry) silently skips `update` (never refreshed) and/or `uninstall`
+#   (never removed) — the exact drift the deep-SAST refresh workflow shipped
+#   with (installed + uninstalled but never refreshed by update).
+#
+# The check: any src file that BOTH writes (writeFileSync/copyFileSync) AND
+# constructs a ship-dir path, outside the allowlist. Pure readers (doctor,
+# detection, enforcement probes) don't write, so they never match.
+#
+# Allowlist rationale:
+#   - src/ship-installers.ts — the canonical writer (every install* lives here).
+#   - src/cli.ts — the init orchestrator (writes the manifest; references
+#     workflow paths in help/logging, not a bypass installer).
+#   - src/uninstall/index.ts — the reverser (writes settings.json/package.json
+#     reversals; references .githooks for the core.hooksPath unset).
+RULE15_MANAGED_WRITE=""
+for f in $(grep -rlE "writeFileSync|copyFileSync|cpSync" src --include='*.ts' 2>/dev/null); do
+  case "$f" in
+    src/ship-installers.ts | src/cli.ts | src/uninstall/index.ts) continue ;;
+  esac
+  grep -q "// managed-write-ok" "$f" && continue
+  if grep -qE "\.github/workflows|'\.github', 'workflows'|'\.githooks'|\.githooks/|'\.devcontainer'|\.devcontainer/" "$f"; then
+    RULE15_MANAGED_WRITE="$RULE15_MANAGED_WRITE $f"
+  fi
+done
+if [ -n "$RULE15_MANAGED_WRITE" ]; then
+  echo "❌ Rule 15 violation: a module writes a managed ship artifact (.github/workflows,"
+  echo "   .githooks, .devcontainer) outside src/ship-installers.ts:"
+  for f in $RULE15_MANAGED_WRITE; do echo "     $f"; done
+  echo "   → Move the write into src/ship-installers.ts and register the surface in"
+  echo "     src/managed-artifacts.ts:MANAGED_SHIP_SURFACES so update + uninstall cover it."
+  echo "   → Annotate '// managed-write-ok' for a justified exception (e.g. read-only use)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
