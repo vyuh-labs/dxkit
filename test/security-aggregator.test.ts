@@ -275,9 +275,41 @@ describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () 
   function secretFpFor(file: string, ordinal: number): string {
     return computeContentFingerprint(SECRET_CANONICAL_RULE, file, secretContentAnchor(ordinal));
   }
-  function allowEntry(fingerprint: string, kind: 'secret' | 'code', category: string) {
+  function allowEntry(
+    fingerprint: string,
+    kind: 'secret' | 'code' | 'dep-vuln',
+    category: string,
+  ) {
     return { fingerprint, kind, category, addedAt: '2026-06-01' } as never;
   }
+
+  it('false-positive / test-fixture dep-vulns are lifted from the scoreable bucket but stay raw + annotated', () => {
+    const depFp = 'deadbeefdeadbeef';
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      depVulns: {
+        findings: [
+          { id: 'CVE-1', package: 'left-pad', severity: 'critical', tool: 'osv', fingerprint: depFp },
+          { id: 'CVE-2', package: 'axios', severity: 'critical', tool: 'osv', fingerprint: 'aaaa1111aaaa1111' },
+        ],
+        tool: 'osv-scanner',
+        available: true,
+        unavailableReason: '',
+      },
+      allowlist: {
+        schemaVersion: 'dxkit-allowlist/v1',
+        mode: 'full',
+        entries: [allowEntry(depFp, 'dep-vuln', 'test-fixture')],
+      } as never,
+    });
+    // Raw bucket counts both (reports show the truth + "1 allowlisted").
+    expect(agg.depBySeverity.critical).toBe(2);
+    // Scoreable bucket excludes the reviewed dep-vuln → only the real one.
+    expect(agg.scoreableDepBySeverity.critical).toBe(1);
+    const lifted = agg.findingsByCategory.dependency.find((f) => f.fingerprint === depFp);
+    expect(lifted?.allowlisted).toBe(true);
+    expect(lifted?.allowlistCategory).toBe('test-fixture');
+  });
 
   it('false-positive / test-fixture secrets are lifted from the scoreable bucket but stay in the raw bucket + annotated', () => {
     // The fixture secret is the only secret in its file → ordinal 0.

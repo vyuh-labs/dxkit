@@ -104,6 +104,11 @@ export interface BomReport {
      *  `vyuh-dxkit vulnerabilities` — that command shows one tick
      *  per advisory; bom shows one row per package. */
     totalAdvisories: number;
+    /** Unique advisories (of `totalAdvisories`) covered by an active
+     *  allowlist entry — disclosed beside the severity table so an
+     *  accepted advisory doesn't read as an un-triaged headline critical.
+     *  Raw counts above are unchanged (dxkit's raw-truth model). */
+    allowlistedAdvisories: number;
     /** Packages found only by a vuln scanner — license scanner
      *  missed them. See BomEntry.joinedFromBoth. */
     vulnOnlyPackages: number;

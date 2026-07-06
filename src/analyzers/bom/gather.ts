@@ -7,6 +7,8 @@
 
 import { gatherLicensesResult } from '../licenses/gather';
 import { gatherDepVulns } from '../security/gather';
+import { loadAllowlist } from '../../allowlist/file';
+import { annotateDepFindingsWithAllowlist } from '../../allowlist/annotate';
 import type { DepVulnSummary } from '../security/types';
 import type {
   DepVulnFinding,
@@ -187,6 +189,11 @@ export async function gatherBomEntries(
 
   const licenseFindings = licensesEnv?.findings ?? [];
   const vulnFindings = depVulns.findings;
+  // Annotate dep-vulns with their active-allowlist status so the BoM
+  // discloses the live-vs-allowlisted split identically to the vuln scan
+  // (an accepted advisory isn't an un-triaged headline critical). Idempotent
+  // when the override already carried annotations.
+  annotateDepFindingsWithAllowlist(vulnFindings, loadAllowlist(cwd));
 
   // Index vulns by package@version (primary) and package (fallback).
   const vulnByPkgVer = new Map<string, DepVulnFinding[]>();
