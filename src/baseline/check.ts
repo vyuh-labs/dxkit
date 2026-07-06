@@ -185,6 +185,12 @@ export interface ClassifiedPair {
    *  carries `file` / `line`. */
   readonly file?: string;
   readonly line?: number;
+  /** Human location descriptor for finding tables — kind-aware, computed once
+   *  from the anchor entry. `file:line` for located kinds; `package@version ·
+   *  advisory-id` for dep-vulns (which have no file:line — the reason a
+   *  dep-vuln row used to render `Location: —`). Absent for locator-less
+   *  kinds with no meaningful descriptor. */
+  readonly locator?: string;
   /** True when the anchor entry's line falls inside the diff
    *  between baseline and HEAD. Undefined when the pair has no
    *  line locator (dep-vuln, etc.) or when git history isn't
@@ -595,6 +601,7 @@ export async function runGuardrailCheck(
 
     const file = locatorFile(anchorEntry);
     const line = locatorLine(anchorEntry);
+    const locator = describeEntryLocation(anchorEntry);
     const overlapsChangedLines =
       file !== undefined && line !== undefined && line > 0
         ? (linesChangedFor(file)?.has(line) ?? false)
@@ -639,6 +646,7 @@ export async function runGuardrailCheck(
       kind: anchorEntry.kind,
       ...(file !== undefined ? { file } : {}),
       ...(line !== undefined ? { line } : {}),
+      ...(locator ? { locator } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(suppressedByAllowlist !== undefined ? { suppressedByAllowlist } : {}),
     });
@@ -822,6 +830,27 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
     toolVersionDiffs,
     coverageDrift: diffCoverage(baseline.coverage, current.coverage),
   };
+}
+
+/**
+ * Human location descriptor for a finding table — kind-aware, computed once.
+ * Located kinds render `file:line` (or `file`); a dep-vuln has no file:line, so
+ * it renders its own identity `package@version · advisory-id` (the fix for the
+ * `Location: —` rows). Returns `''` for a genuinely location-less kind with no
+ * meaningful descriptor (e.g. a sanitized entry). Extend the dep-vuln branch's
+ * shape here — never re-derive location text in a renderer — so a future
+ * locator-less kind supplies a descriptor instead of regressing to `—`.
+ */
+export function describeEntryLocation(entry: BaselineEntry): string {
+  if (!isSanitized(entry) && entry.kind === 'dep-vuln') {
+    const ver = entry.installedVersion ? `@${entry.installedVersion}` : '';
+    const adv = entry.id ? ` · ${entry.id}` : '';
+    return `${entry.package}${ver}${adv}`;
+  }
+  const file = locatorFile(entry);
+  if (file === undefined) return '';
+  const line = locatorLine(entry);
+  return line !== undefined && line > 0 ? `${file}:${line}` : file;
 }
 
 function locatorFile(entry: BaselineEntry): string | undefined {

@@ -286,6 +286,12 @@ function statusLabel(status: FindingStatus): string {
 }
 
 function locatorProse(p: ClassifiedPair): string {
+  // Kind-aware location descriptor, computed once at classification time
+  // (`describeEntryLocation`): `file:line` for located kinds, `package@version ·
+  // advisory-id` for dep-vulns (which have no file:line — the `Location: —`
+  // rows). Falls back to the file:line locator for any pair without a precomputed
+  // descriptor (defensive).
+  if (p.locator) return p.locator;
   if (p.file === undefined) return '';
   return p.line !== undefined && p.line > 0 ? `${p.file}:${p.line}` : p.file;
 }
@@ -517,6 +523,10 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       ...(p.severity !== undefined ? { severity: p.severity } : {}),
       ...(p.file !== undefined ? { file: p.file } : {}),
       ...(p.line !== undefined ? { line: p.line } : {}),
+      // Kind-aware location descriptor (`package@version · advisory-id` for
+      // dep-vulns, `file:line` otherwise) so JSON consumers get a finding's
+      // identity without re-deriving it.
+      ...(p.locator !== undefined ? { locator: p.locator } : {}),
       ...(p.overlapsChangedLines !== undefined
         ? { overlapsChangedLines: p.overlapsChangedLines }
         : {}),
