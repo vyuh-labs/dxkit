@@ -66,7 +66,11 @@ import {
   secretContentAnchor,
   SECRET_CANONICAL_RULE,
 } from '../tools/fingerprint';
-import { annotateFindingsWithAllowlist, allowlistLiftsScore } from '../../allowlist/annotate';
+import {
+  annotateFindingsWithAllowlist,
+  annotateDepFindingsWithAllowlist,
+  allowlistLiftsScore,
+} from '../../allowlist/annotate';
 import type { AllowlistFile } from '../../allowlist/file';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
@@ -185,6 +189,12 @@ export interface SecurityAggregate {
    * score-lifting allowlisted findings. Scorer reads this; reports read
    * raw `secretsBySeverity`. */
   scoreableSecretsBySeverity: SeverityCounts;
+
+  /** Dependency advisories by severity, EXCLUDING score-lifting
+   * allowlisted dep-vulns (`false-positive` / `test-fixture`). The
+   * dimension scorer reads this; reports read raw `depBySeverity`. Equal
+   * to `depBySeverity` when no allowlist lifts a dep-vuln. */
+  scoreableDepBySeverity: SeverityCounts;
 
   /** Findings partitioned by category, post-dedup. Renderers iterate
    * these — never iterate raw envelope arrays. `dependency` is the
@@ -684,6 +694,19 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     bumpCounts(depBySeverity, f.severity);
   }
 
+  // Allowlist-annotate dep findings (kind `dep-vuln`) by their stamped
+  // fingerprint, then derive the score-only bucket EXCLUDING score-lifting
+  // allowlisted dep-vulns — mirror of the code/secret scoreable buckets, so
+  // an accepted dep advisory neither drags the Security score nor is
+  // suggested as a fix in top-actions. Reports read raw `depBySeverity`.
+  annotateDepFindingsWithAllowlist(uniqueDepFindings, input.allowlist ?? null);
+  const scoreableDepBySeverity = emptyCounts();
+  for (const f of uniqueDepFindings) {
+    if (!(f.allowlisted && allowlistLiftsScore(f.allowlistCategory))) {
+      bumpCounts(scoreableDepBySeverity, f.severity);
+    }
+  }
+
   // ─── Provenance ─────────────────────────────────────────────────────
   const provenance: AggregateProvenance = {
     secrets: {
@@ -720,6 +743,7 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     secretsBySeverity,
     scoreableCodeBySeverity,
     scoreableSecretsBySeverity,
+    scoreableDepBySeverity,
     findingsByCategory: {
       secret: codeFindingsByCategory.secret,
       code: codeFindingsByCategory.code,

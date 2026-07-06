@@ -388,8 +388,13 @@ export function formatSecurityReport(report: SecurityReport, elapsed: string): s
     L.push(`| HIGH     | ${d.high} |`);
     L.push(`| MEDIUM   | ${d.medium} |`);
     L.push(`| LOW      | ${d.low} |`);
-    L.push(`| **Subtotal** | **${d.total}** |`);
+    // Allowlisted dep-vulns carry the same annotation as code/secret now, so
+    // the subtotal discloses "(N allowlisted)" identically — a reviewed-and-
+    // accepted advisory no longer reads as an un-triaged headline critical.
+    const depAllowlisted = (d.findings ?? []).filter((f) => f.allowlisted).length;
+    L.push(`| **Subtotal** | **${d.total}**${allowlistedSuffix(depAllowlisted)} |`);
     L.push('');
+    pushAllowlistedNote(L, depAllowlisted);
     // D025e: if at least one pack scanned successfully (tool set) but
     // another active pack returned unavailable, the totals are partial.
     // Surface this rather than letting the customer assume the table is
