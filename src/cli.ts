@@ -140,7 +140,9 @@ function printUsage(): void {
   console.log(`
   ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
 
-  ${logger.bold('Usage:')}
+  ${logger.bold('Commands:')}
+${renderCommandIndex().join('\n')}
+  ${logger.bold('Reference (flags & options):')}
     vyuh-dxkit init [options]    Install dxkit agent DX in this repo
     vyuh-dxkit update [options]  Re-generate (preserves evolved files)
     vyuh-dxkit uninstall [options]
