@@ -234,6 +234,19 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   contract test requires BOTH builders if you declare it. See
   `typescript.ts` (`tsc --noEmit` + vitest/jest) and `python.ts`
   (`py_compile` + pytest) for worked examples, and CLAUDE.md Rule 15.
+- **Lint gate** (3.0) — `lintGate?: LintGateProvider`, the pack's standard
+  zero-config linter wired as an opt-in guardrail gate (a net-new lint error
+  blocks; the repo's pre-existing lint debt is grandfathered). One pure builder
+  `lintCommand(ctx)` returns `{ bin, args, parse, expectedExit? }` — where
+  `parse` is a regex with named groups (`file`/`line`/`rule`/`message`) so the
+  finding is LOCATED (per file+line) — or `null` when the linter isn't
+  resolvable in the repo. A pack NEVER shells out itself; the check runner
+  (`src/analyzers/custom-checks/run.ts`) executes it and folds output into
+  `custom-check` findings, exactly like a user-declared check. 7 of 8 packs
+  declare a real gate (see `typescript.ts` `TS_ESLINT_UNIX_PARSE`, `python.ts`
+  `PY_RUFF_CONCISE_PARSE`, `csharp.ts` `CSHARP_MSBUILD_WARNING_PARSE`); Java
+  ships a dormant provider (no single zero-config standalone linter). See
+  CLAUDE.md Rule 17.
 - **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
   `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
   `ruleFile?` (filename under `src-templates/.claude/rules/`),

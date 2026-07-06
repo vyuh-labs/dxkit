@@ -761,6 +761,46 @@ if [ -n "$ROGUE_FLOOR" ]; then
 fi
 
 # =============================================================================
+# Custom-check gate (3.0): the one-runner seam stays single-path.
+# =============================================================================
+#
+# A custom check (user-declared `.dxkit/policy.json:checks` OR a pack-declared
+# built-in lint gate) is a first-class gate citizen: its failures are
+# fingerprinted, baselined, and gated net-new-only exactly like secrets / SAST.
+# Both sources normalize to ONE `CustomCheckSpec` (via the adapters in
+# src/analyzers/custom-checks/config.ts) and execute through ONE runner
+# (`runCustomChecks` in src/analyzers/custom-checks/run.ts), reached by every
+# consumer through the ONE gather entry point `resolveCustomCheckSpecs` /
+# `gatherCustomCheckFindings` (src/analyzers/custom-checks/gather.ts). Lint is
+# therefore the first CONSUMER of the seam, never a parallel path (Rule 2).
+#
+# SECURITY: the runner executes commands, so they must come only from the repo's
+# own committed policy / a pack's built-in lint command — the same trust
+# boundary as the repo's npm scripts / CI config. A rogue caller that re-runs
+# checks from another source would bypass that boundary.
+#
+# Guard: `runCustomChecks(` is callable only from the custom-checks module
+# itself and the `checks` CLI dry-run (which needs per-check status, not just
+# the flattened findings). Every other consumer goes through
+# gatherCustomCheckFindings. Annotate '// custom-check-runner-ok' for a
+# justified exception (rare).
+ROGUE_CHECK_RUNNER=$(grep -rn "runCustomChecks(" src/ 2>/dev/null \
+  | grep -v "// custom-check-runner-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/analyzers/custom-checks/" \
+  | grep -v "^src/checks-cli.ts")
+if [ -n "$ROGUE_CHECK_RUNNER" ]; then
+  echo "❌ Custom-check rule violation: runCustomChecks() invoked outside the canonical"
+  echo "   runner module (src/analyzers/custom-checks/) + the \`checks\` CLI dry-run:"
+  echo "$ROGUE_CHECK_RUNNER"
+  echo "   → Call gatherCustomCheckFindings() from src/analyzers/custom-checks/gather.ts;"
+  echo "     it is the ONE entry point (spec resolution + execution) both the baseline"
+  echo "     producer and the guardrail share, so lint stays a consumer not a fork."
+  echo "   → Annotate '// custom-check-runner-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Sprint 4 (2.5.2): dead template-condition detector.
 # =============================================================================
 #

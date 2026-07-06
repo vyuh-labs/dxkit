@@ -5,16 +5,16 @@ everything dxkit needs to analyze a project in that language —
 detection, source extensions, test patterns, lint integration,
 coverage parsing, dep-vuln scanning, license tooling, and more.
 
-| Pack       | Detected when                                               | Primary tools                                                    |
-| ---------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| typescript | `package.json` + `*.ts`/`*.tsx`                             | eslint, npm-audit, license-checker, Istanbul                     |
-| python     | `pyproject.toml` / `requirements.txt` / `setup.py` + `*.py` | ruff, pip-audit, pip-licenses, coverage.py                       |
-| go         | `go.mod` + `*.go`                                           | golangci-lint, govulncheck, go-licenses, gocov                   |
-| rust       | `Cargo.toml` + `*.rs`                                       | clippy, cargo-audit, cargo-license, tarpaulin                    |
-| csharp     | `*.csproj` / `*.sln` + `*.cs`                               | dotnet-format, osv-scanner-nuget-direct, nuget-license, coverlet |
-| kotlin     | `build.gradle.kts` / `build.gradle` + `*.kt`                | detekt, gradle-versions-plugin, gradle-license-report, JaCoCo    |
-| java       | `pom.xml` / `build.gradle` + `*.java`                       | pmd, mvn versions, mvn license:third-party, JaCoCo               |
-| ruby       | `Gemfile` + `*.rb`                                          | rubocop, bundle-audit, licensee, SimpleCov                       |
+| Pack       | Detected when                                               | Primary tools                                                         |
+| ---------- | ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| typescript | `package.json` + `*.ts`/`*.tsx`                             | eslint, npm-audit, license-checker, Istanbul                          |
+| python     | `pyproject.toml` / `requirements.txt` / `setup.py` + `*.py` | ruff, pip-audit, pip-licenses, coverage.py                            |
+| go         | `go.mod` + `*.go`                                           | golangci-lint, govulncheck, go-licenses, gocov                        |
+| rust       | `Cargo.toml` + `*.rs`                                       | clippy, cargo-audit, cargo-license, tarpaulin                         |
+| csharp     | `*.csproj` / `*.sln` + `*.cs`                               | dotnet-format, osv-scanner-nuget-direct, nuget-license, coverlet      |
+| kotlin     | `build.gradle.kts` / `build.gradle` + `*.kt`                | detekt, ktlint, gradle-versions-plugin, gradle-license-report, JaCoCo |
+| java       | `pom.xml` / `build.gradle` + `*.java`                       | pmd, mvn versions, mvn license:third-party, JaCoCo                    |
+| ruby       | `Gemfile` + `*.rb`                                          | rubocop, bundle-audit, licensee, SimpleCov                            |
 
 ## How detection works
 
@@ -65,6 +65,38 @@ This means **adding a new pack auto-extends every dxkit report**.
 The graphify scan, the hygiene grep, the BoM aggregation, the
 test-gap discovery — they all iterate `LanguageSupport` and pick up
 the new contributions automatically.
+
+## The built-in lint gate
+
+Each pack also declares a **lint gate** — its standard zero-config linter
+wired so a _net-new_ lint error can block a change while the repo's
+pre-existing lint backlog is grandfathered. It is opt-in and default-off;
+enable it in [`.dxkit/policy.json`](policy.md):
+
+```jsonc
+{ "lint": { "enabled": true, "blocking": false } } // blocking:true to gate
+```
+
+When enabled, each active pack contributes a `lint:<language>` gate that runs
+its linter and parses per-line diagnostics into fingerprinted findings, which
+flow through the same baseline + guardrail as secrets and SAST. Coverage is
+**7 of 8 packs**:
+
+| Pack       | Lint gate                                          |
+| ---------- | -------------------------------------------------- |
+| typescript | eslint (`--format unix`)                           |
+| python     | ruff (concise)                                     |
+| go         | golangci-lint                                      |
+| ruby       | rubocop (emacs format)                             |
+| rust       | clippy (`-D warnings`)                             |
+| kotlin     | ktlint                                             |
+| csharp     | dotnet build analyzers                             |
+| java       | — (gate as a user check → checkstyle/PMD/spotbugs) |
+
+Java has no single zero-config standalone linter, so gate it as a **user
+check** in `policy.json:checks` pointing at your build's checkstyle/PMD task.
+See [`vyuh-dxkit checks`](../commands/checks.md) for the full model (user
+checks + the lint gate, binary vs located findings, the trust boundary).
 
 ## Forcing pack activation
 

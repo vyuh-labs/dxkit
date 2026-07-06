@@ -60,6 +60,8 @@ tuning belongs here.
 | `blockRules`                | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.                                                                            |
 | `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn). |
 | `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                          |
+| `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                            |
+| `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                        |
 
 ## Baseline mode pinning
 
@@ -111,6 +113,44 @@ Run `vyuh-dxkit doctor` to check whether your guardrail is actually _enforced_
 (a required check on a protected branch) rather than merely wired, and
 `vyuh-dxkit protect` (dry-run by default; `--apply` to write) to require the
 `dxkit-guardrails` check + PR review.
+
+## Custom checks + lint gate
+
+A **custom check** is any repo command dxkit runs as a first-class gate
+citizen — its failures are fingerprinted, baselined, and gated **net-new only**
+(a pre-existing failure is grandfathered) exactly like secrets and SAST. Two
+sources feed one seam:
+
+```jsonc
+{
+  "checks": [
+    { "name": "check:no-cross-layer-imports", "command": "node scripts/layers.js" },
+    {
+      "name": "eslint-strict",
+      "command": "npx eslint --format unix src",
+      "blocking": false,
+      "parse": { "regex": "^(?<file>[^:]+):(?<line>\\d+)" },
+    },
+  ],
+  "lint": { "enabled": true, "blocking": false },
+}
+```
+
+- **`checks[]`** — user-declared invariants. `command` is a string or argv
+  array; `blocking` (default `true`) sets block-vs-warn; `expectedExit`
+  (default `0`) sets the passing exit code; `parse` is `"exit"` (BINARY — the
+  whole command passes or fails) or `{ "regex": "…" }` (LOCATED — each matching
+  line is a finding keyed on `file+line+rule`, so net-new lint errors block
+  while the backlog is grandfathered).
+- **`lint`** — the pack-declared built-in lint gate (eslint/ruff/golangci/…);
+  see [language packs](language-packs.md#the-built-in-lint-gate). `enabled` and
+  `blocking` both default `false`.
+
+Both are opt-in and default-off (a repo configuring nothing spawns nothing),
+and they gate in **committed/baseline mode** only. **Security:** the commands
+are executed, so they come only from this committed file — the same trust
+boundary as your npm scripts / CI config. The full model, the two finding
+shapes, and troubleshooting live in [`vyuh-dxkit checks`](../commands/checks.md).
 
 ## Finding statuses
 
