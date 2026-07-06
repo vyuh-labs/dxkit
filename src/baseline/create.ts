@@ -42,6 +42,7 @@ import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './ba
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { DEFAULT_BROWNFIELD_POLICY, loadPolicyFromCwd } from './policy';
+import { gatherCustomCheckFindings } from '../analyzers/custom-checks/gather';
 import { PRODUCERS, runProducers } from './producers';
 import type { ProducerContext } from './producers';
 import { resolveSalt } from '../analyzers/tools/salt';
@@ -355,6 +356,16 @@ export async function gatherCurrentScan(options: {
   const { testGapsReport, hygiene, rawSecrets, inlineAllowlistAnnotations } =
     await gatherScopedProducerInputs(cwd, scope, !!options.verbose);
 
+  // Custom-check findings (user-declared checks + built-in lint). Gathered ONLY
+  // when the scope can carry them AND the repo opted in (policy.checks /
+  // lint.enabled) — `gatherCustomCheckFindings` no-ops (no spawn) otherwise, so
+  // a repo without custom checks pays nothing. Scoped out of gathers that a
+  // policy can't block on (the loop Stop-gate's fast path), matching the other
+  // producer inputs.
+  const customCheckFindings = scope.customChecks
+    ? gatherCustomCheckFindings({ cwd, policy: loadPolicyFromCwd(cwd) })
+    : [];
+
   const producerCtx: ProducerContext = {
     cwd,
     commitSha: repoState.commitSha,
@@ -364,6 +375,7 @@ export async function gatherCurrentScan(options: {
     hygiene,
     rawSecrets,
     inlineAllowlistAnnotations,
+    customCheckFindings,
   };
 
   // Dispatch through the canonical producer registry (CLAUDE.md

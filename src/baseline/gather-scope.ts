@@ -77,6 +77,8 @@ export interface GatherScope {
   readonly testGaps: boolean;
   /** hygiene markers (TODO/FIXME/stale) → `stale-file` + Quality counts. */
   readonly hygiene: boolean;
+  /** custom checks (user-declared `checks` + built-in lint) → `custom-check`. */
+  readonly customChecks: boolean;
 }
 
 /** Everything on — the default every non-loop caller gets. */
@@ -94,6 +96,7 @@ export const FULL_SCOPE: GatherScope = Object.freeze({
   cloc: true,
   testGaps: true,
   hygiene: true,
+  customChecks: true,
 });
 
 /** All-off starting point for the additive derivation below. */
@@ -111,6 +114,7 @@ const EMPTY_SCOPE: GatherScope = Object.freeze({
   cloc: false,
   testGaps: false,
   hygiene: false,
+  customChecks: false,
 });
 
 /** True when no analyzer at all is required — caller can short-circuit. */
@@ -174,6 +178,12 @@ export function scopeForPolicy(policy: BrownfieldPolicy): GatherScope {
   if (r.newSevereQualityIssueInChangedFiles) {
     scope.codePatterns = true;
     scope.hygiene = true;
+  }
+  // Custom checks gate via their own per-check `blocking` flag, not a status in
+  // `policy.block`, so scope them in whenever the repo configured any — else the
+  // loop Stop-gate's fast path would silently skip a blocking custom check.
+  if ((policy.checks && policy.checks.length > 0) || policy.lint?.enabled) {
+    scope.customChecks = true;
   }
   return Object.freeze(scope);
 }
