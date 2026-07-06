@@ -120,17 +120,14 @@ describe('runCorrectnessFloor', () => {
     // `sleep 5` under a 200ms budget must be killed and reported as a timeout,
     // NOT as a non-zero-exit failure.
     const exec = makeCommandExec(200);
-    const out = exec({ label: 'slow', bin: 'sleep', args: ['5'] }, process.cwd());
+    const out = exec({ bin: 'sleep', args: ['5'] }, process.cwd());
     expect(out.available).toBe(true);
     expect(out.timedOut).toBe(true);
   });
 
   it('makeCommandExec: a fast command completes normally under the budget', () => {
     const exec = makeCommandExec(10_000);
-    const out = exec(
-      { label: 'fast', bin: 'node', args: ['-e', 'process.exit(0)'] },
-      process.cwd(),
-    );
+    const out = exec({ bin: 'node', args: ['-e', 'process.exit(0)'] }, process.cwd());
     expect(out.timedOut).toBeFalsy();
     expect(out.code).toBe(0);
   });
