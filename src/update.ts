@@ -3,21 +3,11 @@ import * as path from 'path';
 import { Manifest, ManifestInstallFlags } from './types';
 import { detect } from './detect';
 import { generate } from './generator';
-import {
-  installCiBaselineRefresh,
-  installCiGuardrails,
-  installDevcontainer,
-  installDxkitDevDependency,
-  installHooks,
-  installHooksPostinstall,
-  installIgnoreFiles,
-  installPrReview,
-  ShipInstallResult,
-} from './ship-installers';
+import { ShipInstallResult } from './ship-installers';
+import { detectInstallFlags, refreshManagedSurfaces } from './managed-artifacts';
 import * as logger from './logger';
 import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
-import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
-import { requiresResolvableCli, dxkitCli } from './self-invocation';
+import { dxkitCli } from './self-invocation';
 
 /**
  * Re-exports the shared type so callers within the update module can
@@ -27,44 +17,12 @@ import { requiresResolvableCli, dxkitCli } from './self-invocation';
 export type InstallFlags = ManifestInstallFlags;
 
 /**
- * Workspace-derived flag detection. Used in two cases:
- *   1. The manifest doesn't carry `installFlags` (pre-2.5.2 manifests
- *      written by dxkit 2.5.0 / 2.5.1).
- *   2. Defensive fallback if manifest is corrupt / partial.
- *
- * False-positive risk is bounded — the installers themselves are
- * idempotent and emit sidecars when they detect competing files, so
- * even spurious detection can't clobber customer state.
+ * Workspace-derived flag detection (the fallback for legacy manifests without
+ * `installFlags`) lives in the managed-artifact registry now, so init, update,
+ * and uninstall infer the same flags from the same surface list. Re-exported
+ * here for callers that import it from `./update`.
  */
-export function detectInstallFlags(cwd: string): InstallFlags {
-  return {
-    withDxkitAgents: fs.existsSync(path.join(cwd, '.claude', 'skills', 'dxkit-learn')),
-    withHooks: fs.existsSync(path.join(cwd, '.githooks', 'pre-push')),
-    withPrecommit: fs.existsSync(path.join(cwd, '.githooks', 'pre-commit')),
-    withDevcontainer: fs.existsSync(path.join(cwd, '.devcontainer', 'devcontainer.json')),
-    withCiGuardrails: fs.existsSync(path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml')),
-    withBaselineRefresh: fs.existsSync(
-      path.join(cwd, '.github', 'workflows', 'dxkit-baseline-refresh.yml'),
-    ),
-    withPrReview: fs.existsSync(path.join(cwd, '.github', 'workflows', 'pr-review.yml')),
-    withClaudeLoop: isClaudeLoopInstalled(cwd),
-    withCiPushTrigger: guardrailsHasPushTrigger(cwd),
-  };
-}
-
-/** Whether the installed guardrails workflow already carries the opt-in
- *  `push:` trigger, so `update` (workspace-fallback path) preserves it. */
-function guardrailsHasPushTrigger(cwd: string): boolean {
-  try {
-    const wf = fs.readFileSync(
-      path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'),
-      'utf8',
-    );
-    return /^\s*push:/m.test(wf);
-  } catch {
-    return false;
-  }
-}
+export { detectInstallFlags };
 
 /**
  * Resolves the install flags for an update. Manifest-stored values
@@ -208,61 +166,15 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   aggregate.skipped.push(...generated.skipped);
   aggregate.overwritten.push(...generated.overwritten);
 
-  // ─── Optional ship surfaces (devcontainer / hooks / CI / PR review) ─────
-  // Each installer is idempotent and renders sidecars when the customer
-  // has a conflicting file unless --force is passed. So re-running them
-  // here picks up template changes (e.g. the per-stack devcontainer
-  // extensions from 2.5.1 / Sprint 1.5) without clobbering customer edits.
-  if (flags.withDevcontainer) {
-    mergeShipResult(aggregate, installDevcontainer(cwd, { force }));
-  }
-  if (flags.withHooks) {
-    mergeShipResult(aggregate, installHooks(cwd, { force, withPrecommit: flags.withPrecommit }));
-    // The postinstall hook chain — reinstall in case the customer's
-    // package.json grew its own postinstall after init landed.
-    mergeShipResult(aggregate, installHooksPostinstall(cwd, { force }));
-  }
-  if (flags.withCiGuardrails) {
-    mergeShipResult(
-      aggregate,
-      installCiGuardrails(cwd, { force, pushTrigger: !!flags.withCiPushTrigger }),
-    );
-  }
-  // Self-heal a missing project-local devDependency on upgrade. Pre-fix
-  // installs wired self-invocation surfaces without declaring the package, so
-  // they fall back to a stale (or missing) global. The set of surfaces that
-  // imply the dep is derived from the one registry in src/self-invocation.ts
-  // (same source the init flow uses), so update can't drift from init. Adds
-  // it when absent (idempotent — skips when already declared, so a customer's
-  // pin is never repinned here; the version bump is `npm install`, npm's job).
-  if (
-    requiresResolvableCli({
-      claudeSettings: flags.withDxkitAgents,
-      claudeLoop: flags.withClaudeLoop,
-      gitHooks: flags.withHooks,
-      ciGuardrails: flags.withCiGuardrails,
-    })
-  ) {
-    mergeShipResult(aggregate, installDxkitDevDependency(cwd, { force }));
-  }
-  if (flags.withBaselineRefresh) {
-    mergeShipResult(aggregate, installCiBaselineRefresh(cwd, { force }));
-  }
-  if (flags.withPrReview) {
-    mergeShipResult(aggregate, installPrReview(cwd, { force }));
-  }
-  // Loop pack: refresh the Stop hook + CLAUDE.md loop block on repos that
-  // opted in. Additive + idempotent — re-running picks up loop-norm prose
-  // changes without disturbing the user's other hooks. Preset is read from
-  // the existing .dxkit/policy.json (preserved), so this never resets it.
-  if (flags.withClaudeLoop) {
-    mergeShipResult(aggregate, installClaudeLoop(cwd));
-  }
-
-  // Ignore files (.gitignore + .dxkit-ignore) — always refresh because
-  // their content can grow with new dxkit features (e.g. graphify-out/
-  // entry added in 2.5.1).
-  mergeShipResult(aggregate, installIgnoreFiles(cwd, { force }));
+  // ─── Optional ship surfaces (devcontainer / hooks / CI / loop / ignore) ──
+  // Re-run every registered ship surface the customer installed so template
+  // changes land (per-stack devcontainer extensions, a refreshed workflow, the
+  // self-healed devDependency, loop-norm prose, grown ignore entries). The set
+  // of surfaces, their order, their install opts, and whether each refreshes on
+  // update all live in ONE place — the managed-artifact registry — so update
+  // can't silently skip a surface the way the deep-SAST refresh once was. Each
+  // installer is idempotent and emits sidecars on conflict unless --force.
+  refreshManagedSurfaces(cwd, { force, flags }, (r) => mergeShipResult(aggregate, r));
 
   // ─── Summary ───────────────────────────────────────────────────────────
   console.log(''); // slop-ok

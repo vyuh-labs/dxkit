@@ -150,6 +150,11 @@ export interface ManifestInstallFlags {
   /** Opt-in `push:[default-branch]` trigger on the guardrails workflow (a
    *  post-hoc verdict for trunk-based/no-PR repos). Optional; absent = off. */
   withCiPushTrigger?: boolean;
+  /** Deep-SAST refresh workflow (Snyk/CodeQL ingest; opt-in). Optional: absent
+   *  on manifests written before the flag existed — such installs are cleaned
+   *  up by presence detection (the workflow's `dxkit-` filename), and update
+   *  refreshes them once the flag is stamped on the next init/update. */
+  withDeepSastRefresh?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf
