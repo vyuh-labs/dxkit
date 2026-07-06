@@ -17,6 +17,31 @@ The three contracts to remember:
 2. **Hooks fire fast (pre-push); CI fires thorough**. Both use the same guardrail logic.
 3. **Reports are deterministic** — same code + same baseline = same findings. The salt mode (`deterministic` vs `random`) controls per-finding identity stability across runs.
 
+## Discovering the full capability set (don't rely on this list staying complete)
+
+dxkit's capabilities grow. Rather than trust a hand-written list, read the
+**live capability registry** — the single source of truth for what dxkit can do:
+
+```bash
+npx vyuh-dxkit capabilities --json
+```
+
+This returns every capability with its group, one-line summary, the dxkit-*
+skill that drives it, and — grounded in *this* repo — which ones are
+`recommended` (capabilities the repo would benefit from but isn't using yet).
+It never drifts: a new capability appears here the moment it ships.
+
+Pair it with the repo-grounded advice from doctor:
+
+```bash
+npx vyuh-dxkit doctor --json   # .recommendations[] = what to adopt here, with the command to run
+```
+
+When a user asks "what can dxkit do for me?" or "what should I set up here?",
+read those two, then propose the fitting capabilities and drive each through
+its skill (the `skill` field tells you which). This is how a user configures
+dxkit by talking to you — the menu is machine-readable so you never guess.
+
 ## The 6 dimensions
 
 Each dimension is a 0-100 score with letter grade (A≥80, B≥60, C≥40, D≥20, E<20):

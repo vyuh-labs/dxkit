@@ -822,6 +822,10 @@ registry drives every discovery surface:
   lets `doctor` proactively recommend an unused capability grounded in the
   repo (e.g. detect ad-hoc repo checks that aren't gated → recommend the
   gate runner);
+- the agent-queryable capability catalog `vyuh-dxkit capabilities [--json]`
+  (`src/discovery/capabilities-cli.ts`) — the machine-readable menu a coding
+  agent reads to discover what dxkit can do here and configure it
+  conversationally, each entry tagged with the `skill` that drives it;
 - the agent-facing `skill` mapping;
 - generated docs.
 

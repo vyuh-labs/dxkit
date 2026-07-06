@@ -100,6 +100,8 @@ npx vyuh-dxkit doctor --json > /tmp/dxkit-onboard-doctor.json
 
 Parse `summary.fixable[]`. Most fresh-install gaps will be operational (hooks not yet activated by postinstall trigger; baseline not captured yet; etc.) rather than scaffold-missing.
 
+Also read `recommendations[]` — doctor's advisor mode surfaces capabilities this repo would benefit from but isn't using yet (each with a `reason` grounded in the repo and the `command` to run). Fold these into the walkthrough: they are how you propose the *right* next capabilities instead of a generic checklist. For the full menu of what dxkit can set up, read `npx vyuh-dxkit capabilities --json` (every capability + the dxkit-* skill that drives it) and offer the ones that fit.
+
 ### 4. Fix gaps
 
 For each fixable signal in doctor's output, dispatch through `dxkit-fix`'s recovery loop. Most common fresh-install gaps:
