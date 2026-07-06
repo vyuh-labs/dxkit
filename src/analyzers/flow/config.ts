@@ -41,6 +41,13 @@ const DEFAULTS: FlowConfig = {
   blockThreshold: 1,
 };
 
+/** Current schema version of the committed `.dxkit/policy.json:flow` block.
+ *  Stamped on write so a future flow-config restructure is detectable/migratable
+ *  (a versionless block reads as v1 — every field is optional-with-default). The
+ *  four keys above are the FROZEN v1 contract; evolve additively. Pinned by
+ *  `test/flow-contract-freeze.test.ts`. */
+export const FLOW_CONFIG_SCHEMA_VERSION = 1;
+
 interface RawFlow {
   stripUrlPrefixes?: unknown;
   specs?: unknown;
@@ -124,7 +131,13 @@ export function writeFlowPolicy(
       return false; // malformed — leave it; caller surfaces the note
     }
   }
-  const nextFlow = { ...(policy.flow ?? {}), ...patch };
+  // Stamp the current schema version LAST so every written flow block carries it
+  // (a one-time migration for legacy versionless blocks, idempotent thereafter).
+  const nextFlow = {
+    ...(policy.flow ?? {}),
+    ...patch,
+    schemaVersion: FLOW_CONFIG_SCHEMA_VERSION,
+  };
   if (JSON.stringify(policy.flow ?? {}) === JSON.stringify(nextFlow)) return false;
   policy.flow = nextFlow;
   fs.mkdirSync(path.dirname(abs), { recursive: true });

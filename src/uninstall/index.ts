@@ -66,8 +66,21 @@ export interface UninstallOptions {
 /** Files dxkit MERGES into (reverted, not deleted) — never delete-file these. */
 const MERGE_TARGETS = new Set(['.gitignore', 'CLAUDE.md', '.claude/settings.json', 'package.json']);
 
-/** Curated, intentionally git-tracked `.dxkit/` paths kept under --keep-baselines. */
-const CURATED_DXKIT = ['baselines', ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME, 'external'];
+/** Curated, intentionally git-tracked `.dxkit/` paths kept under --keep-baselines.
+ *  These are committed user artifacts (not dxkit-installed config): the baseline +
+ *  allowlist, the ingested external snapshots, and the flow cross-repo contract
+ *  (`flow/served.json` + `consumed.json`) + `workspace.json` participant list —
+ *  which a repo commits and a counterpart gates against, exactly like a baseline.
+ *  (dxkit CONFIG under `.dxkit/` — policy.json, reports/, loop/ — is not curated;
+ *  it's removed so uninstall restores the pre-dxkit state.) */
+const CURATED_DXKIT = [
+  'baselines',
+  ALLOWLIST_FILENAME,
+  ALLOWLIST_REASONS_FILENAME,
+  'external',
+  'flow',
+  'workspace.json',
+];
 
 function readManifest(cwd: string): Manifest | null {
   try {

@@ -42,9 +42,20 @@ export interface WorkspaceExternal {
 }
 
 export interface Workspace {
+  /** Committed-artifact schema version. Optional on the in-memory shape (callers
+   *  build a workspace from participants + external and the writer stamps the
+   *  current version), but ALWAYS populated on read — `normalizeWorkspace`
+   *  defaults a versionless legacy file to v1. Lets a future participant-shape
+   *  change be migrated instead of silently misread (freeze contract). */
+  readonly schemaVersion?: number;
   readonly participants: readonly WorkspaceParticipant[];
   readonly external: readonly WorkspaceExternal[];
 }
+
+/** Current `.dxkit/workspace.json` schema version. Bump + add a migration when
+ *  the participant/external shape changes incompatibly; a versionless file reads
+ *  as v1. Pinned by `test/flow-contract-freeze.test.ts`. */
+export const WORKSPACE_SCHEMA_VERSION = 1;
 
 const WORKSPACE_REL = path.join('.dxkit', 'workspace.json');
 
@@ -87,7 +98,7 @@ function normalizeExternal(v: unknown): WorkspaceExternal | null {
  *  absent one — both mean "no configured topology"). */
 export function normalizeWorkspace(raw: unknown): Workspace | null {
   if (!raw || typeof raw !== 'object') return null;
-  const r = raw as { participants?: unknown; external?: unknown };
+  const r = raw as { schemaVersion?: unknown; participants?: unknown; external?: unknown };
   const participants = Array.isArray(r.participants)
     ? r.participants.map(normalizeParticipant).filter((p): p is WorkspaceParticipant => p !== null)
     : [];
@@ -95,7 +106,10 @@ export function normalizeWorkspace(raw: unknown): Workspace | null {
     ? r.external.map(normalizeExternal).filter((e): e is WorkspaceExternal => e !== null)
     : [];
   if (participants.length === 0 && external.length === 0) return null;
-  return { participants, external };
+  // A versionless legacy file (written before the stamp existed) is v1-shaped.
+  const schemaVersion =
+    typeof r.schemaVersion === 'number' ? r.schemaVersion : WORKSPACE_SCHEMA_VERSION;
+  return { schemaVersion, participants, external };
 }
 
 /** Read `.dxkit/workspace.json`. Fail-open: absent or malformed → `null`. */
@@ -109,9 +123,20 @@ export function readWorkspace(cwd: string): Workspace | null {
   return normalizeWorkspace(raw);
 }
 
-/** Write `.dxkit/workspace.json`, creating `.dxkit/` as needed. */
-export function writeWorkspace(cwd: string, ws: Workspace): void {
+/** Write `.dxkit/workspace.json`, creating `.dxkit/` as needed. Stamps the
+ *  CURRENT schema version (the caller supplies only participants + external; a
+ *  write always means "this is now current-version"), with `schemaVersion` first
+ *  for readability. */
+export function writeWorkspace(
+  cwd: string,
+  ws: Pick<Workspace, 'participants' | 'external'>,
+): void {
   const abs = workspacePath(cwd);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(ws, null, 2) + '\n', 'utf8');
+  const out = {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    participants: ws.participants,
+    external: ws.external,
+  };
+  fs.writeFileSync(abs, JSON.stringify(out, null, 2) + '\n', 'utf8');
 }

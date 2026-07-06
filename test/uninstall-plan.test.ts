@@ -139,6 +139,11 @@ describe('planUninstall / executeUninstall — restores pre-dxkit state', () => 
   it('--keep-baselines preserves the committed curated artifacts', () => {
     write('.dxkit/baselines/main.json', '{}');
     write('.dxkit/allowlist.json', '{}');
+    // Committed cross-repo flow contract + participant list — curated like a
+    // baseline (a repo commits them and a counterpart gates against them).
+    write('.dxkit/flow/served.json', '{"side":"served","routes":[]}');
+    write('.dxkit/flow/consumed.json', '{"side":"consumed","bindings":[]}');
+    write('.dxkit/workspace.json', '{"participants":[]}');
     write('.dxkit/reports/x.md', '#');
     write('.dxkit/policy.json', '{}');
     writeManifest({});
@@ -147,8 +152,11 @@ describe('planUninstall / executeUninstall — restores pre-dxkit state', () => 
     executeUninstall(tmp, plan, { keepBaselines: true });
     expect(exists('.dxkit/baselines/main.json')).toBe(true); // kept
     expect(exists('.dxkit/allowlist.json')).toBe(true); // kept
+    expect(exists('.dxkit/flow/served.json')).toBe(true); // kept — committed contract
+    expect(exists('.dxkit/flow/consumed.json')).toBe(true); // kept
+    expect(exists('.dxkit/workspace.json')).toBe(true); // kept — committed participants
     expect(exists('.dxkit/reports/x.md')).toBe(false); // runtime removed
-    expect(exists('.dxkit/policy.json')).toBe(false);
+    expect(exists('.dxkit/policy.json')).toBe(false); // config removed (not curated)
   });
 
   it('reports empty on a repo with no dxkit footprint', () => {
