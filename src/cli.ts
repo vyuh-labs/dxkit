@@ -776,6 +776,18 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'checks': {
+      const { runChecks } = await import('./checks-cli');
+      // positionals[1] is the subcommand ('list' | 'run') when present; a bare
+      // path (or nothing) defaults to 'list'. The path is whichever positional
+      // isn't the subcommand.
+      const isSub = positionals[1] === 'list' || positionals[1] === 'run';
+      const sub = positionals[1] === 'run' ? 'run' : 'list';
+      const target = resolveRepoPath(isSub ? positionals[2] : positionals[1]);
+      runChecks(target, sub, { json: !!values.json });
+      break;
+    }
+
     case 'health': {
       const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeHealthWithMetrics } = await import('./analyzers/health');
