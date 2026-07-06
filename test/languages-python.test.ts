@@ -6,6 +6,7 @@ import {
   python,
   extractPyImportsRaw,
   resolvePyImportRaw,
+  pySourceRoots,
   findPyProjectVenvPython,
 } from '../src/languages/python';
 
@@ -120,6 +121,37 @@ describe('resolvePyImportRaw', () => {
   it('returns null for `from . import X` (ambiguous)', () => {
     fs.writeFileSync(path.join(tmp, 'a.py'), '');
     expect(resolvePyImportRaw('a.py', '.', tmp)).toBeNull();
+  });
+
+  it('resolves a src-layout absolute import (integration-test coverage crediting)', () => {
+    // src layout: `from authz.access import x` lives at src/authz/access.py,
+    // not authz/access.py. An int test importing it must credit that file.
+    fs.mkdirSync(path.join(tmp, 'src', 'authz'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'authz', '__init__.py'), '');
+    fs.writeFileSync(path.join(tmp, 'src', 'authz', 'access.py'), '');
+    fs.mkdirSync(path.join(tmp, 'tests', 'int'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'tests', 'int', 'test_access.py'), '');
+
+    expect(pySourceRoots(tmp)).toContain(path.join(tmp, 'src'));
+    expect(resolvePyImportRaw('tests/int/test_access.py', 'authz.access', tmp)).toBe(
+      'src/authz/access.py',
+    );
+  });
+
+  it('project-root layout still wins over src/ (root checked first)', () => {
+    // Both authz/access.py (root) and src/authz/access.py exist — the root
+    // one resolves first, matching Python's default sys.path order.
+    fs.mkdirSync(path.join(tmp, 'authz'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'authz', 'access.py'), '');
+    fs.mkdirSync(path.join(tmp, 'src', 'authz'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'authz', 'access.py'), '');
+    expect(resolvePyImportRaw('a.py', 'authz.access', tmp)).toBe('authz/access.py');
+  });
+
+  it('src-layout resolution does not credit external packages', () => {
+    fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'app.py'), '');
+    expect(resolvePyImportRaw('a.py', 'requests', tmp)).toBeNull();
   });
 });
 
