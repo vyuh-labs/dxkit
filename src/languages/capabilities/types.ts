@@ -21,6 +21,7 @@
 
 import type { Coverage } from '../../analyzers/tools/coverage';
 import type { LanguageId } from '../../types';
+import type { AllowlistCategory } from '../../allowlist/categories';
 
 /** Four-tier severity counts, the project-wide convention. */
 export interface SeverityCounts {
@@ -171,6 +172,16 @@ export interface DepVulnFinding {
   // identity. `BomReport.summary.fingerprints` carries the full list
   // as a single manifest for external diff tooling.
   fingerprint?: string;
+
+  // Allowlist annotation (reporting + scoring). Set by
+  // `annotateDepFindingsWithAllowlist` when an ACTIVE allowlist entry of
+  // kind `dep-vuln` matches this finding's stamped fingerprint. Mirrors the
+  // code/secret/config annotation on `SecurityFinding`: the aggregator
+  // derives the score-only `scoreableDepBySeverity` bucket from it, and
+  // renderers surface the live-vs-allowlisted split. Optional so producers
+  // never populate it.
+  allowlisted?: boolean;
+  allowlistCategory?: AllowlistCategory;
 }
 
 /** Dependency vulnerabilities, the depVulns capability. */

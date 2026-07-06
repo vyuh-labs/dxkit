@@ -44,6 +44,7 @@ function emptyAggregate(over: Partial<SecurityAggregate> = {}): SecurityAggregat
     secretsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     scoreableCodeBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     scoreableSecretsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+    scoreableDepBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
     findingsByCategory: { secret: [], code: [], config: [], dependency: [] },
     dependencyAdvisoryUniqueCount: 0,
     dependencyFindingsRawCount: 0,

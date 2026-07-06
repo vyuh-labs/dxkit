@@ -17,12 +17,14 @@
  * presentation gains an honesty annotation.
  *
  * Identity contract (CLAUDE.md Rule 9): this module never computes a
- * fingerprint. It matches against the fingerprint the aggregator
- * already stamped on each code/secret/config finding (plus the
- * `absorbedFingerprints` recorded when cross-tool dedup collapsed
- * contributors — same robust-match set the guardrail uses). Dependency
- * findings are keyed by `(package, version, id)` through a producer and
- * carry no inline fingerprint, so they are out of scope here.
+ * fingerprint. It matches against the fingerprint the aggregator already
+ * stamped on each finding (plus the `absorbedFingerprints` recorded when
+ * cross-tool dedup collapsed contributors — same robust-match set the
+ * guardrail uses). This covers code/secret/config findings AND dependency
+ * findings: a `DepVulnFinding` carries a stamped `fingerprint` hashing
+ * `(package, installedVersion, id)`, so it matches a `dep-vuln` allowlist
+ * entry through the same core — closing the gap where an allowlisted
+ * dep-vuln still dragged the Security score and was suggested as a fix.
  */
 import { type AllowlistFile, findEntry, isEntryActive } from './file';
 import type { AllowlistCategory } from './categories';
@@ -32,23 +34,28 @@ import type { IdentityKind } from '../baseline/producers';
 /**
  * The minimal finding shape this module reads + writes. The runtime
  * objects are richer (`CodeFinding` carries `fingerprint` +
- * `absorbedFingerprints`); we accept the structural subset so callers
- * pass their findings directly without a cast.
+ * `absorbedFingerprints`; `DepVulnFinding` carries a stamped
+ * `fingerprint`); we accept the structural subset so callers pass their
+ * findings directly without a cast.
  */
 export interface AnnotatableFinding {
-  readonly category: FindingCategory;
   readonly fingerprint?: string;
   readonly absorbedFingerprints?: readonly string[];
   allowlisted?: boolean;
   allowlistCategory?: AllowlistCategory;
 }
 
+/** A code-side finding additionally carries its report category. */
+export type CategorizedFinding = AnnotatableFinding & { readonly category: FindingCategory };
+
 /**
  * Map a report `FindingCategory` to the canonical `IdentityKind` used
- * by allowlist entries. Only the three fingerprint-bearing categories
- * resolve; `dependency` returns null (out of scope — see module doc).
+ * by allowlist entries. All four categories resolve: the three
+ * code-side categories plus `dependency` → `dep-vuln` (dep findings now
+ * carry a stamped fingerprint, so they are annotatable — see the dep
+ * wrapper below).
  */
-function kindForCategory(category: FindingCategory): IdentityKind | null {
+function kindForCategory(category: FindingCategory): IdentityKind {
   switch (category) {
     case 'secret':
       return 'secret';
@@ -57,7 +64,7 @@ function kindForCategory(category: FindingCategory): IdentityKind | null {
     case 'config':
       return 'config';
     case 'dependency':
-      return null;
+      return 'dep-vuln';
   }
 }
 
@@ -91,17 +98,17 @@ export function allowlistLiftsScore(category: AllowlistCategory | undefined): bo
  * active at `now`. The kind guard rules out a cross-kind hash collision
  * waiving the wrong finding — mirrors `allowlistSuppressionFor`.
  */
-export function annotateFindingsWithAllowlist(
+function annotateByKind(
   findings: AnnotatableFinding[],
   allowlist: AllowlistFile | null,
-  now: Date = new Date(),
+  kindOf: (f: AnnotatableFinding) => IdentityKind,
+  now: Date,
 ): number {
   if (!allowlist || allowlist.entries.length === 0) return 0;
 
   let annotated = 0;
   for (const f of findings) {
-    const kind = kindForCategory(f.category);
-    if (!kind) continue;
+    const kind = kindOf(f);
 
     const candidates: string[] = [];
     if (f.fingerprint) candidates.push(f.fingerprint);
@@ -118,4 +125,74 @@ export function annotateFindingsWithAllowlist(
     }
   }
   return annotated;
+}
+
+/**
+ * Annotate code-side findings (secret / code / config), each mapped to its
+ * `IdentityKind` by its report category.
+ */
+export function annotateFindingsWithAllowlist(
+  findings: CategorizedFinding[],
+  allowlist: AllowlistFile | null,
+  now: Date = new Date(),
+): number {
+  return annotateByKind(findings, allowlist, (f) => kindForCategory((f as CategorizedFinding).category), now);
+}
+
+/**
+ * Annotate dependency findings (kind `dep-vuln`) by their stamped
+ * fingerprint. Split from the code-side path because `DepVulnFinding`
+ * carries no `category` field — its kind is constant — but it shares the
+ * one matching core so the score-lift and the report split stay consistent
+ * with code/secret/config (one concept, one code path).
+ */
+export function annotateDepFindingsWithAllowlist(
+  findings: AnnotatableFinding[],
+  allowlist: AllowlistFile | null,
+  now: Date = new Date(),
+): number {
+  return annotateByKind(findings, allowlist, () => 'dep-vuln', now);
+}
+
+/** The live-vs-allowlisted split for one axis of findings, for renderers. */
+export interface AllowlistSplit {
+  /** Findings with no active allowlist match. */
+  live: number;
+  /** Findings an active allowlist entry covers. */
+  allowlisted: number;
+  /** Allowlisted breakdown by category, e.g. `{ 'test-fixture': 3 }`. */
+  byCategory: Partial<Record<AllowlistCategory, number>>;
+}
+
+/**
+ * Summarize a set of already-annotated findings into a live/allowlisted
+ * split for a report headline. The ONE partition every security-bearing
+ * renderer (vuln-scan, health, BoM, dashboard) reads, so the "(N
+ * allowlisted)" story is rendered identically everywhere.
+ */
+export function summarizeAllowlist(findings: readonly AnnotatableFinding[]): AllowlistSplit {
+  let live = 0;
+  let allowlisted = 0;
+  const byCategory: Partial<Record<AllowlistCategory, number>> = {};
+  for (const f of findings) {
+    if (f.allowlisted) {
+      allowlisted++;
+      if (f.allowlistCategory) {
+        byCategory[f.allowlistCategory] = (byCategory[f.allowlistCategory] ?? 0) + 1;
+      }
+    } else {
+      live++;
+    }
+  }
+  return { live, allowlisted, byCategory };
+}
+
+/** Render an `AllowlistSplit` as a compact ` · N allowlisted (cat, cat)` suffix, or '' when none. */
+export function renderAllowlistSuffix(split: AllowlistSplit): string {
+  if (split.allowlisted === 0) return '';
+  const cats = Object.entries(split.byCategory)
+    .map(([cat, n]) => (n && n > 0 ? `${cat}` : ''))
+    .filter(Boolean)
+    .join(', ');
+  return ` · ${split.allowlisted} allowlisted${cats ? ` (${cats})` : ''}`;
 }

@@ -83,9 +83,12 @@ export function toSecurityScoreInput(input: ScoreInput): SecurityScoreInput {
   }
 
   // G_v4_8 (C1.3): dep-vuln bucket counts come from the aggregate's
-  // post-fingerprint-dedup set. Matches vuln-scan + BoM exactly.
+  // post-fingerprint-dedup set. The score reads the allowlist-adjusted
+  // `scoreableDepBySeverity` (excludes dep-vulns accepted as false-positive
+  // / test-fixture); reports read the raw `depBySeverity`. Same source —
+  // the aggregator computes both — mirroring the code/secret split above.
   const depCounts = c.securityAggregate
-    ? c.securityAggregate.depBySeverity
+    ? c.securityAggregate.scoreableDepBySeverity
     : {
         critical: c.depVulns?.counts.critical ?? 0,
         high: c.depVulns?.counts.high ?? 0,
