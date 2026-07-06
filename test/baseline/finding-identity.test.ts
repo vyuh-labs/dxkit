@@ -758,6 +758,84 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     },
     expected: 'changed',
   },
+
+  // ─── custom-check / lint findings (5) ─────────────────────────────────
+  {
+    name: 'custom-check/located clean — same check, file, line, rule',
+    prior: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    },
+    current: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'custom-check/located line-shifted within window — drift absorbed',
+    prior: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    },
+    current: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 43,
+      rule: 'no-unused-vars',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'custom-check/located rule-changed — different diagnostic, identity changes',
+    prior: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    },
+    current: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-explicit-any',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'custom-check/binary clean — same whole-command check name',
+    // A binary (pass/fail) check has no file: identity is just the check name,
+    // so it persists as long as the same command keeps failing.
+    prior: { kind: 'custom-check', check: 'check:seam' },
+    current: { kind: 'custom-check', check: 'check:seam' },
+    expected: 'persisted',
+  },
+  {
+    name: 'custom-check/binary → located are distinct identities for one check',
+    // A binary failure of `lint:typescript` and a located diagnostic under the
+    // same check name must not collapse — the file discriminator separates them.
+    prior: { kind: 'custom-check', check: 'lint:typescript' },
+    current: {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      file: 'src/api/users.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -976,6 +1054,7 @@ const EXPECTED_KINDS = [
   'secret-hmac',
   'stale-allow',
   'flow-binding',
+  'custom-check',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

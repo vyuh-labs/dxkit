@@ -162,6 +162,30 @@ const SAMPLES: ReadonlyArray<Sample> = [
       category: 'false-positive',
     },
   },
+  {
+    // The LOCATED (linter-diagnostic) variant — line-window-bucketed identity,
+    // so shifting it re-mints and it must carry a full locator. The binary
+    // variant (no file) is line-independent and needs no sample here.
+    label: 'custom-check (located)',
+    entry: {
+      id: ID,
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      blocking: true,
+      file: 'a.ts',
+      line: 10,
+      rule: 'no-unused-vars',
+    },
+    shifted: {
+      id: ID,
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      blocking: true,
+      file: 'a.ts',
+      line: 10 + SHIFT,
+      rule: 'no-unused-vars',
+    },
+  },
 ];
 
 /** Empirically: does shifting this finding down the file change its identity? */
@@ -193,6 +217,7 @@ describe('matcher relocation invariant', () => {
       'large-file',
       'secret-hmac',
       'stale-allow',
+      'custom-check',
     ] as const satisfies ReadonlyArray<IdentityKind>;
     const sampled = new Set(SAMPLES.map((s) => s.entry.kind));
     for (const kind of allKinds) {

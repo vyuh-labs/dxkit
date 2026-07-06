@@ -123,7 +123,8 @@ export type IdentityInput =
   | LargeFileIdentityInput
   | SecretHmacIdentityInput
   | StaleAllowIdentityInput
-  | FlowBindingIdentityInput;
+  | FlowBindingIdentityInput
+  | CustomCheckIdentityInput;
 
 /**
  * Content anchor for the secret/code/config identity schemes.
@@ -415,6 +416,39 @@ export interface FlowBindingIdentityInput {
 }
 
 /**
+ * A failure emitted by a user-declared custom check (`.dxkit/policy.json:checks`)
+ * or a pack-declared built-in check (lint). The check runner turns a check's
+ * output into zero or more of these — either ONE binary finding (the command
+ * exited non-zero and produced no per-location parse: `file`/`line`/`rule` are
+ * absent, identity is just the check name) or one finding PER parsed location (a
+ * linter's `file:line: rule` diagnostic).
+ *
+ * Identity is dxkit-derived + tool-independent (Rule 9): the check `name` (a
+ * repo-stable label the user/pack chose, not a captured tool string), the source
+ * `file`, a 3-line window of `line`, and the intrinsic `rule` id the parser
+ * extracted. It never hashes the raw output text — that varies run to run
+ * (timestamps, ordering) and across environments. The located variant is
+ * line-window-bucketed (like `hygiene` / `stale-allow`), so it carries a full
+ * `(file, line, rule)` locator downstream; the binary variant is
+ * line-INDEPENDENT (identity = the check name), so it is locator-less.
+ */
+export interface CustomCheckIdentityInput {
+  readonly kind: 'custom-check';
+  /** Stable check label (`lint:typescript`, a user check's `name`). Never a
+   *  captured tool string — this is the durable cross-run/-environment key. */
+  readonly check: string;
+  /** Source file for a parsed per-location finding; absent for a binary
+   *  (whole-command) failure. */
+  readonly file?: string;
+  /** Line for a parsed per-location finding (bucketed into the shared 3-line
+   *  window at hash time); absent for a binary failure. */
+  readonly line?: number;
+  /** Intrinsic rule/diagnostic id the parser extracted (e.g. `no-unused-vars`);
+   *  absent for a binary failure or an unparsed line. */
+  readonly rule?: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -523,6 +557,30 @@ export type BaselineEntry =
        * absent when the file can't be read. */
       contentHash?: string;
     }
+  | {
+      id: FindingId;
+      kind: 'custom-check';
+      /** The check's stable label — the durable identity key (Rule 9). */
+      check: string;
+      /** Whether a NET-NEW occurrence of this finding blocks (the check declared
+       * `blocking: true`) or only warns. Carried on the entry, not derived from
+       * severity/status, because block intent is user/pack-declared per check —
+       * the guardrail reads it to fold a non-blocking net-new finding down to a
+       * warn (see check.ts). Not an identity input. */
+      blocking: boolean;
+      /** Source file for a parsed per-location finding; absent for a binary
+       * (whole-command) failure. Present ⟹ line-sensitive identity ⟹ full
+       * `(file, line, rule)` locator (the relocation invariant). */
+      file?: string;
+      /** Line for a parsed per-location finding; absent for a binary failure. */
+      line?: number;
+      /** Parser-extracted rule/diagnostic id; absent for a binary failure. */
+      rule?: string;
+      /** Human-facing message (the linter's message text, or the captured
+       * output tail for a binary failure). Display metadata only — NOT hashed
+       * (it is tool-captured text; Rule 9 forbids it from identity). */
+      message?: string;
+    }
   | SanitizedBaselineEntry;
 
 /**
@@ -570,7 +628,8 @@ export interface SanitizedBaselineEntry {
     | 'large-file'
     | 'secret-hmac'
     | 'stale-allow'
-    | 'flow-binding';
+    | 'flow-binding'
+    | 'custom-check';
   readonly sanitized: true;
 }
 

@@ -216,6 +216,10 @@ function describeEntry(entry: BaselineEntry): string {
       return `${entry.file}:${entry.line}  [stale dxkit-allow:${entry.category}]`;
     case 'flow-binding':
       return `${entry.method} ${entry.path}  ← ${entry.file}:${entry.line}`;
+    case 'custom-check':
+      return entry.file !== undefined
+        ? `${entry.file}:${entry.line ?? '?'}  [${entry.check}${entry.rule ? '/' + entry.rule : ''}]`
+        : `[${entry.check}]  (whole-command check)`;
   }
 }
 

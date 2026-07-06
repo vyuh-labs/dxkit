@@ -397,6 +397,11 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     // removed). High severity — it is a runtime breakage the gate proves
     // statically, on par with a security regression.
     'flow-binding': 'high',
+    // A custom-check / lint failure. Severity is a neutral default — a custom
+    // check's block intent is user/pack-declared (`entry.blocking`), NOT
+    // severity-derived, so severity only feeds the confidence-threshold logic
+    // for persisted pairs here, never the block decision.
+    'custom-check': 'medium',
   });
 
 /**
@@ -878,6 +883,9 @@ function locatorFile(entry: BaselineEntry): string | undefined {
       return entry.file;
     case 'duplication':
       return entry.fileA;
+    case 'custom-check':
+      // Located variant carries a file; binary variant does not.
+      return entry.file;
     case 'dep-vuln':
     case 'secret-hmac':
       return undefined;
@@ -896,6 +904,8 @@ function locatorLine(entry: BaselineEntry): number | undefined {
       return entry.startLineA;
     case 'coverage-gap':
       return entry.lineRange?.[0];
+    case 'custom-check':
+      return entry.line;
     default:
       return undefined;
   }

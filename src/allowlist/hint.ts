@@ -217,6 +217,13 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'the current route, or — if a cross-repo consumer the scan cannot see is ' +
         'intended — allowlist with category=false-positive.'
       );
+    case 'custom-check':
+      return (
+        'A repo-declared check (a custom `.dxkit/policy.json` invariant, or a ' +
+        "pack's lint gate) reported a net-new failure. Fix what the check flags, " +
+        'or — if the check fired spuriously — allowlist with category=false-positive ' +
+        'or relax the check in policy.json.'
+      );
   }
 }
 
@@ -250,6 +257,10 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'large-file':
     case 'stale-file':
       return { file: entry.file };
+    case 'custom-check':
+      // Located variant carries file+line; binary has neither → {} routes to
+      // the fingerprint form.
+      return { file: entry.file, line: entry.line };
     case 'secret-hmac':
     case 'dep-vuln':
     case 'duplication':

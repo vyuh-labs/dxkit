@@ -157,6 +157,22 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // pure rename; the `${method} ${path}` join key is the rule discriminator
       // so two distinct bindings in one renamed file don't cross-pair.
       return { id: entry.id, file: entry.file, rule: `${entry.method} ${entry.path}` };
+    case 'custom-check':
+      // Two shapes. LOCATED (a linter diagnostic, `file` present): line-window-
+      // bucketed identity → line-dependent → full (file, line, rule) locator so
+      // the matcher relocates it across a shift, exactly like hygiene/stale-allow.
+      // The rule discriminator combines the check label with the parsed rule so
+      // two different diagnostics on one line (or two checks) never cross-pair.
+      // BINARY (`file` absent): identity is just the check name → line-
+      // independent → locator-less; the multiset pass pairs by identity-hash.
+      return entry.file !== undefined
+        ? {
+            id: entry.id,
+            file: entry.file,
+            line: entry.line ?? 0,
+            rule: entry.rule !== undefined ? `${entry.check}/${entry.rule}` : entry.check,
+          }
+        : { id: entry.id };
     case 'dep-vuln':
     case 'secret-hmac':
       // Line-independent identity (advisory id; value HMAC) → locator-less;

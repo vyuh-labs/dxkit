@@ -63,6 +63,15 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     file: 'web/List.tsx',
     line: 20,
   },
+  'custom-check': {
+    id: FP,
+    kind: 'custom-check',
+    check: 'lint:typescript',
+    blocking: true,
+    file: 'src/a.ts',
+    line: 5,
+    rule: 'no-unused-vars',
+  },
 };
 
 const ALL_KINDS = Object.keys(ENTRIES) as BaselineEntry['kind'][];

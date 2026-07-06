@@ -190,6 +190,15 @@ export const DEFERRED_KINDS: Readonly<
       'Substitute: none — net-new broken-integration detection is inert until the gate wires in.',
     landingPhase: 'Flow M3 (the integration gate)',
   },
+  'custom-check': {
+    reason:
+      'the identity + baseline-entry shape land first (this commit); the producer ' +
+      'that runs the checks and folds their failures into the baseline lands in the ' +
+      'next commit of the same flagship, once the canonical runner + policy schema ' +
+      'exist for it to consume. Substitute: none — custom-check grandfathering is ' +
+      'inert until the producer wires in.',
+    landingPhase: 'custom-check flagship (producer commit)',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────

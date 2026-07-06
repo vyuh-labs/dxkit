@@ -151,6 +151,13 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // CLI rejects with a hint pointing at the annotation's source
   // location.
   'stale-allow': [],
+
+  // Custom-check / lint findings: false-positive (the check fired
+  // spuriously — a lint rule the team disagrees with, a flaky command);
+  // otherwise accepted-risk or deferred. Never test-fixture (the check
+  // is real code the team declared). File-only for now (a binary check
+  // has no single-line site), so not inline-compatible.
+  'custom-check': ['false-positive', 'accepted-risk', 'deferred'],
 };
 
 /**
