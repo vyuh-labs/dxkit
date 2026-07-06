@@ -95,7 +95,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Install dxkit agent DX in this repo',
-    docsBlurb: 'Scaffold dxkit into a repo: agent skills, CLAUDE.md, and any opted-in hooks/CI/devcontainer.',
+    docsBlurb:
+      'Scaffold dxkit into a repo: agent skills, CLAUDE.md, and any opted-in hooks/CI/devcontainer.',
     skill: 'dxkit-init',
   },
   {
@@ -103,7 +104,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Re-generate managed files (preserves your edits)',
-    docsBlurb: 'Refresh dxkit-owned files to the current version, provenance-aware — never clobbers files you evolved.',
+    docsBlurb:
+      'Refresh dxkit-owned files to the current version, provenance-aware — never clobbers files you evolved.',
     skill: 'dxkit-update',
   },
   {
@@ -111,7 +113,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Remove dxkit, restoring the exact pre-dxkit state',
-    docsBlurb: 'Delete files dxkit created and surgically revert its additive merges. Dry-run by default; --yes applies.',
+    docsBlurb:
+      'Delete files dxkit created and surgically revert its additive merges. Dry-run by default; --yes applies.',
     skill: 'dxkit-uninstall',
   },
   {
@@ -119,14 +122,16 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Verify setup — and recommend capabilities you are not using',
-    docsBlurb: 'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
+    docsBlurb:
+      'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
   },
   {
     id: 'capabilities',
     audience: 'user',
     group: 'setup',
     summary: 'List every dxkit capability + what this repo should adopt',
-    docsBlurb: 'The capability catalog — every command with its group, summary, and driving skill, plus repo-grounded recommendations. `--json` is the agent-queryable menu for configuring dxkit conversationally.',
+    docsBlurb:
+      'The capability catalog — every command with its group, summary, and driving skill, plus repo-grounded recommendations. `--json` is the agent-queryable menu for configuring dxkit conversationally.',
     skill: 'dxkit-learn',
   },
   {
@@ -134,7 +139,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Show / install required analysis tools',
-    docsBlurb: 'Report the status of external analysis tools (semgrep, gitleaks, …) and install missing ones.',
+    docsBlurb:
+      'Report the status of external analysis tools (semgrep, gitleaks, …) and install missing ones.',
   },
   {
     id: 'hooks',
@@ -150,7 +156,8 @@ export const COMMANDS = [
     group: 'setup',
     aliases: ['protect'],
     summary: 'Set up branch protection / required checks (dry-run by default)',
-    docsBlurb: 'Configure branch protection so the guardrail check is a required status. `protect` is the dry-run-first alias.',
+    docsBlurb:
+      'Configure branch protection so the guardrail check is a required status. `protect` is the dry-run-first alias.',
   },
   {
     id: 'setup-prebuild',
@@ -164,14 +171,16 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Plan / apply a dxkit version upgrade',
-    docsBlurb: 'Show a package-manager-aware upgrade plan for the dxkit devDependency and its transition steps.',
+    docsBlurb:
+      'Show a package-manager-aware upgrade plan for the dxkit devDependency and its transition steps.',
   },
   {
     id: 'issue',
     audience: 'user',
     group: 'setup',
     summary: 'Open a pre-filled GitHub issue against dxkit',
-    docsBlurb: 'Compose a typed feedback issue (false-positive / bug / feature-request / …); nothing submits until you confirm in the browser.',
+    docsBlurb:
+      'Compose a typed feedback issue (false-positive / bug / feature-request / …); nothing submits until you confirm in the browser.',
   },
 
   // ── Assess ─────────────────────────────────────────────────────────────
@@ -180,7 +189,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Run the deterministic 6-dimension health analysis',
-    docsBlurb: 'Score Security, Code Quality, Tests, Docs, Maintainability, and Developer Experience with structured deductions.',
+    docsBlurb:
+      'Score Security, Code Quality, Tests, Docs, Maintainability, and Developer Experience with structured deductions.',
     skill: 'dxkit-reports',
   },
   {
@@ -189,7 +199,8 @@ export const COMMANDS = [
     group: 'assess',
     aliases: ['vuln'],
     summary: 'Run the deep security scan',
-    docsBlurb: 'Secrets, SAST, and dependency-vulnerability findings with CVSS scoring and remediation proposals.',
+    docsBlurb:
+      'Secrets, SAST, and dependency-vulnerability findings with CVSS scoring and remediation proposals.',
     skill: 'dxkit-reports',
   },
   {
@@ -197,7 +208,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Analyze test coverage gaps',
-    docsBlurb: 'Surface untested source files by risk tier, crediting coverage artifacts and import-graph reachability.',
+    docsBlurb:
+      'Surface untested source files by risk tier, crediting coverage artifacts and import-graph reachability.',
     skill: 'dxkit-test',
   },
   {
@@ -205,7 +217,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Code quality + slop detection',
-    docsBlurb: 'Duplication, complexity, and AI-slop signals rolled into the Code Quality dimension.',
+    docsBlurb:
+      'Duplication, complexity, and AI-slop signals rolled into the Code Quality dimension.',
   },
   {
     id: 'dev-report',
@@ -233,7 +246,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Run per-pack test-with-coverage (materializes the artifact)',
-    docsBlurb: 'Side-effecting: run each active pack’s coverage command so health/test-gaps read line-level truth.',
+    docsBlurb:
+      'Side-effecting: run each active pack’s coverage command so health/test-gaps read line-level truth.',
   },
   {
     id: 'dashboard',
@@ -248,7 +262,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Run every analyzer + dashboard in one shot (full audit)',
-    docsBlurb: 'One command to run all analyzers and render the dashboard — the full-audit entry point.',
+    docsBlurb:
+      'One command to run all analyzers and render the dashboard — the full-audit entry point.',
     skill: 'dxkit-reports',
   },
 
@@ -258,7 +273,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Capture / show per-finding baselines for the guardrail',
-    docsBlurb: 'Record per-finding identities the guardrail check diffs against to gate net-new regressions.',
+    docsBlurb:
+      'Record per-finding identities the guardrail check diffs against to gate net-new regressions.',
     whenToRecommend: recommendBaseline,
   },
   {
@@ -266,7 +282,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Diff current scan vs baseline; block on net-new regressions',
-    docsBlurb: 'The brownfield gate: fail on findings introduced by a change, grandfathering pre-existing debt.',
+    docsBlurb:
+      'The brownfield gate: fail on findings introduced by a change, grandfathering pre-existing debt.',
     skill: 'dxkit-action',
   },
   {
@@ -274,7 +291,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Suppress / audit individual findings with typed reasons',
-    docsBlurb: 'Accept a finding with a typed category + required reason + optional expiry; audit and prune entries.',
+    docsBlurb:
+      'Accept a finding with a typed category + required reason + optional expiry; audit and prune entries.',
     skill: 'dxkit-allowlist',
   },
   {
@@ -282,7 +300,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Ingest external SAST (SARIF) findings as first-class',
-    docsBlurb: 'Pull CodeQL / Snyk / Semgrep-Pro SARIF into dxkit so external findings share one fingerprint + gate.',
+    docsBlurb:
+      'Pull CodeQL / Snyk / Semgrep-Pro SARIF into dxkit so external findings share one fingerprint + gate.',
     skill: 'dxkit-ingest',
   },
   {
@@ -290,8 +309,19 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Autonomous-loop utilities (doctor / ledger / snapshot)',
-    docsBlurb: 'Inspect and verify the autonomous-loop Stop-gate wiring, its ledger, and the correctness-floor snapshot.',
+    docsBlurb:
+      'Inspect and verify the autonomous-loop Stop-gate wiring, its ledger, and the correctness-floor snapshot.',
     skill: 'dxkit-loop',
+  },
+  {
+    id: 'checks',
+    audience: 'user',
+    group: 'gate',
+    summary: 'List / dry-run your custom repo-invariant + lint gates',
+    docsBlurb:
+      'Declare repo invariants (a project rule, a lint gate) as first-class gate citizens: the guardrail fingerprints their failures and blocks only net-new ones, grandfathering pre-existing debt. `checks list` shows what is configured; `checks run` dry-runs them.',
+    skill: 'dxkit-checks',
+    whenToRecommend: recommendChecks,
   },
 
   // ── Integrate ──────────────────────────────────────────────────────────
@@ -300,7 +330,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'integrate',
     summary: 'UI→API integration mapping + the broken-integration gate',
-    docsBlurb: 'Map client calls to served endpoints and gate changes that break a UI→API contract across repos.',
+    docsBlurb:
+      'Map client calls to served endpoints and gate changes that break a UI→API contract across repos.',
     skill: 'dxkit-flow',
     whenToRecommend: recommendFlow,
   },
@@ -311,21 +342,24 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Repo exploration via the code graph',
-    docsBlurb: 'Query the graphify artifact: hot-files, entry-points, communities, api-surface, per-file/feature context.',
+    docsBlurb:
+      'Query the graphify artifact: hot-files, entry-points, communities, api-surface, per-file/feature context.',
   },
   {
     id: 'context',
     audience: 'user',
     group: 'explore',
     summary: 'Slim structural code slice for a query (token-efficient)',
-    docsBlurb: 'Budget-bounded structural context for a query — a compact codebase slice for an LLM.',
+    docsBlurb:
+      'Budget-bounded structural context for a query — a compact codebase slice for an LLM.',
   },
   {
     id: 'reviewers',
     audience: 'user',
     group: 'explore',
     summary: 'Suggest reviewers via the active-owner model',
-    docsBlurb: 'Rank reviewers by recency-weighted ownership of the touched files, blended with CODEOWNERS, with a bus-factor signal.',
+    docsBlurb:
+      'Rank reviewers by recency-weighted ownership of the touched files, blended with CODEOWNERS, with a bus-factor signal.',
   },
 
   // ── Export ─────────────────────────────────────────────────────────────
@@ -361,7 +395,8 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Offline, no-API demonstration walkthroughs',
-    docsBlurb: 'Run a self-contained walkthrough (default: the loop-guardrail demo) with no network or API key.',
+    docsBlurb:
+      'Run a self-contained walkthrough (default: the loop-guardrail demo) with no network or API key.',
   },
 ] as const satisfies readonly CapabilityDescriptor[];
 
@@ -519,6 +554,57 @@ function recommendFlow(ctx: RecommendContext): Recommendation | null {
     reason:
       'detected a UI framework but no flow setup — flow maps UI→API calls and gates changes that break an integration',
     command: 'vyuh-dxkit flow init',
+  };
+}
+
+/**
+ * Recommend the custom-check gate when the repo runs a linter but hasn't wired
+ * it into dxkit's guardrail. The gate is opt-in default-off, so a repo with a
+ * clear lint signal and no `checks` / `lint` policy block is exactly the case
+ * where "block only net-new lint errors" adds value without the user knowing to
+ * ask for it. Conservative: fires only on a concrete linter signal, and goes
+ * silent once the policy opts in.
+ */
+function recommendChecks(ctx: RecommendContext): Recommendation | null {
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+  // `.dxkit/policy.json` is flat (resolvePolicy spreads it at the top level),
+  // so `checks` / `lint` are top-level keys — mirror of the flow probe's
+  // `'flow' in policy`.
+  const checks = policy.checks;
+  const lint = policy.lint as Record<string, unknown> | undefined;
+  // Already opted in? (a declared check, or the lint gate enabled) → silent.
+  if (Array.isArray(checks) && checks.length > 0) return null;
+  if (lint?.enabled === true) return null;
+
+  // A concrete linter signal: a standalone lint config, or a package.json
+  // `lint` script. Kept conservative so this never nags a repo without one.
+  const lintConfigs = [
+    'eslint.config.js',
+    'eslint.config.mjs',
+    'eslint.config.cjs',
+    '.eslintrc.js',
+    '.eslintrc.cjs',
+    '.eslintrc.json',
+    '.eslintrc.yml',
+    '.eslintrc.yaml',
+    'ruff.toml',
+    '.ruff.toml',
+    '.rubocop.yml',
+    '.golangci.yml',
+    '.golangci.yaml',
+  ];
+  let signal = lintConfigs.some((f) => existsAt(ctx.cwd, f));
+  if (!signal) {
+    const pkg = readJsonSafe(path.join(ctx.cwd, 'package.json'));
+    const scripts = (pkg?.scripts as Record<string, unknown> | undefined) ?? {};
+    signal = typeof scripts.lint === 'string';
+  }
+  if (!signal) return null;
+
+  return {
+    reason:
+      'this repo runs a linter but it is not a guardrail gate — enable the lint gate so net-new lint errors block (pre-existing debt is grandfathered)',
+    command: 'vyuh-dxkit checks',
   };
 }
 
