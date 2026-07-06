@@ -162,6 +162,46 @@ describe('analyzeDashboard', () => {
     expect(result.html).toContain('GHSA-7j9m-j397-g4wx');
   });
 
+  it('discloses allowlisted dep-vulns in the Vulnerabilities tile (#27)', () => {
+    // An accepted dep advisory is annotated upstream (aggregator) and
+    // serialized into summary.dependencies.findings; the dashboard tile
+    // counts it as allowlisted so a reviewed-and-accepted CVE doesn't read
+    // as un-triaged risk — same disclosure the vuln scan + BoM show.
+    write('vulnerability-scan-2026-05-11.md', '# Vuln');
+    write(
+      'vulnerability-scan-2026-05-11-detailed.json',
+      JSON.stringify({
+        findings: [],
+        summary: {
+          findings: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+          dependencies: {
+            critical: 0,
+            high: 1,
+            medium: 0,
+            low: 0,
+            total: 1,
+            tool: 'osv-scanner',
+            findings: [
+              {
+                id: 'GHSA-accepted',
+                package: 'left-pad',
+                installedVersion: '1.0.0',
+                tool: 'osv-scanner',
+                severity: 'high',
+                allowlisted: true,
+                allowlistCategory: 'test-fixture',
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const result = analyzeDashboard(tmp);
+    // The Vulnerabilities tile sub-line discloses the allowlisted dep-vuln.
+    expect(result.html).toContain('1 allowlisted');
+  });
+
   it('degrades gracefully when JSON envelopes are missing or malformed', () => {
     write('health-audit-2026-05-11.md', '# Health');
     write('health-audit-2026-05-11-detailed.json', '{ this is not valid json');
