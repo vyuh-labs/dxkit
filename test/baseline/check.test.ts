@@ -271,6 +271,60 @@ describe('runGuardrailCheck (integration)', () => {
       expect(mdOut).toContain('## Guardrail: PASSED');
       expect(mdOut).toContain('Suppressed by allowlist (1)');
     }, 300_000);
+
+    it('an allowlist entry suppresses a WARNING-class finding too, not just a blocking one (#23)', async () => {
+      await createBaseline({ cwd: dir });
+      writeFileSync(join(dir, 'leftover.bak'), 'old\n');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'drop a .bak'], { cwd: dir });
+
+      // Warn-only policy: the stale-file `added` finding WARNS (not blocks).
+      const policyPath = join(dir, 'warn-policy.json');
+      writeFileSync(policyPath, JSON.stringify({ block: [], warn: ['added'], blockRules: {} }));
+      const findStale = (r: Awaited<ReturnType<typeof runGuardrailCheck>>) =>
+        r.pairs.find((p) => p.kind === 'stale-file' && p.classification.status === 'added');
+
+      const before = await runGuardrailCheck({ cwd: dir, policyPath });
+      const staleBefore = findStale(before);
+      expect(staleBefore?.classification.warns).toBe(true);
+      expect(staleBefore?.classification.blocks).toBe(false);
+      expect(staleBefore?.suppressedByAllowlist).toBeUndefined();
+      expect(before.warns).toBe(true);
+      const fp = staleBefore?.pair.currentId;
+      expect(fp).toBeTruthy();
+
+      // Allowlist it. The #23 bug: suppression was gated on `blocks`, so a
+      // warning was never waived and persisted forever. Now it must be
+      // suppressed + dropped from the warning verdict/count.
+      const dxkitDir = join(dir, '.dxkit');
+      execFileSync('mkdir', ['-p', dxkitDir]);
+      writeFileSync(
+        join(dxkitDir, 'allowlist.json'),
+        JSON.stringify({
+          schemaVersion: 'dxkit-allowlist/v1',
+          mode: 'full',
+          entries: [
+            {
+              fingerprint: fp,
+              kind: 'stale-file',
+              category: 'false-positive',
+              reason: 'reviewed — generated artifact',
+              addedBy: 'reviewer@example.com',
+              addedAt: '2026-05-01',
+            },
+          ],
+        }),
+      );
+
+      const after = await runGuardrailCheck({ cwd: dir, policyPath });
+      const staleAfter = findStale(after);
+      expect(staleAfter?.suppressedByAllowlist).toBeDefined(); // suppression ran for a WARNING
+      expect(after.warns).toBe(false); // the warning is waived from the verdict
+      // Renderers: it moves to the suppressed bucket, not the warnings bucket.
+      const jsonOut = renderJson(after);
+      expect(jsonOut.summary.suppressed).toBe(1);
+      expect(jsonOut.summary.warning).toBe(0);
+    }, 300_000);
   });
 
   describe('error + policy + drift paths', () => {
