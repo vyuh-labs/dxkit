@@ -32,7 +32,11 @@ import {
   detectInstalledRefreshTransport,
   installCiGuardrails,
 } from '../src/ship-installers';
-import { hydrateAnchorFromBranch, loadAnchorFromBranch } from '../src/baseline/anchor';
+import {
+  hydrateAnchorFromBranch,
+  loadAnchorFromBranch,
+  anchorBranchStatus,
+} from '../src/baseline/anchor';
 import { execSync } from 'child_process';
 
 const PROTECTED: EnforcementState = {
@@ -501,6 +505,61 @@ describe('hydrateAnchorFromBranch', () => {
 // #18: a LOCAL guardrail check under the `branch` transport must read the
 // anchor from the SIDE BRANCH (source of truth), not a stale committed tree
 // copy — read-only, without mutating the tree. loadAnchorFromBranch is that read.
+describe('anchorBranchStatus (#101 deleted-anchor detection)', () => {
+  let dir: string;
+  let remote: string;
+  const sh = (cmd: string, cwd: string) => execSync(cmd, { cwd, stdio: 'ignore' });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-anchorstatus-'));
+    remote = mkdtempSync(join(tmpdir(), 'dxkit-anchorremote-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  });
+
+  function repoWithOrigin(): void {
+    sh('git init -q --bare', remote);
+    sh('git init -q', dir);
+    sh('git config user.email t@t.co', dir);
+    sh('git config user.name t', dir);
+    sh(`git remote add origin ${JSON.stringify(remote)}`, dir);
+    writeFileSync(join(dir, 'f'), 'x');
+    sh('git add -A', dir);
+    sh('git commit -qm init', dir);
+  }
+
+  it('is not configured for non-branch transports', () => {
+    expect(anchorBranchStatus(dir, undefined).configured).toBe(false);
+    expect(anchorBranchStatus(dir, { anchor: 'tree' }).configured).toBe(false);
+  });
+
+  it('remoteReachable=false with no origin (offline-safe — no false alarm)', () => {
+    sh('git init -q', dir);
+    const s = anchorBranchStatus(dir, { anchor: 'branch', anchorRef: 'dxkit-baselines' });
+    expect(s.configured).toBe(true);
+    expect(s.remoteReachable).toBe(false);
+    expect(s.branchExists).toBe(false);
+  });
+
+  it('branchExists=true when the anchor branch is present on origin', () => {
+    repoWithOrigin();
+    sh('git checkout -q -b dxkit-baselines', dir);
+    sh('git push -q origin dxkit-baselines', dir);
+    const s = anchorBranchStatus(dir, { anchor: 'branch', anchorRef: 'dxkit-baselines' });
+    expect(s.remoteReachable).toBe(true);
+    expect(s.branchExists).toBe(true);
+  });
+
+  it('branchExists=false when origin is reachable but the anchor branch is gone (the deletion signal)', () => {
+    repoWithOrigin();
+    sh('git push -q origin HEAD:main', dir); // main exists; the anchor branch never does
+    const s = anchorBranchStatus(dir, { anchor: 'branch', anchorRef: 'dxkit-baselines' });
+    expect(s.remoteReachable).toBe(true);
+    expect(s.branchExists).toBe(false);
+  });
+});
+
 describe('loadAnchorFromBranch (branch-transport read-only side-branch read)', () => {
   let dir: string;
   const rel = '.dxkit/baselines/main.json';

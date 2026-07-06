@@ -113,3 +113,41 @@ export function hydrateAnchorFromBranch(
   fs.writeFileSync(baselinePath, content, 'utf8');
   return true;
 }
+
+/**
+ * Health of the `branch`-transport anchor branch. `configured` is true when
+ * the policy uses the branch transport; `remoteReachable` distinguishes an
+ * offline probe (don't alarm) from a reachable remote that genuinely lacks
+ * the branch; `branchExists` is the deletion signal. Doctor warns only when
+ * `configured && remoteReachable && !branchExists` — a deleted anchor branch,
+ * which silently strands the guardrail's committed baseline (#101).
+ */
+export interface AnchorBranchStatus {
+  configured: boolean;
+  anchorRef: string;
+  remoteReachable: boolean;
+  branchExists: boolean;
+}
+
+export function anchorBranchStatus(
+  cwd: string,
+  section: BaselineSection | undefined,
+): AnchorBranchStatus {
+  const configured = section?.anchor === 'branch';
+  const anchorRef = section?.anchorRef ?? DEFAULT_ANCHOR_REF;
+  if (!configured) {
+    return { configured: false, anchorRef, remoteReachable: false, branchExists: false };
+  }
+  try {
+    const out = execSync(`git ls-remote --heads origin ${JSON.stringify(anchorRef)}`, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim();
+    // Reachable: exit 0. Branch present iff a matching head ref was returned.
+    return { configured: true, anchorRef, remoteReachable: true, branchExists: out.length > 0 };
+  } catch {
+    // Offline / no `origin` remote — unknown, not confirmed-missing.
+    return { configured: true, anchorRef, remoteReachable: false, branchExists: false };
+  }
+}

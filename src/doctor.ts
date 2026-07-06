@@ -7,6 +7,7 @@ import { activeLanguagesFromStack } from './languages';
 import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
+import { anchorBranchStatus } from './baseline/anchor';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
 import { detectInstalledRefreshTransport } from './ship-installers';
@@ -466,6 +467,34 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
 
 function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] {
   const checks: CheckResult[] = [];
+
+  // 0. Anchor branch health (branch transport only). The `branch` transport
+  // reads the committed baseline from a side branch (`dxkit-baselines`). If
+  // that branch is deleted, the guardrail silently loses its baseline
+  // (fail-open). Surface a deleted anchor as a warning with a repair path.
+  // Only emitted when the transport IS branch AND the remote is reachable, so
+  // an offline run or a non-branch repo never produces a false alarm (#101).
+  const anchorStatus = anchorBranchStatus(cwd, safeLoadPolicy(cwd)?.baseline);
+  if (anchorStatus.configured && anchorStatus.remoteReachable) {
+    checks.push({
+      label: `baseline anchor branch present (${anchorStatus.anchorRef})`,
+      ok: anchorStatus.branchExists,
+      tier: 'operational',
+      ...(anchorStatus.branchExists
+        ? {}
+        : {
+            fix: {
+              hint:
+                `The '${anchorStatus.anchorRef}' anchor branch is missing (deleted?). The ` +
+                `branch-transport guardrail reads the committed baseline from it — without it ` +
+                `the gate silently loses its baseline. Recapture the baseline and re-run the ` +
+                `refresh workflow (or push .dxkit/baselines/ to '${anchorStatus.anchorRef}'). ` +
+                `Restrict deletion of that branch to prevent recurrence.`,
+              command: dxkitCli('baseline create --force'),
+            },
+          }),
+    });
+  }
 
   // 1. Hooks active. Two independent conditions must BOTH hold for the
   // pre-push guardrail to actually fire: `core.hooksPath` set to
