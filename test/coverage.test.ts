@@ -134,9 +134,11 @@ describe('loadCoverage (filesystem)', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-cov-'));
     // Phase 10e.B.3.6: loadCoverage dispatches through language packs, so
     // test fixtures need pack-detection triggers. Every test here gets
-    // package.json (→ typescript), pyproject.toml (→ python), go.mod (→
-    // go) so whichever artifact we write finds its owning pack active.
+    // package.json + a real source file (→ typescript — the TS pack requires
+    // a JS/TS source file, not just package.json), pyproject.toml (→ python),
+    // go.mod (→ go) so whichever artifact we write finds its owning pack active.
     fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"t"}');
+    fs.writeFileSync(path.join(tmp, 'index.ts'), 'export const x = 1;\n');
     fs.writeFileSync(path.join(tmp, 'pyproject.toml'), '');
     fs.writeFileSync(path.join(tmp, 'go.mod'), 'module t\n');
   });

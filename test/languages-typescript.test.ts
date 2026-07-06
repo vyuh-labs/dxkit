@@ -21,9 +21,19 @@ afterEach(() => {
 });
 
 describe('typescript.detect', () => {
-  it('detects via package.json', () => {
+  it('detects via package.json + a real JS/TS source file', () => {
     fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+    fs.writeFileSync(path.join(tmp, 'index.ts'), 'export const x = 1;\n');
     expect(typescript.detect(tmp)).toBe(true);
+  });
+
+  it('does NOT detect on package.json alone (no JS/TS source)', () => {
+    // A package.json is generic tooling config — many non-JS repos carry one
+    // (husky, prettier, or dxkit's own devDependency + postinstall hook). Without
+    // a real source file it is not a TypeScript project; detecting it would
+    // misflag a pure-.NET/Go/Python repo as TS (found on a real .NET repo).
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+    expect(typescript.detect(tmp)).toBe(false);
   });
 
   it('returns false without package.json', () => {
