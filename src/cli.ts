@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { renderCommandIndex, suggestCommand } from './discovery/commands';
 import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
@@ -2567,10 +2568,18 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
-    default:
+    default: {
       console.error(`Unknown command: ${command}`);
-      printUsage();
+      const near = suggestCommand(command);
+      if (near.length > 0) {
+        console.error(`Did you mean: ${near.join(', ')}?`);
+      }
+      console.error('');
+      console.error('Available commands:');
+      for (const line of renderCommandIndex()) console.error(line);
+      console.error("Run 'vyuh-dxkit --help' for full usage and options.");
       process.exit(1);
+    }
   }
 }
 
