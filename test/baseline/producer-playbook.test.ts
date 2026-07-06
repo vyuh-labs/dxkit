@@ -105,6 +105,7 @@ function fixtureContext(): ProducerContext {
     },
     rawSecrets: [],
     inlineAllowlistAnnotations: [],
+    customCheckFindings: [],
   };
 }
 

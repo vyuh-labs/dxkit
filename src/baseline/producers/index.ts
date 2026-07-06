@@ -54,7 +54,9 @@ import type { GitleaksRawSecret } from '../../analyzers/tools/gitleaks';
 import type { AnalysisResult } from '../../analysis-result';
 import type { TestGapsReport } from '../../analyzers/tests/types';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
+import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import type { BaselineEntry, RichBaselineEntry } from '../types';
+import { customCheckFindingsToBaselineEntries } from './custom-checks';
 import { largeFilesToBaselineEntries } from './health';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
 import { rawSecretsToBaselineEntries } from './secret-hmac';
@@ -116,6 +118,11 @@ export interface ProducerContext {
    *  Consumed by the stale-allow producer to detect orphaned
    *  annotations whose underlying finding is gone. */
   readonly inlineAllowlistAnnotations: ReadonlyArray<InlineAllowlistOccurrence>;
+  /** Failures captured by the custom-check runner (user-declared checks +
+   *  built-in lint), gathered once by the orchestrator via
+   *  `gatherCustomCheckFindings`. Empty when no checks are configured (the
+   *  common case) — the producer then emits nothing. */
+  readonly customCheckFindings: ReadonlyArray<CustomCheckFinding>;
 }
 
 /**
@@ -190,15 +197,6 @@ export const DEFERRED_KINDS: Readonly<
       'Substitute: none — net-new broken-integration detection is inert until the gate wires in.',
     landingPhase: 'Flow M3 (the integration gate)',
   },
-  'custom-check': {
-    reason:
-      'the identity + baseline-entry shape land first (this commit); the producer ' +
-      'that runs the checks and folds their failures into the baseline lands in the ' +
-      'next commit of the same flagship, once the canonical runner + policy schema ' +
-      'exist for it to consume. Substitute: none — custom-check grandfathering is ' +
-      'inert until the producer wires in.',
-    landingPhase: 'custom-check flagship (producer commit)',
-  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────
@@ -271,6 +269,14 @@ const STALE_ALLOW_PRODUCER: BaselineProducer = {
   },
 };
 
+const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
+  name: 'custom-check',
+  contributes: ['custom-check'],
+  produce(ctx) {
+    return customCheckFindingsToBaselineEntries(ctx.customCheckFindings);
+  },
+};
+
 /**
  * The canonical producer list. Order is preserved in baseline-file
  * output for deterministic diffs; adding a new producer appends
@@ -287,6 +293,7 @@ export const PRODUCERS: ReadonlyArray<BaselineProducer> = Object.freeze([
   HEALTH_PRODUCER,
   TESTS_PRODUCER,
   STALE_ALLOW_PRODUCER,
+  CUSTOM_CHECK_PRODUCER,
 ]);
 
 /**

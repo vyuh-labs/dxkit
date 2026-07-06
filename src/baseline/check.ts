@@ -322,11 +322,23 @@ export interface GuardrailCheckResult {
  * exists only for cross-file relocation matching, which a committed salt
  * provides and ref-based does not. So it is matcher-assist only here and is
  * excluded from the ref-based diff.
+ *
+ * `custom-check` joins them for the same reason as `duplication`: the checks it
+ * runs (linters, build-based analyzers, user commands) need the project's
+ * toolchain — `node_modules`, a restored `dotnet`/gradle build — which a bare
+ * `git worktree add` checkout does not have. The ref side would systematically
+ * under-produce (every linter fail-open-skips for a missing binary) while the
+ * working-tree side produces in full, so a straight diff would flag the whole
+ * current set as net-new. Committed-full mode (which captures custom-check once
+ * from a fully-provisioned tree) is the mode that gates it; ref-based excludes
+ * it. (The loop Stop-gate + pre-push run in the working tree, so they gate it
+ * fine via the committed baseline.)
  */
 const REF_UNRELIABLE_KINDS: ReadonlySet<BaselineEntry['kind']> = new Set([
   'duplication',
   'test-gap',
   'secret-hmac',
+  'custom-check',
 ]);
 
 /**
