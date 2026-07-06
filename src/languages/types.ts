@@ -7,6 +7,7 @@ import type {
 } from './capabilities/provider';
 import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { CorrectnessProvider } from './capabilities/correctness';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -601,6 +602,18 @@ export interface LanguageSupport {
    * capability is always wired and the omission class of bug cannot recur.
    */
   correctness: CorrectnessProvider;
+
+  /**
+   * The lint-GATE provider: the linter command that gates NET-NEW lint findings,
+   * plus how to parse its output into per-location findings. Consumed by the
+   * custom-check runner via `activeLintGateProviders` (Rule 6). OPTIONAL and
+   * opt-in (policy `lint.enabled`): a pack with no stable machine-parseable
+   * linter omits it (or returns null), and its users gate that linter via a
+   * user-declared `checks` entry instead. Distinct from the `lint` capability
+   * below, which produces aggregate COUNTS for the Quality score — the gate
+   * needs per-finding locations to diff net-new-ness.
+   */
+  lintGate?: LintGateProvider;
 
   /**
    * Tier a lint rule code into a severity bucket. Accepts `string | null |

@@ -39,6 +39,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 interface GolangciIssue {
   FromLinter?: string;
@@ -933,6 +934,32 @@ const goCorrectnessProvider: CorrectnessProvider = {
   },
 };
 
+/**
+ * Lint-GATE provider: golangci-lint, for the net-new lint gate. Resolved via the
+ * tool registry (Rule 1); null when it isn't installed. `--out-format
+ * line-number` emits `file:line:col: message (linter)` per issue, mapped to
+ * located findings; golangci-lint exits non-zero when it reports issues
+ * (expectedExit 0 = clean). Non-matching preamble/summary lines are skipped by
+ * the parser.
+ */
+/** golangci-lint `--out-format line-number` line: `<file>:<line>:<col>: <message> (<linter>)`.
+ *  Exported so the lint-gate format contract is testable against a real sample. */
+export const GO_GOLANGCI_LINE_PARSE =
+  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\((?<rule>[^)]+)\\)\\s*$';
+
+const goLintGateProvider: LintGateProvider = {
+  lintCommand(ctx) {
+    const gl = findTool(TOOL_DEFS['golangci-lint'], ctx.cwd);
+    if (!gl.available || !gl.path) return null;
+    return {
+      bin: gl.path,
+      args: ['run', '--out-format', 'line-number'],
+      parse: GO_GOLANGCI_LINE_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -996,6 +1023,7 @@ export const go: LanguageSupport = {
   deepSast: { codeqlLanguage: 'go', codeqlBuildRequired: true, snykCode: true },
 
   correctness: goCorrectnessProvider,
+  lintGate: goLintGateProvider,
 
   capabilities: {
     depVulns: goDepVulnsProvider,

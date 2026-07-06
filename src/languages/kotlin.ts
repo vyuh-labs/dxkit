@@ -24,6 +24,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -434,6 +435,30 @@ const kotlinCorrectnessProvider = jvmCorrectnessProvider({
   declineWhen: isAndroidGradleBuild,
 });
 
+/** ktlint line: `<file>:<line>:<col>: <message> (<rule>)`. Exported for the
+ *  format-contract test. */
+export const KOTLIN_KTLINT_PARSE =
+  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\((?<rule>[^)]+)\\)\\s*$';
+
+/**
+ * Lint-GATE provider: ktlint, the standard zero-config Kotlin linter/formatter.
+ * Resolved via the tool registry (Rule 1); null when it isn't installed
+ * (fail-open). ktlint's default output is one `file:line:col: message (rule)`
+ * per violation, mapped to located findings; it exits non-zero on violations.
+ */
+const kotlinLintGateProvider: LintGateProvider = {
+  lintCommand(ctx) {
+    const ktlint = findTool(TOOL_DEFS.ktlint, ctx.cwd);
+    if (!ktlint.available || !ktlint.path) return null;
+    return {
+      bin: ktlint.path,
+      args: [],
+      parse: KOTLIN_KTLINT_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 // ─── Pack export ────────────────────────────────────────────────────────────
 
 export const kotlin: LanguageSupport = {
@@ -520,7 +545,7 @@ export const kotlin: LanguageSupport = {
 
   detect: detectKotlin,
 
-  tools: ['detekt', 'osv-scanner'],
+  tools: ['detekt', 'ktlint', 'osv-scanner'],
 
   // Semgrep's Kotlin ruleset (`p/kotlin`) is sparse compared to Python/JS
   // — skipping for now until coverage matures, mirroring the csharp pack.
@@ -535,6 +560,7 @@ export const kotlin: LanguageSupport = {
   },
 
   correctness: kotlinCorrectnessProvider,
+  lintGate: kotlinLintGateProvider,
 
   capabilities: {
     depVulns: kotlinDepVulnsProvider,

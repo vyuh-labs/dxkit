@@ -509,6 +509,11 @@ export const java: LanguageSupport = {
   deepSast: { codeqlLanguage: 'java', codeqlBuildRequired: true, snykCode: true },
 
   correctness: javaCorrectnessProvider,
+  // Lint gate: DORMANT. Java linters (checkstyle/PMD/SpotBugs) run via the build
+  // tool with varied, non-line-oriented output (XML/SARIF), so no stable text
+  // gate is pinned yet; Java users gate their linter via a user-declared `checks`
+  // entry. Promoting to a real gate is a one-pack change when a format is fixed.
+  lintGate: { lintCommand: () => null },
 
   capabilities: {
     imports: javaImportsProvider,

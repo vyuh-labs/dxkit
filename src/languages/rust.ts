@@ -35,6 +35,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 interface CargoMessage {
   reason: string;
@@ -935,6 +936,32 @@ const rustCorrectnessProvider: CorrectnessProvider = {
   },
 };
 
+/** clippy `--message-format short` line: `<file>:<line>:<col>: warning|error: <message>`.
+ *  clippy's short format omits the lint name, so there is no `rule` group — the
+ *  finding is (file, line, message). Exported for the format-contract test. */
+export const RUST_CLIPPY_SHORT_PARSE =
+  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?:warning|error):\\s+(?<message>.*)$';
+
+/**
+ * Lint-GATE provider: clippy, the standard Rust linter that ships with the
+ * toolchain (via cargo). `-D warnings` promotes every lint to a non-zero exit so
+ * the gate actually fires (clippy is exit-0 on warnings otherwise); `--message-
+ * format short` gives one `file:line:col: warning: message` per finding. A repo
+ * without clippy is handled by the runner's fail-open on a failed cargo
+ * subcommand only insofar as it produces no located matches — clippy is part of
+ * a default rustup install, the common case when a Rust team opts into linting.
+ */
+const rustLintGateProvider: LintGateProvider = {
+  lintCommand() {
+    return {
+      bin: 'cargo',
+      args: ['clippy', '--message-format', 'short', '--', '-D', 'warnings'],
+      parse: RUST_CLIPPY_SHORT_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 export const rust: LanguageSupport = {
   id: 'rust',
   displayName: 'Rust',
@@ -999,6 +1026,7 @@ export const rust: LanguageSupport = {
   deepSast: { codeqlLanguage: 'rust', codeqlBeta: true },
 
   correctness: rustCorrectnessProvider,
+  lintGate: rustLintGateProvider,
 
   capabilities: {
     depVulns: rustDepVulnsProvider,

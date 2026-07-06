@@ -8,6 +8,7 @@ import type {
   LanguageSupport,
 } from './types';
 import type { CorrectnessProvider } from './capabilities/correctness';
+import type { LintGateProvider } from './capabilities/lint-gate';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -448,6 +449,19 @@ export function activeCorrectnessProviders(
   return packs
     .filter((p) => p.correctness !== undefined)
     .map((p) => ({ id: p.id, provider: p.correctness as CorrectnessProvider }));
+}
+
+/**
+ * Active packs that declare a lint-GATE provider, for the custom-check runner
+ * (Rule 6). Only packs with a `lintGate` are returned; the union drives the
+ * `lint:<pack>` built-in checks the guardrail synthesizes when `lint.enabled`.
+ */
+export function activeLintGateProviders(
+  packs: readonly LanguageSupport[],
+): { id: LanguageId; provider: LintGateProvider }[] {
+  return packs
+    .filter((p) => p.lintGate !== undefined)
+    .map((p) => ({ id: p.id, provider: p.lintGate as LintGateProvider }));
 }
 
 export function allFlowSourceExtensions(packs: readonly LanguageSupport[]): string[] {

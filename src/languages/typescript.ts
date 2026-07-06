@@ -44,6 +44,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
@@ -696,7 +697,9 @@ function resolveExtendsTarget(ref: string, fromConfigDir: string): string | null
   // via node_modules. App-specific `paths` almost never live in a shared base
   // package, so a miss here is benign.
   const inNodeModules = path.join(fromConfigDir, 'node_modules', ref);
-  const candidate = ref.endsWith('.json') ? inNodeModules : path.join(inNodeModules, 'tsconfig.json');
+  const candidate = ref.endsWith('.json')
+    ? inNodeModules
+    : path.join(inNodeModules, 'tsconfig.json');
   return isFile(candidate) ? candidate : withExt(inNodeModules);
 }
 
@@ -1249,6 +1252,32 @@ const tsCorrectnessProvider: CorrectnessProvider = {
 };
 
 /**
+ * Lint-GATE provider: eslint, for the net-new lint gate. Only when eslint is
+ * installed locally — `npx --no-install` runs the project's OWN eslint + config
+ * (the same command their CI runs) and never fetches; a repo without eslint
+ * gets no gate (null). `--format unix` emits one `file:line:col: message
+ * [severity/rule]` per diagnostic, which the parse regex maps to located
+ * findings. eslint exits non-zero when it reports an error (expectedExit 0 =
+ * clean), which is what tells the runner to parse.
+ */
+/** eslint `--format unix` line: `<file>:<line>:<col>: <message> [<severity>/<rule>]`.
+ *  Exported so the lint-gate format contract is testable against a real sample. */
+export const TS_ESLINT_UNIX_PARSE =
+  '^(?<file>.+):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\[\\w+/(?<rule>[^\\]]+)\\]\\s*$';
+
+const tsLintGateProvider: LintGateProvider = {
+  lintCommand(ctx) {
+    if (!hasLocalBin(ctx.cwd, 'eslint')) return null;
+    return {
+      bin: 'npx',
+      args: ['--no-install', 'eslint', '.', '--format', 'unix'],
+      parse: TS_ESLINT_UNIX_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
+/**
  * Enumerate TS/JS source files under cwd and pre-compute the pack's
  * per-file imports (raw specifiers) and resolved edges. Uses the
  * cross-platform `walkSourceFiles` walker; `includeTests` +
@@ -1737,6 +1766,7 @@ export const typescript: LanguageSupport = {
   deepSast: { codeqlLanguage: 'javascript', snykCode: true },
 
   correctness: tsCorrectnessProvider,
+  lintGate: tsLintGateProvider,
 
   capabilities: {
     depVulns: tsDepVulnsProvider,

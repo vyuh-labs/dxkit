@@ -1082,6 +1082,22 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'gem install --user-install rubocop',
     },
   },
+  ktlint: {
+    name: 'ktlint',
+    description: 'Kotlin linter / formatter (anti-pattern + style checks)',
+    install: 'brew install ktlint',
+    check: 'ktlint --version',
+    for: 'kotlin',
+    layer: 'language',
+    binaries: ['ktlint'],
+    versionCheck: 'ktlint --version',
+    installCommands: {
+      macos: 'brew install ktlint',
+      linux:
+        'curl -sSLO https://github.com/pinterest/ktlint/releases/latest/download/ktlint && chmod a+x ktlint && sudo mv ktlint /usr/local/bin/',
+      windows: 'choco install ktlint',
+    },
+  },
   // SimpleCov is a pure Ruby gem, library-loaded (`require 'simplecov'`
   // from spec_helper.rb), no CLI binary. Detected via the `gemPackage`
   // field — mirrors `nodePackage` for library-only Ruby gems. CLI-shim

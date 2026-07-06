@@ -11,8 +11,14 @@
  * the lint capability. Both feed the SAME runner.
  */
 
-import type { CustomCheckConfig } from '../../baseline/policy';
+import type { CustomCheckConfig, LintPolicy } from '../../baseline/policy';
+import type { LanguageSupport } from '../../languages/types';
+import type { LintGateContext } from '../../languages/capabilities/lint-gate';
+import { activeLintGateProviders } from '../../languages';
 import type { CustomCheckCommand, CustomCheckParse, CustomCheckSpec } from './types';
+
+/** The reserved prefix for pack-declared built-in lint checks. */
+export const LINT_CHECK_PREFIX = 'lint:';
 
 export interface NormalizeResult {
   readonly specs: readonly CustomCheckSpec[];
@@ -20,10 +26,6 @@ export interface NormalizeResult {
    *  silently-ignored check is visible). */
   readonly warnings: readonly string[];
 }
-
-/** `lint:` is reserved for pack-declared built-in lint, so a user check can't
- *  collide with (or impersonate) a lint finding's identity namespace. */
-const RESERVED_PREFIX = 'lint:';
 
 /**
  * Convert the policy's `checks` array to runner specs. Invalid entries are
@@ -43,8 +45,10 @@ export function normalizeCustomChecks(
       warnings.push('a check entry has no `name` and was skipped');
       continue;
     }
-    if (name.startsWith(RESERVED_PREFIX)) {
-      warnings.push(`check '${name}' uses the reserved '${RESERVED_PREFIX}' prefix and was skipped`);
+    if (name.startsWith(LINT_CHECK_PREFIX)) {
+      warnings.push(
+        `check '${name}' uses the reserved '${LINT_CHECK_PREFIX}' prefix and was skipped`,
+      );
       continue;
     }
     if (seenNames.has(name)) {
@@ -86,4 +90,34 @@ function normalizeParse(parse: CustomCheckConfig['parse'] | undefined): CustomCh
     return { mode: 'regex', pattern: parse.regex };
   }
   return { mode: 'exit' };
+}
+
+/**
+ * Build `lint:<pack>` runner specs from the active packs' lint-GATE providers
+ * (Rule 6). Returns [] when lint gating is disabled (default) or no active pack
+ * declares a gate-able linter. The union is pack-driven: a new pack that
+ * declares `lintGate` is picked up here with no edit (proven by the recipe
+ * playbook). A pack whose `lintCommand` returns null (dormant / not configured
+ * in this repo) contributes nothing.
+ */
+export function lintGateSpecs(
+  packs: readonly LanguageSupport[],
+  ctx: LintGateContext,
+  lint: LintPolicy | undefined,
+): CustomCheckSpec[] {
+  if (!lint?.enabled) return [];
+  const blocking = lint.blocking === true; // default warn-only
+  const specs: CustomCheckSpec[] = [];
+  for (const { id, provider } of activeLintGateProviders(packs)) {
+    const cmd = provider.lintCommand(ctx);
+    if (cmd === null) continue;
+    specs.push({
+      name: `${LINT_CHECK_PREFIX}${id}`,
+      command: { bin: cmd.bin, args: cmd.args },
+      blocking,
+      expectedExit: typeof cmd.expectedExit === 'number' ? cmd.expectedExit : 0,
+      parse: { mode: 'regex', pattern: cmd.parse },
+    });
+  }
+  return specs;
 }
