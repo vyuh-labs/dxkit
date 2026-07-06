@@ -122,6 +122,14 @@ export const COMMANDS = [
     docsBlurb: 'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
   },
   {
+    id: 'capabilities',
+    audience: 'user',
+    group: 'setup',
+    summary: 'List every dxkit capability + what this repo should adopt',
+    docsBlurb: 'The capability catalog — every command with its group, summary, and driving skill, plus repo-grounded recommendations. `--json` is the agent-queryable menu for configuring dxkit conversationally.',
+    skill: 'dxkit-learn',
+  },
+  {
     id: 'tools',
     audience: 'user',
     group: 'setup',

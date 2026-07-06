@@ -16,7 +16,7 @@
  *   - SYNTHETIC INJECTION: the parity check actually bites — inject a fake
  *     unregistered command and assert it is flagged.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -31,6 +31,7 @@ import {
   gatherRecommendations,
   type CapabilityDescriptor,
 } from '../src/discovery/commands';
+import { runCapabilities } from '../src/discovery/capabilities-cli';
 
 const REPO_ROOT = path.join(__dirname, '..');
 
@@ -174,5 +175,38 @@ describe('capability registry — doctor advisor probes (whenToRecommend)', () =
     const d = mkTmp();
     expect(() => gatherRecommendations(d)).not.toThrow();
     expect(gatherRecommendations(d)).toEqual([]);
+  });
+});
+
+describe('capabilities command — the agent-queryable menu', () => {
+  const tmps: string[] = [];
+  afterEach(() => {
+    for (const d of tmps.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('--json emits the whole registry as a stable, agent-legible catalog', () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-caps-'));
+    tmps.push(d);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(' '));
+    });
+    try {
+      runCapabilities(d, { json: true });
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(lines.join('\n')) as {
+      schema: string;
+      commands: Array<{ id: string; skill?: string; recommended: boolean }>;
+    };
+    expect(parsed.schema).toBe('capabilities.v1');
+    // Every user-facing command is present — the menu is complete by construction.
+    const ids = new Set(parsed.commands.map((c) => c.id));
+    for (const c of userCommands()) {
+      expect(ids.has(c.id), `capabilities menu missing ${c.id}`).toBe(true);
+    }
+    // Internal commands are NOT in the user-facing menu.
+    expect(ids.has('hook')).toBe(false);
   });
 });

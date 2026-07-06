@@ -770,6 +770,12 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'capabilities': {
+      const { runCapabilities } = await import('./discovery/capabilities-cli');
+      runCapabilities(cwd, { json: !!values.json });
+      break;
+    }
+
     case 'health': {
       const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeHealthWithMetrics } = await import('./analyzers/health');
