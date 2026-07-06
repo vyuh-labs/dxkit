@@ -20,7 +20,10 @@
  * current sheet, which leaves col 5 blank.
  */
 
-import ExcelJS from 'exceljs';
+// Type-only import (erased at runtime — no dependency) for the Workbook type;
+// the runtime value is loaded lazily via loadExcelJS (exceljs is OPTIONAL).
+import type ExcelJS from 'exceljs';
+import { loadExcelJS } from './exceljs-loader';
 
 import type { LicensesReport } from '../licenses/types';
 
@@ -91,7 +94,8 @@ export const BOM_COLUMNS: ReadonlyArray<string> = [
  * `Buffer.from` at the boundary.
  */
 export async function toLicensesXlsx(report: LicensesReport): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
+  const ExcelJSRuntime = await loadExcelJS();
+  const wb: ExcelJS.Workbook = new ExcelJSRuntime.Workbook();
   wb.creator = 'vyuh-dxkit';
   wb.created = new Date(report.analyzedAt);
 

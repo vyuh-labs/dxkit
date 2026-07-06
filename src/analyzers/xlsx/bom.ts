@@ -31,7 +31,11 @@
  * regardless of which report surface they're reading.
  */
 
-import ExcelJS from 'exceljs';
+// Type-only import (erased at runtime — no dependency) for the `ExcelJS.Workbook`
+// annotations below; the runtime value is loaded lazily via loadExcelJS so
+// exceljs stays an OPTIONAL dependency.
+import type ExcelJS from 'exceljs';
+import { loadExcelJS } from './exceljs-loader';
 
 import type { BomEntry, BomReport, BomSeverity } from '../bom/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
@@ -154,7 +158,8 @@ function anyReachable(e: BomEntry): 'yes' | 'no' | 'unknown' {
  * Render a `BomReport` as a multi-sheet XLSX workbook.
  */
 export async function toBomXlsx(report: BomReport): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
+  const ExcelJSRuntime = await loadExcelJS();
+  const wb: ExcelJS.Workbook = new ExcelJSRuntime.Workbook();
   wb.creator = 'vyuh-dxkit';
   wb.created = new Date(report.analyzedAt);
 
