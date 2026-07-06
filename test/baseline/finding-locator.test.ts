@@ -6,8 +6,9 @@
  * `file:line`. Computed once at classification time so no renderer re-derives it.
  */
 import { describe, it, expect } from 'vitest';
-import { describeEntryLocation } from '../../src/baseline/check';
+import { applyCustomCheckIntent, describeEntryLocation } from '../../src/baseline/check';
 import type { BaselineEntry } from '../../src/baseline/types';
+import type { ClassifyResult } from '../../src/baseline/policy';
 
 describe('describeEntryLocation', () => {
   it('dep-vuln → package@version · advisory-id (the fix for Location: —)', () => {
@@ -59,5 +60,71 @@ describe('describeEntryLocation', () => {
       fingerprint: 'deadbeef00000000',
     } as unknown as BaselineEntry;
     expect(describeEntryLocation(hmac)).toBe('');
+  });
+
+  it('custom-check located → check/rule · file:line', () => {
+    const entry = {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      blocking: true,
+      file: 'src/a.ts',
+      line: 42,
+      rule: 'no-unused-vars',
+    } as unknown as BaselineEntry;
+    expect(describeEntryLocation(entry)).toBe('lint:typescript/no-unused-vars · src/a.ts:42');
+  });
+
+  it('custom-check binary (no file) → the check name, never a bare "custom-check"', () => {
+    const entry = {
+      kind: 'custom-check',
+      check: 'check:seam',
+      blocking: true,
+    } as unknown as BaselineEntry;
+    expect(describeEntryLocation(entry)).toBe('check:seam');
+  });
+});
+
+describe('applyCustomCheckIntent', () => {
+  const blocked: ClassifyResult = {
+    status: 'added',
+    blocks: true,
+    warns: false,
+    reasons: [],
+  };
+
+  it('demotes a net-new BLOCKING-list finding from a non-blocking check to a warn', () => {
+    const entry = {
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      blocking: false,
+    } as unknown as BaselineEntry;
+    const out = applyCustomCheckIntent(entry, blocked);
+    expect(out.blocks).toBe(false);
+    expect(out.warns).toBe(true);
+    expect(out.reasons.some((r) => r.code === 'non-blocking-check')).toBe(true);
+  });
+
+  it('leaves a blocking custom-check untouched', () => {
+    const entry = {
+      kind: 'custom-check',
+      check: 'check:seam',
+      blocking: true,
+    } as unknown as BaselineEntry;
+    expect(applyCustomCheckIntent(entry, blocked)).toBe(blocked);
+  });
+
+  it('is a no-op for non-custom-check kinds', () => {
+    const secret = { kind: 'secret' } as unknown as BaselineEntry;
+    expect(applyCustomCheckIntent(secret, blocked)).toBe(blocked);
+  });
+
+  it('is a no-op when the classification already does not block', () => {
+    const entry = {
+      kind: 'custom-check',
+      check: 'x',
+      blocking: false,
+    } as unknown as BaselineEntry;
+    const warnOnly: ClassifyResult = { status: 'added', blocks: false, warns: true, reasons: [] };
+    expect(applyCustomCheckIntent(entry, warnOnly)).toBe(warnOnly);
   });
 });
