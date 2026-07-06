@@ -807,6 +807,64 @@ share one `src/languages/jvm-build.ts` provider (Maven/Gradle, module-
 level affected) per Rule 2 — a worked example of a shared multi-build-
 system floor.
 
+### 16. Every user-facing capability is registered for discovery
+
+As the product broadens, feature discoverability becomes a first-class
+concern: a capability nobody can find is a capability that does not exist.
+Every top-level CLI command MUST declare a `CapabilityDescriptor` in
+`src/discovery/commands.ts:COMMANDS` — the single source of truth for "what
+capabilities exist and how a user (and an agent) discovers them." That one
+registry drives every discovery surface:
+
+- the grouped `vyuh-dxkit` help index (`renderCommandIndex`, and the
+  unknown-command hint via `suggestCommand`);
+- `doctor` advisor mode — a command's optional `whenToRecommend(ctx)` probe
+  lets `doctor` proactively recommend an unused capability grounded in the
+  repo (e.g. detect ad-hoc repo checks that aren't gated → recommend the
+  gate runner);
+- the agent-facing `skill` mapping;
+- generated docs.
+
+`audience` gates the requirement: `user` commands carry full discovery
+metadata (`group`, `summary`, `docsBlurb`, and a real `skill` when one
+exists); `internal` commands (hook bodies, loop-snapshot plumbing) are still
+**registered** — nothing is invisible — but exempt from the user-facing
+fields. `internal` is a **declared** status, not an omission, so an
+accidentally-hidden user command cannot slip through as merely "unregistered".
+
+Because the registry is the ground truth, a capability cannot be added
+without declaring how it is discovered — discoverability is part of a
+feature's definition of done, not a docs afterthought. New user-facing
+features (the gate runner, `receipt`, allowlist-aware reports) ship WITH
+their descriptor + skill.
+
+**Bad**: a new top-level `case '<cmd>':` in `src/cli.ts` with no
+`COMMANDS` entry; a hand-maintained command list in `printUsage` that
+drifts from the switch; a descriptor naming a `skill` that was never written.
+
+**Good**: one `CapabilityDescriptor` per command; the help index +
+unknown-command hint + docs derived from the registry; `doctor` reads the
+`whenToRecommend` probes.
+
+#### Discovery-registration enforcement (the block-if-unregistered gate)
+
+Mirror of Rule 15's managed-write gate, three escalating layers:
+
+1. **Compile-time**: `CommandId` is the union derived from `COMMANDS`;
+   code that switches over it exhaustively is checked by `tsc`. (Full
+   compile-time dispatch enforcement lands when the `cli.ts` switch becomes
+   table-driven off the registry — a future refactor; the contract is
+   unchanged by it.)
+2. **`scripts/check-architecture.sh` Rule 16**: bidirectional parity —
+   every top-level `case '<id>':` in `src/cli.ts` has a registry id/alias,
+   and every registry token dispatches. Runs pre-commit + CI. A new command
+   that skips registration (or a stale registry entry) fails the gate.
+3. **`test/discovery-playbook.test.ts`**: user-facing field completeness,
+   every referenced `skill` file exists, ids/aliases are unique, and a
+   **synthetic-command injection** proving the parity check still bites —
+   the same empirical guard as `managed-artifacts-playbook.test.ts` /
+   `recipe-playbook.test.ts`.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

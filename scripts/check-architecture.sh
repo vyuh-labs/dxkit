@@ -1227,6 +1227,37 @@ if [ -n "$RULE15_MANAGED_WRITE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Rule 16: capability-registry parity (block-if-unregistered) ────────────
+# Every top-level CLI command MUST be registered in src/discovery/commands.ts.
+# That registry is the single source of truth driving the help index, doctor
+# advisor mode, the skill mapping, and generated docs — so a command that
+# skips registration is undiscoverable. Enforce bidirectional parity between
+# the top-level switch cases in src/cli.ts and the registry's ids + aliases.
+# (Richer checks — user-facing field completeness, skill-file existence,
+# synthetic-injection — live in test/discovery-playbook.test.ts.)
+RULE16_CLI_CASES=$(grep -oE "^    case '[a-z][a-z-]*':" src/cli.ts | sed -E "s/^    case '([a-z-]+)':/\1/" | sort -u)
+RULE16_REG_TOKENS=$( { \
+  grep -oE "id: '[a-z][a-z-]*'" src/discovery/commands.ts | sed -E "s/id: '([a-z-]+)'/\1/"; \
+  grep -oE "aliases: \[[^]]*\]" src/discovery/commands.ts | grep -oE "'[a-z-]+'" | tr -d "'"; \
+} | sort -u)
+RULE16_UNREGISTERED=$(comm -23 <(printf '%s\n' "$RULE16_CLI_CASES") <(printf '%s\n' "$RULE16_REG_TOKENS"))
+RULE16_ORPHANED=$(comm -13 <(printf '%s\n' "$RULE16_CLI_CASES") <(printf '%s\n' "$RULE16_REG_TOKENS"))
+if [ -n "$RULE16_UNREGISTERED" ]; then
+  echo "❌ Rule 16 violation: CLI command(s) with no CapabilityDescriptor in src/discovery/commands.ts:"
+  for c in $RULE16_UNREGISTERED; do echo "     $c"; done
+  echo "   → Add a descriptor (mirror an existing entry). Discoverability is part of a"
+  echo "     command's definition of done: the registry drives the help index, doctor"
+  echo "     advisor mode, the skill mapping, and generated docs. Machine-invoked"
+  echo "     commands register with audience: 'internal' (still registered, not hidden)."
+  ERRORS=$((ERRORS + 1))
+fi
+if [ -n "$RULE16_ORPHANED" ]; then
+  echo "❌ Rule 16 violation: registry lists command token(s) with no dispatch in src/cli.ts:"
+  for c in $RULE16_ORPHANED; do echo "     $c"; done
+  echo "   → Remove the stale entry/alias, or add its switch case in src/cli.ts."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
