@@ -614,12 +614,18 @@ export async function runGuardrailCheck(
       (envelopeDrift.configHashChanged ||
         envelopeDrift.ignoreHashChanged ||
         envelopeDrift.policyHashChanged);
+    // The finding's file was added/modified by this diff → developer-introduced,
+    // so it outranks config_drift (a coincident policy.json edit must not
+    // re-label a net-new finding on a new file). Non-empty changed-line set = the
+    // file is in the diff (a brand-new file has all its lines added).
+    const fileChangedInDiff = file !== undefined && (linesChangedFor(file)?.size ?? 0) > 0;
 
     const context: ClassifyContext = {
       severity,
       kind: anchorEntry.kind,
       ...(scannerVersionDiffers ? { scannerVersionDiffers: true } : {}),
       ...(configDiffers ? { configDiffers: true } : {}),
+      ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
     };
 
