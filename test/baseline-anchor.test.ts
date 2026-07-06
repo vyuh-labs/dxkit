@@ -32,7 +32,8 @@ import {
   detectInstalledRefreshTransport,
   installCiGuardrails,
 } from '../src/ship-installers';
-import { hydrateAnchorFromBranch } from '../src/baseline/anchor';
+import { hydrateAnchorFromBranch, loadAnchorFromBranch } from '../src/baseline/anchor';
+import { execSync } from 'child_process';
 
 const PROTECTED: EnforcementState = {
   branch: 'main',
@@ -494,5 +495,69 @@ describe('hydrateAnchorFromBranch', () => {
         anchorRef: 'dxkit-baselines',
       }),
     ).toBe(false);
+  });
+});
+
+// #18: a LOCAL guardrail check under the `branch` transport must read the
+// anchor from the SIDE BRANCH (source of truth), not a stale committed tree
+// copy — read-only, without mutating the tree. loadAnchorFromBranch is that read.
+describe('loadAnchorFromBranch (branch-transport read-only side-branch read)', () => {
+  let dir: string;
+  const rel = '.dxkit/baselines/main.json';
+  const sh = (cmd: string) => execSync(cmd, { cwd: dir, stdio: 'ignore' });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-loadanchor-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('returns null for non-branch transports (tree/cache/undefined)', () => {
+    for (const section of [undefined, { anchor: 'tree' as const }, { anchor: 'cache' as const }]) {
+      expect(loadAnchorFromBranch(dir, join(dir, rel), section)).toBeNull();
+    }
+  });
+
+  it('returns null (no throw) when the side branch is unreachable / not created yet', () => {
+    sh('git init -q');
+    expect(
+      loadAnchorFromBranch(dir, join(dir, rel), {
+        anchor: 'branch',
+        anchorRef: 'dxkit-baselines',
+      }),
+    ).toBeNull();
+  });
+
+  it('reads the FRESH side-branch anchor, not the stale tree copy, and leaves the tree untouched', () => {
+    sh('git init -q');
+    sh('git config user.email t@t.co');
+    sh('git config user.name t');
+    const mainFile = join(dir, rel);
+    mkdirSync(join(dir, '.dxkit', 'baselines'), { recursive: true });
+    writeFileSync(mainFile, JSON.stringify({ generatedAt: 'STALE', findings: 205 }));
+    sh('git add -A');
+    sh('git commit -qm init');
+    const mainBranch = execSync('git branch --show-current', { cwd: dir, encoding: 'utf8' }).trim();
+    // Side branch carries the FRESH anchor (what the after-merge refresh pushes).
+    sh('git checkout -q -b dxkit-baselines');
+    writeFileSync(mainFile, JSON.stringify({ generatedAt: 'FRESH', findings: 185 }));
+    sh('git add -A');
+    sh('git commit -qm fresh');
+    sh(`git checkout -q ${mainBranch}`); // tree copy is STALE again
+
+    const tmpPath = loadAnchorFromBranch(dir, mainFile, {
+      anchor: 'branch',
+      anchorRef: 'dxkit-baselines',
+    });
+    expect(tmpPath).not.toBeNull();
+    // The returned (temp) file has the FRESH side-branch content …
+    expect(JSON.parse(readFileSync(tmpPath!, 'utf8'))).toMatchObject({
+      generatedAt: 'FRESH',
+      findings: 185,
+    });
+    // … and it did NOT write into the tree path, which is still STALE.
+    expect(tmpPath).not.toBe(mainFile);
+    expect(JSON.parse(readFileSync(mainFile, 'utf8'))).toMatchObject({
+      generatedAt: 'STALE',
+      findings: 205,
+    });
   });
 });

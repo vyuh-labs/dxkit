@@ -58,7 +58,7 @@ import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { classify, resolvePolicy, loadPolicyFromCwd } from './policy';
 import type { BrownfieldPolicy, ClassifyContext, ClassifyResult, BaselineSection } from './policy';
-import { hydrateAnchorFromBranch } from './anchor';
+import { hydrateAnchorFromBranch, loadAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
@@ -1044,10 +1044,25 @@ async function loadPriorSide(
   if (mode.mode !== 'ref-based') {
     const baselinePath =
       options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
+    const section = safeBaselineSection(cwd);
+    // Scoped to the `branch` anchor transport: the source-of-truth anchor lives
+    // on the side branch (the refresh only updates that, so a committed tree copy
+    // goes stale). Read it from there — read-only, into a temp file — so a LOCAL
+    // check matches CI instead of gating against a stale tree copy. Returns null
+    // for `tree` (the tree copy IS the source of truth) and `cache` (CI-only, no
+    // local side branch), and when the side branch isn't created yet / we're
+    // offline — all of which fall through to the on-disk copy below.
+    const fromBranch = loadAnchorFromBranch(cwd, baselinePath, section);
+    if (fromBranch) {
+      // Keep `baselinePath` as the logical tree path for display; read the fresh
+      // side-branch anchor from the temp file.
+      return { baseline: readBaselineFile(fromBranch), baselinePath };
+    }
     if (!fs.existsSync(baselinePath)) {
-      // `anchor: 'branch'` transport keeps the committed anchor on a separate
-      // unprotected branch, not in the tree — hydrate it before giving up.
-      const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, safeBaselineSection(cwd));
+      // No on-disk copy: materialize a `branch` anchor at the tree path if we can
+      // (a bootstrap where the side branch became reachable between the two
+      // calls, or a non-'branch' transport with a genuinely missing file).
+      const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, section);
       if (!hydrated) {
         throw new Error(
           `baseline file not found: ${baselinePath}. ` +
