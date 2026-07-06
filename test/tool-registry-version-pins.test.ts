@@ -34,6 +34,7 @@ const PINNED_TOOLS: Record<string, string> = {
   'osv-scanner': 'v2.3.8',
   pmd: '7.24.0',
   detekt: 'v1.23.6',
+  ktlint: '1.5.0',
   graphify: 'graphifyy==0.8.40',
   jscpd: 'jscpd@4.2.5',
   // 2.10 version-pin sweep: defensive freezes for the dxkit-owned,
