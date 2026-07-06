@@ -212,8 +212,17 @@ export interface ClassifyContext {
    *  `tooling_drift` rather than blocking it as a new regression. */
   readonly scannerVersionDiffers?: boolean;
   /** True when the baseline's `.dxkit-ignore` / policy hash differs
-   *  from the current scan. Reclassifies `added` as `config_drift`. */
+   *  from the current scan. Reclassifies `added` as `config_drift` —
+   *  UNLESS the finding is on a file the diff itself added/changed
+   *  (`fileChangedInDiff`), in which case it's developer-introduced, not
+   *  a config artifact, and stays `added`. */
   readonly configDiffers?: boolean;
+  /** True when the finding's source file was added or modified by the current
+   *  diff (base→HEAD). A finding on such a file is developer-introduced, so it
+   *  outranks `config_drift`: editing policy.json in the same PR must not
+   *  re-label a net-new finding on a brand-new file as "config changed between
+   *  runs". */
+  readonly fileChangedInDiff?: boolean;
   /** True when the underlying source file's lines overlap lines
    *  changed by the current diff. Used by `newSevereQualityIssueIn
    *  ChangedFiles` and similar rules; absent context is treated as
@@ -271,7 +280,13 @@ export function classify(
         code: 'tooling-drift',
         detail: 'scanner or advisory-db version changed between runs',
       });
-    } else if (context.configDiffers) {
+    } else if (context.configDiffers && !context.fileChangedInDiff) {
+      // Config drift only explains a finding that appeared WITHOUT a code
+      // change (e.g. a path the policy newly un-ignored). A finding on a file
+      // the diff itself added/changed is developer-introduced — it stays
+      // `added` even when policy.json changed in the same PR (the misattribution
+      // #19 reported: a net-new finding on a brand-new file labelled config_drift
+      // because policy.json was edited alongside it).
       status = 'config_drift';
       reasons.push({
         code: 'config-drift',

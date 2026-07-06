@@ -331,10 +331,15 @@ describe('runGuardrailCheck (integration)', () => {
       for (const p of addedPairs) expect(p.classification.blocks).toBe(false);
     }, 300_000);
 
-    it('reclassifies `added` as `config_drift` when the ignore file changes', async () => {
+    it('a finding on a diff-added file stays `added` even when the ignore file also changed (#19)', async () => {
       await createBaseline({ cwd: dir });
-      // Add a .dxkit-ignore + a new .bak in the same commit; the
-      // ignore-hash drift demotes the added entry's status.
+      // The developer adds a .dxkit-ignore AND a new .bak file in the same
+      // commit. The ignore hash changes, but the stale-file finding is on the
+      // BRAND-NEW file the diff itself added — it's developer-introduced, so it
+      // must stay `added`, NOT be re-labelled config_drift just because config
+      // changed alongside it (feedback #19). (config_drift's genuine case — a
+      // finding on an UNCHANGED file surfaced by the ignore change — is unit-
+      // tested in policy.test.ts.)
       writeFileSync(join(dir, '.dxkit-ignore'), 'fixtures/\n');
       writeFileSync(join(dir, 'leftover.bak'), 'x\n');
       execFileSync('git', ['add', '.'], { cwd: dir });
@@ -342,11 +347,9 @@ describe('runGuardrailCheck (integration)', () => {
 
       const result = await runGuardrailCheck({ cwd: dir });
       expect(result.envelopeDrift.ignoreHashChanged).toBe(true);
-      const driftPairs = result.pairs.filter(
-        (p) =>
-          p.classification.status === 'config_drift' || p.classification.status === 'tooling_drift',
-      );
-      expect(driftPairs.length).toBeGreaterThan(0);
+      const staleBak = result.pairs.find((p) => p.kind === 'stale-file');
+      expect(staleBak?.classification.status).toBe('added');
+      expect(staleBak?.classification.reasons.some((r) => r.code === 'config-drift')).toBe(false);
     }, 300_000);
   });
 });

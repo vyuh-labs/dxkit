@@ -70,6 +70,23 @@ describe('classify — drift context reclassifies added', () => {
     expect(result.status).toBe('tooling_drift');
   });
 
+  it('a finding on a diff-changed file stays added, not config_drift (#19 misattribution)', () => {
+    // The developer edited policy.json AND added a new file with a finding on it.
+    // config drift explains findings that appear WITHOUT a code change; a finding
+    // on the file the diff itself added is developer-introduced → `added`.
+    const ctx: ClassifyContext = { configDiffers: true, fileChangedInDiff: true };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('added');
+    expect(result.reasons.some((r) => r.code === 'config-drift')).toBe(false);
+  });
+
+  it('config_drift still applies to a finding NOT on a diff-changed file', () => {
+    // A path the policy newly un-ignored surfaces a finding with no code change.
+    const ctx: ClassifyContext = { configDiffers: true, fileChangedInDiff: false };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('config_drift');
+  });
+
   it('does not reclassify persisted on drift signals', () => {
     const ctx: ClassifyContext = { scannerVersionDiffers: true };
     const result = classify(pair('persisted'), DEFAULT_BROWNFIELD_POLICY, ctx);
