@@ -59,10 +59,16 @@ body; a multi-commit feature gets sections.
 
 ## [3] Signals — attach what dxkit knows
 
-Run the guardrail so the PR states its own verdict, and surface any suppression
-activity a reviewer must sign off on:
+Surface the PR's own verdict + any suppression activity a reviewer must sign off
+on. REUSE a guardrail verdict already produced for this commit instead of
+re-running: a feature session normally ran the gate against this exact HEAD
+moments ago (dxkit-feature verify, the pre-push hook, or CI), and a fresh check
+here is a redundant ~25s — the third run in one session. Only run a new check if
+none exists for the current commit (or the tree changed since the last run):
 
 ```bash
+# Reuse the verdict from dxkit-feature verify / the pre-push hook if it ran on
+# this commit; run a fresh check only when there isn't one:
 npx vyuh-dxkit guardrail check                       # PASS/FAIL the PR will get in CI
 npx vyuh-dxkit allowlist audit                        # any new/expiring suppressions?
 npx vyuh-dxkit health --detailed | head -40           # score movement, if relevant
