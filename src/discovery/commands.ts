@@ -23,6 +23,8 @@
  * without declaring how it is discovered — discoverability is part of a
  * feature's definition of done, not a docs afterthought.
  */
+import * as fs from 'fs';
+import * as path from 'path';
 
 /** Job-to-be-done grouping for the help index. `internal` = machine-invoked. */
 export type CommandGroup =
@@ -249,6 +251,7 @@ export const COMMANDS = [
     group: 'gate',
     summary: 'Capture / show per-finding baselines for the guardrail',
     docsBlurb: 'Record per-finding identities the guardrail check diffs against to gate net-new regressions.',
+    whenToRecommend: recommendBaseline,
   },
   {
     id: 'guardrail',
@@ -291,6 +294,7 @@ export const COMMANDS = [
     summary: 'UI→API integration mapping + the broken-integration gate',
     docsBlurb: 'Map client calls to served endpoints and gate changes that break a UI→API contract across repos.',
     skill: 'dxkit-flow',
+    whenToRecommend: recommendFlow,
   },
 
   // ── Explore ────────────────────────────────────────────────────────────
@@ -442,4 +446,96 @@ export function suggestCommand(input: string): string[] {
     }
   }
   return [...hits];
+}
+
+// ─── Doctor advisor probes ──────────────────────────────────────────────────
+// Grounded, cheap recommendations `doctor` surfaces for capabilities the repo
+// would benefit from but isn't using. Each probe is self-contained (cwd + fs
+// only) and conservative — it fires only on a clear signal and returns null
+// once the capability is in use, so `doctor` never nags about what's already
+// set up. New capabilities attach their own probe here as they land (the gate
+// runner's "you have ungated repo checks" probe is the marquee future case).
+
+function existsAt(...parts: string[]): boolean {
+  try {
+    return fs.existsSync(path.join(...parts));
+  } catch {
+    return false;
+  }
+}
+
+function readJsonSafe(p: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function dirHasEntries(dir: string): boolean {
+  try {
+    return fs.readdirSync(dir).some((f) => !f.startsWith('.'));
+  } catch {
+    return false;
+  }
+}
+
+/** Recommend `baseline create` when dxkit is installed but has no baseline. */
+function recommendBaseline(ctx: RecommendContext): Recommendation | null {
+  // Only relevant once dxkit is installed (the manifest exists). Without a
+  // baseline, `guardrail check` has nothing to diff against.
+  if (!existsAt(ctx.cwd, '.vyuh-dxkit.json')) return null;
+  if (dirHasEntries(path.join(ctx.cwd, '.dxkit', 'baselines'))) return null;
+  return {
+    reason:
+      'dxkit is installed but no baseline exists — the guardrail cannot gate net-new findings without one',
+    command: 'vyuh-dxkit baseline create',
+  };
+}
+
+/** Recommend `flow init` on a UI repo with no flow setup. */
+function recommendFlow(ctx: RecommendContext): Recommendation | null {
+  const pkg = readJsonSafe(path.join(ctx.cwd, 'package.json'));
+  if (!pkg) return null;
+  const deps = {
+    ...((pkg.dependencies as Record<string, unknown>) ?? {}),
+    ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
+  };
+  const uiFrameworks = ['react', 'next', 'vue', 'svelte', '@angular/core'];
+  if (!uiFrameworks.some((f) => f in deps)) return null;
+  // Already configured? workspace.json or a flow policy block means yes.
+  if (existsAt(ctx.cwd, '.dxkit', 'workspace.json')) return null;
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json'));
+  if (policy && 'flow' in policy) return null;
+  return {
+    reason:
+      'detected a UI framework but no flow setup — flow maps UI→API calls and gates changes that break an integration',
+    command: 'vyuh-dxkit flow init',
+  };
+}
+
+/** One command's advisor recommendation, tagged with the command id. */
+export interface CommandRecommendation {
+  id: string;
+  recommendation: Recommendation;
+}
+
+/**
+ * Run every user-facing command's `whenToRecommend` probe against `cwd` and
+ * collect the recommendations that fired. Fail-open per probe: a throwing
+ * probe is skipped, never breaks `doctor`. This is the data behind doctor
+ * advisor mode — contextual capability discovery grounded in the repo.
+ */
+export function gatherRecommendations(cwd: string): CommandRecommendation[] {
+  const out: CommandRecommendation[] = [];
+  for (const c of userCommands()) {
+    if (!c.whenToRecommend) continue;
+    try {
+      const rec = c.whenToRecommend({ cwd });
+      if (rec) out.push({ id: c.id, recommendation: rec });
+    } catch {
+      // A probe never breaks doctor.
+    }
+  }
+  return out;
 }

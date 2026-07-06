@@ -16,8 +16,9 @@
  *   - SYNTHETIC INJECTION: the parity check actually bites — inject a fake
  *     unregistered command and assert it is flagged.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import {
@@ -27,6 +28,7 @@ import {
   userCommands,
   suggestCommand,
   renderCommandIndex,
+  gatherRecommendations,
   type CapabilityDescriptor,
 } from '../src/discovery/commands';
 
@@ -129,5 +131,48 @@ describe('capability registry — lookup + discovery helpers', () => {
     for (const c of userCommands()) {
       expect(text, `help index missing ${c.id}`).toContain(c.id);
     }
+  });
+});
+
+describe('capability registry — doctor advisor probes (whenToRecommend)', () => {
+  const tmps: string[] = [];
+  const mkTmp = (): string => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-advisor-'));
+    tmps.push(d);
+    return d;
+  };
+  afterEach(() => {
+    for (const d of tmps.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('recommends `baseline create` when dxkit is installed but no baseline exists', () => {
+    const d = mkTmp();
+    fs.writeFileSync(path.join(d, '.vyuh-dxkit.json'), '{}');
+    const recs = gatherRecommendations(d);
+    expect(recs.map((r) => r.id)).toContain('baseline');
+  });
+
+  it('does NOT recommend `baseline` once a baseline exists (probe returns null)', () => {
+    const d = mkTmp();
+    fs.writeFileSync(path.join(d, '.vyuh-dxkit.json'), '{}');
+    fs.mkdirSync(path.join(d, '.dxkit', 'baselines'), { recursive: true });
+    fs.writeFileSync(path.join(d, '.dxkit', 'baselines', 'main.json'), '{}');
+    expect(gatherRecommendations(d).map((r) => r.id)).not.toContain('baseline');
+  });
+
+  it('recommends `flow` on a UI repo with no flow setup, and not once configured', () => {
+    const d = mkTmp();
+    fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ dependencies: { react: '^18' } }));
+    expect(gatherRecommendations(d).map((r) => r.id)).toContain('flow');
+    // Configuring flow (workspace.json) silences the recommendation.
+    fs.mkdirSync(path.join(d, '.dxkit'), { recursive: true });
+    fs.writeFileSync(path.join(d, '.dxkit', 'workspace.json'), '{}');
+    expect(gatherRecommendations(d).map((r) => r.id)).not.toContain('flow');
+  });
+
+  it('is fail-open: an empty repo yields no recommendations and never throws', () => {
+    const d = mkTmp();
+    expect(() => gatherRecommendations(d)).not.toThrow();
+    expect(gatherRecommendations(d)).toEqual([]);
   });
 });

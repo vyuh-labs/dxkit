@@ -13,6 +13,7 @@ import { detectInstalledRefreshTransport } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
+import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 
 /**
  * Three-tier doctor:
@@ -74,6 +75,10 @@ export interface DoctorReport {
    *  is no standalone `flow doctor`. Agent-legible so the dxkit-flow skill reads
    *  it directly from `doctor --json`. */
   flow?: FlowDiagnosis;
+  /** Advisor mode: capabilities this repo would benefit from but isn't using,
+   *  each grounded in a repo signal via the capability registry's
+   *  `whenToRecommend` probes. Agent-legible so an agent can act on them. */
+  recommendations?: CommandRecommendation[];
   summary: {
     reports: { pass: number; fail: number; status: 'ok' | 'fail' };
     dx: { pass: number; fail: number; status: 'ok' | 'partial' | 'absent' };
@@ -942,6 +947,7 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
     console.log(''); // slop-ok
     logger.dim('💡 Ask Claude Code "fix dxkit" to walk through these via the dxkit-fix skill.');
   } else if (dxTotal > 0 && dx.status !== 'ok') {
+    // (advisor recommendations render below, independent of the fix list)
     // Legacy hint preserved for existing customers — only shows if no
     // structured fix-list is available.
     console.log(''); // slop-ok
@@ -953,6 +959,16 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
       logger.dim(
         `💡 Run \`${dxkitCli('update')}\` to refresh missing Agent DX files (the manifest already exists).`,
       );
+    }
+  }
+
+  // Advisor mode — capabilities this repo would benefit from but isn't using.
+  if (report.recommendations && report.recommendations.length > 0) {
+    console.log(''); // slop-ok
+    logger.info('Recommended for this repo:');
+    for (const { recommendation } of report.recommendations) {
+      logger.dim(`• ${recommendation.reason}`);
+      logger.dim(`  → ${recommendation.command}`);
     }
   }
 
@@ -1019,7 +1035,14 @@ export async function runDoctor(cwd: string, opts: { json?: boolean } = {}): Pro
   // Fold the flow-contract diagnosis into the report (absent on non-flow repos).
   // Never fails doctor — diagnoseFlow is fail-open (returns null on any error).
   const flow = await diagnoseFlow(cwd);
-  const report: DoctorReport = flow ? { ...base, flow } : base;
+  // Advisor mode: capabilities the repo would benefit from but isn't using,
+  // grounded in repo signals via the registry's whenToRecommend probes.
+  const recommendations = gatherRecommendations(cwd);
+  const report: DoctorReport = {
+    ...base,
+    ...(flow ? { flow } : {}),
+    ...(recommendations.length > 0 ? { recommendations } : {}),
+  };
 
   if (opts.json) {
     // Logger is already in stderr mode (setJsonMode was called by cli.ts);
