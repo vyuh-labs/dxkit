@@ -133,10 +133,15 @@ describe('runGuardrailCheck (integration)', () => {
 
       const consoleOut = renderConsole(result);
       expect(consoleOut).toContain('stale-file');
+      // #21: the fingerprint is printed on the finding line so `allowlist add
+      // --fingerprint=<id>` can be copy-pasted straight from gate output.
+      expect(consoleOut).toContain('fingerprint:');
+      expect(consoleOut).toContain('allowlist add --fingerprint=');
       const jsonOut = renderJson(result);
       expect(jsonOut.summary.pairs).toBeGreaterThan(0);
       const mdOut = renderMarkdown(result);
       expect(mdOut).toMatch(/_Baseline_:/);
+      expect(mdOut).toContain('Fingerprint'); // #21: markdown table carries the column
 
       // Explicit --baseline path override.
       const stashed = join(dir, 'stashed-baseline.json');

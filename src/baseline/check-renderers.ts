@@ -236,6 +236,12 @@ function verdictBanner(result: GuardrailCheckResult): string {
   return logger.bold('Guardrail PASSED');
 }
 
+/** The finding's durable fingerprint (current side for added/persisted; prior
+ *  side for removed) — the `--fingerprint` value `allowlist add` expects. */
+function pairFingerprint(p: ClassifiedPair): string | undefined {
+  return p.pair.currentId ?? p.pair.priorId;
+}
+
 function formatPairLines(p: ClassifiedPair, indent: string): string[] {
   const out: string[] = [];
   const loc = locatorProse(p);
@@ -249,6 +255,10 @@ function formatPairLines(p: ClassifiedPair, indent: string): string[] {
   for (const r of p.classification.reasons) {
     out.push(`${indent}  · ${r.code}: ${r.detail}`);
   }
+  // The fingerprint, so a reviewer can copy-paste it straight into
+  // `allowlist add --fingerprint=<id>` without digging through the JSON report.
+  const fp = pairFingerprint(p);
+  if (fp) out.push(`${indent}  · fingerprint: ${fp}  (allowlist add --fingerprint=${fp})`);
   if (p.suppressedByAllowlist) {
     const exp = p.suppressedByAllowlist.expiresAt
       ? `, expires ${p.suppressedByAllowlist.expiresAt}`
@@ -628,8 +638,8 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   if (blocking.length > 0) {
     lines.push('### Blocking findings');
     lines.push('');
-    lines.push('| Status | Kind | Severity | Location | Reason |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
+    lines.push('|---|---|---|---|---|---|');
     for (const p of blocking) lines.push(markdownPairRow(p));
     lines.push('');
   }
@@ -664,8 +674,8 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('<details>');
     lines.push(`<summary>Warnings (${warning.length})</summary>`);
     lines.push('');
-    lines.push('| Status | Kind | Severity | Location | Reason |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
+    lines.push('|---|---|---|---|---|---|');
     for (const p of warning) lines.push(markdownPairRow(p));
     lines.push('');
     lines.push('</details>');
@@ -800,7 +810,11 @@ function markdownPairRow(p: ClassifiedPair): string {
   const sev = escapeMd(p.severity ?? '—');
   const loc = escapeMd(locatorProse(p) || '—');
   const reasonProse = p.classification.reasons.map((r) => `${r.code}: ${r.detail}`).join('; ');
-  return `| ${status} | ${kind} | ${sev} | ${loc} | ${escapeMd(reasonProse) || '—'} |`;
+  // Fingerprint in a `code` span so it's copy-pasteable into `allowlist add
+  // --fingerprint=<id>` straight from the PR comment.
+  const fp = pairFingerprint(p);
+  const fpCell = fp ? `\`${fp}\`` : '—';
+  return `| ${status} | ${kind} | ${sev} | ${loc} | ${fpCell} | ${escapeMd(reasonProse) || '—'} |`;
 }
 
 function escapeMd(s: string): string {
