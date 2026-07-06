@@ -646,7 +646,12 @@ export async function runGuardrailCheck(
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
     };
 
-    const classification = classify(pair, policy, context);
+    // `classify` is kind-agnostic; fold in the custom-check block INTENT (a
+    // net-new finding from a `blocking: false` check warns instead of blocks)
+    // into the ONE classification object, so the main verdict below AND the
+    // `--changed-only` re-derivation (pairBlocks, which reads `p.classification`)
+    // stay consistent (Rule 2).
+    const classification = applyCustomCheckIntent(anchorEntry, classify(pair, policy, context));
 
     // Allowlist suppression: consulted for any pair that would BLOCK or WARN. An
     // active entry matching this finding's fingerprint (and kind, to rule out an
@@ -872,10 +877,59 @@ export function describeEntryLocation(entry: BaselineEntry): string {
     const adv = entry.id ? ` · ${entry.id}` : '';
     return `${entry.package}${ver}${adv}`;
   }
+  if (!isSanitized(entry) && entry.kind === 'custom-check') {
+    // Lead with the check name — a binary (whole-command) check has no file, so
+    // without this the row would read a bare `custom-check` with no clue which
+    // one failed. Located findings append `check/rule · file:line`.
+    const rule = entry.rule ? `/${entry.rule}` : '';
+    const loc =
+      entry.file !== undefined
+        ? ` · ${entry.file}${entry.line !== undefined && entry.line > 0 ? `:${entry.line}` : ''}`
+        : '';
+    return `${entry.check}${rule}${loc}`;
+  }
   const file = locatorFile(entry);
   if (file === undefined) return '';
   const line = locatorLine(entry);
   return line !== undefined && line > 0 ? `${file}:${line}` : file;
+}
+
+/**
+ * Whether a net-new custom-check finding blocks. Reads the user/pack-declared
+ * `blocking` flag off the entry. A sanitized entry (compliance mode) stripped
+ * the flag, so it defaults to blocking=true — the conservative choice. Non-
+ * custom-check kinds never call this.
+ */
+function customCheckIsBlocking(entry: BaselineEntry): boolean {
+  if (isSanitized(entry)) return true;
+  return entry.kind === 'custom-check' ? entry.blocking : true;
+}
+
+/**
+ * Fold the custom-check block INTENT into a classification. Custom-check block
+ * intent is user/pack-declared per check (`entry.blocking`), NOT derived from
+ * severity or matcher status — so a net-new finding from a `blocking: false`
+ * check (a warn-only user check, or lint left at its default) is demoted
+ * block→warn here even though its `added` status is in the policy's block list.
+ * Pure + exported so the demotion is unit-tested directly (not only via a full
+ * guardrail run). A no-op for every non-custom-check kind and for a custom-check
+ * that already doesn't block.
+ */
+export function applyCustomCheckIntent(entry: BaselineEntry, c: ClassifyResult): ClassifyResult {
+  if (isSanitized(entry) || entry.kind !== 'custom-check' || !c.blocks) return c;
+  if (customCheckIsBlocking(entry)) return c;
+  return {
+    ...c,
+    blocks: false,
+    warns: true,
+    reasons: [
+      ...c.reasons,
+      {
+        code: 'non-blocking-check',
+        detail: 'custom check declared blocking:false — reported as a warning, not a block',
+      },
+    ],
+  };
 }
 
 function locatorFile(entry: BaselineEntry): string | undefined {

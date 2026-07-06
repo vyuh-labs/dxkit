@@ -55,6 +55,31 @@ describe('runGuardrailCheck (integration)', () => {
       rmSync(dir, { recursive: true, force: true });
     });
 
+    it('captures a failing user custom-check into the baseline and grandfathers it (#25)', async () => {
+      // A user-declared check that always fails. createBaseline runs it (scope
+      // includes customChecks because the policy configured one), the producer
+      // folds its failure into a `custom-check` baseline entry, and the guardrail
+      // matches it as PERSISTED (pre-existing) — grandfathered, not a net-new block.
+      mkdirSync(join(dir, '.dxkit'), { recursive: true });
+      writeFileSync(
+        join(dir, '.dxkit', 'policy.json'),
+        JSON.stringify({
+          checks: [{ name: 'custom:always-fail', command: ['node', '-e', 'process.exit(1)'] }],
+        }),
+      );
+      const created = await createBaseline({ cwd: dir });
+      const ccEntries = (created.file?.findings ?? []).filter((f) => f.kind === 'custom-check');
+      expect(ccEntries.length).toBe(1);
+      expect(ccEntries[0]).toMatchObject({ kind: 'custom-check', check: 'custom:always-fail' });
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      // The still-failing check is present on both sides → persisted, not net-new.
+      const ccPairs = result.pairs.filter((p) => p.kind === 'custom-check');
+      expect(ccPairs.length).toBe(1);
+      expect(ccPairs[0].classification.status).toBe('persisted');
+      expect(ccPairs[0].classification.blocks).toBe(false);
+    });
+
     it('renderers surface an UNMEASURED dependency audit — fail-loud, no silent clean (#73)', async () => {
       await createBaseline({ cwd: dir });
       const base = await runGuardrailCheck({ cwd: dir });
