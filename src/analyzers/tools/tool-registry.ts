@@ -1091,11 +1091,16 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['ktlint'],
     versionCheck: 'ktlint --version',
+    // ktlint ships a single self-executable on GitHub Releases (tag is the
+    // bare version, no `v` prefix). Pin the linux download so a breaking
+    // major can't silently change the diagnostic format dxkit's lint gate
+    // parses (KOTLIN_KTLINT_PARSE) — the jscpd-5.x class. brew/scoop track
+    // their own version (mirrors detekt, ktlint's sibling Kotlin linter).
     installCommands: {
       macos: 'brew install ktlint',
       linux:
-        'curl -sSLO https://github.com/pinterest/ktlint/releases/latest/download/ktlint && chmod a+x ktlint && sudo mv ktlint /usr/local/bin/',
-      windows: 'choco install ktlint',
+        'curl -sSLO https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint && chmod a+x ktlint && sudo mv ktlint /usr/local/bin/',
+      windows: 'scoop install ktlint',
     },
   },
   // SimpleCov is a pure Ruby gem, library-loaded (`require 'simplecov'`
