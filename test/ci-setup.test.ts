@@ -67,12 +67,14 @@ describe('installCiGuardrails renders + re-renders the CI runtime block', () => 
   const yml = (): string =>
     readFileSync(join(dir, '.github', 'workflows', 'dxkit-guardrails.yml'), 'utf8');
 
-  it('a Go repo gets setup-go with the version; no leftover placeholder', () => {
-    writeFileSync(join(dir, 'go.mod'), 'module x\ngo 1.24\n');
+  it('a Go repo gets setup-go with the DETECTED go.mod version; no leftover placeholder', () => {
+    writeFileSync(join(dir, 'go.mod'), 'module x\ngo 1.23\n');
     writeFileSync(join(dir, 'main.go'), 'package main\nfunc main(){}\n');
     installCiGuardrails(dir);
     expect(yml()).toContain('uses: actions/setup-go@v5');
-    expect(yml()).toContain("go-version: '1.24.0'");
+    // The version is DERIVED from the repo's go.mod (`go 1.23`), not the pack's
+    // hardcoded default — so CI provisions the Go the repo actually targets.
+    expect(yml()).toContain("go-version: '1.23'");
     expect(yml()).not.toContain('__DXKIT_CI_RUNTIME_SETUP__');
   });
 

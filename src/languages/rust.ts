@@ -35,6 +35,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import { readRepoFile } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
 
 interface CargoMessage {
@@ -962,6 +963,17 @@ const rustLintGateProvider: LintGateProvider = {
   },
 };
 
+/** The Rust toolchain this repo targets — `rust-toolchain.toml` channel or
+ *  `Cargo.toml` `rust-version`. Feeds the `RUST_VERSION` template var (the CI
+ *  step uses `rust-toolchain@stable`, whose channel is in the action ref, so
+ *  there's no `versionInput` to substitute). */
+function detectRustVersion(cwd: string): string | undefined {
+  const toolchain = readRepoFile(cwd, 'rust-toolchain.toml').match(/channel\s*=\s*"([^"]+)"/);
+  if (toolchain) return toolchain[1];
+  const cargo = readRepoFile(cwd, 'Cargo.toml').match(/rust-version\s*=\s*"([^"]+)"/);
+  return cargo ? cargo[1] : undefined;
+}
+
 export const rust: LanguageSupport = {
   id: 'rust',
   displayName: 'Rust',
@@ -1045,6 +1057,7 @@ export const rust: LanguageSupport = {
     steps: [{ name: 'Set up Rust', uses: 'dtolnay/rust-toolchain@stable' }],
   },
   defaultVersion: 'stable',
+  detectVersion: detectRustVersion,
   cliBinaries: ['rustc', 'cargo'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/rust:1',

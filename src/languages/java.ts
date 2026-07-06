@@ -23,6 +23,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import { readRepoFile, repoFileExists } from './version-detect';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -431,6 +432,35 @@ const javaCorrectnessProvider = jvmCorrectnessProvider({
 
 // ─── Pack export ────────────────────────────────────────────────────────────
 
+/**
+ * The JDK version this repo targets — `.java-version`, `pom.xml`
+ * `<maven.compiler.release>` / `<java.version>` / `<maven.compiler.source>`, or
+ * a Gradle `sourceCompatibility` / `JavaLanguageVersion.of(N)`. Feeds
+ * setup-java's `java-version` + the devcontainer JDK. Returns a bare major
+ * (`17`, `21`).
+ */
+function detectJavaVersion(cwd: string): string | undefined {
+  if (repoFileExists(cwd, '.java-version')) {
+    const m = readRepoFile(cwd, '.java-version').trim().match(/(\d+)/);
+    if (m) return m[1];
+  }
+  const pom = readRepoFile(cwd, 'pom.xml');
+  if (pom) {
+    const m = pom.match(/<(?:maven\.compiler\.(?:release|source)|java\.version)>\s*(?:1\.)?(\d+)/);
+    if (m) return m[1];
+  }
+  for (const gradle of ['build.gradle', 'build.gradle.kts']) {
+    const g = readRepoFile(cwd, gradle);
+    if (!g) continue;
+    const m =
+      g.match(/JavaLanguageVersion\.of\((\d+)\)/) ||
+      g.match(/sourceCompatibility\s*=?\s*['"]?(?:1\.)?(\d+)/) ||
+      g.match(/languageVersion\s*=\s*JavaLanguageVersion\.of\((\d+)\)/);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
 export const java: LanguageSupport = {
   id: 'java',
   displayName: 'Java',
@@ -547,10 +577,12 @@ export const java: LanguageSupport = {
         name: 'Set up Java',
         uses: 'actions/setup-java@v4',
         with: { distribution: 'temurin', 'java-version': '17' },
+        versionInput: 'java-version',
       },
     ],
   },
   defaultVersion: '17',
+  detectVersion: detectJavaVersion,
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/java:1',
     opts: { version: '17', installGradle: true },

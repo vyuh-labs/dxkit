@@ -38,6 +38,7 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { readRepoFile, repoFileExists } from './version-detect';
 
 interface RuffResult {
   code: string;
@@ -1161,6 +1162,22 @@ const pyLicensesProvider: LicensesProvider = {
   },
 };
 
+/**
+ * The Python version this repo targets — `pyproject.toml` `requires-python` or
+ * `.python-version` (`3.12`). Feeds setup-python's `python-version` + the
+ * devcontainer, so CI runs the interpreter the repo declares.
+ */
+function detectPythonVersion(cwd: string): string | undefined {
+  const pyproject = readRepoFile(cwd, 'pyproject.toml');
+  const m = pyproject.match(/requires-python\s*=\s*"[><=!~ ]*(\d+\.\d+)/);
+  if (m) return m[1];
+  if (repoFileExists(cwd, '.python-version')) {
+    const ver = readRepoFile(cwd, '.python-version').trim();
+    if (/^\d+\.\d+/.test(ver)) return ver.split('.').slice(0, 2).join('.');
+  }
+  return undefined;
+}
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -1259,10 +1276,12 @@ export const python: LanguageSupport = {
         name: 'Set up Python',
         uses: 'actions/setup-python@v5',
         with: { 'python-version': '3.12' },
+        versionInput: 'python-version',
       },
     ],
   },
   defaultVersion: '3.12',
+  detectVersion: detectPythonVersion,
   cliBinaries: ['python3', 'ruff'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/python:1',

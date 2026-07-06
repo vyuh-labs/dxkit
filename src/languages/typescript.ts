@@ -15,6 +15,7 @@ import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-d
 import { detectLockfile } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
@@ -1615,6 +1616,48 @@ const tsLicensesProvider: LicensesProvider = {
   },
 };
 
+/**
+ * The Node major this repo targets — `.nvmrc`, `package.json` `volta.node` /
+ * `engines.node`, else the installed Node. Feeds the `NODE_VERSION` template
+ * var. (The TS pack has no `ciSetup` — the CI runner already provides Node for
+ * dxkit's own CLI — and the always-on node devcontainer feature is installer-
+ * declared, so this drives docs, not a toolchain-setup substitution.)
+ */
+function detectNodeVersion(cwd: string): string | undefined {
+  if (repoFileExists(cwd, '.nvmrc')) {
+    const ver = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
+    if (/^\d+/.test(ver)) return ver.split('.')[0];
+  }
+  const pkg = readRepoFile(cwd, 'package.json');
+  if (pkg) {
+    try {
+      const parsed = JSON.parse(pkg) as {
+        volta?: { node?: string };
+        engines?: { node?: string };
+      };
+      const volta = parsed?.volta?.node;
+      if (volta) {
+        const m = String(volta).match(/^(\d+)/);
+        if (m) return m[1];
+      }
+      const engine = parsed?.engines?.node;
+      if (engine) {
+        if (!/[>|]/.test(engine)) {
+          const m = String(engine).match(/(\d+)/);
+          if (m) return m[1];
+        }
+        const installed = installedNodeMajor();
+        if (installed) return installed;
+        const m = String(engine).match(/(\d+)/);
+        if (m) return m[1];
+      }
+    } catch {
+      /* ignore malformed package.json */
+    }
+  }
+  return installedNodeMajor();
+}
+
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
@@ -1798,6 +1841,7 @@ export const typescript: LanguageSupport = {
   permissions: ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)'],
   defaultVersion: '20',
   versionKey: 'node',
+  detectVersion: detectNodeVersion,
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/node:1',
     // Node 22 LTS — matches the smoke workflow's `setup-node@v6` line.

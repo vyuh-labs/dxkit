@@ -221,6 +221,34 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     expect(lang.defaultVersion!.length).toBeGreaterThan(0);
   });
 
+  it('a version-bearing ciSetup step wires `versionInput` (CI provisions the DETECTED SDK)', () => {
+    // A `with` input named `version` or ending `-version` carries the toolchain
+    // version. If a step hardcodes one WITHOUT `versionInput`, CI silently
+    // provisions the pack's default even when the repo targets another version
+    // (the .NET-8-on-a-net9-repo bug). Force the pack to opt into derivation —
+    // or deliberately omit `versionInput` (documented, e.g. Kotlin's JDK).
+    for (const step of lang.ciSetup?.steps ?? []) {
+      const versionKeys = Object.keys(step.with ?? {}).filter(
+        (k) => k === 'version' || k.endsWith('-version'),
+      );
+      if (versionKeys.length === 0) continue;
+      // If versionInput is set it must name an actual `with` key; a pack may
+      // omit it only when the version axis differs from its detected version
+      // (Kotlin's setup-java JDK vs its compiler version — defers to Java).
+      if (step.versionInput !== undefined) {
+        expect(
+          versionKeys,
+          `${lang.id}: ciSetup step '${step.name}' versionInput '${step.versionInput}' not in \`with\``,
+        ).toContain(step.versionInput);
+      } else {
+        expect(
+          lang.id === 'kotlin',
+          `${lang.id}: ciSetup step '${step.name}' hardcodes ${versionKeys.join('/')} but has no versionInput — wire detectVersion + versionInput so CI derives the repo's version (or document the exemption)`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it('declares `devcontainerFeature` (per-stack feature for installDevcontainer)', () => {
     // Every shipped pack today has a canonical ghcr.io feature. If a
     // future pack genuinely has no feature surface, drop this

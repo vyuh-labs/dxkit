@@ -53,6 +53,17 @@ export interface CiSetupStep {
   readonly name: string;
   readonly uses: string;
   readonly with?: Readonly<Record<string, string>>;
+  /**
+   * The `with` input that carries the toolchain version (e.g. `'dotnet-version'`,
+   * `'python-version'`). When set AND the repo's version was DETECTED (not just
+   * defaulted), `allCiSetupSteps` overrides `with[versionInput]` with the
+   * detected version so CI provisions the SDK the repo actually targets — a
+   * net9.0 repo gets .NET 9, not the pack's hardcoded default. Omit on steps
+   * whose version is fixed in the action ref (e.g. `rust-toolchain@stable`) or
+   * whose version axis differs from the pack's `defaultVersion` (Kotlin's JDK vs
+   * its compiler version — left to the co-active Java pack).
+   */
+  readonly versionInput?: string;
 }
 
 /** A pack's CI runtime setup — the ordered steps unioned into the workflow. */
@@ -656,9 +667,23 @@ export interface LanguageSupport {
   /**
    * Default language version surfaced in `DEFAULT_VERSIONS` (e.g. '3.12'
    * for Python, '20' for Node). Plumbed into template variables as
-   * `<KEY>_VERSION` (uppercased `versionKey`).
+   * `<KEY>_VERSION` (uppercased `versionKey`). The FLOOR used when the repo's
+   * version can't be detected — the CI/devcontainer version is
+   * `detectVersion(cwd) ?? defaultVersion`.
    */
   defaultVersion?: string;
+
+  /**
+   * Detect the toolchain version this repo actually targets — .NET
+   * TargetFramework (`net9.0` → `'9.0'`), `go.mod`'s `go X.Y`, `.ruby-version`,
+   * `pom.xml` compiler release, etc. Returns undefined when undetectable (then
+   * consumers fall back to `defaultVersion`). Pack-declared per Rule 6: detection
+   * lives in the pack, never in a hardcoded `detect.ts` switch. `detect.ts`
+   * populates `DetectedStack.versions` from these; `allCiSetupSteps` /
+   * devcontainer render substitute a DETECTED version so a repo gets the SDK it
+   * targets (the pre-fix bug: a hardcoded .NET 8 step on a net9.0 repo).
+   */
+  detectVersion?(cwd: string): string | undefined;
 
   /**
    * Per-pack devcontainer feature declaration. Drives the per-stack
