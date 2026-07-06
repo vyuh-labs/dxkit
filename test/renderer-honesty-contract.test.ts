@@ -99,6 +99,7 @@ function unavailableBom(): BomReport {
       vulnerablePackages: 0,
       actionableVulns: 0,
       totalAdvisories: 0,
+      allowlistedAdvisories: 0,
       vulnOnlyPackages: 0,
       byTopLevelDep: {},
       filter: 'all',

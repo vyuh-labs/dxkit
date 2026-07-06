@@ -124,6 +124,14 @@ export async function analyzeBom(
   // "how many distinct CVEs" semantics most users intuit.
   const totalAdvisories = fingerprints.length;
 
+  // Unique advisories covered by an active allowlist entry — disclosed
+  // beside the severity table so an accepted advisory doesn't read as an
+  // un-triaged headline critical (mirror of the vuln-scan split). Counted
+  // unique-by-fingerprint to match `totalAdvisories`.
+  const allowlistedAdvisories = collectFingerprints(
+    entries.flatMap((e) => e.vulns).filter((v) => v.allowlisted),
+  ).length;
+
   return {
     repo: stack.projectName || path.basename(cacheResult.cwd),
     analyzedAt: cacheResult.builtAt,
@@ -136,6 +144,7 @@ export async function analyzeBom(
       vulnerablePackages,
       actionableVulns,
       totalAdvisories,
+      allowlistedAdvisories,
       vulnOnlyPackages,
       byTopLevelDep,
       filter,
@@ -349,6 +358,15 @@ export function formatBomReport(report: BomReport, elapsed: string): string {
     L.push(`| MEDIUM   | ${s.bySeverity.medium} |`);
     L.push(`| LOW      | ${s.bySeverity.low} |`);
     L.push('');
+    if (s.allowlistedAdvisories > 0) {
+      L.push(
+        `> ℹ ${s.allowlistedAdvisories} of the ${s.totalAdvisories} advisories ` +
+          `${s.allowlistedAdvisories === 1 ? 'is' : 'are'} covered by an active allowlist ` +
+          `entry (reviewed and accepted). Counts above are raw totals; the guardrail does ` +
+          `not block on allowlisted advisories and they do not drag the Security score.`,
+      );
+      L.push('');
+    }
   }
   if (s.vulnOnlyPackages > 0) {
     L.push(
