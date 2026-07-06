@@ -142,6 +142,18 @@ describe('classify — block-rule overrides', () => {
     expect(result.blocks).toBe(false);
   });
 
+  it('a config-drift-demoted secret STILL blocks — config drift never disables a security block-rule (#20)', () => {
+    // A net-new secret on an UNCHANGED file surfaced alongside a policy.json edit
+    // (configDiffers, not a diff-changed file so #86 doesn't already keep it
+    // `added`). config drift creates no phantom secrets, so the block-rule must
+    // still fire — only the reason string reflects the drift, never the verdict.
+    const ctx: ClassifyContext = { kind: 'secret', configDiffers: true, fileChangedInDiff: false };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('config_drift'); // reason still reflects the drift
+    expect(result.blocks).toBe(true); // ...but it BLOCKS — the #20 bypass is closed
+    expect(result.reasons.some((r) => r.detail.includes('newSecret'))).toBe(true);
+  });
+
   it('blocks a new high-reachable dep-vuln but not a non-reachable one', () => {
     const reachable: ClassifyContext = {
       kind: 'dep-vuln',
