@@ -108,5 +108,8 @@
     "hosted-git-info": "^9.0.2",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "^0.25.10"
+  },
+  "overrides": {
+    "uuid": "^11.1.0"
   }
 }
