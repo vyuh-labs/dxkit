@@ -39,6 +39,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import { readRepoFile } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
 
 interface GolangciIssue {
@@ -960,6 +961,13 @@ const goLintGateProvider: LintGateProvider = {
   },
 };
 
+/** The Go version this repo targets — `go.mod`'s `go X.Y[.Z]` directive. Feeds
+ *  setup-go's `go-version` + the devcontainer. */
+function detectGoVersion(cwd: string): string | undefined {
+  const m = readRepoFile(cwd, 'go.mod').match(/^go\s+(\d+\.\d+(?:\.\d+)?)/m);
+  return m ? m[1] : undefined;
+}
+
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
@@ -1039,9 +1047,17 @@ export const go: LanguageSupport = {
   permissions: ['Bash(go test:*)', 'Bash(go build:*)', 'Bash(go vet:*)', 'Bash(golangci-lint:*)'],
   ruleFile: 'go.md',
   ciSetup: {
-    steps: [{ name: 'Set up Go', uses: 'actions/setup-go@v5', with: { 'go-version': '1.24.0' } }],
+    steps: [
+      {
+        name: 'Set up Go',
+        uses: 'actions/setup-go@v5',
+        with: { 'go-version': '1.24.0' },
+        versionInput: 'go-version',
+      },
+    ],
   },
   defaultVersion: '1.24.0',
+  detectVersion: detectGoVersion,
   cliBinaries: ['go', 'golangci-lint'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/go:1',

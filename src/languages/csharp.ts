@@ -15,6 +15,7 @@ import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
+import { readRepoFile } from './version-detect';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -1491,6 +1492,34 @@ const csharpLintGateProvider: LintGateProvider = {
   },
 };
 
+/**
+ * The .NET SDK version this repo targets — from a `.csproj` TargetFramework(s)
+ * or `global.json`. `net9.0` / `net9.0-windows` → `'9.0'` so CI provisions .NET
+ * 9 (setup-dotnet + the devcontainer feature). The TFM tag may carry an OS
+ * suffix (`net9.0-windows`) — capture the first `netX.Y` regardless. `.csproj`
+ * discovery is depth-aware (enterprise layouts nest them deep).
+ */
+function detectCsharpVersion(cwd: string): string | undefined {
+  // Depth-UNLIMITED discovery via the canonical walker: enterprise .NET layouts
+  // nest .csproj files 6–9 deep, past any hardcoded cap (G_v4_12).
+  const csproj = walkPaths(cwd, { extensions: ['.csproj'] })[0];
+  if (csproj) {
+    const content = readRepoFile(cwd, csproj);
+    const m = content.match(/<TargetFrameworks?>[^<]*?net(\d+\.\d+)/);
+    if (m) return m[1];
+  }
+  const globalJson = readRepoFile(cwd, 'global.json');
+  if (globalJson) {
+    try {
+      const ver = (JSON.parse(globalJson) as { sdk?: { version?: string } })?.sdk?.version;
+      if (ver) return ver.split('.').slice(0, 2).join('.');
+    } catch {
+      /* ignore malformed global.json */
+    }
+  }
+  return undefined;
+}
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -1670,10 +1699,16 @@ export const csharp: LanguageSupport = {
   ruleFile: 'csharp.md',
   ciSetup: {
     steps: [
-      { name: 'Set up .NET', uses: 'actions/setup-dotnet@v4', with: { 'dotnet-version': '8.0' } },
+      {
+        name: 'Set up .NET',
+        uses: 'actions/setup-dotnet@v4',
+        with: { 'dotnet-version': '8.0' },
+        versionInput: 'dotnet-version',
+      },
     ],
   },
   defaultVersion: '8.0',
+  detectVersion: detectCsharpVersion,
   cliBinaries: ['dotnet'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/dotnet:2',

@@ -368,17 +368,31 @@ export function allPrimaryComponentPaths(flags: DetectedStack['languages']): str
  * the workflow never carries a per-language setup chain (Rule 6). Node's own
  * setup stays in the template as dxkit's CLI runtime; this adds the project's.
  */
-export function allCiSetupSteps(flags: DetectedStack['languages']): CiSetupStep[] {
-  const seen = new Set<string>();
-  const out: CiSetupStep[] = [];
+export function allCiSetupSteps(flags: DetectedStack['languages'], cwd?: string): CiSetupStep[] {
+  // Dedup by `uses`, but PREFER a step whose version was actually substituted
+  // from a DETECTED version — so a Java+Kotlin repo (both `setup-java`) uses the
+  // Java pack's detected JDK, not Kotlin's fixed default. Substitute only on a
+  // real detection so an undetected repo keeps the declared step byte-for-byte.
+  const byUses = new Map<string, { step: CiSetupStep; detected: boolean }>();
+  const order: string[] = [];
   for (const l of activeLanguagesFromFlags(flags)) {
+    const detected = cwd !== undefined ? l.detectVersion?.(cwd) : undefined;
     for (const step of l.ciSetup?.steps ?? []) {
-      if (seen.has(step.uses)) continue;
-      seen.add(step.uses);
-      out.push(step);
+      const substituted =
+        step.versionInput && detected
+          ? { ...step, with: { ...step.with, [step.versionInput]: detected } }
+          : step;
+      const isDetected = Boolean(step.versionInput && detected);
+      const existing = byUses.get(step.uses);
+      if (!existing) {
+        byUses.set(step.uses, { step: substituted, detected: isDetected });
+        order.push(step.uses);
+      } else if (isDetected && !existing.detected) {
+        byUses.set(step.uses, { step: substituted, detected: isDetected });
+      }
     }
   }
-  return out;
+  return order.map((u) => byUses.get(u)!.step);
 }
 
 /**
@@ -626,6 +640,7 @@ export function splitTestFilePatterns(patterns: string[] = allTestFilePatterns()
  */
 export function buildDevcontainerFeatures(
   flags: DetectedStack['languages'],
+  cwd?: string,
 ): Record<string, Record<string, unknown>> {
   const features: Record<string, Record<string, unknown>> = {
     // Always-on: dxkit's own runtime + the gh CLI used by
@@ -635,7 +650,13 @@ export function buildDevcontainerFeatures(
   };
   for (const lang of activeLanguagesFromFlags(flags)) {
     if (lang.devcontainerFeature) {
-      features[lang.devcontainerFeature.name] = lang.devcontainerFeature.opts ?? {};
+      const opts = { ...(lang.devcontainerFeature.opts ?? {}) };
+      // Provision the SDK the repo actually targets: override the feature's
+      // `version` opt with the DETECTED version (never the default, so an
+      // undetected repo keeps the declared opts byte-for-byte).
+      const detected = cwd !== undefined ? lang.detectVersion?.(cwd) : undefined;
+      if (detected && 'version' in opts) opts.version = detected;
+      features[lang.devcontainerFeature.name] = opts;
     }
   }
   return features;

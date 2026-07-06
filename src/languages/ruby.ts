@@ -27,6 +27,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import { readRepoFile, repoFileExists } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -759,6 +760,23 @@ const rubyLintGateProvider: LintGateProvider = {
   },
 };
 
+/**
+ * The Ruby version this repo targets — `.ruby-version` or a Gemfile
+ * `ruby "X.Y.Z"` directive. Feeds setup-ruby's `ruby-version` + the
+ * devcontainer.
+ */
+function detectRubyVersion(cwd: string): string | undefined {
+  if (repoFileExists(cwd, '.ruby-version')) {
+    const m = readRepoFile(cwd, '.ruby-version')
+      .trim()
+      .match(/(\d+\.\d+(?:\.\d+)?)/);
+    if (m) return m[1];
+  }
+  const gemfile = readRepoFile(cwd, 'Gemfile');
+  const m = gemfile.match(/^\s*ruby\s+["']([~>=< ]*)?(\d+\.\d+(?:\.\d+)?)/m);
+  return m ? m[2] : undefined;
+}
+
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
@@ -865,9 +883,17 @@ export const ruby: LanguageSupport = {
   cliBinaries: ['ruby', 'bundle'],
 
   ciSetup: {
-    steps: [{ name: 'Set up Ruby', uses: 'ruby/setup-ruby@v1', with: { 'ruby-version': '3.3.0' } }],
+    steps: [
+      {
+        name: 'Set up Ruby',
+        uses: 'ruby/setup-ruby@v1',
+        with: { 'ruby-version': '3.3.0' },
+        versionInput: 'ruby-version',
+      },
+    ],
   },
   defaultVersion: '3.3.0',
+  detectVersion: detectRubyVersion,
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/ruby:1',
     opts: { version: '3.3' },

@@ -150,7 +150,7 @@ function renderCiSetupStep(step: CiSetupStep): string {
 export function renderCiRuntimeSetup(cwd: string): string {
   let steps: CiSetupStep[] = [];
   try {
-    steps = allCiSetupSteps(detect(cwd).languages);
+    steps = allCiSetupSteps(detect(cwd).languages, cwd);
   } catch {
     steps = [];
   }
@@ -364,7 +364,7 @@ function renderDevcontainerJson(tmplDir: string, cwd: string): string {
   const srcAbs = path.join(tmplDir, 'devcontainer.json');
   const template = fs.readFileSync(srcAbs, 'utf8');
   const stack = detect(cwd);
-  const features = buildDevcontainerFeatures(stack.languages);
+  const features = buildDevcontainerFeatures(stack.languages, cwd);
   const extensions = buildDevcontainerExtensions(stack.languages);
   return template
     .replace('__DXKIT_DEVCONTAINER_FEATURES__', renderFeaturesBlock(features))

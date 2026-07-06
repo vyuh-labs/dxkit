@@ -394,11 +394,11 @@ export const ${id}: LanguageSupport = {
   // with a stable per-line format (eslint/ruff/golangci-lint/rubocop/clippy/
   // ktlint are the worked examples). If not (linter needs project config, e.g.
   // Java checkstyle), leave it dormant — users gate their linter via a
-  // .dxkit/policy.json `checks` entry.
+  // .dxkit/policy.json \`checks\` entry.
   lintGate: {
     lintCommand(_ctx) {
       // TODO(${id}): resolve the linter (findTool(TOOL_DEFS.<tool>, ctx.cwd)) and
-      // return { bin, args, parse, expectedExit } where `parse` is a regex with
+      // return { bin, args, parse, expectedExit } where \`parse\` is a regex with
       // named (?<file>)(?<line>)(?<rule>)(?<message>) groups; or return null.
       return null;
     },
@@ -418,8 +418,22 @@ export const ${id}: LanguageSupport = {
   cliBinaries: [/* TODO: e.g. 'kotlinc', 'gradle' */],
 
   // Default language version surfaced in DEFAULT_VERSIONS and the
-  // <KEY>_VERSION template var.
+  // <KEY>_VERSION template var — the FLOOR when detection misses.
   defaultVersion: 'TODO',
+
+  // Detect the toolchain version this repo targets from its manifest
+  // (e.g. a .csproj TargetFramework, go.mod's \`go X.Y\`, a .python-version).
+  // Return undefined when undetectable (consumers fall back to defaultVersion).
+  // This is what makes CI + the devcontainer provision the SDK the repo
+  // actually targets instead of the hardcoded default — DON'T skip it. Use the
+  // readRepoFile / repoFileExists helpers in ./version-detect (and walkPaths for
+  // deep manifest discovery). If your \`ciSetup\` step passes a version input, set
+  // \`versionInput\` on that step so the detected version is substituted in.
+  detectVersion(cwd) {
+    // TODO: read this language's version manifest and return e.g. '3.12'.
+    void cwd;
+    return undefined;
+  },
 
   // Optional: lookup key in DetectedStack['versions']. Defaults to id.
   // Only override when legacy template/config naming differs (typescript

@@ -123,9 +123,14 @@ const mockPlaybookPack = {
         name: 'Set up Playbook',
         uses: 'playbook/setup-playbook@v9',
         with: { 'playbook-version': '9.9.9' },
+        // `versionInput` + `detectVersion` below prove version DERIVATION is
+        // pack-driven: `allCiSetupSteps(flags, cwd)` must substitute the
+        // synthetic pack's DETECTED version (42.0.0) here, not the default.
+        versionInput: 'playbook-version',
       },
     ],
   },
+  detectVersion: () => '42.0.0',
   // HTTP-flow contribution. Distinctive tokens (`playbookFetch`,
   // `playbookClient`, `playbookGet`, `playbookApp`) so the assertion verifies
   // the synthetic pack's httpFlow descriptor flows through `allHttpFlow` —
@@ -497,10 +502,19 @@ describe('recipe playbook — synthetic pack', () => {
       playbook: true,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
+    // Without cwd: no detection, so the declared default renders.
     const steps = allCiSetupSteps(flags);
     const synthetic = steps.find((s) => s.uses === 'playbook/setup-playbook@v9');
     expect(synthetic).toBeDefined();
     expect(synthetic?.with?.['playbook-version']).toBe('9.9.9');
+
+    // WITH cwd: the pack's `detectVersion` (42.0.0) is substituted into the
+    // `versionInput` key — codifying "toolchain-version derivation is
+    // pack-driven, not a hardcoded default." A new pack that declares
+    // detectVersion + versionInput inherits this automatically.
+    const derived = allCiSetupSteps(flags, '/tmp/any-repo');
+    const syntheticDerived = derived.find((s) => s.uses === 'playbook/setup-playbook@v9');
+    expect(syntheticDerived?.with?.['playbook-version']).toBe('42.0.0');
   });
 
   // ─── activeLanguagesFromFlags (LP.7) ──────────────────────────────────────

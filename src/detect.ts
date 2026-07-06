@@ -1,21 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
 import { DEFAULT_VERSIONS } from './constants';
 import { LANGUAGES } from './languages';
-
-function getInstalledNodeVersion(): string | undefined {
-  try {
-    const output = execSync('node --version', { stdio: 'pipe' }).toString().trim();
-    const match = output.replace(/^v/, '').match(/^(\d+)/);
-    if (match) return match[1];
-  } catch {
-    /* node not installed */
-  }
-  return undefined;
-}
 
 function fileExists(cwd: string, ...segments: string[]): boolean {
   return fs.existsSync(path.join(cwd, ...segments));
@@ -38,86 +26,23 @@ function globExists(cwd: string, pattern: string): boolean {
   }
 }
 
-function extractPythonVersion(cwd: string): string | undefined {
-  // Try pyproject.toml requires-python
-  const pyproject = readFileOr(cwd, 'pyproject.toml', '');
-  const match = pyproject.match(/requires-python\s*=\s*"[><=!~]*(\d+\.\d+)/);
-  if (match) return match[1];
-
-  // Try .python-version
-  if (fileExists(cwd, '.python-version')) {
-    const ver = readFileOr(cwd, '.python-version', '').trim();
-    if (ver.match(/^\d+\.\d+/)) return ver.split('.').slice(0, 2).join('.');
+/**
+ * Toolchain version per pack — DETECTED from the repo (via each pack's
+ * `detectVersion`, Rule 6) or the pack's `defaultVersion` floor. Keyed on
+ * `versionKey ?? id`. One code path: `allCiSetupSteps` / the devcontainer
+ * render re-derive the DETECTED value to substitute into the setup step, and
+ * the `<KEY>_VERSION` template vars read this map — never a second extractor.
+ */
+function detectVersions(cwd: string): DetectedStack['versions'] {
+  const versions: Record<string, string> = {};
+  for (const lang of LANGUAGES) {
+    if (lang.defaultVersion === undefined) continue;
+    const key = lang.versionKey ?? lang.id;
+    const detected = lang.detectVersion?.(cwd);
+    const fallback = (DEFAULT_VERSIONS as Record<string, string>)[key];
+    if (detected ?? fallback) versions[key] = (detected ?? fallback) as string;
   }
-  return undefined;
-}
-
-function extractGoVersion(cwd: string): string | undefined {
-  const goMod = readFileOr(cwd, 'go.mod', '');
-  const match = goMod.match(/^go\s+(\d+\.\d+(?:\.\d+)?)/m);
-  return match ? match[1] : undefined;
-}
-
-function extractNodeVersion(cwd: string): string | undefined {
-  // 1. Try .nvmrc (explicit pin — most authoritative)
-  if (fileExists(cwd, '.nvmrc')) {
-    const ver = readFileOr(cwd, '.nvmrc', '').trim().replace(/^v/, '');
-    if (ver.match(/^\d+/)) return ver.split('.')[0];
-  }
-
-  // 2. Try package.json volta.node (pinned version manager)
-  const pkg = readFileOr(cwd, 'package.json', '{}');
-  try {
-    const parsed = JSON.parse(pkg);
-
-    const voltaNode = parsed?.volta?.node;
-    if (voltaNode) {
-      const match = voltaNode.match(/^(\d+)/);
-      if (match) return match[1];
-    }
-
-    // 3. Try engines.node
-    const nodeEngine = parsed?.engines?.node;
-    if (nodeEngine) {
-      // Exact pins: "20", "20.x", "^20", "~20" → use directly
-      const isRange = /[>|]/.test(nodeEngine);
-      if (!isRange) {
-        const match = nodeEngine.match(/(\d+)/);
-        if (match) return match[1];
-      }
-
-      // For ranges like ">=10", ">=18", prefer installed version
-      // but fall back to the range minimum if node isn't installed
-      const installedVersion = getInstalledNodeVersion();
-      if (installedVersion) return installedVersion;
-
-      // Last resort: extract from range
-      const match = nodeEngine.match(/(\d+)/);
-      if (match) return match[1];
-    }
-  } catch {
-    /* ignore parse errors */
-  }
-
-  // 4. Try installed Node version (no package.json or no engines field)
-  const installed = getInstalledNodeVersion();
-  if (installed) return installed;
-
-  return undefined;
-}
-
-function extractRustVersion(cwd: string): string | undefined {
-  // Try rust-toolchain.toml
-  const toolchain = readFileOr(cwd, 'rust-toolchain.toml', '');
-  const match = toolchain.match(/channel\s*=\s*"([^"]+)"/);
-  if (match) return match[1];
-
-  // Try Cargo.toml rust-version
-  const cargo = readFileOr(cwd, 'Cargo.toml', '');
-  const rvMatch = cargo.match(/rust-version\s*=\s*"([^"]+)"/);
-  if (rvMatch) return rvMatch[1];
-
-  return undefined;
+  return versions as DetectedStack['versions'];
 }
 
 function findFileRecursive(cwd: string, pattern: RegExp, maxDepth = 3): string | null {
@@ -143,30 +68,6 @@ function findFileRecursive(cwd: string, pattern: RegExp, maxDepth = 3): string |
     return null;
   }
   return search(cwd, 0);
-}
-
-function extractCsharpVersion(cwd: string): string | undefined {
-  // Try .csproj TargetFramework
-  const csproj = findFileRecursive(cwd, /\.csproj$/);
-  if (csproj) {
-    const content = fs.readFileSync(csproj, 'utf-8');
-    const match = content.match(/<TargetFramework>net(\d+\.\d+)<\/TargetFramework>/);
-    if (match) return match[1];
-  }
-
-  // Try global.json SDK version
-  const globalJson = readFileOr(cwd, 'global.json', '');
-  if (globalJson) {
-    try {
-      const parsed = JSON.parse(globalJson);
-      const ver = parsed?.sdk?.version;
-      if (ver) return ver.split('.').slice(0, 2).join('.');
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return undefined;
 }
 
 function detectNextjs(cwd: string): boolean {
@@ -413,13 +314,7 @@ export function detect(cwd: string): DetectedStack {
     },
     projectName: detectProjectName(cwd),
     projectDescription: detectProjectDescription(cwd),
-    versions: {
-      python: extractPythonVersion(cwd) ?? DEFAULT_VERSIONS.python,
-      go: extractGoVersion(cwd) ?? DEFAULT_VERSIONS.go,
-      node: extractNodeVersion(cwd) ?? DEFAULT_VERSIONS.node,
-      rust: extractRustVersion(cwd) ?? DEFAULT_VERSIONS.rust,
-      csharp: extractCsharpVersion(cwd) ?? DEFAULT_VERSIONS.csharp,
-    },
+    versions: detectVersions(cwd),
     testRunner: detectTestRunner(cwd),
     // nextjs detection takes precedence — it's a more specific signal
     // than detectFramework's package.json scan (10f.4: nextjs moved out
