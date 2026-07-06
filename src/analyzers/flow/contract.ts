@@ -26,6 +26,12 @@ export const FLOW_DIR = path.join('.dxkit', 'flow');
 export const SERVED_SNAPSHOT = 'served.json';
 export const CONSUMED_SNAPSHOT = 'consumed.json';
 
+/** Current schema version of the committed `served.json` / `consumed.json`
+ *  snapshots (the `schemaVersion` literal on `SnapshotMeta`). Named here so the
+ *  freeze contract has one referenceable constant; pinned by
+ *  `test/flow-contract-freeze.test.ts`. */
+export const SERVED_CONSUMED_SCHEMA_VERSION = 1;
+
 /** One served endpoint in the served-side inventory. */
 export interface ServedRoute {
   readonly method: string;
