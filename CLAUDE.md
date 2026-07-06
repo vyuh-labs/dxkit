@@ -869,6 +869,83 @@ Mirror of Rule 15's managed-write gate, three escalating layers:
    the same empirical guard as `managed-artifacts-playbook.test.ts` /
    `recipe-playbook.test.ts`.
 
+### 17. Custom checks are one seam — user checks and lint share it
+
+A **custom check** is any repo command dxkit runs as a first-class gate
+citizen: a user-declared invariant (`.dxkit/policy.json:checks` — a project
+rule, an architecture script, a license audit) OR a pack-declared built-in
+lint gate. There is ONE `custom-check` `IdentityKind`, and BOTH sources mint
+findings into it, so a custom-check failure inherits the entire native-finding
+machine (Rule 9 fingerprint → Rule 10 baseline producer → git-aware matcher →
+brownfield classify → allowlist → guardrail verdict). Lint is therefore the
+first **consumer** of this seam, never a parallel pipeline (this is Rule 2 —
+one concept, one code path — applied to the gate runner).
+
+The seam has one spine; every consumer routes through it:
+
+- **Resolve** specs via the ONE entry point `resolveCustomCheckSpecs` /
+  `gatherCustomCheckFindings` in `src/analyzers/custom-checks/gather.ts`. It
+  merges user checks (normalized by `config.ts:normalizeCustomChecks`) with
+  pack lint (`config.ts:lintGateSpecs`, driven by
+  `LanguageSupport.lintGate` — Rule 6). The baseline producer (create time) and
+  the guardrail (current scan) both call this, so they see the identical set
+  from the identical path; `vyuh-dxkit checks list` renders exactly it.
+- **Execute** via the ONE runner `runCustomChecks` in
+  `src/analyzers/custom-checks/run.ts`, which shares the correctness floor's
+  bounded-exec primitive (`src/analyzers/tools/bounded-exec.ts`) and owns the
+  load-bearing policy: fail-OPEN on infrastructure (missing binary / timeout →
+  skipped, never a block), a real non-`expectedExit` exit → findings. In regex
+  mode it parses output REGARDLESS of exit code (many linters exit 0 while
+  emitting diagnostics — dotnet analyzers, eslint warnings), so "clean" means
+  zero matches, not exit 0.
+- **Two finding shapes.** LOCATED (regex parse; identity =
+  `check + file + lineWindow + rule`) is what lets a net-new lint error block
+  while the repo's pre-existing lint backlog is grandfathered — always prefer
+  it for linter-shaped checks. BINARY (`exit` parse; identity = the check name)
+  is for a genuine whole-command pass/fail and grandfathers the whole check, so
+  reserve it for commands expected to pass.
+- **Gates in committed mode only.** `custom-check` is in
+  `REF_UNRELIABLE_KINDS` (`src/baseline/check.ts`): a throwaway worktree at a
+  git ref lacks the toolchain, so a linter would fail-open-skip on the "before"
+  side and false-flag every finding as net-new. Committed/baseline mode
+  captures the floor from a provisioned tree, so the diff is honest.
+- **Opt-in, default-off.** `policy.json:checks[]` (user) and
+  `policy.json:lint{enabled,blocking}` (pack lint) — a repo that configures
+  nothing spawns nothing.
+
+**SECURITY (load-bearing):** the runner EXECUTES commands. They come ONLY from
+the repo's own committed `.dxkit/policy.json` or a pack's built-in lint command
+— the same trust boundary as the repo's npm scripts / CI config. dxkit NEVER
+runs a check from a CLI flag or any other untrusted source. Review a PR that
+edits `checks[].command` with the scrutiny of a PR that edits a CI workflow.
+
+**Bad**: a second `execFileSync` of a check command outside the runner; a
+lint code path that fingerprints/baselines separately from user checks; a
+binary lint gate (grandfathers the whole linter, so net-new errors slip
+through); gating custom checks in ref-based mode; running a check command from
+anything but the committed policy / a pack lint provider.
+
+**Good**: `gatherCustomCheckFindings(...)` from `gather.ts` for every consumer;
+`lintGate` declared on the pack and merged by `lintGateSpecs`; a located
+(regex) lint gate; `custom-check` left in `REF_UNRELIABLE_KINDS`.
+
+#### Custom-check enforcement
+
+1. **`scripts/check-architecture.sh` (custom-check gate)**: `runCustomChecks(`
+   is callable only from `src/analyzers/custom-checks/` and the `checks` CLI
+   dry-run (`src/checks-cli.ts`); every other consumer goes through
+   `gatherCustomCheckFindings`. Annotate `// custom-check-runner-ok` for a
+   justified exception (rare).
+2. **`test/recipe-playbook.test.ts`**: the synthetic pack declares a `lintGate`;
+   the playbook asserts `lintGateSpecs` picks it up — catches "lint stopped
+   being pack-driven", the same way it guards `depVulns` / `correctness` /
+   fingerprinting.
+3. **`test/baseline/finding-identity.test.ts`** (Rule 9 layer): the
+   `custom-check` discriminant has both a located and a binary fixture row.
+   **`test/checks-cli.test.ts`**: `checks list` / `checks run` resolve through
+   the one entry point; the `recommendChecks` doctor probe fires on a lint
+   signal and goes silent once policy opts in.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

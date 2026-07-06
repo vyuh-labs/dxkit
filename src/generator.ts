@@ -178,6 +178,11 @@ export const DXKIT_SKILLS = [
   // dry-run first. Also captures optional, opt-in feedback via a prefilled
   // GitHub issue. The graceful-exit surface.
   'dxkit-uninstall',
+  // dxkit-checks (3.0): declare + operate custom repo-invariant gates and the
+  // pack-declared built-in lint gate — the guardrail fingerprints their
+  // failures and blocks only net-new ones (pre-existing debt grandfathered).
+  // Drives `vyuh-dxkit checks` + the policy.json:checks/lint config. Rule 17.
+  'dxkit-checks',
 ] as const;
 
 interface GenerateResult {

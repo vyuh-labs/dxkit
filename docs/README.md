@@ -27,15 +27,16 @@ Hook activation is automatic via the postinstall chain (no manual
 `git config core.hooksPath .githooks` step needed). If you ever need
 to re-activate manually: `vyuh-dxkit hooks activate`.
 
-| Command                                            | What it does                                                   |
-| -------------------------------------------------- | -------------------------------------------------------------- |
-| [`baseline create`](commands/baseline.md)          | Write per-finding identities to `.dxkit/baselines/<name>.json` |
-| [`baseline show`](commands/baseline.md)            | Pretty-print or filter the on-disk baseline                    |
-| [`guardrail check`](commands/guardrail.md)         | Diff current scan vs. baseline; block on net-new regressions   |
-| [`allowlist add`](commands/allowlist.md)           | Suppress a specific finding (typed category + reason + expiry) |
-| [`allowlist audit`](commands/allowlist.md)         | Surface stale / soon-to-expire / orphaned / missing-rationale  |
-| [`allowlist export --snyk`](commands/allowlist.md) | Propagate Snyk-originated suppressions to a `.snyk` policy     |
-| [`.dxkit/policy.json`](configuration/policy.md)    | Tune which classifications block vs. warn                      |
+| Command                                            | What it does                                                    |
+| -------------------------------------------------- | --------------------------------------------------------------- |
+| [`baseline create`](commands/baseline.md)          | Write per-finding identities to `.dxkit/baselines/<name>.json`  |
+| [`baseline show`](commands/baseline.md)            | Pretty-print or filter the on-disk baseline                     |
+| [`guardrail check`](commands/guardrail.md)         | Diff current scan vs. baseline; block on net-new regressions    |
+| [`checks`](commands/checks.md)                     | List / dry-run your custom repo-invariant + built-in lint gates |
+| [`allowlist add`](commands/allowlist.md)           | Suppress a specific finding (typed category + reason + expiry)  |
+| [`allowlist audit`](commands/allowlist.md)         | Surface stale / soon-to-expire / orphaned / missing-rationale   |
+| [`allowlist export --snyk`](commands/allowlist.md) | Propagate Snyk-originated suppressions to a `.snyk` policy      |
+| [`.dxkit/policy.json`](configuration/policy.md)    | Tune which classifications block vs. warn                       |
 
 ## What you can run
 
