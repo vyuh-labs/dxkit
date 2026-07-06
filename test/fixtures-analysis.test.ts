@@ -28,6 +28,7 @@ import { gatherFileFindings } from '../src/analyzers/security/gather';
 import { gatherGrepSecretsResult } from '../src/analyzers/tools/grep-secrets';
 import { gatherRepoFlowModel } from '../src/analyzers/flow/gather';
 import { summarize } from '../src/analyzers/flow/model';
+import { buildReachable } from '../src/analyzers/tests/import-graph';
 
 const FIXTURES = join(__dirname, 'fixtures', 'analysis');
 
@@ -116,6 +117,30 @@ describe('analysis fixtures — language-agnostic invariants (every stack)', () 
       expect(result!.suppressedCount).toBeGreaterThanOrEqual(1);
     });
   }
+});
+
+describe('analysis fixtures — test-gap import-graph credits non-relative imports', () => {
+  // The recurring class this guards: the import-graph resolver was blind to
+  // non-relative specifiers, so an integration test that imports the module
+  // under test by alias (TS `@/…`) or src-layout absolute path (Python
+  // `authz.access`) produced NO edge — and the test-gap analyzer flagged the
+  // exercised file as an untested gap. dxkit's own repo uses only relative
+  // imports, so its self-guardrail is structurally blind to this shape (the
+  // 2.30 class). These fixtures make the aliased / src-rooted shape visible.
+
+  it('ts-webapp: an @/-aliased import from an int test resolves an edge to the source file', async () => {
+    const reached = await buildReachable(['tests/int/access.int.spec.ts'], staged['ts-webapp']);
+    // Without tsconfig `paths` awareness the alias would not resolve and the
+    // set would not contain the source file.
+    expect([...reached]).toContain('src/authz/access.ts');
+  });
+
+  it('python-svc: a src-layout absolute import from an int test resolves an edge to the source file', async () => {
+    const reached = await buildReachable(['tests/int/test_access.py'], staged['python-svc']);
+    // Without `src/`-root awareness the absolute import would anchor at the
+    // project root only, miss `src/authz/access.py`, and leave it a gap.
+    expect([...reached]).toContain('src/authz/access.py');
+  });
 });
 
 describe('analysis fixtures — flow resolution (flow-capable packs)', () => {

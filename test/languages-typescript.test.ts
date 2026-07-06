@@ -6,6 +6,7 @@ import {
   typescript,
   extractTsImportsRaw,
   resolveTsImportRaw,
+  loadTsPathConfig,
   buildTsTopLevelDepIndex,
 } from '../src/languages/typescript';
 
@@ -123,6 +124,89 @@ describe('resolveTsImportRaw', () => {
   it('returns null for unresolvable relative paths', () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), '');
     expect(resolveTsImportRaw('a.ts', './missing', tmp)).toBeNull();
+  });
+
+  it('resolves a tsconfig `paths` alias (integration-test coverage crediting)', () => {
+    // `@/*` → `src/*`. An integration test importing `@/authz/access` must
+    // resolve to `src/authz/access.ts` so the file is credited, not flagged.
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }),
+    );
+    fs.mkdirSync(path.join(tmp, 'src', 'authz'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'authz', 'access.ts'), '');
+    fs.mkdirSync(path.join(tmp, 'tests', 'int'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'tests', 'int', 'access.int.spec.ts'), '');
+
+    const cfg = loadTsPathConfig(tmp);
+    expect(cfg).not.toBeNull();
+    expect(resolveTsImportRaw('tests/int/access.int.spec.ts', '@/authz/access', tmp, cfg)).toBe(
+      'src/authz/access.ts',
+    );
+  });
+
+  it('resolves a baseUrl-rooted bare specifier', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { baseUrl: '.' } }),
+    );
+    fs.mkdirSync(path.join(tmp, 'src', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'lib', 'util.ts'), '');
+    const cfg = loadTsPathConfig(tmp);
+    expect(resolveTsImportRaw('a.ts', 'src/lib/util', tmp, cfg)).toBe('src/lib/util.ts');
+  });
+
+  it('follows tsconfig `extends` to inherit paths from a base config', () => {
+    // paths declared in a base config, resolved relative to the BASE dir.
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.base.json'),
+      JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '~/*': ['src/*'] } } }),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.json'),
+      JSON.stringify({ extends: './tsconfig.base.json' }),
+    );
+    fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'index.ts'), '');
+    const cfg = loadTsPathConfig(tmp);
+    expect(resolveTsImportRaw('a.ts', '~/index', tmp, cfg)).toBe('src/index.ts');
+  });
+
+  it('parses tsconfig with comments + trailing commas (JSONC)', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.json'),
+      `{
+        // project config
+        "compilerOptions": {
+          "baseUrl": ".",
+          "paths": {
+            "@app/*": ["src/*"], /* app root */
+          },
+        },
+      }`,
+    );
+    fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'x.ts'), '');
+    const cfg = loadTsPathConfig(tmp);
+    expect(cfg).not.toBeNull();
+    expect(resolveTsImportRaw('a.ts', '@app/x', tmp, cfg)).toBe('src/x.ts');
+  });
+
+  it('an alias still returns null without a tsconfig (relative-only fallback)', () => {
+    fs.mkdirSync(path.join(tmp, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'src', 'x.ts'), '');
+    expect(loadTsPathConfig(tmp)).toBeNull();
+    expect(resolveTsImportRaw('a.ts', '@/x', tmp)).toBeNull();
+  });
+
+  it('an unmatched alias does not resolve external packages', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }),
+    );
+    const cfg = loadTsPathConfig(tmp);
+    expect(resolveTsImportRaw('a.ts', 'react', tmp, cfg)).toBeNull();
+    expect(resolveTsImportRaw('a.ts', '@scope/pkg', tmp, cfg)).toBeNull();
   });
 });
 

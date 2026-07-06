@@ -711,28 +711,71 @@ export function extractPyImportsRaw(content: string): string[] {
   return out;
 }
 
+function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The import roots an absolute (non-relative) Python import resolves
+ * against. Always the project root; plus `src/` when it exists — the
+ * modern "src layout" (`[tool.setuptools.packages.find] where = ["src"]`)
+ * where `from authz.access import x` lives at `src/authz/access.py`, not
+ * `authz/access.py`. Derived from the tree, not hardcoded to one repo.
+ *
+ * Root cause this closes: anchoring absolute imports at `cwd` alone made
+ * the resolver blind to the src layout, so an integration test importing
+ * the module under test produced no edge and the test-gap analyzer flagged
+ * the exercised file as an untested gap (the TS-alias bug's Python analog).
+ */
+export function pySourceRoots(cwd: string): string[] {
+  const roots = [cwd];
+  const srcDir = path.join(cwd, 'src');
+  if (isDir(srcDir)) roots.push(srcDir);
+  return roots;
+}
+
 /**
  * Resolve a Python import specifier to an in-project file path, or null
  * for unresolvable / stdlib / external references. Handles relative
- * specifiers (leading dots) and absolute-from-project-root imports.
- * Exported for unit testing.
+ * specifiers (leading dots) and absolute imports rooted at any of the
+ * project's source roots (`pySourceRoots` — project root + `src/`).
+ * `roots` is injected by the imports gather (computed once); when omitted
+ * it is derived per-call so direct/unit callers get src-layout support
+ * for free. Exported for unit testing.
  */
-export function resolvePyImportRaw(fromFile: string, spec: string, cwd: string): string | null {
+export function resolvePyImportRaw(
+  fromFile: string,
+  spec: string,
+  cwd: string,
+  roots?: string[],
+): string | null {
   const fromDir = path.dirname(path.join(cwd, fromFile));
   const dotMatch = spec.match(/^(\.+)(.*)$/);
-  let baseDir: string;
-  let remainder: string;
   if (dotMatch) {
     const dots = dotMatch[1].length;
-    remainder = dotMatch[2];
-    baseDir = fromDir;
+    const remainder = dotMatch[2];
+    if (!remainder) return null;
+    let baseDir = fromDir;
     for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
-  } else {
-    baseDir = cwd;
-    remainder = spec;
+    return resolvePyModuleAt(baseDir, remainder, cwd);
   }
-  if (!remainder) return null;
+  // Absolute import — try each source root, most-specific (deepest) later
+  // roots don't shadow the project root: first hit wins, project root first.
+  for (const root of roots ?? pySourceRoots(cwd)) {
+    const resolved = resolvePyModuleAt(root, spec, cwd);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/** Resolve a dotted module remainder under a base dir to a `.py` file or package `__init__.py`. */
+function resolvePyModuleAt(baseDir: string, remainder: string, cwd: string): string | null {
   const parts = remainder.split('.').filter(Boolean);
+  if (parts.length === 0) return null;
   const candidate = path.join(baseDir, ...parts);
   if (isFile(candidate + '.py')) return toRel(candidate + '.py', cwd);
   const init = path.join(candidate, '__init__.py');
@@ -758,6 +801,10 @@ function gatherPyImportsResult(cwd: string): ImportsResult | null {
   const extracted = new Map<string, ReadonlyArray<string>>();
   const edges = new Map<string, ReadonlySet<string>>();
 
+  // Compute the project's source roots ONCE (project root + `src/` layout)
+  // so absolute imports resolve to edges regardless of layout.
+  const roots = pySourceRoots(cwd);
+
   for (const rel of files) {
     let content: string;
     try {
@@ -769,7 +816,7 @@ function gatherPyImportsResult(cwd: string): ImportsResult | null {
     extracted.set(rel, specs);
     const targets = new Set<string>();
     for (const spec of specs) {
-      const resolved = resolvePyImportRaw(rel, spec, cwd);
+      const resolved = resolvePyImportRaw(rel, spec, cwd, roots);
       if (resolved) targets.add(resolved);
     }
     if (targets.size > 0) edges.set(rel, targets);

@@ -577,16 +577,14 @@ export function extractTsImportsRaw(content: string): string[] {
 }
 
 /**
- * Resolve a TS/JS module specifier to an in-project relative file path,
- * or null for external packages and unresolvable specifiers. Exported so
- * unit tests can exercise resolution directly; the imports capability
- * calls it while building per-file edges.
+ * Given an absolute base path (no extension resolution applied yet),
+ * return the in-project relative path of the TS/JS file it points at, or
+ * null. Handles the three module-resolution shapes: an explicit-extension
+ * path, a bare path needing an extension appended, and a directory with an
+ * `index.*` barrel. Factored out so both relative and tsconfig-path
+ * resolution share one definition of "what file does this base resolve to".
  */
-export function resolveTsImportRaw(fromFile: string, spec: string, cwd: string): string | null {
-  if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
-  const fromDir = path.dirname(path.join(cwd, fromFile));
-  const baseAbs = path.resolve(fromDir, spec);
-
+function resolveTsFileAt(baseAbs: string, cwd: string): string | null {
   for (const ext of TS_JS_EXT) {
     if (baseAbs.endsWith(ext) && isFile(baseAbs)) {
       return toRel(baseAbs, cwd);
@@ -599,6 +597,261 @@ export function resolveTsImportRaw(fromFile: string, spec: string, cwd: string):
     const idx = path.join(baseAbs, 'index' + ext);
     if (isFile(idx)) return toRel(idx, cwd);
   }
+  return null;
+}
+
+/**
+ * A single `paths` entry from tsconfig, pre-split around its (at most one)
+ * `*` wildcard. `@/*` → `{ prefix: '@/', suffix: '', hasWildcard: true }`;
+ * its targets `["src/*"]` → `[{ prefix: 'src/', suffix: '' }]`. `baseDir`
+ * is the absolute directory the targets resolve against (baseUrl if set,
+ * else the config file that declared `paths`).
+ */
+interface TsPathMapping {
+  prefix: string;
+  suffix: string;
+  hasWildcard: boolean;
+  targets: Array<{ prefix: string; suffix: string }>;
+  baseDir: string;
+}
+
+/**
+ * The tsconfig-derived module-resolution config the pack needs to resolve
+ * non-relative specifiers: `paths` alias mappings and the `baseUrl` root
+ * for bare-specifier resolution. Null when the project declares neither.
+ */
+export interface TsPathConfig {
+  baseUrlAbs: string | null;
+  mappings: TsPathMapping[];
+}
+
+function splitAroundStar(s: string): { prefix: string; suffix: string; hasWildcard: boolean } {
+  const star = s.indexOf('*');
+  if (star === -1) return { prefix: s, suffix: '', hasWildcard: false };
+  return { prefix: s.slice(0, star), suffix: s.slice(star + 1), hasWildcard: true };
+}
+
+/**
+ * Tolerant JSONC parse for tsconfig/jsconfig files, which routinely carry
+ * `//` + `/* *\/` comments and trailing commas that `JSON.parse` rejects.
+ *
+ * This is a STRING-AWARE scanner, not a regex strip: tsconfig path globs
+ * (`@app/*`, `src/*`) contain `/*`, so a regex block-comment strip would
+ * eat the alias value. Only a `"` toggles string state (tsconfig is JSON —
+ * always double-quoted); a `"` inside a comment is consumed by the comment
+ * skip, never seen as a delimiter. Returns null on unparseable input
+ * (fail-open — resolution just loses aliases).
+ */
+function parseJsonc(text: string): Record<string, unknown> | null {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      out += c;
+      if (c === '\\') {
+        // Preserve the escaped char verbatim so an escaped quote doesn't
+        // close the string.
+        if (next !== undefined) out += next;
+        i++;
+      } else if (c === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++; // skip the closing '/'
+      continue;
+    }
+    out += c;
+  }
+  const noTrailingCommas = out.replace(/,(\s*[}\]])/g, '$1');
+  try {
+    return JSON.parse(noTrailingCommas);
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a tsconfig `extends` reference to an absolute file path, or null. */
+function resolveExtendsTarget(ref: string, fromConfigDir: string): string | null {
+  const withExt = (p: string) => (p.endsWith('.json') ? p : p + '.json');
+  if (ref.startsWith('./') || ref.startsWith('../')) {
+    return withExt(path.resolve(fromConfigDir, ref));
+  }
+  // Bare/package extends (e.g. `@tsconfig/node18/tsconfig.json`) — best-effort
+  // via node_modules. App-specific `paths` almost never live in a shared base
+  // package, so a miss here is benign.
+  const inNodeModules = path.join(fromConfigDir, 'node_modules', ref);
+  const candidate = ref.endsWith('.json') ? inNodeModules : path.join(inNodeModules, 'tsconfig.json');
+  return isFile(candidate) ? candidate : withExt(inNodeModules);
+}
+
+interface CompilerOptionsDecl {
+  paths?: Record<string, string[]>;
+  baseUrl?: string;
+}
+
+/**
+ * Load the effective `paths` + `baseUrl` for `cwd`, following `extends`.
+ *
+ * Precedence mirrors tsc: the most-derived config that declares a field
+ * wins, and `paths`/`baseUrl` resolve relative to the directory of the
+ * config file that *declared* them (not the inheriting one). Bounded walk
+ * with cycle protection. Returns null when neither field is declared
+ * anywhere in the chain — the common no-alias project, where resolution
+ * stays relative-only.
+ *
+ * Root cause of the test-gap under-crediting this closes: the resolver was
+ * blind to `@/…` aliases and `baseUrl`-rooted bare imports, so an
+ * integration test that imports the module under test by alias produced no
+ * import edge and the file was flagged as an untested gap despite being
+ * exercised. Resolution is a TS language fact, so it lives here (Rule 6).
+ */
+export function loadTsPathConfig(cwd: string): TsPathConfig | null {
+  let start: string | null = null;
+  for (const name of ['tsconfig.json', 'jsconfig.json']) {
+    const p = path.join(cwd, name);
+    if (isFile(p)) {
+      start = p;
+      break;
+    }
+  }
+  if (!start) return null;
+
+  // Walk the extends chain child→parent, capturing the FIRST (most-derived)
+  // declaration of paths and of baseUrl, each with its declaring dir.
+  let pathsDecl: { paths: Record<string, string[]>; dir: string } | null = null;
+  let baseUrlDecl: { baseUrl: string; dir: string } | null = null;
+  const visited = new Set<string>();
+  let current: string | null = start;
+  for (let depth = 0; current && depth < 16; depth++) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(current, 'utf-8');
+    } catch {
+      break;
+    }
+    const parsed = parseJsonc(raw);
+    if (!parsed) break;
+    const dir = path.dirname(current);
+    const co = (parsed.compilerOptions ?? {}) as CompilerOptionsDecl;
+    if (!pathsDecl && co.paths && typeof co.paths === 'object') {
+      pathsDecl = { paths: co.paths, dir };
+    }
+    if (!baseUrlDecl && typeof co.baseUrl === 'string') {
+      baseUrlDecl = { baseUrl: co.baseUrl, dir };
+    }
+    const ext = parsed.extends;
+    current = typeof ext === 'string' ? resolveExtendsTarget(ext, dir) : null;
+  }
+
+  if (!pathsDecl && !baseUrlDecl) return null;
+
+  const baseUrlAbs = baseUrlDecl ? path.resolve(baseUrlDecl.dir, baseUrlDecl.baseUrl) : null;
+  // tsc resolves `paths` targets relative to baseUrl when set, else (TS 4.1+)
+  // relative to the config that declared `paths`.
+  const pathsBaseDir = baseUrlAbs ?? (pathsDecl ? pathsDecl.dir : null);
+
+  const mappings: TsPathMapping[] = [];
+  if (pathsDecl && pathsBaseDir) {
+    for (const [key, targets] of Object.entries(pathsDecl.paths)) {
+      if (!Array.isArray(targets)) continue;
+      const k = splitAroundStar(key);
+      mappings.push({
+        prefix: k.prefix,
+        suffix: k.suffix,
+        hasWildcard: k.hasWildcard,
+        targets: targets.map((t) => {
+          const ts = splitAroundStar(t);
+          return { prefix: ts.prefix, suffix: ts.suffix };
+        }),
+        baseDir: pathsBaseDir,
+      });
+    }
+  }
+
+  return { baseUrlAbs, mappings };
+}
+
+/**
+ * Resolve a non-relative specifier through tsconfig `paths` then `baseUrl`.
+ * Mappings are tried most-specific first (longest literal prefix+suffix),
+ * matching tsc's longest-match rule. Returns null for genuinely external
+ * packages.
+ */
+function resolveViaTsPaths(spec: string, cfg: TsPathConfig, cwd: string): string | null {
+  const sorted = [...cfg.mappings].sort(
+    (a, b) => b.prefix.length + b.suffix.length - (a.prefix.length + a.suffix.length),
+  );
+  for (const m of sorted) {
+    let capture: string | null = null;
+    if (m.hasWildcard) {
+      if (
+        spec.length >= m.prefix.length + m.suffix.length &&
+        spec.startsWith(m.prefix) &&
+        spec.endsWith(m.suffix)
+      ) {
+        capture = spec.slice(m.prefix.length, spec.length - m.suffix.length);
+      }
+    } else if (spec === m.prefix) {
+      capture = '';
+    }
+    if (capture === null) continue;
+    for (const t of m.targets) {
+      const abs = path.resolve(m.baseDir, t.prefix + capture + t.suffix);
+      const resolved = resolveTsFileAt(abs, cwd);
+      if (resolved) return resolved;
+    }
+  }
+  // baseUrl-rooted bare specifier (classic `baseUrl: "."` → `import 'src/x'`).
+  if (cfg.baseUrlAbs) {
+    const resolved = resolveTsFileAt(path.resolve(cfg.baseUrlAbs, spec), cwd);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/**
+ * Resolve a TS/JS module specifier to an in-project relative file path,
+ * or null for external packages and unresolvable specifiers. Exported so
+ * unit tests can exercise resolution directly; the imports capability
+ * calls it while building per-file edges.
+ *
+ * `pathConfig` carries the project's tsconfig `paths`/`baseUrl` (loaded
+ * once per gather via `loadTsPathConfig`). When omitted, resolution is
+ * relative-only — preserving the pre-tsconfig-aware behavior for callers
+ * that don't supply it.
+ */
+export function resolveTsImportRaw(
+  fromFile: string,
+  spec: string,
+  cwd: string,
+  pathConfig?: TsPathConfig | null,
+): string | null {
+  if (spec.startsWith('./') || spec.startsWith('../')) {
+    const fromDir = path.dirname(path.join(cwd, fromFile));
+    return resolveTsFileAt(path.resolve(fromDir, spec), cwd);
+  }
+  // Non-relative: an alias (`@/…`) or a baseUrl-rooted bare specifier
+  // (`src/…`) only resolves with the project's tsconfig path config;
+  // otherwise it's an external package.
+  if (pathConfig) return resolveViaTsPaths(spec, pathConfig, cwd);
   return null;
 }
 
@@ -1017,6 +1270,13 @@ function gatherTsImportsResult(cwd: string): ImportsResult | null {
   const extracted = new Map<string, ReadonlyArray<string>>();
   const edges = new Map<string, ReadonlySet<string>>();
 
+  // Parse tsconfig `paths`/`baseUrl` ONCE (not per file/spec) so aliased
+  // (`@/…`) and baseUrl-rooted (`src/…`) imports resolve to edges. Without
+  // this, integration tests that import the module under test by alias
+  // produced no edge, and the test-gap analyzer flagged the exercised file
+  // as an untested gap.
+  const pathConfig = loadTsPathConfig(cwd);
+
   for (const rel of files) {
     let content: string;
     try {
@@ -1028,7 +1288,7 @@ function gatherTsImportsResult(cwd: string): ImportsResult | null {
     extracted.set(rel, specs);
     const targets = new Set<string>();
     for (const spec of specs) {
-      const resolved = resolveTsImportRaw(rel, spec, cwd);
+      const resolved = resolveTsImportRaw(rel, spec, cwd, pathConfig);
       if (resolved) targets.add(resolved);
     }
     if (targets.size > 0) edges.set(rel, targets);
