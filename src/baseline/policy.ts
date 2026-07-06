@@ -348,17 +348,24 @@ export function classify(
  * Returns the matching rule's name (for reason rendering) or null
  * when no rule fires.
  *
- * Block-rules only apply to `added` status — they exist to escalate
- * specific kinds of new findings beyond the generic policy. A
- * `tooling_drift` reclassification means the `added` status is gone
- * and the block-rule no longer applies.
+ * Block-rules escalate specific kinds of net-new findings beyond the generic
+ * policy. They fire on a matcher-`added` finding INCLUDING one demoted to
+ * `config_drift`: a config / .dxkit-ignore / policy-hash change does not create
+ * phantom findings (the credential or vuln is really in the code — the config
+ * edit only changed the *reason* string), so it must never disable a block for a
+ * net-new blocking-class finding. That closes the bypass where a coincident
+ * policy.json edit — or drift vs a stale baseline — let a net-new critical secret
+ * pass as a warning (feedback #20). `tooling_drift` (a scanner / advisory-DB
+ * version change CAN surface a phantom critical that isn't a real regression) and
+ * `uncertain` (scanner wobble) still suppress block-rules, preserving the
+ * legitimate false-block prevention there.
  */
 function evaluateBlockRules(
   status: FindingStatus,
   rules: BrownfieldBlockRules,
   context: ClassifyContext,
 ): string | null {
-  if (status !== 'added') return null;
+  if (status !== 'added' && status !== 'config_drift') return null;
   if (rules.newSecret && context.kind === 'secret') return 'newSecret';
   if (rules.newCriticalSecurity && context.kind === 'code' && context.severity === 'critical') {
     return 'newCriticalSecurity';
