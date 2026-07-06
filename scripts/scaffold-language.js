@@ -386,6 +386,24 @@ export const ${id}: LanguageSupport = {
     },
   },
 
+  // Lint-GATE provider (custom-check flagship): the linter command that gates
+  // NET-NEW lint findings, plus a regex mapping its output to per-location
+  // findings. Every pack declares this slot (the contract test forces it). This
+  // scaffold ships a DORMANT gate (returns null) so the pack compiles; wire a
+  // real one before ship IF the language has a zero-config standalone linter
+  // with a stable per-line format (eslint/ruff/golangci-lint/rubocop/clippy/
+  // ktlint are the worked examples). If not (linter needs project config, e.g.
+  // Java checkstyle), leave it dormant — users gate their linter via a
+  // .dxkit/policy.json `checks` entry.
+  lintGate: {
+    lintCommand(_ctx) {
+      // TODO(${id}): resolve the linter (findTool(TOOL_DEFS.<tool>, ctx.cwd)) and
+      // return { bin, args, parse, expectedExit } where `parse` is a regex with
+      // named (?<file>)(?<line>)(?<rule>)(?<message>) groups; or return null.
+      return null;
+    },
+  },
+
   // ─── LP-recipe metadata (populate every field) ─────────────────────────
 
   // Bash permission entries for .claude/settings.json. Cover the test/build/

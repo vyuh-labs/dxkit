@@ -41,6 +41,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 function dirHasMatching(dir: string, regex: RegExp): boolean {
   try {
@@ -1464,6 +1465,32 @@ const csharpCorrectnessProvider: CorrectnessProvider = {
   },
 };
 
+/** MSBuild analyzer-warning line: `<file>(<line>,<col>): warning <CODE>: <message> [<proj>]`.
+ *  Exported for the format-contract test. */
+export const CSHARP_MSBUILD_WARNING_PARSE =
+  '^(?<file>.+?)\\((?<line>\\d+),\\d+\\):\\s+warning\\s+(?<rule>\\w+):\\s+(?<message>.*?)(?:\\s+\\[[^\\]]*\\])?\\s*$';
+
+/**
+ * Lint-GATE provider: the .NET Roslyn analyzers, surfaced through `dotnet build`.
+ * C# has no standalone per-line linter (analyzers run in the compiler), so the
+ * gate parses build warnings — `File.cs(line,col): warning CAxxxx: message`.
+ * `dotnet build` exits 0 even with warnings, which is why the runner parses
+ * regex output regardless of exit code; a clean build emits no warning lines
+ * (pass). `--nologo` trims the banner. Fail-open when `dotnet` isn't installed.
+ * (Formatting-only style can instead be gated with a user check running
+ * `dotnet format --verify-no-changes`.)
+ */
+const csharpLintGateProvider: LintGateProvider = {
+  lintCommand() {
+    return {
+      bin: 'dotnet',
+      args: ['build', '--nologo', '-clp:NoSummary'],
+      parse: CSHARP_MSBUILD_WARNING_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -1612,6 +1639,7 @@ export const csharp: LanguageSupport = {
   deepSast: { codeqlLanguage: 'csharp', codeqlBuildRequired: true, snykCode: true },
 
   correctness: csharpCorrectnessProvider,
+  lintGate: csharpLintGateProvider,
 
   capabilities: {
     depVulns: csharpDepVulnsProvider,

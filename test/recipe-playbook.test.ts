@@ -57,12 +57,14 @@ import {
   activeLanguagesFromFlags,
   activeLanguagesFromStack,
   activeCorrectnessProviders,
+  activeLintGateProviders,
   buildDevcontainerExtensions,
   buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
+import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
@@ -156,6 +158,18 @@ const mockPlaybookPack = {
   correctness: {
     syntaxCheck: () => ({ label: 'playbook-typecheck', bin: 'playbookc-mock', args: ['--check'] }),
     affectedTests: () => ({ label: 'playbook-tests', bin: 'playbookc-mock', args: ['test'] }),
+  },
+  // Lint-GATE contribution (custom-check flagship). Distinctive bin/parse so the
+  // assertion verifies the synthetic pack's provider flows through
+  // `activeLintGateProviders` + `lintGateSpecs` — codifying "the lint gate is
+  // pack-driven, a consumer of the one custom-check runner seam."
+  lintGate: {
+    lintCommand: () => ({
+      bin: 'playbook-lint-mock',
+      args: ['--gate'],
+      parse: '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
+      expectedExit: 0,
+    }),
   },
   detect: vi.fn(() => false),
   tools: [],
@@ -324,6 +338,31 @@ describe('recipe playbook — synthetic pack', () => {
       .map((c) => c.label);
     expect(playbookChecks).toContain('playbook-typecheck');
     expect(playbookChecks).toContain('playbook-tests');
+  });
+
+  // custom-check flagship: the lint gate iterates `activeLintGateProviders`, so a
+  // synthetic pack that declares a `lintGate` provider must surface a
+  // `lint:<pack>` spec through `lintGateSpecs` — codifying "the lint gate is a
+  // pack-driven consumer of the one custom-check runner seam."
+  it('activeLintGateProviders + lintGateSpecs pick up the mock pack lint gate', () => {
+    const packs = [...LANGUAGES];
+    const providers = activeLintGateProviders(packs);
+    expect(providers.some((p) => (p.id as string) === 'playbook')).toBe(true);
+    const specs = lintGateSpecs(
+      packs,
+      { cwd: '/nonexistent-repo', changedFiles: [] },
+      {
+        enabled: true,
+        blocking: true,
+      },
+    );
+    const playbookSpec = specs.find((s) => s.name === 'lint:playbook');
+    expect(playbookSpec).toBeDefined();
+    expect(playbookSpec?.command.bin).toBe('playbook-lint-mock');
+    expect(playbookSpec?.blocking).toBe(true);
+    expect(playbookSpec?.parse).toEqual({ mode: 'regex', pattern: expect.any(String) });
+    // Disabled lint policy yields nothing (opt-in default off).
+    expect(lintGateSpecs(packs, { cwd: '/x', changedFiles: [] }, undefined)).toEqual([]);
   });
 
   // 2.7 Sprint 1: exported-symbol detection registry helper iterates

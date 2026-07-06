@@ -27,6 +27,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -733,6 +734,31 @@ const rubyCorrectnessProvider: CorrectnessProvider = {
   },
 };
 
+/**
+ * Lint-GATE provider: rubocop, for the net-new lint gate. Resolved via the tool
+ * registry (Rule 1); null when it isn't installed. `--format emacs` emits
+ * `file:line:col: severity: Cop: message` per offense, mapped to located
+ * findings; rubocop exits non-zero when it reports offenses (expectedExit 0 =
+ * clean).
+ */
+/** rubocop `--format emacs` line: `<file>:<line>:<col>: <sev>: <Cop>: <message>`.
+ *  Exported so the lint-gate format contract is testable against a real sample. */
+export const RUBY_RUBOCOP_EMACS_PARSE =
+  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+\\w:\\s+(?<rule>[\\w/]+):\\s+(?<message>.*)$';
+
+const rubyLintGateProvider: LintGateProvider = {
+  lintCommand(ctx) {
+    const rubocop = findTool(TOOL_DEFS.rubocop, ctx.cwd);
+    if (!rubocop.available || !rubocop.path) return null;
+    return {
+      bin: rubocop.path,
+      args: ['--format', 'emacs'],
+      parse: RUBY_RUBOCOP_EMACS_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
@@ -814,6 +840,7 @@ export const ruby: LanguageSupport = {
   deepSast: { codeqlLanguage: 'ruby', snykCode: true },
 
   correctness: rubyCorrectnessProvider,
+  lintGate: rubyLintGateProvider,
 
   capabilities: {
     imports: rubyImportsProvider,

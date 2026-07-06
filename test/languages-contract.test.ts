@@ -312,6 +312,35 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
+  // custom-check flagship: every pack declares a lint-GATE provider (Rule 6),
+  // so the lint gate is uniformly pack-driven and no pack silently lacks the
+  // slot. A pack with no zero-config standalone linter returns null (dormant —
+  // e.g. Java, whose linters need project config); the rest return a well-formed
+  // located command. A NEW pack that omits `lintGate` fails HERE.
+  it('declares a lintGate provider returning null or a well-formed located command', () => {
+    const g = lang.lintGate;
+    expect(
+      g,
+      `${lang.id}: every pack must declare a lintGate provider (real or dormant)`,
+    ).toBeDefined();
+    expect(typeof g!.lintCommand, `${lang.id}: lintGate must supply a lintCommand() builder`).toBe(
+      'function',
+    );
+    const cmd = g!.lintCommand({ cwd: process.cwd(), changedFiles: [] });
+    if (cmd !== null) {
+      expect(typeof cmd.bin).toBe('string');
+      expect(Array.isArray(cmd.args)).toBe(true);
+      // A located gate MUST carry a parse pattern with a `file` capture group —
+      // without it every finding is binary and net-new lint can't be diffed.
+      expect(typeof cmd.parse).toBe('string');
+      expect(cmd.parse, `${lang.id}: lint parse regex must capture (?<file>…)`).toContain(
+        '(?<file>',
+      );
+      // The pattern must compile.
+      expect(() => new RegExp(cmd.parse)).not.toThrow();
+    }
+  });
+
   it('extraExcludes is an array of strings when defined', () => {
     if (lang.extraExcludes) {
       expect(Array.isArray(lang.extraExcludes)).toBe(true);

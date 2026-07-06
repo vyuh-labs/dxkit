@@ -37,6 +37,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
+import type { LintGateProvider } from './capabilities/lint-gate';
 
 interface RuffResult {
   code: string;
@@ -943,6 +944,30 @@ const pyCorrectnessProvider: CorrectnessProvider = {
   },
 };
 
+/**
+ * Lint-GATE provider: ruff, for the net-new lint gate. Resolved via the tool
+ * registry (Rule 1); null when ruff isn't installed. `--output-format concise`
+ * emits `file:line:col: CODE message` per finding, mapped to located findings.
+ * ruff exits non-zero when it reports findings (expectedExit 0 = clean).
+ */
+/** ruff `--output-format concise` line: `<file>:<line>:<col>: <CODE> <message>`.
+ *  Exported so the lint-gate format contract is testable against a real sample. */
+export const PY_RUFF_CONCISE_PARSE =
+  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<rule>[A-Z]+\\d+)\\s+(?<message>.*)$';
+
+const pyLintGateProvider: LintGateProvider = {
+  lintCommand(ctx) {
+    const ruff = findTool(TOOL_DEFS.ruff, ctx.cwd);
+    if (!ruff.available || !ruff.path) return null;
+    return {
+      bin: ruff.path,
+      args: ['check', '.', '--output-format', 'concise'],
+      parse: PY_RUFF_CONCISE_PARSE,
+      expectedExit: 0,
+    };
+  },
+};
+
 /** A `bin` we can hand the runner: a bare name (resolved on PATH) or an
  *  existing interpreter path. Mirrors the runner's own availability gate. */
 function binaryLike(bin: string): boolean {
@@ -1213,6 +1238,7 @@ export const python: LanguageSupport = {
   deepSast: { codeqlLanguage: 'python', snykCode: true },
 
   correctness: pyCorrectnessProvider,
+  lintGate: pyLintGateProvider,
 
   capabilities: {
     depVulns: pyDepVulnsProvider,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { runCustomChecks, describeCustomChecks } from '../../src/analyzers/custom-checks/run';
-import { extractFindings } from '../../src/analyzers/custom-checks/parse';
+import { parseLocated } from '../../src/analyzers/custom-checks/parse';
 import type { CommandExec } from '../../src/analyzers/tools/bounded-exec';
 import type { CustomCheckSpec } from '../../src/analyzers/custom-checks/types';
 
@@ -107,12 +107,15 @@ describe('describeCustomChecks', () => {
 
 describe('runCustomChecks — regex parse mode (lint)', () => {
   // An eslint-stylish-ish line: `src/a.ts:12:5  error  no-unused-vars  'x' is unused`
-  const eslintish = { mode: 'regex' as const, pattern: '^(?<file>[^:]+):(?<line>\\d+):\\d+\\s+\\w+\\s+(?<rule>[\\w-]+)\\s+(?<message>.*)$' };
+  const eslintish = {
+    mode: 'regex' as const,
+    pattern: '^(?<file>[^:]+):(?<line>\\d+):\\d+\\s+\\w+\\s+(?<rule>[\\w-]+)\\s+(?<message>.*)$',
+  };
 
   it('extracts one located finding per matching line', () => {
     const output = [
       "src/a.ts:12:5  error  no-unused-vars  'x' is unused",
-      "src/b.ts:3:1  error  no-explicit-any  avoid any",
+      'src/b.ts:3:1  error  no-explicit-any  avoid any',
     ].join('\n');
     const exec: CommandExec = () => ({ available: true, code: 1, output });
     const r = runCustomChecks({
@@ -142,7 +145,7 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
     expect(r.findings[0].message).toBe('totally unparseable');
   });
 
-  it('a passing lint check (exit 0) yields nothing even with a regex parser', () => {
+  it('a clean lint check (exit 0, no matching output) yields nothing', () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: '' });
     const r = runCustomChecks({
       cwd: CWD,
@@ -152,20 +155,42 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
     expect(r.results[0].status).toBe('pass');
     expect(r.findings).toEqual([]);
   });
+
+  it('a regex check that EXITS 0 but emits findings still gates (C#/Java build-analyzer case)', () => {
+    // dotnet build / a warnings-only eslint exit 0 yet print diagnostics — the
+    // runner parses regardless of exit, so these are NOT silently a pass.
+    const output = 'Program.cs(12,5): warning CA1822: Member does not access instance data';
+    const csharpParse = {
+      mode: 'regex' as const,
+      pattern:
+        '^(?<file>.+?)\\((?<line>\\d+),\\d+\\):\\s+warning\\s+(?<rule>\\w+):\\s+(?<message>.*)$',
+    };
+    const exec: CommandExec = () => ({ available: true, code: 0, output });
+    const r = runCustomChecks({
+      cwd: CWD,
+      specs: [spec({ name: 'lint:csharp', parse: csharpParse })],
+      exec,
+    });
+    expect(r.results[0].status).toBe('fail');
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]).toMatchObject({ file: 'Program.cs', line: 12, rule: 'CA1822' });
+  });
 });
 
-describe('extractFindings — dedupe + malformed regex', () => {
+describe('parseLocated — dedupe + malformed regex', () => {
   it('dedupes identical (file,line,rule) diagnostics within one run', () => {
     const out = ['src/a.ts:1:  r1  x', 'src/a.ts:1:  r1  x'].join('\n');
-    const found = extractFindings('lint:x', true, {
-      mode: 'regex',
-      pattern: '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
-    }, out);
+    const found = parseLocated(
+      'lint:x',
+      true,
+      '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
+      out,
+    );
     expect(found).toHaveLength(1);
   });
 
   it('a malformed regex degrades to a binary finding (never crashes the gate)', () => {
-    const found = extractFindings('lint:x', true, { mode: 'regex', pattern: '(' }, 'some output');
+    const found = parseLocated('lint:x', true, '(', 'some output');
     expect(found).toHaveLength(1);
     expect(found[0].file).toBeUndefined();
     expect(found[0].message).toMatch(/invalid parse regex/);

@@ -25,7 +25,7 @@
  */
 
 import { makeCommandExec, type CommandExec } from '../tools/bounded-exec';
-import { extractFindings } from './parse';
+import { binaryFinding, parseLocated } from './parse';
 import type {
   CustomCheckFinding,
   CustomCheckResult,
@@ -64,12 +64,32 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
       results.push({ name: spec.name, status: 'skipped-timeout', findings: [] });
       continue;
     }
-    if (outcome.code === spec.expectedExit) {
-      results.push({ name: spec.name, status: 'pass', findings: [] });
-      continue;
+
+    const passedExit = outcome.code === spec.expectedExit;
+    let checkFindings: CustomCheckFinding[];
+    if (spec.parse.mode === 'exit') {
+      // Binary check: the exit code IS the signal. Finding iff it failed.
+      checkFindings = passedExit ? [] : [binaryFinding(spec.name, spec.blocking, outcome.output)];
+    } else {
+      // Regex check: parse ALWAYS (many linters exit 0 with findings — C#/Java
+      // build analyzers, eslint warnings). "Clean" = zero matches, not exit 0.
+      const located = parseLocated(spec.name, spec.blocking, spec.parse.pattern, outcome.output);
+      if (located.length > 0) {
+        checkFindings = located;
+      } else if (!passedExit) {
+        // Failed but parsed nothing — the linter/command errored (bad config,
+        // crash). Surface it as a binary finding so the failure isn't lost.
+        checkFindings = [binaryFinding(spec.name, spec.blocking, outcome.output)];
+      } else {
+        checkFindings = [];
+      }
     }
-    const checkFindings = extractFindings(spec.name, spec.blocking, spec.parse, outcome.output);
-    results.push({ name: spec.name, status: 'fail', findings: checkFindings });
+
+    results.push({
+      name: spec.name,
+      status: checkFindings.length > 0 ? 'fail' : 'pass',
+      findings: checkFindings,
+    });
     findings.push(...checkFindings);
   }
 
