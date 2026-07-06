@@ -14,6 +14,7 @@ import {
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { detectLockfile } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
+import { walkPaths } from '../analyzers/tools/walk-paths';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
@@ -1255,22 +1256,32 @@ const tsCorrectnessProvider: CorrectnessProvider = {
  * Lint-GATE provider: eslint, for the net-new lint gate. Only when eslint is
  * installed locally — `npx --no-install` runs the project's OWN eslint + config
  * (the same command their CI runs) and never fetches; a repo without eslint
- * gets no gate (null). `--format unix` emits one `file:line:col: message
- * [severity/rule]` per diagnostic, which the parse regex maps to located
- * findings. eslint exits non-zero when it reports an error (expectedExit 0 =
- * clean), which is what tells the runner to parse.
+ * gets no gate (null).
+ *
+ * The output format is dxkit's BUNDLED formatter (`--format <dist>/formatters/
+ * eslint-unix.cjs`), not the core `unix` name: ESLint v9 removed `unix` from
+ * core, so `--format unix` on a current install prints "The unix formatter is
+ * no longer part of core ESLint" and emits nothing parseable. The bundled
+ * formatter reproduces the same `file:line:col: message [severity/rule]` shape
+ * (repo-relative paths for portable identity) on ESLint 8 AND 9 with no extra
+ * install, so the parse regex below is unchanged. eslint exits non-zero when it
+ * reports an error (expectedExit 0 = clean), which tells the runner to parse.
  */
-/** eslint `--format unix` line: `<file>:<line>:<col>: <message> [<severity>/<rule>]`.
+/** eslint unix-style line: `<file>:<line>:<col>: <message> [<severity>/<rule>]`.
  *  Exported so the lint-gate format contract is testable against a real sample. */
 export const TS_ESLINT_UNIX_PARSE =
   '^(?<file>.+):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\[\\w+/(?<rule>[^\\]]+)\\]\\s*$';
+
+/** Absolute path to dxkit's bundled ESLint formatter (shipped to dist/formatters
+ *  by copy-templates; resolves under src/ in vitest, dist/ at runtime). */
+export const ESLINT_UNIX_FORMATTER = path.join(__dirname, '..', 'formatters', 'eslint-unix.cjs');
 
 const tsLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
     if (!hasLocalBin(ctx.cwd, 'eslint')) return null;
     return {
       bin: 'npx',
-      args: ['--no-install', 'eslint', '.', '--format', 'unix'],
+      args: ['--no-install', 'eslint', '.', '--format', ESLINT_UNIX_FORMATTER],
       parse: TS_ESLINT_UNIX_PARSE,
       expectedExit: 0,
     };
@@ -1754,7 +1765,14 @@ export const typescript: LanguageSupport = {
   clocLanguageNames: ['TypeScript', 'JavaScript', 'JSX', 'TSX'],
 
   detect(cwd) {
-    return fileExists(cwd, 'package.json');
+    if (!fileExists(cwd, 'package.json')) return false;
+    // A package.json alone is NOT a JS/TS project: many non-JS repos carry one
+    // purely for tooling — husky, prettier, or dxkit's OWN devDependency +
+    // `postinstall` hook (which is exactly how a pure-.NET repo ends up with a
+    // package.json). Require at least one real JS/TS source file so such a repo
+    // isn't misdetected as TypeScript — the manifest-AND-source contract the
+    // other packs already enforce (see csharp/python `detect`).
+    return walkPaths(cwd, { extensions: TS_JS_EXT }).length > 0;
   },
 
   mapLintSeverity: mapEslintRuleSeverity,

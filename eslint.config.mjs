@@ -32,8 +32,9 @@ export default [
   },
   {
     // Node CommonJS build scripts + zero-dep sibling packages (e.g.
-    // packages/create-dxkit/) that ship as standalone CJS modules.
-    files: ['scripts/**/*.js', 'packages/**/*.js'],
+    // packages/create-dxkit/) that ship as standalone CJS modules, plus the
+    // bundled ESLint formatter (a runtime .cjs asset loaded via require()).
+    files: ['scripts/**/*.js', 'packages/**/*.js', 'src/formatters/**/*.cjs'],
     languageOptions: {
       globals: { ...globals.node },
       sourceType: 'commonjs',

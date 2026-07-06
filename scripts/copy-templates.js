@@ -28,6 +28,13 @@ const RESOURCE_FILES = [
     dest: path.join(PKG_ROOT, 'dist', 'analyzers', 'tools', 'default-exclusions.gitignore'),
   },
   {
+    // The TS lint gate points `eslint --format` at this file (ESLint v9 dropped
+    // the core `unix` formatter). Runtime asset loaded by require() from
+    // dist/formatters via __dirname — ship it alongside the compiled packs.
+    src: path.join(PKG_ROOT, 'src', 'formatters', 'eslint-unix.cjs'),
+    dest: path.join(PKG_ROOT, 'dist', 'formatters', 'eslint-unix.cjs'),
+  },
+  {
     src: path.join(
       PKG_ROOT,
       'node_modules',
