@@ -631,19 +631,21 @@ export async function runGuardrailCheck(
 
     const classification = classify(pair, policy, context);
 
-    // Allowlist suppression: only consulted when the classifier would
-    // block. An active entry matching this finding's fingerprint (and
-    // kind, to rule out an astronomically-unlikely cross-kind hash
-    // collision) waives the block. Expired entries are skipped here so
-    // the finding re-blocks the moment its accepted-risk window lapses.
+    // Allowlist suppression: consulted for any pair that would BLOCK or WARN. An
+    // active entry matching this finding's fingerprint (and kind, to rule out an
+    // astronomically-unlikely cross-kind hash collision) waives it from the
+    // verdict — a reviewed-and-accepted finding drops out of the warning list
+    // too, not just the block list (a warning-class pair used to keep warning
+    // forever because suppression was gated on `blocks` alone). Expired entries
+    // are skipped here so the finding re-surfaces the moment its window lapses.
     const suppressedByAllowlist =
-      classification.blocks && allowlist
+      (classification.blocks || classification.warns) && allowlist
         ? allowlistSuppressionFor(allowlist, anchorEntry, now)
         : undefined;
 
     const effectiveBlocks = classification.blocks && suppressedByAllowlist === undefined;
     if (effectiveBlocks) blocks = true;
-    if (classification.warns) warns = true;
+    if (classification.warns && suppressedByAllowlist === undefined) warns = true;
 
     classifiedPairs.push({
       pair,
@@ -670,7 +672,7 @@ export async function runGuardrailCheck(
   let filteredWarns = false;
   for (const p of filteredPairs) {
     if (pairBlocks(p)) filteredBlocks = true;
-    if (p.classification.warns) filteredWarns = true;
+    if (p.classification.warns && p.suppressedByAllowlist === undefined) filteredWarns = true;
   }
 
   // Allowlist delta between the baseline's anchor SHA and the

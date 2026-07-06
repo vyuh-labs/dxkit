@@ -52,6 +52,15 @@ function isBlocking(p: ClassifiedPair): boolean {
   return p.classification.blocks && p.suppressedByAllowlist === undefined;
 }
 
+/** Whether a pair contributes a live WARNING — warns per the classifier, not a
+ *  block, and not waived by an active allowlist entry (a suppressed pair is
+ *  neither blocking nor warning; it lands in the suppressed bucket). */
+function isWarning(p: ClassifiedPair): boolean {
+  return (
+    !p.classification.blocks && p.classification.warns && p.suppressedByAllowlist === undefined
+  );
+}
+
 // ─── Console renderer ─────────────────────────────────────────────────────
 
 /**
@@ -115,7 +124,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   // most actionable surfaces first.
   const blocking = result.pairs.filter(isBlocking);
   const suppressed = result.pairs.filter(isAllowlistSuppressed);
-  const warning = result.pairs.filter((p) => !p.classification.blocks && p.classification.warns);
+  const warning = result.pairs.filter(isWarning);
   const persisted = result.pairs.filter(
     (p) =>
       !p.classification.blocks &&
@@ -229,8 +238,7 @@ function verdictBanner(result: GuardrailCheckResult): string {
   }
   if (result.warns) {
     const count =
-      result.pairs.filter((p) => p.classification.warns).length +
-      flow.filter((f) => f.verdict === 'warn').length;
+      result.pairs.filter(isWarning).length + flow.filter((f) => f.verdict === 'warn').length;
     return logger.bold(`Guardrail PASSED — ${count} warning${count === 1 ? '' : 's'}`);
   }
   return logger.bold('Guardrail PASSED');
@@ -466,9 +474,7 @@ export interface GuardrailJsonPayload {
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
   const blocking = result.pairs.filter(isBlocking).length;
   const suppressed = result.pairs.filter(isAllowlistSuppressed).length;
-  const warning = result.pairs.filter(
-    (p) => !p.classification.blocks && p.classification.warns,
-  ).length;
+  const warning = result.pairs.filter(isWarning).length;
   const persisted = result.pairs.filter(
     (p) =>
       !p.classification.blocks &&
@@ -596,7 +602,7 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   const lines: string[] = [];
   const blocking = result.pairs.filter(isBlocking);
   const suppressed = result.pairs.filter(isAllowlistSuppressed);
-  const warning = result.pairs.filter((p) => !p.classification.blocks && p.classification.warns);
+  const warning = result.pairs.filter(isWarning);
   const resolved = result.pairs.filter((p) => p.classification.status === 'removed');
 
   const verdict = result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED';
