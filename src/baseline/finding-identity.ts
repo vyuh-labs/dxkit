@@ -133,7 +133,37 @@ export function identityFor(
       // (method, path, file) triple — all tool-independent + dxkit-derived
       // (Rule 9). The call can move anywhere in the file without re-minting.
       return computeFlowBindingFingerprint(input.method, input.path, input.file);
+    case 'custom-check':
+      // Version-independent. Two shapes: a LOCATED finding (a linter's
+      // per-line diagnostic) hashes (check, file, lineWindow, rule) — the
+      // line-window bucket absorbs benign reformat drift, and all four inputs
+      // are dxkit-derived / tool-independent (the check NAME, not a captured
+      // tool string); a BINARY finding (a whole-command pass/fail check, no
+      // parseable output) hashes only the check name, so it is line-independent
+      // and locator-less. Never hashes the raw output text (Rule 9).
+      return computeCustomCheckIdentity(input.check, input.file, input.line, input.rule);
   }
+}
+
+/**
+ * Identity for a custom-check / lint finding. Located variant
+ * (`file` present): `(check, file, lineWindow, rule)` — line-window-bucketed
+ * so a small reformat doesn't churn identity, and per-`rule` so distinct
+ * diagnostics on one line stay distinct. Binary variant (`file` absent): just
+ * the check name — the durable "this whole command is failing" signal.
+ */
+function computeCustomCheckIdentity(
+  check: string,
+  file: string | undefined,
+  line: number | undefined,
+  rule: string | undefined,
+): FindingId {
+  const body =
+    file !== undefined
+      ? `${check}\0${file}\0${lineWindowFor(line ?? 0)}\0${rule ?? ''}`
+      : check;
+  const input = `custom-check\0v1\0${body}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 
 /**

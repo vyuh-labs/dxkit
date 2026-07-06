@@ -58,6 +58,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'secret-hmac',
   'stale-allow',
   'flow-binding',
+  'custom-check',
 ];
 
 /** Compile-time exhaustiveness check — adding a new kind to

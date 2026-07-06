@@ -119,6 +119,17 @@ export function baselineEntryToIdentityInput(entry: BaselineEntry): IdentityInpu
     case 'flow-binding':
       // Line is display-only metadata on the entry, never an identity input.
       return { kind: 'flow-binding', method: e.method, path: e.path, file: e.file };
+    case 'custom-check':
+      // `blocking` + `message` are display/verdict metadata on the entry, never
+      // identity inputs (Rule 9). File/line/rule reconstruct the located variant;
+      // all absent for the binary variant.
+      return {
+        kind: 'custom-check',
+        check: e.check,
+        file: e.file,
+        line: e.line,
+        rule: e.rule,
+      };
   }
 }
 
