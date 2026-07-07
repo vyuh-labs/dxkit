@@ -38,7 +38,7 @@ npx vyuh-dxkit doctor --json   → read the top-level `flow` field
 - `servedUnconsumed[]` — served routes no in-repo call hits (dead route, or a cross-repo consumer).
 - `connection.rung` — how the served side is resolved (`monorepo` / `committed-counterpart` / `configured-participants` / `unresolved`).
 
-Walk the `unresolved` tail and, per item, act on its `suggestion`: add the missing route, configure a participant (handshake mode), adopt a spec, or annotate an intentional external call.
+Walk the `unresolved` tail and, per item, act on its `suggestion`: add the missing route, configure a participant (handshake mode), or adopt the provider's spec so an external call resolves. There is no inline "ignore this line" marker — an intentional break is accepted per-finding via the allowlist once the gate surfaces it as a net-new breakage (see **fix** mode below), so the acceptance is reviewed and diff-tracked rather than a silent inline comment.
 
 ### fix — repair a net-new broken integration ⭐
 
@@ -51,9 +51,18 @@ npx vyuh-dxkit guardrail check --json   → read `flowGate.findings[]`
 Each finding is `{ method, path, file, line, reason, verdict }`. `reason` is `no-route` (a call to nothing) or `route-removed` (a served route the PR deleted, still consumed). For each:
 
 1. Explain it in one line: which call, which route, what the PR changed.
-2. Propose the **repair** — restore the removed route, update the consumer to the new route, or (only if genuinely intentional) add an explicit annotation / a per-finding allowlist entry that a human reviews.
+2. Propose the **repair** — restore the removed route, update the consumer to the new route, or (only if genuinely intentional) accept it with a reviewed per-finding allowlist entry (see "Accepting a genuinely-intentional break" below).
 
 **Load-bearing safety rule — repair, never suppress.** Fix the integration; do not clear the block by refreshing the baseline or silently allowlisting the finding. An intentional break requires an explicit, reviewed acceptance, never a quiet re-baseline. This mirrors the loop discipline (do NOT refresh the baseline to clear a block) and is what keeps the gate honest when an agent is the one clearing it.
+
+**Accepting a genuinely-intentional break.** A flow finding is a first-class finding: it carries a durable fingerprint (printed on the guardrail line and in the JSON `flowGate.findings[].id`), so the escape hatch is the same per-finding allowlist every other kind uses — not a separate flow-only config. When (and only when) a break is a reviewed, deliberate integration boundary (e.g. a route served by a third party dxkit can't see), accept it by fingerprint:
+
+```
+npx vyuh-dxkit allowlist add --fingerprint=<id> --kind=flow-binding \
+  --category=false-positive --reason="served by <external system>, verified"
+```
+
+The gate then lists it under "suppressed by allowlist" (waived from the verdict, still surfaced for audit) and a reviewer sees the category + reason in the PR comment. Prefer `--category=accepted-risk` (with `--expires`) for a break you intend to fix later. This is a committed, diff-reviewable acceptance — never edit the baseline to make a flow block disappear.
 
 ### handshake — gate across repos
 

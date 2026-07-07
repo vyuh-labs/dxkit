@@ -270,11 +270,16 @@ function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   return out;
 }
 
-/** The flow-binding fingerprint line — same shape secret/code findings print
- *  (`formatPairLines`), so a reviewer copies it straight into `allowlist add`.
- *  A flow finding carries its durable identity on `id` (Rule 9). */
+/** The flow-binding fingerprint line + the concrete accept command. A flow
+ *  finding's kind is always `flow-binding` (unlike a generic pair, whose kind
+ *  varies), so the hint can spell out the FULL `allowlist add` invocation — the
+ *  documented escape hatch for an intentional break, reviewed like any
+ *  suppression. Identity is on `id` (Rule 9). */
 function flowFingerprintLine(id: string): string {
-  return `    · fingerprint: ${id}  (allowlist add --fingerprint=${id})`;
+  return (
+    `    · fingerprint: ${id}  (accept if intentional: allowlist add ` +
+    `--fingerprint=${id} --kind=flow-binding --category=false-positive --reason="<why>")`
+  );
 }
 
 function verdictBanner(result: GuardrailCheckResult): string {
