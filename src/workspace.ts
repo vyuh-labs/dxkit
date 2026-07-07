@@ -23,13 +23,24 @@ import * as path from 'path';
 
 /** A repo/service in the system — a source root plus the base URLs its served
  *  routes answer on (used to attribute a consumed call to the provider it
- *  targets). `path` is repo-relative or a `../sibling` path. */
+ *  targets). A participant is located by `path` (a local checkout) and/or `repo`
+ *  (a remote clone URL); at least one is required. */
 export interface WorkspaceParticipant {
   readonly name: string;
-  readonly path: string;
+  /** Local source root — repo-relative or a `../sibling` path. Preferred when it
+   *  exists on disk (offline, fast). Optional when `repo` is set (a purely-remote
+   *  participant with no local checkout). */
+  readonly path?: string;
+  /** Remote clone URL (`https://…`, `git@host:owner/repo.git`, `ssh://…`, or a
+   *  `file://` path). Used by `flow publish` to fetch the participant's served
+   *  contract when no local `path` checkout is present — so participants need not
+   *  be locally checked out (e.g. in CI). Auth is the ambient git environment;
+   *  dxkit never handles credentials. */
+  readonly repo?: string;
   readonly baseUrls?: readonly string[];
   /** Git ref to pin the participant's contract at when publishing (e.g. `main`).
-   *  Omitted → gather from the participant's current working tree. */
+   *  Omitted → the local working tree (local `path`) or the remote's default
+   *  HEAD (`repo`). */
   readonly ref?: string;
 }
 
@@ -70,12 +81,25 @@ function stringList(v: unknown): string[] {
 
 function normalizeParticipant(v: unknown): WorkspaceParticipant | null {
   if (!v || typeof v !== 'object') return null;
-  const r = v as { name?: unknown; path?: unknown; baseUrls?: unknown; ref?: unknown };
-  if (typeof r.name !== 'string' || typeof r.path !== 'string') return null;
+  const r = v as {
+    name?: unknown;
+    path?: unknown;
+    repo?: unknown;
+    baseUrls?: unknown;
+    ref?: unknown;
+  };
+  if (typeof r.name !== 'string') return null;
+  const hasPath = typeof r.path === 'string';
+  const hasRepo = typeof r.repo === 'string';
+  // A participant must be locatable: a local `path`, a remote `repo`, or both.
+  // (An older dxkit lacking `repo` support drops a purely-remote participant
+  // here rather than crashing — graceful forward-compat.)
+  if (!hasPath && !hasRepo) return null;
   const baseUrls = stringList(r.baseUrls);
   return {
     name: r.name,
-    path: r.path,
+    ...(hasPath ? { path: r.path as string } : {}),
+    ...(hasRepo ? { repo: r.repo as string } : {}),
     ...(baseUrls.length ? { baseUrls } : {}),
     ...(typeof r.ref === 'string' ? { ref: r.ref } : {}),
   };

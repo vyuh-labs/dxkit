@@ -9,6 +9,7 @@ import {
   mirrorSaltFile,
   resolveRefToSha,
   withRefWorktree,
+  withRemoteRefWorktree,
 } from '../../src/baseline/ref-baseline';
 
 /**
@@ -174,5 +175,105 @@ describe('withRefWorktree', () => {
     const err = captured as RefBaselineError;
     expect(err.message).toContain('never-existed');
     expect(err.hint).toBeTruthy();
+  });
+});
+
+describe('withRemoteRefWorktree', () => {
+  // A local "remote" repo reached over the file:// transport (the same code path
+  // a real https/ssh remote takes — a shallow single-ref fetch into a temp dir).
+  let remoteDir: string;
+  let remoteUrl: string;
+  beforeEach(() => {
+    remoteDir = mkdtempSync(join(tmpdir(), 'dxkit-remote-src-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: remoteDir });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(remoteDir, 'v1.txt'), 'first\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'v1');
+    git('tag', 'release-1');
+    // A later commit on main that the tag must NOT see.
+    writeFileSync(join(remoteDir, 'v2.txt'), 'second\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'v2');
+    remoteUrl = `file://${remoteDir}`;
+  });
+  afterEach(() => rmSync(remoteDir, { recursive: true, force: true }));
+
+  it('clones the default HEAD into a temp dir and passes it to fn, then cleans up', async () => {
+    let captured: string | null = null;
+    const result = await withRemoteRefWorktree({ repo: remoteUrl }, async (checkout) => {
+      captured = checkout;
+      // HEAD = main tip → both commits present.
+      expect(existsSync(join(checkout, 'v1.txt'))).toBe(true);
+      expect(existsSync(join(checkout, 'v2.txt'))).toBe(true);
+      return readFileSync(join(checkout, 'v1.txt'), 'utf-8');
+    });
+    expect(result).toBe('first\n');
+    expect(captured).not.toBeNull();
+    expect(existsSync(captured!)).toBe(false); // temp dir removed
+  });
+
+  it('pins a tag ref — the checkout is the tagged commit, not the branch tip', async () => {
+    await withRemoteRefWorktree({ repo: remoteUrl, ref: 'release-1' }, async (checkout) => {
+      expect(existsSync(join(checkout, 'v1.txt'))).toBe(true);
+      expect(existsSync(join(checkout, 'v2.txt'))).toBe(false); // tag predates v2
+      return null;
+    });
+  });
+
+  it('fetches a named branch', async () => {
+    await withRemoteRefWorktree({ repo: remoteUrl, ref: 'main' }, async (checkout) => {
+      expect(existsSync(join(checkout, 'v2.txt'))).toBe(true);
+      return null;
+    });
+  });
+
+  it('cleans up the temp checkout even when fn throws', async () => {
+    let captured: string | null = null;
+    await expect(
+      withRemoteRefWorktree({ repo: remoteUrl }, async (checkout) => {
+        captured = checkout;
+        throw new Error('boom-in-fn');
+      }),
+    ).rejects.toThrow('boom-in-fn');
+    expect(captured).not.toBeNull();
+    expect(existsSync(captured!)).toBe(false);
+  });
+
+  it('throws RefBaselineError for an unknown ref', async () => {
+    let captured: unknown;
+    try {
+      await withRemoteRefWorktree({ repo: remoteUrl, ref: 'does-not-exist' }, async () => null);
+    } catch (e) {
+      captured = e;
+    }
+    expect(captured).toBeInstanceOf(RefBaselineError);
+    expect((captured as RefBaselineError).hint).toBeTruthy();
+  });
+
+  it('throws RefBaselineError for an unreachable URL', async () => {
+    const bad = `file://${remoteDir}-nonexistent`;
+    await expect(withRemoteRefWorktree({ repo: bad }, async () => null)).rejects.toBeInstanceOf(
+      RefBaselineError,
+    );
+  });
+
+  it('rejects a repo URL beginning with a dash (argument-injection guard)', async () => {
+    let captured: unknown;
+    try {
+      await withRemoteRefWorktree({ repo: '--upload-pack=touch /tmp/pwn' }, async () => null);
+    } catch (e) {
+      captured = e;
+    }
+    expect(captured).toBeInstanceOf(RefBaselineError);
+    expect((captured as RefBaselineError).message).toContain("begins with '-'");
+  });
+
+  it('rejects a ref beginning with a dash (argument-injection guard)', async () => {
+    await expect(
+      withRemoteRefWorktree({ repo: remoteUrl, ref: '--exec=evil' }, async () => null),
+    ).rejects.toBeInstanceOf(RefBaselineError);
   });
 });
