@@ -115,19 +115,34 @@ __DXKIT_CI_RUNTIME_SETUP__
       # post it as a PR comment even when the guardrail blocks.
       - name: Run guardrail check
         id: guardrail
+        env:
+          # The PR's base branch (empty on a push-trigger run). The guardrail
+          # gates against THIS, not always the default branch.
+          DXKIT_PR_BASE: ${{ github.base_ref }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
           else
             DXKIT=vyuh-dxkit
           fi
-          # Cache transport with a cold cache (eviction / first run): fall back to
-          # a live ref-based gather for this one run rather than error on a missing
-          # anchor. 'branch'/'tree' always have an anchor by check time.
+          DEFAULT_BRANCH="__DXKIT_DEFAULT_BRANCH__"
           EXTRA=""
-          if [ "${{ steps.anchor.outputs.transport }}" = "cache" ] && ! ls .dxkit/baselines/*.json >/dev/null 2>&1; then
-            echo "cache miss — falling back to a ref-based gather for this run"
-            EXTRA="--mode ref-based"
+          if [ -n "$DXKIT_PR_BASE" ] && [ "$DXKIT_PR_BASE" != "$DEFAULT_BRANCH" ]; then
+            # A committed baseline is anchored to the default branch only (its
+            # refresh runs on push to '$DEFAULT_BRANCH'). A PR into a NON-default
+            # base branch therefore can't be gated by that file — diffing it
+            # against the default branch would flag the base branch's own drift as
+            # this PR's regressions. Gate it against its ACTUAL base via a live
+            # ref-based gather at the PR base instead.
+            echo "PR base '$DXKIT_PR_BASE' is not the default branch '$DEFAULT_BRANCH' — gating against the PR base via ref-based (the committed baseline is default-branch-anchored)."
+            EXTRA="--mode ref-based --ref origin/$DXKIT_PR_BASE"
+          elif [ "${{ steps.anchor.outputs.transport }}" = "cache" ] && ! ls .dxkit/baselines/*.json >/dev/null 2>&1; then
+            # Cache transport with a cold cache (eviction / first run): fall back to
+            # a live ref-based gather at the PR base for this one run rather than
+            # error on a missing anchor. 'branch'/'tree' always have an anchor by
+            # check time.
+            echo "cache miss — falling back to a ref-based gather at the PR base for this run"
+            EXTRA="--mode ref-based --ref origin/${DXKIT_PR_BASE:-$DEFAULT_BRANCH}"
           fi
           set +e
           "${DXKIT}" guardrail check $EXTRA --markdown > guardrail-report.md

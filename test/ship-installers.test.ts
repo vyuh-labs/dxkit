@@ -275,6 +275,24 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     expect(result.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
   });
 
+  it('substitutes the default branch into the guardrail base-ref gate (#118)', () => {
+    execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: tmp });
+
+    installCiGuardrails(tmp);
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-guardrails.yml'),
+      'utf8',
+    );
+    // Placeholder resolved to the consumer's default branch...
+    expect(content).not.toContain('__DXKIT_DEFAULT_BRANCH__');
+    expect(content).toContain('DEFAULT_BRANCH="trunk"');
+    // ...and the step forces a live ref-based gather at the PR base when the
+    // PR targets a NON-default branch (the committed baseline is
+    // default-branch-anchored).
+    expect(content).toContain('DXKIT_PR_BASE: ${{ github.base_ref }}');
+    expect(content).toContain('--mode ref-based --ref origin/$DXKIT_PR_BASE');
+  });
+
   it('skips when workflow file already exists', () => {
     fs.mkdirSync(path.join(tmp, '.github/workflows'), { recursive: true });
     fs.writeFileSync(

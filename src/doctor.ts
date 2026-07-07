@@ -10,7 +10,7 @@ import { resolveBaselineMode } from './baseline/modes';
 import { anchorBranchStatus } from './baseline/anchor';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
-import { detectInstalledRefreshTransport } from './ship-installers';
+import { detectInstalledRefreshTransport, detectDefaultBranch } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
@@ -163,6 +163,36 @@ function detectModeMisalignment(
     hint: 'Public repos auto-pick ref-based for a reason: committed-full leaks file paths + package names + advisory IDs to anyone reading the repo. Switch to ref-based or committed-sanitized in .dxkit/policy.json.',
     command: 'edit .dxkit/policy.json: set baseline.mode to ref-based or committed-sanitized',
   };
+}
+
+/**
+ * A long-lived non-default branch on the remote (`develop` / `dev` /
+ * `release/*`) — evidence the repo runs a gitflow-style model where PRs
+ * commonly target something other than the default branch. Returns the branch
+ * name, or null when none is found (the common single-trunk case). Best-effort:
+ * any git failure returns null. Used to decide whether the committed-baseline
+ * anchoring note is relevant (#118) — a committed baseline is anchored to the
+ * default branch, so on a gitflow repo a ref-based posture keeps every surface
+ * agreeing on what a PR is diffed against.
+ */
+function detectGitflowBranch(cwd: string, defaultBranch: string): string | null {
+  try {
+    const out = execSync("git branch -r --format='%(refname:short)'", {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString();
+    const remoteBranches = out
+      .split('\n')
+      .map((l) => l.trim().replace(/^origin\//, ''))
+      .filter(Boolean);
+    for (const b of remoteBranches) {
+      if (b === defaultBranch || b === 'HEAD') continue;
+      if (b === 'develop' || b === 'dev' || b.startsWith('release/')) return b;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -595,6 +625,23 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
               },
             }),
       });
+
+      // 2a. Gitflow anchoring note. A committed baseline is anchored to the
+      // default branch (its refresh runs only on push to it). The CI guardrail
+      // auto-gates a PR into a NON-default base against its own base via
+      // ref-based (#118), so correctness is covered — but on a gitflow repo
+      // where most PRs target a long-lived branch, pinning ref-based keeps the
+      // LOCAL guardrail (which reads the committed file) agreeing with CI.
+      const gitflowBranch = detectGitflowBranch(cwd, detectDefaultBranch(cwd));
+      if (gitflowBranch) {
+        checks.push({
+          label:
+            `committed baseline is default-branch-anchored; PRs into '${gitflowBranch}' are ` +
+            `auto-gated ref-based by CI — pin baseline.mode: ref-based to match the local guardrail`,
+          ok: true,
+          tier: 'operational',
+        });
+      }
     }
 
     // 2b. Baseline mode aligned with repo visibility. Warns when an

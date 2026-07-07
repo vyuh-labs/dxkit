@@ -549,7 +549,15 @@ export function installCiGuardrails(
     cwd,
     'dxkit-guardrails.yml',
     stale ? { ...opts, force: true } : opts,
-    { [CI_RUNTIME_SETUP_KEY]: ciSetup, __DXKIT_CI_PUSH_TRIGGER__: pushTrigger },
+    {
+      [CI_RUNTIME_SETUP_KEY]: ciSetup,
+      __DXKIT_CI_PUSH_TRIGGER__: pushTrigger,
+      // The committed baseline is anchored to the default branch (its refresh
+      // runs only on push to it). The guardrail step compares `github.base_ref`
+      // against this so a PR into a NON-default base is gated against its own
+      // base via ref-based, not against the default-branch baseline (#118).
+      __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    },
   );
   if (stale && result.installed.length > 0) {
     result.notes.push('Refreshed the CI guardrails workflow for the current language stack.');
