@@ -61,6 +61,27 @@ function isWarning(p: ClassifiedPair): boolean {
   );
 }
 
+/** The headline verdict word + the counts behind it — the same numbers
+ *  `renderMarkdown` shows, including folded-in flow-gate findings. One counting
+ *  path so the cached verdict summary and the rendered block never disagree. */
+export interface VerdictCounts {
+  readonly verdict: 'BLOCKED' | 'PASSED (with warnings)' | 'PASSED';
+  readonly blocking: number;
+  readonly warning: number;
+  readonly resolved: number;
+}
+export function verdictCounts(result: GuardrailCheckResult): VerdictCounts {
+  const flow = result.flowGate?.findings ?? [];
+  return {
+    verdict: result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED',
+    blocking:
+      result.pairs.filter(isBlocking).length + flow.filter((f) => f.verdict === 'block').length,
+    warning:
+      result.pairs.filter(isWarning).length + flow.filter((f) => f.verdict === 'warn').length,
+    resolved: result.pairs.filter((p) => p.classification.status === 'removed').length,
+  };
+}
+
 // ─── Console renderer ─────────────────────────────────────────────────────
 
 /**
