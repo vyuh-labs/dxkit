@@ -50,6 +50,20 @@ export interface LedgerEvent {
   readonly guardrail_status: CheckStatus;
   /** Net-new findings that blocked completion (0 when guardrail passed). */
   readonly net_new_findings: number;
+  /**
+   * Net-new BLOCKED findings broken out by category (identity kind: `secret`,
+   * `code`, `dep-vuln`, `custom-check`, `flow-binding`, …). Sums to
+   * `net_new_findings`. Optional for forward/backward compat — absent on events
+   * written before the metrics series recorded per-category detail, and on
+   * cache-replayed events. Drives `vyuh-dxkit metrics`' by-category breakdown.
+   */
+  readonly categories?: Record<string, number>;
+  /** Net-new WARNING-class findings surfaced this gate (non-blocking). Optional
+   *  for the same compat reason as `categories`. */
+  readonly warn_findings?: number;
+  /** Net-new WARNING-class findings broken out by category. Sums to
+   *  `warn_findings`. Optional (same compat reason as `categories`). */
+  readonly warn_categories?: Record<string, number>;
   /** Size of the prior baseline the current scan was diffed against. */
   readonly baseline_findings: number;
   /** Files changed relative to the baseline commit, when derivable. */

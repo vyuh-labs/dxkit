@@ -19,6 +19,7 @@ This skill runs dxkit analyzers and reads their output back to the user. It's th
 | "License inventory" | `npx vyuh-dxkit licenses` | Every dependency's declared license |
 | "Bill of materials" | `npx vyuh-dxkit bom` | Licenses + dep vulnerabilities joined (15-col XLSX-ready output) |
 | "Run everything" | `npx vyuh-dxkit report` | Every analyzer in one shot, ~3-5 min |
+| "What has dxkit caught for us / ROI" | `npx vyuh-dxkit metrics` | Findings the gate blocked before merge, per week + by category (from the loop ledger) |
 | "Show me the dashboard" | `npx vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html`, incl. an interactive **Graph** tab (code structure) |
 | "What does this repo do / where is X" | `npx vyuh-dxkit explore <sub>` | Query the code graph: entry-points / hot-files / communities / file / feature / api-surface |
 | "Token-efficient context for a query" | `npx vyuh-dxkit context <query>` | Slim structural slice for an LLM (also a fix-time hint via `--graph-context`) |
@@ -100,6 +101,35 @@ When the user asks "is this CVE worth fixing today" the answer depends on:
 3. **Patch availability** — is there a fixed version?
 
 Surface those three when summarizing a dep-vuln finding. The detailed JSON has the OSV/GHSA reference URL — link to it.
+
+## The value / ROI report (`metrics`)
+
+When the user asks "what has dxkit actually caught for us?", "show me the ROI",
+or is building a case to a manager, run:
+
+```bash
+npx vyuh-dxkit metrics                     # all history
+npx vyuh-dxkit metrics --since v2.30.0      # since a tag/ref (resolved to its date)
+npx vyuh-dxkit metrics --since 2026-04-01   # since a date
+npx vyuh-dxkit metrics --json              # for a dashboard feed
+```
+
+Lead with the **interceptions** number — net-new findings the guardrail
+*blocked before they reached the base branch*. It's drawn from the append-only
+loop ledger (`.dxkit/loop/ledger.jsonl`), so it's a count of events the gate
+actually stopped and can't be inflated. The report also breaks interceptions
+down **by category** (secret / dep-vuln / code / custom-check / …) and into a
+**weekly series**, plus repair-after-block (how often the loop fixed what it
+introduced).
+
+Two honesty caveats to relay, not hide:
+
+- The ledger only fills when the guardrail runs in an **autonomous loop**
+  (the Stop-gate) — an empty report means the loop hasn't run here, not that
+  nothing was caught. Confirm wiring with `npx vyuh-dxkit loop doctor`.
+- Older events written before per-category detail existed are counted in the
+  totals but surface as "not attributable to a category" — don't present the
+  by-category view as exhaustive when that note is non-zero.
 
 ## When the user wants to ACT on findings
 
