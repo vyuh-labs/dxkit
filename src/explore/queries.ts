@@ -567,6 +567,22 @@ export function apiSurfaceQuery(
 }
 
 /**
+ * Below this many files in the graph, orientation-by-graph rarely beats grep:
+ * the navigation cost the graph saves is small when the relevant files already
+ * fit in a quick `grep`/ripgrep sweep, and its payoff scales with codebase size.
+ * Advisory only — the queries still run; this just lets the CLI be honest about
+ * when a dead-ended query should fall back to grep instead of a second call.
+ */
+export const SMALL_REPO_FILE_THRESHOLD = 200;
+
+/** True when the graph covers few enough files that grep is usually the faster
+ *  orientation path (from `nodesByFile`, the per-file symbol index). */
+export function isSmallRepo(graph: Graph): boolean {
+  const files = graph.nodesByFile.size;
+  return files > 0 && files < SMALL_REPO_FILE_THRESHOLD;
+}
+
+/**
  * Options for `featureQuery`. `substring` enables the noisier
  * keyword-substring expansion (off by default per Sprint 0 spec —
  * false-positive prone for short keywords).
