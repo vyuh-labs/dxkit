@@ -1,6 +1,6 @@
 ---
 name: dxkit-feature
-description: Develop a new feature with the code graph as your map — orient cheaply by querying structure instead of reading whole files, implement following the patterns already in the repo, then verify the change did not regress security, tests, or quality before you push. Use when the user says "add a feature", "implement X", "build the Y flow", "where should this live", or otherwise starts net-new development in a dxkit-scaffolded repo.
+description: Develop a new feature with the code graph as your map — orient cheaply by querying structure instead of reading whole files, implement following the patterns already in the repo, then verify the change did not regress security, tests, or quality before you push. Use when the user says "add a feature", "implement X", "build the Y flow", "where should this live", or otherwise starts net-new development in a dxkit-scaffolded repo. Yields to a repo-specific feature or architecture skill when one exists: if this repo defines its own skill for building a module/feature (e.g. "/add-module", a platform architecture guide), that skill owns the architecture contract and this one runs inside it as the orientation-and-verification layer — not a replacement for it.
 ---
 
 # dxkit-feature
@@ -14,6 +14,28 @@ This skill drives forward development — building something new — the way
 2. **Close the loop a plain coding agent skips.** After the edit, run the
    dxkit analyzers on the change and the guardrail check, so the new feature
    doesn't quietly ship a vuln, a test gap, or a quality regression.
+
+## Defer to a repo-specific feature/architecture skill first
+
+This skill is deliberately generic — it claims the broad "add a feature /
+implement X" trigger. But many repos define their own skill for building a
+module or feature (an `/add-module`, a platform architecture guide, a
+domain-specific scaffolder) that encodes **where** code must live and **what
+contract** it must satisfy in that codebase. When such a skill exists, it wins
+on architecture: it decides the shape, the boundaries, the naming, the layering.
+
+The two compose — they don't conflict:
+
+- **The repo skill owns the architecture contract** — the "what and where."
+- **This skill owns the method** — orient by graph instead of grep (step [2]),
+  and verify the change didn't regress security/tests/quality before pushing
+  (step [5]). Offer those as the layer that runs *inside* the repo's flow.
+
+So when the user's request matches both, follow the repo-specific skill for the
+design decisions and fold this skill's orientation + verification steps into it —
+don't override the repo's conventions with the generic loop below. Only when the
+repo has **no** feature/architecture skill of its own does this skill drive the
+whole flow end to end.
 
 ## The feature loop
 
