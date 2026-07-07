@@ -522,7 +522,11 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     const consoleOut = renderConsole(result);
     expect(consoleOut).toContain('Guardrail BLOCKED — 1 new regression');
     expect(consoleOut).toMatch(/Flow:\s+1 \(blocking: 1,/);
-    expect(consoleOut).toContain(`allowlist add --fingerprint=${fp}`);
+    // The finding prints the FULL escape-hatch command (kind is always
+    // flow-binding), so an intentional break is accepted from the output.
+    expect(consoleOut).toContain(
+      `allowlist add --fingerprint=${fp} --kind=flow-binding --category=false-positive`,
+    );
     // The markdown (PR comment) carries the fingerprint in the flow table.
     const md = renderMarkdown(result);
     expect(md).toContain('Fingerprint');
