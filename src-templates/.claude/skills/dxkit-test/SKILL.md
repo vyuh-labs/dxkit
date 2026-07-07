@@ -113,6 +113,29 @@ npx vyuh-dxkit guardrail check
 Exit 0 = your new tests didn't introduce a net-new regression (e.g. a flaky
 test, a slop finding in test prose). Address anything it flags before pushing.
 
+## Run only the tests a change touches (`tests affected`)
+
+When you're iterating on a change and the full suite is slow, run just the tests
+that reach it, computed from the code graph:
+
+```bash
+npx vyuh-dxkit tests affected --json            # vs your working changes (HEAD)
+npx vyuh-dxkit tests affected --diff origin/main # vs a base branch (PR scope)
+```
+
+This is sharper than `vitest --changed` / jest `--onlyChanged`, which walk the
+*import* graph and select the whole suite in composition-root repos (every spec
+imports one config root). dxkit walks the *call* graph, so it selects the tests
+that actually exercise the change.
+
+Read the JSON: run `testFiles` when `complete: true`; when `complete: false`
+(`fallback: "all"`) run the **full** suite — it fails safe that way whenever the
+graph is missing, stale, or unreliable for a changed language (e.g. C#), so it
+never silently skips a test it should run. A `stale: true` flag means the graph
+predates the current commit — pass `--refresh` for an exact map. **This is a
+dev-speed tool: run affected inline, but the gate (pre-push / CI) still runs the
+full suite as the backstop.**
+
 ## Scope — what NOT to test
 
 - Don't test auto-generated, vendored, or trivial pass-through code just to

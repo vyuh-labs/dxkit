@@ -16,6 +16,7 @@
 
 import type { DetectedStack } from '../types';
 import type { Community, Graph, GraphNode, HttpEndpointNode } from './types';
+import { isTestSourceFile } from '../analyzers/tools/walk-source-files';
 
 // ─── Low-level primitives ────────────────────────────────────────────────────
 
@@ -46,6 +47,94 @@ export function calleesOf(graph: Graph, nodeId: string): GraphNode[] {
 /** All nodes declared in the given source file. */
 export function nodesInFile(graph: Graph, sourceFile: string): GraphNode[] {
   return [...(graph.nodesByFile.get(sourceFile) ?? [])];
+}
+
+// ─── Affected-test selection (graph-derived, #32) ────────────────────────────
+
+/** The tests a diff reaches, computed from the call graph. Emitted by
+ *  `vyuh-dxkit tests affected`. */
+export interface AffectedTestsResult {
+  /** Test files that transitively reach a changed symbol, plus any changed test
+   *  file itself. Deduped, sorted. */
+  readonly testFiles: string[];
+  /** The individual affected test symbols (for name-level runner selection). */
+  readonly testSymbols: Array<{ symbol: string; sourceFile: string; line?: number }>;
+  /** Seed count — changed-file symbols present in the graph. */
+  readonly changedSymbols: number;
+  /** Changed files the graph CANNOT account for: a non-test file with zero
+   *  symbols in the graph (a graphify gap, a brand-new file, or a non-source
+   *  file). Their test impact is not graph-derivable, so the caller must treat a
+   *  non-empty list as "selection incomplete → run the full suite" — never a
+   *  silent under-selection. */
+  readonly untraceable: string[];
+}
+
+/**
+ * The tests that transitively REACH any symbol in `changedFiles`, via reverse
+ * traversal of `calls` edges (a test reaches changed code when there's a call
+ * path test → … → changed symbol; that makes the test a transitive CALLER —
+ * an ancestor — of the changed symbol). Following `calls` edges (not imports) is
+ * the whole point: it distinguishes "this test actually exercises the change"
+ * from the import-graph's "this test's module transitively imports the change",
+ * which over-selects the entire suite in composition-root architectures.
+ *
+ * Pure over the graph. SAFETY is the caller's job: this function reports what the
+ * graph says AND what it can't account for (`untraceable`); the caller layers
+ * the graph-present / call-graph-reliability / staleness gates and falls back to
+ * the full suite whenever any of them fails. A graph-derived list is only ever
+ * trustworthy under all of those.
+ */
+export function affectedTestsQuery(
+  graph: Graph,
+  changedFiles: ReadonlyArray<string>,
+): AffectedTestsResult {
+  const changed = new Set(changedFiles);
+  // Seeds: every graph symbol declared in a changed file.
+  const seeds: string[] = [];
+  const filesWithSymbols = new Set<string>();
+  for (const n of graph.nodes) {
+    if (changed.has(n.sourceFile)) {
+      seeds.push(n.id);
+      filesWithSymbols.add(n.sourceFile);
+    }
+  }
+  // Reverse BFS over `calls` edges: collect every transitive caller (ancestor).
+  const visited = new Set<string>(seeds);
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    for (const e of graph.edgesToNode.get(id) ?? []) {
+      if (e.relation !== 'calls') continue;
+      if (!visited.has(e.from)) {
+        visited.add(e.from);
+        queue.push(e.from);
+      }
+    }
+  }
+  // Affected test symbols = visited nodes that live in test files.
+  const testSymbols: AffectedTestsResult['testSymbols'] = [];
+  const testFiles = new Set<string>();
+  for (const id of visited) {
+    const n = graph.nodeById.get(id);
+    if (n && isTestSourceFile(n.sourceFile)) {
+      testSymbols.push({ symbol: n.label, sourceFile: n.sourceFile, line: n.line });
+      testFiles.add(n.sourceFile);
+    }
+  }
+  // A changed test file is affected directly, even if graphify captured no
+  // symbol for it (a test with no traced outgoing calls still must run).
+  for (const f of changedFiles) if (isTestSourceFile(f)) testFiles.add(f);
+  // Changed non-test files with no graph symbol: the graph can't trace their
+  // callers, so their impact is unknown — surfaced for the caller's fail-safe.
+  const untraceable = changedFiles.filter((f) => !isTestSourceFile(f) && !filesWithSymbols.has(f));
+  return {
+    testFiles: [...testFiles].sort(),
+    testSymbols: testSymbols.sort(
+      (a, b) => a.sourceFile.localeCompare(b.sourceFile) || (a.line ?? 0) - (b.line ?? 0),
+    ),
+    changedSymbols: seeds.length,
+    untraceable: [...untraceable].sort(),
+  };
 }
 
 // ─── High-level queries ──────────────────────────────────────────────────────

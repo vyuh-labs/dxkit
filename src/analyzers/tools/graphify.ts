@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { runDetached } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import { getPythonExcludeFilter } from './exclusions';
@@ -920,11 +921,16 @@ async function computeAndCache(cwd: string): Promise<void> {
   // empty version strings.
   if (data.graph) {
     const dxkitVersion = readDxkitVersion();
+    const commitSha = readHeadShaSafe(cwd);
     const enrichedGraph: GraphJson = {
       ...data.graph,
       meta: {
         ...data.graph.meta,
         dxkitVersion,
+        // Stamp the commit the graph reflects, so consumers can decide EXACT
+        // staleness (graph SHA vs current HEAD) and a CI job can key a cached
+        // graph on it. Omitted when HEAD can't be read (not a git repo).
+        ...(commitSha ? { commitSha } : {}),
       },
     };
     graphCache.set(cwd, { kind: 'success', graph: enrichedGraph });
@@ -945,6 +951,20 @@ async function computeAndCache(cwd: string): Promise<void> {
  * this module's directory; works for both `npm install -g` and local
  * `npm link` flows. Returns 'unknown' on any failure (caller tolerates).
  */
+/** The current git HEAD sha, or undefined outside a git repo / on any error.
+ *  Stamped into the graph meta so staleness can be judged exactly. */
+function readHeadShaSafe(cwd: string): string | undefined {
+  try {
+    return execSync('git rev-parse HEAD', {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 function readDxkitVersion(): string {
   try {
     // dist/analyzers/tools/graphify.js → ../../../package.json
