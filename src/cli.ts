@@ -788,6 +788,20 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'configure': {
+      const { runConfigure } = await import('./configure-cli');
+      // `configure check` (positional subcommand) is the CI drift detector;
+      // otherwise positionals[1] is a path. Plan-only by default (safe);
+      // --apply writes the merge into policy.json.
+      const isCheck = positionals[1] === 'check';
+      runConfigure(resolveRepoPath(isCheck ? positionals[2] : positionals[1]), {
+        check: isCheck,
+        apply: !!values.apply,
+        json: !!values.json,
+      });
+      break;
+    }
+
     case 'health': {
       const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeHealthWithMetrics } = await import('./analyzers/health');

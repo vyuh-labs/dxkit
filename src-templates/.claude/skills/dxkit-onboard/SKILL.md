@@ -1,6 +1,6 @@
 ---
 name: dxkit-onboard
-description: Walk a customer through setting up dxkit on a repo from scratch — checks state, installs, scaffolds, configures hooks, runs doctor, fixes any gaps, captures the first baseline, sets up branch protection + Codespaces prebuild. Use when the user asks "set me up", "install dxkit on this repo", "I want to use dxkit", "walk me through dxkit setup", "help me get started with dxkit", or anything about onboarding a fresh repo. Asks for confirmation at each step with sensible defaults; hands off to dxkit-fix mid-flow when doctor surfaces gaps.
+description: Walk a customer through setting up dxkit on a repo from scratch — checks state, installs, scaffolds, configures hooks, runs doctor, fixes any gaps, captures the first baseline, sets up branch protection + Codespaces prebuild. Also drives a DETERMINISTIC deep-configuration pass — it runs `vyuh-dxkit configure --plan`, which COMPUTES the config each capability should take from observable repo facts (not the agent's judgment, so the same repo yields the same plan every run), shows it, gets confirmation, then `configure --apply` merge-writes it into policy.json without clobbering existing settings. The plan is registry-driven, so new capabilities join it automatically as dxkit grows. Use when the user asks "set me up", "install dxkit on this repo", "I want to use dxkit", "walk me through dxkit setup", "help me get started with dxkit", "configure dxkit for this repo", "what should I set up", or anything about onboarding or fully configuring a repo. Asks for confirmation at each step with sensible defaults; hands off to dxkit-fix mid-flow when doctor surfaces gaps.
 ---
 
 # dxkit-onboard
@@ -36,11 +36,12 @@ Don't use when:
 [3] Doctor            → npx vyuh-dxkit doctor (parse summary.fixable[])
 [4] Fix gaps          → dispatch through dxkit-fix for each fixable signal
 [5] Capture baseline  → npx vyuh-dxkit baseline create (with explicit secrets-warning)
-[6] Pre-commit ASK    → opt-in based on repo size (>500 files: default no)
-[7] Postinstall chain → opt-in to auto-activate hooks for teammates
-[8] Branch protection → ASK to run vyuh-dxkit setup-branch-protection
-[9] Codespaces prebuild → ASK to run vyuh-dxkit setup-prebuild (if customer uses Codespaces)
-[10] Final verify     → re-run doctor; show green; surface any remaining gaps
+[6] Deep configure    → configure --plan → confirm → --apply (DETERMINISTIC; computed, not chosen)
+[7] Pre-commit ASK    → opt-in based on repo size (>500 files: default no)
+[8] Postinstall chain → opt-in to auto-activate hooks for teammates
+[9] Branch protection → ASK to run vyuh-dxkit setup-branch-protection
+[10] Codespaces prebuild → ASK to run vyuh-dxkit setup-prebuild (if customer uses Codespaces)
+[11] Final verify     → re-run doctor; show green; surface any remaining gaps
 ```
 
 Each step ASKS the customer with a sensible default — never silent execution. The customer can decline any step; default behavior shouldn't surprise them.
@@ -165,7 +166,82 @@ git add .dxkit/policy.json
 git commit -m "chore: pin baseline mode in policy.json"
 ```
 
-### 6. Pre-commit ASK
+### 6. Deep configuration — the deterministic, registry-driven pass
+
+Beyond the operational wiring above, dxkit has per-capability configuration —
+what the guardrail blocks on, the loop posture, the flow-gate posture, whether
+the lint gate is on, and so on. The right value for each is not a matter of
+taste; it follows from observable facts about the repo. So dxkit **computes**
+it — the decision lives in code (`vyuh-dxkit configure`), not in your judgment
+or mine. That is what makes this pass reproducible: **the same repo yields the
+same plan on every run and in every environment.** Your job here is to drive
+the plan → confirm → apply loop, not to decide the values.
+
+**Why this matters (don't hand-configure policy.json instead):** if you were to
+eyeball the repo and hand-pick, say, a baseline mode, two people (or the same
+person on two days) could pick differently, and CI could disagree with a laptop.
+The planner removes that: it reads the facts once and every consumer agrees.
+
+Run the plan first — it writes nothing:
+
+```bash
+npx vyuh-dxkit configure --plan          # human-readable
+npx vyuh-dxkit configure --plan --json   # machine-readable (for you to parse)
+```
+
+Each line of the plan carries the value, the reason, and the **evidence** — the
+concrete fact(s) that forced it (e.g. `visibility=public`, `linter config
+present, no lint policy yet`). Present the plan to the customer in plain terms:
+"Based on this repo, dxkit will set X to Y because Z. Apply it?"
+
+- **The registry drives it.** The plan walks every capability the registry
+  exposes (`capabilities --json` is the same source), so as dxkit grows, new
+  capabilities appear in the plan automatically — you never maintain a checklist.
+- **It's a floor, not a ceiling.** The planner seeds each capability at its
+  *safe* default (flow `warn`, lint `warn-only`, the visibility-derived baseline
+  mode). Stricter postures (flow `block`, lint `blocking`) are a deliberate
+  later choice — hand off to the capability's own skill (dxkit-flow,
+  dxkit-checks, dxkit-loop) when the customer wants to tighten one. Each plan
+  item names its driving `skill` for exactly this.
+- **Nothing to do is a valid outcome.** On a repo that's already configured (or
+  has no signal), the plan is empty — say so and move on.
+
+On confirmation, apply it. The write is a **merge** — every existing key in
+`.dxkit/policy.json` is preserved (a hand-tuned severity block, a custom check
+you already declared); only the planned sections are added:
+
+```bash
+npx vyuh-dxkit configure --apply
+git add .dxkit/policy.json
+git commit -m "chore: configure dxkit policy for this repo"
+```
+
+Apply is **idempotent** — re-running is a clean no-op, because each planner goes
+silent once its section is pinned. Commit the file so every developer and CI
+share the posture.
+
+**Relay the computed values; don't reinterpret them.** The plan's value, reason,
+and evidence come from code — present them as-is. Do not substitute your own
+judgment for a computed value, soften it, or "improve" it in prose. Your role is
+to relay the plan and carry the customer's *explicit* decisions (a deliberate
+override, a declined section) — not to decide the values yourself. This is what
+keeps the outcome model-independent: the same repo gets the same config whether
+this conversation runs on one model or another, because neither model is choosing
+the values.
+
+**Never hand-edit policy.json to "configure" a capability the planner covers** —
+run `configure` so the value stays computed and reproducible. Hand-editing is
+for a deliberate override *after* the plan (e.g. bumping flow to `block`), and
+even then the capability's own skill (dxkit-flow, dxkit-checks, dxkit-loop) is
+the better path.
+
+**Enforce it in CI.** `vyuh-dxkit configure check` exits non-zero when a
+recommended section is missing from policy.json — so if any agent (on any model)
+hand-edited around the planner and left a gap, or a newly-shipped capability
+hasn't been configured, CI catches it. Offer to wire it into the guardrail
+workflow for teams that want the invariant enforced, not just available.
+
+### 7. Pre-commit ASK
 
 Pre-commit is opt-in even under `--full` because it re-runs every analyzer on every commit (~1-3 min on 500+ file repos). Most teams skip it.
 
@@ -180,7 +256,7 @@ Default recommendation by repo size:
 
 If yes, run `npx vyuh-dxkit init --with-precommit-hook --yes` to add the pre-commit hook.
 
-### 7. Postinstall chain
+### 8. Postinstall chain
 
 If the customer's `package.json` already has a `postinstall` script (most non-trivial repos do — patch-package, husky, monorepo bootstrap), dxkit won't auto-chain its hook activation into it. Teammates who clone the repo and run `npm install` won't get hooks wired automatically.
 
@@ -193,7 +269,7 @@ ASK:
 
 If yes, hand off to `dxkit-hooks` for the actual edit (it knows the safe append pattern + how to deal with sidecar files).
 
-### 8. Branch protection ASK
+### 9. Branch protection ASK
 
 Local hooks are fast feedback; CI is the unbypassable enforcement. Branch protection wires CI as a required status check — without it, the dxkit-guardrails workflow is informational and PRs can merge even when it fails.
 
@@ -209,7 +285,7 @@ npx vyuh-dxkit setup-branch-protection
 
 If the customer isn't a repo admin (HTTP 403), surface the manual UI path: Settings → Branches → Add rule → Require status checks → check `dxkit-guardrails`. Or ask their repo admin to run the command.
 
-### 9. Codespaces prebuild ASK
+### 10. Codespaces prebuild ASK
 
 Only relevant if the customer's team uses Codespaces. ASK:
 
@@ -225,7 +301,7 @@ npx vyuh-dxkit setup-prebuild
 
 Same admin-permission caveat as step 8.
 
-### 10. Final verify
+### 11. Final verify
 
 Re-run doctor:
 
