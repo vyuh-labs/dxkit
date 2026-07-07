@@ -223,6 +223,22 @@ export interface BrownfieldPolicy {
    * default — lint ships dormant).
    */
   readonly lint?: LintPolicy;
+  /**
+   * Code-graph freshness transport. Absent/`'off'` ⟹ the graph is rebuilt on
+   * demand by each consumer (the default). `'cache'` installs the
+   * `dxkit-graph-refresh` workflow, which rebuilds `graph.json` on merge to the
+   * default branch and stores it in the Actions cache (NEVER git — no repo
+   * bloat) so the guardrail run restores it instead of a cold rebuild. Opt-in
+   * because it's a CI-performance optimization, not a correctness gate.
+   */
+  readonly graph?: GraphSection;
+}
+
+/** `graph.*` block in `.dxkit/policy.json`. */
+export interface GraphSection {
+  /** `'cache'` → install the graph-refresh workflow (Actions-cache transport);
+   *  `'off'`/absent → rebuild on demand (the default). */
+  readonly refresh?: 'cache' | 'off';
 }
 
 /**

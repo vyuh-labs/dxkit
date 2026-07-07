@@ -45,6 +45,8 @@ import type { ManifestInstallFlags } from './types';
 import {
   installCiBaselineRefresh,
   installCiDeepSastRefresh,
+  installCiGraphRefresh,
+  graphRefreshEnabled,
   installCiGuardrails,
   installDevcontainer,
   installDxkitDevDependency,
@@ -65,6 +67,7 @@ type PrimaryFlag =
   | 'withBaselineRefresh'
   | 'withPrReview'
   | 'withDeepSastRefresh'
+  | 'withGraphRefresh'
   | 'withClaudeLoop';
 
 /**
@@ -237,6 +240,20 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-deep-sast-refresh.yml'),
   },
   {
+    // Graph-refresh (#119): rebuild + cache graph.json on merge to the default
+    // branch (Actions-cache transport — never git, so no repo bloat). Opt-in via
+    // `.dxkit/policy.json:graph.refresh: "cache"`; the flag is stamped from that
+    // policy at init. Presence uninstall detection (the `dxkit-graph-refresh.yml`
+    // filename) cleans up installs made before the flag was stamped.
+    id: 'ci-graph-refresh',
+    gate: { kind: 'flag', flag: 'withGraphRefresh' },
+    artifacts: () => ['.github/workflows/dxkit-graph-refresh.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiGraphRefresh(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-graph-refresh.yml'),
+  },
+  {
     // Loop pack: Stop-gate hook in .claude/settings.json + a CLAUDE.md loop
     // block + a policy.json preset — all merges into user files, reverted
     // elsewhere, so no delete artifacts. Present here so update refreshes the
@@ -298,12 +315,17 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
     withClaudeLoop: false,
     withCiPushTrigger: guardrailsHasPushTrigger(cwd),
     withDeepSastRefresh: false,
+    withGraphRefresh: false,
   };
   for (const surface of MANAGED_SHIP_SURFACES) {
     if (surface.gate.kind === 'flag' && surface.detectPresent) {
       flags[surface.gate.flag] = surface.detectPresent(cwd);
     }
   }
+  // Graph-refresh is opt-in via policy, so a repo that set `graph.refresh:
+  // "cache"` but hasn't installed the workflow yet must still be treated as
+  // enabled — otherwise `update` would never lay it down. Presence OR policy.
+  flags.withGraphRefresh = flags.withGraphRefresh || graphRefreshEnabled(cwd);
   return flags;
 }
 

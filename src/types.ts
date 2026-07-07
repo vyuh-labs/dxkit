@@ -155,6 +155,12 @@ export interface ManifestInstallFlags {
    *  up by presence detection (the workflow's `dxkit-` filename), and update
    *  refreshes them once the flag is stamped on the next init/update. */
   withDeepSastRefresh?: boolean;
+  /** Graph-refresh workflow (rebuild + cache graph.json on merge; opt-in via
+   *  `.dxkit/policy.json:graph.refresh: "cache"`). Optional: absent on manifests
+   *  written before it existed — cleaned up by presence detection (the
+   *  `dxkit-graph-refresh.yml` filename), and update refreshes once the flag is
+   *  stamped on the next init/update. */
+  withGraphRefresh?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

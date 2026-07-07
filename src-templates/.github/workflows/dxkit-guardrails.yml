@@ -111,6 +111,19 @@ __DXKIT_CI_RUNTIME_SETUP__
           restore-keys: |
             dxkit-baseline-
 
+      # Restore the code graph the graph-refresh workflow cached for this base
+      # SHA, so graph consumers (flow console, finding context) reuse it instead
+      # of a cold rebuild. Best-effort: a cache miss just means a consumer
+      # rebuilds on demand. No-op unless graph.refresh is enabled (the workflow
+      # that populates this cache is opt-in).
+      - name: Restore cached code graph
+        uses: actions/cache/restore@v4
+        with:
+          path: .dxkit/reports/graph.json
+          key: dxkit-graph-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            dxkit-graph-
+
       # Capture the markdown report regardless of exit code so we can
       # post it as a PR comment even when the guardrail blocks.
       - name: Run guardrail check

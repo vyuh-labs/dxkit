@@ -28,6 +28,8 @@ import {
   installCiGuardrails,
   installCiBaselineRefresh,
   installCiDeepSastRefresh,
+  installCiGraphRefresh,
+  graphRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -249,6 +251,7 @@ ${renderCommandIndex().join('\n')}
                               (PR-gate that posts a markdown summary comment)
     --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
     --with-deep-sast-refresh  Install .github/workflows/dxkit-deep-sast-refresh.yml (Snyk/CodeQL ingest; opt-in)
+    --with-graph-refresh      Install .github/workflows/dxkit-graph-refresh.yml (rebuild + cache graph.json on merge; opt-in, sets policy graph.refresh)
     --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
     --claude-loop             Register the Stop-gate hook for autonomous coding
@@ -360,6 +363,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-baseline-refresh': { type: 'boolean', default: false },
       'with-ci-push-trigger': { type: 'boolean', default: false },
       'with-deep-sast-refresh': { type: 'boolean', default: false },
+      'with-graph-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
@@ -614,6 +618,16 @@ export async function run(argv: string[]): Promise<void> {
           result: installCiDeepSastRefresh(cwd, { force: !!values.force }),
         });
       }
+      // Graph-refresh (#119) — opt-in perf transport: rebuild + cache graph.json
+      // on merge (Actions cache, never git). Enabled by the flag OR an existing
+      // `.dxkit/policy.json:graph.refresh: "cache"`; off by default (it's an
+      // optimization, not a gate, so it shouldn't clutter every CI install).
+      if (values['with-graph-refresh'] || graphRefreshEnabled(cwd)) {
+        shipResults.push({
+          label: 'CI graph-refresh workflow',
+          result: installCiGraphRefresh(cwd, { force: !!values.force }),
+        });
+      }
 
       // Flow setup — folded into `init` (there is no standalone `flow init`).
       // Detect a UI→API surface; if there is none, stay silent (zero burden on
@@ -722,6 +736,9 @@ export async function run(argv: string[]): Promise<void> {
         // to have no flag → update never refreshed it) and uninstall removes it
         // by flag rather than only by presence.
         withDeepSastRefresh: !!values['with-deep-sast-refresh'],
+        // #119: stamp the opt-in (flag or policy) so update refreshes the
+        // graph-refresh workflow and uninstall removes it.
+        withGraphRefresh: !!values['with-graph-refresh'] || graphRefreshEnabled(cwd),
       });
 
       console.log('');

@@ -140,6 +140,19 @@ The UI→API integration gate has its own posture under `flow.mode` in the same 
 
 The gate is additive and fail-open: it only fires when a change touches a client call / route / spec, and self-skips when there is no served-side truth to check against. Set it up with `npx vyuh-dxkit init --flow`, or hand off to the **dxkit-flow** skill for setup / diagnosis / repair.
 
+### Keeping the code graph fresh in CI (`graph.refresh`)
+
+The code graph (`.dxkit/reports/graph.json`) is a **gitignored**, rebuilt-on-demand artifact. On a large repo, rebuilding it in CI is slow. Opt into a cache transport that keeps it warm:
+
+```jsonc
+{ "graph": { "refresh": "cache" } }  // cache | off (default off)
+```
+
+- `cache` — installs `dxkit-graph-refresh.yml`, which rebuilds the graph on merge to the default branch (+ weekly + on demand) and stores it in the **GitHub Actions cache** keyed by commit SHA. **Never committed to git** — no repo bloat, no bot commits; caches evict after ~7 idle days. The guardrail run restores it so graph consumers skip a cold rebuild.
+- `off` / absent — every consumer rebuilds the graph on demand (the default).
+
+Two ways to enable it: `npx vyuh-dxkit init --with-graph-refresh` (installs the workflow directly), or set the `graph.refresh` knob above and run `npx vyuh-dxkit update` (which lays the workflow down). Either way, `update` refreshes it and `uninstall` removes it. Rebuild the graph locally any time with `npx vyuh-dxkit explore refresh`. It's a CI-performance optimization, not a correctness gate — leave it off unless graph rebuilds are slow.
+
 ## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
 
 dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:
