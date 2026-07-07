@@ -43,7 +43,15 @@ function call(path: string, over: Partial<ClientCall> = {}): ClientCall {
 }
 
 function route(path: string, over: Partial<RouteEndpoint> = {}): RouteEndpoint {
-  return { method: 'GET', path, via: 'decorator', handler: 'h', file: 'api/r.ts', line: 5, ...over };
+  return {
+    method: 'GET',
+    path,
+    via: 'decorator',
+    handler: 'h',
+    file: 'api/r.ts',
+    line: 5,
+    ...over,
+  };
 }
 
 /** Calls the JOIN considers resolved (bound to a route). */

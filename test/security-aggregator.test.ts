@@ -275,11 +275,7 @@ describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () 
   function secretFpFor(file: string, ordinal: number): string {
     return computeContentFingerprint(SECRET_CANONICAL_RULE, file, secretContentAnchor(ordinal));
   }
-  function allowEntry(
-    fingerprint: string,
-    kind: 'secret' | 'code' | 'dep-vuln',
-    category: string,
-  ) {
+  function allowEntry(fingerprint: string, kind: 'secret' | 'code' | 'dep-vuln', category: string) {
     return { fingerprint, kind, category, addedAt: '2026-06-01' } as never;
   }
 
@@ -289,8 +285,20 @@ describe('buildSecurityAggregate — allowlist score-lift (C-D2 follow-on)', () 
       ...emptyInput(),
       depVulns: {
         findings: [
-          { id: 'CVE-1', package: 'left-pad', severity: 'critical', tool: 'osv', fingerprint: depFp },
-          { id: 'CVE-2', package: 'axios', severity: 'critical', tool: 'osv', fingerprint: 'aaaa1111aaaa1111' },
+          {
+            id: 'CVE-1',
+            package: 'left-pad',
+            severity: 'critical',
+            tool: 'osv',
+            fingerprint: depFp,
+          },
+          {
+            id: 'CVE-2',
+            package: 'axios',
+            severity: 'critical',
+            tool: 'osv',
+            fingerprint: 'aaaa1111aaaa1111',
+          },
         ],
         tool: 'osv-scanner',
         available: true,

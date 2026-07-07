@@ -163,7 +163,10 @@ describe('capability registry — doctor advisor probes (whenToRecommend)', () =
 
   it('recommends `flow` on a UI repo with no flow setup, and not once configured', () => {
     const d = mkTmp();
-    fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ dependencies: { react: '^18' } }));
+    fs.writeFileSync(
+      path.join(d, 'package.json'),
+      JSON.stringify({ dependencies: { react: '^18' } }),
+    );
     expect(gatherRecommendations(d).map((r) => r.id)).toContain('flow');
     // Configuring flow (workspace.json) silences the recommendation.
     fs.mkdirSync(path.join(d, '.dxkit'), { recursive: true });
