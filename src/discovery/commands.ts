@@ -25,6 +25,10 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveBaselineMode } from '../baseline/modes';
+import type { RepoVisibility } from '../baseline/visibility';
+import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
+import { isClaudeLoopInstalled } from '../loop/scaffold';
 
 /** Job-to-be-done grouping for the help index. `internal` = machine-invoked. */
 export type CommandGroup =
@@ -63,6 +67,51 @@ export interface Recommendation {
   command: string;
 }
 
+/**
+ * Context handed to a `planConfig` probe — the deterministic configuration
+ * planner (`vyuh-dxkit configure`). Carries `cwd` plus the SAME injectable
+ * probes the baseline-mode resolver takes, so a planner that needs repo
+ * visibility (baseline) reuses the canonical `resolveBaselineMode` (Rule 11)
+ * instead of re-shelling to `gh`, and tests get a deterministic result without
+ * a network probe. New planners that need a new signal add a field here
+ * (progressive enhancement — never invalidates an existing descriptor).
+ */
+export interface ConfigContext {
+  cwd: string;
+  /** Injectable for tests; production omits and the baseline planner lets
+   *  `resolveBaselineMode` probe `gh` itself. */
+  probeVisibility?: (cwd: string) => RepoVisibility;
+  /** Injectable for tests; production omits and the resolver probes
+   *  `origin/HEAD`. */
+  probeDefaultRef?: (cwd: string) => string | undefined;
+}
+
+/**
+ * One capability's DETERMINISTIC configuration recommendation — a pure
+ * function of observable repo facts, never an agent's judgment. This is what
+ * makes `configure` reproducible: the same repo yields the same plan on every
+ * run and in every environment. `patch` is the partial `.dxkit/policy.json`
+ * object the apply step deep-merges (preserving every other key, the #68
+ * discipline); `reason` says why in prose and `evidence` cites the concrete
+ * fact(s) that forced the value.
+ */
+export interface ConfigPlanItem {
+  /** The capability this configures — the command id (e.g. 'baseline'). */
+  capability: string;
+  /** The driving skill, copied from the descriptor for the agent. */
+  skill?: string;
+  /** Human label of the policy section it sets (e.g. 'baseline.mode'). */
+  section: string;
+  /** One-line human summary of the value (e.g. 'ref-based (origin/main)'). */
+  summary: string;
+  /** The partial policy object to deep-merge into `.dxkit/policy.json`. */
+  patch: Record<string, unknown>;
+  /** Why this value — prose. */
+  reason: string;
+  /** The observable fact(s) that determined it (e.g. 'visibility=public'). */
+  evidence: string;
+}
+
 export interface CapabilityDescriptor {
   /** Canonical command id — MUST equal the top-level switch case in `cli.ts`. */
   id: string;
@@ -82,6 +131,17 @@ export interface CapabilityDescriptor {
    * "listed, not proactively recommended". Presence powers advisor mode.
    */
   whenToRecommend?: (ctx: RecommendContext) => Recommendation | null;
+  /**
+   * Deterministic config planner (`vyuh-dxkit configure`): given observable
+   * repo facts, what config value should this capability take? A PURE function
+   * — same repo, same answer, every run — so `configure` is reproducible and
+   * free of agent subjectivity. Returns `null` when there's nothing to
+   * recommend (already configured, or no clear signal) — the planner then
+   * stays silent, exactly like `whenToRecommend`. Symmetric with it, and
+   * discovered the same way (`gatherConfigPlan` iterates the registry), so a
+   * new capability that declares `planConfig` is covered automatically.
+   */
+  planConfig?: (ctx: ConfigContext) => ConfigPlanItem | null;
 }
 
 /**
@@ -124,6 +184,16 @@ export const COMMANDS = [
     summary: 'Verify setup — and recommend capabilities you are not using',
     docsBlurb:
       'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
+  },
+  {
+    id: 'configure',
+    audience: 'user',
+    group: 'setup',
+    summary: 'Compute + apply a deterministic config plan for this repo',
+    docsBlurb:
+      'Walk every capability the registry exposes and compute the config each should take from observable repo facts — a pure, reproducible plan (same repo → same plan). `--plan` shows it, `--apply` merge-writes it into .dxkit/policy.json without clobbering your edits. New capabilities join the plan automatically.',
+    skill: 'dxkit-onboard',
+    whenToRecommend: recommendConfigure,
   },
   {
     id: 'capabilities',
@@ -276,6 +346,7 @@ export const COMMANDS = [
     docsBlurb:
       'Record per-finding identities the guardrail check diffs against to gate net-new regressions.',
     whenToRecommend: recommendBaseline,
+    planConfig: planBaselineMode,
   },
   {
     id: 'guardrail',
@@ -312,6 +383,7 @@ export const COMMANDS = [
     docsBlurb:
       'Inspect and verify the autonomous-loop Stop-gate wiring, its ledger, and the correctness-floor snapshot.',
     skill: 'dxkit-loop',
+    planConfig: planLoopPreset,
   },
   {
     id: 'checks',
@@ -322,6 +394,7 @@ export const COMMANDS = [
       'Declare repo invariants (a project rule, a lint gate) as first-class gate citizens: the guardrail fingerprints their failures and blocks only net-new ones, grandfathering pre-existing debt. `checks list` shows what is configured; `checks run` dry-runs them.',
     skill: 'dxkit-checks',
     whenToRecommend: recommendChecks,
+    planConfig: planLintGate,
   },
 
   // ── Integrate ──────────────────────────────────────────────────────────
@@ -334,6 +407,7 @@ export const COMMANDS = [
       'Map client calls to served endpoints and gate changes that break a UI→API contract across repos.',
     skill: 'dxkit-flow',
     whenToRecommend: recommendFlow,
+    planConfig: planFlowMode,
   },
 
   // ── Explore ────────────────────────────────────────────────────────────
@@ -536,20 +610,31 @@ function recommendBaseline(ctx: RecommendContext): Recommendation | null {
   };
 }
 
-/** Recommend `flow init` on a UI repo with no flow setup. */
-function recommendFlow(ctx: RecommendContext): Recommendation | null {
-  const pkg = readJsonSafe(path.join(ctx.cwd, 'package.json'));
-  if (!pkg) return null;
+/**
+ * Signal: this repo has a UI framework but no flow setup yet — the case where
+ * flow's UI→API integration gate adds value. Shared by BOTH the doctor probe
+ * (`recommendFlow`) and the deterministic planner (`planFlowMode`) so the two
+ * never diverge (Rule 2 — one concept, one code path).
+ */
+function hasFlowSignal(cwd: string): boolean {
+  const pkg = readJsonSafe(path.join(cwd, 'package.json'));
+  if (!pkg) return false;
   const deps = {
     ...((pkg.dependencies as Record<string, unknown>) ?? {}),
     ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
   };
   const uiFrameworks = ['react', 'next', 'vue', 'svelte', '@angular/core'];
-  if (!uiFrameworks.some((f) => f in deps)) return null;
+  if (!uiFrameworks.some((f) => f in deps)) return false;
   // Already configured? workspace.json or a flow policy block means yes.
-  if (existsAt(ctx.cwd, '.dxkit', 'workspace.json')) return null;
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json'));
-  if (policy && 'flow' in policy) return null;
+  if (existsAt(cwd, '.dxkit', 'workspace.json')) return false;
+  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  if (policy && 'flow' in policy) return false;
+  return true;
+}
+
+/** Recommend `flow init` on a UI repo with no flow setup. */
+function recommendFlow(ctx: RecommendContext): Recommendation | null {
+  if (!hasFlowSignal(ctx.cwd)) return null;
   return {
     reason:
       'detected a UI framework but no flow setup — flow maps UI→API calls and gates changes that break an integration',
@@ -565,16 +650,23 @@ function recommendFlow(ctx: RecommendContext): Recommendation | null {
  * ask for it. Conservative: fires only on a concrete linter signal, and goes
  * silent once the policy opts in.
  */
-function recommendChecks(ctx: RecommendContext): Recommendation | null {
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+/**
+ * Signal: this repo runs a linter but has NOT wired it into dxkit's gate. Shared
+ * by the doctor probe (`recommendChecks`) and the deterministic planner
+ * (`planLintGate`) so they never diverge (Rule 2). Conservative: fires only on
+ * a concrete linter config / `lint` script, and goes silent the moment the
+ * `checks` / `lint` policy opts in.
+ */
+function hasLintSignal(cwd: string): boolean {
+  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json')) ?? {};
   // `.dxkit/policy.json` is flat (resolvePolicy spreads it at the top level),
   // so `checks` / `lint` are top-level keys — mirror of the flow probe's
   // `'flow' in policy`.
   const checks = policy.checks;
   const lint = policy.lint as Record<string, unknown> | undefined;
   // Already opted in? (a declared check, or the lint gate enabled) → silent.
-  if (Array.isArray(checks) && checks.length > 0) return null;
-  if (lint?.enabled === true) return null;
+  if (Array.isArray(checks) && checks.length > 0) return false;
+  if (lint?.enabled === true) return false;
 
   // A concrete linter signal: a standalone lint config, or a package.json
   // `lint` script. Kept conservative so this never nags a repo without one.
@@ -593,14 +685,14 @@ function recommendChecks(ctx: RecommendContext): Recommendation | null {
     '.golangci.yml',
     '.golangci.yaml',
   ];
-  let signal = lintConfigs.some((f) => existsAt(ctx.cwd, f));
-  if (!signal) {
-    const pkg = readJsonSafe(path.join(ctx.cwd, 'package.json'));
-    const scripts = (pkg?.scripts as Record<string, unknown> | undefined) ?? {};
-    signal = typeof scripts.lint === 'string';
-  }
-  if (!signal) return null;
+  if (lintConfigs.some((f) => existsAt(cwd, f))) return true;
+  const pkg = readJsonSafe(path.join(cwd, 'package.json'));
+  const scripts = (pkg?.scripts as Record<string, unknown> | undefined) ?? {};
+  return typeof scripts.lint === 'string';
+}
 
+function recommendChecks(ctx: RecommendContext): Recommendation | null {
+  if (!hasLintSignal(ctx.cwd)) return null;
   return {
     reason:
       'this repo runs a linter but it is not a guardrail gate — enable the lint gate so net-new lint errors block (pre-existing debt is grandfathered)',
@@ -629,6 +721,145 @@ export function gatherRecommendations(cwd: string): CommandRecommendation[] {
       if (rec) out.push({ id: c.id, recommendation: rec });
     } catch {
       // A probe never breaks doctor.
+    }
+  }
+  return out;
+}
+
+// ─── Deterministic config planners (`vyuh-dxkit configure`) ──────────────────
+// Each is a PURE function of observable repo facts — same repo, same plan, every
+// run and every environment. That reproducibility is the whole point: the config
+// value is COMPUTED, never chosen by an agent. Each returns null when there's
+// nothing to recommend (already pinned, or no signal), exactly like the doctor
+// probes above. New capabilities attach their own `planConfig` to their
+// descriptor and are picked up by `gatherConfigPlan` with no other edit.
+
+/**
+ * Baseline mode: pin the visibility-derived default explicitly so every
+ * developer and CI job agree. This is load-bearing, not cosmetic — a developer
+ * without `gh` access resolves visibility to 'unknown' (→ committed-full) while
+ * CI with `gh` sees 'public' (→ ref-based), so an UNPINNED repo silently uses
+ * two different postures. Reuses the canonical resolver (Rule 11); returns null
+ * once `baseline.mode` is pinned.
+ */
+function planBaselineMode(ctx: ConfigContext): ConfigPlanItem | null {
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+  const baseline = policy.baseline as Record<string, unknown> | undefined;
+  if (baseline && typeof baseline.mode === 'string') return null; // already pinned
+  const resolved = resolveBaselineMode({
+    cwd: ctx.cwd,
+    probeVisibility: ctx.probeVisibility,
+    probeDefaultRef: ctx.probeDefaultRef,
+  });
+  const patchBaseline: Record<string, unknown> = { mode: resolved.mode };
+  if (resolved.mode === 'ref-based' && resolved.ref) patchBaseline.ref = resolved.ref;
+  const summary =
+    resolved.mode === 'ref-based' && resolved.ref
+      ? `${resolved.mode} (${resolved.ref})`
+      : resolved.mode;
+  return {
+    capability: 'baseline',
+    section: 'baseline.mode',
+    summary,
+    patch: { baseline: patchBaseline },
+    reason: `pin the baseline posture so every developer + CI agree (${resolved.explanation})`,
+    evidence: `source=${resolved.source}`,
+  };
+}
+
+/**
+ * Flow gate: on a UI repo with no flow setup, seed the safe default posture —
+ * `warn` (surface net-new broken integrations, never fail a build). The team
+ * moves it to `block` later via the dxkit-flow skill. Reuses `hasFlowSignal`
+ * (shared with the doctor probe, Rule 2).
+ */
+function planFlowMode(ctx: ConfigContext): ConfigPlanItem | null {
+  if (!hasFlowSignal(ctx.cwd)) return null;
+  return {
+    capability: 'flow',
+    section: 'flow.mode',
+    summary: 'warn',
+    patch: { flow: { mode: 'warn', schemaVersion: FLOW_CONFIG_SCHEMA_VERSION } },
+    reason: 'seed the UI→API integration gate at the safe default (warn, never fails a build)',
+    evidence: 'UI framework in package.json, no flow config yet',
+  };
+}
+
+/**
+ * Lint gate: on a repo that runs a linter but hasn't wired it in, enable the
+ * gate WARN-only (`blocking: false`) — net-new lint errors surface without the
+ * pre-existing backlog suddenly blocking. The team flips `blocking: true` once
+ * the backlog is clean. Reuses `hasLintSignal` (shared with the doctor probe).
+ */
+function planLintGate(ctx: ConfigContext): ConfigPlanItem | null {
+  if (!hasLintSignal(ctx.cwd)) return null;
+  return {
+    capability: 'checks',
+    section: 'lint',
+    summary: 'enabled, warn-only',
+    patch: { lint: { enabled: true, blocking: false } },
+    reason: 'gate net-new lint errors without blocking on the pre-existing backlog',
+    evidence: 'linter config / lint script present, no lint policy yet',
+  };
+}
+
+/**
+ * Loop posture: if the Stop-gate is installed but `loop.preset` is unpinned,
+ * pin the safe default (`security-only`). Rarely fires in practice — the loop
+ * scaffold seeds the preset at install — so this is a safety net. Reuses the
+ * canonical Stop-hook detector (`isClaudeLoopInstalled`, Rule 2).
+ */
+function planLoopPreset(ctx: ConfigContext): ConfigPlanItem | null {
+  if (!isClaudeLoopInstalled(ctx.cwd)) return null;
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+  const loop = policy.loop as Record<string, unknown> | undefined;
+  if (loop && typeof loop.preset === 'string') return null; // already pinned
+  return {
+    capability: 'loop',
+    section: 'loop.preset',
+    summary: 'security-only',
+    patch: { loop: { preset: 'security-only' } },
+    reason: 'pin the safe default loop posture (blocks net-new security, warns on debt)',
+    evidence: 'loop Stop-gate installed, no preset pinned',
+  };
+}
+
+/**
+ * Recommend `configure` from doctor when dxkit is installed but nothing is
+ * configured yet (no `.dxkit/policy.json`). Cheap probe — it does not compute
+ * the full plan, just the clearest "unconfigured" signal.
+ */
+function recommendConfigure(ctx: RecommendContext): Recommendation | null {
+  if (!existsAt(ctx.cwd, '.vyuh-dxkit.json')) return null;
+  if (existsAt(ctx.cwd, '.dxkit', 'policy.json')) return null;
+  return {
+    reason:
+      'dxkit is installed but nothing is configured — compute a deterministic config plan from this repo',
+    command: 'vyuh-dxkit configure --plan',
+  };
+}
+
+/**
+ * Run every capability's `planConfig` against `cwd` and collect the
+ * deterministic items that fired — the data behind `vyuh-dxkit configure`.
+ * Registry-driven: iterates `userCommands()`, so a new capability that declares
+ * `planConfig` is covered with no edit here. Fail-open per planner (a throwing
+ * planner is skipped, never aborts the pass). The driving `skill` is stamped
+ * from the descriptor so the agent knows which skill owns each item.
+ */
+export function gatherConfigPlan(
+  cwd: string,
+  opts: Omit<ConfigContext, 'cwd'> = {},
+  registry: readonly CapabilityDescriptor[] = userCommands(),
+): ConfigPlanItem[] {
+  const out: ConfigPlanItem[] = [];
+  for (const c of registry) {
+    if (!c.planConfig) continue;
+    try {
+      const item = c.planConfig({ cwd, ...opts });
+      if (item) out.push({ ...item, skill: item.skill ?? c.skill });
+    } catch {
+      // A planner never aborts the configure pass.
     }
   }
   return out;
