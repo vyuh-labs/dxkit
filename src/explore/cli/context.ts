@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { contextQuery, fileLineContextQuery, type ContextNode } from '../queries';
-import { envelope, markdownHeader, printJson, printMarkdown } from '../format';
+import { envelope, markdownHeader, printJson, printMarkdown, smallRepoGrepHint } from '../format';
 import { extractWindow } from '../source-slice';
 import { languageForFile } from '../../languages';
 import type { Graph } from '../types';
@@ -56,13 +56,29 @@ export function runContext(
   const depth = values.depth !== undefined ? parsePositiveInt(values.depth, Infinity) : undefined;
   const substring = !!values.substring;
 
-  const result = contextQuery(graph, keyword, { budget, substring, maxDepth: depth });
+  let result = contextQuery(graph, keyword, { budget, substring, maxDepth: depth });
+
+  // Auto-fall-back to substring on an empty exact match (one call, not two).
+  let autoExpanded = false;
+  if (!result.matched && !substring) {
+    const expanded = contextQuery(graph, keyword, { budget, substring: true, maxDepth: depth });
+    if (expanded.matched) {
+      result = expanded;
+      autoExpanded = true;
+    }
+  }
 
   if (values.json) {
     printJson(
       envelope(
         'context',
-        { query: keyword, budget, substring, depth: depth ?? null },
+        {
+          query: keyword,
+          budget,
+          substring: substring || autoExpanded,
+          autoExpanded,
+          depth: depth ?? null,
+        },
         graph,
         result,
       ),
@@ -73,20 +89,25 @@ export function runContext(
   const sections: string[] = [markdownHeader('Context', `\`${keyword}\``, graph)];
 
   if (!result.matched) {
+    const grepHint = smallRepoGrepHint(graph, keyword);
     if (result.suggestions.length > 0) {
       const lines = result.suggestions
         .map((s) => `  - \`${s.key}\` (${s.hits} hit${s.hits === 1 ? '' : 's'})`)
         .join('\n');
       sections.push(
-        `No symbols matched \`${keyword}\`. Did you mean:\n\n${lines}\n\nRerun with \`--substring\` to expand from these, or pick one above.`,
+        `No symbols matched \`${keyword}\` (exact or substring). Closest by typo-distance:\n\n${lines}\n\nPick one above, or try a different keyword.`,
       );
     } else {
       sections.push(
-        `No symbols matched \`${keyword}\` (no close alternatives either). Try a different keyword or \`--substring\` for broader matching.`,
+        `No symbols matched \`${keyword}\` — exact or substring — and no close alternatives. Try a different keyword.`,
       );
     }
+    if (grepHint) sections.push(grepHint);
     printMarkdown(...sections);
     return;
+  }
+  if (autoExpanded) {
+    sections.push('_(no exact symbol match — expanded via substring)_');
   }
 
   // Anchor — the "start here" line.

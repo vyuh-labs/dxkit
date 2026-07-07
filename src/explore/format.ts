@@ -12,6 +12,7 @@
  */
 
 import type { Graph } from './types';
+import { isSmallRepo } from './queries';
 
 /**
  * Stable JSON envelope every `--json` mode subcommand emits. Skills
@@ -103,6 +104,25 @@ export function markdownTable<R extends Record<string, string | number>>(
  */
 export function markdownFooter(hint: string): string {
   return `\n${hint}`;
+}
+
+/**
+ * On a small repo, an honest nudge toward grep — so a dead-ended graph query
+ * doesn't read as "nothing here", and the agent doesn't spend a second call
+ * chasing the graph when a `grep`/ripgrep sweep would answer faster. Returns
+ * null when the repo is large enough that the graph is the better tool.
+ * Escapes the keyword conservatively for the shown command (letters/digits/
+ * dot/dash/underscore only) so the hint never suggests a shell-unsafe string.
+ */
+export function smallRepoGrepHint(graph: Graph, keyword: string): string | null {
+  if (!isSmallRepo(graph)) return null;
+  const safe = /^[\w.-]+$/.test(keyword) ? keyword : '<keyword>';
+  return (
+    `> ℹ️ This repo is small (${graph.nodesByFile.size} files in the graph). ` +
+    `On a repo this size, \`grep -rin ${safe} .\` (or ripgrep \`rg -i ${safe}\`) is usually ` +
+    `faster than graph orientation — the graph's payoff grows with codebase size. ` +
+    `Fall back to grep here; reach for the graph on the large-repo case where it shines.`
+  );
 }
 
 /**

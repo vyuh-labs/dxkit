@@ -19,6 +19,7 @@ import {
   markdownTable,
   printJson,
   printMarkdown,
+  smallRepoGrepHint,
 } from '../format';
 import type { Graph } from '../types';
 import type { ExploreCliValues } from '../../explore-cli';
@@ -40,10 +41,29 @@ export function runFeature(
 
   const limit = parseLimit(values.limit, DEFAULT_LIMIT);
   const substring = !!values.substring;
-  const result = featureQuery(graph, keyword, { limit, substring });
+  let result = featureQuery(graph, keyword, { limit, substring });
+
+  // Auto-fall-back to substring expansion on an empty exact match, so a miss
+  // does the work of two calls instead of dead-ending with "rerun with
+  // --substring". Only when the caller didn't already ask for it.
+  let autoExpanded = false;
+  if (result.results.length === 0 && !substring) {
+    const expanded = featureQuery(graph, keyword, { limit, substring: true });
+    if (expanded.results.length > 0) {
+      result = expanded;
+      autoExpanded = true;
+    }
+  }
 
   if (values.json) {
-    printJson(envelope('explore.feature', { keyword, limit, substring }, graph, result));
+    printJson(
+      envelope(
+        'explore.feature',
+        { keyword, limit, substring: substring || autoExpanded, autoExpanded },
+        graph,
+        result,
+      ),
+    );
     return;
   }
 
@@ -51,26 +71,29 @@ export function runFeature(
   sections.push(markdownHeader('Feature', `\`${keyword}\``, graph));
 
   if (result.results.length === 0) {
+    const grepHint = smallRepoGrepHint(graph, keyword);
     if (result.suggestions.length > 0) {
       const lines = result.suggestions
         .map((s) => `  - \`${s.key}\` (${s.hits} hit${s.hits === 1 ? '' : 's'})`)
         .join('\n');
       sections.push(
-        `No exact symbol match for \`${keyword}\`. Related symbols (substring or typo-distance):\n\n${lines}\n\nRerun with \`--substring\` to expand structurally from these (the typical "where is X implemented?" workflow), or pick a specific symbol above.`,
+        `No exact or substring match for \`${keyword}\`. Closest symbols (typo-distance):\n\n${lines}\n\nPick a specific symbol above, or try a different keyword.`,
       );
     } else {
       sections.push(
-        `No symbols matched \`${keyword}\` (no close alternatives found either). Try a different keyword, rerun with \`--substring\` for broader matching, or check \`vyuh-dxkit explore communities\` to see the natural-module structure.`,
+        `No symbols matched \`${keyword}\` — exact or substring — and no close alternatives. Try a different keyword, or check \`vyuh-dxkit explore communities\` to see the natural-module structure.`,
       );
     }
+    if (grepHint) sections.push(grepHint);
     printMarkdown(...sections);
     return;
   }
 
   // Summary line + central entry point (if any).
   const totalSeeds = result.results.reduce((sum, c) => sum + c.seedHits, 0);
+  const expandNote = autoExpanded ? ' _(no exact symbol match — expanded via substring)_' : '';
   sections.push(
-    `**Seed matches**: ${totalSeeds} symbol${totalSeeds === 1 ? '' : 's'} across ${result.results.length} cluster${result.results.length === 1 ? '' : 's'}.`,
+    `**Seed matches**: ${totalSeeds} symbol${totalSeeds === 1 ? '' : 's'} across ${result.results.length} cluster${result.results.length === 1 ? '' : 's'}.${expandNote}`,
   );
 
   // Per-cluster sections.
