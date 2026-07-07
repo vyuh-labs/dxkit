@@ -358,6 +358,15 @@ export const COMMANDS = [
     skill: 'dxkit-action',
   },
   {
+    id: 'receipt',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Emit the PR "dxkit signals" block (verdict + allowlist + score delta)',
+    docsBlurb:
+      'The ready-to-paste PR signals block, computed not narrated: the guardrail verdict, the allowlist delta, and (with --since) health-score movement vs the base ref. Reuses the session verdict cache so it never re-runs an unchanged scan.',
+    skill: 'dxkit-pr',
+  },
+  {
     id: 'allowlist',
     audience: 'user',
     group: 'gate',

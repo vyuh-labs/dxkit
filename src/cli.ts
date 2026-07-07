@@ -788,6 +788,21 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'receipt': {
+      const { runReceipt, receiptFailureHint } = await import('./receipt-cli');
+      try {
+        await runReceipt(resolveRepoPath(positionals[1]), {
+          since: values.since as string | undefined,
+          json: !!values.json,
+          refresh: !!values.refresh,
+        });
+      } catch (err) {
+        logger.fail(receiptFailureHint(err as Error));
+        process.exit(1);
+      }
+      break;
+    }
+
     case 'configure': {
       const { runConfigure } = await import('./configure-cli');
       // `configure check` (positional subcommand) is the CI drift detector;
@@ -2180,8 +2195,9 @@ export async function run(argv: string[]): Promise<void> {
       }
       const targetPath = resolveRepoPath(positionals[2]);
       const { runGuardrailCheck } = await import('./baseline/check');
-      const { renderConsole, renderJson, renderMarkdown } =
+      const { renderConsole, renderJson, renderMarkdown, verdictCounts } =
         await import('./baseline/check-renderers');
+      const { writeVerdict } = await import('./baseline/verdict-cache');
       const { parseBaselineMode } = await import('./baseline/modes');
       const cliModeRaw = values.mode as string | undefined;
       const cliMode = cliModeRaw !== undefined ? parseBaselineMode(cliModeRaw) : undefined;
@@ -2213,6 +2229,21 @@ export async function run(argv: string[]): Promise<void> {
           cliRef: values.ref as string | undefined,
         });
         if (!quiet) logger.info(`Baseline ${result.mode.explanation}`);
+        // Cache the verdict so a same-tree replay (the `receipt` command, a
+        // second gate this session) reuses it instead of re-gathering. Keyed on
+        // a content-complete tree signature + policy hash, so a replay can never
+        // hide a net-new finding. Best-effort — never breaks the check.
+        {
+          const counts = verdictCounts(result);
+          writeVerdict(targetPath, result.policy, {
+            blocks: result.blocks,
+            warns: result.warns,
+            blockingCount: counts.blocking,
+            warningCount: counts.warning,
+            markdown: renderMarkdown(result),
+            ranAt: new Date().toISOString(),
+          });
+        }
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
           await emitJson(renderJson(result));

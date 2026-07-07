@@ -73,6 +73,25 @@ function gitCapture(repoDir: string, args: string): string {
  * net-new finding. Returns null when it cannot be computed (then the gate
  * always gathers, the safe default).
  */
+/** dxkit's own regenerated output dirs — never the code under test, so they
+ *  must not contribute to the tree signature (else a gather that writes one
+ *  perturbs the next signature). */
+function isDxkitOutput(rel: string): boolean {
+  return rel.startsWith('.dxkit/cache/') || rel.startsWith('.dxkit/reports/');
+}
+
+/** Drop `git status --porcelain` lines that reference a dxkit output path
+ *  (they appear as `?? .dxkit/cache/…` when not gitignored). */
+function stripDxkitOutputs(status: string): string {
+  return status
+    .split('\n')
+    .filter((line) => {
+      const rel = line.slice(3).trim(); // porcelain: XY + space, then path
+      return !isDxkitOutput(rel);
+    })
+    .join('\n');
+}
+
 export function workingTreeSignature(repoDir: string): string | null {
   const head = gitCapture(repoDir, 'rev-parse HEAD').trim();
   if (!head) return null; // not a git repo / no commit → never cache
@@ -82,13 +101,19 @@ export function workingTreeSignature(repoDir: string): string | null {
     // empty when there is no such ref. Committed-full mode is fully
     // captured by HEAD + the tracked/untracked content below.
     `base:${gitCapture(repoDir, 'rev-parse origin/main').trim()}`,
-    `status:${gitCapture(repoDir, 'status --porcelain=v1 -uall')}`,
+    // Drop dxkit's OWN regenerated outputs from the status — the verdict cache
+    // and the reports dir are written BY a gather, so including them would make
+    // every gather perturb the next signature and defeat the replay. These are
+    // never the code under test. (In an installed repo they're gitignored too;
+    // this makes the signature robust even when they aren't.)
+    `status:${stripDxkitOutputs(gitCapture(repoDir, 'status --porcelain=v1 -uall'))}`,
     `diff:${gitCapture(repoDir, 'diff HEAD')}`,
   ];
   const untracked = gitCapture(repoDir, 'ls-files --others --exclude-standard')
     .split('\n')
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((rel) => !isDxkitOutput(rel));
   for (const rel of untracked) {
     try {
       const buf = fs.readFileSync(path.join(repoDir, rel));

@@ -57,32 +57,38 @@ Lead the body with the *why* (the problem) and the *what* (the approach), then
 the bucketed change list. Keep it proportional — a one-commit fix gets a short
 body; a multi-commit feature gets sections.
 
-## [3] Signals — attach what dxkit knows
+## [3] Signals — one command, computed not narrated
 
-Surface the PR's own verdict + any suppression activity a reviewer must sign off
-on. REUSE a guardrail verdict already produced for this commit instead of
-re-running: a feature session normally ran the gate against this exact HEAD
-moments ago (dxkit-feature verify, the pre-push hook, or CI), and a fresh check
-here is a redundant ~25s — the third run in one session. Only run a new check if
-none exists for the current commit (or the tree changed since the last run):
+The signals block (guardrail verdict, allowlist delta, score movement) is a
+COMMAND, not something you hand-assemble: `vyuh-dxkit receipt`. It emits
+ready-to-paste markdown, so the PR body can never misrepresent gate state, and
+it **reuses the verdict cache** — a feature session normally ran the gate against
+this exact HEAD moments ago (dxkit-feature verify, the pre-push hook), so
+`receipt` replays that result instead of paying a third ~25s scan. It re-runs
+only when the tree actually changed since the last gather.
 
 ```bash
-# Reuse the verdict from dxkit-feature verify / the pre-push hook if it ran on
-# this commit; run a fresh check only when there isn't one:
-npx vyuh-dxkit guardrail check                       # PASS/FAIL the PR will get in CI
-npx vyuh-dxkit allowlist audit                        # any new/expiring suppressions?
-npx vyuh-dxkit health --detailed | head -40           # score movement, if relevant
+npx vyuh-dxkit receipt --since <base-branch>    # verdict + allowlist delta + score movement
 ```
 
-Put in the body:
+- `--since <ref>` adds the health-score movement vs the base branch (it runs a
+  base-ref analysis, so omit it if you only need the verdict + allowlist — that
+  part is always cached and instant).
+- `--json` if you want to parse it; `--refresh` forces a fresh gather (rarely
+  needed — the cache already misses on any real tree change).
 
-- **Guardrail verdict** — PASS, or FAIL with the net-new findings named (a
-  reviewer should know before CI tells them).
-- **Allowlist activity** — any suppression added on this branch, with its
-  category + reason + expiry, called out for explicit review (suppressions are
-  the highest-trust thing a reviewer approves).
-- **Score deltas** — only when the change targeted a dimension (e.g. "Tests
-  62 → 71 after closing the auth gaps"). Don't pad with unchanged scores.
+Paste `receipt`'s output straight into the body under `## dxkit signals`. It
+already contains:
+
+- **Guardrail verdict** — PASS, or BLOCKED with the net-new findings named.
+- **Allowlist delta** — any suppression added on this branch, with category +
+  reason + expiry, called out for explicit review (suppressions are the
+  highest-trust thing a reviewer approves).
+- **Score movement** — the per-dimension base→head table (only with `--since`).
+
+Because the block is computed, you don't transcribe numbers by hand — that's
+what used to let a PR body drift from the real gate state. `receipt` is
+informational (it never fails the command); `guardrail check` remains the gate.
 
 ### Suggested reviewers
 
@@ -117,10 +123,8 @@ rotation`, not `Updates`. Match the repo's existing PR/commit convention
 - **Fix:** … (closes <finding/issue>)
 - **Refactor:** … (behavior-preserving)
 
-## dxkit signals
-- Guardrail: ✅ PASS  (or ❌ + the net-new findings)
-- Allowlist: <new suppressions + reason + expiry, or "no changes">
-- Scores: <dimension deltas, if the change targeted one>
+<!-- ## dxkit signals — paste `vyuh-dxkit receipt --since <base>` output here.
+     It already renders the verdict, allowlist delta, and score-movement table. -->
 
 ## Suggested reviewers
 - @alice — owns 3/4 touched files, active · @bob — CODEOWNERS
