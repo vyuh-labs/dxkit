@@ -283,6 +283,15 @@ export const COMMANDS = [
     skill: 'dxkit-test',
   },
   {
+    id: 'tests',
+    audience: 'user',
+    group: 'assess',
+    summary: 'Select tests affected by a diff via the code graph',
+    docsBlurb:
+      '`tests affected --diff <ref>` lists the test files a change reaches, computed from the call graph (beats module-graph selection in composition-root repos). Fails safe to the full suite when the graph is missing, stale, or unreliable for a changed language.',
+    skill: 'dxkit-test',
+  },
+  {
     id: 'quality',
     audience: 'user',
     group: 'assess',

@@ -803,6 +803,24 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'tests': {
+      const sub = positionals[1];
+      if (sub !== 'affected') {
+        logger.fail(
+          `Unknown tests subcommand: ${sub ?? '(missing)'}. ` +
+            `Available: vyuh-dxkit tests affected [path] [--diff <ref>] [--json] [--refresh]`,
+        );
+        process.exit(1);
+      }
+      const { runTestsAffected } = await import('./tests-affected-cli');
+      await runTestsAffected(resolveRepoPath(positionals[2]), {
+        diff: values.diff as string | undefined,
+        json: !!values.json,
+        refresh: !!values.refresh,
+      });
+      break;
+    }
+
     case 'configure': {
       const { runConfigure } = await import('./configure-cli');
       // `configure check` (positional subcommand) is the CI drift detector;

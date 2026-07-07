@@ -25,9 +25,7 @@
  * lands.
  */
 
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import * as path from 'node:path';
+import { refreshGraph } from './explore/refresh';
 import {
   GraphCorruptError,
   GraphNotFoundError,
@@ -147,38 +145,6 @@ function loadGraphOrExit(cwd: string): Graph {
     }
     throw err;
   }
-}
-
-/**
- * Shell out to `vyuh-dxkit health` to regenerate graph.json. Uses
- * the locally-installed dxkit (resolved via the same `bin` script
- * the user invoked). Output streams through to the terminal so the
- * user sees the health run's progress.
- */
-async function refreshGraph(cwd: string): Promise<void> {
-  // Resolve the current dxkit entry point. The caller's CLI script
-  // lives at one of two places depending on install flavor; both
-  // resolve via the same node entry.
-  const dxkitBin = resolveDxkitBin();
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn('node', [dxkitBin, 'health', cwd], {
-      stdio: 'inherit',
-      cwd,
-    });
-    child.on('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`vyuh-dxkit health exited with code ${code}`));
-    });
-    child.on('error', reject);
-  });
-}
-
-function resolveDxkitBin(): string {
-  // dist/explore-cli.js → dist/index.js
-  const distEntry = path.resolve(__dirname, 'index.js');
-  if (existsSync(distEntry)) return distEntry;
-  // Fallback for local dev where __dirname might be elsewhere.
-  return 'node_modules/@vyuhlabs/dxkit/dist/index.js';
 }
 
 function printExploreHelp(): void {

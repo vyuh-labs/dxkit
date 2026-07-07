@@ -147,6 +147,14 @@ export interface GraphMeta {
   readonly graphifyVersion: string;
   readonly dxkitVersion: string;
   readonly generatedAt: string;
+  /**
+   * The git HEAD commit the graph was built at, stamped by dxkit at write time.
+   * Lets a consumer decide EXACT staleness (graph SHA vs current HEAD) rather
+   * than a timestamp proxy, and keys a CI-cached graph. Optional for
+   * back-compat: a graph written before this field existed omits it, and
+   * consumers treat an absent SHA as "freshness unknown".
+   */
+  readonly commitSha?: string;
   readonly sourceFilesInGraph: number;
   readonly excludedFileCount: number;
   readonly packs: ReadonlyArray<LanguageId>;
