@@ -59,9 +59,9 @@ consumer through it (canonical examples added in 2.30):
   `catchAllPrefixCovers` in `src/analyzers/flow/model.ts`. BOTH the join (doctor's
   `diagnoseFlow`) and the integration gate (`evaluateFlowGate`) resolve a call
   against the served set through this ONE catch-all-aware predicate. The recurring
-  shape here (the flagship instance of the *semantic*-divergence variant): the gate
+  shape here (the flagship instance of the _semantic_-divergence variant): the gate
   held a LOSSY projection of the concept — a `Set<string>` of exact `${method}
-  ${path}` keys, which discards catch-all structure — so it did exact membership
+${path}` keys, which discards catch-all structure — so it did exact membership
   only and hard-blocked every call served by a `[...slug]` / `/**` catch-all that
   doctor resolved cleanly. `buildServedMatcher` rebuilds the catch-all prefixes
   from the key set so the gate inherits the join's resolution. The consumed side's
@@ -116,9 +116,9 @@ pinned by `test/managed-artifacts-playbook.test.ts` (synthetic-surface injection
 — asserts uninstall + update both pick up a newly-registered surface, mirror of
 `recipe-playbook.test.ts`).
 
-**Two variants of this class, two nets.** A *lexical* duplicate (a second `git
+**Two variants of this class, two nets.** A _lexical_ duplicate (a second `git
 ls-files .env`, a config-less `gatherFlowModel`) is a copy-paste the arch-check
-greps for. But the flow gate-vs-join bug was a *semantic* divergence: two
+greps for. But the flow gate-vs-join bug was a _semantic_ divergence: two
 functions computing the same concept (`servedMatch` vs an exact `Set.has`) with
 no shared token to grep — one path simply held a lossy shape of the data and
 re-implemented weaker logic against it. Grep cannot see that `.has(key)` is a
@@ -601,11 +601,11 @@ with two adjacent helpers locked to the same module:
   DB (a cross-repo `flow publish` participant declared by `repo:` URL)
   into a temp checkout with the same try/finally cleanup. Auth is the
   ambient git env with BOTH prompt paths disabled (`GIT_TERMINAL_PROMPT=0`
-  + SSH `BatchMode=yes`) and a bounded timeout, so a bad remote fails
-  FAST rather than hanging a gate; `repo`/`ref` come from committed
-  `workspace.json`, so an argument-injection guard rejects a leading-`-`
-  value. Only `flow publish` (explicit, offline-committed) fetches —
-  the per-commit gate reads the committed `served.json`, never clones.
+  - SSH `BatchMode=yes`) and a bounded timeout, so a bad remote fails
+    FAST rather than hanging a gate; `repo`/`ref` come from committed
+    `workspace.json`, so an argument-injection guard rejects a leading-`-`
+    value. Only `flow publish` (explicit, offline-committed) fetches —
+    the per-commit gate reads the committed `served.json`, never clones.
 
 Precedence inside the resolver (locked in 2.6 Sprint 0):
 

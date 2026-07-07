@@ -159,9 +159,7 @@ function computeCustomCheckIdentity(
   rule: string | undefined,
 ): FindingId {
   const body =
-    file !== undefined
-      ? `${check}\0${file}\0${lineWindowFor(line ?? 0)}\0${rule ?? ''}`
-      : check;
+    file !== undefined ? `${check}\0${file}\0${lineWindowFor(line ?? 0)}\0${rule ?? ''}` : check;
   const input = `custom-check\0v1\0${body}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }

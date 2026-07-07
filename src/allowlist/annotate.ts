@@ -136,7 +136,12 @@ export function annotateFindingsWithAllowlist(
   allowlist: AllowlistFile | null,
   now: Date = new Date(),
 ): number {
-  return annotateByKind(findings, allowlist, (f) => kindForCategory((f as CategorizedFinding).category), now);
+  return annotateByKind(
+    findings,
+    allowlist,
+    (f) => kindForCategory((f as CategorizedFinding).category),
+    now,
+  );
 }
 
 /**
