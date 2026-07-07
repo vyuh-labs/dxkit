@@ -735,6 +735,31 @@ export function installCiBaselineRefresh(
   return result;
 }
 
+/**
+ * Graph-refresh workflow (#119) — rebuilds `graph.json` on merge to the default
+ * branch and stores it in the Actions cache (never git). Opt-in; installed only
+ * when `.dxkit/policy.json:graph.refresh` is `"cache"`. Substitutes the default
+ * branch + the detected-stack runtime setup, exactly like the guardrail +
+ * baseline-refresh workflows so graphify resolves the same symbols the gate sees.
+ */
+export function installCiGraphRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  return installWorkflow(cwd, 'dxkit-graph-refresh.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+  });
+}
+
+/** Whether this repo opted into the graph-refresh cache transport
+ *  (`.dxkit/policy.json:graph.refresh: "cache"`). The install flag + managed
+ *  surface derive from this, so policy is the single opt-in source. */
+export function graphRefreshEnabled(cwd: string): boolean {
+  try {
+    return loadPolicyFromCwd(cwd).graph?.refresh === 'cache';
+  } catch {
+    return false;
+  }
+}
+
 export function installCiDeepSastRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-deep-sast-refresh.yml', opts);
   if (result.installed.length > 0) {

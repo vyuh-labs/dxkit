@@ -31,6 +31,7 @@ import {
   GraphNotFoundError,
   GraphSchemaVersionError,
   loadGraph,
+  tryLoadGraph,
 } from './explore/load';
 import { runApiSurface } from './explore/cli/api-surface';
 import { runCommunities } from './explore/cli/communities';
@@ -67,6 +68,16 @@ export async function runExplore(
   const subcommand = positionals[0];
   if (!subcommand) {
     printExploreHelp();
+    return;
+  }
+
+  // `explore refresh` — rebuild graph.json and report its freshness. This is
+  // both the explicit user affordance ("give me a current graph") and the build
+  // command the CI graph-refresh workflow runs before caching the artifact. No
+  // query follows; it just regenerates + reports.
+  if (subcommand === 'refresh') {
+    await refreshGraph(cwd);
+    reportGraphFreshness(cwd, values);
     return;
   }
 
@@ -122,6 +133,36 @@ export async function runExplore(
 }
 
 /**
+ * Report the freshly-built graph's freshness (node count + the commit it was
+ * built at). Best-effort: a missing/corrupt graph just prints nothing beyond
+ * the build already done. Emits JSON with `--json` for a workflow to key on.
+ */
+function reportGraphFreshness(cwd: string, values: ExploreCliValues): void {
+  const graph = tryLoadGraph(cwd);
+  const commitSha = graph?.meta.commitSha;
+  if (values.json) {
+    process.stdout.write(
+      JSON.stringify({
+        schema: 'graph-refresh.v1',
+        built: graph !== null,
+        commitSha: commitSha ?? null,
+        nodes: graph?.nodes.length ?? 0,
+      }) + '\n',
+    ); // slop-ok
+    return;
+  }
+  if (!graph) {
+    process.stderr.write('Graph rebuilt, but could not be read back for a freshness report.\n');
+    return;
+  }
+  process.stderr.write(
+    `Graph refreshed: ${graph.nodes.length} node(s)` +
+      (commitSha ? `, built at ${commitSha.slice(0, 8)}.` : '.') +
+      '\n',
+  );
+}
+
+/**
  * Load the graph and exit with a typed error message on failure.
  * Centralized so every subcommand gets the same diagnostic prose +
  * exit codes per the Sprint 0 spec (2 = not found, 3 = schema
@@ -162,6 +203,8 @@ Subcommands:
                            also available as the top-level 'vyuh-dxkit context')
   context <file:line>      Focused source chunk around a location + its callers
                            /callees (read ~the enclosing symbol, not the file)
+  refresh                  Rebuild graph.json now + report its freshness (the
+                           command the CI graph-refresh workflow runs)
 
 Flags (all subcommands):
   --json                   Emit structured JSON envelope

@@ -8,12 +8,15 @@ import {
   installDevcontainer,
   installCiGuardrails,
   installCiBaselineRefresh,
+  installCiGraphRefresh,
+  graphRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
   installDxkitDevDependency,
   detectDefaultBranch,
 } from '../src/ship-installers';
+import { detectInstallFlags, managedGatedArtifacts } from '../src/managed-artifacts';
 import { VERSION } from '../src/constants';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -291,6 +294,47 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     // default-branch-anchored).
     expect(content).toContain('DXKIT_PR_BASE: ${{ github.base_ref }}');
     expect(content).toContain('--mode ref-based --ref origin/$DXKIT_PR_BASE');
+  });
+
+  it('installs the graph-refresh workflow with the default branch substituted (#119)', () => {
+    execFileSync('git', ['init', '-q', '-b', 'develop'], { cwd: tmp });
+    const result = installCiGraphRefresh(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-graph-refresh.yml');
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-graph-refresh.yml'),
+      'utf8',
+    );
+    expect(content).not.toContain('__DXKIT_'); // every placeholder resolved
+    expect(content).toContain('branches: [develop]');
+    // Caches the graph (never commits it) and rebuilds via `explore refresh`.
+    expect(content).toContain('actions/cache/save@v4');
+    expect(content).toContain('path: .dxkit/reports/graph.json');
+    expect(content).toContain('explore refresh');
+  });
+
+  it('graph refresh is opt-in via policy graph.refresh, and gated in the surface registry (#119)', () => {
+    // No policy → disabled → surface contributes no uninstall artifact.
+    expect(graphRefreshEnabled(tmp)).toBe(false);
+    expect(detectInstallFlags(tmp).withGraphRefresh).toBe(false);
+
+    // Opt in via policy → enabled, so `update`/`uninstall` pick it up even
+    // before the workflow file exists on disk.
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ graph: { refresh: 'cache' } }),
+    );
+    expect(graphRefreshEnabled(tmp)).toBe(true);
+    const flags = detectInstallFlags(tmp);
+    expect(flags.withGraphRefresh).toBe(true);
+    expect(managedGatedArtifacts(flags)).toContain('.github/workflows/dxkit-graph-refresh.yml');
+
+    // 'off' is the same as absent.
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ graph: { refresh: 'off' } }),
+    );
+    expect(graphRefreshEnabled(tmp)).toBe(false);
   });
 
   it('skips when workflow file already exists', () => {
