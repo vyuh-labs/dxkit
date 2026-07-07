@@ -18,13 +18,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ShipInstallResult } from '../ship-installers';
 import { DEFAULT_LOOP_PRESET, type LoopPreset } from './policy';
-import { dxkitCli } from '../self-invocation';
+import { claudeHookCommand } from '../self-invocation';
 
 /** The command Claude Code runs on Stop. Built from the canonical CLI
  *  invocation (`src/self-invocation.ts`) so the installer, doctor, and any
  *  future tooling agree on the exact string and the loop Stop hook is a
- *  registered self-invocation surface (devDependency + doctor coverage). */
-export const STOP_HOOK_COMMAND = dxkitCli('hook stop-gate');
+ *  registered self-invocation surface (devDependency + doctor coverage).
+ *  Uses the cwd-anchored form: a Stop hook fires from the agent's shell cwd,
+ *  which may be a subdirectory, so it `cd`s to the project root first. */
+export const STOP_HOOK_COMMAND = claudeHookCommand('hook stop-gate');
 
 /**
  * Timeout (seconds) for the installed Stop hook. Claude Code's default

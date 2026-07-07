@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DXKIT_CLI,
   dxkitCli,
+  claudeHookCommand,
   SELF_INVOCATION_SURFACES,
   activeSelfInvocationSurfaces,
   requiresResolvableCli,
@@ -32,6 +33,23 @@ describe('dxkitCli — canonical CLI invocation', () => {
     expect(dxkitCli()).toBe('npx vyuh-dxkit');
     expect(dxkitCli('hook stop-gate')).toBe('npx vyuh-dxkit hook stop-gate');
     expect(dxkitCli('baseline create')).toBe('npx vyuh-dxkit baseline create');
+  });
+});
+
+describe('claudeHookCommand — cwd-anchored form for .claude/settings.json hooks', () => {
+  it('anchors to the project root before invoking, and keeps the subcommand intact', () => {
+    // A Claude Code hook fires from the agent's shell cwd, which may be a
+    // subdirectory. Anchor to $CLAUDE_PROJECT_DIR so dxkit analyzes the repo
+    // root, not whatever subtree the shell sits in.
+    const cmd = claudeHookCommand('hook stop-gate');
+    expect(cmd).toBe('cd "${CLAUDE_PROJECT_DIR:-.}" && npx vyuh-dxkit hook stop-gate');
+    // The `:-.}` default keeps a non-Claude invocation a harmless no-op cd.
+    expect(cmd).toContain('${CLAUDE_PROJECT_DIR:-.}');
+    // Doctor + installer detection keys on the raw subcommand — it must survive.
+    expect(cmd).toContain('hook stop-gate');
+    expect(claudeHookCommand('context-hook')).toBe(
+      'cd "${CLAUDE_PROJECT_DIR:-.}" && npx vyuh-dxkit context-hook',
+    );
   });
 });
 

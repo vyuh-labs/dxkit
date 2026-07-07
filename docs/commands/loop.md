@@ -34,7 +34,16 @@ The body of the Claude Code **Stop hook**. Not run by hand — `init
 ```json
 {
   "hooks": {
-    "Stop": [{ "hooks": [{ "type": "command", "command": "npx vyuh-dxkit hook stop-gate" }] }]
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && npx vyuh-dxkit hook stop-gate"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
