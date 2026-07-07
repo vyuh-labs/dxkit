@@ -18,7 +18,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readWorkspace, type WorkspaceParticipant } from '../../workspace';
-import { withRefWorktree, resolveRefToSha } from '../../baseline/ref-baseline';
+import {
+  withRefWorktree,
+  withRemoteRefWorktree,
+  resolveRefToSha,
+} from '../../baseline/ref-baseline';
 import { gatherFlowModel } from './gather';
 import {
   buildServedContract,
@@ -31,8 +35,13 @@ import {
   type ServedContract,
 } from './contract';
 
-/** Where a participant's served routes came from. */
-export type ParticipantSource = 'local' | 'ref' | 'missing';
+/** Where a participant's served routes came from.
+ *   - `local`       — gathered from a local checkout's working tree
+ *   - `ref`         — gathered from a local checkout pinned at a git ref
+ *   - `remote`      — cloned from the participant's `repo:` URL (shallow, at ref)
+ *   - `missing`     — no local checkout and no `repo` to fall back to
+ *   - `unreachable` — a `repo:` clone/fetch failed (bad URL, auth, unknown ref) */
+export type ParticipantSource = 'local' | 'ref' | 'remote' | 'missing' | 'unreachable';
 
 export interface PublishedParticipant {
   readonly name: string;
@@ -85,32 +94,59 @@ async function servedRoutesFrom(root: string, opts: PublishOptions): Promise<Ser
   return buildServedContract(model, GATHER_META).routes;
 }
 
-/** Gather one participant's served routes. Local path by default; pinned at a
- *  git ref when the participant declares one AND that ref resolves. Fail-open:
- *  a missing path → zero routes; an unresolvable ref → fall back to the tree. */
+/**
+ * Gather one participant's served routes. Resolution order (Rule 11 primitives):
+ *   1. LOCAL checkout, when `path` is set and exists on disk — preferred because
+ *      it is offline and fast. Pinned at a git ref via `withRefWorktree` when the
+ *      participant declares one AND it resolves in that checkout; else the
+ *      working tree.
+ *   2. REMOTE clone, when no usable local checkout but a `repo:` URL is set —
+ *      `withRemoteRefWorktree` fetches it shallowly at `ref` (default HEAD). This
+ *      is why `{ path, repo, ref }` uses the sibling on a dev machine and clones
+ *      in CI where the sibling isn't checked out.
+ * Fail-open throughout: a missing local path with no `repo` → `missing`; a clone
+ * failure → `unreachable`; a local gather failure → `missing`. A participant
+ * never wedges a publish.
+ */
 async function gatherParticipant(
   cwd: string,
   participant: WorkspaceParticipant,
   opts: PublishOptions,
 ): Promise<{ routes: ServedRoute[]; source: ParticipantSource }> {
-  const abs = path.resolve(cwd, participant.path);
-  if (!fs.existsSync(abs)) return { routes: [], source: 'missing' };
+  const abs = participant.path ? path.resolve(cwd, participant.path) : null;
 
-  if (participant.ref && resolveRefToSha(abs, participant.ref)) {
+  if (abs && fs.existsSync(abs)) {
+    if (participant.ref && resolveRefToSha(abs, participant.ref)) {
+      try {
+        const routes = await withRefWorktree({ cwd: abs, ref: participant.ref }, (wt) =>
+          servedRoutesFrom(wt, opts),
+        );
+        return { routes, source: 'ref' };
+      } catch {
+        // Worktree/gather failure → fall through to the working tree.
+      }
+    }
     try {
-      const routes = await withRefWorktree({ cwd: abs, ref: participant.ref }, (wt) =>
-        servedRoutesFrom(wt, opts),
-      );
-      return { routes, source: 'ref' };
+      return { routes: await servedRoutesFrom(abs, opts), source: 'local' };
     } catch {
-      // Worktree/gather failure → fall through to the working tree.
+      return { routes: [], source: 'missing' };
     }
   }
-  try {
-    return { routes: await servedRoutesFrom(abs, opts), source: 'local' };
-  } catch {
-    return { routes: [], source: 'missing' };
+
+  // No local checkout — fetch the remote when the participant declares one.
+  if (participant.repo) {
+    try {
+      const routes = await withRemoteRefWorktree(
+        { repo: participant.repo, ...(participant.ref ? { ref: participant.ref } : {}) },
+        (checkout) => servedRoutesFrom(checkout, opts),
+      );
+      return { routes, source: 'remote' };
+    } catch {
+      return { routes: [], source: 'unreachable' };
+    }
   }
+
+  return { routes: [], source: 'missing' };
 }
 
 /**

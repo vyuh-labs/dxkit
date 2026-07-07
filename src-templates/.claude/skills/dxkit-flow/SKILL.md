@@ -69,13 +69,21 @@ The gate then lists it under "suppressed by allowlist" (waived from the verdict,
 When the provider a call targets lives in another repo, the gate needs that repo's served contract. Two ways, both landing in `.dxkit/flow/served.json` (which the gate reads offline):
 
 - **Committed counterpart** — the provider commits its own `served.json`; this repo vendors it. Fully offline, diff-reviewable.
-- **Workspace participants** — declare the services in `.dxkit/workspace.json` (`participants[]` with a local `path` and optional `ref`), then:
+- **Workspace participants** — declare the services in `.dxkit/workspace.json` (`participants[]`), then:
 
   ```
   npx vyuh-dxkit flow publish   → unions every participant's served routes into this repo's served.json
   ```
 
-  `flow refresh` writes just this repo's snapshots; `flow publish` unions the whole mesh so this repo resolves calls to services it does not co-locate. Commit the result.
+  Each participant is located by `path` (a local checkout / sibling dir) and/or `repo` (a remote clone URL — `https://…`, `git@host:owner/repo.git`, `ssh://…`), with an optional `ref` to pin a branch/tag/commit:
+
+  ```jsonc
+  { "name": "backend", "path": "../backend" }                                  // local sibling
+  { "name": "billing", "repo": "https://github.com/acme/billing.git", "ref": "main" }  // remote, no checkout needed
+  { "name": "auth",    "path": "../auth", "repo": "git@github.com:acme/auth.git", "ref": "main" }  // local when present, else clone
+  ```
+
+  A `repo:` participant is fetched (shallow, at `ref`) so services need not be locally checked out — e.g. in CI. When both `path` and `repo` are set, the local checkout is preferred when it exists (offline, fast) and the remote is the fallback. Remote fetch uses your ambient git credentials (SSH agent / credential helper) — dxkit never prompts, so a private repo needs its key/token already configured. `flow refresh` writes just this repo's snapshots; `flow publish` unions the whole mesh. Commit the result — the per-commit gate reads the committed `served.json` offline and never fetches.
 
 ### console — an interactive HTML artifact a reviewer can exercise
 

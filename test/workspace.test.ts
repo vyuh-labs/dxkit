@@ -57,6 +57,41 @@ describe('workspace.json primitive', () => {
     expect(ws?.participants[0]).toEqual({ name: 'backend', path: '../backend', ref: 'main' });
   });
 
+  it('accepts a purely-REMOTE participant (repo, no local path)', () => {
+    const ws = normalizeWorkspace({
+      participants: [{ name: 'backend', repo: 'https://github.com/acme/backend.git', ref: 'main' }],
+      external: [],
+    });
+    expect(ws?.participants[0]).toEqual({
+      name: 'backend',
+      repo: 'https://github.com/acme/backend.git',
+      ref: 'main',
+    });
+  });
+
+  it('preserves both path and repo on one participant (local-first, remote fallback)', () => {
+    const ws = normalizeWorkspace({
+      participants: [{ name: 'be', path: '../be', repo: 'git@github.com:acme/be.git' }],
+      external: [],
+    });
+    expect(ws?.participants[0]).toEqual({
+      name: 'be',
+      path: '../be',
+      repo: 'git@github.com:acme/be.git',
+    });
+  });
+
+  it('drops a participant with neither path nor repo (not locatable)', () => {
+    const ws = normalizeWorkspace({
+      participants: [
+        { name: 'located', repo: 'https://x/y.git' },
+        { name: 'unlocatable' }, // no path, no repo → dropped
+      ],
+      external: [],
+    });
+    expect(ws?.participants.map((p) => p.name)).toEqual(['located']);
+  });
+
   it('normalizes away malformed entries but keeps well-formed ones', () => {
     const ws = normalizeWorkspace({
       participants: [

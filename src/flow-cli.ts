@@ -455,8 +455,10 @@ export async function runFlowPublish(opts: FlowViewOptions): Promise<void> {
     `Published mesh contract: ${result.totalServedRoutes} served route(s) across ${result.participants.length} participant(s) + this repo (hash ${result.contentHash}).`,
   );
   for (const p of result.participants) {
-    const detail =
-      p.source === 'missing' ? 'path not found — skipped' : `${p.routes} route(s) (${p.source})`;
+    let detail: string;
+    if (p.source === 'missing') detail = 'path not found — skipped';
+    else if (p.source === 'unreachable') detail = 'remote fetch failed — skipped';
+    else detail = `${p.routes} route(s) (${p.source})`;
     logger.info(`  • ${p.name}: ${detail}`);
   }
   logger.info(`  ${path.relative(opts.cwd, result.servedPath)}`);
