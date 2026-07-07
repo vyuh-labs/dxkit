@@ -55,6 +55,88 @@ export function isPlaceholderOnlyPath(path: string): boolean {
   return /^(\/\{var\})+$/.test(path);
 }
 
+/** A path whose FIRST segment is a placeholder carries no anchoring signal —
+ *  `/{var}/users/login` could resolve under any top-level namespace, so a "no
+ *  route serves it" verdict is too uncertain to block a build. Superset of
+ *  `isPlaceholderOnlyPath` (all-dynamic is a special case of leading-dynamic). */
+export function hasOpaqueLeadingSegment(path: string): boolean {
+  return /^\/\{var\}(\/|$)/.test(path);
+}
+
+/**
+ * The path-intrinsic confidence a CONSUMED binding carries — how much static
+ * signal the path gives the gate to threshold a block on. A path with a literal
+ * leading anchor is 1 (block-worthy when genuinely broken); a path with no
+ * anchoring signal (all-placeholder, or a leading placeholder that could resolve
+ * under any namespace) is 0.3, so a net-new break on it WARNS rather than
+ * blocks. One source of truth (Rule 2) for the consumed contract's confidence.
+ */
+export function consumedPathConfidence(path: string): number {
+  return hasOpaqueLeadingSegment(path) ? 0.3 : 1;
+}
+
+/**
+ * Does a catch-all route's static prefix COVER a concrete call path? `/api`
+ * covers `/api`, `/api/x`, `/api/x/y`; a root catch-all (`''`) covers anything.
+ * The one prefix-covering predicate (Rule 2) shared by the join's
+ * `bestCatchAllMatch` and the gate's `servedMatch`, so a call the join resolves
+ * against a splat route is one the gate ALSO sees as served (the class-fix: the
+ * gate did exact-key membership only, hard-blocking any call served by a
+ * `[...slug]` / `/**` catch-all that doctor resolved cleanly).
+ */
+export function catchAllPrefixCovers(prefix: string, callPath: string): boolean {
+  return prefix === '' || callPath === prefix || callPath.startsWith(prefix + '/');
+}
+
+/**
+ * A served-side lookup the gate resolves a consumed binding against — exact
+ * `(method, path)` keys plus the per-method catch-all static prefixes parsed out
+ * of them. Built from the SAME served key set `servedKeySet` produces, so the
+ * gate inherits the join's catch-all awareness without re-deriving routes.
+ */
+export interface ServedMatcher {
+  readonly exact: ReadonlySet<string>;
+  readonly catchAllPrefixesByMethod: ReadonlyMap<string, readonly string[]>;
+}
+
+/**
+ * Build a {@link ServedMatcher} from served `${method} ${path}` keys. Catch-all
+ * routes (`GET /api/{*}`) are recorded as their static prefix under the method,
+ * so the gate can prefix-match a concrete call the way the join does.
+ */
+export function buildServedMatcher(servedKeys: Iterable<string>): ServedMatcher {
+  const exact = new Set<string>();
+  const catchAll = new Map<string, string[]>();
+  for (const key of servedKeys) {
+    exact.add(key);
+    const sp = key.indexOf(' ');
+    if (sp <= 0) continue;
+    const method = key.slice(0, sp);
+    const routePath = key.slice(sp + 1);
+    if (isCatchAllPath(routePath)) {
+      const list = catchAll.get(method) ?? [];
+      list.push(catchAllStaticPrefix(routePath));
+      catchAll.set(method, list);
+    }
+  }
+  return { exact, catchAllPrefixesByMethod: catchAll };
+}
+
+/**
+ * Does a consumed `(method, path)` resolve against the served set — exactly, OR
+ * via a catch-all whose static prefix covers it? The single consumed→served
+ * resolution predicate (Rule 2): the gate answers "is this served?" through the
+ * same catch-all-aware logic the join uses, so gate and doctor agree on the same
+ * commit. An all-placeholder path never prefix-matches a catch-all (no static
+ * signal to align).
+ */
+export function servedMatch(method: string, callPath: string, m: ServedMatcher): boolean {
+  if (m.exact.has(`${method} ${callPath}`)) return true;
+  if (isPlaceholderOnlyPath(callPath)) return false;
+  const prefixes = m.catchAllPrefixesByMethod.get(method);
+  return prefixes ? prefixes.some((p) => catchAllPrefixCovers(p, callPath)) : false;
+}
+
 /**
  * Bind each client call to the route it targets, on the normalized
  * `(method, path)` key. Routes are indexed once; each call resolves in O(1).
@@ -104,8 +186,8 @@ function bestCatchAllMatch(
   if (!candidates || isPlaceholderOnlyPath(callPath)) return null;
   let best: { route: RouteEndpoint; prefix: string } | null = null;
   for (const c of candidates) {
-    const covers = c.prefix === '' || callPath === c.prefix || callPath.startsWith(c.prefix + '/');
-    if (covers && (!best || c.prefix.length > best.prefix.length)) best = c;
+    if (catchAllPrefixCovers(c.prefix, callPath) && (!best || c.prefix.length > best.prefix.length))
+      best = c;
   }
   return best?.route ?? null;
 }

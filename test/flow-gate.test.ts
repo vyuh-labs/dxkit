@@ -88,6 +88,71 @@ describe('evaluateFlowGate — net-new detection', () => {
   });
 });
 
+// The gate once resolved consumed→served by EXACT key membership, so any call
+// served by a `[...slug]` / `/**` catch-all — which doctor's join resolves
+// cleanly — hard-blocked as a net-new `no-route`. The gate now shares the join's
+// catch-all-aware matcher (Rule 2).
+describe('evaluateFlowGate — catch-all resolution (shares the join matcher)', () => {
+  it('a new call under a catch-all prefix is SERVED, not net-new broken', () => {
+    const found = evaluateFlowGate(
+      inputs({
+        headConsumed: [b({ method: 'POST', path: '/api/users/login' })],
+        baseConsumed: [],
+        headServed: new Set(['POST /api/{*}']), // Payload/Next [...slug] route
+        baseServed: new Set(['POST /api/{*}']),
+      }),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('the most-specific catch-all covers nested paths; a call outside every prefix still breaks', () => {
+    const found = evaluateFlowGate(
+      inputs({
+        headConsumed: [
+          b({ method: 'GET', path: '/api/v2/things', file: 'web/a.tsx' }), // under /api/v2/{*}
+          b({ method: 'GET', path: '/other/thing', file: 'web/b.tsx' }), // no catch-all covers it
+        ],
+        headServed: new Set(['GET /api/{*}', 'GET /api/v2/{*}']),
+        baseServed: new Set(['GET /api/{*}', 'GET /api/v2/{*}']),
+      }),
+    );
+    expect(found.map((f) => f.path)).toEqual(['/other/thing']);
+  });
+
+  it('route-removed is detected when a catch-all that covered the call is gone at HEAD', () => {
+    const call = b({ method: 'GET', path: '/api/x' });
+    const found = evaluateFlowGate(
+      inputs({
+        headConsumed: [call],
+        baseConsumed: [call],
+        headServed: new Set(), // the catch-all was removed
+        baseServed: new Set(['GET /api/{*}']), // covered the call at base
+      }),
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ path: '/api/x', reason: 'route-removed' });
+  });
+});
+
+// An opaque leading `{var}` (`/{var}/users/login`) could resolve
+// under any top-level namespace, so a "no route serves it" verdict is too
+// uncertain to block — it warns. Confidence is path-intrinsic (set by
+// buildConsumedContract via consumedPathConfidence); the gate here honors it.
+describe('evaluateFlowGate — opaque-leading-segment confidence', () => {
+  it('a leading-placeholder path warns rather than blocks', () => {
+    const found = evaluateFlowGate(
+      inputs({
+        headConsumed: [b({ path: '/{var}/users/login', confidence: 0.3 })],
+        headServed: new Set(['GET /articles']),
+        baseServed: new Set(['GET /articles']),
+      }),
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].verdict).toBe('warn');
+    expect(flowGateBlocks(found)).toBe(false);
+  });
+});
+
 describe('evaluateFlowGate — confidence gating', () => {
   it('a low-confidence (placeholder-only) net-new break WARNS, never blocks', () => {
     const found = evaluateFlowGate(

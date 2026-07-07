@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { parseSource } from '../src/ast/parse';
 import { extractFromTree, type FileFlow } from '../src/analyzers/flow/extract';
-import { joinFlow, buildFlowModel, summarize } from '../src/analyzers/flow/model';
+import {
+  joinFlow,
+  buildFlowModel,
+  summarize,
+  buildServedMatcher,
+  servedMatch,
+  consumedPathConfidence,
+  hasOpaqueLeadingSegment,
+  catchAllPrefixCovers,
+} from '../src/analyzers/flow/model';
 import { getLanguage } from '../src/languages';
 import type { HttpFlowSupport } from '../src/languages/types';
 
@@ -75,5 +84,59 @@ describe('flow model + summary', () => {
     expect(s.resolved).toBe(2); // two of three calls bind; /orphan does not
     expect(s.highConfidence).toBe(2);
     expect(s.unresolved).toBe(1);
+  });
+});
+
+// The served matcher the GATE resolves against, sharing the join's
+// catch-all-aware covering predicate (Rule 2).
+describe('served matcher (gate ↔ join parity)', () => {
+  it('resolves an exact key', () => {
+    const m = buildServedMatcher(['GET /articles']);
+    expect(servedMatch('GET', '/articles', m)).toBe(true);
+    expect(servedMatch('GET', '/other', m)).toBe(false);
+    expect(servedMatch('POST', '/articles', m)).toBe(false); // method-scoped
+  });
+
+  it('prefix-matches a concrete call under a catch-all', () => {
+    const m = buildServedMatcher(['POST /api/{*}']);
+    expect(servedMatch('POST', '/api', m)).toBe(true);
+    expect(servedMatch('POST', '/api/users/login', m)).toBe(true);
+    expect(servedMatch('POST', '/apix', m)).toBe(false); // not a prefix boundary
+  });
+
+  it('a root catch-all covers anything of its method', () => {
+    const m = buildServedMatcher(['GET /{*}']);
+    expect(servedMatch('GET', '/anything/at/all', m)).toBe(true);
+    expect(servedMatch('POST', '/anything', m)).toBe(false);
+  });
+
+  it('an all-placeholder call never prefix-matches a catch-all (no static signal)', () => {
+    const m = buildServedMatcher(['GET /{*}']);
+    expect(servedMatch('GET', '/{var}', m)).toBe(false);
+  });
+
+  it('the covering predicate is the join and gate shared primitive', () => {
+    expect(catchAllPrefixCovers('/api', '/api/x')).toBe(true);
+    expect(catchAllPrefixCovers('/api', '/api')).toBe(true);
+    expect(catchAllPrefixCovers('', '/anything')).toBe(true);
+    expect(catchAllPrefixCovers('/api', '/apix')).toBe(false);
+  });
+});
+
+describe('consumed path confidence (opaque leading segment)', () => {
+  it('a literal-anchored path is full confidence', () => {
+    expect(consumedPathConfidence('/api/users/login')).toBe(1);
+    expect(consumedPathConfidence('/api/{var}')).toBe(1); // literal anchor, trailing var
+  });
+
+  it('a leading placeholder is low confidence (warn, not block)', () => {
+    expect(hasOpaqueLeadingSegment('/{var}/users/login')).toBe(true);
+    expect(consumedPathConfidence('/{var}/users/login')).toBe(0.3);
+  });
+
+  it('all-placeholder is a special case of leading-placeholder', () => {
+    expect(hasOpaqueLeadingSegment('/{var}')).toBe(true);
+    expect(consumedPathConfidence('/{var}')).toBe(0.3);
+    expect(consumedPathConfidence('/{var}/{var}')).toBe(0.3);
   });
 });

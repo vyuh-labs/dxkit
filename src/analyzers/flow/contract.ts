@@ -19,7 +19,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { dedupeServedRoutes, isPlaceholderOnlyPath, type FlowModel } from './model';
+import { consumedPathConfidence, dedupeServedRoutes, type FlowModel } from './model';
 
 /** Directory (relative to repo root) where flow contract snapshots live. */
 export const FLOW_DIR = path.join('.dxkit', 'flow');
@@ -135,9 +135,10 @@ export function buildConsumedContract(model: FlowModel, meta: SnapshotMeta): Con
         path: call.path,
         file: call.file,
         line: call.line,
-        // A placeholder-only path carries no static signal → low confidence, so
-        // the gate warns rather than blocks on it.
-        confidence: isPlaceholderOnlyPath(call.path) ? 0.3 : 1,
+        // Path-intrinsic confidence: a path with no leading anchor (all-
+        // placeholder, or an opaque leading `{var}` that could resolve under any
+        // namespace) is low-confidence, so the gate warns rather than blocks.
+        confidence: consumedPathConfidence(call.path),
       });
     }
   }
