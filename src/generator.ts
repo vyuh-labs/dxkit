@@ -5,7 +5,7 @@ import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { sha256 } from './files';
 import { activeLanguagesFromStack } from './languages';
-import { dxkitCli } from './self-invocation';
+import { dxkitCli, claudeHookCommand } from './self-invocation';
 import { decideUpdateDisposition } from './update-disposition';
 import * as logger from './logger';
 
@@ -84,7 +84,7 @@ function buildSettingsJson(config: ResolvedConfig): string {
               hooks: [
                 {
                   type: 'command',
-                  command: dxkitCli('context-hook'),
+                  command: claudeHookCommand('context-hook'),
                 },
               ],
             },

@@ -45,6 +45,26 @@ export function dxkitCli(subcommand = ''): string {
 }
 
 /**
+ * The cwd-anchored form for a `.claude/settings.json` hook command
+ * (`context-hook`, the loop Stop-gate). A Claude Code hook runs with the
+ * AGENT'S current working directory, which can be any subdirectory the
+ * agent's shell has `cd`-ed into — not necessarily the repo root. A bare
+ * `npx vyuh-dxkit …` then analyzes whatever subtree the shell happens to
+ * sit in (wrong graph, wrong diff), and any relative script path in a hook
+ * fails outright with MODULE_NOT_FOUND. Claude Code exports
+ * `$CLAUDE_PROJECT_DIR` (the project root) into every hook's environment,
+ * so anchor there before invoking; `${...:-.}` keeps a stray non-Claude
+ * invocation a harmless no-op cd (stay put), preserving old behavior.
+ *
+ * This is the ONLY self-invocation surface that needs the anchor — the git
+ * pre-push hook already runs from the worktree root and the CI workflow
+ * from the checkout root, so those keep the plain `dxkitCli` form.
+ */
+export function claudeHookCommand(subcommand: string): string {
+  return `cd "\${CLAUDE_PROJECT_DIR:-.}" && ${dxkitCli(subcommand)}`;
+}
+
+/**
  * The install-time decisions that determine which self-invocation surfaces
  * a given `init`/`update` run actually writes. Each surface maps itself to
  * one of these via `installedWhen`.
