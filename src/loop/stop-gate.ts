@@ -106,6 +106,33 @@ function blockingPairs(json: GuardrailJsonPayload): GuardrailJsonPayload['pairs'
 }
 
 /**
+ * Per-category detail for the metrics interception series (#117). Splits the
+ * live (non-allowlisted) net-new pairs into a blocked-by-category histogram
+ * (sums to `net_new_findings`) and a warned-by-category one. Recorded on every
+ * post-guardrail ledger event so `vyuh-dxkit metrics` can attribute
+ * interceptions to a finding kind without re-gathering.
+ */
+function findingBreakdown(json: GuardrailJsonPayload): {
+  categories: Record<string, number>;
+  warn_findings: number;
+  warn_categories: Record<string, number>;
+} {
+  const categories: Record<string, number> = {};
+  const warn_categories: Record<string, number> = {};
+  let warn_findings = 0;
+  for (const p of json.pairs) {
+    if (p.suppressedByAllowlist !== undefined) continue; // waived — not a live finding
+    if (p.blocks) {
+      categories[p.kind] = (categories[p.kind] ?? 0) + 1;
+    } else if (p.warns) {
+      warn_findings++;
+      warn_categories[p.kind] = (warn_categories[p.kind] ?? 0) + 1;
+    }
+  }
+  return { categories, warn_findings, warn_categories };
+}
+
+/**
  * Build the repair-friendly message the model reads when blocked. Lists
  * each net-new finding with the location it must fix, and is explicit
  * about the two anti-patterns (refresh baseline / fix grandfathered debt)
@@ -226,6 +253,10 @@ export async function computeStopGate(
 
   const blocking = blockingPairs(json);
   const guardrailBlocks = blocking.length > 0;
+  // Per-category interception detail, recorded on every event from here down
+  // (all have the guardrail payload in scope) so `metrics` can attribute
+  // blocked/warned findings to a kind. See findingBreakdown.
+  const breakdown = findingBreakdown(json);
 
   // Guardrail decides first. If it blocks, don't bother running tests —
   // the model must fix the findings regardless.
@@ -238,6 +269,7 @@ export async function computeStopGate(
       commit: json.current.commitSha,
       guardrail_status: 'fail',
       net_new_findings: blocking.length,
+      ...breakdown,
       baseline_findings: json.baseline.findingsCount,
       files_changed: 0,
       allowed: false,
@@ -268,6 +300,7 @@ export async function computeStopGate(
       commit: json.current.commitSha,
       guardrail_status: 'pass',
       net_new_findings: 0,
+      ...breakdown,
       baseline_findings: json.baseline.findingsCount,
       files_changed: 0,
       allowed: false,
@@ -297,6 +330,7 @@ export async function computeStopGate(
       commit: json.current.commitSha,
       guardrail_status: 'pass',
       net_new_findings: 0,
+      ...breakdown,
       baseline_findings: json.baseline.findingsCount,
       files_changed: 0,
       allowed: false,
@@ -324,6 +358,7 @@ export async function computeStopGate(
     commit: json.current.commitSha,
     guardrail_status: 'pass',
     net_new_findings: 0,
+    ...breakdown,
     baseline_findings: json.baseline.findingsCount,
     files_changed: 0,
     allowed: true,

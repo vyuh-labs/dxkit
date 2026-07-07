@@ -803,6 +803,15 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'metrics': {
+      const { runMetrics } = await import('./metrics-cli');
+      await runMetrics(resolveRepoPath(positionals[1]), {
+        since: values.since as string | undefined,
+        json: !!values.json,
+      });
+      break;
+    }
+
     case 'tests': {
       const sub = positionals[1];
       if (sub !== 'affected') {

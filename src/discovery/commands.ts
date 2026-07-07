@@ -345,6 +345,15 @@ export const COMMANDS = [
       'One command to run all analyzers and render the dashboard — the full-audit entry point.',
     skill: 'dxkit-reports',
   },
+  {
+    id: 'metrics',
+    audience: 'user',
+    group: 'assess',
+    summary: 'Findings the gate stopped before merge — the ROI series from the loop ledger',
+    docsBlurb:
+      'The champion ROI report, computed not narrated: net-new findings the guardrail intercepted before they reached the base branch, per week and by category, from the append-only loop ledger. Interceptions are the ungameable number; --since <ref|date> scopes the window.',
+    skill: 'dxkit-reports',
+  },
 
   // ── Gate ───────────────────────────────────────────────────────────────
   {
