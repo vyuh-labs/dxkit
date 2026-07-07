@@ -67,6 +67,51 @@ export interface AllowlistDelta {
  * (the canonical "no commit" value baseline-create uses outside a
  * git repo) yields `baselineAccessible: false` immediately.
  */
+/**
+ * Resolve the git base the allowlist delta should diff against — the branch the
+ * PR MERGES INTO, not the findings-baseline capture commit.
+ *
+ * The delta answers "what suppressions does THIS branch add vs its base." The
+ * findings-baseline capture SHA is the wrong base for that: a baseline captured
+ * before the allowlist was adopted (and not since refreshed) has no allowlist
+ * file at that commit, so `computeAllowlistDelta`'s "file absent → all current
+ * are new" branch made the ENTIRE allowlist read as "added on this branch" (a
+ * real customer-reported PR-comment bug). The base BRANCH TIP already carries
+ * whatever suppressions the base has, so diffing against it yields only the
+ * branch's net-new entries.
+ *
+ *   - ref-based mode → the resolved ref (post-#118 this is `origin/<base>`).
+ *   - committed mode → the default-branch tip (`origin/<branch>`, else the local
+ *     branch), falling back to the baseline anchor SHA when neither is
+ *     reachable (detached CI checkout with no remote branch).
+ */
+export function resolveAllowlistDeltaBase(
+  cwd: string,
+  refBasedRef: string | undefined,
+  baselineBranch: string,
+  baselineCommitSha: string,
+): string {
+  if (refBasedRef) return refBasedRef;
+  if (baselineBranch) {
+    for (const cand of [`origin/${baselineBranch}`, baselineBranch]) {
+      if (refReachable(cwd, cand)) return cand;
+    }
+  }
+  return baselineCommitSha;
+}
+
+function refReachable(cwd: string, ref: string): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', ref], {
+      cwd,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function computeAllowlistDelta(cwd: string, baselineCommitSha: string): AllowlistDelta {
   const current = loadAllowlist(cwd);
   const empty: AllowlistDelta = { added: [], removed: [], baselineAccessible: false };

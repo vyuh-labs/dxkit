@@ -3,7 +3,11 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { computeAllowlistDelta, diffEntries } from '../../src/allowlist/diff';
+import {
+  computeAllowlistDelta,
+  diffEntries,
+  resolveAllowlistDeltaBase,
+} from '../../src/allowlist/diff';
 import {
   ALLOWLIST_DIR,
   ALLOWLIST_FILENAME,
@@ -198,5 +202,47 @@ describe('computeAllowlistDelta (git-aware)', () => {
     const d = computeAllowlistDelta(tmp, baselineSha);
     expect(d.added).toEqual([]);
     expect(d.removed.map((x) => x.fingerprint)).toEqual(['aaaa111111111111']);
+  });
+
+  // Customer-reported: the PR "Allowlist activity" listed the WHOLE allowlist as
+  // "added on this branch", not just the branch's new entries. Root cause — the
+  // delta diffed against the findings-baseline capture commit, which predated
+  // the allowlist's adoption, so the file was absent there and every current
+  // entry read as new. The base must be the branch the PR MERGES INTO.
+  it('resolveAllowlistDeltaBase picks the base-branch tip, not the stale pre-allowlist SHA', () => {
+    fs.writeFileSync(path.join(tmp, 'README.md'), 'init\n');
+    const preAllowlistSha = commit('base (no allowlist yet)'); // the stale baseline commit
+    writeAllowlist([makeEntry({ fingerprint: 'aaaa111111111111' })]);
+    commit('adopt allowlist on main');
+
+    // A feature branch that adds ONE suppression.
+    execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: tmp });
+    writeAllowlist([
+      makeEntry({ fingerprint: 'aaaa111111111111' }),
+      makeEntry({ fingerprint: 'cccc333333333333' }),
+    ]);
+    commit('feature adds a suppression');
+
+    // committed mode (no ref-based ref): resolver prefers the base-branch tip.
+    const base = resolveAllowlistDeltaBase(tmp, undefined, 'main', preAllowlistSha);
+    expect(base).toBe('main');
+    const scoped = computeAllowlistDelta(tmp, base);
+    expect(scoped.added.map((e) => e.fingerprint)).toEqual(['cccc333333333333']); // ← only THIS branch's
+
+    // The old base (the stale pre-allowlist SHA) is the bug: whole allowlist as "added".
+    const buggy = computeAllowlistDelta(tmp, preAllowlistSha);
+    expect(buggy.added.map((e) => e.fingerprint).sort()).toEqual([
+      'aaaa111111111111',
+      'cccc333333333333',
+    ]);
+  });
+
+  it('resolveAllowlistDeltaBase prefers the ref-based ref, and falls back to the baseline SHA', () => {
+    fs.writeFileSync(path.join(tmp, 'README.md'), 'init\n');
+    const sha = commit('base');
+    // ref-based: the resolved ref wins.
+    expect(resolveAllowlistDeltaBase(tmp, 'origin/main', 'main', sha)).toBe('origin/main');
+    // committed with an unreachable branch: falls back to the baseline SHA.
+    expect(resolveAllowlistDeltaBase(tmp, undefined, 'nonexistent-branch', sha)).toBe(sha);
   });
 });

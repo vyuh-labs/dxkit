@@ -70,7 +70,11 @@ import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
-import { computeAllowlistDelta, type AllowlistDelta } from '../allowlist/diff';
+import {
+  computeAllowlistDelta,
+  resolveAllowlistDeltaBase,
+  type AllowlistDelta,
+} from '../allowlist/diff';
 import { findEntry, isEntryActive, loadAllowlist } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
 import type { AllowlistCategory } from '../allowlist/categories';
@@ -697,12 +701,20 @@ export async function runGuardrailCheck(
     if (p.classification.warns && p.suppressedByAllowlist === undefined) filteredWarns = true;
   }
 
-  // Allowlist delta between the baseline's anchor SHA and the
-  // current working tree. Surfaced in the markdown renderer so
-  // PR reviewers see new suppressions being introduced; absent /
-  // degenerate when the SHA isn't reachable (shallow clone, etc.)
-  // and the renderer treats that as "delta unavailable."
-  const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, baseline.repo.commitSha);
+  // Allowlist delta between the branch the PR MERGES INTO and the current
+  // working tree. Surfaced in the markdown renderer so PR reviewers see the new
+  // suppressions THIS branch introduces (not every entry accumulated since the
+  // baseline was captured). The base is the base-branch tip, resolved per mode —
+  // diffing against the stale findings-baseline SHA made the whole allowlist
+  // read as "added" when that commit predated the allowlist. Absent/degenerate
+  // when the base isn't reachable (shallow clone) → renderer shows "unavailable".
+  const allowlistBase = resolveAllowlistDeltaBase(
+    cwd,
+    mode.mode === 'ref-based' ? mode.ref : undefined,
+    baseline.repo.branch,
+    baseline.repo.commitSha,
+  );
+  const allowlistDelta: AllowlistDelta = computeAllowlistDelta(cwd, allowlistBase);
 
   // The flow integration gate — an additive, fail-open pass that runs its own
   // base↔HEAD flow gather (independent of the finding matcher above) and never
