@@ -20,7 +20,8 @@
  */
 
 import { computeFlowBindingFingerprint } from '../tools/fingerprint';
-import { contractKey, type ConsumedBinding } from './contract';
+import { type ConsumedBinding } from './contract';
+import { buildServedMatcher, servedMatch } from './model';
 
 /** Why a binding is broken: the endpoint was never served (a new call to a
  *  non-existent route, or a typo), or a route that WAS served got removed. */
@@ -72,22 +73,28 @@ export function evaluateFlowGate(inputs: GateInputs): BrokenIntegration[] {
   const baseByIdentity = new Map<string, ConsumedBinding>();
   for (const b of inputs.baseConsumed) baseByIdentity.set(identityKey(b), b);
 
+  // Resolve a consumed binding against the served set through the SAME
+  // catch-all-aware matcher the join (doctor) uses — Rule 2. Exact-key
+  // membership alone hard-blocked any call served by a `[...slug]` / `/**`
+  // catch-all that doctor resolved cleanly (the class-fix).
+  const headMatcher = buildServedMatcher(inputs.headServed);
+  const baseMatcher = buildServedMatcher(inputs.baseServed);
+
   const out: BrokenIntegration[] = [];
   for (const b of inputs.headConsumed) {
-    const key = contractKey(b.method, b.path);
-    if (inputs.headServed.has(key)) continue; // resolves at HEAD → not broken
+    if (servedMatch(b.method, b.path, headMatcher)) continue; // resolves at HEAD → not broken
 
     // Broken at HEAD. Was the SAME binding already broken at base? (present at
     // base AND unresolved against the base served set) → grandfathered.
     const base = baseByIdentity.get(identityKey(b));
-    const brokenBefore = base !== undefined && !inputs.baseServed.has(key);
+    const servedAtBase = servedMatch(b.method, b.path, baseMatcher);
+    const brokenBefore = base !== undefined && !servedAtBase;
     if (brokenBefore) continue;
 
     // Net-new. `route-removed` when the binding existed at base and WAS served
     // then (the PR removed the route); otherwise the call itself is new or
     // never resolved (`no-route`).
-    const reason: BrokenReason =
-      base !== undefined && inputs.baseServed.has(key) ? 'route-removed' : 'no-route';
+    const reason: BrokenReason = base !== undefined && servedAtBase ? 'route-removed' : 'no-route';
     out.push({
       id: computeFlowBindingFingerprint(b.method, b.path, b.file),
       method: b.method,

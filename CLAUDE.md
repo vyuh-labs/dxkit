@@ -55,6 +55,18 @@ consumer through it (canonical examples added in 2.30):
   `src/analyzers/flow/gather.ts` (loads `stripUrlPrefixes` / `specs` itself, so a
   surface cannot forget them); the raw `gatherFlowModel` is only for
   explicit-config callers (the two-ref gate, cross-repo publish, the map CLI);
+- whether a consumed `(method, path)` is SERVED → `servedMatch` /
+  `catchAllPrefixCovers` in `src/analyzers/flow/model.ts`. BOTH the join (doctor's
+  `diagnoseFlow`) and the integration gate (`evaluateFlowGate`) resolve a call
+  against the served set through this ONE catch-all-aware predicate. The recurring
+  shape here (the flagship instance of the *semantic*-divergence variant): the gate
+  held a LOSSY projection of the concept — a `Set<string>` of exact `${method}
+  ${path}` keys, which discards catch-all structure — so it did exact membership
+  only and hard-blocked every call served by a `[...slug]` / `/**` catch-all that
+  doctor resolved cleanly. `buildServedMatcher` rebuilds the catch-all prefixes
+  from the key set so the gate inherits the join's resolution. The consumed side's
+  path-intrinsic confidence is likewise one function, `consumedPathConfidence` (a
+  leading `{var}` has no anchor → warn, not block);
 - benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
   (Rule 5's benign module), consulted by BOTH secret detectors.
 - what dxkit OWNS vs what the user owns, for a managed file → the manifest's
@@ -103,6 +115,21 @@ provenance lane is pinned by `test/lifecycle/` (the update lane) and the
 pinned by `test/managed-artifacts-playbook.test.ts` (synthetic-surface injection
 — asserts uninstall + update both pick up a newly-registered surface, mirror of
 `recipe-playbook.test.ts`).
+
+**Two variants of this class, two nets.** A *lexical* duplicate (a second `git
+ls-files .env`, a config-less `gatherFlowModel`) is a copy-paste the arch-check
+greps for. But the flow gate-vs-join bug was a *semantic* divergence: two
+functions computing the same concept (`servedMatch` vs an exact `Set.has`) with
+no shared token to grep — one path simply held a lossy shape of the data and
+re-implemented weaker logic against it. Grep cannot see that `.has(key)` is a
+degenerate `servedMatch`. The only net that catches semantic divergence is a
+**parity test** that runs BOTH consumers on shared fixtures and asserts they
+agree (`test/flow-gate-join-parity.test.ts`: every call the join resolves must
+NOT be a gate block, and vice-versa). So: when one concept has two consumers that
+hold DIFFERENT data shapes (routes vs a key-set, a rich model vs a projection),
+an arch-check rule is not enough — add a parity test. The lossy-projection shape
+is the smell: the moment you reduce a concept to a cheaper representation for one
+consumer, you have opened the door to re-deriving its logic incorrectly.
 
 #### The fixture-repo ANALYSIS harness (`test/fixtures-analysis.test.ts`)
 
