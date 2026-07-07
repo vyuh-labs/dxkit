@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-07-07
+
+The cross-repo release. dxkit's flow pillar — UI→API integration tracing and the
+net-new-breakage gate — reaches GA, and the guardrail becomes something an agent
+can configure, query, and prove ROI for on its own. Every change here was found
+by dogfooding dxkit against real customer repos; the recurring theme is closing
+the seam between dxkit's own repo and the shapes a real system has.
+
+### Added — the flow / cross-repo pillar is GA
+
+- **Remote-repo participants.** A `flow publish` participant can now be declared
+  by a `repo:` clone URL, not just a local `path`. dxkit fetches the participant's
+  served contract (shallow, at an optional `ref`) so a cross-repo mesh no longer
+  needs every service checked out side-by-side — it works in CI. When both a
+  `path` and a `repo` are set, the local checkout is preferred when present
+  (offline, fast) and the remote is the fallback. Auth is your ambient git
+  environment (SSH agent / credential helper); dxkit never prompts, and the
+  per-commit gate never fetches — it reads the committed `served.json` offline.
+- **`vyuh-dxkit configure`** — a deterministic, registry-driven config planner.
+  It computes the right `.dxkit/policy.json` for a repo in code (not by asking a
+  model), so the same repo yields the same plan on any agent. `--plan` previews,
+  `--apply` deep-merges without clobbering your edits, and `check` is an
+  enforceable CI drift detector.
+- **`vyuh-dxkit metrics`** — the interception ROI series from the loop ledger:
+  how many net-new findings the gate blocked before merge, by week and category.
+  Ungameable (it counts blocks, not self-reported fixes).
+- **`vyuh-dxkit receipt`** — the PR "dxkit signals" block as a command, backed by
+  a session verdict cache so a stop, a commit, and a receipt don't each re-run the
+  full scan.
+- **`vyuh-dxkit tests affected`** — graph-derived incremental test selection
+  (the tests that transitively reach your changed symbols). Opt-in and advisory;
+  the correctness floor is untouched.
+- **`vyuh-dxkit checks`** and **custom regression gates.** A repo can declare its
+  own invariants in `.dxkit/policy.json` and have them gated as first-class
+  findings — fingerprinted, baselined, and grandfathered like any secret or CVE.
+  The same seam powers a **pack-declared lint gate** for 7 of the 8 language packs,
+  so a net-new lint error blocks while your existing lint backlog is grandfathered.
+
+### Added — discovery: dxkit tells an agent what it can do
+
+- A **capability registry** (Rule 16) is the single source of truth for every
+  top-level command: it drives the grouped help index, an agent-queryable
+  `vyuh-dxkit capabilities` catalog, the `doctor` advisor that recommends an
+  unused capability grounded in your repo, and the skill mapping. A new command
+  cannot ship without declaring how it is discovered.
+
+### Fixed — the flow gate tells one true story
+
+- **Catch-all routes resolve.** The gate matched a consumed call to a served route
+  by exact path only, so any call served by a `[...slug]` / `/**` catch-all
+  hard-blocked as `no-route` even though `doctor` resolved it cleanly. The gate now
+  shares `doctor`'s catch-all-aware matcher, and a call with an opaque leading
+  `{var}` (no anchoring signal) warns rather than blocks.
+- **The report reconciles.** A repo whose only regressions were flow breakages
+  read "BLOCKED — 3 new regressions" over a summary that said "blocking: 0". The
+  summary now carries a `Flow:` line, and every flow finding prints its
+  fingerprint (console + PR comment) so it can be accepted from the output.
+- **A documented escape hatch.** An intentional integration break is accepted with
+  a reviewed `allowlist add --kind=flow-binding` entry — the same per-finding
+  allowlist every kind uses. The guardrail line now emits the full command.
+
+### Fixed — the guardrail is honest across real-repo shapes
+
+- **Config-drift can no longer swallow a blocking-class finding** (a net-new
+  secret or critical on a changed file stays a block). *Security fix.*
+- **A PR is gated against its own base branch,** not always the default — so a PR
+  into `develop` is diffed against `develop`, in both visibility modes.
+- **The PR allowlist activity lists only this branch's new suppressions,** diffed
+  against the base-branch tip rather than a stale pre-allowlist baseline commit.
+- **Allowlist entries suppress WARNING-class findings,** not only would-block ones,
+  and an allowlisted finding no longer drags the dimension score or the headline.
+- **Dep-vuln finding tables show `package@version · advisory-id`** instead of a
+  bare `Location: —`.
+- **test-gaps credits integration coverage** (tsconfig-alias + src-layout import
+  resolution), so a file with integration tests is no longer flagged untested.
+- **`.claude/settings.json` hook commands anchor to the project root,** so a hook
+  fires regardless of the agent's working directory.
+
+### Added — keep the code graph fresh without bloating the repo
+
+- A CI-cache graph-refresh transport rebuilds the code graph on merge and restores
+  it for the guardrail by commit SHA. The graph is never committed (no repo bloat)
+  and is SHA-stamped so staleness is exact. Opt-in (`policy.json:graph.refresh`).
+
+### Changed
+
+- **`exceljs` is an optional peer dependency,** loaded lazily — its heavy
+  transitive tree (and a `uuid` advisory) no longer ships to every dxkit consumer.
+- The install / update / uninstall lifecycle is driven by one managed-artifact
+  registry, so a new shipped surface cannot silently skip update or uninstall.
+- CI and devcontainer toolchain versions are derived from the repo (the .NET SDK
+  from `TargetFramework`, etc.) rather than hardcoded.
+
+**Why 3.0.0:** `flow.publish` participants gain a `repo` field and new commands
+join the CLI surface — all additive, but the cross-repo pillar crossing into GA
+is the headline the major version marks. No breaking changes to existing
+`.dxkit/` artifacts; committed baselines, allowlists, and flow contracts from 2.x
+are read and auto-migrated.
+
 ## [2.34.0] - 2026-07-05
 
 ### Fixed — the guardrail's required-status-check name matches what the workflow emits
