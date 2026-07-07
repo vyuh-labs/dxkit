@@ -186,6 +186,20 @@ export function renderConsole(result: GuardrailCheckResult): string {
       `warning: ${warning.length}, persisted: ${persisted.length}, ` +
       `resolved: ${removed.length})`,
   );
+  // A flow-gate line so the verdict banner's total (which counts flow findings)
+  // reconciles with the summary. Without it, a repo whose only regressions are
+  // flow breakages read "BLOCKED — 3 new regressions" over "Pairs: blocking: 0"
+  // — one report, two stories.
+  const flowFindings = result.flowGate?.findings ?? [];
+  const flowSuppressed = result.flowGate?.suppressed ?? [];
+  if (flowFindings.length > 0 || flowSuppressed.length > 0) {
+    const fBlock = flowFindings.filter((f) => f.verdict === 'block').length;
+    const fWarn = flowFindings.filter((f) => f.verdict === 'warn').length;
+    lines.push(
+      `  Flow:        ${flowFindings.length + flowSuppressed.length} ` +
+        `(blocking: ${fBlock}, warning: ${fWarn}, suppressed: ${flowSuppressed.length})`,
+    );
+  }
   lines.push(
     `  Verdict:     ${result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED'}`,
   );
@@ -230,12 +244,18 @@ function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   const warning = flow.findings.filter((f) => f.verdict === 'warn');
   if (blocking.length > 0) {
     out.push(logger.bold(`Flow breakage — blocking (${blocking.length})`));
-    for (const f of blocking) out.push(`  ${describeBrokenIntegration(f)}`);
+    for (const f of blocking) {
+      out.push(`  ${describeBrokenIntegration(f)}`);
+      out.push(flowFingerprintLine(f.id));
+    }
     out.push('');
   }
   if (warning.length > 0) {
     out.push(logger.bold(`Flow breakage — warning (${warning.length})`));
-    for (const f of warning) out.push(`  ${describeBrokenIntegration(f)}`);
+    for (const f of warning) {
+      out.push(`  ${describeBrokenIntegration(f)}`);
+      out.push(flowFingerprintLine(f.id));
+    }
     out.push('');
   }
   if (suppressed.length > 0) {
@@ -248,6 +268,13 @@ function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
     out.push('');
   }
   return out;
+}
+
+/** The flow-binding fingerprint line — same shape secret/code findings print
+ *  (`formatPairLines`), so a reviewer copies it straight into `allowlist add`.
+ *  A flow finding carries its durable identity on `id` (Rule 9). */
+function flowFingerprintLine(id: string): string {
+  return `    · fingerprint: ${id}  (allowlist add --fingerprint=${id})`;
 }
 
 function verdictBanner(result: GuardrailCheckResult): string {
@@ -759,14 +786,16 @@ function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
   const out: string[] = [];
   const blocking = flow.findings.filter((f) => f.verdict === 'block');
   const warning = flow.findings.filter((f) => f.verdict === 'warn');
+  // The fingerprint column mirrors the pair tables — a reviewer copies `f.id`
+  // straight into `allowlist add --fingerprint=<id>` from the PR comment.
   const row = (f: FlowGateOutcome['findings'][number]): string =>
     `| ${escapeMd(`${f.method} ${f.path}`)} | ${escapeMd(f.reason)} | ` +
-    `${escapeMd(`${f.file}:${f.line}`)} | ${f.confidence.toFixed(2)} |`;
+    `${escapeMd(`${f.file}:${f.line}`)} | ${f.confidence.toFixed(2)} | \`${escapeMd(f.id)}\` |`;
   if (blocking.length > 0) {
     out.push('### Broken integrations');
     out.push('');
-    out.push('| Endpoint | Reason | Consumer | Confidence |');
-    out.push('|---|---|---|---|');
+    out.push('| Endpoint | Reason | Consumer | Confidence | Fingerprint |');
+    out.push('|---|---|---|---|---|');
     for (const f of blocking) out.push(row(f));
     out.push('');
   }
@@ -774,8 +803,8 @@ function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
     out.push('<details>');
     out.push(`<summary>Integration warnings (${warning.length})</summary>`);
     out.push('');
-    out.push('| Endpoint | Reason | Consumer | Confidence |');
-    out.push('|---|---|---|---|');
+    out.push('| Endpoint | Reason | Consumer | Confidence | Fingerprint |');
+    out.push('|---|---|---|---|---|');
     for (const f of warning) out.push(row(f));
     out.push('');
     out.push('</details>');

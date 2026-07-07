@@ -513,6 +513,20 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     const json = renderJson(result);
     expect(json.flowGate?.findings.some((f) => f.path === '/dead')).toBe(true);
     expect(json.verdict.blocks).toBe(true);
+
+    // The report tells ONE verdict story: the console header counts the flow
+    // block, and the summary reconciles it via a Flow line (not a pairs-only
+    // "blocking: 0" over a "BLOCKED — 1 regression" header). The finding also
+    // prints its fingerprint so a reviewer can allowlist it from the output.
+    const fp = computeFlowBindingFingerprint('GET', '/dead', 'client.ts');
+    const consoleOut = renderConsole(result);
+    expect(consoleOut).toContain('Guardrail BLOCKED — 1 new regression');
+    expect(consoleOut).toMatch(/Flow:\s+1 \(blocking: 1,/);
+    expect(consoleOut).toContain(`allowlist add --fingerprint=${fp}`);
+    // The markdown (PR comment) carries the fingerprint in the flow table.
+    const md = renderMarkdown(result);
+    expect(md).toContain('Fingerprint');
+    expect(md).toContain(fp);
   }, 300_000);
 
   it('warn flowMode surfaces the breakage without blocking the build', async () => {
