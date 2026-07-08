@@ -393,6 +393,69 @@
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
       "addedAt": "2026-06-17"
+    },
+    {
+      "fingerprint": "f12007bb575cc81a",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "3.0 release growth: module expanded with new 3.0 capabilities (flow GA, remote participants, discovery/config registries); refactor tracked post-3.0",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "e963ef2f29721565",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "3.0 release growth: module expanded with new 3.0 capabilities (flow GA, remote participants, discovery/config registries); refactor tracked post-3.0",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "e2391a28c37ddcc5",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "3.0 release growth: module expanded with new 3.0 capabilities (flow GA, remote participants, discovery/config registries); refactor tracked post-3.0",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "5b642377c349b308",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "3.0 release growth: module expanded with new 3.0 capabilities (flow GA, remote participants, discovery/config registries); refactor tracked post-3.0",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "2e28adb46967ae82",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "3.0 release growth: module expanded with new 3.0 capabilities (flow GA, remote participants, discovery/config registries); refactor tracked post-3.0",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "bd85d5ade87de200",
+      "kind": "test-file-degradation",
+      "category": "accepted-risk",
+      "reason": "analyzer fixture under test/fixtures — an intentionally-shaped sample input for dxkit's own analyzers, not production test code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
+    },
+    {
+      "fingerprint": "2f94c317a322a167",
+      "kind": "test-file-degradation",
+      "category": "accepted-risk",
+      "reason": "analyzer fixture under test/fixtures — an intentionally-shaped sample input for dxkit's own analyzers, not production test code",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-08",
+      "expiresAt": "2026-10-08"
     }
   ],
   "identityScheme": "v2"
