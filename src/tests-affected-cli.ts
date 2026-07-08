@@ -106,7 +106,7 @@ function selectAffected(cwd: string, base: string): Selection {
     );
   }
 
-  // Gate 2: any changed file in an unreliable-call-graph language.
+  // Gate 2 flags any changed file in an unreliable-call-graph language.
   const unreliable = new Set<string>();
   for (const f of changed) {
     const lang = languageForFile(f);
@@ -183,7 +183,7 @@ function readHeadSha(cwd: string): string | undefined {
 
 function emit(sel: Selection, json?: boolean): void {
   if (json) {
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         {
           schema: 'tests-affected.v1',
@@ -198,8 +198,8 @@ function emit(sel: Selection, json?: boolean): void {
         },
         null,
         2,
-      ),
-    ); // slop-ok
+      ) + '\n',
+    );
     return;
   }
 

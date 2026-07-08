@@ -46,7 +46,8 @@ function seed(cwd: string, markdown: string, blocks = false): void {
 
 function captureStdout(fn: () => Promise<void>): Promise<string> {
   const chunks: string[] = [];
-  // markdown output goes via process.stdout.write; --json via console.log.
+  // Both markdown and --json output go via process.stdout.write; the console
+  // spy is kept as a belt-and-suspenders capture for any stray logger line.
   const wSpy = vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
     chunks.push(String(c));
     return true;

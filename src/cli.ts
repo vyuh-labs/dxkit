@@ -2678,15 +2678,15 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     default: {
-      console.error(`Unknown command: ${command}`);
+      /* slop-ok */ console.error(`Unknown command: ${command}`);
       const near = suggestCommand(command);
       if (near.length > 0) {
-        console.error(`Did you mean: ${near.join(', ')}?`);
+        /* slop-ok */ console.error(`Did you mean: ${near.join(', ')}?`);
       }
-      console.error('');
-      console.error('Available commands:');
-      for (const line of renderCommandIndex()) console.error(line);
-      console.error("Run 'vyuh-dxkit --help' for full usage and options.");
+      /* slop-ok */ console.error('');
+      /* slop-ok */ console.error('Available commands:');
+      for (const line of renderCommandIndex()) /* slop-ok */ console.error(line);
+      /* slop-ok */ console.error("Run 'vyuh-dxkit --help' for full usage and options.");
       process.exit(1);
     }
   }

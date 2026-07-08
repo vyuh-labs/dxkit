@@ -76,7 +76,7 @@ export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promis
   const movement = opts.since ? await computeScoreMovement(cwd, opts.since) : null;
 
   if (opts.json) {
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         {
           schema: 'receipt.v1',
@@ -92,8 +92,8 @@ export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promis
         },
         null,
         2,
-      ),
-    ); // slop-ok
+      ) + '\n',
+    );
     return;
   }
 
@@ -150,7 +150,7 @@ async function resolveVerdict(
 /**
  * Health-score delta between `ref` and HEAD. Runs the full health analysis at
  * both, the base side inside a throwaway worktree via the canonical
- * `withRefWorktree` primitive (Rule 11). Best-effort: any failure (unreachable
+ * `withRefWorktree` primitive (Rule 11). Best-effort on any failure (unreachable
  * ref, analysis error) returns null so the receipt simply omits the section.
  */
 async function computeScoreMovement(cwd: string, ref: string): Promise<ScoreMovement | null> {

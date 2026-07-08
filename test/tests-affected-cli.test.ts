@@ -65,12 +65,20 @@ afterEach(() => {
 
 function capture(fn: () => Promise<void>): Promise<string> {
   const chunks: string[] = [];
+  // --json output goes via process.stdout.write; the console spy is a
+  // belt-and-suspenders capture for any stray logger line.
+  const w = vi
+    .spyOn(process.stdout, 'write')
+    .mockImplementation((s: string | Uint8Array) => (chunks.push(String(s)), true));
   const l = vi
     .spyOn(console, 'log')
     .mockImplementation((...a) => void chunks.push(a.map(String).join(' ')));
   return fn()
     .then(() => chunks.join(''))
-    .finally(() => l.mockRestore());
+    .finally(() => {
+      w.mockRestore();
+      l.mockRestore();
+    });
 }
 
 describe('tests affected — fail-safe gates', () => {

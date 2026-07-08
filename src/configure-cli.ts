@@ -123,13 +123,13 @@ function applyAndReport(
   const result = applyConfigPlan(cwd, plan);
 
   if (opts.json) {
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         { schema: 'configure-apply.v1', changed: result.changed, sections: result.sections, plan },
         null,
         2,
-      ),
-    ); // slop-ok
+      ) + '\n',
+    );
     return;
   }
 
