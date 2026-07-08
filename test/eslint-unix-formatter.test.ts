@@ -13,11 +13,8 @@
  * either drifts, this fails here instead of silently in a user's guardrail.
  */
 import { describe, it, expect } from 'vitest';
-import { createRequire } from 'module';
 import * as fs from 'fs';
 import { TS_ESLINT_UNIX_PARSE, ESLINT_UNIX_FORMATTER } from '../src/languages/typescript';
-
-const require = createRequire(import.meta.url);
 
 describe('bundled eslint-unix formatter ↔ TS_ESLINT_UNIX_PARSE contract', () => {
   it('the formatter path the gate references actually exists', () => {
@@ -26,6 +23,7 @@ describe('bundled eslint-unix formatter ↔ TS_ESLINT_UNIX_PARSE contract', () =
   });
 
   it('formatter output for a real eslint result parses via the gate regex', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const format = require(ESLINT_UNIX_FORMATTER) as (r: unknown[]) => string;
     // Shape of an ESLint result object (filePath + messages[]), as eslint hands
     // a formatter. Absolute filePath under cwd so the formatter relativizes it.
@@ -54,6 +52,7 @@ describe('bundled eslint-unix formatter ↔ TS_ESLINT_UNIX_PARSE contract', () =
   });
 
   it('emits empty output for a clean run (no messages → no findings)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const format = require(ESLINT_UNIX_FORMATTER) as (r: unknown[]) => string;
     expect(format([{ filePath: '/x/clean.ts', messages: [] }])).toBe('');
   });

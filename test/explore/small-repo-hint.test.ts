@@ -6,12 +6,8 @@
  * and that a miss on a small repo surfaces the hint.
  */
 import { describe, expect, it, vi } from 'vitest';
-import {
-  isSmallRepo,
-  SMALL_REPO_FILE_THRESHOLD,
-  type Graph,
-  type GraphNode,
-} from '../../src/explore/queries';
+import { isSmallRepo, SMALL_REPO_FILE_THRESHOLD } from '../../src/explore/queries';
+import type { Graph, GraphNode } from '../../src/explore/types';
 import { smallRepoGrepHint } from '../../src/explore/format';
 import { runFeature } from '../../src/explore/cli/feature';
 
