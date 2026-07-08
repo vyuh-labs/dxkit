@@ -95,20 +95,36 @@ check_added() {
   local label="$1"
   local pattern="$2"
   local hint="$3"
-  local hits
+  local diff hits
   if [ "$DIFF_MODE" = "range" ]; then
-    hits=$(git diff --unified=0 "$DIFF_BASE"...HEAD -- $SOURCE 2>/dev/null \
-      | grep -E "^\+[^+]" \
-      | grep -vE 'slop-ok' \
-      | grep -E "$pattern" \
-      || true)
+    diff=$(git diff --unified=0 "$DIFF_BASE"...HEAD -- $SOURCE 2>/dev/null)
   else
-    hits=$(git diff --cached --unified=0 -- $SOURCE 2>/dev/null \
-      | grep -E "^\+[^+]" \
-      | grep -vE 'slop-ok' \
-      | grep -E "$pattern" \
-      || true)
+    diff=$(git diff --cached --unified=0 -- $SOURCE 2>/dev/null)
   fi
+  # A slop rule targets CODE, and its escape hatch must be reliable. So before
+  # matching the pattern, awk (per hunk, so adjacency never crosses files):
+  #   - drops added COMMENT lines — a code-quality check must not fire on the
+  #     English word in prose (`fail-open: any`, `--json via console.log`);
+  #   - honors `// slop-ok` on the flagged line OR an adjacent added line in the
+  #     same hunk — because prettier moves a trailing comment off a multi-line
+  #     `console.log(` opening line, which otherwise made the escape hatch a
+  #     silent trap.
+  hits=$(printf '%s\n' "$diff" \
+    | awk '
+        /^@@/ || /^diff --git/ || /^--- / || /^\+\+\+ / { blk++; next }
+        /^\+/ && !/^\+\+/ { n++; L[n] = $0; B[n] = blk }
+        END {
+          for (i = 1; i <= n; i++) {
+            if (L[i] ~ /slop-ok/) continue
+            if (i < n && B[i + 1] == B[i] && L[i + 1] ~ /slop-ok/) continue
+            if (i > 1 && B[i - 1] == B[i] && L[i - 1] ~ /slop-ok/) continue
+            s = L[i]; sub(/^\+/, "", s); sub(/^[ \t]+/, "", s)
+            if (s ~ /^(\*|\/\/|\/\*)/) continue
+            print L[i]
+          }
+        }' \
+    | grep -E "$pattern" \
+    || true)
   if [ -n "$hits" ]; then
     echo "❌ Slop check: new ${label} in ${DIFF_MODE} changes:"
     echo "$hits" | head -10 | sed 's/^/   /'
