@@ -29,7 +29,7 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
   const report = computeMetrics(events, { sinceMs: since.ms });
 
   if (opts.json) {
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         {
           schema: 'metrics.v1',
@@ -38,8 +38,8 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
         },
         null,
         2,
-      ),
-    ); // slop-ok
+      ) + '\n',
+    );
     return;
   }
 

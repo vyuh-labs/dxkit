@@ -18,7 +18,7 @@
  *   - `hydrateAnchorFromBranch` — materialize the anchor AT `baselinePath` (used
  *     when the tree copy is simply absent, e.g. a CI checkout).
  *
- * Both are scoped to `anchor === 'branch'` and fail-open: any git error (wrong
+ * Both are scoped to `anchor === 'branch'` and fail-open on any git error (wrong
  * transport, side branch not created yet, offline) returns null/false and the
  * caller falls back to whatever is (or isn't) on disk. This is a transport
  * detail, never a place to hard-fail a check.
