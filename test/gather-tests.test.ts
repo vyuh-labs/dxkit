@@ -103,6 +103,27 @@ describe('gatherTestFiles', () => {
     const files = gatherTestFiles(tmp);
     expect(files.every((f) => !f.path.includes('node_modules'))).toBe(true);
   });
+
+  it('does NOT classify fixture/mock/snapshot files as test files (no false "degraded" test)', () => {
+    // Analyzer fixtures under test/ — sample INPUT, not test code. A test-dir
+    // glob would otherwise sweep them in and flag them as assertion-less
+    // ("degraded") test files (the dogfood false positive).
+    writeFile(
+      'test/fixtures/nextjs/app/page.tsx',
+      'export default function Page() { return null; }',
+    );
+    writeFile('test/fixtures/node/index.js', 'module.exports = { sample: true };');
+    writeFile('src/__mocks__/thing.ts', 'export const stub = 1;');
+    writeFile('test/__snapshots__/foo.snap', 'exports[`x`] = `y`;');
+    // A real test still counts.
+    writeFile(
+      'test/real.test.ts',
+      'describe("x", () => { it("y", () => { expect(1).toBe(1); }); });',
+    );
+    const files = gatherTestFiles(tmp);
+    expect(files.map((f) => f.path)).toEqual(['test/real.test.ts']);
+    expect(files.some((f) => f.path.includes('fixtures'))).toBe(false);
+  });
 });
 
 describe('gatherSourceFiles', () => {
