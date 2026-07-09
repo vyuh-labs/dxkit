@@ -209,7 +209,9 @@ __DXKIT_CI_RUNTIME_SETUP__
             --out flow-console.html --json > console.json 2>/dev/null
           set -e
           eps=$(node -e "try{const j=require('./console.json');process.stdout.write(String((j.shownEndpoints||0)+(j.broken||0)))}catch(e){process.stdout.write('0')}" 2>/dev/null || echo 0)
+          brk=$(node -e "try{const j=require('./console.json');process.stdout.write(String(j.broken||0))}catch(e){process.stdout.write('0')}" 2>/dev/null || echo 0)
           echo "endpoints=$eps" >> "$GITHUB_OUTPUT"
+          echo "broken=$brk" >> "$GITHUB_OUTPUT"
 
       - name: Upload flow console
         if: always() && steps.console.outputs.endpoints != '0'
@@ -232,11 +234,22 @@ __DXKIT_CI_RUNTIME_SETUP__
             printf '%s\n' "$MARKER"
             cat guardrail-report.md
           } > comment.md
-          # Link the flow console artifact when this PR touched an integration.
+          # Link the flow console artifact + a short reviewer checklist when this
+          # PR touched an integration. Both self-skip on a PR with no UI→API
+          # surface, so a non-integration change adds nothing.
           if [ "${{ steps.console.outputs.endpoints }}" != "0" ] && [ -f flow-console.html ]; then
             printf '\n\n---\n📊 **[Interactive flow console](%s)** — download from this run'"'"'s **Artifacts** to exercise the %s integration(s) this PR touches (UI→API map + request runner; your auth stays in the browser).\n' \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
               "${{ steps.console.outputs.endpoints }}" >> comment.md
+            {
+              printf '\n**Reviewer checklist — %s integration(s) touched**\n' "${{ steps.console.outputs.endpoints }}"
+              printf -- '- [ ] Opened the flow console and exercised the touched endpoint(s) against a dev/staging Base URL\n'
+              if [ "${{ steps.console.outputs.broken }}" != "0" ]; then
+                printf -- '- [ ] The %s net-new integration break(s) flagged above are intentional or fixed\n' "${{ steps.console.outputs.broken }}"
+              fi
+              printf -- '- [ ] New/changed endpoints: auth + required params behave as expected\n'
+              printf -- '- [ ] Consuming UI handles error + empty responses, not just the happy path\n'
+            } >> comment.md
           fi
           existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" \
