@@ -438,24 +438,6 @@
       "addedBy": "siddarth.ch1990@gmail.com",
       "addedAt": "2026-07-08",
       "expiresAt": "2026-10-08"
-    },
-    {
-      "fingerprint": "bd85d5ade87de200",
-      "kind": "test-file-degradation",
-      "category": "accepted-risk",
-      "reason": "analyzer fixture under test/fixtures — an intentionally-shaped sample input for dxkit's own analyzers, not production test code",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-07-08",
-      "expiresAt": "2026-10-08"
-    },
-    {
-      "fingerprint": "2f94c317a322a167",
-      "kind": "test-file-degradation",
-      "category": "accepted-risk",
-      "reason": "analyzer fixture under test/fixtures — an intentionally-shaped sample input for dxkit's own analyzers, not production test code",
-      "addedBy": "siddarth.ch1990@gmail.com",
-      "addedAt": "2026-07-08",
-      "expiresAt": "2026-10-08"
     }
   ],
   "identityScheme": "v2"

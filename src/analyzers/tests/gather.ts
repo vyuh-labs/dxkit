@@ -42,6 +42,20 @@ const CRITICAL_PATTERNS = [
 
 // ─── Test file discovery ────────────────────────────────────────────────────
 
+/**
+ * A file under a fixtures / mocks / snapshots directory is test SUPPORT — sample
+ * input, factory data, recorded output — NOT a test file. It has no assertions
+ * by design, so a test-dir glob that swept it in would classify it as a
+ * "degraded" test file (a false positive: dxkit's own analyzer fixtures, and any
+ * user's `test/fixtures/**`, are not degraded tests). Matched as a path SEGMENT
+ * (`.../fixtures/...`), covering the `__fixtures__` / `__mocks__` / `__snapshots__`
+ * conventions too.
+ */
+const FIXTURE_SUPPORT_DIR = /(^|\/)(__)?(fixtures?|mocks?|snapshots?)(__)?\//i;
+export function isFixtureSupportPath(relPath: string): boolean {
+  return FIXTURE_SUPPORT_DIR.test(relPath.replace(/\\/g, '/'));
+}
+
 export function gatherTestFiles(cwd: string): TestFile[] {
   // Walker computes test-files as (includeTests:true SET) MINUS
   // (includeTests:false SET). Test-pattern derivation is pack-driven
@@ -51,6 +65,7 @@ export function gatherTestFiles(cwd: string): TestFile[] {
   const testFiles: TestFile[] = [];
   for (const p of allFiles) {
     if (nonTestFiles.has(p)) continue;
+    if (isFixtureSupportPath(p)) continue; // fixtures/mocks/snapshots are support, not tests
     const fullPath = path.join(cwd, p);
     testFiles.push({
       path: p,
