@@ -61,6 +61,7 @@ export function toQualityScoreInput(input: ScoreInput): QualityScoreInput {
     mixedLanguages: m.mixedLanguages,
 
     filesOver500Lines: m.filesOver500Lines,
+    largeFileThreshold: m.largeFileThreshold,
     largestFileLines: m.largestFileLines,
 
     anyTypeCount: m.anyTypeCount,
@@ -165,7 +166,7 @@ export function scoreQualityDimension(input: ScoreInput): DimensionScore {
           `. ⚠ Linter coverage gap: ${annotated}`
         );
       })() +
-      `. ${m.filesOver500Lines} files exceed 500 lines` +
+      `. ${m.filesOver500Lines} files exceed ${m.largeFileThreshold} lines` +
       `. Largest file: ${m.largestFilePath} (${m.largestFileLines} lines)` +
       `. ${m.consoleLogCount} console/debug statements` +
       (m.anyTypeCount > 0 ? `. ${m.anyTypeCount} loose type annotations` : '') +

@@ -100,4 +100,24 @@ describe('resolvePolicy — checks/lint passthrough', () => {
     expect(policy.lint).toBeUndefined();
     fs.rmSync(cwd, { recursive: true, force: true });
   });
+
+  it('carries a valid largeFileThreshold through resolvePolicy', () => {
+    const cwd = withPolicy({ largeFileThreshold: 800 });
+    expect(resolvePolicy(undefined, cwd).largeFileThreshold).toBe(800);
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('ignores a malformed largeFileThreshold (string / zero / negative) → default applies', () => {
+    for (const bad of ['800', 0, -1, Number.NaN, null, {}]) {
+      const cwd = withPolicy({ largeFileThreshold: bad });
+      expect(resolvePolicy(undefined, cwd).largeFileThreshold).toBeUndefined();
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('largeFileThreshold is absent when the policy omits it (default 500 applies downstream)', () => {
+    const cwd = withPolicy({ mode: 'brownfield' });
+    expect(resolvePolicy(undefined, cwd).largeFileThreshold).toBeUndefined();
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
 });

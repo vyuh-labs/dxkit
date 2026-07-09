@@ -597,8 +597,10 @@ with two adjacent helpers locked to the same module:
   — the temp-dir + cleanup + salt-mirroring dance lives in one
   place so future "do something at a git ref" features compose
   on the same primitive. Its **remote sibling** `withRemoteRefWorktree({repo, ref}, fn)`
-  lives here too: it shallow-fetches a repo NOT in the local object
-  DB (a cross-repo `flow publish` participant declared by `repo:` URL)
+  lives in the adjacent `src/baseline/remote-ref.ts` (same Rule-11 contract,
+  split out only for module size — it uses clone/fetch, never `git worktree`,
+  so it does not trip the worktree arch-check): it shallow-fetches a repo NOT in
+  the local object DB (a cross-repo `flow publish` participant declared by `repo:` URL)
   into a temp checkout with the same try/finally cleanup. Auth is the
   ambient git env with BOTH prompt paths disabled (`GIT_TERMINAL_PROMPT=0`
   - SSH `BatchMode=yes`) and a bounded timeout, so a bad remote fails

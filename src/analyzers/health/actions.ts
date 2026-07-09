@@ -341,7 +341,7 @@ function maintainabilityActions(input: ScoreInput): HealthAction[] {
   if (m.filesOver500Lines > 15) {
     actions.push({
       id: 'health.maint.reduce-large-files',
-      title: `Reduce ${m.filesOver500Lines} files > 500 lines`,
+      title: `Reduce ${m.filesOver500Lines} files > ${m.largeFileThreshold} lines`,
       rationale: 'Large files are hard to navigate and review.',
       evidence: [],
       patch: (cur) => withMetrics(cur, { filesOver500Lines: 5 }),

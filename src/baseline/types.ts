@@ -326,7 +326,8 @@ export interface StaleFileIdentityInput {
 
 /**
  * A source file flagged by the health analyzer as over the
- * largest-file threshold (today: 500 lines). Identity is per-file —
+ * large-file threshold (default 500 lines; configurable via
+ * `policy.json:largeFileThreshold`). Identity is per-file —
  * the fact that this specific file crossed the threshold is the
  * durable signal. Crossing back under the threshold removes the
  * identity; crossing back over re-adds it.

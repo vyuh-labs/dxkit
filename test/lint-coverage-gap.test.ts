@@ -16,6 +16,7 @@ function reportWithLintTool(tool: string | null, errors = 0, warnings = 1): Qual
     metrics: {
       sourceFiles: 100,
       filesOver500Lines: 0,
+      largeFileThreshold: 500,
       largestFileLines: 0,
       anyTypeCount: 0,
       typeErrors: null,

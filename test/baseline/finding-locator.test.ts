@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyCustomCheckIntent, describeEntryLocation } from '../../src/baseline/check';
 import type { BaselineEntry } from '../../src/baseline/types';
-import type { ClassifyResult } from '../../src/baseline/policy';
+import type { ClassifyResult } from '../../src/baseline/classify';
 
 describe('describeEntryLocation', () => {
   it('dep-vuln → package@version · advisory-id (the fix for Location: —)', () => {

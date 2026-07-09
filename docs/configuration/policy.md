@@ -51,17 +51,18 @@ tuning belongs here.
 
 ## Shape
 
-| Key                         | Type           | Effect                                                                                                                                                                             |
-| --------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`                      | `"brownfield"` | Always `brownfield` in 2.5.0. Reserved for future greenfield-strict modes.                                                                                                         |
-| `block`                     | `string[]`     | Finding statuses that fail the guardrail check (exit code 1).                                                                                                                      |
-| `warn`                      | `string[]`     | Statuses that print a warning but don't fail.                                                                                                                                      |
-| `confidence`                | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`.                                                                     |
-| `blockRules`                | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.                                                                            |
-| `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn). |
-| `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                          |
-| `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                            |
-| `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                        |
+| Key                         | Type           | Effect                                                                                                                                                                                                                                                                                                              |
+| --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | `"brownfield"` | Always `brownfield` in 2.5.0. Reserved for future greenfield-strict modes.                                                                                                                                                                                                                                          |
+| `block`                     | `string[]`     | Finding statuses that fail the guardrail check (exit code 1).                                                                                                                                                                                                                                                       |
+| `warn`                      | `string[]`     | Statuses that print a warning but don't fail.                                                                                                                                                                                                                                                                       |
+| `confidence`                | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`.                                                                                                                                                                                                      |
+| `blockRules`                | `object`       | Per-finding-kind block overrides. Each `true` flag escalates the corresponding new finding to blocking.                                                                                                                                                                                                             |
+| `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn).                                                                                                                                  |
+| `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                                                                                                                                                           |
+| `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
+| `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
+| `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 
 ## Baseline mode pinning
 
@@ -225,6 +226,22 @@ the most common candidate beyond `code` / `hygiene`):
 ```json
 { "addedRequiresChangedLines": ["code", "hygiene", "duplication"] }
 ```
+
+### Tune the large-file threshold
+
+By default a source file is flagged `large-file` above 500 lines. A repo
+with a different house norm can raise or lower the bar:
+
+```json
+{ "largeFileThreshold": 800 }
+```
+
+The value is resolved once when metrics are gathered, so the same number
+drives the guardrail `large-file` finding, the "files over N lines"
+count, and the Quality + Maintainability dimension scores — they never
+disagree. Because `large-file` identity is per-path (not line-based),
+changing the threshold only changes _which_ files are flagged; it never
+invalidates a baseline or allowlist.
 
 ## `loop.preset` — loop-scoped posture (not read by CI)
 

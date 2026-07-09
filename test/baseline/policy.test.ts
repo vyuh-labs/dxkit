@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_BROWNFIELD_POLICY, classify, classifyAll } from '../../src/baseline/policy';
-import type { BrownfieldPolicy, ClassifyContext } from '../../src/baseline/policy';
+import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
+import { classify, classifyAll } from '../../src/baseline/classify';
+import type { BrownfieldPolicy } from '../../src/baseline/policy';
+import type { ClassifyContext } from '../../src/baseline/classify';
 import type { MatchPair } from '../../src/baseline/types';
 
 function pair(

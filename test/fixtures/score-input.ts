@@ -37,6 +37,7 @@ export function baseMetrics(): HealthMetrics {
     coverageConfigExists: false,
     typeErrors: null,
     filesOver500Lines: 0,
+    largeFileThreshold: 500,
     largestFileLines: 0,
     largestFilePath: '',
     consoleLogCount: 0,

@@ -75,8 +75,12 @@ export interface QualityScoreInput {
    *  source directory (suggests in-progress migration that's stalled). */
   mixedLanguages: boolean;
 
-  /** Files exceeding 500 lines. Step-penalized at 5 and 20. */
+  /** Files exceeding the large-file threshold. Step-penalized at 5 and 20. */
   filesOver500Lines: number;
+  /** The resolved large-file threshold (lines) `filesOver500Lines` was counted
+   *  against — the canonical 500 default or a policy override. Carried so the
+   *  penalty prose names the actual bar, not a hardcoded 500. */
+  largeFileThreshold: number;
   /** Largest single source file by line count. Step-penalized at
    *  5K and 10K — the 5K threshold is the "should have been split"
    *  bar; the 10K threshold is "this is a god-file." */
@@ -135,7 +139,7 @@ export const QUALITY_SCORING_SPEC: DimensionScoringSpec<QualityScoreInput> = {
     },
     {
       id: 'files-over-500-lines',
-      describe: (i) => `${i.filesOver500Lines} file(s) over 500 lines`,
+      describe: (i) => `${i.filesOver500Lines} file(s) over ${i.largeFileThreshold} lines`,
       applies: (i) => i.filesOver500Lines > 5,
       delta: (i) => (i.filesOver500Lines > 20 ? -20 : -10),
     },

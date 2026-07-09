@@ -47,6 +47,10 @@ export interface QualityMetrics {
   // would diverge by ~50 points on a typical TS monorepo (file-size
   // penalty + any-type-density penalty are big drivers).
   filesOver500Lines: number;
+  /** Resolved large-file threshold (lines) `filesOver500Lines` was counted
+   *  against — carried from `HealthMetrics.largeFileThreshold` so the standalone
+   *  slop score + prose name the same bar the health-side dimension uses. */
+  largeFileThreshold: number;
   largestFileLines: number;
   anyTypeCount: number;
   typeErrors: number | null;

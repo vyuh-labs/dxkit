@@ -20,6 +20,19 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 
+/**
+ * Canonical DEFAULT large-file threshold — a source file is "large" at strictly
+ * MORE than this many lines. This is THE single application point: both the
+ * `filesOver500Lines` count and the `largestFiles` list are derived here against
+ * the resolved threshold, and the resolved value is recorded on
+ * `HealthMetrics.largeFileThreshold` so every downstream consumer (the baseline
+ * `large-file` producer, the Quality + Maintainability scores, and the report
+ * prose) reads ONE value and cannot diverge. A repo overrides it via
+ * `.dxkit/policy.json:largeFileThreshold`, resolved once at the analyzer
+ * boundary (`gatherAnalysisResultBody`) and threaded in as the third argument.
+ */
+export const LARGE_FILE_THRESHOLD_LINES = 500;
+
 /** Count how many of `relPaths` exist under `root`. Cross-platform
  *  replacement for `ls a b c` existence-count shell-outs (the prior
  *  `ls` form returned 0 on Windows). */
@@ -87,6 +100,7 @@ function lineCount(content: string): number {
 export function gatherGenericMetrics(
   cwd: string,
   languageFlags?: DetectedStack['languages'],
+  largeFileThreshold: number = LARGE_FILE_THRESHOLD_LINES,
 ): Partial<HealthMetrics> {
   // D026 (2.4.7): repo-level artifacts probed from git toplevel; code-
   // level metrics (source-file counts, hygiene grep, semgrep) stay
@@ -136,15 +150,18 @@ export function gatherGenericMetrics(
       largestFileLines = f.lines;
       largestFilePath = f.path;
     }
-    if (f.lines > 500) filesOver500Lines++;
+    if (f.lines > largeFileThreshold) filesOver500Lines++;
   }
   const sourceFiles = sourceList.length;
-  // Every file over the canonical large-file threshold, sorted
+  // Every file over the resolved large-file threshold, sorted
   // descending. Filtered (not pre-sliced) at this layer so the
   // baseline `large-file` producer captures one entry per file and
-  // the per-kind count matches `filesOver500Lines` above. The
-  // markdown renderer caps to top 10 at the display site.
-  const largestFiles = filteredFiles.filter((f) => f.lines > 500).sort((a, b) => b.lines - a.lines);
+  // the per-kind count matches `filesOver500Lines` above (both derive
+  // from the SAME threshold — the whole point of applying it once here).
+  // The markdown renderer caps to top 10 at the display site.
+  const largestFiles = filteredFiles
+    .filter((f) => f.lines > largeFileThreshold)
+    .sort((a, b) => b.lines - a.lines);
 
   // ─── Console / debug / type-escape / eval counts (D074 closure) ───────────
   // skipComments: true filters lines beginning with //, /*, or # so
@@ -312,6 +329,7 @@ export function gatherGenericMetrics(
     totalLines,
     coverageConfigExists,
     filesOver500Lines,
+    largeFileThreshold,
     largestFileLines,
     largestFilePath,
     largestFiles,
