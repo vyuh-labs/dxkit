@@ -413,6 +413,8 @@ export async function run(argv: string[]): Promise<void> {
       // explore flags
       limit: { type: 'string' },
       refresh: { type: 'boolean', default: false },
+      // report snapshot flag: retain the most recent N history entries
+      retain: { type: 'string' },
       substring: { type: 'boolean', default: false },
       // reviewers flags
       staged: { type: 'boolean', default: false },
@@ -1852,6 +1854,31 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'report': {
+      // Subcommands: `report snapshot` publishes a per-merge score snapshot to
+      // the `dxkit-reports` anchor; `report history` reads the trend back. Both
+      // dispatch to reports-cli; a bare `report` runs the full audit below.
+      const reportSub = positionals[1];
+      if (reportSub === 'snapshot' || reportSub === 'history') {
+        const cwd = resolveRepoPath(positionals[2]);
+        if (values.json) logger.setJsonMode(true);
+        const { runReportSnapshot, runReportHistory } = await import('./reports-cli');
+        const code =
+          reportSub === 'snapshot'
+            ? await runReportSnapshot({
+                cwd,
+                json: !!values.json,
+                dryRun: !!values['dry-run'],
+                ...(values.ref ? { anchorRef: String(values.ref) } : {}),
+                ...(values.retain ? { retainHistory: Number(values.retain) } : {}),
+              })
+            : runReportHistory({
+                cwd,
+                json: !!values.json,
+                ...(values.ref ? { anchorRef: String(values.ref) } : {}),
+                ...(values.limit ? { limit: Number(values.limit) } : {}),
+              });
+        process.exit(code);
+      }
       // D021 (2.4.7 sub-piece 3): single orchestrator that runs every
       // analyzer in sequence and produces a fully-populated dashboard.
       // Child-process model rather than direct function calls: each
