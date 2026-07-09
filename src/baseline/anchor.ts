@@ -29,20 +29,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DEFAULT_ANCHOR_REF } from './modes';
+import { readFromAnchorRef } from './anchor-publish';
 import type { BaselineSection } from './policy';
 
-function gitShow(cwd: string, ref: string, relPath: string): string {
-  return execSync(`git show ${JSON.stringify(`${ref}:${relPath}`)}`, {
-    cwd,
-    stdio: ['ignore', 'pipe', 'ignore'],
-    encoding: 'utf8',
-  });
-}
-
 /**
- * Fetch the anchor's content from the side branch. Returns the file text, or
- * `null` when the transport is not `branch`, or the branch/file is unreachable
- * (not created yet, offline). Never throws.
+ * Fetch the baseline anchor's content from the side branch. Returns the file
+ * text, or `null` when the transport is not `branch`, or the branch/file is
+ * unreachable (not created yet, offline). Never throws. Gates on the baseline
+ * `section` then delegates to the ONE side-ref reader `readFromAnchorRef`
+ * (`anchor-publish.ts`) so baseline + reports read a side ref through the same
+ * primitive (CLAUDE.md Rule 2).
  */
 function anchorContentFromBranch(
   cwd: string,
@@ -51,23 +47,7 @@ function anchorContentFromBranch(
 ): string | null {
   if (section?.anchor !== 'branch') return null;
   const anchorRef = section.anchorRef ?? DEFAULT_ANCHOR_REF;
-
-  // Best-effort fetch so the `origin/<anchorRef>` mirror exists (no-op in CI
-  // where checkout already fetched, or when offline).
-  try {
-    execSync(`git fetch --depth=1 origin ${JSON.stringify(anchorRef)}`, { cwd, stdio: 'ignore' });
-  } catch {
-    /* offline / already present — fall through to the reads below */
-  }
-
-  for (const ref of [`origin/${anchorRef}`, anchorRef]) {
-    try {
-      return gitShow(cwd, ref, relPath);
-    } catch {
-      /* try the next ref form */
-    }
-  }
-  return null;
+  return readFromAnchorRef(cwd, anchorRef, relPath);
 }
 
 function relFromCwd(cwd: string, baselinePath: string): string {
