@@ -37,8 +37,11 @@ export interface MaintainabilityScoreInput {
   sourceFiles: number;
   /** Largest single source file by line count (the "god file" probe). */
   largestFileLines: number;
-  /** Count of source files exceeding 500 lines. */
+  /** Count of source files exceeding the large-file threshold. */
   filesOver500Lines: number;
+  /** The resolved large-file threshold (lines) the count was measured against —
+   *  500 default or a policy override; carried so the prose names the real bar. */
+  largeFileThreshold: number;
   /** Console / debugger statement count across source. */
   consoleLogCount: number;
   /** `engines.node` field from package.json, e.g. ">=14.0.0", or null
@@ -79,7 +82,8 @@ export const MAINTAINABILITY_SCORING_SPEC: DimensionScoringSpec<MaintainabilityS
     },
     {
       id: 'files-over-500-density',
-      describe: (i) => `${i.filesOver500Lines} files over 500 lines (extraction recommended)`,
+      describe: (i) =>
+        `${i.filesOver500Lines} files over ${i.largeFileThreshold} lines (extraction recommended)`,
       applies: (i) => i.filesOver500Lines > 5,
       delta: (i) => (i.filesOver500Lines > 30 ? -15 : i.filesOver500Lines > 15 ? -10 : -5),
     },

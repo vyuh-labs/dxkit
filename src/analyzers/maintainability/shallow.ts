@@ -24,6 +24,7 @@ export function toMaintainabilityScoreInput(input: ScoreInput): MaintainabilityS
     sourceFiles: m.sourceFiles,
     largestFileLines: m.largestFileLines,
     filesOver500Lines: m.filesOver500Lines,
+    largeFileThreshold: m.largeFileThreshold,
     consoleLogCount: m.consoleLogCount,
     nodeEngineVersion: m.nodeEngineVersion,
     godNodeCount: c.structural?.godNodeCount ?? null,
@@ -84,7 +85,7 @@ export function scoreMaintainabilityDimension(input: ScoreInput): DimensionScore
       `${m.sourceFiles} source files across ${m.directories} directories` +
       `. ${m.controllers} ${componentsLabel}, ${m.models} ${modelsLabel}` +
       `. Largest file: ${m.largestFileLines} lines` +
-      `. ${m.filesOver500Lines} files over 500 lines` +
+      `. ${m.filesOver500Lines} files over ${m.largeFileThreshold} lines` +
       (m.nodeEngineVersion ? `. Node engine: ${m.nodeEngineVersion}` : '') +
       (communityCount !== null ? `. ${communityCount} architectural communities` : '') +
       (avgCohesion !== null ? `. Avg cohesion: ${avgCohesion.toFixed(2)}` : '') +

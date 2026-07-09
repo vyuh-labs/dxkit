@@ -166,7 +166,7 @@ export const DEFERRED_KINDS: Readonly<
     reason:
       'graphify Python script does not yet surface per-file complexity offenders; ' +
       'QualityMetrics.topGodFiles is forward-declared but unpopulated. ' +
-      'Substitute: large-file (>500 lines) overlaps the same files ~80%+ of the time.',
+      'Substitute: large-file (over the configured large-file threshold) overlaps the same files ~80%+ of the time.',
     landingPhase: '2.6 / Phase 10s.2 (graphify-symbols expansion)',
   },
   hygiene: {

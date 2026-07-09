@@ -190,6 +190,7 @@ function healthMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
     coverageConfigExists: false,
     typeErrors: null,
     filesOver500Lines: 2,
+    largeFileThreshold: 500,
     largestFileLines: 800,
     largestFilePath: 'src/big.ts',
     largestFiles: [{ path: 'src/big.ts', lines: 800 }],

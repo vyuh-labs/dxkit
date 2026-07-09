@@ -18,11 +18,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readWorkspace, type WorkspaceParticipant } from '../../workspace';
-import {
-  withRefWorktree,
-  withRemoteRefWorktree,
-  resolveRefToSha,
-} from '../../baseline/ref-baseline';
+import { withRefWorktree, resolveRefToSha } from '../../baseline/ref-baseline';
+import { withRemoteRefWorktree } from '../../baseline/remote-ref';
 import { gatherFlowModel } from './gather';
 import {
   buildServedContract,

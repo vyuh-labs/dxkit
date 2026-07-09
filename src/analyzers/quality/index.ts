@@ -46,6 +46,7 @@ export function qualityMetricsToScoreInput(m: QualityMetrics): QualityScoreInput
     mixedLanguages: m.mixedLanguages,
 
     filesOver500Lines: m.filesOver500Lines,
+    largeFileThreshold: m.largeFileThreshold,
     largestFileLines: m.largestFileLines,
 
     anyTypeCount: m.anyTypeCount,
@@ -155,6 +156,7 @@ export async function analyzeQuality(
     // standalone slop score sees the same penalties the health-side
     // dimension sees.
     filesOver500Lines: cm.filesOver500Lines,
+    largeFileThreshold: cm.largeFileThreshold,
     largestFileLines: cm.largestFileLines,
     anyTypeCount: cm.anyTypeCount,
     typeErrors: cm.typeErrors,

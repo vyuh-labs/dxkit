@@ -18,7 +18,8 @@ import { DetectedStack } from '../types';
 import { CapabilityReport, HealthMetrics, HealthReport } from './types';
 import type { AnalysisResult, AnalysisResultBody } from '../analysis-result';
 import { readOrBuildAnalysisResult } from './cache';
-import { gatherGenericMetrics } from './tools/generic';
+import { gatherGenericMetrics, LARGE_FILE_THRESHOLD_LINES } from './tools/generic';
+import { loadPolicyFromCwd } from '../baseline/policy';
 import { gatherLayer2Parallel } from './tools/parallel';
 import { stripNotRunSuffix } from './tools/lint-label';
 import { loadCoverage } from './tools/coverage';
@@ -63,6 +64,7 @@ export function defaultMetrics(): HealthMetrics {
     coverageConfigExists: false,
     typeErrors: null,
     filesOver500Lines: 0,
+    largeFileThreshold: LARGE_FILE_THRESHOLD_LINES,
     largestFileLines: 0,
     largestFilePath: '',
     largestFiles: [],
@@ -203,8 +205,20 @@ export async function gatherAnalysisResultBody(
   // Step 2: Gather metrics -- generic first, then language-specific, then optional.
   // Active-pack flags from `stack` drive the architecturalShape-aware
   // path counters (primary components, route handlers, data models).
+  //
+  // The large-file threshold is resolved ONCE here, at the analyzer boundary,
+  // from the repo's committed `.dxkit/policy.json` (default 500). It is threaded
+  // into the single application point in `gatherGenericMetrics` and recorded on
+  // `HealthMetrics.largeFileThreshold`, so every downstream consumer — the
+  // `filesOver500Lines` count, `largestFiles`, the baseline `large-file`
+  // producer, and the Quality/Maintainability scores + prose — reads the same
+  // value. Reading it here (not in a producer/renderer) keeps the analyzer the
+  // one place policy meets metrics; ref-based gathers read each ref's own
+  // committed policy.
+  const largeFileThreshold =
+    loadPolicyFromCwd(repoPath).largeFileThreshold ?? LARGE_FILE_THRESHOLD_LINES;
   const generic = timed('generic (Layer 0)', verbose, () =>
-    gatherGenericMetrics(repoPath, stack.languages),
+    gatherGenericMetrics(repoPath, stack.languages, largeFileThreshold),
   );
   const metrics: HealthMetrics = { ...defaultMetrics(), ...generic };
 

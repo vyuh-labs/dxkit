@@ -44,6 +44,14 @@ export interface HealthMetrics {
   typeErrors: number | null;
 
   filesOver500Lines: number;
+  /**
+   * The resolved large-file threshold (lines) this gather applied — the canonical
+   * 500 default, or a `.dxkit/policy.json:largeFileThreshold` override. Recorded
+   * here so `filesOver500Lines`, `largestFiles`, the baseline `large-file`
+   * producer, the Quality/Maintainability scores, and the "over N lines" report
+   * prose all read ONE value and cannot diverge.
+   */
+  largeFileThreshold: number;
   largestFileLines: number;
   largestFilePath: string;
   /**
@@ -330,7 +338,8 @@ export interface HealthReport {
   };
   languages: Array<{ name: string; files: number; lines: number; percentage: number }>;
   /**
-   * Every source file over the large-file threshold (500 lines),
+   * Every source file over the large-file threshold (default 500
+   * lines; see `largeFileThreshold`),
    * sorted by line count descending. Surfaced verbatim from
    * `HealthMetrics.largestFiles` so the baseline `large-file`
    * producer captures one entry per file. Renderers slice to top-N

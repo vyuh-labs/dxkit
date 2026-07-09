@@ -42,6 +42,7 @@ function unavailableQuality(): QualityReport {
     metrics: {
       sourceFiles: 0,
       filesOver500Lines: 0,
+      largeFileThreshold: 500,
       largestFileLines: 0,
       anyTypeCount: 0,
       typeErrors: null,

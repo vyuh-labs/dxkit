@@ -9,8 +9,8 @@ import {
   mirrorSaltFile,
   resolveRefToSha,
   withRefWorktree,
-  withRemoteRefWorktree,
 } from '../../src/baseline/ref-baseline';
+import { withRemoteRefWorktree } from '../../src/baseline/remote-ref';
 
 /**
  * Real-git fixture tests for the ref-based gather path. Each test

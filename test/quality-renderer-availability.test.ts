@@ -14,6 +14,7 @@ function baseReport(): QualityReport {
     metrics: {
       sourceFiles: 100,
       filesOver500Lines: 0,
+      largeFileThreshold: 500,
       largestFileLines: 0,
       anyTypeCount: 0,
       typeErrors: null,
