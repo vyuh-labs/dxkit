@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-07-10
+
+The freshness-and-honesty release for the flow pillar: the committed contract
+snapshots stop going silently stale, flow's numbers say exactly what they can
+and cannot see, and keeping the contract current becomes automatic — with the
+review checkpoint placed where it matters (route removals), not everywhere.
+
 ### Added
 
 - **On-merge flow-contract refresh (opt-in).** `flow.onMergeRefresh: true`
