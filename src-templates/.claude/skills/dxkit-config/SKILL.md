@@ -153,6 +153,19 @@ The code graph (`.dxkit/reports/graph.json`) is a **gitignored**, rebuilt-on-dem
 
 Two ways to enable it: `npx vyuh-dxkit init --with-graph-refresh` (installs the workflow directly), or set the `graph.refresh` knob above and run `npx vyuh-dxkit update` (which lays the workflow down). Either way, `update` refreshes it and `uninstall` removes it. Rebuild the graph locally any time with `npx vyuh-dxkit explore refresh`. It's a CI-performance optimization, not a correctness gate — leave it off unless graph rebuilds are slow.
 
+### Publishing report snapshots on merge (`reports.onMerge`)
+
+Opt into a score-over-time trend: publish a health snapshot on every merge to the default branch, so you can see each dimension's score move release over release.
+
+```jsonc
+{ "reports": { "onMerge": true } }  // default false
+```
+
+- `true` — installs `dxkit-reports-refresh.yml`, which renders the full audit on merge (+ weekly + on demand) and publishes a snapshot to a **dedicated `dxkit-reports` side ref** via git plumbing. It appends one line to `report-history.jsonl` and refreshes a browsable `latest/` dashboard on that ref — **without committing anything to the default branch's tree** (same transport the baseline anchor uses, just a distinct ref, so its churn never touches the baseline). Read the trend back with `npx vyuh-dxkit report history`. Retention is `reports.retain` (how many snapshots to keep).
+- `false` / absent — no snapshots are published (the default).
+
+Two ways to enable it: `npx vyuh-dxkit init --with-reports-refresh` (installs the workflow directly), or set the `reports.onMerge` knob above and run `npx vyuh-dxkit update` (which lays the workflow down). Either way, `update` refreshes it and `uninstall` removes it. It's a reporting/trend feature, not a correctness gate — leave it off unless you want the merge-time score history.
+
 ## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
 
 dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:

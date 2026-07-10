@@ -10,6 +10,8 @@ import {
   installCiBaselineRefresh,
   installCiGraphRefresh,
   graphRefreshEnabled,
+  installCiReportsRefresh,
+  reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -335,6 +337,48 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
       JSON.stringify({ graph: { refresh: 'off' } }),
     );
     expect(graphRefreshEnabled(tmp)).toBe(false);
+  });
+
+  it('installs the reports-refresh workflow with the default branch substituted', () => {
+    execFileSync('git', ['init', '-q', '-b', 'develop'], { cwd: tmp });
+    const result = installCiReportsRefresh(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-reports-refresh.yml');
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-reports-refresh.yml'),
+      'utf8',
+    );
+    expect(content).not.toContain('__DXKIT_'); // every placeholder resolved
+    expect(content).toContain('branches: [develop]');
+    // Renders the audit, then publishes the snapshot to the dxkit-reports ref.
+    expect(content).toContain('report snapshot');
+  });
+
+  it('reports refresh is opt-in via policy reports.onMerge, and gated in the surface registry', () => {
+    // No policy → disabled → surface contributes no uninstall artifact and the
+    // legacy workspace-derived fallback does not stamp the flag.
+    expect(reportsRefreshEnabled(tmp)).toBe(false);
+    expect(detectInstallFlags(tmp).withReportsRefresh).toBe(false);
+
+    // Opt in via policy → enabled, so `update`/`uninstall` pick it up even
+    // before the workflow file exists on disk. This is the seam the init gap
+    // left open: the surface + fallback were correct, but init never stamped
+    // the flag on a modern manifest, so update silently skipped the workflow.
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ reports: { onMerge: true } }),
+    );
+    expect(reportsRefreshEnabled(tmp)).toBe(true);
+    const flags = detectInstallFlags(tmp);
+    expect(flags.withReportsRefresh).toBe(true);
+    expect(managedGatedArtifacts(flags)).toContain('.github/workflows/dxkit-reports-refresh.yml');
+
+    // onMerge:false is the same as absent.
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ reports: { onMerge: false } }),
+    );
+    expect(reportsRefreshEnabled(tmp)).toBe(false);
   });
 
   it('skips when workflow file already exists', () => {
