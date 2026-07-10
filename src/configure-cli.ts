@@ -23,10 +23,9 @@
  * is the conversational driver: it runs `--plan`, shows it, gets the user's
  * confirmation, then runs `--apply`.
  */
-import * as fs from 'fs';
-import * as path from 'path';
 import * as logger from './logger';
 import { gatherConfigPlan, type ConfigPlanItem, type ConfigContext } from './discovery/commands';
+import { deepMergePolicy, mergeIntoPolicyFile } from './baseline/policy-write';
 
 export interface ConfigureOptions {
   /** Write the plan into policy.json (default is plan-only, no write). */
@@ -158,59 +157,18 @@ export interface ApplyResult {
 
 /**
  * Deep-merge every plan item's `patch` into `.dxkit/policy.json`, PRESERVING
- * every existing key — the same non-clobber discipline `writeFlowPolicy` /
- * `ensureLoopPreset` use for their single sections, generalized to the whole
- * configure pass (this is the ONE writer for the configure concern). Idempotent:
- * if the merged result equals what's on disk, the file is left untouched. A
- * malformed existing policy is left intact and reported via the return
+ * every existing key. The read-merge-write mechanics live in the canonical
+ * policy merge-writer (`mergeIntoPolicyFile`, Rule 2); this wrapper folds the
+ * plan's patches into one merged patch and reports which sections it carried.
+ * A malformed existing policy is left intact and reported via the return
  * (`changed: false`), never overwritten.
  */
 export function applyConfigPlan(cwd: string, plan: readonly ConfigPlanItem[]): ApplyResult {
   const sections = plan.map((p) => p.section);
   if (plan.length === 0) return { changed: false, sections };
 
-  const abs = path.join(cwd, '.dxkit', 'policy.json');
-  let policy: Record<string, unknown> = {};
-  if (fs.existsSync(abs)) {
-    try {
-      policy = JSON.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
-    } catch {
-      // Malformed — never clobber a file we can't parse.
-      return { changed: false, sections };
-    }
-  }
-
-  const before = JSON.stringify(policy);
-  let merged = policy;
-  for (const item of plan) merged = deepMerge(merged, item.patch);
-  const after = JSON.stringify(merged);
-  if (before === after) return { changed: false, sections };
-
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(merged, null, 2) + '\n', 'utf8');
-  return { changed: true, sections };
-}
-
-/** True for a plain (non-array, non-null) object. */
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/**
- * Recursively merge `patch` over `base`, returning a NEW object. Nested plain
- * objects merge key-by-key (so a `patch` that sets `flow.mode` preserves a
- * sibling `flow.specs`); arrays and primitives are replaced by the patch value.
- * Deterministic and pure over its inputs.
- */
-function deepMerge(
-  base: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...base };
-  for (const [key, patchVal] of Object.entries(patch)) {
-    const baseVal = out[key];
-    out[key] =
-      isPlainObject(baseVal) && isPlainObject(patchVal) ? deepMerge(baseVal, patchVal) : patchVal;
-  }
-  return out;
+  let patch: Record<string, unknown> = {};
+  for (const item of plan) patch = deepMergePolicy(patch, item.patch);
+  const outcome = mergeIntoPolicyFile(cwd, patch);
+  return { changed: outcome.changed, sections };
 }
