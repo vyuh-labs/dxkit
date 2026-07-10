@@ -30,6 +30,8 @@ import {
   installCiDeepSastRefresh,
   installCiGraphRefresh,
   graphRefreshEnabled,
+  installCiReportsRefresh,
+  reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -252,6 +254,7 @@ ${renderCommandIndex().join('\n')}
     --with-baseline-refresh   Install .github/workflows/dxkit-baseline-refresh.yml
     --with-deep-sast-refresh  Install .github/workflows/dxkit-deep-sast-refresh.yml (Snyk/CodeQL ingest; opt-in)
     --with-graph-refresh      Install .github/workflows/dxkit-graph-refresh.yml (rebuild + cache graph.json on merge; opt-in, sets policy graph.refresh)
+    --with-reports-refresh    Install .github/workflows/dxkit-reports-refresh.yml (publish a health snapshot to the dxkit-reports ref on merge; opt-in, or enable via policy reports.onMerge)
     --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
     --claude-loop             Register the Stop-gate hook for autonomous coding
@@ -364,6 +367,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-ci-push-trigger': { type: 'boolean', default: false },
       'with-deep-sast-refresh': { type: 'boolean', default: false },
       'with-graph-refresh': { type: 'boolean', default: false },
+      'with-reports-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
@@ -630,6 +634,17 @@ export async function run(argv: string[]): Promise<void> {
           result: installCiGraphRefresh(cwd, { force: !!values.force }),
         });
       }
+      // Report snapshots on merge — opt-in score-over-time transport: publish
+      // a health snapshot to the dedicated `dxkit-reports` ref on merge (git
+      // plumbing, never the default branch's tree). Enabled by the flag OR an
+      // existing `.dxkit/policy.json:reports.onMerge: true`; off by default
+      // (a trend feature, not a gate, so it shouldn't clutter every CI install).
+      if (values['with-reports-refresh'] || reportsRefreshEnabled(cwd)) {
+        shipResults.push({
+          label: 'CI reports-refresh workflow',
+          result: installCiReportsRefresh(cwd, { force: !!values.force }),
+        });
+      }
 
       // Flow setup — folded into `init` (there is no standalone `flow init`).
       // Detect a UI→API surface; if there is none, stay silent (zero burden on
@@ -741,6 +756,11 @@ export async function run(argv: string[]): Promise<void> {
         // #119: stamp the opt-in (flag or policy) so update refreshes the
         // graph-refresh workflow and uninstall removes it.
         withGraphRefresh: !!values['with-graph-refresh'] || graphRefreshEnabled(cwd),
+        // Reports-refresh: stamp the opt-in (flag or reports.onMerge) so update
+        // refreshes the dxkit-reports-refresh workflow and uninstall removes it.
+        // Without this stamp the surface's flag gate never opens on a modern
+        // manifest and update would silently skip it.
+        withReportsRefresh: !!values['with-reports-refresh'] || reportsRefreshEnabled(cwd),
       });
 
       console.log('');
