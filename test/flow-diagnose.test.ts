@@ -80,6 +80,32 @@ describe('diagnoseFlow', () => {
     }
   });
 
+  it('surfaces committed-contract freshness (generatedAt + per-participant provenance)', async () => {
+    const dir = makeRepo({
+      'web/List.tsx': "axios.get('/articles');\n",
+      '.dxkit/flow/served.json': JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        side: 'served',
+        routes: [{ method: 'GET', path: '/articles', handler: null, via: 'spec' }],
+        participants: [
+          { name: 'backend', source: 'remote', routes: 1, sha: 'a'.repeat(40), ref: 'main' },
+        ],
+      }),
+    });
+    try {
+      const d = await diagnoseFlow(dir);
+      expect(d).not.toBeNull();
+      expect(d!.contract?.generatedAt).toBe('2026-06-01T00:00:00.000Z');
+      // No workspace entry for the participant → tip unknowable → honest null,
+      // never a false stale verdict.
+      expect(d!.contract?.participants[0]).toMatchObject({ name: 'backend', moved: null });
+      expect(d!.contract?.stale).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns null when the repo has no flow surface (doctor omits the section)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-flowdiag-none-'));
     try {

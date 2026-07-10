@@ -137,7 +137,9 @@ describe('publishFlow', () => {
       );
       const appDir = join(root, 'app');
       const result = await publishFlow(appDir, { generatedAt: NOW });
-      expect(result.participants).toEqual([{ name: 'backend', routes: 2, source: 'remote' }]);
+      expect(result.participants).toMatchObject([{ name: 'backend', routes: 2, source: 'remote' }]);
+      // Provenance: the gathered commit is recorded (the staleness anchor).
+      expect(result.participants[0].sha).toMatch(/^[0-9a-f]{40}$/);
       const served = readServedContract(appDir);
       expect(served?.routes.map((r) => `${r.method} ${r.path}`).sort()).toEqual([
         'GET /articles',
@@ -164,7 +166,7 @@ describe('publishFlow', () => {
       const appDir = join(root, 'app');
       const result = await publishFlow(appDir, { generatedAt: NOW });
       // The tag predates '/added-later' → one route, not two.
-      expect(result.participants).toEqual([{ name: 'backend', routes: 1, source: 'remote' }]);
+      expect(result.participants).toMatchObject([{ name: 'backend', routes: 1, source: 'remote' }]);
       expect(readServedContract(appDir)?.routes.map((r) => r.path)).toEqual(['/articles']);
     } finally {
       rmSync(remote.replace('file://', ''), { recursive: true, force: true });
@@ -204,13 +206,13 @@ describe('publishFlow', () => {
 
       // Local checkout present → uses it (offline, fast).
       let result = await publishFlow(appDir, { generatedAt: NOW });
-      expect(result.participants).toEqual([{ name: 'backend', routes: 1, source: 'local' }]);
+      expect(result.participants).toMatchObject([{ name: 'backend', routes: 1, source: 'local' }]);
       expect(readServedContract(appDir)?.routes.map((r) => r.path)).toEqual(['/from-local']);
 
       // Remove the local checkout → same participant now clones the remote.
       rmSync(join(root, 'backend'), { recursive: true, force: true });
       result = await publishFlow(appDir, { generatedAt: NOW });
-      expect(result.participants).toEqual([{ name: 'backend', routes: 1, source: 'remote' }]);
+      expect(result.participants).toMatchObject([{ name: 'backend', routes: 1, source: 'remote' }]);
       expect(readServedContract(appDir)?.routes.map((r) => r.path)).toEqual(['/from-remote']);
     } finally {
       rmSync(remote.replace('file://', ''), { recursive: true, force: true });

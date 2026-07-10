@@ -37,6 +37,7 @@ npx vyuh-dxkit doctor --json   → read the top-level `flow` field
 - `unresolved[]` — each `{ method, path, reason, suggestion, file, line }`. `reason` is `no-route` / `external` / `placeholder-only`; `suggestion` is `add-route` / `configure-participant` / `adopt-spec` / `annotate`.
 - `servedUnconsumed[]` — served routes no in-repo call hits (dead route, or a cross-repo consumer).
 - `connection.rung` — how the served side is resolved (`monorepo` / `committed-counterpart` / `configured-participants` / `unresolved`).
+- `contract` (when a committed `served.json` exists) — freshness of the snapshot: `generatedAt`, and per participant the commit its routes were gathered at (`sha`), its current `tip`, and `moved` (tri-state: `true` = the provider has shipped commits since this publish → recommend `flow publish` + commit; `false` = current; `null` = unknowable, e.g. offline — never treated as stale). `stale: true` only on a CONFIRMED move.
 
 Walk the `unresolved` tail and, per item, act on its `suggestion`: add the missing route, configure a participant (handshake mode), or adopt the provider's spec so an external call resolves. There is no inline "ignore this line" marker — an intentional break is accepted per-finding via the allowlist once the gate surfaces it as a net-new breakage (see **fix** mode below), so the acceptance is reviewed and diff-tracked rather than a silent inline comment.
 
@@ -84,6 +85,8 @@ When the provider a call targets lives in another repo, the gate needs that repo
   ```
 
   A `repo:` participant is fetched (shallow, at `ref`) so services need not be locally checked out — e.g. in CI. When both `path` and `repo` are set, the local checkout is preferred when it exists (offline, fast) and the remote is the fallback. Remote fetch uses your ambient git credentials (SSH agent / credential helper) — dxkit never prompts, so a private repo needs its key/token already configured. `flow refresh` writes just this repo's snapshots; `flow publish` unions the whole mesh. Commit the result — the per-commit gate reads the committed `served.json` offline and never fetches.
+
+  **Freshness is disclosed, not assumed.** `flow publish` records the commit each participant's routes were gathered at onto the snapshot (`participants[].sha`). `doctor` later compares that against each participant's current tip (a local `rev-parse`, or one bounded `ls-remote` for `repo:` participants — fail-open offline) and warns "served.json is BEHIND: <name> moved since publish" when a provider has shipped commits past the snapshot. The gate itself never probes the network; when its findings were resolved against a committed contract, it prints the snapshot's publish date so a reviewer knows which vintage judged them. A stale snapshot's usual symptom is a FALSE `no-route` on a call to a route the provider added recently — the fix is `flow publish` + commit, not an allowlist entry.
 
 ### console — an interactive HTML artifact a reviewer can exercise
 

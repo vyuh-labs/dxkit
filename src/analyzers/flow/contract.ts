@@ -66,9 +66,35 @@ interface SnapshotMeta {
   readonly contentHash?: string;
 }
 
+/** Where a participant's served routes came from at publish time.
+ *   - `local`       — a local checkout's working tree
+ *   - `ref`         — a local checkout pinned at a git ref
+ *   - `remote`      — cloned from the participant's `repo:` URL (shallow)
+ *   - `missing`     — no local checkout and no `repo` to fall back to
+ *   - `unreachable` — a `repo:` clone/fetch failed (bad URL, auth, unknown ref) */
+export type ParticipantSource = 'local' | 'ref' | 'remote' | 'missing' | 'unreachable';
+
+/** Per-participant provenance recorded on a published served contract — the
+ *  staleness signal: WHICH commit each participant's routes were gathered at.
+ *  Additive on schema v1 (older readers ignore it); doctor compares `sha`
+ *  against the participant's current tip to disclose a snapshot that has
+ *  fallen behind its provider. */
+export interface ParticipantProvenance {
+  readonly name: string;
+  readonly source: ParticipantSource;
+  /** Routes this participant contributed to the mesh. */
+  readonly routes: number;
+  /** Commit the participant's routes were gathered at, when resolvable. */
+  readonly sha?: string;
+  /** Ref the participant was pinned at (from workspace.json), when declared. */
+  readonly ref?: string;
+}
+
 export interface ServedContract extends SnapshotMeta {
   readonly side: 'served';
   readonly routes: ServedRoute[];
+  /** Present on mesh publishes (`flow publish` with workspace participants). */
+  readonly participants?: readonly ParticipantProvenance[];
 }
 
 export interface ConsumedContract extends SnapshotMeta {

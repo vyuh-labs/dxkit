@@ -30,20 +30,21 @@ import {
   servedContentHash,
   type ServedRoute,
   type ServedContract,
+  type ParticipantSource,
+  type ParticipantProvenance,
 } from './contract';
 
-/** Where a participant's served routes came from.
- *   - `local`       — gathered from a local checkout's working tree
- *   - `ref`         — gathered from a local checkout pinned at a git ref
- *   - `remote`      — cloned from the participant's `repo:` URL (shallow, at ref)
- *   - `missing`     — no local checkout and no `repo` to fall back to
- *   - `unreachable` — a `repo:` clone/fetch failed (bad URL, auth, unknown ref) */
-export type ParticipantSource = 'local' | 'ref' | 'remote' | 'missing' | 'unreachable';
+// The source taxonomy lives on the contract schema (contract.ts) — provenance
+// is a committed artifact field now, not just CLI display. Re-exported so
+// existing importers keep working.
+export type { ParticipantSource } from './contract';
 
 export interface PublishedParticipant {
   readonly name: string;
   readonly routes: number;
   readonly source: ParticipantSource;
+  /** Commit the participant's routes were gathered at, when resolvable. */
+  readonly sha?: string;
 }
 
 export interface PublishResult {
@@ -109,22 +110,29 @@ async function gatherParticipant(
   cwd: string,
   participant: WorkspaceParticipant,
   opts: PublishOptions,
-): Promise<{ routes: ServedRoute[]; source: ParticipantSource }> {
+): Promise<{ routes: ServedRoute[]; source: ParticipantSource; sha?: string }> {
   const abs = participant.path ? path.resolve(cwd, participant.path) : null;
 
   if (abs && fs.existsSync(abs)) {
-    if (participant.ref && resolveRefToSha(abs, participant.ref)) {
-      try {
-        const routes = await withRefWorktree({ cwd: abs, ref: participant.ref }, (wt) =>
-          servedRoutesFrom(wt, opts),
-        );
-        return { routes, source: 'ref' };
-      } catch {
-        // Worktree/gather failure → fall through to the working tree.
+    if (participant.ref) {
+      // Provenance: the commit the routes are gathered AT — the staleness
+      // anchor doctor later compares against the participant's current tip.
+      const pinnedSha = resolveRefToSha(abs, participant.ref);
+      if (pinnedSha) {
+        try {
+          const routes = await withRefWorktree({ cwd: abs, ref: participant.ref }, (wt) =>
+            servedRoutesFrom(wt, opts),
+          );
+          return { routes, source: 'ref', sha: pinnedSha };
+        } catch {
+          // Worktree/gather failure → fall through to the working tree.
+        }
       }
     }
     try {
-      return { routes: await servedRoutesFrom(abs, opts), source: 'local' };
+      const routes = await servedRoutesFrom(abs, opts);
+      const headSha = resolveRefToSha(abs, 'HEAD');
+      return { routes, source: 'local', ...(headSha ? { sha: headSha } : {}) };
     } catch {
       return { routes: [], source: 'missing' };
     }
@@ -133,11 +141,19 @@ async function gatherParticipant(
   // No local checkout — fetch the remote when the participant declares one.
   if (participant.repo) {
     try {
-      const routes = await withRemoteRefWorktree(
+      const gathered = await withRemoteRefWorktree(
         { repo: participant.repo, ...(participant.ref ? { ref: participant.ref } : {}) },
-        (checkout) => servedRoutesFrom(checkout, opts),
+        async (checkout) => ({
+          routes: await servedRoutesFrom(checkout, opts),
+          // The shallow checkout's HEAD IS the fetched commit — record it.
+          sha: resolveRefToSha(checkout, 'HEAD'),
+        }),
       );
-      return { routes, source: 'remote' };
+      return {
+        routes: gathered.routes,
+        source: 'remote',
+        ...(gathered.sha ? { sha: gathered.sha } : {}),
+      };
     } catch {
       return { routes: [], source: 'unreachable' };
     }
@@ -170,15 +186,32 @@ export async function publishFlow(cwd: string, opts: PublishOptions): Promise<Pu
 
   const allRoutes: ServedRoute[] = [...selfServed.routes];
   const participants: PublishedParticipant[] = [];
+  const provenance: ParticipantProvenance[] = [];
   for (const p of readWorkspace(cwd)?.participants ?? []) {
-    const { routes, source } = await gatherParticipant(cwd, p, opts);
-    participants.push({ name: p.name, routes: routes.length, source });
+    const { routes, source, sha } = await gatherParticipant(cwd, p, opts);
+    participants.push({ name: p.name, routes: routes.length, source, ...(sha ? { sha } : {}) });
+    provenance.push({
+      name: p.name,
+      source,
+      routes: routes.length,
+      ...(sha ? { sha } : {}),
+      ...(p.ref ? { ref: p.ref } : {}),
+    });
     allRoutes.push(...routes);
   }
 
   const mesh = dedupeServed(allRoutes);
   const contentHash = servedContentHash(mesh);
-  const servedContract: ServedContract = { side: 'served', ...baseMeta, contentHash, routes: mesh };
+  const servedContract: ServedContract = {
+    side: 'served',
+    ...baseMeta,
+    contentHash,
+    routes: mesh,
+    // Per-participant provenance — the staleness anchor. Only on mesh
+    // publishes: a participant-less publish is the monorepo/single-repo case
+    // where the snapshot's own commitSha already tells the story.
+    ...(provenance.length > 0 ? { participants: provenance } : {}),
+  };
 
   const servedPath = writeServedContract(cwd, servedContract);
   const consumedPath = writeConsumedContract(cwd, consumed);

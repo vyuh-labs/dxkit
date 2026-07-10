@@ -100,6 +100,31 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
     expect(out.findings.every((f) => f.verdict === 'warn')).toBe(true);
   });
 
+  it('discloses the committed contract vintage on the outcome (offline — from the snapshot itself)', async () => {
+    // A committed counterpart served.json participates in the HEAD served set;
+    // its publish timestamp must surface on the outcome so renderers can say
+    // which vintage judged the findings. No network involved — the value is
+    // read straight off the snapshot.
+    mkdirSync(join(dir, '.dxkit', 'flow'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'flow', 'served.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        side: 'served',
+        routes: [{ method: 'GET', path: '/from-counterpart', handler: null, via: 'spec' }],
+      }),
+    );
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'commit counterpart']);
+    writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
+    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+    expect(out.ran).toBe(true);
+    expect(out.contractGeneratedAt).toBe('2026-06-01T00:00:00.000Z');
+    // And the counterpart's routes were honored as served truth.
+    expect(out.findings.map((f) => f.path)).not.toContain('/from-counterpart');
+  });
+
   it('passes clean when every call still resolves', async () => {
     // No change to the working tree — the one call still resolves.
     const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });

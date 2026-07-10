@@ -240,6 +240,16 @@ function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   const suppressed = flow.suppressed ?? [];
   if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
+  // Snapshot-age disclosure: the findings were resolved against a committed
+  // contract of a specific vintage — a stale one can read as a false no-route,
+  // and the reader deserves to know which vintage judged them.
+  if (flow.contractGeneratedAt && flow.findings.length > 0) {
+    out.push(
+      `  (resolved against committed served.json published ${flow.contractGeneratedAt.slice(0, 10)} — ` +
+        `if the provider has since changed, refresh via \`flow publish\` and commit)`,
+    );
+    out.push('');
+  }
   const blocking = flow.findings.filter((f) => f.verdict === 'block');
   const warning = flow.findings.filter((f) => f.verdict === 'warn');
   if (blocking.length > 0) {

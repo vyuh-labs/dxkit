@@ -79,6 +79,11 @@ export interface FlowGateOutcome {
   readonly suppressed: readonly FlowGateSuppression[];
   /** True when at least one active finding blocks (only possible in `block` mode). */
   readonly blocks: boolean;
+  /** Publish timestamp of the committed `served.json` the HEAD side resolved
+   *  against, when one was used. Pure disclosure (a stale snapshot can read as
+   *  a false no-route) — recorded from the snapshot itself, never a network
+   *  probe; freshness probing is doctor's job. */
+  readonly contractGeneratedAt?: string;
   /** True when at least one active finding warns. */
   readonly warns: boolean;
 }
@@ -190,7 +195,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
     });
     const headConsumed = buildConsumedContract(headModel, GATE_META).bindings;
     const headServed = servedKeySet(buildServedContract(headModel, GATE_META));
-    unionCommittedServed(cwd, headServed);
+    const contractGeneratedAt = unionCommittedServed(cwd, headServed);
 
     // Base side, gathered from a detached worktree at the ref (Rule 11). Read
     // ITS committed snapshot so the base served set reflects the counterpart as
@@ -244,7 +249,15 @@ export async function evaluateFlowGateForGuardrail(opts: {
         `    [flow] ${active.length} net-new broken integration(s) — ${blocks ? 'blocking' : 'warning'}\n`,
       );
     }
-    return { ran: true, mode: gateMode, findings: active, suppressed, blocks, warns };
+    return {
+      ran: true,
+      mode: gateMode,
+      findings: active,
+      suppressed,
+      blocks,
+      warns,
+      ...(contractGeneratedAt ? { contractGeneratedAt } : {}),
+    };
   } catch {
     // Fail-open: a ref that can't be checked out, an unparseable tree, a git
     // error — none of these should fail the guardrail. The gate simply did not
@@ -254,9 +267,13 @@ export async function evaluateFlowGateForGuardrail(opts: {
 }
 
 /** Union a repo's committed counterpart `served.json` (if any) into a served
- *  key set. Fail-open: an absent / malformed snapshot is a no-op. */
-function unionCommittedServed(cwd: string, into: Set<string>): void {
+ *  key set. Fail-open: an absent / malformed snapshot is a no-op. Returns the
+ *  snapshot's publish timestamp when one was used — the gate DISCLOSES the
+ *  snapshot's age on its findings (a stale contract can read as a false
+ *  no-route) but never probes the network for freshness; that is doctor's job. */
+function unionCommittedServed(cwd: string, into: Set<string>): string | undefined {
   const committed = readServedContract(cwd);
-  if (!committed) return;
+  if (!committed) return undefined;
   for (const k of servedKeySet(committed)) into.add(k);
+  return committed.generatedAt;
 }

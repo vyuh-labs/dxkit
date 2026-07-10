@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Flow-contract staleness is disclosed, not silent.** `flow publish` now
+  records the commit each participant's routes were gathered at onto the
+  committed `served.json` (additive; snapshots stay schema v1). `doctor`
+  compares that provenance against each participant's current tip — a local
+  `rev-parse`, or one bounded fail-open `ls-remote` for `repo:` participants —
+  and warns when the snapshot has fallen behind a provider ("BEHIND: <name>
+  moved since publish"), with an honest tri-state per participant (moved /
+  current / unknown — offline never reads as stale). The guardrail's flow
+  findings print the snapshot's publish date so a reviewer knows which
+  contract vintage judged them; the per-commit gate itself still never touches
+  the network.
+
 ## [3.1.0] - 2026-07-10
 
 The anchor-integrity release. The guardrail's memory — the committed baseline
