@@ -115,6 +115,10 @@ describe('gatherTestFiles', () => {
     writeFile('test/fixtures/node/index.js', 'module.exports = { sample: true };');
     writeFile('src/__mocks__/thing.ts', 'export const stub = 1;');
     writeFile('test/__snapshots__/foo.snap', 'exports[`x`] = `y`;');
+    // Go's `testdata` convention — the go tool itself ignores a `testdata` dir;
+    // a `test/` glob would otherwise sweep a source file under it in as a
+    // degraded test. Placed under test/ so the dir glob does reach it.
+    writeFile('test/testdata/sample.ts', 'export const golden = { ok: true };');
     // A real test still counts.
     writeFile(
       'test/real.test.ts',
@@ -123,6 +127,7 @@ describe('gatherTestFiles', () => {
     const files = gatherTestFiles(tmp);
     expect(files.map((f) => f.path)).toEqual(['test/real.test.ts']);
     expect(files.some((f) => f.path.includes('fixtures'))).toBe(false);
+    expect(files.some((f) => f.path.includes('testdata'))).toBe(false);
   });
 });
 
