@@ -31,6 +31,7 @@ import {
   type BaselineAnchor,
 } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
 
 /**
@@ -645,7 +646,12 @@ export function detectInstalledRefreshTransport(cwd: string): BaselineAnchor | n
     return null; // not installed
   }
   if (content.includes('actions/cache/save')) return 'cache';
-  if (content.includes('origin "${ANCHOR}"')) return 'branch';
+  // Current branch-variant shape (publishes via the CLI) and the legacy one
+  // (inline side-branch push) — both classify as 'branch' so an update sees
+  // "already branch" and refreshes the template without a spurious migration.
+  if (content.includes('baseline publish') || content.includes('origin "${ANCHOR}"')) {
+    return 'branch';
+  }
   if (content.includes('git push')) return 'tree';
   return null;
 }
@@ -706,6 +712,36 @@ export function installCiBaselineRefresh(
     },
     REFRESH_WORKFLOW_DEST,
   );
+  // Record a resolved 'branch' transport in the policy so the guardrail READER
+  // activates: `loadAnchorFromBranch` gates on `policy.baseline.anchor ===
+  // 'branch'`, so an enforcement-derived transport that lives only in the
+  // workflow's content leaves the check reading a stale tree copy while the
+  // refresh publishes to a side branch nobody reads (the write/read halves of
+  // one concept resolving from two sources — CLAUDE.md Rule 2). Non-clobber:
+  // written only when the policy has no explicit `anchor` (an explicit value
+  // already won during resolution above). Scoped to 'branch' deliberately —
+  // pinning an auto-derived 'tree' would disable the tree→branch auto-migration
+  // that fires when the default branch later becomes protected, and 'tree' /
+  // 'cache' have no check-time reader that needs the policy to say so.
+  if (plan.transport === 'branch' && readPolicyBaselineSection(cwd)?.anchor === undefined) {
+    const persisted = mergeIntoPolicyFile(cwd, {
+      baseline: {
+        anchor: 'branch',
+        ...(plan.anchorRef !== DEFAULT_ANCHOR_REF ? { anchorRef: plan.anchorRef } : {}),
+      },
+    });
+    if (persisted.changed) {
+      result.notes.push(
+        `Recorded baseline.anchor: 'branch' in .dxkit/policy.json — the guardrail check reads ` +
+          `the anchor from the '${plan.anchorRef}' side branch only when the policy says so. Commit it.`,
+      );
+    } else if (persisted.reason === 'malformed-policy') {
+      result.notes.push(
+        `.dxkit/policy.json is not valid JSON — could not record baseline.anchor: 'branch'. ` +
+          `Fix the file and set it by hand, or the guardrail check will not read the side-branch anchor.`,
+      );
+    }
+  }
   if (result.installed.length > 0) {
     if (migrating) {
       result.notes.push(

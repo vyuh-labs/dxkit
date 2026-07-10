@@ -87,32 +87,18 @@ __DXKIT_CI_RUNTIME_SETUP__
           fi
           "${DXKIT}" baseline create --force
 
-      - name: Push anchor to the unprotected side branch
+      - name: Publish anchor to the unprotected side branch
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          ANCHOR="__DXKIT_ANCHOR_REF__"
-          # Self-heal: does the anchor branch still exist on the remote? If it was
-          # deleted, recreate it even when the baseline is byte-unchanged — else a
-          # deleted anchor stays gone until the next baseline change and the
-          # guardrail silently loses its committed baseline (fail-open).
-          if git ls-remote --exit-code --heads origin "${ANCHOR}" >/dev/null 2>&1; then
-            ANCHOR_PRESENT=1
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
           else
-            ANCHOR_PRESENT=0
-            echo "Anchor branch '${ANCHOR}' is missing on the remote — recreating it (self-heal)."
+            DXKIT=vyuh-dxkit
           fi
-          if [ "${ANCHOR_PRESENT}" = "1" ] && git diff --quiet -- .dxkit/baselines/; then
-            echo "Baseline unchanged and anchor '${ANCHOR}' present — nothing to refresh."
-            exit 0
-          fi
-          # Reset the side branch to the current commit plus the refreshed anchor,
-          # then force-push it. It carries only what the guardrail reads back:
-          # .dxkit/baselines/. Force is safe — this branch is dxkit-owned. The
-          # empty-commit allowance lets recreation succeed when the baseline is
-          # byte-identical (self-heal after a deletion).
-          git checkout -B "${ANCHOR}"
-          git add .dxkit/baselines/
-          git commit -m "chore(baseline): refresh anchor" --allow-empty
-          git push --force origin "${ANCHOR}"
-          echo "Anchor pushed to '${ANCHOR}'. The guardrail check hydrates it from there."
+          # The publish goes through dxkit's canonical side-ref writer (git
+          # plumbing, no checkout, never touches the working tree) — the same
+          # primitive report snapshots use. It resolves the side branch
+          # (__DXKIT_ANCHOR_REF__) from the committed .dxkit/policy.json, the
+          # SAME source the guardrail check reads it from; it skips the push
+          # when the anchor already matches, and it recreates the branch if it
+          # was deleted (self-heal) even when the baseline is byte-unchanged.
+          "${DXKIT}" baseline publish

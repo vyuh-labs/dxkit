@@ -184,6 +184,13 @@ ${renderCommandIndex().join('\n')}
                                  (read later by guardrail check to gate new regressions).
                                  --mode=committed-full|committed-sanitized|ref-based picks
                                  the on-disk posture; default auto-selects from repo visibility.
+    vyuh-dxkit baseline publish [path]
+                                 Publish .dxkit/baselines/ to the anchor side branch
+                                 (baseline.anchor: 'branch' in .dxkit/policy.json) via
+                                 dxkit's canonical side-ref writer — replace-all, idempotent,
+                                 recreates a deleted anchor branch. The after-merge refresh
+                                 workflow runs this; run it manually after a local
+                                 \`baseline create\` on a branch-transport repo.
     vyuh-dxkit baseline show [path] [--name <n>] [--baseline <path>]
                              [--kind <kind>] [--json]
                                  Pretty-print the on-disk baseline. Default: summary +
@@ -2226,6 +2233,52 @@ export async function run(argv: string[]): Promise<void> {
           logger.fail((err as Error).message);
           process.exit(1);
         }
+        // With the `branch` anchor transport the SIDE BRANCH is what the
+        // guardrail reads — a freshly-captured tree copy is invisible until
+        // published there. Point at the one publish path.
+        try {
+          const { loadPolicyFromCwd } = await import('./baseline/policy');
+          if (loadPolicyFromCwd(targetPath).baseline?.anchor === 'branch') {
+            logger.dim(
+              `  Anchor transport is 'branch': run \`${dxkitCli('baseline publish')}\` to make ` +
+                `this baseline the one the guardrail reads (the refresh workflow does this on merge).`,
+            );
+          }
+        } catch {
+          /* unreadable policy — the create result stands on its own */
+        }
+        break;
+      }
+      if (subCommand === 'publish') {
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { publishBaselineAnchor } = await import('./baseline/anchor');
+        logger.header('vyuh-dxkit baseline publish');
+        const outcome = publishBaselineAnchor(targetPath);
+        if (!outcome.ok) {
+          logger.fail(outcome.error ?? 'baseline publish failed.');
+          process.exit(1);
+        }
+        const publish = outcome.publish;
+        if (publish?.pushed) {
+          logger.success(
+            `Published ${outcome.files} baseline file(s) to '${outcome.anchorRef}' ` +
+              `(${publish.commit?.slice(0, 12)}). The guardrail check hydrates the anchor from there.`,
+          );
+          if (outcome.selfHealed) {
+            logger.info(
+              `The '${outcome.anchorRef}' branch was missing on the remote — recreated it (self-heal).`,
+            );
+          }
+        } else if (publish?.reason === 'no change') {
+          logger.info(
+            `Anchor on '${outcome.anchorRef}' already matches .dxkit/baselines/ — nothing to publish.`,
+          );
+        } else {
+          // No origin / rejected push: in the refresh workflow this is a broken
+          // run, not a soft skip — fail loud so CI surfaces it.
+          logger.fail(`Anchor publish did not push: ${publish?.reason ?? 'unknown'}.`);
+          process.exit(1);
+        }
         break;
       }
       if (subCommand === 'show') {
@@ -2269,6 +2322,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.fail(
         `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
           `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force] · ` +
+          `vyuh-dxkit baseline publish [path] · ` +
           `vyuh-dxkit baseline show [path] [--name <name>] [--baseline <path>] [--kind <kind>] [--json]`,
       );
       process.exit(1);
