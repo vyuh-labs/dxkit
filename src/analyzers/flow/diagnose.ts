@@ -16,6 +16,7 @@ import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages'
 import { gatherRepoFlowModel } from './gather';
 import { isPlaceholderOnlyPath, type FlowModel } from './model';
 import { readServedContract } from './contract';
+import { contractFreshness, type ContractFreshness } from './staleness';
 import { readWorkspace } from '../../workspace';
 import type { FlowTopology } from './setup';
 
@@ -65,6 +66,11 @@ export interface FlowDiagnosis {
   /** Served routes with no consuming call (dead-route / cross-repo candidates). */
   readonly servedUnconsumed: readonly UnconsumedRoute[];
   readonly connection: { readonly rung: ConnectionRung; readonly note: string };
+  /** Freshness of the committed served contract, when one exists: when it was
+   *  published, per-participant provenance, and whether a provider's tip has
+   *  moved since (doctor may probe the network for this; the per-commit gate
+   *  never does). Absent on repos that commit no contract. */
+  readonly contract?: ContractFreshness;
 }
 
 function suggestionFor(reason: UnresolvedReason, topology: FlowTopology): FlowFixHint {
@@ -163,6 +169,11 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
     .filter((r) => !consumedKeys.has(`${r.method} ${r.path}`) && !isPlaceholderOnlyPath(r.path))
     .map((r) => ({ method: r.method, path: r.path, file: r.file, line: r.line }));
 
+  // Freshness disclosure for a committed contract — stale-but-declared beats
+  // stale-and-silent. May probe participant tips (local rev-parse / bounded
+  // ls-remote), fail-open; doctor is the network-allowed surface.
+  const contract = contractFreshness(cwd);
+
   return {
     topology,
     calls,
@@ -171,5 +182,6 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
     unresolved,
     servedUnconsumed,
     connection: resolveConnection(cwd, model),
+    ...(contract ? { contract } : {}),
   };
 }

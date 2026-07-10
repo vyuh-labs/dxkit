@@ -51,6 +51,53 @@ function assertSafeGitArg(kind: 'repo' | 'ref', value: string): void {
 }
 
 /**
+ * Current tip of a REMOTE repo's ref, without cloning — one bounded
+ * `git ls-remote`. The flow staleness probe compares a published snapshot's
+ * recorded participant SHA against this to disclose "the provider has moved
+ * since this contract was published". Read-only, prompt-free, time-bounded,
+ * and FAIL-OPEN: any failure (offline, auth, unknown ref) returns `null` —
+ * staleness disclosure is a diagnosis, never a place to fail a command.
+ * Lives here so every remote-participant access composes on one module's
+ * guard + auth posture (the same `repo`/`ref` trust boundary: committed
+ * workspace.json).
+ */
+export function remoteTipSha(opts: {
+  repo: string;
+  ref?: string;
+  timeoutMs?: number;
+}): string | null {
+  try {
+    assertSafeGitArg('repo', opts.repo);
+    const ref = opts.ref && opts.ref.trim() ? opts.ref.trim() : 'HEAD';
+    if (ref !== 'HEAD') assertSafeGitArg('ref', ref);
+    const out = execFileSync('git', ['ls-remote', opts.repo, ref], {
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+      },
+      timeout: opts.timeoutMs ?? 15_000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    // Lines are `<sha>\t<refname>`. Prefer the branch over a same-named tag;
+    // a HEAD query returns the HEAD line directly.
+    const lines = out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const pick =
+      lines.find((l) => l.endsWith(`refs/heads/${ref}`)) ??
+      lines.find((l) => l.endsWith(`refs/tags/${ref}`)) ??
+      lines[0];
+    const sha = pick?.split(/\s+/)[0];
+    return sha && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Clone a REMOTE repo at a ref into a temp dir, run `fn` against the checkout,
  * then remove it. Where `withRefWorktree` checks out a ref from the CURRENT
  * repo's object DB, this fetches a repo we do NOT have locally — a cross-repo

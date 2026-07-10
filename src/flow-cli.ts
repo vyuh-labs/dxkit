@@ -458,7 +458,13 @@ export async function runFlowPublish(opts: FlowViewOptions): Promise<void> {
     let detail: string;
     if (p.source === 'missing') detail = 'path not found — skipped';
     else if (p.source === 'unreachable') detail = 'remote fetch failed — skipped';
-    else detail = `${p.routes} route(s) (${p.source})`;
+    else {
+      // Provenance: the commit each participant's routes were gathered at is
+      // recorded on the snapshot, so doctor can later tell when the provider
+      // has moved past this publish.
+      const at = p.sha ? ` @ ${p.sha.slice(0, 12)}` : '';
+      detail = `${p.routes} route(s) (${p.source}${at})`;
+    }
     logger.info(`  • ${p.name}: ${detail}`);
   }
   logger.info(`  ${path.relative(opts.cwd, result.servedPath)}`);

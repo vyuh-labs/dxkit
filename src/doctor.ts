@@ -1085,6 +1085,33 @@ function renderFlowSection(flow: FlowDiagnosis): void {
   if (flow.unresolved.length === 0 && flow.servedUnconsumed.length === 0) {
     logger.success('  Every call resolves and every route has a consumer.');
   }
+
+  // Freshness of the committed contract — stale-but-declared beats
+  // stale-and-silent. `moved` is a per-participant tri-state (true/false/null
+  // = unknown, e.g. offline), so the prose never overclaims.
+  if (flow.contract) {
+    const c = flow.contract;
+    const age = c.generatedAt.slice(0, 10);
+    if (c.stale) {
+      const movedNames = c.participants.filter((p) => p.moved === true).map((p) => p.name);
+      logger.warn(
+        `Committed served.json (published ${age}) is BEHIND: ${movedNames.join(', ')} ` +
+          `moved since publish. Re-run \`flow publish\` and commit the refresh.`,
+      );
+    } else {
+      logger.dim(`  Committed served.json published ${age}.`);
+    }
+    for (const p of c.participants) {
+      const at = p.sha ? ` @ ${p.sha.slice(0, 12)}` : '';
+      const state =
+        p.moved === true
+          ? `tip moved → ${p.tip?.slice(0, 12)}`
+          : p.moved === false
+            ? 'current'
+            : 'tip unknown (offline / no provenance)';
+      logger.dim(`    • ${p.name}: ${p.routes} route(s), ${p.source}${at} — ${state}`);
+    }
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────
