@@ -109,7 +109,7 @@ or is building a case to a manager, run:
 
 ```bash
 npx vyuh-dxkit metrics                     # all history
-npx vyuh-dxkit metrics --since v2.30.0      # since a tag/ref (resolved to its date)
+npx vyuh-dxkit metrics --since v3.0.0       # since a tag/ref (resolved to its date)
 npx vyuh-dxkit metrics --since 2026-04-01   # since a date
 npx vyuh-dxkit metrics --json              # for a dashboard feed
 ```

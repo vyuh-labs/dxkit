@@ -10,9 +10,8 @@ backports — please upgrade.
 
 | Version | Supported        |
 | ------- | ---------------- |
-| 2.x.y   | ✅ Latest minor  |
-| 1.x.y   | ❌ Not supported |
-| 0.x.y   | ❌ Not supported |
+| 3.x.y   | ✅ Latest minor  |
+| < 3.0   | ❌ Not supported |
 
 ## Reporting a Vulnerability
 
@@ -58,8 +57,16 @@ Out of scope:
 - Vulnerabilities in third-party tools dxkit invokes (`gitleaks`,
   `semgrep`, `jscpd`, `cloc`, `npm-audit`, etc.) — please report
   those upstream.
-- Vulnerabilities in repos analyzed _by_ dxkit. dxkit reads source
-  trees but does not execute customer code.
+- Vulnerabilities in repos analyzed _by_ dxkit. Analysis reads source
+  trees without executing them. The gate features that DO run repo
+  commands — the correctness floor (build/test commands), custom
+  checks, and the lint gate — execute only commands declared in the
+  repo's own committed configuration (`.dxkit/policy.json`, the
+  project's build files), the same trust boundary as the repo's npm
+  scripts or CI config. A malicious command in a repo you choose to
+  run dxkit against is that repo's compromise, not dxkit's; a way to
+  make dxkit run a command from anywhere else IS in scope — please
+  report it.
 - Issues that require physical access to the user's machine or
   a privileged account.
 

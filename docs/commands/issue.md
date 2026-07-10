@@ -69,7 +69,7 @@ Example body:
 
 ```markdown
 **Type:** false-positive
-**dxkit version:** 2.6.0
+**dxkit version:** 3.1.0
 **Node version:** v22.1.0
 **Platform:** linux / x64
 **Finding fingerprint:** `a3f9c0e8b7d2e1f4`

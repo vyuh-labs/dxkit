@@ -1,6 +1,8 @@
 # Roadmap
 
-What dxkit ships today and what is planned next. For per-release detail see [`CHANGELOG.md`](../CHANGELOG.md).
+What dxkit ships today. For per-release detail see [`CHANGELOG.md`](../CHANGELOG.md);
+forward-looking plans are tracked in GitHub issues and release notes rather than
+this file, so the sections below record what has shipped.
 
 ## Shipped
 
@@ -172,12 +174,12 @@ author excluded, a bus-factor signal. Renders names + GitHub @handles, never ema
       gaps) attribute to the file's current owner. Opt-in; net-new findings need no
       blame (the introducer is the PR author). Honesty: blame is last-touch.
 
-## Next release — Reachability refinements (carried from 2.8)
+## Deferred — Reachability refinements (carried from 2.8)
 
 - [ ] Per-ecosystem reliability gating: only mark a finding `reachable: false` when its language pack resolves imports reliably (TS / Python / Go). For packs whose import resolution is unreliable (C# namespaces ≠ package names, etc.), leave `reachable` unset rather than risk a false "unreachable" that hides a real vuln.
 - [ ] Reachable-first report framing: a `"N reachable / M total"` summary line and reachable-first sort in the vulnerability report (the per-finding `reachable` glyph already renders). _Considered for 2.9.3 and deferred: the dependency table already discounts unreachable advisories 0.25× inside the composite `riskScore`, so this is a presentation refinement (a hard reachable-first sort tier + the summary lens) rather than new signal._
 
-## In progress — Correctness floor (loop-safety liveness gate, 2.23.0)
+## Shipped in 2.23.0 — Correctness floor (loop-safety liveness gate)
 
 The guardrail proves "no net-new findings" (secrets, CVEs, SAST, coverage). It
 does not prove the code still **compiles and its affected tests still pass**, so

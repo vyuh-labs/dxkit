@@ -15,7 +15,7 @@ Use when:
 - "Update dxkit"
 - "Upgrade to latest"
 - "What changed in dxkit recently?"
-- "What's new in 2.5.5?" (or any other specific version)
+- "What's new in 3.1.0?" (or any other specific version)
 - "Should I upgrade?"
 
 Don't use when:

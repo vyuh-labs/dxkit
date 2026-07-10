@@ -282,7 +282,7 @@ secret-task premium pointed the same way but was weak (mean +19%, median
 slightly negative), so we lean on the robust test-gap result.) So the gate is not
 just safer than deferring, it is plausibly cheaper too.
 
-**And the gate is fast enough to run on every stop.** dxkit 2.14.0 scopes the
+**And the gate is fast enough to run on every stop.** dxkit scopes the
 Stop-gate scan to the active preset's blockable finding kinds and re-scans only
 the changed files, reusing cached results for everything unchanged. The verdict
 is identical to a full scan; the cost is seconds per stop, not minutes, even on
