@@ -114,4 +114,31 @@ describe('publishReportSnapshot', () => {
     expect(history).toHaveLength(1);
     expect(history[0].scores.overall).toBe(80);
   });
+
+  it('NEVER mutates the default branch — tree, tip, and working tree untouched', () => {
+    // The whole point of a side ref: the publish writes report-history.jsonl +
+    // latest/ onto `dxkit-reports` via a temp index + git plumbing, so the
+    // checked-out default branch must be byte-identical afterward. This is the
+    // safety invariant that makes the on-merge workflow safe to run on a
+    // protected branch's merge event.
+    const treeBefore = git(repo, 'rev-parse', 'main^{tree}').trim();
+    const tipBefore = git(repo, 'rev-parse', 'main').trim();
+
+    const res = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 's', date: 'd', dxkitVersion: '3.0.0' }),
+      artifacts: [{ path: 'dashboard.html', content: '<html>ok</html>' }],
+    });
+    expect(res.publish.pushed).toBe(true);
+
+    // main is unchanged: same tree object, same commit tip.
+    expect(git(repo, 'rev-parse', 'main^{tree}').trim()).toBe(treeBefore);
+    expect(git(repo, 'rev-parse', 'main').trim()).toBe(tipBefore);
+    // The report artifacts exist on the side ref, NOT on the default branch.
+    git(repo, 'fetch', '-q', 'origin', 'dxkit-reports');
+    expect(git(repo, 'cat-file', '-e', 'origin/dxkit-reports:report-history.jsonl')).toBeDefined();
+    expect(() => git(repo, 'cat-file', '-e', 'main:report-history.jsonl')).toThrow();
+    // The plumbing publish never wrote into the working tree.
+    expect(git(repo, 'status', '--porcelain').trim()).toBe('');
+  });
 });
