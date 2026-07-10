@@ -326,6 +326,7 @@ export async function runFlowConsole(opts: FlowConsoleOptions): Promise<void> {
     unconsumed: shownUnconsumed,
     broken,
     totals: { endpoints: map.totalEndpoints, bindings: map.totalBindings },
+    dynamicCallSites: model.dynamicCalls.length,
     visNetworkBundle: bundle,
   };
   const html = buildFlowConsole(input);

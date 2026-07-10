@@ -43,6 +43,47 @@ describe('flow extract — client calls (consumed side)', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe('/{var}/x');
   });
+
+  it('a KNOWN client with a runtime-built URL is counted as dynamic, never silently dropped', async () => {
+    const flow = await extract(`
+      fetch(buildUrl());
+      fetch(endpoint);
+      fetch('/static');
+    `);
+    expect(flow.calls).toHaveLength(1); // only the literal joins
+    expect(flow.dynamicCalls).toHaveLength(2); // the other two are DISCLOSED
+    expect(flow.dynamicCalls?.[0]).toMatchObject({ receiver: 'fetch', file: 'sample.ts' });
+  });
+
+  it('precision-guard rejections are NOT counted as dynamic (filtering ≠ blind spot)', async () => {
+    // Without a receiver allowlist, api.get(x) is indistinguishable from
+    // map.get(x) — counting it would turn the coverage number into noise.
+    const flow = await extract(`
+      map.get(key);
+      cache.get(lookup());
+    `);
+    expect(flow.calls).toHaveLength(0);
+    expect(flow.dynamicCalls ?? []).toHaveLength(0);
+  });
+
+  it('an ALLOWLISTED receiver with a dynamic URL counts as dynamic', async () => {
+    const withBases: HttpFlowSupport = {
+      ...ts,
+      clientMethodCallees: { methods: ['get', 'post'], bases: ['api'] },
+    };
+    const tree = await parseSource(
+      `
+      api.get(buildUrl());
+      api.get('/ok');
+      other.get(buildUrl());
+    `,
+      'typescript',
+    );
+    const flow = extractFromTree(tree!.rootNode, withBases, 'sample.ts', cfg);
+    expect(flow.calls).toHaveLength(1);
+    expect(flow.dynamicCalls).toHaveLength(1); // api.* is a KNOWN client
+    expect(flow.dynamicCalls?.[0].receiver).toBe('api');
+  });
 });
 
 describe('flow extract — routes (served side)', () => {

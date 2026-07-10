@@ -106,6 +106,32 @@ describe('diagnoseFlow', () => {
     }
   });
 
+  it('coverage honesty: dynamic call sites are counted and the blind-spot note is present', async () => {
+    const dir = makeRepo({
+      'web/List.tsx': [
+        "axios.get('/articles');", // exact
+        'axios.get(`/articles/${slug}`);', // templated
+        'fetch(buildUrl());', // dynamic — recognized, unverifiable
+        'fetch(endpoint);', // dynamic
+      ].join('\n'),
+      'api/ctrl.ts': "class C { @get('/articles') a() {} }\n",
+    });
+    try {
+      const d = await diagnoseFlow(dir);
+      expect(d).not.toBeNull();
+      const cov = d!.coverage;
+      expect(cov.extracted).toBe(2);
+      expect(cov.dynamic).toBe(2);
+      expect(cov.callSitesSeen).toBe(4);
+      expect(cov.paths).toEqual({ exact: 1, templated: 1, opaque: 0 });
+      expect(cov.dynamicSites.map((x) => x.receiver)).toEqual(['fetch', 'fetch']);
+      expect(cov.note).toMatch(/cannot be verified/);
+      expect(cov.note).toMatch(/GraphQL/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns null when the repo has no flow surface (doctor omits the section)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-flowdiag-none-'));
     try {

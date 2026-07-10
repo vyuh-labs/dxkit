@@ -23,7 +23,7 @@ function model(calls: ClientCall[], routes: RouteEndpoint[]): FlowModel {
       reason: r ? ('exact' as const) : ('no-route' as const),
     };
   });
-  return { calls, routes, bindings };
+  return { calls, routes, bindings, dynamicCalls: [] };
 }
 
 const CALL: ClientCall = {

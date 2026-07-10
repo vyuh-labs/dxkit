@@ -15,7 +15,13 @@
  * the I/O); this module just structures + joins.
  */
 
-import { extractFileFlow, type ClientCall, type FileFlow, type RouteEndpoint } from './extract';
+import {
+  extractFileFlow,
+  type ClientCall,
+  type DynamicCallSite,
+  type FileFlow,
+  type RouteEndpoint,
+} from './extract';
 import { catchAllStaticPrefix, isCatchAllPath, type NormalizeConfig } from './normalize';
 
 /**
@@ -46,6 +52,9 @@ export interface FlowModel {
   readonly calls: readonly ClientCall[];
   readonly routes: readonly RouteEndpoint[];
   readonly bindings: readonly FlowBinding[];
+  /** Recognized client call sites whose URL is dynamic — seen but not
+   *  verifiable (the coverage-honesty channel; see extract.ts). */
+  readonly dynamicCalls: readonly DynamicCallSite[];
 }
 
 /** A path made up entirely of `{var}` segments carries no static signal. One
@@ -217,7 +226,8 @@ export function dedupeServedRoutes(routes: readonly RouteEndpoint[]): RouteEndpo
 export function buildFlowModel(fileFlows: readonly FileFlow[]): FlowModel {
   const calls = fileFlows.flatMap((f) => f.calls);
   const routes = fileFlows.flatMap((f) => f.routes);
-  return { calls, routes, bindings: joinFlow(calls, routes) };
+  const dynamicCalls = fileFlows.flatMap((f) => f.dynamicCalls ?? []);
+  return { calls, routes, bindings: joinFlow(calls, routes), dynamicCalls };
 }
 
 /**

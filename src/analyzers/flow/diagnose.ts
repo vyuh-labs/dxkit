@@ -14,7 +14,7 @@
 
 import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
 import { gatherRepoFlowModel } from './gather';
-import { isPlaceholderOnlyPath, type FlowModel } from './model';
+import { hasOpaqueLeadingSegment, isPlaceholderOnlyPath, type FlowModel } from './model';
 import { readServedContract } from './contract';
 import { contractFreshness, type ContractFreshness } from './staleness';
 import { readWorkspace } from '../../workspace';
@@ -71,6 +71,59 @@ export interface FlowDiagnosis {
    *  moved since (doctor may probe the network for this; the per-commit gate
    *  never does). Absent on repos that commit no contract. */
   readonly contract?: ContractFreshness;
+  /** What flow can and cannot see — the coverage-honesty surface. */
+  readonly coverage: FlowCoverage;
+}
+
+/**
+ * Coverage honesty: green is not the same as complete, and this block says
+ * exactly how incomplete. `dynamic` counts RECOGNIZED client call sites whose
+ * URL is built at runtime — flow saw them and cannot verify them (they are
+ * excluded from every resolved/unresolved number). The `paths` distribution
+ * shows how anchored the extracted calls are: an `opaque` path (leading
+ * `{var}`) is too generic for the gate to ever block on.
+ */
+export interface FlowCoverage {
+  /** Every client call site the extractor recognized: extracted + dynamic. */
+  readonly callSitesSeen: number;
+  /** Call sites with a statically-extractable URL (what the join runs on). */
+  readonly extracted: number;
+  /** Recognized call sites with a dynamically-built URL — unverifiable. */
+  readonly dynamic: number;
+  /** Where the unverifiable call sites live (render capped; JSON complete). */
+  readonly dynamicSites: ReadonlyArray<{ receiver: string; file: string; line: number }>;
+  /** Anchoring of extracted call paths: `exact` (no placeholders), `templated`
+   *  (placeholders but anchored), `opaque` (leading placeholder — warn-only). */
+  readonly paths: { exact: number; templated: number; opaque: number };
+  /** The standing blind-spot disclosure (dynamic URLs, GraphQL out of scope). */
+  readonly note: string;
+}
+
+/** Build the coverage block from a gathered model (pure). */
+export function flowCoverage(model: FlowModel): FlowCoverage {
+  let exact = 0;
+  let templated = 0;
+  let opaque = 0;
+  for (const c of model.calls) {
+    if (c.path === null) continue; // external/unnormalizable — already in the unresolved tail
+    if (hasOpaqueLeadingSegment(c.path)) opaque++;
+    else if (c.path.includes('{var}')) templated++;
+    else exact++;
+  }
+  const dynamic = model.dynamicCalls.length;
+  return {
+    callSitesSeen: model.calls.length + dynamic,
+    extracted: model.calls.length,
+    dynamic,
+    dynamicSites: model.dynamicCalls,
+    paths: { exact, templated, opaque },
+    note:
+      'Flow verifies statically-extractable REST-style calls. ' +
+      (dynamic > 0
+        ? `${dynamic} recognized call site(s) build their URL at runtime and cannot be verified. `
+        : '') +
+      'GraphQL operations are out of scope.',
+  };
 }
 
 function suggestionFor(reason: UnresolvedReason, topology: FlowTopology): FlowFixHint {
@@ -183,5 +236,6 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
     servedUnconsumed,
     connection: resolveConnection(cwd, model),
     ...(contract ? { contract } : {}),
+    coverage: flowCoverage(model),
   };
 }
