@@ -216,7 +216,8 @@ export const COMMANDS = [
     docsBlurb:
       'One command to run all analyzers and render the dashboard — the full-audit entry point. ' +
       '`report snapshot` publishes a per-merge score snapshot to the dxkit-reports ref; ' +
-      '`report history` renders the score-over-time trend. Automate snapshots on merge with ' +
+      '`report history` renders the score-over-time trend (`--markdown` emits a "score moved X→Y" ' +
+      'block for a CI job summary or PR comment). Automate snapshots on merge with ' +
       '`policy.json:reports.onMerge` (the dxkit-reports-refresh workflow).',
     skill: 'dxkit-reports',
   },
@@ -224,9 +225,9 @@ export const COMMANDS = [
     id: 'metrics',
     audience: 'user',
     group: 'assess',
-    summary: 'Findings the gate stopped before merge — the ROI series from the loop ledger',
+    summary: 'Findings the gate stopped before merge + the score-over-time trend',
     docsBlurb:
-      'The champion ROI report, computed not narrated: net-new findings the guardrail intercepted before they reached the base branch, per week and by category, from the append-only loop ledger. Interceptions are the ungameable number; --since <ref|date> scopes the window.',
+      'The champion ROI report, computed not narrated: net-new findings the guardrail intercepted before they reached the base branch, per week and by category, from the append-only loop ledger. Interceptions are the ungameable number; --since <ref|date> scopes the window. Also surfaces the score-over-time trend (how each dimension moved) from the dxkit-reports snapshots when on-merge reports are enabled.',
     skill: 'dxkit-reports',
   },
 

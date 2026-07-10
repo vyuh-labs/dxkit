@@ -3,6 +3,8 @@ import {
   parseHistory,
   serializeHistory,
   foldEntry,
+  scoreDeltas,
+  latestDeltas,
   type ReportHistoryEntry,
 } from '../../src/reports/history';
 
@@ -23,6 +25,43 @@ function entry(sha: string, over = 70): ReportHistoryEntry {
     scores: { ...scores, overall: over },
   };
 }
+
+describe('score deltas', () => {
+  it('scoreDeltas computes to - from only when both are measured', () => {
+    const prev = { ...scores, overall: 70, security: 80, documentation: 40 };
+    const cur = { ...scores, overall: 74, security: 80, documentation: null };
+    const d = scoreDeltas(prev, cur);
+    const by = (k: string) => d.find((x) => x.key === k)!;
+    expect(by('overall')).toMatchObject({ from: 70, to: 74, delta: 4 });
+    expect(by('security')).toMatchObject({ from: 80, to: 80, delta: 0 });
+    // unmeasured now → no fabricated delta
+    expect(by('documentation')).toMatchObject({ from: 40, to: null, delta: null });
+  });
+
+  it('scoreDeltas with no prior yields null from/delta for every key', () => {
+    const d = scoreDeltas(undefined, scores);
+    expect(d.every((x) => x.from === null && x.delta === null)).toBe(true);
+    expect(d.find((x) => x.key === 'overall')!.to).toBe(scores.overall);
+  });
+
+  it('latestDeltas compares the last two entries', () => {
+    const res = latestDeltas([entry('a', 60), entry('b', 65), entry('c', 72)]);
+    expect(res.prev?.sha).toBe('b');
+    expect(res.cur?.sha).toBe('c');
+    expect(res.deltas.find((d) => d.key === 'overall')!.delta).toBe(7);
+  });
+
+  it('latestDeltas on a single entry has no prior', () => {
+    const res = latestDeltas([entry('a', 60)]);
+    expect(res.prev).toBeUndefined();
+    expect(res.cur?.sha).toBe('a');
+    expect(res.deltas.find((d) => d.key === 'overall')!.delta).toBeNull();
+  });
+
+  it('latestDeltas on empty history is inert', () => {
+    expect(latestDeltas([])).toEqual({ deltas: [] });
+  });
+});
 
 describe('report history codec', () => {
   it('round-trips entries through serialize → parse', () => {

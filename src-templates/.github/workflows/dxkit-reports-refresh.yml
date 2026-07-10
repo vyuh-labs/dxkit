@@ -80,3 +80,17 @@ __DXKIT_CI_RUNTIME_SETUP__
           # ref. Anchor ref + retention come from .dxkit/policy.json:reports.
           "${DXKIT}" report
           "${DXKIT}" report snapshot
+
+      - name: Score-over-time job summary
+        # Read the freshly-published trend back off the dxkit-reports ref and
+        # render "score moved X→Y" (per dimension) into the run's summary — the
+        # merge-time surface that makes the snapshot visible without opening the
+        # dashboard. Best-effort: never fails the job.
+        if: always()
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" report history --markdown >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
