@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-07-07
+## [3.0.0] - 2026-07-09
 
 The cross-repo release. dxkit's flow pillar — UI→API integration tracing and the
 net-new-breakage gate — reaches GA, and the guardrail becomes something an agent
@@ -91,6 +91,21 @@ the seam between dxkit's own repo and the shapes a real system has.
   it for the guardrail by commit SHA. The graph is never committed (no repo bloat)
   and is SHA-stamped so staleness is exact. Opt-in (`policy.json:graph.refresh`).
 
+### Added — score-over-time report snapshots on merge
+
+- **`vyuh-dxkit report snapshot` / `report history`.** Opt into a per-merge health
+  snapshot (`policy.json:reports.onMerge`) and dxkit publishes each dimension's
+  score to a dedicated `dxkit-reports` side ref — so you can watch the trend move
+  release over release with `report history`. Storage rides the same git-plumbing
+  anchor transport the baseline refresh uses: the snapshot commits `report-history.jsonl`
+  plus a browsable `latest/` dashboard onto the side ref **without ever mutating
+  the default branch's tree** (no bot commits, no repo bloat), and retention is
+  `reports.retain`. Installed via `init --with-reports-refresh` or by setting the
+  policy knob and running `update`; refreshed by `update` and removed by `uninstall`
+  like every other managed surface.
+- **A PR reviewer checklist** is posted when a change touches a flow integration,
+  so a human reviewing a net-new client call or route knows exactly what to verify.
+
 ### Changed
 
 - **`exceljs` is an optional peer dependency,** loaded lazily — its heavy
@@ -99,6 +114,10 @@ the seam between dxkit's own repo and the shapes a real system has.
   registry, so a new shipped surface cannot silently skip update or uninstall.
 - CI and devcontainer toolchain versions are derived from the repo (the .NET SDK
   from `TargetFramework`, etc.) rather than hardcoded.
+- **The large-file threshold is configurable** (`policy.json:largeFileThreshold`,
+  default 500 lines) and flows through the quality + maintainability scores and
+  the guardrail's large-file finding from one place, so a repo whose norm is a
+  higher line count isn't flagged against dxkit's default.
 
 **Why 3.0.0:** `flow.publish` participants gain a `repo` field and new commands
 join the CLI surface — all additive, but the cross-repo pillar crossing into GA
