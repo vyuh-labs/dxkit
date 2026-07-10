@@ -1156,14 +1156,14 @@ export async function run(argv: string[]): Promise<void> {
       // `flow refresh` → write the served/consumed contract snapshots the
       // cross-repo integration gate reads.
       if (subCommand === 'refresh') {
-        const { runFlowRefresh } = await import('./flow-cli');
+        const { runFlowRefresh } = await import('./flow-contract-cli');
         await runFlowRefresh({ cwd, frontend, backend, specs, json: !!values.json });
         break;
       }
       // `flow publish` → the multi-repo handshake: union every workspace
       // participant's served routes into this repo's served.json.
       if (subCommand === 'publish') {
-        const { runFlowPublish } = await import('./flow-cli');
+        const { runFlowPublish } = await import('./flow-contract-cli');
         await runFlowPublish({
           cwd,
           frontend,
