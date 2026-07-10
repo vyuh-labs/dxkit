@@ -156,6 +156,23 @@ export interface LintPolicy {
 }
 
 /**
+ * `.dxkit/policy.json:reports` — opt-in report snapshots published to the
+ * dedicated `dxkit-reports` side ref on merge to the default branch. Off by
+ * default; the on-merge workflow + `vyuh-dxkit report snapshot` read it.
+ */
+export interface ReportsPolicy {
+  /** Publish a snapshot on merge to the default branch (the workflow trigger). */
+  readonly onMerge?: boolean;
+  /** Which reports to publish under `latest/` (default: health + dashboard). */
+  readonly kinds?: ReadonlyArray<string>;
+  /** Side ref the snapshots + `report-history.jsonl` live on. Default
+   *  `dxkit-reports` (kept distinct from the baseline anchor). */
+  readonly anchorRef?: string;
+  /** Retention: how many history entries / full snapshots to keep. */
+  readonly retain?: { readonly history?: number; readonly snapshots?: number };
+}
+
+/**
  * Brownfield-mode policy. The product promise — "existing debt is
  * allowed; new regressions are blocked" — flows from these settings.
  */
@@ -208,6 +225,8 @@ export interface BrownfieldPolicy {
    * flagged, never a fingerprint — no baseline migration.
    */
   readonly largeFileThreshold?: number;
+  /** Opt-in report snapshots on merge (see ReportsPolicy). */
+  readonly reports?: ReportsPolicy;
   /**
    * Baseline-mode pinning. When absent, the resolver in `./modes.ts`
    * falls back to visibility-derived defaults
