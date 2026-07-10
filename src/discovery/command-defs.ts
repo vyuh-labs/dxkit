@@ -99,7 +99,9 @@ export const COMMANDS = [
     aliases: ['protect'],
     summary: 'Set up branch protection / required checks (dry-run by default)',
     docsBlurb:
-      'Configure branch protection so the guardrail check is a required status. `protect` is the dry-run-first alias.',
+      'Configure branch protection so the guardrail check is a required status, and add a ' +
+      'deletion-protection ruleset for the dxkit anchor side branches. `protect` is the ' +
+      'dry-run-first alias.',
   },
   {
     id: 'setup-prebuild',
