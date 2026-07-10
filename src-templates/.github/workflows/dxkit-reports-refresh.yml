@@ -1,0 +1,82 @@
+name: dxkit reports refresh
+
+# Publishes a dxkit health/analysis SNAPSHOT to the dedicated `dxkit-reports`
+# side ref after each merge to the default branch (or weekly / on demand). Each
+# run appends one line to `report-history.jsonl` (the durable score-over-time
+# trend) and refreshes the browsable `latest/` dashboard on that ref — WITHOUT
+# committing anything to the default branch's tree.
+#
+# Storage rides the shared anchor transport (git plumbing: no worktree, no tree
+# mutation), the same one the baseline refresh uses — reports just target a
+# distinct ref so their churn + retention never touch the baseline anchor.
+#
+# Read the trend back with `vyuh-dxkit report history`. Opt-in: installed only
+# when `.dxkit/policy.json:reports.onMerge` is true. Retention is `reports.retain`.
+
+on:
+  push:
+    branches: [__DXKIT_DEFAULT_BRANCH__]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+# `contents: write` is required to push the snapshot to the `dxkit-reports` side
+# ref (never the default branch). The ambient checkout token authenticates the
+# push; the shared anchor writer uses git plumbing, so no branch is checked out.
+permissions:
+  contents: write
+
+jobs:
+  reports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Language runtime(s) for the detected stack, so the analyzers score the
+      # same code the local + gate builds see. Empty on a Node-only repo.
+__DXKIT_CI_RUNTIME_SETUP__
+      - name: Install dependencies + dxkit
+        run: |
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+
+      - name: Generate reports + publish the snapshot
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          # `report` renders the full audit + dashboard into .dxkit/reports/;
+          # `report snapshot` maps the scores to a history entry and publishes the
+          # appended report-history.jsonl + latest/ dashboard to the dxkit-reports
+          # ref. Anchor ref + retention come from .dxkit/policy.json:reports.
+          "${DXKIT}" report
+          "${DXKIT}" report snapshot

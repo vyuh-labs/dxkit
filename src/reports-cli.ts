@@ -20,24 +20,12 @@ import {
   type SnapshotArtifact,
 } from './reports/snapshot';
 import type { ReportHistoryEntry } from './reports/history';
+import { loadPolicyFromCwd, type ReportsPolicy } from './baseline/policy';
 import * as logger from './logger';
 
-/** `policy.json:reports` (opt-in). Resolved here tolerantly; formal typing lives
- *  on `BrownfieldPolicy.reports`. */
-interface ReportsPolicy {
-  onMerge?: boolean;
-  anchorRef?: string;
-  retain?: { history?: number };
-}
-
+/** The repo's `policy.json:reports` block (opt-in), via the one policy loader. */
 function readReportsPolicy(cwd: string): ReportsPolicy {
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8'));
-    const r = raw?.reports;
-    return r && typeof r === 'object' ? (r as ReportsPolicy) : {};
-  } catch {
-    return {};
-  }
+  return loadPolicyFromCwd(cwd).reports ?? {};
 }
 
 function gitLine(cwd: string, args: string[]): string {
