@@ -43,15 +43,16 @@ const CRITICAL_PATTERNS = [
 // ─── Test file discovery ────────────────────────────────────────────────────
 
 /**
- * A file under a fixtures / mocks / snapshots directory is test SUPPORT — sample
- * input, factory data, recorded output — NOT a test file. It has no assertions
- * by design, so a test-dir glob that swept it in would classify it as a
- * "degraded" test file (a false positive: dxkit's own analyzer fixtures, and any
- * user's `test/fixtures/**`, are not degraded tests). Matched as a path SEGMENT
- * (`.../fixtures/...`), covering the `__fixtures__` / `__mocks__` / `__snapshots__`
- * conventions too.
+ * A file under a fixtures / mocks / snapshots / testdata directory is test
+ * SUPPORT — sample input, factory data, recorded output — NOT a test file. It
+ * has no assertions by design, so a test-dir glob that swept it in would
+ * classify it as a "degraded" test file (a false positive: dxkit's own analyzer
+ * fixtures, and any user's `test/fixtures/**`, are not degraded tests). Matched
+ * as a path SEGMENT (`.../fixtures/...`), covering the tool-recognized fixture
+ * conventions across ecosystems: `__fixtures__` / `__mocks__` / `__snapshots__`
+ * (jest) and `testdata/` (the Go toolchain itself ignores a `testdata` dir).
  */
-const FIXTURE_SUPPORT_DIR = /(^|\/)(__)?(fixtures?|mocks?|snapshots?)(__)?\//i;
+const FIXTURE_SUPPORT_DIR = /(^|\/)(__)?(fixtures?|mocks?|snapshots?|testdata)(__)?\//i;
 export function isFixtureSupportPath(relPath: string): boolean {
   return FIXTURE_SUPPORT_DIR.test(relPath.replace(/\\/g, '/'));
 }
