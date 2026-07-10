@@ -47,6 +47,18 @@ export interface ReportHistoryEntry {
   readonly findings?: ReportFindingCounts;
 }
 
+/** The score keys, in canonical display order — the ONE list every consumer
+ *  iterates (parse, delta, render), so a new dimension is added in one place. */
+export const SCORE_KEYS: ReadonlyArray<keyof ReportScores> = [
+  'overall',
+  'security',
+  'quality',
+  'tests',
+  'documentation',
+  'maintainability',
+  'developerExperience',
+];
+
 function isFiniteNumberOrNull(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isFinite(v));
 }
@@ -54,17 +66,8 @@ function isFiniteNumberOrNull(v: unknown): v is number | null {
 function coerceScores(raw: unknown): ReportScores | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const keys: Array<keyof ReportScores> = [
-    'overall',
-    'security',
-    'quality',
-    'tests',
-    'documentation',
-    'maintainability',
-    'developerExperience',
-  ];
   const out: Record<string, number | null> = {};
-  for (const k of keys) {
+  for (const k of SCORE_KEYS) {
     const v = o[k];
     if (!isFiniteNumberOrNull(v)) return null; // a malformed score line is skipped whole
     out[k] = v;
@@ -103,6 +106,41 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
     out.push(entry);
   }
   return out;
+}
+
+/** One dimension's movement between two snapshots. `delta` is `to - from` only
+ *  when both sides are measured; a null on either side leaves `delta` null (an
+ *  unmeasured dimension has no honest movement). */
+export interface ScoreDelta {
+  readonly key: keyof ReportScores;
+  readonly from: number | null;
+  readonly to: number | null;
+  readonly delta: number | null;
+}
+
+/** Per-dimension movement from `prev` scores to `cur` scores. Pure. When `prev`
+ *  is undefined (the first-ever snapshot) every `from`/`delta` is null. */
+export function scoreDeltas(prev: ReportScores | undefined, cur: ReportScores): ScoreDelta[] {
+  return SCORE_KEYS.map((key) => {
+    const to = cur[key];
+    const from = prev ? prev[key] : null;
+    const delta = typeof from === 'number' && typeof to === 'number' ? to - from : null;
+    return { key, from, to, delta };
+  });
+}
+
+/** The movement of the most recent merge vs the one before it — the "score moved
+ *  X→Y" primitive both the CI job summary and `metrics` read. With <2 entries
+ *  there is no prior, so `prev` is undefined and every delta is null. Pure. */
+export function latestDeltas(entries: readonly ReportHistoryEntry[]): {
+  readonly prev?: ReportHistoryEntry;
+  readonly cur?: ReportHistoryEntry;
+  readonly deltas: ScoreDelta[];
+} {
+  if (entries.length === 0) return { deltas: [] };
+  const cur = entries[entries.length - 1];
+  const prev = entries.length >= 2 ? entries[entries.length - 2] : undefined;
+  return { ...(prev ? { prev } : {}), cur, deltas: scoreDeltas(prev?.scores, cur.scores) };
 }
 
 /** Serialize entries to JSONL (one compact object per line, trailing newline). */

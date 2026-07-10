@@ -162,6 +162,7 @@ Opt into a score-over-time trend: publish a health snapshot on every merge to th
 ```
 
 - `true` — installs `dxkit-reports-refresh.yml`, which renders the full audit on merge (+ weekly + on demand) and publishes a snapshot to a **dedicated `dxkit-reports` side ref** via git plumbing. It appends one line to `report-history.jsonl` and refreshes a browsable `latest/` dashboard on that ref — **without committing anything to the default branch's tree** (same transport the baseline anchor uses, just a distinct ref, so its churn never touches the baseline). Read the trend back with `npx vyuh-dxkit report history`. Retention is `reports.retain` (how many snapshots to keep).
+  - The merge workflow also writes a **"score moved X→Y" job summary** (per dimension) into the run — `report history --markdown` renders that block, so you can drop it into a PR comment too. And `npx vyuh-dxkit metrics` shows the score-over-time trend alongside the gate's interception ROI, so one command answers both "what did the gate stop" and "how is the score trending".
 - `false` / absent — no snapshots are published (the default).
 
 Two ways to enable it: `npx vyuh-dxkit init --with-reports-refresh` (installs the workflow directly), or set the `reports.onMerge` knob above and run `npx vyuh-dxkit update` (which lays the workflow down). Either way, `update` refreshes it and `uninstall` removes it. It's a reporting/trend feature, not a correctness gate — leave it off unless you want the merge-time score history.

@@ -16,6 +16,10 @@ import { execFileSync } from 'child_process';
 import * as logger from './logger';
 import { readLedger } from './loop/ledger';
 import { computeMetrics, type MetricsReport } from './loop/metrics';
+import { readReportHistory } from './reports/snapshot';
+import { renderTrendText } from './reports/render';
+import { latestDeltas, type ReportHistoryEntry } from './reports/history';
+import { loadPolicyFromCwd } from './baseline/policy';
 
 export interface MetricsOptions {
   /** A git ref (resolved to its commit date) or an ISO date; scopes the window. */
@@ -27,6 +31,13 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
   const events = readLedger(cwd);
   const since = resolveSince(cwd, opts.since);
   const report = computeMetrics(events, { sinceMs: since.ms });
+  // The score-over-time trend (published on merge to the dxkit-reports ref) is
+  // the OUTCOME half of ROI — what the gate blocked (ledger) plus how the score
+  // actually moved. Only read it when the repo has a `reports` policy: the read
+  // does a `git fetch` of the anchor ref, and `metrics` must stay a local,
+  // offline-friendly command for the (common) repo that never enabled reports.
+  const usesReports = Object.keys(loadPolicyFromCwd(cwd).reports ?? {}).length > 0;
+  const trend = usesReports ? readReportHistory(cwd) : [];
 
   if (opts.json) {
     process.stdout.write(
@@ -35,6 +46,7 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
           schema: 'metrics.v1',
           since: since.label ?? null,
           ...report,
+          trend: trendJson(trend),
         },
         null,
         2,
@@ -44,6 +56,30 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
   }
 
   render(report, since);
+  renderTrend(trend);
+}
+
+/** Compact JSON view of the trend: the full series plus the latest merge's
+ *  per-dimension movement (the "score moved X→Y" the renderers show). */
+function trendJson(entries: readonly ReportHistoryEntry[]): {
+  snapshots: number;
+  latest: ReportHistoryEntry | null;
+  deltas: ReturnType<typeof latestDeltas>['deltas'];
+} {
+  const { cur, deltas } = latestDeltas(entries);
+  return { snapshots: entries.length, latest: cur ?? null, deltas };
+}
+
+function renderTrend(entries: readonly ReportHistoryEntry[]): void {
+  const lines = renderTrendText(entries);
+  if (lines.length === 0) return;
+  gap();
+  logger.header('Score over time');
+  logger.info(lines[0]);
+  for (const l of lines.slice(1)) logger.dim(l);
+  gap();
+  logger.dim('Published on merge to the `dxkit-reports` ref (policy.json:reports.onMerge).');
+  logger.dim('Full trend: `vyuh-dxkit report history`.');
 }
 
 interface ResolvedSince {

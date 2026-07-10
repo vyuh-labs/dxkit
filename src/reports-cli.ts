@@ -20,6 +20,7 @@ import {
   type SnapshotArtifact,
 } from './reports/snapshot';
 import type { ReportHistoryEntry } from './reports/history';
+import { renderHistoryMarkdown } from './reports/render';
 import { loadPolicyFromCwd, type ReportsPolicy } from './baseline/policy';
 import * as logger from './logger';
 
@@ -152,6 +153,9 @@ export interface ReportHistoryCliOptions {
   readonly anchorRef?: string;
   readonly json?: boolean;
   readonly limit?: number;
+  /** Emit a GitHub-flavored markdown block (for `$GITHUB_STEP_SUMMARY` / a PR
+   *  comment) instead of the terminal table. */
+  readonly markdown?: boolean;
 }
 
 export function runReportHistory(opts: ReportHistoryCliOptions): number {
@@ -161,6 +165,13 @@ export function runReportHistory(opts: ReportHistoryCliOptions): number {
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({ anchorRef, entries: history }) + '\n');
+    return 0;
+  }
+
+  if (opts.markdown) {
+    // Raw markdown to stdout so a workflow can redirect it into
+    // $GITHUB_STEP_SUMMARY; no logger chrome.
+    process.stdout.write(renderHistoryMarkdown(history, opts.limit ? { limit: opts.limit } : {}));
     return 0;
   }
 

@@ -1894,6 +1894,7 @@ export async function run(argv: string[]): Promise<void> {
             : runReportHistory({
                 cwd,
                 json: !!values.json,
+                markdown: !!values.markdown,
                 ...(values.ref ? { anchorRef: String(values.ref) } : {}),
                 ...(values.limit ? { limit: Number(values.limit) } : {}),
               });
