@@ -22,6 +22,16 @@ import { mergeIntoPolicyFile } from '../../baseline/policy-write';
  *   - `off`: the gate does not run at all. */
 export type FlowGateMode = 'block' | 'warn' | 'off';
 
+/** How the on-merge refresh workflow LANDS updated contract snapshots on the
+ *  default branch.
+ *   - `pr` (default): push a `dxkit/flow-refresh` branch and open/update ONE
+ *     standing PR with a contract-change summary. Protected-branch-safe, and
+ *     the review checkpoint lands exactly where it matters — a route REMOVAL
+ *     will start flagging its consumers once merged, so a human sees it first.
+ *   - `push`: commit straight to the default branch with `[skip ci]` — zero
+ *     ceremony for unprotected-trunk teams (a protected branch rejects it). */
+export type FlowRefreshMode = 'pr' | 'push';
+
 export interface FlowConfig {
   /** Host-helper prefixes stripped during URL normalization (per-app config,
    *  e.g. `["https://api.example.com"]`). */
@@ -33,6 +43,11 @@ export interface FlowConfig {
   /** Confidence at/above which a net-new break BLOCKS (else warns). Default 1 —
    *  only exact, fully specified bindings can fail a build. */
   readonly blockThreshold: number;
+  /** Install the on-merge flow-refresh workflow (`dxkit-flow-refresh.yml`).
+   *  Off by default — an opt-in surface. */
+  readonly onMergeRefresh: boolean;
+  /** How the refresh lands snapshot updates (see {@link FlowRefreshMode}). */
+  readonly refreshMode: FlowRefreshMode;
 }
 
 const DEFAULTS: FlowConfig = {
@@ -40,12 +55,16 @@ const DEFAULTS: FlowConfig = {
   specs: [],
   mode: 'block',
   blockThreshold: 1,
+  onMergeRefresh: false,
+  refreshMode: 'pr',
 };
 
 /** Current schema version of the committed `.dxkit/policy.json:flow` block.
  *  Stamped on write so a future flow-config restructure is detectable/migratable
  *  (a versionless block reads as v1 — every field is optional-with-default). The
- *  four keys above are the FROZEN v1 contract; evolve additively. Pinned by
+ *  original four keys (stripUrlPrefixes/specs/mode/blockThreshold) are the
+ *  FROZEN v1 contract; `onMergeRefresh` + `refreshMode` are v1-additive
+ *  (optional-with-default, so old readers ignore them). Pinned by
  *  `test/flow-contract-freeze.test.ts`. */
 export const FLOW_CONFIG_SCHEMA_VERSION = 1;
 
@@ -54,6 +73,8 @@ interface RawFlow {
   specs?: unknown;
   mode?: unknown;
   blockThreshold?: unknown;
+  onMergeRefresh?: unknown;
+  refreshMode?: unknown;
 }
 
 function stringList(v: unknown): string[] {
@@ -85,6 +106,8 @@ export function readFlowConfig(cwd: string): FlowConfig {
       typeof raw.blockThreshold === 'number' && raw.blockThreshold > 0
         ? raw.blockThreshold
         : DEFAULTS.blockThreshold,
+    onMergeRefresh: raw.onMergeRefresh === true,
+    refreshMode: raw.refreshMode === 'push' ? 'push' : DEFAULTS.refreshMode,
   };
 }
 

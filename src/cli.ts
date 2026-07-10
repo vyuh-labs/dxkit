@@ -31,7 +31,9 @@ import {
   installCiGraphRefresh,
   graphRefreshEnabled,
   installCiReportsRefresh,
+  installCiFlowRefresh,
   reportsRefreshEnabled,
+  flowRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -262,6 +264,7 @@ ${renderCommandIndex().join('\n')}
     --with-deep-sast-refresh  Install .github/workflows/dxkit-deep-sast-refresh.yml (Snyk/CodeQL ingest; opt-in)
     --with-graph-refresh      Install .github/workflows/dxkit-graph-refresh.yml (rebuild + cache graph.json on merge; opt-in, sets policy graph.refresh)
     --with-reports-refresh    Install .github/workflows/dxkit-reports-refresh.yml (publish a health snapshot to the dxkit-reports ref on merge; opt-in, or enable via policy reports.onMerge)
+    --with-flow-refresh       Install .github/workflows/dxkit-flow-refresh.yml (re-publish the flow contract on merge and land it per flow.refreshMode — 'pr' standing PR by default; opt-in, or enable via policy flow.onMergeRefresh)
     --with-pr-review          Install .github/workflows/pr-review.yml (AI PR review; opt-in)
                               (post-merge auto-regen of .dxkit/baselines/main.json)
     --claude-loop             Register the Stop-gate hook for autonomous coding
@@ -348,6 +351,9 @@ export async function run(argv: string[]): Promise<void> {
       frontend: { type: 'string' },
       backend: { type: 'string' },
       specs: { type: 'string' },
+      // `flow publish --land=<pr|push|policy>` — how a refresh lands on the
+      // default branch ('policy' resolves flow.refreshMode).
+      land: { type: 'string' },
       'reports-dir': { type: 'string' },
       'json-dir': { type: 'string' },
       'project-name': { type: 'string' },
@@ -375,6 +381,7 @@ export async function run(argv: string[]): Promise<void> {
       'with-deep-sast-refresh': { type: 'boolean', default: false },
       'with-graph-refresh': { type: 'boolean', default: false },
       'with-reports-refresh': { type: 'boolean', default: false },
+      'with-flow-refresh': { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
@@ -653,6 +660,17 @@ export async function run(argv: string[]): Promise<void> {
         });
       }
 
+      // Flow-refresh workflow: after each merge, re-publish the flow-contract
+      // snapshots and land them per flow.refreshMode ('pr' standing PR by
+      // default). Enabled by the flag OR `.dxkit/policy.json:flow.onMergeRefresh:
+      // true`; off by default (contract freshness is opt-in like reports).
+      if (values['with-flow-refresh'] || flowRefreshEnabled(cwd)) {
+        shipResults.push({
+          label: 'CI flow-refresh workflow',
+          result: installCiFlowRefresh(cwd, { force: !!values.force }),
+        });
+      }
+
       // Flow setup — folded into `init` (there is no standalone `flow init`).
       // Detect a UI→API surface; if there is none, stay silent (zero burden on
       // a library / CLI / data repo). Otherwise prompt for the gate posture
@@ -768,6 +786,9 @@ export async function run(argv: string[]): Promise<void> {
         // Without this stamp the surface's flag gate never opens on a modern
         // manifest and update would silently skip it.
         withReportsRefresh: !!values['with-reports-refresh'] || reportsRefreshEnabled(cwd),
+        // Flow-refresh: same stamp discipline (flag or flow.onMergeRefresh),
+        // so update refreshes the workflow and uninstall removes it.
+        withFlowRefresh: !!values['with-flow-refresh'] || flowRefreshEnabled(cwd),
       });
 
       console.log('');
@@ -1143,7 +1164,17 @@ export async function run(argv: string[]): Promise<void> {
       // participant's served routes into this repo's served.json.
       if (subCommand === 'publish') {
         const { runFlowPublish } = await import('./flow-cli');
-        await runFlowPublish({ cwd, frontend, backend, specs, json: !!values.json });
+        await runFlowPublish({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          json: !!values.json,
+          // --land=<pr|push|policy> lands the refreshed snapshots on the
+          // default branch; `policy` resolves the mode from flow.refreshMode
+          // (what the refresh workflow passes), pr/push override explicitly.
+          ...(values.land !== undefined ? { land: String(values.land) } : {}),
+        });
         break;
       }
       logger.fail(`Unknown flow subcommand: ${subCommand}`);

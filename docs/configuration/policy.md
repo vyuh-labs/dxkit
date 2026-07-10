@@ -245,6 +245,39 @@ the most common candidate beyond `code` / `hygiene`):
 { "addedRequiresChangedLines": ["code", "hygiene", "duplication"] }
 ```
 
+### Flow-contract refresh on merge
+
+Keep the committed flow-contract snapshots (`.dxkit/flow/served.json` +
+`consumed.json`) current automatically — the gate reads them offline, and
+`doctor` warns when a provider has moved past the committed copy; this closes
+that gap without anyone remembering to run `flow publish`:
+
+```json
+{
+  "flow": {
+    "onMergeRefresh": true,
+    "refreshMode": "pr"
+  }
+}
+```
+
+With `onMergeRefresh: true`, `vyuh-dxkit init`/`update` installs the
+`dxkit-flow-refresh` workflow, which re-runs `flow publish` after each merge
+(+ weekly + on demand) and lands the result per `refreshMode`:
+
+- **`pr`** (default) — ONE standing `dxkit/flow-refresh` PR, force-updated in
+  place. Its body is a contract-change summary; route **removals** lead with a
+  warning, because merging them arms the integration gate against any consumer
+  still calling those routes — that is exactly the change a human should see.
+  Pure additions only fix false `no-route`s; enable GitHub auto-merge on the
+  PR if those need no ceremony. Protected-branch-safe.
+- **`push`** — a direct `[skip ci]` commit to the default branch. Zero
+  ceremony; a protected branch rejects it (use `pr`).
+
+The landing logic lives in the CLI (`flow publish --land=policy`), so the
+workflow carries no bash logic. Manual anytime: `vyuh-dxkit flow publish`
+(+ commit), or `flow publish --land=pr` to open the same standing PR yourself.
+
 ### Report snapshots on merge
 
 Publish a health/analysis snapshot to a dedicated `dxkit-reports` side branch on

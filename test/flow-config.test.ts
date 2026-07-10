@@ -19,9 +19,39 @@ describe('readFlowConfig', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-flowcfg-none-'));
     try {
       const c = readFlowConfig(dir);
-      expect(c).toEqual({ stripUrlPrefixes: [], specs: [], mode: 'block', blockThreshold: 1 });
+      expect(c).toEqual({
+        stripUrlPrefixes: [],
+        specs: [],
+        mode: 'block',
+        blockThreshold: 1,
+        onMergeRefresh: false,
+        refreshMode: 'pr',
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes the refresh knobs: onMergeRefresh strict-true, refreshMode pr unless push', () => {
+    for (const [raw, expected] of [
+      [
+        { onMergeRefresh: true, refreshMode: 'push' },
+        { on: true, mode: 'push' },
+      ],
+      [
+        { onMergeRefresh: 'yes', refreshMode: 'auto-merge' },
+        { on: false, mode: 'pr' },
+      ],
+      [{}, { on: false, mode: 'pr' }],
+    ] as const) {
+      const dir = repoWith({ flow: raw });
+      try {
+        const c = readFlowConfig(dir);
+        expect(c.onMergeRefresh).toBe(expected.on);
+        expect(c.refreshMode).toBe(expected.mode);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -40,6 +70,8 @@ describe('readFlowConfig', () => {
         specs: ['openapi.json', 'v2.yaml'],
         mode: 'warn',
         blockThreshold: 0.5,
+        onMergeRefresh: false,
+        refreshMode: 'pr',
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

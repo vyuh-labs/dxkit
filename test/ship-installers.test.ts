@@ -11,6 +11,8 @@ import {
   installCiGraphRefresh,
   graphRefreshEnabled,
   installCiReportsRefresh,
+  installCiFlowRefresh,
+  flowRefreshEnabled,
   reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
@@ -379,6 +381,48 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
       JSON.stringify({ reports: { onMerge: false } }),
     );
     expect(reportsRefreshEnabled(tmp)).toBe(false);
+  });
+
+  it('installs the flow-refresh workflow: default branch substituted, landing via the CLI only', () => {
+    execFileSync('git', ['init', '-q', '-b', 'develop'], { cwd: tmp });
+    const result = installCiFlowRefresh(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-flow-refresh.yml');
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-flow-refresh.yml'),
+      'utf8',
+    );
+    expect(content).not.toContain('__DXKIT_'); // every placeholder resolved
+    expect(content).toContain('branches: [develop]');
+    // The landing logic lives in the tested CLI — the workflow is one command,
+    // with NO git write logic in its bash (the class-fix from the baseline
+    // refresh applies here from day one).
+    expect(content).toContain('flow publish --land=policy');
+    expect(content).not.toContain('git push');
+    expect(content).not.toContain('git commit');
+  });
+
+  it('flow refresh is opt-in via policy flow.onMergeRefresh, and gated in the surface registry', () => {
+    expect(flowRefreshEnabled(tmp)).toBe(false);
+    expect(detectInstallFlags(tmp).withFlowRefresh).toBe(false);
+
+    // Opt in via policy → enabled even before the workflow file exists, so
+    // `update` lays it down and `uninstall` removes it (the init-gap seam).
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ flow: { onMergeRefresh: true } }),
+    );
+    expect(flowRefreshEnabled(tmp)).toBe(true);
+    const flags = detectInstallFlags(tmp);
+    expect(flags.withFlowRefresh).toBe(true);
+    expect(managedGatedArtifacts(flags)).toContain('.github/workflows/dxkit-flow-refresh.yml');
+
+    // onMergeRefresh:false is the same as absent.
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ flow: { onMergeRefresh: false } }),
+    );
+    expect(flowRefreshEnabled(tmp)).toBe(false);
   });
 
   it('skips when workflow file already exists', () => {
