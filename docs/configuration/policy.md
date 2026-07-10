@@ -63,6 +63,7 @@ tuning belongs here.
 | `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
+| `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
 
 ## Baseline mode pinning
 
@@ -226,6 +227,31 @@ the most common candidate beyond `code` / `hygiene`):
 ```json
 { "addedRequiresChangedLines": ["code", "hygiene", "duplication"] }
 ```
+
+### Report snapshots on merge
+
+Publish a health/analysis snapshot to a dedicated `dxkit-reports` side branch on
+every merge to the default branch, building a durable **score-over-time** trend
+without committing anything to your default branch:
+
+```json
+{
+  "reports": {
+    "onMerge": true,
+    "anchorRef": "dxkit-reports",
+    "retain": { "history": 200, "snapshots": 20 }
+  }
+}
+```
+
+With `onMerge: true`, `vyuh-dxkit init`/`update` installs the
+`dxkit-reports-refresh` workflow, which runs `report` then `report snapshot`
+after each merge. Each run appends one line to `report-history.jsonl` and
+refreshes the browsable `latest/` dashboard on the ref. Read the trend with
+`vyuh-dxkit report history`. Storage rides the same anchor transport the baseline
+refresh uses (git plumbing — no worktree, no default-branch write); the dedicated
+ref keeps report churn off the baseline anchor. Manual: `vyuh-dxkit report
+snapshot` publishes on demand; add `--dry-run` to preview.
 
 ### Tune the large-file threshold
 
