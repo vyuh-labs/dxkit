@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git checkout -B` + force-push bash — the push semantics (unchanged-skip,
   self-heal, non-fast-forward retry) live in one tested implementation.
   `doctor`'s deleted-anchor warning points at it as the repair.
+- **`vyuh-dxkit protect` now prevents anchor-branch deletion.** When the policy
+  configures anchor side branches (`baseline.anchor: "branch"` and/or
+  `reports.onMerge: true`), the command ensures a `dxkit-anchor-branches`
+  repository ruleset that blocks deleting them — the prevention layer on top of
+  doctor's detection and the refresh's self-heal. Deletion is the ONLY rule:
+  pushes (including the refresh's force-push) stay allowed, and no checks are
+  required on the side branches. Dry-run first like the rest of `protect`; a
+  plan without rulesets degrades to a warning.
 
 ### Fixed
 

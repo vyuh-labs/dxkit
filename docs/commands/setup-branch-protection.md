@@ -95,6 +95,24 @@ Safe to re-run. When an existing protection rule is present:
     → Review-count policy NOT changed (pass --require-reviews=N to require reviews).
 ```
 
+## Anchor side branches: deletion protection
+
+When the committed policy configures anchor side branches — `baseline.anchor:
+"branch"` (default `dxkit-baselines`) and/or `reports.onMerge: true` (default
+`dxkit-reports`) — the command also ensures a **`dxkit-anchor-branches`
+repository ruleset** that blocks deleting those branches. A deleted baseline
+anchor silently strands the guardrail's committed baseline until the next
+refresh; this closes the class at the source (`doctor` detects a deletion,
+`baseline publish` self-heals it, the ruleset prevents it).
+
+The ruleset carries **only the `deletion` rule** — pushes (including the
+refresh's force-push of orphan commits) stay allowed, and no checks are
+required on the side branches (a gated side branch would recreate the refresh
+deadlock the transport exists to avoid). It is created/updated idempotently
+(dry-run first, like the rest of the command), only ever edits the ruleset
+named `dxkit-anchor-branches`, and a repo plan without rulesets degrades to a
+warning with the manual path.
+
 ## See also
 
 - [`setup-prebuild`](setup-prebuild.md) — companion CLI for Codespaces

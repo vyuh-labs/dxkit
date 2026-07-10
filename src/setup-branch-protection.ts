@@ -41,6 +41,12 @@ import {
   GUARDRAIL_CHECK,
   LEGACY_GUARDRAIL_CHECK,
 } from './enforcement';
+import {
+  ANCHOR_RULESET_NAME,
+  anchorRefsFromPolicy,
+  planAnchorRuleset,
+  type RulesetDetail,
+} from './anchor-ruleset';
 
 export interface SetupBranchProtectionOpts {
   /** Branch to protect. Defaults to the repo's default branch. */
@@ -161,6 +167,26 @@ export async function runSetupBranchProtection(
   }
   const { owner, repo } = ownerRepo;
 
+  const status = protectDefaultBranch(cwd, owner, repo, opts);
+  if (status === 'error') return;
+
+  // Second section: deletion protection for the anchor side branches (the
+  // baseline anchor + the reports ref). Runs regardless of how the
+  // default-branch section resolved short of an error — "already protected"
+  // up top doesn't mean the anchors are.
+  protectAnchorBranches(cwd, {
+    owner,
+    repo,
+    ...(opts.dryRun !== undefined && { dryRun: opts.dryRun }),
+  });
+}
+
+function protectDefaultBranch(
+  cwd: string,
+  owner: string,
+  repo: string,
+  opts: SetupBranchProtectionOpts,
+): 'done' | 'error' {
   const branch = opts.branch ?? resolveDefaultBranch(cwd);
 
   // Warn if the workflow file isn't present — protection-by-name would
@@ -172,7 +198,7 @@ export async function runSetupBranchProtection(
     );
     logger.dim(`  → Run \`${dxkitCli('init --with-ci --yes')}\` first to scaffold the workflow.`);
     process.exitCode = 1;
-    return;
+    return 'error';
   }
 
   // Read the branch's EFFECTIVE enforcement first (classic protection AND
@@ -187,7 +213,7 @@ export async function runSetupBranchProtection(
       logger.success(
         `${owner}/${repo}#${branch} already requires the ${REQUIRED_CHECK} check — nothing to do.`,
       );
-      return;
+      return 'done';
     }
     if (state.rulesetGoverned) {
       console.log(''); // slop-ok
@@ -197,7 +223,7 @@ export async function runSetupBranchProtection(
       );
       logger.dim(`  → Add '${REQUIRED_CHECK}' to that ruleset's required status checks:`);
       logger.dim(`     https://github.com/${owner}/${repo}/settings/rules`);
-      return;
+      return 'done';
     }
   } catch (e) {
     // Fail-open: if we couldn't read enforcement (gh error, no scope), fall
@@ -212,7 +238,7 @@ export async function runSetupBranchProtection(
   } catch (e) {
     if (e instanceof GhError) {
       process.exitCode = renderGhError(e, 'Read existing protection');
-      return;
+      return 'error';
     }
     throw e;
   }
@@ -242,7 +268,7 @@ export async function runSetupBranchProtection(
     );
     console.log(''); // slop-ok
     logger.info(`Re-run with \`${dxkitCli('protect --apply')}\` to write these settings.`);
-    return;
+    return 'done';
   }
 
   logger.info(
@@ -259,7 +285,7 @@ export async function runSetupBranchProtection(
   } catch (e) {
     if (e instanceof GhError) {
       process.exitCode = renderGhError(e, 'Apply protection');
-      return;
+      return 'error';
     }
     throw e;
   }
@@ -272,4 +298,112 @@ export async function runSetupBranchProtection(
       '  → Review-count policy NOT changed (pass --require-reviews=N to require reviews).',
     );
   }
+  return 'done';
+}
+
+/** `ghApi`-shaped caller, injectable for tests (the gh-api harness). */
+export type GhApiFn = typeof ghApi;
+
+export interface AnchorProtectionArgs {
+  owner: string;
+  repo: string;
+  dryRun?: boolean;
+  gh?: GhApiFn;
+}
+
+/**
+ * Deletion protection for the anchor side branches — executes the pure
+ * `planAnchorRuleset` plan (see `anchor-ruleset.ts` for the why). Add-on
+ * semantics: silent when the policy configures no anchor branches, and a
+ * failure here WARNS without failing the command (rulesets aren't available
+ * on every plan; doctor still detects a deleted anchor, and the refresh
+ * self-heals it — this layer is prevention, not the only net).
+ */
+export function protectAnchorBranches(cwd: string, args: AnchorProtectionArgs): void {
+  const gh = args.gh ?? ghApi;
+  const { owner, repo } = args;
+  const refs = anchorRefsFromPolicy(cwd);
+  if (refs.length === 0) return;
+
+  console.log(''); // slop-ok
+  logger.info(
+    `Anchor side branch(es) per .dxkit/policy.json: ${refs.join(', ')} — checking deletion protection...`,
+  );
+
+  let existing: RulesetDetail | null = null;
+  try {
+    const list = gh(`repos/${owner}/${repo}/rulesets`, { cwd, method: 'GET' }) as Array<{
+      id: number;
+      name: string;
+    }> | null;
+    const mine = (list ?? []).find((rs) => rs.name === ANCHOR_RULESET_NAME);
+    if (mine) {
+      existing = gh(`repos/${owner}/${repo}/rulesets/${mine.id}`, {
+        cwd,
+        method: 'GET',
+      }) as RulesetDetail;
+    }
+  } catch (e) {
+    if (e instanceof GhError) {
+      logger.warn(`Could not read repository rulesets: ${e.message}`);
+      logger.dim(
+        `  → Skipping anchor-branch deletion protection (doctor still detects a deleted ` +
+          `anchor, and the refresh workflow recreates it).`,
+      );
+      return;
+    }
+    throw e;
+  }
+
+  const plan = planAnchorRuleset(refs, existing);
+  if (plan.action === 'none') {
+    logger.success(`  ${plan.reason}.`);
+    return;
+  }
+
+  if (args.dryRun) {
+    logger.info(
+      `Would ${plan.action} the '${ANCHOR_RULESET_NAME}' ruleset (dry run — no changes written):`,
+    );
+    logger.dim(`  → why: ${plan.reason}`);
+    logger.dim(`  → blocks: deletion of ${refs.map((r) => `refs/heads/${r}`).join(', ')}`);
+    logger.dim(
+      `  → allows: every push, including the refresh's force-push (no non-fast-forward rule, ` +
+        `no required checks — a gated side branch would deadlock the refresh).`,
+    );
+    logger.info(`Re-run with \`${dxkitCli('protect --apply')}\` to write it.`);
+    return;
+  }
+
+  try {
+    if (plan.action === 'create') {
+      gh(`repos/${owner}/${repo}/rulesets`, {
+        cwd,
+        method: 'POST',
+        inputJson: JSON.stringify(plan.payload),
+      });
+    } else {
+      gh(`repos/${owner}/${repo}/rulesets/${plan.rulesetId}`, {
+        cwd,
+        method: 'PUT',
+        inputJson: JSON.stringify(plan.payload),
+      });
+    }
+  } catch (e) {
+    if (e instanceof GhError) {
+      logger.warn(`Could not ${plan.action} the anchor ruleset: ${e.message}`);
+      logger.dim(
+        `  → Repository rulesets need GitHub Free+ (public repos) / Team+ (private). ` +
+          `Without one, restrict deletion of ${refs.join(', ')} manually in Settings → Rules.`,
+      );
+      return;
+    }
+    throw e;
+  }
+
+  logger.success(
+    `Deletion protection ${plan.action === 'create' ? 'created' : 'updated'} for ` +
+      `${refs.join(', ')} ('${ANCHOR_RULESET_NAME}' ruleset).`,
+  );
+  logger.dim(`  → Verify: https://github.com/${owner}/${repo}/settings/rules`);
 }

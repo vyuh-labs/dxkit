@@ -519,8 +519,9 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
                 `branch-transport guardrail reads the committed baseline from it — without it ` +
                 `the gate silently loses its baseline. Recapture (\`${dxkitCli('baseline create --force')}\`) ` +
                 `then run \`${dxkitCli('baseline publish')}\` to recreate the branch (self-heal; ` +
-                `the refresh workflow also does this on its next run). Restrict deletion of ` +
-                `that branch to prevent recurrence.`,
+                `the refresh workflow also does this on its next run). Then run ` +
+                `\`${dxkitCli('protect --apply')}\` — it adds a deletion-protection ruleset for ` +
+                `the anchor branches so this cannot recur.`,
               command: dxkitCli('baseline publish'),
             },
           }),

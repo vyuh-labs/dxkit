@@ -124,6 +124,10 @@ the anchor already matches, and recreates the branch if it was deleted
 (self-heal). Run it manually after a local `baseline create` to make the new
 capture the one the guardrail reads.
 
+To prevent the deletion in the first place, `vyuh-dxkit protect` also adds a
+deletion-only ruleset covering the anchor side branches — see
+[`setup-branch-protection`](../commands/setup-branch-protection.md#anchor-side-branches-deletion-protection).
+
 Run `vyuh-dxkit doctor` to check whether your guardrail is actually _enforced_
 (a required check on a protected branch) rather than merely wired, and
 `vyuh-dxkit protect` (dry-run by default; `--apply` to write) to require the
