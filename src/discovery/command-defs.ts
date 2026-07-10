@@ -311,7 +311,10 @@ export const COMMANDS = [
     group: 'integrate',
     summary: 'UI→API integration mapping + the broken-integration gate',
     docsBlurb:
-      'Map client calls to served endpoints and gate changes that break a UI→API contract across repos.',
+      'Map client calls to served endpoints and gate changes that break a UI→API contract across ' +
+      'repos. `flow publish --land` refreshes + lands the committed contract snapshots (the ' +
+      'on-merge refresh workflow runs it; `pr` opens one standing reviewable PR, `push` commits ' +
+      'directly on unprotected trunks).',
     skill: 'dxkit-flow',
     whenToRecommend: recommendFlow,
     planConfig: planFlowMode,

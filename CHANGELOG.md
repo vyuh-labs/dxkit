@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **On-merge flow-contract refresh (opt-in).** `flow.onMergeRefresh: true`
+  installs `dxkit-flow-refresh.yml`: after each merge it re-runs `flow publish`
+  and lands any snapshot change per `flow.refreshMode` — `pr` (default) keeps
+  ONE standing `dxkit/flow-refresh` PR whose body is a contract-change summary
+  (route removals lead with a warning: merging them arms the gate against
+  remaining consumers), `push` commits directly with `[skip ci]` for
+  unprotected trunks. The landing logic is `flow publish --land=<pr|push|policy>`
+  in the tested CLI — the workflow carries no bash logic. Covered by
+  init/update/uninstall via the managed-surface registry.
+
 - **Flow coverage honesty: green no longer masquerades as complete.** The
   extractor now counts the client call sites it recognizes but cannot verify —
   a `fetch(...)`/allowlisted client whose URL is built at runtime — instead of

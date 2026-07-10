@@ -167,6 +167,20 @@ Opt into a score-over-time trend: publish a health snapshot on every merge to th
 
 Two ways to enable it: `npx vyuh-dxkit init --with-reports-refresh` (installs the workflow directly), or set the `reports.onMerge` knob above and run `npx vyuh-dxkit update` (which lays the workflow down). Either way, `update` refreshes it and `uninstall` removes it. It's a reporting/trend feature, not a correctness gate — leave it off unless you want the merge-time score history.
 
+## Flow-contract refresh on merge (`policy.json:flow.onMergeRefresh` + `flow.refreshMode`)
+
+Keep the committed flow snapshots (`.dxkit/flow/`) current automatically — `doctor` warns when a provider moved past the committed contract; this closes that gap without anyone remembering `flow publish`.
+
+```jsonc
+{ "flow": { "onMergeRefresh": true, "refreshMode": "pr" } }  // defaults: false / "pr"
+```
+
+- `onMergeRefresh: true` — installs `dxkit-flow-refresh.yml`: after each merge (+ weekly + on demand) it re-runs `flow publish` and lands any snapshot change per `refreshMode`.
+- `refreshMode: "pr"` (default) — ONE standing `dxkit/flow-refresh` PR, force-updated in place, whose body is a contract-change summary. Route REMOVALS lead with a warning (merging them arms the gate against remaining consumers — the one change a human should review); additions are safe and can ride GitHub auto-merge. Protected-branch-safe.
+- `refreshMode: "push"` — direct `[skip ci]` commit to the default branch. Zero ceremony, unprotected trunks only (a protected branch rejects the push — use `pr`).
+
+Enable via `npx vyuh-dxkit init --with-flow-refresh`, or set the policy knobs and run `npx vyuh-dxkit update`. Either way `update` refreshes the workflow and `uninstall` removes it. The landing logic lives in the CLI (`flow publish --land=policy`), never in workflow bash.
+
 ## Configuring deep-SAST ingestion (`.vyuh-dxkit.json:deepSast`)
 
 dxkit's bundled SAST is intraprocedural; interprocedural findings (path traversal, info exposure, SSRF, injection) come from an external engine (Snyk Code or CodeQL) ingested via the `dxkit-ingest` skill. Persist the engine + Snyk project once so `ingest --from-snyk` needs no flags:

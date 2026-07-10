@@ -31,6 +31,7 @@ import {
   type BaselineAnchor,
 } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { readFlowConfig } from './analyzers/flow/config';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
 
@@ -813,6 +814,27 @@ export function reportsRefreshEnabled(cwd: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function installCiFlowRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = installWorkflow(cwd, 'dxkit-flow-refresh.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+  });
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'flow-refresh workflow installed: after each merge it re-publishes the flow contract ' +
+        "and lands updates per .dxkit/policy.json:flow.refreshMode ('pr' = one standing " +
+        "reviewable PR, the default; 'push' = direct [skip ci] commit, unprotected branches only).",
+    );
+  }
+  return result;
+}
+
+/** Whether the on-merge flow refresh is enabled in policy — resolved through
+ *  the ONE flow-section reader (Rule 2), same as every other flow surface. */
+export function flowRefreshEnabled(cwd: string): boolean {
+  return readFlowConfig(cwd).onMergeRefresh;
 }
 
 export function installCiDeepSastRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {

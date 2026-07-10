@@ -16,10 +16,14 @@ import { readFlowConfig } from './analyzers/flow/config';
 import {
   buildConsumedContract,
   buildServedContract,
+  readConsumedContract,
+  readServedContract,
   writeConsumedContract,
   writeServedContract,
 } from './analyzers/flow/contract';
 import { publishFlow } from './analyzers/flow/publish';
+import { landFlowRefresh, type FlowLandMode } from './analyzers/flow/land';
+import { detectDefaultBranch } from './ship-installers';
 import {
   buildFlowConsole,
   type ConsoleEndpoint,
@@ -426,10 +430,14 @@ export async function runFlowRefresh(opts: FlowViewOptions): Promise<void> {
  * own served/consumed (the monorepo case). See `flow refresh` for the
  * single-repo snapshot without the mesh union.
  */
-export async function runFlowPublish(opts: FlowViewOptions): Promise<void> {
+export async function runFlowPublish(opts: FlowViewOptions & { land?: string }): Promise<void> {
   if (!opts.json) logger.header('vyuh-dxkit flow publish');
   const config = readFlowConfig(opts.cwd);
   const commitSha = headCommitSha(opts.cwd);
+  // Landing needs the pre-publish snapshots: served to narrate what changed,
+  // consumed for the substance check (a timestamp-only refresh never lands).
+  const before = opts.land !== undefined ? readServedContract(opts.cwd) : undefined;
+  const beforeConsumed = opts.land !== undefined ? readConsumedContract(opts.cwd) : undefined;
   const result = await publishFlow(opts.cwd, {
     stripUrlPrefixes: config.stripUrlPrefixes,
     specs: [
@@ -470,6 +478,40 @@ export async function runFlowPublish(opts: FlowViewOptions): Promise<void> {
   }
   logger.info(`  ${path.relative(opts.cwd, result.servedPath)}`);
   logger.info(`  ${path.relative(opts.cwd, result.consumedPath)}`);
-  logger.info('');
-  logger.info('Commit these so this repo can gate against the whole mesh offline.');
+  if (opts.land === undefined) {
+    logger.info('');
+    logger.info('Commit these so this repo can gate against the whole mesh offline.');
+    return;
+  }
+
+  // ── landing: put the refreshed snapshots on the default branch ──
+  const mode: FlowLandMode =
+    opts.land === 'pr' || opts.land === 'push' ? opts.land : config.refreshMode;
+  const landed = landFlowRefresh({
+    cwd: opts.cwd,
+    mode,
+    before,
+    beforeConsumed,
+    defaultBranch: detectDefaultBranch(opts.cwd),
+  });
+  const deltaLine =
+    `+${landed.delta.added.length} route(s), −${landed.delta.removed.length} removed` +
+    (landed.delta.removed.length > 0 ? ' — review the removals' : '');
+  switch (landed.outcome) {
+    case 'clean':
+      logger.info('Snapshots unchanged — nothing to land.');
+      break;
+    case 'pushed':
+      logger.success(`Landed on the default branch (push mode): ${deltaLine}.`);
+      break;
+    case 'pr-opened':
+      logger.success(`Opened the standing refresh PR: ${landed.prUrl ?? ''} (${deltaLine}).`);
+      break;
+    case 'pr-updated':
+      logger.success(`Updated the standing refresh PR: ${landed.prUrl ?? ''} (${deltaLine}).`);
+      break;
+    case 'branch-pushed-no-pr':
+      logger.warn(landed.note ?? 'Branch pushed; open the PR manually.');
+      break;
+  }
 }
