@@ -11,6 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { mergeIntoPolicyFile } from '../../baseline/policy-write';
 
 /** How the guardrail treats a net-new broken integration.
  *   - `block` (default): honor the per-finding verdict — an exact, fully
@@ -122,25 +123,12 @@ export function writeFlowPolicy(
   cwd: string,
   patch: Partial<Pick<FlowConfig, 'mode' | 'stripUrlPrefixes' | 'specs'>>,
 ): boolean {
-  const abs = path.join(cwd, '.dxkit', 'policy.json');
-  let policy: { flow?: Record<string, unknown>; [k: string]: unknown } = {};
-  if (fs.existsSync(abs)) {
-    try {
-      policy = JSON.parse(fs.readFileSync(abs, 'utf8'));
-    } catch {
-      return false; // malformed — leave it; caller surfaces the note
-    }
-  }
-  // Stamp the current schema version LAST so every written flow block carries it
+  // Stamp the current schema version so every written flow block carries it
   // (a one-time migration for legacy versionless blocks, idempotent thereafter).
-  const nextFlow = {
-    ...(policy.flow ?? {}),
-    ...patch,
-    schemaVersion: FLOW_CONFIG_SCHEMA_VERSION,
-  };
-  if (JSON.stringify(policy.flow ?? {}) === JSON.stringify(nextFlow)) return false;
-  policy.flow = nextFlow;
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(policy, null, 2) + '\n', 'utf8');
-  return true;
+  // The read-merge-write mechanics live in the canonical policy merge-writer:
+  // sibling sections survive, a malformed file is never clobbered (returns
+  // false; caller surfaces the note), an unchanged merge writes nothing.
+  return mergeIntoPolicyFile(cwd, {
+    flow: { ...patch, schemaVersion: FLOW_CONFIG_SCHEMA_VERSION },
+  }).changed;
 }

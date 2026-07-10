@@ -19,6 +19,7 @@ import * as path from 'path';
 import type { ShipInstallResult } from '../ship-installers';
 import { DEFAULT_LOOP_PRESET, type LoopPreset } from './policy';
 import { claudeHookCommand } from '../self-invocation';
+import { mergeIntoPolicyFile, readPolicyFileRaw } from '../baseline/policy-write';
 
 /** The command Claude Code runs on Stop. Built from the canonical CLI
  *  invocation (`src/self-invocation.ts`) so the installer, doctor, and any
@@ -220,27 +221,22 @@ function ensureLoopPreset(
   result: ShipInstallResult,
 ): void {
   const rel = path.join('.dxkit', 'policy.json');
-  const abs = path.join(cwd, rel);
 
-  let policy: { loop?: { preset?: string }; [k: string]: unknown } = {};
-  if (fs.existsSync(abs)) {
-    try {
-      policy = JSON.parse(fs.readFileSync(abs, 'utf8'));
-    } catch {
-      result.notes.push(`${rel} is not valid JSON — left untouched. Set loop.preset by hand.`);
-      return;
-    }
+  const policy = readPolicyFileRaw(cwd);
+  if (policy === null) {
+    result.notes.push(`${rel} is not valid JSON — left untouched. Set loop.preset by hand.`);
+    return;
   }
-  const existing = policy.loop?.preset;
-  // Override on explicit; else keep existing; else seed the default.
+  const existing = (policy.loop as { preset?: string } | undefined)?.preset;
+  // Override on explicit; else keep existing; else seed the default. The write
+  // goes through the canonical policy merge-writer (Rule 2): sibling sections
+  // survive, unchanged merges write nothing.
   const target = explicit ?? existing ?? DEFAULT_LOOP_PRESET;
   if (existing === target) {
     result.skipped.push(rel);
     return;
   }
-  policy.loop = { ...policy.loop, preset: target };
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(policy, null, 2) + '\n', 'utf8');
+  mergeIntoPolicyFile(cwd, { loop: { preset: target } });
   result.installed.push(rel);
 }
 
