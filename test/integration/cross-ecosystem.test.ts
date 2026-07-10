@@ -411,7 +411,10 @@ describe('cross-ecosystem benchmarks — C# (single project)', () => {
     if (!hasDotnet) return;
     // obj/project.assets.json is gitignored; regenerate before scan.
     await execAsync('dotnet restore --verbosity quiet', { cwd: fixture });
-  });
+    // A cold `dotnet restore` on a CI runner routinely exceeds vitest's
+    // default 10s hook timeout — give the restore room so a slow NuGet
+    // fetch is not misreported as a build failure.
+  }, 120_000);
 
   it.skipIf(!hasDotnet)(
     'surfaces Newtonsoft.Json@9.0.1 advisory from real dotnet output (parser key fix)',
@@ -440,7 +443,9 @@ describe('cross-ecosystem benchmarks — C# (multi-project, D003 validator)', ()
     if (!hasDotnet) return;
     // obj/ in both ProjectA + ProjectB are gitignored.
     await execAsync('dotnet restore Solution.sln --verbosity quiet', { cwd: fixture });
-  });
+    // Same cold-restore latency as the single-project suite; the default
+    // 10s hook timeout is too tight for a multi-project restore on CI.
+  }, 120_000);
 
   it.skipIf(!hasDotnet)(
     'surfaces Newtonsoft.Json reachable only through ProjectB (Phase 10h.6.7 D003 fix)',
