@@ -108,8 +108,21 @@ refresh stays fast and automated:
 
 Omit `anchor` and dxkit picks per your protection posture (`branch` on a
 protected default branch, else `tree`; `tree` when protection can't be probed,
-so it never silently reconfigures a repo). `ref-based` mode has no committed
-anchor, so no refresh workflow is installed at all.
+so it never silently reconfigures a repo). When the pick is `branch`, the
+installer **records `anchor: "branch"` into this policy file** (non-clobber —
+an explicit value always wins): the guardrail check reads the side-branch
+anchor only when the committed policy says so, so the transport must live
+where every consumer can see it, not just inside the workflow's content.
+Commit the change. `ref-based` mode has no committed anchor, so no refresh
+workflow is installed at all.
+
+On the `branch` transport the side branch is written by ONE path —
+`vyuh-dxkit baseline publish` (which the refresh workflow runs after
+`baseline create --force`). It publishes `.dxkit/baselines/` to `anchorRef`
+via git plumbing (no checkout, working tree untouched), skips the push when
+the anchor already matches, and recreates the branch if it was deleted
+(self-heal). Run it manually after a local `baseline create` to make the new
+capture the one the guardrail reads.
 
 Run `vyuh-dxkit doctor` to check whether your guardrail is actually _enforced_
 (a required check on a protected branch) rather than merely wired, and

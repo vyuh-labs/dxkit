@@ -517,10 +517,11 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
               hint:
                 `The '${anchorStatus.anchorRef}' anchor branch is missing (deleted?). The ` +
                 `branch-transport guardrail reads the committed baseline from it — without it ` +
-                `the gate silently loses its baseline. Recapture the baseline and re-run the ` +
-                `refresh workflow (or push .dxkit/baselines/ to '${anchorStatus.anchorRef}'). ` +
-                `Restrict deletion of that branch to prevent recurrence.`,
-              command: dxkitCli('baseline create --force'),
+                `the gate silently loses its baseline. Recapture (\`${dxkitCli('baseline create --force')}\`) ` +
+                `then run \`${dxkitCli('baseline publish')}\` to recreate the branch (self-heal; ` +
+                `the refresh workflow also does this on its next run). Restrict deletion of ` +
+                `that branch to prevent recurrence.`,
+              command: dxkitCli('baseline publish'),
             },
           }),
     });

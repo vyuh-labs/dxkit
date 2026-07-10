@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vyuh-dxkit baseline publish`** — publish `.dxkit/baselines/` to the anchor
+  side branch on the `branch` anchor transport, through the same canonical
+  side-ref writer report snapshots use (git plumbing: no checkout, working tree
+  untouched, idempotent, recreates a deleted anchor branch). The after-merge
+  refresh workflow now runs this instead of carrying its own inline
+  `git checkout -B` + force-push bash — the push semantics (unchanged-skip,
+  self-heal, non-fast-forward retry) live in one tested implementation.
+  `doctor`'s deleted-anchor warning points at it as the repair.
+
+### Fixed
+
+- **An auto-selected `branch` anchor transport is now recorded in
+  `.dxkit/policy.json`.** The guardrail check reads the side-branch anchor only
+  when the committed policy says `baseline.anchor: "branch"` — but the installer
+  used to keep an enforcement-derived pick only inside the workflow's content,
+  so the refresh published to a side branch the check never read (it gated
+  against a stale tree copy instead). The installer persists the resolved
+  transport (non-clobber; an explicit policy value always wins), and existing
+  installs are healed by the next `init`/`update`. Recording it also stops an
+  `update` run that cannot probe branch protection from wrongly migrating a
+  working branch-transport workflow back to `tree`.
+- **A deleted anchor side branch is recreated even when a stale local
+  `origin/<ref>` still matches its content.** The side-ref writer now confirms
+  the ref exists on the remote before skipping an unchanged publish, so the
+  self-heal can't be suppressed by a leftover remote-tracking ref.
+
 ## [3.0.0] - 2026-07-09
 
 The cross-repo release. dxkit's flow pillar — UI→API integration tracing and the

@@ -1299,6 +1299,33 @@ if [ -n "$RULE16_ORPHANED" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Side-ref push discipline (Rule 2 / Rule 11 for workflow templates) ─────
+# Publishing files to a dxkit side ref (dxkit-baselines, dxkit-reports, …) has
+# ONE implementation: src/baseline/anchor-publish.ts, reached from a workflow
+# via the CLI (`baseline publish` / `report snapshot`). A workflow template
+# that re-implements the push inline — the `git checkout -B` + `git push
+# --force` shape — forks the unchanged-skip/self-heal/idempotence semantics
+# into untested bash (the exact divergence the branch-transport refresh
+# shipped with). Plain `git push` to the DEFAULT branch (the `tree` transport,
+# deep-SAST snapshot commits) is a tracked-file commit, not a side-ref
+# publish, and stays allowed.
+SIDEREF_INLINE_PUSH=""
+for f in src-templates/.github/workflows/*.yml; do
+  hits=$(grep -nE "git checkout -B|git push (--force|-f)( |$)" "$f" 2>/dev/null | grep -v "# side-ref-push-ok" || true)
+  if [ -n "$hits" ]; then
+    SIDEREF_INLINE_PUSH="$SIDEREF_INLINE_PUSH $f"
+  fi
+done
+if [ -n "$SIDEREF_INLINE_PUSH" ]; then
+  echo "❌ Side-ref push violation: a workflow template re-implements the side-ref publish inline:"
+  for f in $SIDEREF_INLINE_PUSH; do echo "     $f"; done
+  echo "   → Publish through the CLI (\`baseline publish\` / \`report snapshot\`), which routes"
+  echo "     through the ONE writer src/baseline/anchor-publish.ts (unchanged-skip + self-heal"
+  echo "     + non-fast-forward retry live there, tested). Annotate '# side-ref-push-ok' on the"
+  echo "     line for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

@@ -10,13 +10,19 @@
  * guardrail check must read the anchor from the side branch, so their verdicts
  * agree — reading a stale tree copy locally is exactly the drift this closes.
  *
- * This module is the single reader of that side branch (`git show
- * origin/<anchorRef>:<path>`), in two flavors:
+ * This module is the single reader AND the single publisher of that side
+ * branch, so the two sides cannot drift (CLAUDE.md Rule 2 — the read and the
+ * write resolve the transport + ref from the SAME policy section):
  *   - `loadAnchorFromBranch` — read-only: writes the anchor to a TEMP file and
  *     returns its path, never touching the working tree (what a `guardrail
  *     check` uses — a read must not mutate a tracked file).
  *   - `hydrateAnchorFromBranch` — materialize the anchor AT `baselinePath` (used
  *     when the tree copy is simply absent, e.g. a CI checkout).
+ *   - `publishBaselineAnchor` — publish `.dxkit/baselines/` to the side branch
+ *     through the canonical side-ref writer (`anchor-publish.ts`), replace-all
+ *     (latest-wins). What `vyuh-dxkit baseline publish` and therefore the
+ *     after-merge refresh workflow run — never an inline `git push` in a
+ *     workflow's bash.
  *
  * Both are scoped to `anchor === 'branch'` and fail-open on any git error (wrong
  * transport, side branch not created yet, offline) returns null/false and the
@@ -29,8 +35,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DEFAULT_ANCHOR_REF } from './modes';
-import { readFromAnchorRef } from './anchor-publish';
-import type { BaselineSection } from './policy';
+import {
+  publishFilesToAnchorRef,
+  readFromAnchorRef,
+  type AnchorFile,
+  type PublishResult,
+} from './anchor-publish';
+import { loadPolicyFromCwd, type BaselineSection } from './policy';
 
 /**
  * Fetch the baseline anchor's content from the side branch. Returns the file
@@ -107,6 +118,116 @@ export interface AnchorBranchStatus {
   anchorRef: string;
   remoteReachable: boolean;
   branchExists: boolean;
+}
+
+/** Outcome of a `baseline publish`. `ok:false` carries `error` (wrong
+ *  transport / nothing captured); a transport failure (no origin, rejected
+ *  push) surfaces on `publish.reason` with `ok:true` left false-ish only via
+ *  `publish.pushed` — the CLI decides loud-vs-quiet per reason. */
+export interface BaselineAnchorPublishOutcome {
+  readonly ok: boolean;
+  readonly anchorRef: string;
+  /** Files published (count of `.dxkit/baselines/` entries). */
+  readonly files: number;
+  /** The side branch was missing on a reachable remote and this publish
+   *  recreated it — the deleted-anchor self-heal path. */
+  readonly selfHealed: boolean;
+  readonly publish?: PublishResult;
+  readonly error?: string;
+}
+
+/** Collect every file under `.dxkit/baselines/` as anchor files (repo-relative
+ *  POSIX paths) — exactly what the guardrail reader resolves off the ref. */
+function collectBaselineFiles(cwd: string): AnchorFile[] {
+  const root = path.join(cwd, '.dxkit', 'baselines');
+  const out: AnchorFile[] = [];
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (e.isFile()) {
+        out.push({
+          path: path.relative(cwd, abs).split(path.sep).join('/'),
+          content: fs.readFileSync(abs, 'utf8'),
+        });
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Publish the on-disk `.dxkit/baselines/` to the anchor side branch —
+ * replace-all (latest-wins), through the ONE side-ref writer. Resolves the
+ * transport + ref from the SAME policy section the guardrail reader uses, so
+ * the two sides cannot disagree about where the anchor lives. Refuses (ok:false)
+ * when the policy transport is not `branch` — publishing to a side branch the
+ * check would never read is exactly the drift this module exists to prevent.
+ *
+ * Idempotent + self-healing via the writer: identical content pushes nothing,
+ * while a deleted side branch is recreated even when the content is unchanged.
+ */
+export function publishBaselineAnchor(
+  cwd: string,
+  sectionOverride?: BaselineSection,
+): BaselineAnchorPublishOutcome {
+  let section = sectionOverride;
+  if (section === undefined) {
+    try {
+      section = loadPolicyFromCwd(cwd).baseline;
+    } catch {
+      section = undefined;
+    }
+  }
+  const anchorRef = section?.anchorRef ?? DEFAULT_ANCHOR_REF;
+  if (section?.anchor !== 'branch') {
+    return {
+      ok: false,
+      anchorRef,
+      files: 0,
+      selfHealed: false,
+      error:
+        "the baseline anchor transport is not 'branch' — set .dxkit/policy.json:baseline.anchor " +
+        "to 'branch' (the guardrail check only reads a side-branch anchor when the policy says so).",
+    };
+  }
+  const files = collectBaselineFiles(cwd);
+  if (files.length === 0) {
+    return {
+      ok: false,
+      anchorRef,
+      files: 0,
+      selfHealed: false,
+      error: 'no baseline captured — run `baseline create` first (.dxkit/baselines/ is empty).',
+    };
+  }
+
+  // Probe BEFORE publishing so a recreated-after-deletion push is reported as
+  // the self-heal it is (doctor's deleted-anchor warning points here as the repair).
+  const before = anchorBranchStatus(cwd, section);
+  const missing = before.remoteReachable && !before.branchExists;
+
+  const publish = publishFilesToAnchorRef({
+    cwd,
+    anchorRef,
+    files,
+    message: 'chore(baseline): refresh anchor',
+    baseParent: false,
+  });
+  return {
+    ok: true,
+    anchorRef,
+    files: files.length,
+    selfHealed: missing && publish.pushed,
+    publish,
+  };
 }
 
 export function anchorBranchStatus(

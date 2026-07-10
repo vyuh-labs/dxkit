@@ -102,6 +102,31 @@ What lands in the file:
 
 The file is JSON-pretty-printed for git-friendly diffs. Commit it.
 
+## `baseline publish`
+
+Publish the on-disk `.dxkit/baselines/` to the anchor side branch — the write
+half of the [`branch` anchor transport](../configuration/policy.md#anchor-transport-committed-modes).
+The transport and branch name resolve from the committed
+`.dxkit/policy.json:baseline` section, the **same source the guardrail check
+reads them from**, so the publish and the read can never disagree about where
+the anchor lives; the command refuses when the policy transport is not
+`branch` (publishing to a branch the check would never read is drift, not a
+feature).
+
+The push goes through dxkit's canonical side-ref writer (git plumbing — no
+checkout, no commit on your current branch, working tree untouched):
+
+- **idempotent** — when the anchor on the side branch already matches, nothing
+  is pushed;
+- **latest-wins** — each publish replaces the branch content with a single
+  orphan commit (no history accretion);
+- **self-healing** — a deleted anchor branch is recreated even when the
+  baseline is byte-identical (`doctor` points here when it detects one).
+
+The after-merge refresh workflow runs this right after `baseline create
+--force`; run it manually after a local capture on a branch-transport repo to
+make the new baseline the one the guardrail reads.
+
 ## `baseline show`
 
 Pretty-print the on-disk baseline. Default: summary line + per-kind
@@ -134,8 +159,11 @@ vyuh-dxkit baseline create --name release
 ## Refreshing the baseline
 
 The `--with-baseline-refresh` flag on `init` installs a GitHub Actions
-workflow that runs `baseline create --force` on every push to `main`
-and auto-commits the updated file with `[skip ci]`. The next PR's
+workflow that runs `baseline create --force` on every push to `main`,
+then stores the result per the anchor transport: on `tree` it
+auto-commits the updated file with `[skip ci]`; on `branch` it runs
+[`baseline publish`](#baseline-publish) to the unprotected side branch
+(no push to `main` at all). The next PR's
 [`guardrail check`](guardrail.md) reads the refreshed anchor without
 manual intervention.
 

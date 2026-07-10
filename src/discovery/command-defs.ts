@@ -236,9 +236,11 @@ export const COMMANDS = [
     id: 'baseline',
     audience: 'user',
     group: 'gate',
-    summary: 'Capture / show per-finding baselines for the guardrail',
+    summary: 'Capture / publish / show per-finding baselines for the guardrail',
     docsBlurb:
-      'Record per-finding identities the guardrail check diffs against to gate net-new regressions.',
+      'Record per-finding identities the guardrail check diffs against to gate net-new ' +
+      'regressions. `baseline publish` pushes the captured anchor to the side branch on the ' +
+      '`branch` anchor transport — the one side-ref write path the refresh workflow runs.',
     whenToRecommend: recommendBaseline,
     planConfig: planBaselineMode,
   },

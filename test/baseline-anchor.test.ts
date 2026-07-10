@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -339,16 +339,63 @@ describe('installCiBaselineRefresh — content per transport (anti-recurrence)',
     expect(r.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
   });
 
-  it('committed + protected → branch variant pushes to the side branch, NEVER to the default branch', () => {
+  it('committed + protected → branch variant publishes via the CLI, NEVER an inline git push', () => {
     installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: PROTECTED });
     const yml = dest();
-    // The anchor ref substitution landed, and the push targets that side branch...
-    expect(yml).toContain(`ANCHOR="${DEFAULT_ANCHOR_REF}"`);
-    expect(yml).toContain('git push --force origin "${ANCHOR}"');
-    // ...and NEVER a bare `git push` (which defaults to the protected branch — the
-    // deadlock) and never a [skip ci] COMMIT (the hack the side branch obviates).
-    expect(yml).not.toMatch(/git push\s*$/m);
+    // The anchor ref substitution landed, and the publish goes through the ONE
+    // side-ref writer (`baseline publish` → anchor-publish.ts), not bespoke bash.
+    expect(yml).toContain(DEFAULT_ANCHOR_REF);
+    expect(yml).toContain('baseline publish');
+    // NO git write of any kind in the workflow body: no push (a bare one targets
+    // the protected branch — the deadlock; a forced one is the inline side-ref
+    // publish this class-fix removed) and no [skip ci] commit.
+    expect(yml).not.toContain('git push');
+    expect(yml).not.toContain('git checkout -B');
     expect(yml).not.toMatch(/-m "[^"]*\[skip ci\]/);
+  });
+
+  it("branch install RECORDS baseline.anchor: 'branch' in policy.json (the reader's activation)", () => {
+    const r = installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+    });
+    const policy = JSON.parse(readFileSync(join(dir, '.dxkit', 'policy.json'), 'utf8'));
+    expect(policy.baseline.anchor).toBe('branch');
+    // Default ref stays implicit — no need to pin what the default already says.
+    expect(policy.baseline.anchorRef).toBeUndefined();
+    expect(r.notes.join('\n')).toMatch(/Recorded baseline\.anchor/);
+  });
+
+  it('a custom anchorRef is recorded alongside the transport', () => {
+    installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+      anchorRef: 'my-anchors',
+    });
+    const policy = JSON.parse(readFileSync(join(dir, '.dxkit', 'policy.json'), 'utf8'));
+    expect(policy.baseline).toEqual({ anchor: 'branch', anchorRef: 'my-anchors' });
+  });
+
+  it('the persist is non-clobber: an explicit policy anchor is never rewritten', () => {
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { anchor: 'cache' }, loop: { preset: 'security-only' } }),
+    );
+    installCiBaselineRefresh(dir, {
+      baselineMode: 'committed-full',
+      enforcement: PROTECTED,
+      policyAnchor: 'branch', // explicit override for this install call
+    });
+    const policy = JSON.parse(readFileSync(join(dir, '.dxkit', 'policy.json'), 'utf8'));
+    // The file's explicit value survives; sibling sections untouched.
+    expect(policy.baseline.anchor).toBe('cache');
+    expect(policy.loop.preset).toBe('security-only');
+  });
+
+  it('a tree install records nothing (pinning tree would disable the tree→branch auto-migration)', () => {
+    installCiBaselineRefresh(dir, { baselineMode: 'committed-full', enforcement: UNPROTECTED });
+    expect(existsSync(join(dir, '.dxkit', 'policy.json'))).toBe(false);
   });
 
   it('committed + unprotected → tree variant (the original direct-push refresh)', () => {
@@ -388,7 +435,7 @@ describe('installCiBaselineRefresh — content per transport (anti-recurrence)',
     });
     expect(r.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
     expect(r.notes.join('\n')).toMatch(/Migrated the baseline-refresh workflow from the 'tree'/);
-    expect(dest()).toContain(`ANCHOR="${DEFAULT_ANCHOR_REF}"`);
+    expect(dest()).toContain('baseline publish');
   });
 
   it('does NOT rewrite an up-to-date workflow (migration fires only on a transport change)', () => {
@@ -467,6 +514,25 @@ describe('detectInstalledRefreshTransport', () => {
       policyAnchor: 'cache',
     });
     expect(detectInstalledRefreshTransport(dir)).toBe('cache');
+  });
+  it("classifies a LEGACY branch workflow (pre-CLI inline push) as 'branch', not 'tree'", () => {
+    // The pre-3.1 branch template pushed inline. An update must read it as
+    // 'branch' so the refresh is a plain template refresh, not a spurious
+    // transport migration.
+    mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(
+      join(dir, '.github', 'workflows', 'dxkit-baseline-refresh.yml'),
+      [
+        'jobs:',
+        '  refresh:',
+        '    steps:',
+        '      - run: |',
+        '          ANCHOR="dxkit-baselines"',
+        '          git checkout -B "${ANCHOR}"',
+        '          git push --force origin "${ANCHOR}"',
+      ].join('\n'),
+    );
+    expect(detectInstalledRefreshTransport(dir)).toBe('branch');
   });
 });
 
