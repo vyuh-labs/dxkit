@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-07-10
+
+The anchor-integrity release. The guardrail's memory — the committed baseline
+anchor — now has one write path, a policy-recorded transport every consumer
+agrees on, and deletion protection: prevent, detect, and heal for the
+deleted-anchor class.
+
 ### Added
 
 - **`vyuh-dxkit baseline publish`** — publish `.dxkit/baselines/` to the anchor
