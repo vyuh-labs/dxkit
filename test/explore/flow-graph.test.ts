@@ -56,7 +56,7 @@ function model(calls: ClientCall[], routes: RouteEndpoint[]): FlowModel {
       reason: r ? ('exact' as const) : ('no-route' as const),
     };
   });
-  return { calls, routes, bindings };
+  return { calls, routes, bindings, dynamicCalls: [] };
 }
 
 /** A tiny indexed base graph with one function node in web/List.tsx. */

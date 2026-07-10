@@ -52,10 +52,24 @@ export interface RouteEndpoint {
   readonly line: number;
 }
 
+/** A RECOGNIZED client call site whose URL is built dynamically — the extractor
+ *  saw `fetch(...)` / an allowlisted `api.get(...)` but the first argument is
+ *  not a literal, so there is nothing to join. Counted (never silently
+ *  dropped): these are the calls flow admits it cannot verify. The precision
+ *  guard's rejections (a non-HTTP `map.get(key)`) are NOT in this set — that
+ *  is filtering working, not a blind spot. */
+export interface DynamicCallSite {
+  readonly receiver: string;
+  readonly file: string;
+  readonly line: number;
+}
+
 /** Both HTTP surfaces extracted from one file. */
 export interface FileFlow {
   readonly calls: ClientCall[];
   readonly routes: RouteEndpoint[];
+  /** Recognized-but-unextractable call sites (see {@link DynamicCallSite}). */
+  readonly dynamicCalls?: DynamicCallSite[];
 }
 
 const HTTP_VERB_METHODS = new Set([
@@ -166,6 +180,7 @@ export function extractFromTree(
 ): FileFlow {
   const calls: ClientCall[] = [];
   const routes: RouteEndpoint[] = [];
+  const dynamicCalls: DynamicCallSite[] = [];
 
   // ── file-convention routes (Next.js App Router / SvelteKit) ──
   // The served URL is derived from the handler file's LOCATION, so this needs
@@ -240,6 +255,10 @@ export function extractFromTree(
           file,
           line: line(node),
         });
+      } else {
+        // A known client with a dynamically-built URL — count it (coverage
+        // honesty), don't silently drop it.
+        dynamicCalls.push({ receiver: callee.text, file, line: line(node) });
       }
       return;
     }
@@ -279,6 +298,8 @@ export function extractFromTree(
         if (!baseOk) return;
         const raw = literalText(firstNamedArg(node));
         // Unallowlisted receiver → require a URL-looking literal (precision guard).
+        // That rejection is FILTERING (a non-HTTP map.get), not a blind spot,
+        // so it is deliberately not counted as dynamic.
         if (!methodCallBases && !looksLikeUrlLiteral(raw)) return;
         const method = normalizeMethod(verb, hf.methodAliases);
         if (raw != null && method) {
@@ -290,12 +311,16 @@ export function extractFromTree(
             file,
             line: line(node),
           });
+        } else if (raw == null && method) {
+          // An ALLOWLISTED client receiver with a dynamic URL — a call flow
+          // recognizes but cannot verify. Counted, not silently dropped.
+          dynamicCalls.push({ receiver, file, line: line(node) });
         }
       }
     }
   });
 
-  return { calls, routes };
+  return { calls, routes, dynamicCalls };
 }
 
 /**

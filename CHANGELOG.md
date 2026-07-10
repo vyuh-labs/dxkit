@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Flow coverage honesty: green no longer masquerades as complete.** The
+  extractor now counts the client call sites it recognizes but cannot verify —
+  a `fetch(...)`/allowlisted client whose URL is built at runtime — instead of
+  silently dropping them. `doctor`'s flow section reports
+  `extracted/seen call sites statically verifiable` with the unverifiable
+  locations, a path-anchoring distribution (exact / templated / opaque), and a
+  standing blind-spot note (dynamic URLs, GraphQL out of scope); the flow
+  console header discloses the same count. Precision-guard rejections (a
+  non-HTTP `map.get`) are deliberately NOT counted — that is filtering
+  working, not a blind spot.
 - **Flow-contract staleness is disclosed, not silent.** `flow publish` now
   records the commit each participant's routes were gathered at onto the
   committed `served.json` (additive; snapshots stay schema v1). `doctor`

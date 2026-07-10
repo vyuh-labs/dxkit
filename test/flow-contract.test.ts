@@ -47,7 +47,7 @@ function route(over: Partial<RouteEndpoint>): RouteEndpoint {
   };
 }
 function model(calls: ClientCall[], routes: RouteEndpoint[]): FlowModel {
-  return { calls, routes, bindings: [] };
+  return { calls, routes, bindings: [], dynamicCalls: [] };
 }
 
 let tmpDir: string;

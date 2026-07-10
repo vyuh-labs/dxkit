@@ -57,6 +57,9 @@ export interface FlowConsoleInput {
    *  populated in `diff` scope. */
   readonly broken: readonly ConsoleEndpoint[];
   readonly totals: { readonly endpoints: number; readonly bindings: number };
+  /** Coverage honesty for the header: recognized call sites whose URL is
+   *  dynamic — present in the code, absent from this console (unverifiable). */
+  readonly dynamicCallSites?: number;
   /** The bundled vis-network source, or '' to omit the interactive map (the
    *  request runner still works). Injected by the CLI (I/O), so the builder
    *  stays pure. */
@@ -132,6 +135,13 @@ export function buildFlowConsole(input: FlowConsoleInput): string {
 
   // The broken-integrations section only makes sense for a diffed view (the
   // gate needs a base to diff against). In full scope it is omitted entirely.
+  // Coverage honesty in the header: this console shows what static extraction
+  // can see; say plainly what it can't, so "all green" is never over-read.
+  const coverageNote =
+    input.dynamicCallSites && input.dynamicCallSites > 0
+      ? `<div class="dx-safety">${input.dynamicCallSites} recognized call site(s) build their URL at runtime and are not shown here — flow cannot statically verify them (\`doctor --json\` lists their locations under flow.coverage).</div>\n`
+      : '';
+
   const brokenSection =
     input.scope === 'diff'
       ? `  <div class="dx-section-h">Net-new broken integrations</div>
@@ -176,6 +186,7 @@ export function buildFlowConsole(input: FlowConsoleInput): string {
   <div class="stat"><b>${input.totals.bindings}</b><span>UI→API bindings</span></div>
   <div class="stat"><b>${scopedCount}</b><span>in this view</span></div>
 </div>
+${coverageNote}
 
 <div id="dx-graph"></div>
 

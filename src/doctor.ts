@@ -1064,6 +1064,28 @@ function renderFlowSection(flow: FlowDiagnosis): void {
   );
   logger.dim(`  ${flow.connection.note}`);
 
+  // Coverage honesty: green ≠ complete. Say what the extractor saw but cannot
+  // verify, so nobody mistakes "0 unresolved" for "every integration checked".
+  const cov = flow.coverage;
+  if (cov.dynamic > 0) {
+    logger.warn(
+      `coverage: ${cov.extracted}/${cov.callSitesSeen} call sites statically verifiable — ` +
+        `${cov.dynamic} build their URL at runtime and are NOT checked:`,
+    );
+    for (const d of cov.dynamicSites.slice(0, CAP)) {
+      logger.dim(`  • ${d.receiver}(…dynamic…)  ${d.file}:${d.line}`);
+    }
+    if (cov.dynamicSites.length > CAP) {
+      logger.dim(`  … and ${cov.dynamicSites.length - CAP} more`);
+    }
+  }
+  if (cov.paths.opaque > 0) {
+    logger.dim(
+      `  ${cov.paths.opaque} extracted path(s) start with a placeholder — too generic to ever block on (warn-only).`,
+    );
+  }
+  logger.dim(`  ${cov.note}`);
+
   if (flow.unresolved.length > 0) {
     logger.warn(`${flow.unresolved.length} unresolved call(s):`);
     for (const u of flow.unresolved.slice(0, CAP)) {

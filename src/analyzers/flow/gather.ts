@@ -51,6 +51,7 @@ function relabelFileFlow(flow: FileFlow, base: string): FileFlow {
   return {
     calls: flow.calls.map((c) => ({ ...c, file: rel(c.file) })),
     routes: flow.routes.map((r) => ({ ...r, file: rel(r.file) })),
+    dynamicCalls: (flow.dynamicCalls ?? []).map((d) => ({ ...d, file: rel(d.file) })),
   };
 }
 

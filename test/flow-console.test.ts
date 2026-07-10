@@ -77,6 +77,15 @@ describe('buildFlowConsole', () => {
     expect(html).toMatch(/never (committed|prod)/i);
   });
 
+  it('discloses unverifiable (dynamic-URL) call sites in the header, silent when zero', () => {
+    const withDynamic = buildFlowConsole(input({ dynamicCallSites: 3 }));
+    expect(withDynamic).toContain('3 recognized call site(s) build their URL at runtime');
+    const clean = buildFlowConsole(input({ dynamicCallSites: 0 }));
+    expect(clean).not.toContain('build their URL at runtime');
+    const absent = buildFlowConsole(input());
+    expect(absent).not.toContain('build their URL at runtime');
+  });
+
   it('shows the broken-integrations section only in diff scope', () => {
     expect(buildFlowConsole(input({ scope: 'full' }))).not.toContain('id="dx-broken"');
     const diff = buildFlowConsole(
