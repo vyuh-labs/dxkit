@@ -38,7 +38,7 @@ vyuh-dxkit upgrade --plan --json    # structured output for dxkit-update skill
 vyuh-dxkit upgrade --yes
 
 # Pin to a specific version
-vyuh-dxkit upgrade --target=2.5.5 --yes
+vyuh-dxkit upgrade --target=3.1.0 --yes
 
 # Print the commands without executing
 vyuh-dxkit upgrade --yes --dry-run
@@ -64,15 +64,15 @@ vyuh-dxkit upgrade --yes --dry-run
   "generatedAt": "2026-05-21T22:00:00.000Z",
   "cwd": "/path/to/your/repo",
   "current": {
-    "binary": "2.5.1", // installed binary version (via npx vyuh-dxkit --version)
-    "scaffold": "2.5.1" // scaffold version recorded in manifest
+    "binary": "3.0.0", // installed binary version (via npx vyuh-dxkit --version)
+    "scaffold": "3.0.0" // scaffold version recorded in manifest
   },
-  "target": "2.5.2", // resolved target (latest or --target)
+  "target": "3.1.0", // resolved target (latest or --target)
   "delta": "patch", // none | patch | minor | major | downgrade
   "steps": [
     {
-      "command": "npm install @vyuhlabs/dxkit@2.5.2",
-      "purpose": "Install dxkit binary 2.5.1 → 2.5.2"
+      "command": "npm install @vyuhlabs/dxkit@3.1.0",
+      "purpose": "Install dxkit binary 3.0.0 → 3.1.0"
     },
     {
       "command": "npx vyuh-dxkit update",
@@ -98,8 +98,8 @@ vyuh-dxkit upgrade --yes --dry-run
 | `delta`     | When                        | Recommended path                                                                    |
 | ----------- | --------------------------- | ----------------------------------------------------------------------------------- |
 | `none`      | Current = target. No-op.    | Nothing to do.                                                                      |
-| `patch`     | 2.5.1 → 2.5.2               | Low risk. Run `--yes` directly.                                                     |
-| `minor`     | 2.5.x → 2.6.0               | Probably safe. Check changelog for new features + scaffold changes.                 |
+| `patch`     | 3.1.0 → 3.1.1               | Low risk. Run `--yes` directly.                                                     |
+| `minor`     | 3.1.x → 3.2.0               | Probably safe. Check changelog for new features + scaffold changes.                 |
 | `major`     | 2.x.x → 3.0.0               | Read CHANGELOG.md for breaking changes BEFORE upgrading.                            |
 | `downgrade` | Target older than installed | Not officially supported. Schemas may differ. Surfaces warning; never auto-execute. |
 
