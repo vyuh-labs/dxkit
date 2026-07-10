@@ -47,6 +47,8 @@ import {
   installCiDeepSastRefresh,
   installCiGraphRefresh,
   graphRefreshEnabled,
+  installCiReportsRefresh,
+  reportsRefreshEnabled,
   installCiGuardrails,
   installDevcontainer,
   installDxkitDevDependency,
@@ -68,6 +70,7 @@ type PrimaryFlag =
   | 'withPrReview'
   | 'withDeepSastRefresh'
   | 'withGraphRefresh'
+  | 'withReportsRefresh'
   | 'withClaudeLoop';
 
 /**
@@ -254,6 +257,18 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-graph-refresh.yml'),
   },
   {
+    // On-merge report snapshots (opt-in via policy.json:reports.onMerge).
+    // Presence uninstall detection cleans up installs made before the flag was
+    // stamped, same as graph-refresh.
+    id: 'ci-reports-refresh',
+    gate: { kind: 'flag', flag: 'withReportsRefresh' },
+    artifacts: () => ['.github/workflows/dxkit-reports-refresh.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiReportsRefresh(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-reports-refresh.yml'),
+  },
+  {
     // Loop pack: Stop-gate hook in .claude/settings.json + a CLAUDE.md loop
     // block + a policy.json preset — all merges into user files, reverted
     // elsewhere, so no delete artifacts. Present here so update refreshes the
@@ -316,6 +331,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
     withCiPushTrigger: guardrailsHasPushTrigger(cwd),
     withDeepSastRefresh: false,
     withGraphRefresh: false,
+    withReportsRefresh: false,
   };
   for (const surface of MANAGED_SHIP_SURFACES) {
     if (surface.gate.kind === 'flag' && surface.detectPresent) {
@@ -326,6 +342,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
   // "cache"` but hasn't installed the workflow yet must still be treated as
   // enabled — otherwise `update` would never lay it down. Presence OR policy.
   flags.withGraphRefresh = flags.withGraphRefresh || graphRefreshEnabled(cwd);
+  flags.withReportsRefresh = flags.withReportsRefresh || reportsRefreshEnabled(cwd);
   return flags;
 }
 

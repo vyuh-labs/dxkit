@@ -161,6 +161,7 @@ export interface ManifestInstallFlags {
    *  `dxkit-graph-refresh.yml` filename), and update refreshes once the flag is
    *  stamped on the next init/update. */
   withGraphRefresh?: boolean;
+  withReportsRefresh?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

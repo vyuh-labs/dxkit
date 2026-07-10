@@ -212,9 +212,12 @@ export const COMMANDS = [
     id: 'report',
     audience: 'user',
     group: 'assess',
-    summary: 'Run every analyzer + dashboard in one shot (full audit)',
+    summary: 'Full audit (report), or publish/read a score snapshot (report snapshot|history)',
     docsBlurb:
-      'One command to run all analyzers and render the dashboard — the full-audit entry point.',
+      'One command to run all analyzers and render the dashboard — the full-audit entry point. ' +
+      '`report snapshot` publishes a per-merge score snapshot to the dxkit-reports ref; ' +
+      '`report history` renders the score-over-time trend. Automate snapshots on merge with ' +
+      '`policy.json:reports.onMerge` (the dxkit-reports-refresh workflow).',
     skill: 'dxkit-reports',
   },
   {

@@ -760,6 +760,25 @@ export function graphRefreshEnabled(cwd: string): boolean {
   }
 }
 
+/** Install the on-merge report-snapshot workflow (opt-in via
+ *  `policy.json:reports.onMerge`). Stack-aware + default-branch substitution,
+ *  mirror of the graph-refresh installer. */
+export function installCiReportsRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  return installWorkflow(cwd, 'dxkit-reports-refresh.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+  });
+}
+
+/** Whether report snapshots on merge are enabled in policy. */
+export function reportsRefreshEnabled(cwd: string): boolean {
+  try {
+    return loadPolicyFromCwd(cwd).reports?.onMerge === true;
+  } catch {
+    return false;
+  }
+}
+
 export function installCiDeepSastRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-deep-sast-refresh.yml', opts);
   if (result.installed.length > 0) {
