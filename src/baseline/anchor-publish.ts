@@ -19,6 +19,9 @@
  * current `origin/<ref>` tip, so unchanged files persist and history accrues
  * (reports append `report-history.jsonl` + refresh `latest/`); `false` writes an
  * orphan single-parentless commit (replace-all, the baseline latest-wins model).
+ * Both modes skip the push when the tree they would write already matches the
+ * remote tip (idempotent refresh) — and because a deleted ref has no tip, a
+ * republish after deletion always goes through (self-heal), even byte-identical.
  * `removePaths` deletes entries (report snapshot pruning). A non-fast-forward
  * push (a concurrent merge advanced the ref) is retried once against the new tip.
  */
@@ -90,6 +93,16 @@ export function readFromAnchorRef(cwd: string, anchorRef: string, relPath: strin
   return null;
 }
 
+/** Does the ref exist on the REMOTE right now? `null` when unknown (offline /
+ *  no ls-remote) — used only to veto the no-change skip, never to fail. */
+function remoteRefExists(git: (args: string[]) => string, anchorRef: string): boolean | null {
+  try {
+    return git(['ls-remote', '--heads', 'origin', anchorRef]).trim().length > 0;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve the tree-ish + commit of the current side-ref tip, or null if absent. */
 function resolveTip(
   git: (args: string[]) => string,
@@ -147,18 +160,19 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
 
     const buildAndPush = (): PublishResult => {
       const baseParent = opts.baseParent !== false;
-      if (baseParent) {
-        // Refresh the remote-tracking ref so `resolveTip` bases the commit on the
-        // TRUE remote tip — a prior push-by-refspec doesn't reliably update the
-        // local `origin/<ref>` on every git version, and this also picks up a
-        // concurrent merge's advance before we build.
-        try {
-          git(['fetch', '--depth=1', 'origin', anchorRef]);
-        } catch {
-          /* first publish (ref absent) / offline — resolveTip returns null */
-        }
+      // Refresh the remote-tracking ref so `resolveTip` sees the TRUE remote
+      // tip — a prior push-by-refspec doesn't reliably update the local
+      // `origin/<ref>` on every git version, and this also picks up a
+      // concurrent merge's advance before we build. Both modes need it:
+      // accumulate bases the commit on it, replace-all compares against it for
+      // the no-change skip below.
+      try {
+        git(['fetch', '--depth=1', 'origin', anchorRef]);
+      } catch {
+        /* first publish (ref absent) / offline — resolveTip returns null */
       }
-      const tip = baseParent ? resolveTip(git, anchorRef) : null;
+      const remoteTip = resolveTip(git, anchorRef);
+      const tip = baseParent ? remoteTip : null;
 
       // Seed the temp index from the base tree (accumulate) or empty (orphan).
       if (tip) git(['read-tree', tip.tree]);
@@ -179,8 +193,16 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       }
 
       const tree = git(['write-tree']).trim();
-      // No change vs the base tree → nothing to publish (idempotent refresh).
-      if (tip && tree === tip.tree) {
+      // No change vs the remote tip's tree → nothing to publish (idempotent
+      // refresh). This applies in BOTH modes: replace-all compares the orphan
+      // tree it would write against what's already on the ref, so a periodic
+      // refresh with identical content pushes nothing. Before skipping, confirm
+      // the ref still EXISTS on the remote: `resolveTip` falls back to a stale
+      // local `origin/<ref>` when the fetch fails, and a fetch fails both when
+      // offline AND when the remote branch was deleted — in the deleted case a
+      // byte-identical republish must still push (the self-heal path), or the
+      // anchor stays gone until the content next changes.
+      if (remoteTip && tree === remoteTip.tree && remoteRefExists(git, anchorRef) !== false) {
         return { pushed: false, commit: null, reason: 'no change' };
       }
       const commitArgs = ['commit-tree', tree, '-m', opts.message];

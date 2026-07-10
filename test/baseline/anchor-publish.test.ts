@@ -143,6 +143,56 @@ describe('publishFilesToAnchorRef', () => {
     expect(git(bare, 'log', '--oneline', ANCHOR).trim().split('\n')).toHaveLength(1);
   });
 
+  it('replace-all is idempotent too: identical content pushes nothing', () => {
+    const files = [{ path: 'a.txt', content: '1' }];
+    publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: ANCHOR,
+      files,
+      baseParent: false,
+      message: 'a',
+    });
+    const res = publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: ANCHOR,
+      files,
+      baseParent: false,
+      message: 'a again',
+    });
+    expect(res.pushed).toBe(false);
+    expect(res.reason).toBe('no change');
+    // Still exactly one commit on the ref — the periodic refresh didn't churn it.
+    expect(git(bare, 'log', '--oneline', ANCHOR).trim().split('\n')).toHaveLength(1);
+  });
+
+  it('replace-all self-heals: a deleted ref is recreated even when content is byte-identical', () => {
+    const files = [{ path: 'a.txt', content: '1' }];
+    publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: ANCHOR,
+      files,
+      baseParent: false,
+      message: 'a',
+    });
+    // The side branch gets deleted on the remote (the failure class doctor's
+    // deleted-anchor warning detects). The
+    // local remote-tracking ref still remembers the old tip — the hard case:
+    // resolveTip falls back to it (the fetch of a deleted ref fails), the tree
+    // compares equal, and a naive no-change skip would leave the branch gone
+    // until the content next changes. The writer must confirm the ref still
+    // exists on the REMOTE before skipping.
+    git(bare, 'update-ref', '-d', `refs/heads/${ANCHOR}`);
+    const res = publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: ANCHOR,
+      files,
+      baseParent: false,
+      message: 'recreate',
+    });
+    expect(res.pushed).toBe(true);
+    expect(readFromAnchorRef(repo, ANCHOR, 'a.txt')).toBe('1');
+  });
+
   it('returns pushed:false with a reason when there is no origin remote', () => {
     const noRemote = mkdtempSync(join(tmpdir(), 'dxkit-anchor-noremote-'));
     try {
