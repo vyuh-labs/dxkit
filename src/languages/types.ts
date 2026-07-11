@@ -425,13 +425,16 @@ export interface ModelSchemaSupport {
    * Field-initializer callees that carry the field's type and optionality
    * (ORM column constructors): `models.CharField(max_length=…, null=True)`,
    * `Column(String, nullable=False)`, `db.Column(db.Integer)`. Matched on
-   * the callee's trailing segment. The callee name becomes the field's type
-   * token (folded through `typeAliases`); `optionalityKeyword` names the
-   * keyword argument that carries optionality and `optionalityPolarity` its
-   * meaning (`'nullable'`: true ⇒ optional; `'required'`: true ⇒ required).
+   * the callee's trailing segment. `typeFrom` says where the type token
+   * lives: `'callee'` (Django — `CharField` IS the type; the default) or
+   * `'firstArg'` (SQLAlchemy — `Column(String, …)`); the token is folded
+   * through `typeAliases`. `optionalityKeyword` names the keyword argument
+   * that carries optionality and `optionalityPolarity` its meaning
+   * (`'nullable'`: true ⇒ optional; `'required'`: true ⇒ required).
    */
   fieldCallees?: Array<{
     names: string[];
+    typeFrom?: 'callee' | 'firstArg';
     optionalityKeyword?: string;
     optionalityPolarity?: 'nullable' | 'required';
   }>;
