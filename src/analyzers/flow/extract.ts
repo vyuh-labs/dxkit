@@ -42,6 +42,7 @@ import {
   type ServedMethod,
 } from './normalize';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
+import { extractDecoratorRoutes } from './extract-decorators';
 
 /** An outbound HTTP call found in source (the consumed side). */
 export interface ClientCall {
@@ -142,28 +143,6 @@ function fetchMethod(call: Node, shape: GrammarShape, hf: HttpFlowSupport): Http
 }
 
 /**
- * The handler name a route decorator is attached to (best-effort). Decorators
- * are siblings preceding the definition, so the handler is the decorator's
- * next named sibling (skipping any stacked decorators); a nested grammar shape
- * is handled by an ancestor fallback over the shape's definition node types.
- */
-function decoratedHandlerName(decorator: Node, shape: GrammarShape): string | null {
-  let sib: Node | null = decorator.nextNamedSibling;
-  while (sib && shape.decoratorNodes.includes(sib.type)) sib = sib.nextNamedSibling;
-  const sibName = sib?.childForFieldName('name');
-  if (sibName) return sibName.text;
-  let cur: Node | null = decorator.parent;
-  for (let i = 0; cur && i < 3; i++) {
-    if (shape.functionNodes.includes(cur.type)) {
-      const name = cur.childForFieldName('name');
-      if (name) return name.text;
-    }
-    cur = cur.parent;
-  }
-  return null;
-}
-
-/**
  * Extract both HTTP surfaces from one already-parsed tree using a pack's
  * httpFlow descriptor (WHAT is HTTP) and the grammar's shape (HOW to read the
  * tree). Pure over its inputs.
@@ -210,13 +189,8 @@ export function extractFromTree(
   const clientCallees = new Set(hf.clientCallees ?? []);
   const methodCallMethods = new Set(hf.clientMethodCallees?.methods ?? []);
   const methodCallBases = hf.clientMethodCallees?.bases;
-  const routeDecorators = new Set(hf.routeDecorators ?? []);
   const routerMethods = new Set(hf.routeRouterCallees?.methods ?? []);
   const routerBases = hf.routeRouterCallees?.bases ?? [];
-  const memberDecorators = hf.routeMemberDecorators;
-  const memberDecoratorMethods = new Set(memberDecorators?.methods ?? []);
-  const pathDecorators = hf.routePathDecorators;
-  const pathDecoratorNames = new Set(pathDecorators?.names ?? []);
   const routeCalleeNames = new Set(hf.routeCallees?.names ?? []);
   const routeCalleeMemberNames = new Set(hf.routeCallees?.memberNames ?? []);
   const routeCalleeExcludes = new Set(hf.routeCallees?.excludeArgCallees ?? []);
@@ -233,88 +207,10 @@ export function extractFromTree(
     return s;
   };
 
-  /** The route path of a member/path decorator — its first string argument,
-   *  REQUIRED to begin with `/` once unquoted. FastAPI/Flask/Sanic mandate the
-   *  leading slash, and requiring it is the precision guard that keeps
-   *  look-alike member decorators (`@mock.patch('pkg.attr')`) from minting
-   *  phantom routes. (Bare `routeDecorators` keep their historical exemption —
-   *  LoopBack allows `@post('zen/x')`.) */
-  const slashedDecoratorPath = (call: Node): string | null => {
-    const raw = literalText(shape.firstArg(call));
-    if (raw == null) return null;
-    let s = raw.trim();
-    if (s.length >= 2 && /^['"`]/.test(s) && s.endsWith(s[0])) s = s.slice(1, -1);
-    if (!s.startsWith('/')) return null;
-    return normalizePath(raw, config);
-  };
-
-  /** The declared methods of a path-first decorator (`methods=['GET','POST']`),
-   *  read from its keyword argument; absent → the descriptor's defaults. */
-  const pathDecoratorMethods = (call: Node): HttpMethod[] => {
-    const spec = pathDecorators as NonNullable<typeof pathDecorators>;
-    const value = shape.optionValue(call, spec.methodsKeyword);
-    const tokens = value ? shape.listStrings(value).map((s) => s.replace(/['"`]/g, '')) : [];
-    const source = tokens.length > 0 ? tokens : spec.defaultMethods;
-    return source
-      .map((t) => normalizeMethod(t, hf.methodAliases))
-      .filter((m): m is HttpMethod => m !== null);
-  };
-
   walk(root, (node) => {
     // ── decorator routes: @get('/x') / @app.get('/x') / @app.route('/x', methods=[...]) ──
     if (shape.decoratorNodes.includes(node.type)) {
-      const call = shape.decoratorCall(node);
-      const callee = call ? shape.resolveCall(call) : null;
-      if (call && callee?.kind === 'bare' && routeDecorators.has(callee.name)) {
-        const path = normalizePath(literalText(shape.firstArg(call)), config);
-        const method = normalizeMethod(callee.name, hf.methodAliases);
-        if (path && method) {
-          routes.push({
-            method,
-            path,
-            via: 'decorator',
-            handler: decoratedHandlerName(node, shape),
-            file,
-            line: line(node),
-          });
-        }
-      } else if (
-        call &&
-        callee?.kind === 'member' &&
-        memberDecorators &&
-        memberDecoratorMethods.has(callee.name) &&
-        (memberDecorators.bases === undefined ||
-          receiverMatchesBase(callee.receiver, memberDecorators.bases))
-      ) {
-        // MEMBER-callee verb decorator: FastAPI `@app.get('/x')`.
-        const path = slashedDecoratorPath(call);
-        const method = normalizeMethod(callee.name, hf.methodAliases);
-        if (path && method) {
-          routes.push({
-            method,
-            path,
-            via: 'decorator',
-            handler: decoratedHandlerName(node, shape),
-            file,
-            line: line(node),
-          });
-        }
-      } else if (call && callee && pathDecorators && pathDecoratorNames.has(callee.name)) {
-        // PATH-first decorator with a methods keyword: Flask `@app.route(...)`.
-        const path = slashedDecoratorPath(call);
-        if (path) {
-          for (const method of pathDecoratorMethods(call)) {
-            routes.push({
-              method,
-              path,
-              via: 'decorator',
-              handler: decoratedHandlerName(node, shape),
-              file,
-              line: line(node),
-            });
-          }
-        }
-      }
+      routes.push(...extractDecoratorRoutes(node, shape, hf, file, line(node), config));
       // A decorator's call is a route declaration, never a client call — skip
       // the subtree so `@app.get('/x')`'s inner member call isn't double-read
       // as an outbound `app.get(...)`.
