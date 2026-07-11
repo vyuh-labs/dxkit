@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`@vyuhlabs/dxkit-sdk`: the frozen extension surface (types-first).**
+  A new sibling package publishes the contract extensions build against:
+  the declarative descriptor language (`HttpFlowSupport`,
+  `FileRouteSupport`, `ModelSchemaSupport`), grammar-shape access types
+  (`GrammarShape`, `GrammarModelShape`, `ResolvedCall`), the versioned
+  extension wire schemas (`contract.v1`, `inventory.v1`, `findings.v1`,
+  `export.v1`, plus the `ExtensionManifest` shape), the shared URL/method
+  normalizer (`normalizePath`, `normalizeMethod`, `bindingKey`, catch-all
+  helpers), and the AST access shapes (`ParsedFile`, `walk`,
+  `ParseFileFn`/`ParseSourceFn`). The main package now depends on the SDK
+  and re-exports these symbols, so dxkit and every extension share one
+  definition of every frozen shape. Additive-only within an SDK major;
+  shipped wire-schema versions are read forever. The surface is pinned by
+  a three-layer freeze net (runtime export snapshot, re-export reference
+  identity, compile-time structural pins) plus an architecture gate that
+  keeps the SDK self-contained and frozen names single-definition. The
+  extension orchestrator and plugin runtime land in later minors; see
+  `docs/extension-sdk.md`.
+
 ## [3.4.0] - 2026-07-11
 
 ### Added

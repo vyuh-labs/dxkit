@@ -998,6 +998,57 @@ anything but the committed policy / a pack lint provider.
    the one entry point; the `recommendChecks` doctor probe fires on a lint
    signal and goes silent once policy opts in.
 
+### 18. The frozen extension surface lives in `packages/dxkit-sdk`
+
+`@vyuhlabs/dxkit-sdk` is the extension SDK: the descriptor language
+(`HttpFlowSupport`, `FileRouteSupport`, `ModelSchemaSupport`), grammar-shape
+access types (`GrammarShape`, `GrammarModelShape`, `ResolvedCall`), the
+extension wire schemas (`contract.v1` / `inventory.v1` / `findings.v1` /
+`export.v1` + `ExtensionManifest`), the ONE URL/method normalizer
+(`normalizePath`, `normalizeMethod`, `bindingKey`, catch-all helpers), and
+the AST access shapes (`ParsedFile`, `walk`). The main package DEPENDS on
+the SDK and re-exports (`src/languages/types.ts`, `src/ast/grammar-shape.ts`,
+`src/ast/grammar-model-shape.ts`, `src/analyzers/flow/normalize.ts`,
+`src/ast/parse.ts` are the bridges) — so dxkit and every extension share one
+definition of every frozen shape, and the freeze is structural, not
+documentation.
+
+Rules, both directions:
+
+- **The SDK is self-contained.** Nothing under `packages/dxkit-sdk/src`
+  imports main-package internals or node builtins (`web-tree-sitter` types
+  and same-package relative imports only). If the surface needs a concept,
+  MOVE it into the SDK and re-export from main — never leak internals in.
+- **One definition per frozen name.** A frozen type or helper re-declared in
+  `src/` (instead of imported + re-exported) forks the concept; the arch
+  gate catches the declaration shape and the freeze test catches the
+  reference identity.
+- **Additive-only within an SDK major.** Removing/renaming a frozen export
+  is an SDK major bump. Growing the surface = updating the freeze test's
+  export list + a changelog entry, deliberately.
+- **Deliberate non-exports stay out**: `DepVulnsProvider` freezes IN PLACE
+  (a pack contract entangled with the internal `LanguageId` union — pinned
+  structurally by the freeze test; extensions contribute dep findings via
+  `findings.v1`); finding identity/fingerprints are computed only by dxkit
+  (Rule 9), never by an extension; the pack-id union and registries stay
+  internal.
+- **Release ordering**: the main package's SDK dependency must resolve on
+  npm before a main release that raises its floor — publish `dxkit-sdk@vX.Y.Z`
+  (its own tag-scoped workflow) first, then dxkit. CI smokes the tarball
+  PAIR so PRs never depend on unpublished registry state.
+
+#### SDK-boundary enforcement
+
+1. **`scripts/check-architecture.sh` Rule 18**: (a) no import in
+   `packages/dxkit-sdk/src` beyond `web-tree-sitter` + same-package
+   relatives; (b) no line-start re-declaration of a frozen name in `src/`.
+   Annotate `// rule18-sdk-ok` for justified exceptions (rare).
+2. **`test/sdk-surface-freeze.test.ts`**: exact runtime export-name
+   snapshot, reference-identity of main's re-exports (one code path),
+   compile-time structural pins for every frozen type including the
+   in-place `DepVulnsProvider` fields, wire-schema id registry pinned
+   append-only, and `SDK_MAJOR` ↔ package version agreement.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

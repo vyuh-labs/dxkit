@@ -51,6 +51,19 @@ jobs:
           echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
           echo "Built tarball: ${tarball}"
 
+      # The main package depends on @vyuhlabs/dxkit-sdk (the frozen extension
+      # surface, a sibling workspace package). Installing the main tarball in
+      # a fresh repo must not assume the registry already has the matching SDK
+      # version — pack the SDK too and install the PAIR, which also smokes
+      # exactly what a release ships.
+      - name: Build sdk tarball
+        id: pack-sdk
+        run: |
+          cd packages/dxkit-sdk
+          tarball=$(npm pack --silent)
+          echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
+          echo "Built sdk tarball: ${tarball}"
+
       - name: Install tarball into a fresh consumer repo
         run: |
           set -euo pipefail
@@ -76,7 +89,7 @@ jobs:
           }
           EOF
           git add . && git commit -q -m "init"
-          npm install --save-dev "${{ steps.pack.outputs.tarball }}"
+          npm install --save-dev "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}"
 
       - name: Run `vyuh-dxkit init --full --yes`
         run: |
@@ -157,7 +170,7 @@ jobs:
           cd /tmp/dxkit-smoke-default
           git init -q
           npm init -y >/dev/null
-          npm install --save-dev "${{ steps.pack.outputs.tarball }}" --silent
+          npm install --save-dev "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}" --silent
           ./node_modules/.bin/vyuh-dxkit init --full --yes
           if [ -f .githooks/pre-commit ]; then
             echo "::error::pre-commit hook should NOT install without --with-precommit-hook"
@@ -241,6 +254,16 @@ jobs:
           tarball=$(npm pack --silent)
           echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
 
+      # Pack the sdk sibling too — the main tarball's @vyuhlabs/dxkit-sdk
+      # dependency must resolve from the pair, not the registry (see the
+      # pack-smoke job's note).
+      - name: Build sdk tarball
+        id: pack-sdk
+        run: |
+          cd packages/dxkit-sdk
+          tarball=$(npm pack --silent)
+          echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
+
       - name: Stage a consumer repo with --with-devcontainer
         # Stage inside `${{ github.workspace }}/consumer/` because the
         # devcontainers/ci action looks for the config relative to the
@@ -260,7 +283,7 @@ jobs:
           echo '{"name":"dc-smoke","private":true}' > package.json
           git add package.json
           git commit -q -m "init"
-          npm install --save-dev "${{ steps.pack.outputs.tarball }}"
+          npm install --save-dev "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}"
           ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --yes
           test -f .devcontainer/devcontainer.json
           # Per-stack devcontainer features (Phase 2.5.1): the consumer
