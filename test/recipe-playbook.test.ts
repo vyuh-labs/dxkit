@@ -44,6 +44,9 @@ import {
   allDocCommentPatterns,
   allExportDetectionDeclarations,
   allFlowSourceExtensions,
+  allModelSchema,
+  allModelSchemaSourceExtensions,
+  changedFilesTouchModelSurface,
   allCiSetupSteps,
   allHttpFlow,
   allModelPaths,
@@ -69,6 +72,8 @@ import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { extractFromTree } from '../src/analyzers/flow/extract';
 import { parseSource } from '../src/ast/parse';
 import { grammarShape } from '../src/ast/grammar-shape';
+import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
+import { extractModelsFromTree } from '../src/analyzers/model-schema/extract';
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
@@ -158,6 +163,18 @@ const mockPlaybookPack = {
       baseDirs: ['playbookapp'],
       methodExports: ['GET', 'POST'],
     },
+  },
+  // Model-schema contribution. Distinctive tokens (`PlaybookRecord`,
+  // `PlaybookEntity`, `playbookColumn`) so the assertions verify the
+  // synthetic pack's modelSchema descriptor flows through `allModelSchema`
+  // AND drives the ONE model extractor — codifying "model extraction is
+  // pack-driven, not analyzer-by-analyzer."
+  modelSchema: {
+    modelBaseClasses: ['PlaybookRecord'],
+    modelDecorators: ['PlaybookEntity'],
+    fieldCallees: [{ names: ['playbookColumn'], optionalityKeyword: 'playbookNullable' }],
+    typeAliases: { playbookcolumn: 'playbook-string' },
+    schemaSignals: [{ manifest: 'playbook.toml', anyOf: ['playbook-orm'] }],
   },
   // A grammar alongside httpFlow makes the synthetic pack flow-CAPABLE, so its
   // extensions flow through `allFlowSourceExtensions` /
@@ -886,6 +903,67 @@ describe('recipe playbook — synthetic pack', () => {
     expect(changedFilesTouchFlowSurface(['app/Widget.pbk'], packs)).toBe(true);
     // A non-flow change does not.
     expect(changedFilesTouchFlowSurface(['README.md'], packs)).toBe(false);
+  });
+
+  // Model-schema: the registry helper + trigger iterate every active pack,
+  // and the synthetic descriptor drives the ONE model extractor over a real
+  // grammar's shapes — the same declaration-driven-all-the-way-down proof the
+  // flow tests establish. A new language pack inherits exactly this path:
+  // declare grammars + modelSchema, zero extractor edits.
+  it('allModelSchema + the model-surface trigger pick up the mock pack', () => {
+    const flags = {
+      typescript: true,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const descriptors = allModelSchema(flags);
+    expect(
+      descriptors.some((d) => d.modelBaseClasses?.includes('PlaybookRecord')),
+      'synthetic modelSchema missing from allModelSchema',
+    ).toBe(true);
+    const packs = [...LANGUAGES];
+    expect(allModelSchemaSourceExtensions(packs)).toContain('.pbk');
+    expect(changedFilesTouchModelSurface(['src/Widget.pbk'], packs)).toBe(true);
+    expect(changedFilesTouchModelSurface(['README.md'], packs)).toBe(false);
+    // Spec-only trigger: a configured spec path trips it even with no
+    // model-capable extension match.
+    expect(changedFilesTouchModelSurface(['api/models.json'], packs, ['api/models.json'])).toBe(
+      true,
+    );
+  });
+
+  it('the synthetic modelSchema descriptor extracts models through the one extractor', async () => {
+    const synthetic = mockPlaybookPack.modelSchema!;
+    // Any shaped grammar exercises the path — the JS family here.
+    const modelShape = modelShapeForGrammar('javascript')!;
+    const callShape = grammarShape('javascript')!;
+    const tree = await parseSource(
+      `
+      @PlaybookEntity()
+      class Widget {
+        name = playbookColumn({ playbookNullable: true });
+        count;
+      }
+      class Plain { x = 1; }
+      `,
+      'javascript',
+    );
+    const set = extractModelsFromTree(tree!.rootNode, synthetic, modelShape, callShape, 'w.pbk');
+    expect(set.models.map((m) => m.name)).toEqual(['Widget']);
+    expect(set.models[0].via).toBe('decorator');
+    // The field constructor supplied the type token (folded through the
+    // pack's typeAliases) and the optionality keyword.
+    expect(set.models[0].fields).toEqual([
+      { name: 'name', type: 'playbook-string', required: false },
+      { name: 'count', type: null, required: null },
+    ]);
   });
 
   it('allTestGapPriorityPaths unions all three buckets across active packs (C8)', () => {

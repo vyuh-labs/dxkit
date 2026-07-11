@@ -148,11 +148,14 @@ const JS_FAMILY: GrammarModelShape = {
   },
 
   fieldOptionalMarker(field) {
-    // The optional `?` is an anonymous token between name and annotation.
+    // Three-valued (the honesty contract): a `?` token → optional; a type
+    // annotation WITHOUT `?` → required (TS semantics); no annotation at all
+    // (plain JS, or an inferred field) → null — the grammar genuinely cannot
+    // tell, and a fabricated `required` would let the diff block on it.
     for (const c of field.children) {
       if (c && !c.isNamed && c.type === '?') return true;
     }
-    return false;
+    return field.childForFieldName('type') !== null ? false : null;
   },
 
   fieldTag() {
