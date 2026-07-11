@@ -66,6 +66,9 @@ import {
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
+import { extractFromTree } from '../src/analyzers/flow/extract';
+import { parseSource } from '../src/ast/parse';
+import { grammarShape } from '../src/ast/grammar-shape';
 import { buildVariables, buildConditions } from '../src/constants';
 import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
@@ -140,7 +143,12 @@ const mockPlaybookPack = {
     clientMethodCallees: { methods: ['playbookGet'], bases: ['playbookClient'] },
     routeDecorators: ['playbookGet'],
     routeRouterCallees: { methods: ['playbookGet'], bases: ['playbookApp'] },
-    methodAliases: { playbookDel: 'DELETE' },
+    // Non-verb tokens NEED an alias to mint a method — the end-to-end
+    // extraction test below is what proves the alias map flows through.
+    // Keys are LOWERCASE method tokens (normalizeMethod lowercases before
+    // lookup) — this fixture originally used camelCase keys, which the
+    // registry-presence assertion could not catch; the extraction test can.
+    methodAliases: { playbookdel: 'DELETE', playbookget: 'GET' },
     // File-convention routing (2.28): distinctive tokens so the assertion
     // verifies the synthetic pack's fileRoutes descriptor drives the SHARED
     // path algebra (`deriveFileRoutePath`) — codifying "file-route derivation
@@ -789,7 +797,7 @@ describe('recipe playbook — synthetic pack', () => {
     const synthetic = descriptors.find((d) => d.clientCallees?.includes('playbookFetch'));
     expect(synthetic).toBeDefined();
     expect(synthetic?.routeDecorators).toContain('playbookGet');
-    expect(synthetic?.methodAliases?.playbookDel).toBe('DELETE');
+    expect(synthetic?.methodAliases?.playbookdel).toBe('DELETE');
     // Real typescript pack's descriptor also flows through (regression guard
     // against the helper returning only the synthetic contribution).
     const real = descriptors.find((d) => d.clientCallees?.includes('fetch'));
@@ -833,6 +841,35 @@ describe('recipe playbook — synthetic pack', () => {
     expect(deriveFileRoutePath('playbookapp/(group)/things/playbookroute.pbk', fr)).toBe('/things');
     // A non-handler file under the base derives nothing.
     expect(deriveFileRoutePath('playbookapp/widgets/other.pbk', fr)).toBeNull();
+  });
+
+  // END-TO-END extraction: the synthetic descriptor drives the ONE extractor
+  // over a real grammar's shape. This is the proof that flow extraction is
+  // descriptor-driven all the way down — not just that the registry unions
+  // descriptors (the allHttpFlow test above), but that a pack's declared
+  // tokens actually mint calls and routes with ZERO extractor edits. A new
+  // language pack inherits exactly this path: declare grammars + httpFlow.
+  it('the synthetic descriptor extracts calls + routes through the one extractor', async () => {
+    const synthetic = mockPlaybookPack.httpFlow!;
+    const shape = grammarShape('javascript')!; // any shaped grammar exercises the path
+    const tree = await parseSource(
+      `
+      playbookFetch('/from-bare-callee');
+      playbookClient.playbookGet('/from-member-call');
+      playbookApp.playbookGet('/from-router-call', handler);
+      `,
+      'javascript',
+    );
+    const flow = extractFromTree(tree!.rootNode, synthetic, shape, 'widget.pbk');
+    // Every construct family recognized off the DESCRIPTOR's tokens, with the
+    // alias map minting the verbs (playbookGet -> GET).
+    expect(flow.calls.map((c) => `${c.method} ${c.path} via ${c.receiver}`).sort()).toEqual([
+      'GET /from-bare-callee via playbookFetch',
+      'GET /from-member-call via playbookClient',
+    ]);
+    expect(flow.routes.map((r) => `${r.method} ${r.path} via ${r.via}`)).toEqual([
+      'GET /from-router-call via router-call',
+    ]);
   });
 
   // Flow-gate trigger: the surface helpers iterate active packs (httpFlow +
