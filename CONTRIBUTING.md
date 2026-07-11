@@ -247,6 +247,38 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   `PY_RUFF_CONCISE_PARSE`, `csharp.ts` `CSHARP_MSBUILD_WARNING_PARSE`); Java
   ships a dormant provider (no single zero-config standalone linter). See
   CLAUDE.md Rule 17.
+- **HTTP flow** (M6) — `httpFlow?: HttpFlowSupport` +
+  `treeSitterGrammars?`, the UI→API flow extraction surface. The recipe
+  is DECLARATION-ONLY — the one extractor
+  (`src/analyzers/flow/extract.ts`) reads any grammar through the
+  per-grammar shape table (`src/ast/grammar-shape.ts`) and is never
+  edited for a language:
+  1. Declare `treeSitterGrammars` (extension → logical grammar name —
+     the wasm ships in `tree-sitter-wasms`). If the grammar has no
+     shape row yet, add one row in `src/ast/grammar-shape.ts`; most
+     grammars fit the shared callee-field factory (verify node/field
+     names against a real parse first — an unverified row silently
+     misreads trees).
+  2. Fill the descriptor from the construct families in
+     `HttpFlowSupport` (`src/languages/types.ts`): `clientCallees`
+     (bare `fetch(url)`), `clientMethodCallees` (`recv.get('/x')`,
+     with `bases` naming TRUSTED always-HTTP receivers whose dynamic
+     URLs are disclosed rather than dropped), `routeDecorators`
+     (`@get('/x')`), `routeMemberDecorators` (`@app.get('/x')`),
+     `routePathDecorators` (`@app.route('/x', methods=[...])`),
+     `routeRouterCallees` (`app.get('/x', handler)`), `routeCallees`
+     (verb-less `path(route, view)` → method-agnostic `ANY` routes),
+     `fileRoutes` (file-convention routing). Worked examples:
+     `typescript.ts` (fetch/axios/Express/Next.js) and `python.ts`
+     (requests/httpx/FastAPI/Flask/Django).
+  3. Pin it: a pack test like `test/flow-extract-python.test.ts`, plus
+     a fixture dir + flow row in `test/fixtures-analysis.test.ts`.
+
+  `test/languages-contract.test.ts` loud-fails an httpFlow pack whose
+  grammar is missing, unshaped, or whose descriptor is vacuous;
+  `test/recipe-playbook.test.ts` proves extraction is descriptor-driven
+  end-to-end with the synthetic pack.
+
 - **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
   `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
   `ruleFile?` (filename under `src-templates/.claude/rules/`),

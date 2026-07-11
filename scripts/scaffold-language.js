@@ -349,15 +349,36 @@ export const ${id}: LanguageSupport = {
   // pack's contributions reach each helper.
   //   architecturalShape  — primary-component / route / model path conventions
   //                         + vocabulary + test-gap taxonomy
-  //   httpFlow            — HTTP client callees + route decorators/routers, so
-  //                         the flow extractor (src/analyzers/flow/) maps this
-  //                         language's UI→API→handler integrations. Add it if
-  //                         the language has an HTTP client or web framework
-  //                         (e.g. Python requests/FastAPI, Go net-http/gin,
-  //                         Java Spring @GetMapping, C# ASP.NET [HttpGet]).
   //   deepSast            — CodeQL / Snyk Code interprocedural engine support
   //   callGraphReliability — how much to trust graphify's caller counts here
   //   correctness         — the liveness floor (REQUIRED; wired below)
+
+  // TODO(${id}): OPTIONAL httpFlow — UI→API flow extraction for this language.
+  // Add it if the language has an HTTP client or web framework. The recipe is
+  // DECLARATION-ONLY (zero extractor edits — CONTRIBUTING.md "Adding flow
+  // support to a language pack" is the walkthrough):
+  //   1. Declare \`treeSitterGrammars\` below (extension → logical grammar
+  //      name). The wasm ships in tree-sitter-wasms; if the grammar has no
+  //      shape row yet, add one in src/ast/grammar-shape.ts (most fit the
+  //      shared callee-field factory) — test/languages-contract.test.ts
+  //      loud-fails an httpFlow pack whose grammar is unshaped.
+  //   2. Fill the descriptor. Construct families (see HttpFlowSupport in
+  //      src/languages/types.ts, worked examples in typescript.ts/python.ts):
+  //        clientCallees          — fetch(url)-style bare clients
+  //        clientMethodCallees    — recv.get('/x'); \`bases\` = TRUSTED
+  //                                 always-HTTP receivers (requests, httpx)
+  //        routeDecorators        — bare verb decorators (@get('/x'))
+  //        routeMemberDecorators  — member verb decorators (@app.get('/x'))
+  //        routePathDecorators    — path + methods kwarg (@app.route(...))
+  //        routeRouterCallees     — app.get('/x', handler) router calls
+  //        routeCallees           — verb-less path(route, view) → ANY routes
+  //        fileRoutes             — file-convention routing (route.ts under app/)
+  //   3. Add a fixture under test/fixtures/analysis/ + a flow row in
+  //      test/fixtures-analysis.test.ts, and a pack test like
+  //      test/flow-extract-python.test.ts pinning YOUR declaration.
+  //
+  // httpFlow: { ... },
+  // treeSitterGrammars: { '.${id}': '${id}' },
 
   // REQUIRED(${id}): correctness floor — the loop-safety liveness gate. Two PURE
   // command builders; the runner (src/analyzers/correctness/run.ts) executes

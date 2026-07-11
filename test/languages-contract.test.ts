@@ -4,6 +4,7 @@ import * as path from 'path';
 import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages';
 import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
+import { grammarShape } from '../src/ast/grammar-shape';
 
 const REQUIRED_IDS: LanguageId[] = ['typescript', 'python', 'go', 'rust', 'csharp'];
 
@@ -438,5 +439,79 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     ).toBe(true);
     expect(lang.clocLanguageNames!.length).toBeGreaterThan(0);
     for (const n of lang.clocLanguageNames!) expect(typeof n).toBe('string');
+  });
+
+  // httpFlow (M6): a flow declaration only extracts when the whole chain is
+  // wired — descriptor -> grammar -> shape row -> wasm artifact. A pack that
+  // declares httpFlow with a missing link SILENTLY contributes nothing (the
+  // extractor fail-opens per file), which is exactly the kind of half-landed
+  // capability this contract exists to make loud.
+  it('httpFlow, when declared, is extraction-complete (grammar + shape + wasm) and non-vacuous', () => {
+    if (!lang.httpFlow) return; // packs without a modeled HTTP surface skip
+    const hf = lang.httpFlow;
+
+    // 1. A flow descriptor without a grammar can never parse a file.
+    const grammars = Object.entries(lang.treeSitterGrammars ?? {});
+    expect(
+      grammars.length,
+      `${lang.id}: declares httpFlow but no treeSitterGrammars — no file would ever parse, ` +
+        `so the descriptor is dead. Declare the grammar(s) for its source extensions.`,
+    ).toBeGreaterThan(0);
+
+    for (const [ext, grammar] of grammars) {
+      expect(ext.startsWith('.'), `${lang.id}: grammar key "${ext}" must be a dotted ext`).toBe(
+        true,
+      );
+      // 2. The grammar must have a shape row (src/ast/grammar-shape.ts) — the
+      //    extractor skips files whose grammar it cannot read.
+      expect(
+        grammarShape(grammar),
+        `${lang.id}: grammar "${grammar}" has no shape row in src/ast/grammar-shape.ts — ` +
+          `flow extraction would silently skip every ${ext} file. Add the row (most grammars ` +
+          `fit the shared callee-field factory).`,
+      ).not.toBeNull();
+      // 3. The wasm artifact must actually ship.
+      const wasmsDir = path.dirname(require.resolve('tree-sitter-wasms/package.json'));
+      const wasm = path.join(wasmsDir, 'out', `tree-sitter-${grammar}.wasm`);
+      expect(
+        fs.existsSync(wasm),
+        `${lang.id}: no bundled wasm for grammar "${grammar}" (${wasm})`,
+      ).toBe(true);
+    }
+
+    // 4. Non-vacuous: at least one construct family, and every present family
+    //    well-formed (an empty methods/names list matches nothing, silently).
+    const families = [
+      hf.clientCallees,
+      hf.clientMethodCallees?.methods,
+      hf.routeDecorators,
+      hf.routeRouterCallees?.methods,
+      hf.routeMemberDecorators?.methods,
+      hf.routePathDecorators?.names,
+      hf.routeCallees?.names,
+      hf.fileRoutes ? [hf.fileRoutes.handlerFile] : undefined,
+    ].filter((f): f is string[] => f !== undefined);
+    expect(
+      families.length,
+      `${lang.id}: httpFlow declares no construct family — a vacuous descriptor`,
+    ).toBeGreaterThan(0);
+    for (const family of families) {
+      expect(family.length, `${lang.id}: an httpFlow construct family is empty`).toBeGreaterThan(0);
+    }
+    if (hf.routePathDecorators) {
+      expect(hf.routePathDecorators.methodsKeyword.length).toBeGreaterThan(0);
+      expect(hf.routePathDecorators.defaultMethods.length).toBeGreaterThan(0);
+    }
+    if (hf.routeRouterCallees) expect(hf.routeRouterCallees.bases.length).toBeGreaterThan(0);
+    if (hf.fileRoutes) {
+      expect(hf.fileRoutes.baseDirs.length).toBeGreaterThan(0);
+      expect(hf.fileRoutes.methodExports.length).toBeGreaterThan(0);
+    }
+    // Discovery signals, when declared, must be well-formed (an empty anyOf
+    // silently recommends nothing).
+    for (const signal of hf.flowSignals ?? []) {
+      expect(signal.manifest.length).toBeGreaterThan(0);
+      expect(signal.anyOf.length).toBeGreaterThan(0);
+    }
   });
 });
