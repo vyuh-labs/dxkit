@@ -89,6 +89,14 @@ describe('flow normalizePath', () => {
     expect(spec).toBe(client);
   });
 
+  it('Go 1.22 pattern forms canonicalize: {rest...} → catch-all, {$} is not a segment', () => {
+    expect(normalizePath("'/files/{p...}'")).toBe('/files/{*}');
+    expect(normalizePath("'/items/{id}'")).toBe('/items/{var}');
+    // `{$}` means "match exactly here" — it is a matching directive, not a
+    // path segment, so it must not survive as a phantom {var}.
+    expect(normalizePath("'/items/{$}'")).toBe('/items');
+  });
+
   it('Django/Flask angle-bracket converters canonicalize like every other param form', () => {
     // Single-segment converters (<int:pk>, <slug:s>, bare <name>) → {var},
     // joining a client's `/users/${id}`.
