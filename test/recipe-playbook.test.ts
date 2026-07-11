@@ -79,6 +79,8 @@ import { buildRequiredTools } from '../src/analyzers/tools/tool-registry';
 import { detect } from '../src/detect';
 import * as fs from 'fs';
 import * as os from 'os';
+import { gatherPackDepVulnsAcrossRoots } from '../src/analyzers/security/gather';
+import { clearWalkPathsCache } from '../src/analyzers/tools/walk-paths';
 import * as path from 'path';
 
 // ─── The mock synthetic pack ────────────────────────────────────────────────
@@ -217,6 +219,9 @@ const mockPlaybookPack = {
     depVulns: {
       source: 'playbook-mock',
       manifestPatterns: ['playbook.lock', '*.pbkproj'],
+      // Distinctive lockfile basename so the nested-root dispatch assertion
+      // below proves per-root auditing is declaration-driven.
+      lockfilePatterns: ['playbook.lock'],
       async gather() {
         return null;
       },
@@ -334,6 +339,38 @@ describe('recipe playbook — synthetic pack', () => {
     expect(patterns).toContain('package.json'); // typescript
     expect(patterns).toContain('go.mod'); // go
     expect(patterns).toContain('*.csproj'); // csharp
+  });
+
+  // Nested dep-audit roots (the nested-lockfile gap): the per-root dispatch
+  // reads the pack's DECLARED lockfilePatterns — a synthetic pack with a
+  // nested `playbook.lock` gets its gatherOutcome invoked once per root.
+  it("gatherPackDepVulnsAcrossRoots audits the synthetic pack's nested lockfile roots", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-playbook-nested-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'apps', 'svc'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'playbook.lock'), '{}');
+      fs.writeFileSync(path.join(dir, 'apps', 'svc', 'playbook.lock'), '{}');
+      const calls: string[] = [];
+      const pack = {
+        ...mockPlaybookPack,
+        capabilities: {
+          ...mockPlaybookPack.capabilities,
+          depVulns: {
+            ...mockPlaybookPack.capabilities!.depVulns!,
+            async gatherOutcome(d: string) {
+              calls.push(path.relative(dir, d).split(path.sep).join('/') || '.');
+              return { kind: 'no-manifest' as const, reason: 'mock' };
+            },
+          },
+        },
+      };
+      clearWalkPathsCache();
+      await gatherPackDepVulnsAcrossRoots(pack as never, dir, undefined);
+      expect(calls.sort()).toEqual(['.', 'apps/svc']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      clearWalkPathsCache();
+    }
   });
 
   it('changedFilesTouchDependencyManifest detects the mock pack manifest (2.16)', () => {

@@ -26,6 +26,7 @@ import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-
 import * as path from 'path';
 import { SecurityFinding, DepVulnSummary, Severity } from './types';
 import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
+import { discoverNestedDepRoots, mergeDepVulnOutcomes } from './nested-dep-roots';
 import { loadAllowlist } from '../../allowlist/file';
 import { defaultDispatcher } from '../dispatcher';
 import { allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
@@ -36,8 +37,9 @@ import {
   SECRETS,
 } from '../../languages/capabilities/descriptors';
 import { providersFor } from '../../languages/capabilities';
-import type { DepVulnResult } from '../../languages/capabilities/types';
+import type { DepVulnGatherOutcome, DepVulnResult } from '../../languages/capabilities/types';
 import type { DepVulnGatherOptions } from '../../languages/capabilities/provider';
+import type { LanguageSupport } from '../../languages/types';
 
 // ─── dispatcher-driven secrets gather ────────────────────────────────────────
 
@@ -294,6 +296,66 @@ const EMPTY_DEP_VULNS: DepVulnSummary = {
  * polyglot repos where one pack activates but has nothing to scan are
  * a clean "we checked, found nothing here" state.
  */
+/** One pack's gatherOutcome under the standard provider deadline, with the
+ *  stall materialised as an `unavailable` outcome (mirrors the dispatcher). */
+async function gatherOutcomeWithDeadline(
+  pack: LanguageSupport,
+  dir: string,
+  opts: DepVulnGatherOptions | undefined,
+  label: string,
+): Promise<DepVulnGatherOutcome> {
+  const deadlineOutcome = await withDeadline(
+    pack.capabilities!.depVulns!.gatherOutcome(dir, opts),
+    DEFAULT_PROVIDER_DEADLINE_MS,
+  );
+  if (deadlineOutcome.stalled) {
+    const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
+    process.stderr.write(
+      `[dxkit] depVulns provider "${pack.id}" stalled after >${seconds}s (deadline)${label} — treating as unavailable\n`,
+    );
+    return { kind: 'unavailable', reason: `stalled at >${seconds}s (deadline)${label}` };
+  }
+  return deadlineOutcome.value;
+}
+
+/**
+ * One pack's dep audit across EVERY independent resolution root: the repo
+ * root plus each nested directory holding one of the pack's declared
+ * lockfiles (the nested-lockfile gap — a vuln added to a nested
+ * sub-project's lockfile read CLEAN when only the root was audited).
+ * Discovery is pack-declared + exclusion-aware
+ * (`src/analyzers/security/nested-dep-roots.ts`); outcomes merge with
+ * per-identity dedup, and a pack with no `lockfilePatterns` (or no nested
+ * roots) keeps byte-identical root-only behavior. Nested audits are
+ * additive recall: a failure there never degrades the root's availability
+ * story. Exported for the playbook test (a fake pack + temp tree prove the
+ * dispatch is declaration-driven).
+ */
+export async function gatherPackDepVulnsAcrossRoots(
+  pack: LanguageSupport,
+  cwd: string,
+  opts: DepVulnGatherOptions | undefined,
+): Promise<DepVulnGatherOutcome> {
+  const root = await gatherOutcomeWithDeadline(pack, cwd, opts, '');
+  const patterns = pack.capabilities!.depVulns!.lockfilePatterns ?? [];
+  if (patterns.length === 0) return root;
+  const discovery = discoverNestedDepRoots(cwd, patterns);
+  if (discovery.roots.length === 0) return root;
+  if (discovery.dropped.length > 0) {
+    process.stderr.write(
+      `[dxkit] depVulns "${pack.id}": ${discovery.roots.length + discovery.dropped.length} nested lockfile roots found, ` +
+        `auditing the first ${discovery.roots.length} (dropped: ${discovery.dropped.join(', ')})\n`,
+    );
+  }
+  const nested: DepVulnGatherOutcome[] = [];
+  for (const rel of discovery.roots) {
+    nested.push(
+      await gatherOutcomeWithDeadline(pack, path.join(cwd, rel), opts, ` (nested root ${rel})`),
+    );
+  }
+  return mergeDepVulnOutcomes(root, nested, discovery.dropped.length > 0);
+}
+
 export async function gatherDepVulnsWithAvailability(
   cwd: string,
   opts?: DepVulnGatherOptions,
@@ -314,24 +376,7 @@ export async function gatherDepVulnsWithAvailability(
   // deadline reason, so the existing availability machinery surfaces
   // it through `toolsUnavailable` without any consumer change.
   const outcomes = await Promise.allSettled(
-    activePacks.map((l) =>
-      withDeadline(
-        l.capabilities!.depVulns!.gatherOutcome(cwd, opts),
-        DEFAULT_PROVIDER_DEADLINE_MS,
-      ).then((deadlineOutcome) => {
-        if (deadlineOutcome.stalled) {
-          const seconds = Math.round(deadlineOutcome.stalledMs / 1000);
-          process.stderr.write(
-            `[dxkit] depVulns provider "${l.id}" stalled after >${seconds}s (deadline) — treating as unavailable\n`,
-          );
-          return {
-            kind: 'unavailable' as const,
-            reason: `stalled at >${seconds}s (deadline)`,
-          };
-        }
-        return deadlineOutcome.value;
-      }),
-    ),
+    activePacks.map((l) => gatherPackDepVulnsAcrossRoots(l, cwd, opts)),
   );
   const successEnvelopes: DepVulnResult[] = [];
   let firstUnavailable: { pack: string; reason: string } | null = null;

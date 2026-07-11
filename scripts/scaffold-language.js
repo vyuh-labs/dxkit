@@ -321,6 +321,14 @@ export const ${id}: LanguageSupport = {
   // asserted non-empty by test/languages-contract.test.ts — the incremental
   // ref-based dep-audit skip needs it to tell whether a PR touched this pack's
   // dependencies (CLAUDE.md Rule 6).
+  //
+  // ALSO declare \`lockfilePatterns\` when the ecosystem has a lockfile (or a
+  // manifest that independently resolves, like go.mod / requirements.txt):
+  // exact basenames marking an INDEPENDENT dependency-resolution root. The
+  // dep audit then runs once per nested root and merges — without it, a vuln
+  // added to a nested sub-project's lockfile is invisible to the root audit.
+  // Deliberately lockfiles, not plain manifests: a workspace member / Maven
+  // module resolves from the root tree and is already covered.
   capabilities: {},
 
   // TODO(${id}): exported-symbol detection reliability for the graphify

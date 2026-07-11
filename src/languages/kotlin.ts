@@ -295,6 +295,9 @@ const kotlinDepVulnsProvider: DepVulnsProvider = {
     'settings.gradle',
     'settings.gradle.kts',
   ],
+  // Gradle lockfiles resolve per project; Maven pom.xml deliberately NOT
+  // listed (a multi-module build resolves from one tree — no lockfile).
+  lockfilePatterns: ['gradle.lockfile', 'verification-metadata.xml'],
   async gather(cwd) {
     const outcome = await gatherOsvScannerDepVulnsResult(
       cwd,

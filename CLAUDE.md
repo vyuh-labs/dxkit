@@ -97,7 +97,13 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   (`src/package-manager.ts`). A scanner must be pointed at a lockfile it
   understands (`npm audit` needs an npm lockfile; a pnpm/yarn/bun lockfile routes
   to the shared lockfile-aware `gatherOsvScannerDepVulnsResult`). Selecting a
-  scanner without consulting the present lockfile is the bug.
+  scanner without consulting the present lockfile is the bug. The set of
+  dependency-audit ROOTS is likewise one concept: pack-declared
+  `lockfilePatterns` + `discoverNestedDepRoots`
+  (`src/analyzers/security/nested-dep-roots.ts`), consumed at the ONE
+  dispatch primitive (`gatherDepVulnsWithAvailability`) so reports and the
+  gate audit the same lockfile set — the shipped bug: root-only auditing
+  read a nested sub-project's critical vuln as CLEAN.
 - the set of optional SHIP surfaces dxkit installs (CI workflows, git hooks,
   the devcontainer, the loop pack, the dxkit devDependency, the ignore files) →
   `MANAGED_SHIP_SURFACES` in `src/managed-artifacts.ts`. These are NOT recorded

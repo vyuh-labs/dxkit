@@ -937,6 +937,9 @@ const csharpDepVulnsProvider: DepVulnsProvider = {
     'packages.config',
     'Directory.Packages.props',
   ],
+  // NuGet lockfiles are per-project when enabled; csproj deliberately NOT
+  // listed (projects resolve from the solution tree, already root-audited).
+  lockfilePatterns: ['packages.lock.json'],
   async gather(cwd) {
     const outcome = await gatherCsharpDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

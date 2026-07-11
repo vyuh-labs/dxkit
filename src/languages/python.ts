@@ -542,6 +542,10 @@ const pyDepVulnsProvider: DepVulnsProvider = {
     'Pipfile.lock',
     'poetry.lock',
   ],
+  // A nested requirements.txt / pyproject.toml resolves its own
+  // environment (separate services in one repo), unlike a package of a
+  // single rooted environment.
+  lockfilePatterns: ['requirements.txt', 'pyproject.toml', 'Pipfile'],
   async gather(cwd) {
     const outcome = await gatherPyDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
