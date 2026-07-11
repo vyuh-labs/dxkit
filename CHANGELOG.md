@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SDK 0.2.0 — the descriptor language grows six route/client forms and a
+  field-decorator spec (additive).** New on `HttpFlowSupport`:
+  `routePrefixDecorators` (class-level `@RequestMapping`/`@Path` prefixes),
+  `routeGroupCallees` (Ktor `route("/api") { … }` nesting),
+  `routeVerbCallees` (Ktor `get("/x") { … }`), `routeAnnotationPairs`
+  (JAX-RS `@GET` + `@Path`), `clientDecorators` (Retrofit `@GET("users/{id}")`
+  declaring a consumed call), `clientBuilderChains` (WebClient /
+  java.net.http / OkHttp verb-and-URL-on-different-calls chains), and
+  `decoratorPathKeywords` (`@RequestMapping(value = "/x")`). New on
+  `ModelSchemaSupport`: `fieldDecoratorSpecs` (JPA
+  `@Column(nullable = false, name = "wire_name")`). `GrammarShape` gains
+  three optional accessors (`calleeCall`, `receiverNode`,
+  `hasTrailingLambda`) for trailing-lambda and builder-chain navigation,
+  and the shared normalizer folds brace-less template vars
+  (Kotlin `"/users/$id"`) to `{var}`. All additive within SDK major 0.
+
 - **The docs command table is generated from the capability registry.**
   `docs/README.md`'s "What you can run" table is now rendered from the
   Rule-16 command registry between marker comments (`npm run docs:commands`

@@ -32,6 +32,15 @@ describe('flow normalizePath', () => {
     );
   });
 
+  it('canonicalizes Kotlin brace-less template vars ($id) to {var}', () => {
+    expect(normalizePath('"/users/$id"')).toBe('/users/{var}');
+    expect(normalizePath('"/users/$id/posts/$postId"')).toBe('/users/{var}/posts/{var}');
+    // Braced and brace-less forms coexist without a stray token.
+    expect(normalizePath('"/users/${user.id}/tags/$tag"')).toBe('/users/{var}/tags/{var}');
+    // A bare `$` with no identifier head is untouched (Go's `{$}` rule is 6a's).
+    expect(normalizePath('/exact/{$}')).toBe('/exact');
+  });
+
   it('strips configured host-helper prefixes (the per-app lever)', () => {
     expect(normalizePath('`${Config.apiBase()}/widgets/icons`', cfg)).toBe('/widgets/icons');
     expect(normalizePath('`${Config.userSvc()}/services/${id}`', cfg)).toBe('/services/{var}');
