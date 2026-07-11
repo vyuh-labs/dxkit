@@ -30,6 +30,18 @@ import { commandExists } from './runner';
 export interface RunnableCommand {
   readonly bin: string;
   readonly args: readonly string[];
+  /**
+   * Text piped to the child's stdin (the extension runner's config
+   * payload). Absent → stdin is ignored, exactly as before this field
+   * existed; the correctness floor and custom-check callers never set it.
+   */
+  readonly stdin?: string;
+  /**
+   * Capture the child's FULL stdout instead of the readable tail. The
+   * extension runner needs the whole emitted wire document; gate-message
+   * callers keep the tail default so block output stays a screenful.
+   */
+  readonly captureFullOutput?: boolean;
 }
 
 /**
@@ -79,10 +91,12 @@ export function makeCommandExec(timeoutMs?: number): CommandExec {
       const out = execFileSync(cmd.bin, [...cmd.args], {
         cwd,
         encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [cmd.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        ...(cmd.stdin !== undefined ? { input: cmd.stdin } : {}),
+        ...(cmd.captureFullOutput ? { maxBuffer: 64 * 1024 * 1024 } : {}),
         ...(timeoutMs && timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGTERM' } : {}),
       });
-      return { available: true, code: 0, output: tail(out) };
+      return { available: true, code: 0, output: cmd.captureFullOutput ? out : tail(out) };
     } catch (e) {
       const err = e as {
         status?: number;
