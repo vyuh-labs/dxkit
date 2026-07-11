@@ -54,18 +54,21 @@ function route(path: string, over: Partial<RouteEndpoint> = {}): RouteEndpoint {
   };
 }
 
-/** Calls the JOIN considers resolved (bound to a route). */
-function joinResolvedPaths(calls: ClientCall[], routes: RouteEndpoint[]): Set<string> {
+/** Calls the JOIN considers resolved (bound to a route), as `METHOD path` keys
+ *  — method-aware so a fixture can pit two verbs on one path against each
+ *  other (the `ANY` served-route rule). */
+function joinResolvedKeys(calls: ClientCall[], routes: RouteEndpoint[]): Set<string> {
   return new Set(
     joinFlow(calls, routes)
       .filter((binding) => binding.route !== null)
-      .map((binding) => binding.call.path!),
+      .map((binding) => `${binding.call.method} ${binding.call.path}`),
   );
 }
 
-/** Paths the GATE flags as net-new broken, with base === head served (so every
- *  HEAD-broken call is net-new, isolating the resolution decision). */
-function gateBrokenPaths(calls: ClientCall[], routes: RouteEndpoint[]): Set<string> {
+/** `METHOD path` keys the GATE flags as net-new broken, with base === head
+ *  served (so every HEAD-broken call is net-new, isolating the resolution
+ *  decision). */
+function gateBrokenKeys(calls: ClientCall[], routes: RouteEndpoint[]): Set<string> {
   const model = buildFlowModel([{ calls, routes } as FileFlow]);
   const served = servedKeySet(buildServedContract(model, META));
   const consumed = buildConsumedContract(model, META).bindings;
@@ -75,10 +78,18 @@ function gateBrokenPaths(calls: ClientCall[], routes: RouteEndpoint[]): Set<stri
     headServed: served,
     baseServed: served,
   });
-  return new Set(found.map((f) => f.path));
+  return new Set(found.map((f) => `${f.method} ${f.path}`));
 }
 
-const FIXTURES: { name: string; calls: string[]; routes: string[] }[] = [
+/** `"/path"` (GET) or `"METHOD /path"` — fixtures vary methods so the
+ *  method-agnostic (`ANY`) served-route rule is parity-checked too. */
+type Keyed = string;
+function parseKeyed(k: Keyed): { method: string; path: string } {
+  const sp = k.indexOf(' ');
+  return sp === -1 ? { method: 'GET', path: k } : { method: k.slice(0, sp), path: k.slice(sp + 1) };
+}
+
+const FIXTURES: { name: string; calls: Keyed[]; routes: Keyed[] }[] = [
   {
     name: 'catch-all repo (Payload/Next [...slug])',
     calls: ['/api/users/login', '/api/posts', '/api'],
@@ -104,24 +115,46 @@ const FIXTURES: { name: string; calls: string[]; routes: string[] }[] = [
     calls: ['/api/exact', '/api/other', '/elsewhere'],
     routes: ['/api/exact', '/api/{*}'],
   },
+  {
+    name: 'method-agnostic routes (Django path / Go HandleFunc) serve every verb',
+    calls: ['GET /users', 'POST /users', 'DELETE /users/{var}', 'PUT /typo'],
+    routes: ['ANY /users', 'ANY /users/{var}'],
+  },
+  {
+    name: 'method-agnostic catch-all covers any verb under its prefix',
+    calls: ['POST /api/x', 'GET /api/y/z', 'GET /elsewhere'],
+    routes: ['ANY /api/{*}'],
+  },
+  {
+    name: 'a concrete-method route does NOT become method-agnostic',
+    calls: ['POST /a', 'POST /b', 'GET /a'],
+    routes: ['GET /a', 'ANY /b'],
+  },
 ];
 
 describe('gate ↔ join resolution parity (catch-all regression net)', () => {
   for (const fx of FIXTURES) {
     it(`${fx.name}: every join-resolved call is NOT gate-broken, and misses agree`, () => {
-      const calls = fx.calls.map((p) => call(p));
-      const routes = fx.routes.map((p) => route(p));
+      const calls = fx.calls.map((k) => {
+        const { method, path } = parseKeyed(k);
+        return call(path, { method: method as ClientCall['method'] });
+      });
+      const routes = fx.routes.map((k) => {
+        const { method, path } = parseKeyed(k);
+        return route(path, { method: method as RouteEndpoint['method'] });
+      });
 
-      const resolved = joinResolvedPaths(calls, routes);
-      const broken = gateBrokenPaths(calls, routes);
+      const resolved = joinResolvedKeys(calls, routes);
+      const broken = gateBrokenKeys(calls, routes);
 
       // The invariant: resolved and broken are disjoint. A call doctor says is
       // served must never be a gate block, and vice-versa.
-      for (const p of resolved) {
-        expect(broken.has(p), `join resolved ${p} but the gate flagged it broken`).toBe(false);
+      for (const k of resolved) {
+        expect(broken.has(k), `join resolved ${k} but the gate flagged it broken`).toBe(false);
       }
       // And the complement holds: a call neither resolved is exactly a gate miss.
-      const unresolved = new Set(fx.calls.filter((p) => !resolved.has(p)));
+      const callKeys = calls.map((c) => `${c.method} ${c.path}`);
+      const unresolved = new Set(callKeys.filter((k) => !resolved.has(k)));
       expect(broken).toEqual(unresolved);
     });
   }

@@ -22,7 +22,12 @@ import {
   type FileFlow,
   type RouteEndpoint,
 } from './extract';
-import { catchAllStaticPrefix, isCatchAllPath, type NormalizeConfig } from './normalize';
+import {
+  ANY_METHOD,
+  catchAllStaticPrefix,
+  isCatchAllPath,
+  type NormalizeConfig,
+} from './normalize';
 
 /**
  * Why a call did or didn't bind to a route:
@@ -137,13 +142,20 @@ export function buildServedMatcher(servedKeys: Iterable<string>): ServedMatcher 
  * resolution predicate (Rule 2): the gate answers "is this served?" through the
  * same catch-all-aware logic the join uses, so gate and doctor agree on the same
  * commit. An all-placeholder path never prefix-matches a catch-all (no static
- * signal to align).
+ * signal to align). A method-agnostic served route (`ANY /path` — Django
+ * `path()`, Go `http.HandleFunc`) resolves a call with ANY verb on that path,
+ * exactly as the join does: the routing layer genuinely accepts every method
+ * there, dispatching (or 405ing) inside the handler.
  */
 export function servedMatch(method: string, callPath: string, m: ServedMatcher): boolean {
   if (m.exact.has(`${method} ${callPath}`)) return true;
+  if (m.exact.has(`${ANY_METHOD} ${callPath}`)) return true;
   if (isPlaceholderOnlyPath(callPath)) return false;
-  const prefixes = m.catchAllPrefixesByMethod.get(method);
-  return prefixes ? prefixes.some((p) => catchAllPrefixCovers(p, callPath)) : false;
+  const prefixes = [
+    ...(m.catchAllPrefixesByMethod.get(method) ?? []),
+    ...(m.catchAllPrefixesByMethod.get(ANY_METHOD) ?? []),
+  ];
+  return prefixes.some((p) => catchAllPrefixCovers(p, callPath));
 }
 
 /**
@@ -171,14 +183,23 @@ export function joinFlow(
 
   return calls.map((call): FlowBinding => {
     if (call.path == null) return { call, route: null, confidence: 0, reason: 'external' };
-    const route = routeIndex.get(`${call.method} ${call.path}`) ?? null;
+    // A method-agnostic route (`ANY /path`) serves the path for every verb at
+    // the routing layer, so it resolves any concrete method — the same rule
+    // `servedMatch` applies (Rule 2 parity between join and gate).
+    const route =
+      routeIndex.get(`${call.method} ${call.path}`) ??
+      routeIndex.get(`${ANY_METHOD} ${call.path}`) ??
+      null;
     if (route) {
       if (isPlaceholderOnlyPath(call.path)) {
         return { call, route, confidence: 0.3, reason: 'placeholder-only' };
       }
       return { call, route, confidence: 1, reason: 'exact' };
     }
-    const catchAll = bestCatchAllMatch(call.path, catchAllsByMethod.get(call.method));
+    const catchAll = bestCatchAllMatch(call.path, [
+      ...(catchAllsByMethod.get(call.method) ?? []),
+      ...(catchAllsByMethod.get(ANY_METHOD) ?? []),
+    ]);
     if (catchAll) return { call, route: catchAll, confidence: 0.7, reason: 'catch-all' };
     return { call, route: null, confidence: 0, reason: 'no-route' };
   });

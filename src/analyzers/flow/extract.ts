@@ -33,7 +33,13 @@ import { getLanguage } from '../../languages';
 import type { HttpFlowSupport, LanguageId } from '../../languages/types';
 import { parseFile, walk, type Node } from '../../ast/parse';
 import { grammarShape, type GrammarShape, type ResolvedCall } from '../../ast/grammar-shape';
-import { normalizeMethod, normalizePath, type HttpMethod, type NormalizeConfig } from './normalize';
+import {
+  normalizeMethod,
+  normalizePath,
+  type HttpMethod,
+  type NormalizeConfig,
+  type ServedMethod,
+} from './normalize';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
 
 /** An outbound HTTP call found in source (the consumed side). */
@@ -53,7 +59,10 @@ export interface ClientCall {
  *  derived from the file's location), or an ingested OpenAPI/spec document
  *  (preferred when available). */
 export interface RouteEndpoint {
-  readonly method: HttpMethod;
+  /** A concrete verb, or `ANY` for a method-agnostic declaration (a routing
+   *  layer that binds a path for every method — Django `path()`, Go
+   *  `http.HandleFunc`). See `ANY_METHOD` in `normalize.ts`. */
+  readonly method: ServedMethod;
   readonly path: string;
   readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
   readonly handler: string | null;
