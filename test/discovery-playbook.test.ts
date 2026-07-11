@@ -70,11 +70,13 @@ describe('capability registry — Rule 16 parity (block-if-unregistered)', () =>
 });
 
 describe('capability registry — descriptor completeness', () => {
-  it('every user-facing command has group + summary + docsBlurb', () => {
+  it('every user-facing command has group + summary + docsBlurb + typicalRuntime', () => {
     for (const c of userCommands()) {
       expect(c.group, `${c.id}: group`).toBeTruthy();
       expect(c.summary.trim().length, `${c.id}: summary`).toBeGreaterThan(0);
       expect(c.docsBlurb?.trim().length ?? 0, `${c.id}: docsBlurb`).toBeGreaterThan(0);
+      // Feeds the generated docs command table's "Typical runtime" column.
+      expect(c.typicalRuntime?.trim().length ?? 0, `${c.id}: typicalRuntime`).toBeGreaterThan(0);
     }
   });
 
