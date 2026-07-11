@@ -1098,6 +1098,31 @@ export const go: LanguageSupport = {
     ],
   },
 
+  // Data-model declarations for the model-schema drift gate. In Go the
+  // wire-contract marker IS the struct tag: a `json:`-tagged struct is a
+  // serialization contract by definition (API payloads, config files), and
+  // `gorm:` / `db:` / `bson:` mark persistence models. The tag also supplies
+  // the wire field name (first token; `omitempty` reads as optional, a
+  // pointer type likewise). Untagged structs are internal shapes and stay
+  // invisible — precision over recall, the documented posture.
+  modelSchema: {
+    structTagKeys: ['json', 'gorm', 'db', 'bson'],
+    // A stdlib-only JSON API has no manifest signal (encoding/json is not a
+    // go.mod entry) — extraction still works once the gate is configured;
+    // the signal fires on the common persistence/ORM stacks.
+    schemaSignals: [
+      {
+        manifest: 'go.mod',
+        anyOf: [
+          'gorm.io/gorm',
+          'github.com/jmoiron/sqlx',
+          'go.mongodb.org/mongo-driver',
+          'entgo.io/ent',
+        ],
+      },
+    ],
+  },
+
   // Tree-sitter grammar for the canonical AST layer (src/ast/). Logical name —
   // src/ast/ resolves it to the bundled wasm artifact and its shape row.
   treeSitterGrammars: {
