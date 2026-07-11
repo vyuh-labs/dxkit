@@ -31,21 +31,20 @@
 
 import { readFileSync } from 'fs';
 import { dirname, extname, join } from 'path';
-import type { Language, Node, Parser, Tree } from 'web-tree-sitter';
+import type { Language, Parser, Tree } from 'web-tree-sitter';
+import type { ParsedFile as SdkParsedFile } from '@vyuhlabs/dxkit-sdk';
 import { LANGUAGES } from '../languages';
 import type { LanguageId } from '../languages/types';
 
-// Re-export the node/tree types so consumers depend on this module, not on
-// web-tree-sitter directly (keeps the engine swap contained here).
-export type { Node, Tree } from 'web-tree-sitter';
+// The node/tree types, ParsedFile shape, and `walk` moved to
+// @vyuhlabs/dxkit-sdk (the frozen extension surface, CLAUDE.md Rule 18);
+// re-exported so consumers keep depending on this module, not on
+// web-tree-sitter directly (the engine swap stays contained).
+export type { Node, Tree } from '@vyuhlabs/dxkit-sdk';
+export { walk } from '@vyuhlabs/dxkit-sdk';
 
-/** A successfully parsed file. */
-export interface ParsedFile {
-  readonly tree: Tree;
-  readonly source: string;
-  readonly grammar: string;
-  readonly languageId: LanguageId;
-}
+/** A successfully parsed file, narrowed to dxkit's own pack-id union. */
+export type ParsedFile = SdkParsedFile<LanguageId>;
 
 // ── Engine + grammar caches (process-lifetime) ──────────────────────────────
 
@@ -174,20 +173,6 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
   const tree = await parseSource(source, resolved.grammar);
   if (!tree) return null;
   return { tree, source, grammar: resolved.grammar, languageId: resolved.languageId };
-}
-
-/**
- * Depth-first walk of a node and its descendants. The visitor runs on each
- * node; return `false` to skip a node's children. Consumers use this rather
- * than walking `node.children` directly so a future engine swap stays
- * contained in this module.
- */
-export function walk(node: Node, visit: (node: Node) => void | boolean): void {
-  const proceed = visit(node);
-  if (proceed === false) return;
-  for (const child of node.children) {
-    if (child) walk(child, visit);
-  }
 }
 
 /** Test seam: drop cached engine/grammars/parsers so a test can re-init. */

@@ -9,3 +9,15 @@
 export { SDK_MAJOR } from './version';
 export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from './descriptors';
 export type { GrammarModelShape, GrammarShape, ResolvedCall } from './grammar';
+export {
+  ANY_METHOD,
+  CATCHALL,
+  bindingKey,
+  catchAllStaticPrefix,
+  isCatchAllPath,
+  normalizeMethod,
+  normalizePath,
+} from './http-normalize';
+export type { HttpMethod, NormalizeConfig, ServedMethod } from './http-normalize';
+export { walk } from './ast';
+export type { Node, ParsedFile, ParseFileFn, ParseSourceFn, Tree } from './ast';
