@@ -415,6 +415,12 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     // removed). High severity — it is a runtime breakage the gate proves
     // statically, on par with a security regression.
     'flow-binding': 'high',
+    // Net-new breaking schema drift (a field removed / type changed /
+    // requiredness tightened on a declared data model). High severity — a
+    // statically proven contract break, the same tier as flow-binding. The
+    // additive/info classes never reach the guardrail as findings, so this
+    // default speaks only for the breaking ones.
+    'model-schema-drift': 'high',
     // A custom-check / lint failure. Severity is a neutral default — a custom
     // check's block intent is user/pack-declared (`entry.blocking`), NOT
     // severity-derived, so severity only feeds the confidence-threshold logic

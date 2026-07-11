@@ -759,6 +759,89 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     expected: 'changed',
   },
 
+  // ─── model-schema-drift (5) ───────────────────────────────────────────
+  {
+    name: 'model-schema-drift/clean — same model, field, changeClass',
+    prior: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'email',
+      changeClass: 'field-removed',
+    },
+    current: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'email',
+      changeClass: 'field-removed',
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'model-schema-drift/different field → identity changes',
+    prior: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'email',
+      changeClass: 'field-removed',
+    },
+    current: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'nick',
+      changeClass: 'field-removed',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'model-schema-drift/different change class → identity changes',
+    prior: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'email',
+      changeClass: 'field-removed',
+    },
+    current: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'email',
+      changeClass: 'field-type-changed',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'model-schema-drift/different model → identity changes',
+    prior: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: null,
+      changeClass: 'model-removed',
+    },
+    current: {
+      kind: 'model-schema-drift',
+      model: 'Person',
+      field: null,
+      changeClass: 'model-removed',
+    },
+    expected: 'changed',
+  },
+  {
+    name: 'model-schema-drift/model-level vs field-level stay distinct',
+    // null field vs a named field must not collide (the \0 separator).
+    prior: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: null,
+      changeClass: 'model-removed',
+    },
+    current: {
+      kind: 'model-schema-drift',
+      model: 'User',
+      field: 'model-removed',
+      changeClass: '',
+    },
+    expected: 'changed',
+  },
+
   // ─── custom-check / lint findings (5) ─────────────────────────────────
   {
     name: 'custom-check/located clean — same check, file, line, rule',
@@ -1054,6 +1137,7 @@ const EXPECTED_KINDS = [
   'secret-hmac',
   'stale-allow',
   'flow-binding',
+  'model-schema-drift',
   'custom-check',
 ] as const;
 

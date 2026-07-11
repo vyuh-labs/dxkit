@@ -157,6 +157,16 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // pure rename; the `${method} ${path}` join key is the rule discriminator
       // so two distinct bindings in one renamed file don't cross-pair.
       return { id: entry.id, file: entry.file, rule: `${entry.method} ${entry.path}` };
+    case 'model-schema-drift':
+      // LOCATION-free identity ((model, field, changeClass)) → whole-file
+      // display locator; the identity triple is the rule discriminator. The
+      // gate path mints and matches these findings itself (fingerprint
+      // lookup), so this projection only serves show/report tooling.
+      return {
+        id: entry.id,
+        file: entry.file,
+        rule: `${entry.model} ${entry.field ?? ''} ${entry.changeClass}`,
+      };
     case 'custom-check':
       // Two shapes. LOCATED (a linter diagnostic, `file` present): line-window-
       // bucketed identity → line-dependent → full (file, line, rule) locator so

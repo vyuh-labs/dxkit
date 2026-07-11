@@ -124,6 +124,7 @@ export type IdentityInput =
   | SecretHmacIdentityInput
   | StaleAllowIdentityInput
   | FlowBindingIdentityInput
+  | ModelSchemaDriftIdentityInput
   | CustomCheckIdentityInput;
 
 /**
@@ -417,6 +418,28 @@ export interface FlowBindingIdentityInput {
 }
 
 /**
+ * A schema-drift finding — one detected change to a declared data model, the
+ * unit the model-schema drift gate mints and the allowlist waives. Identity
+ * is exactly the triple `(model, field, changeClass)` — LOCATION-FREE by
+ * design (the dep-vuln doctrine: a model is a contract-domain entity whose
+ * name is its address), so the finding survives line and file moves with no
+ * matching machinery. `field` is null for model-level classes
+ * (`model-removed` / `model-added`). The before/after values and the
+ * file/line locator live on the baseline entry as display metadata, never in
+ * the hash — a follow-up commit adjusting the same field cannot dodge an
+ * allowlist decision.
+ */
+export interface ModelSchemaDriftIdentityInput {
+  readonly kind: 'model-schema-drift';
+  /** The model's declared name (dxkit's own AST/spec read, normalized). */
+  readonly model: string;
+  /** Field name, or null for a model-level change class. */
+  readonly field: string | null;
+  /** One of the fixed drift-taxonomy classes (`field-removed`, …). */
+  readonly changeClass: string;
+}
+
+/**
  * A failure emitted by a user-declared custom check (`.dxkit/policy.json:checks`)
  * or a pack-declared built-in check (lint). The check runner turns a check's
  * output into zero or more of these — either ONE binary finding (the command
@@ -548,6 +571,23 @@ export type BaselineEntry =
     }
   | {
       id: FindingId;
+      kind: 'model-schema-drift';
+      /** The identity triple — all three stored so identity is recomputable
+       * from the entry alone (the migration contract). */
+      model: string;
+      field: string | null;
+      changeClass: string;
+      /** Normalized before/after facts — display metadata, never hashed
+       * (identity must survive a follow-up tweak to the same field). */
+      from: string | null;
+      to: string | null;
+      /** Head-side locator (base-side for removals) — display metadata;
+       * identity is location-free by design. */
+      file: string;
+      line: number;
+    }
+  | {
+      id: FindingId;
       kind: 'stale-allow';
       file: string;
       line: number;
@@ -630,6 +670,7 @@ export interface SanitizedBaselineEntry {
     | 'secret-hmac'
     | 'stale-allow'
     | 'flow-binding'
+    | 'model-schema-drift'
     | 'custom-check';
   readonly sanitized: true;
 }

@@ -382,6 +382,47 @@ export function computeFlowBindingFingerprint(method: string, path: string, file
   return computeContentFingerprint(FLOW_BINDING_CANONICAL_RULE, file, `${method} ${path}`);
 }
 
+// ─── Model-schema-drift identity (the drift gate, Rule 9) ─────────────────────
+
+/**
+ * Tool-independent canonical rule for a schema-drift finding. Every drift
+ * shares this constant (like secrets and flow bindings) because the finding
+ * is intrinsic ("this field of this model changed in this way"), never a
+ * per-tool classification.
+ */
+export const MODEL_SCHEMA_DRIFT_CANONICAL_RULE = 'canonical:model-schema-drift';
+
+/**
+ * Durable identity for a schema-drift finding. A model is a CONTRACT-domain
+ * entity — its name is its address, the file is where it happens to live
+ * today — so identity follows the dep-vuln precedent (`(package, advisory)`,
+ * no file) rather than the code-finding one: it is LOCATION-FREE by
+ * construction, hashing only `(model, fieldPath, changeClass)`. The finding
+ * survives line AND file moves with no matching machinery, and a follow-up
+ * commit adjusting the same field cannot dodge an allowlist decision (the
+ * before/after values are display metadata, never hashed).
+ *
+ * Disclosed trade-off (design review): two same-named models in different
+ * modules whose same-named field undergoes the same change class in one PR
+ * share an identity, so one allowlist entry suppresses both — vanishingly
+ * rare, visible in the PR comment's suppressed section, and the
+ * accepted-risk decision plausibly covers both. All inputs are
+ * dxkit-normalized (Rule 9): the model NAME from dxkit's own AST/spec read,
+ * the field name, and the fixed taxonomy class — never a type-checker's
+ * rendered text.
+ */
+export function computeModelSchemaDriftFingerprint(
+  model: string,
+  field: string | null,
+  changeClass: string,
+): string {
+  return computeContentFingerprint(
+    MODEL_SCHEMA_DRIFT_CANONICAL_RULE,
+    '',
+    `${model}\0${field ?? ''}\0${changeClass}`,
+  );
+}
+
 // ─── Secret HMAC primitive ───────────────────────────────────────────────────
 
 /**
