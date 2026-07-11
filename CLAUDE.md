@@ -55,6 +55,14 @@ consumer through it (canonical examples added in 2.30):
   `src/analyzers/flow/gather.ts` (loads `stripUrlPrefixes` / `specs` itself, so a
   surface cannot forget them); the raw `gatherFlowModel` is only for
   explicit-config callers (the two-ref gate, cross-repo publish, the map CLI);
+- a repo's declared MODEL SET with its policy config applied →
+  `gatherRepoModelSet` in `src/analyzers/model-schema/gather.ts` (loads
+  `schema.specs` itself; the raw `gatherModelSet` is only for the two-ref
+  gate's explicit-config sides). What schema DRIFT a diff contains →
+  `diffModelSets` in `src/analyzers/model-schema/model.ts`, the ONE drift
+  computation consumed by BOTH the guardrail gate and `schema diff`
+  (pinned by `test/schema-gate-diff-parity.test.ts` — same
+  parity-test discipline as the flow gate/join pair below);
 - whether a consumed `(method, path)` is SERVED → `servedMatch` /
   `catchAllPrefixCovers` in `src/analyzers/flow/model.ts`. BOTH the join (doctor's
   `diagnoseFlow`) and the integration gate (`evaluateFlowGate`) resolve a call

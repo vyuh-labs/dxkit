@@ -9,7 +9,7 @@ This skill explains how dxkit works. Reach for it when the user asks about dxkit
 
 ## Mental model
 
-dxkit measures a codebase along **6 dimensions** (Security, Code Quality, Tests, Documentation, Maintainability, Developer Experience) using deterministic scanners (gitleaks, semgrep, cloc, jscpd, graphify, ruff, eslint, …). Findings are anchored to a **baseline** (`.dxkit/baselines/main.json`) so today's pre-existing issues don't block tomorrow's PR. A **guardrail check** diffs current state against the baseline and blocks net-new regressions. Hooks + CI wire the guardrail into the developer's workflow.
+dxkit measures a codebase along **6 dimensions** (Security, Code Quality, Tests, Documentation, Maintainability, Developer Experience) using deterministic scanners (gitleaks, semgrep, cloc, jscpd, graphify, ruff, eslint, …). Findings are anchored to a **baseline** (`.dxkit/baselines/main.json`) so today's pre-existing issues don't block tomorrow's PR. A **guardrail check** diffs current state against the baseline and blocks net-new regressions; two additive contract gates ride the same check when configured — **flow** (net-new broken UI→API integrations) and **schema drift** (breaking data-model changes, opt-in). Hooks + CI wire the guardrail into the developer's workflow.
 
 The three contracts to remember:
 

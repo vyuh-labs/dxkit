@@ -380,6 +380,37 @@ export const ${id}: LanguageSupport = {
   // httpFlow: { ... },
   // treeSitterGrammars: { '.${id}': '${id}' },
 
+  // TODO(${id}): OPTIONAL modelSchema — data-model extraction for the schema
+  // drift gate. Add it if the language has canonical model conventions (an
+  // ORM, entity decorators, struct-tag serialization). DECLARATION-ONLY,
+  // like httpFlow (CONTRIBUTING.md "Adding model-schema support" is the
+  // walkthrough):
+  //   1. \`treeSitterGrammars\` as above, PLUS a model-shape row in
+  //      src/ast/grammar-model-shape.ts (class/field/heritage/tag syntax —
+  //      verify every node/field name against a real parse;
+  //      test/languages-contract.test.ts loud-fails an unshaped pack).
+  //   2. Fill the descriptor (ModelSchemaSupport in src/languages/types.ts;
+  //      worked examples typescript.ts/python.ts/go.ts):
+  //        modelBaseClasses       — heritage markers (models.Model, BaseModel)
+  //        weakModelBaseClasses   — too-generic names (Base): count only when
+  //                                 a fieldCallees constructor corroborates
+  //        modelDecorators        — @Entity / @Table / @dataclass
+  //        structTagKeys          — Go-style tag markers (json/gorm)
+  //        fieldCallees           — ORM field constructors (type + optionality;
+  //                                 typeFrom: 'callee' | 'firstArg')
+  //        transparentTypeWrappers— annotation wrappers to fold (Mapped[X])
+  //        typeAliases            — lowercase lexical folds (charfield→string)
+  //        schemaSignals          — manifest tokens for doctor discovery
+  //      PRECISION-FIRST: a missed model is a disclosed gap; a false model
+  //      floods the drift diff. When unsure, leave it out — schema.specs
+  //      (OpenAPI/JSON Schema) is the honest fallback.
+  //   3. Pin it: extend the pack test + a model fixture/row in
+  //      test/fixtures-analysis.test.ts, then real-repo-validate the wave
+  //      (extraction accuracy + mutation battery — see the release gate in
+  //      the feature's design history).
+  //
+  // modelSchema: { ... },
+
   // REQUIRED(${id}): correctness floor — the loop-safety liveness gate. Two PURE
   // command builders; the runner (src/analyzers/correctness/run.ts) executes
   // them and owns the fail-open/fail-closed + timeout policy — a pack NEVER

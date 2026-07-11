@@ -33,6 +33,10 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 | [`baseline show`](commands/baseline.md)            | Pretty-print or filter the on-disk baseline                     |
 | [`guardrail check`](commands/guardrail.md)         | Diff current scan vs. baseline; block on net-new regressions    |
 | [`checks`](commands/checks.md)                     | List / dry-run your custom repo-invariant + built-in lint gates |
+| `flow`                                             | UI→API integration map + the broken-integration gate            |
+| `schema` / `schema diff`                           | Data-model inventory + the schema drift gate (preview = gate)   |
+| `ingest`                                           | Bring external SAST (SARIF) findings into the same gate         |
+| `receipt`                                          | Emit the PR "dxkit signals" block (verdict + allowlist + score) |
 | [`allowlist add`](commands/allowlist.md)           | Suppress a specific finding (typed category + reason + expiry)  |
 | [`allowlist audit`](commands/allowlist.md)         | Surface stale / soon-to-expire / orphaned / missing-rationale   |
 | [`allowlist export --snyk`](commands/allowlist.md) | Propagate Snyk-originated suppressions to a `.snyk` policy      |
@@ -55,13 +59,21 @@ Once dxkit + its tools are installed, here's the command surface:
 | [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                          | < 5 sec (renders existing reports) |
 | [`explore`](commands/explore.md)                                 | "What does this repo do / where does X live?"                      | < 5 sec (queries the graph)        |
 | [`context`](commands/context.md)                                 | "Token-budgeted structural slice for an LLM"                       | < 5 sec (queries the graph)        |
-| [`report`](commands/report.md)                                   | "Run all of the above in one shot"                                 | 5-30 min                           |
+| [`report`](commands/report.md)                                   | "Run all of the above in one shot" (+ `report history` trend)      | 5-30 min                           |
+| `metrics`                                                        | "What did the gate stop before merge, and how's the score trend?"  | < 5 sec                            |
+| `flow`                                                           | "Which client calls bind to which served routes?"                  | 5-30 sec                           |
+| `schema` / `schema diff`                                         | "What data models do we declare / does my change break one?"       | 5-30 sec                           |
+| `capabilities`                                                   | "What can dxkit do here, and what should this repo adopt?"         | < 5 sec                            |
+| `configure`                                                      | "Compute + apply the config this repo should have"                 | < 30 sec                           |
+| `ingest`                                                         | "Bring Snyk Code / CodeQL / SARIF findings into the gate"          | varies                             |
+| `receipt`                                                        | "Emit the PR signals block (verdict + allowlist + score delta)"    | < 30 sec                           |
 | [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                               | < 5 sec                            |
 | [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                            | < 5 sec                            |
 | [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"                 | 5-30 sec                           |
 | [`loop doctor` / `loop ledger`](commands/loop.md)                | "Run a safe autonomous coding loop behind the Stop-gate"           | < 5 sec                            |
 | [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"          | 5-30 sec                           |
 | [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"       | 1-3 min                            |
+| `uninstall`                                                      | "Remove dxkit, restoring the exact pre-dxkit state (dry-run 1st)"  | < 30 sec                           |
 | [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"                | < 5 sec                            |
 | [`baseline create`](commands/baseline.md)                        | "Capture today's findings as a brownfield anchor"                  | 30s-2m                             |
 | [`baseline show`](commands/baseline.md)                          | "Inspect/filter the on-disk baseline"                              | < 1 sec                            |
