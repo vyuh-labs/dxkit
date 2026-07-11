@@ -33,6 +33,12 @@ dxkit/
 │   ├── check-slop.sh               # Pre-commit (cached) + CI (vs base branch)
 │   └── check-coverage.sh           # Pre-push + CI: coverage threshold
 ├── templates/                      # Build output (gitignored, shipped in tarball)
+├── packages/
+│   ├── dxkit-sdk/                  # @vyuhlabs/dxkit-sdk — the FROZEN extension
+│   │                               # surface (descriptors, wire schemas, the
+│   │                               # normalizer). Main src/ depends on it and
+│   │                               # re-exports. See CLAUDE.md Rule 18.
+│   └── create-dxkit/               # npm init bootstrap shim
 └── test/                           # Vitest tests + fixtures
     ├── *.test.ts                   # Unit tests
     └── integration/analyzers.test.ts  # Integration: analyzers on a temp repo
@@ -40,6 +46,14 @@ dxkit/
 
 `templates/` is generated — never edit it directly. Edit `src-templates/`
 and run `npm run build`.
+
+A note on the SDK boundary: anything exported from `packages/dxkit-sdk` is
+contract (additive-only within its major, pinned by
+`test/sdk-surface-freeze.test.ts` and architecture Rule 18). If your change
+touches a frozen shape, the change belongs IN the SDK package with a
+matching freeze-test update and changelog entry; a parallel definition in
+`src/` fails the architecture gate. The SDK imports nothing from `src/`,
+ever.
 
 ## Local development
 
@@ -721,6 +735,13 @@ they run serially.
 
 Releases are handled by the maintainers via GitHub Releases, which trigger
 the publish workflow. Contributors do not need to bump versions in PRs.
+
+Three packages release from this repo, each on its own tag namespace:
+`vX.Y.Z` (the main package, `publish.yml`), `dxkit-sdk@vX.Y.Z`
+(`publish-dxkit-sdk.yml`), and `create-dxkit@vX.Y.Z`
+(`publish-create-dxkit.yml`). Ordering rule: when a main release raises its
+`@vyuhlabs/dxkit-sdk` dependency floor, the SDK publishes first so the
+dependency resolves on npm.
 
 ## Code style
 

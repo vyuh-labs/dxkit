@@ -1,0 +1,147 @@
+name: Publish dxkit-sdk
+
+# Sibling release pipeline for `@vyuhlabs/dxkit-sdk` (the frozen extension
+# surface). Fires on a release whose tag starts with `dxkit-sdk@` (e.g.
+# `dxkit-sdk@v0.1.0`). Mirrors the create-dxkit publish preflight set —
+# version-match, on-main, CI-green, not-already-on-npm — applied to the
+# sub-package's own `package.json` and `npm view` slot, plus a build step
+# (this package compiles TypeScript; the bootstrap shim does not).
+#
+# RELEASE ORDERING (load-bearing): the main package depends on
+# `@vyuhlabs/dxkit-sdk`, so when a main release raises that dependency's
+# floor, the SDK version satisfying it MUST be live on npm BEFORE the main
+# release publishes — otherwise consumers of the new main version cannot
+# resolve the dependency. Publish order: dxkit-sdk first, then dxkit.
+#
+# Release sequence (mirror of the main package, scoped to the SDK):
+#
+#   git tag -a dxkit-sdk@v0.1.0 -m "dxkit-sdk v0.1.0"
+#   git push origin dxkit-sdk@v0.1.0
+#   gh release create dxkit-sdk@v0.1.0 --title "dxkit-sdk v0.1.0"
+#
+# Bump the version in `packages/dxkit-sdk/package.json` (and keep
+# `SDK_MAJOR` in src/version.ts in step — the surface-freeze test pins the
+# pair) before tagging — preflight 1/4 catches the drift if you forget.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    if: startsWith(github.ref_name, 'dxkit-sdk@')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance via OIDC
+      actions: read # required for `gh run list` against the tagged SHA
+    defaults:
+      run:
+        working-directory: packages/dxkit-sdk
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Preflight — tag matches packages/dxkit-sdk/package.json version
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          # Strip the `dxkit-sdk@v` prefix to get the bare semver.
+          TAG_VERSION="${TAG_NAME#dxkit-sdk@v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG_NAME (version $TAG_VERSION) does not match packages/dxkit-sdk/package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "✓ Tag $TAG_NAME matches package.json version $PKG_VERSION"
+
+      - name: Preflight — tagged commit is on main
+        working-directory: ${{ github.workspace }}
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
+            echo "::error::Tagged commit ${GITHUB_SHA} is not reachable from origin/main"
+            exit 1
+          fi
+          echo "✓ Tagged commit ${GITHUB_SHA} is an ancestor of origin/main"
+
+      - name: Preflight — CI is green on tagged commit
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CONCLUSION=$(gh run list \
+            --workflow CI \
+            --commit "${GITHUB_SHA}" \
+            --json conclusion,status \
+            --jq '.[0].conclusion // "missing"')
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI is not green on tagged commit ${GITHUB_SHA} (got: ${CONCLUSION})"
+            exit 1
+          fi
+          echo "✓ CI is green on ${GITHUB_SHA}"
+
+      - name: Preflight — version not already on npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@vyuhlabs/dxkit-sdk@${VERSION}" version >/dev/null 2>&1; then
+            echo "::error::@vyuhlabs/dxkit-sdk@${VERSION} is already published on npm"
+            exit 1
+          fi
+          echo "✓ @vyuhlabs/dxkit-sdk@${VERSION} is available on npm"
+
+      - name: Install workspace + build
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm ci
+          npm run build:sdk
+
+      - name: Pack tarball
+        id: pack
+        run: |
+          TARBALL=$(npm pack --silent)
+          SHASUM=$(sha1sum "$TARBALL" | awk '{print $1}')
+          echo "tarball=$(pwd)/$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "shasum=$SHASUM" >> "$GITHUB_OUTPUT"
+          echo "✓ Built $TARBALL (sha1: $SHASUM)"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public "${{ steps.pack.outputs.tarball }}"
+
+      # Poll loop: up to 60 iterations × 3s = ~180s window. First-publish of
+      # a new scoped package commonly takes 30-90s for the CDN to propagate
+      # (learned on create-dxkit@0.1.0, whose publish registered as workflow
+      # "failure" on a short window even though it succeeded).
+      - name: Verify npm shasum matches local tarball
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          REMOTE_SHASUM=""
+          for i in $(seq 1 60); do
+            REMOTE_SHASUM=$(npm view "@vyuhlabs/dxkit-sdk@${VERSION}" dist.shasum 2>/dev/null || true)
+            if [ -n "$REMOTE_SHASUM" ]; then break; fi
+            sleep 3
+          done
+          LOCAL_SHASUM="${{ steps.pack.outputs.shasum }}"
+          if [ -z "$REMOTE_SHASUM" ]; then
+            echo "::error::npm never reported a shasum for @vyuhlabs/dxkit-sdk@${VERSION}"
+            exit 1
+          fi
+          if [ "$REMOTE_SHASUM" != "$LOCAL_SHASUM" ]; then
+            echo "::error::npm shasum ($REMOTE_SHASUM) does not match local tarball shasum ($LOCAL_SHASUM)"
+            exit 1
+          fi
+          echo "✓ Shasum verified: ${REMOTE_SHASUM}"
+
+      - name: Upload tarball as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vyuhlabs-dxkit-sdk-${{ github.ref_name }}
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 90

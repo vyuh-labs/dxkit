@@ -171,14 +171,9 @@ export interface DeepSastSupport {
 // declare the same shapes, so their ONE definition lives in the SDK package.
 // Imported for use in LanguageSupport and re-exported so every existing
 // consumer keeps importing them from this module.
-import type {
-  FileRouteSupport,
-  HttpFlowSupport,
-  ModelSchemaSupport,
-} from '@vyuhlabs/dxkit-sdk';
+import type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from '@vyuhlabs/dxkit-sdk';
 
 export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport };
-
 
 /**
  * Everything dxkit needs to know about a language lives in one implementation
