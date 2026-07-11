@@ -60,6 +60,19 @@ describe('go pack — served side', () => {
     ]);
   });
 
+  it('chained registrations (r.With(mw).Get) are ROUTES, never client calls', async () => {
+    // chi idiom: middleware chained ahead of the verb method. The receiver
+    // text is the whole chain — the chain HEAD (`r`) identifies the router.
+    // Pre-fix this fell through to the client branch and a served route read
+    // as a consumed call (found on a real chi codebase during validation).
+    const flow = await extract(`
+  r.With(paginate).Get("/articles/{slug}", getArticle)
+  r.Route("/admin").Post("/users", createUser)
+`);
+    expect(routeKeys(flow)).toEqual(['GET /articles/{var}', 'POST /users']);
+    expect(flow.calls).toHaveLength(0);
+  });
+
   it('precision: cache clients and event registrations mint no routes', async () => {
     const flow = await extract(`
   val := r.Get(ctx, "cache/key/name")
