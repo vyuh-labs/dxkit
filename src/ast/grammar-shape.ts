@@ -29,6 +29,7 @@
  */
 
 import { walk, type Node } from './parse';
+import { KOTLIN } from './grammar-shape-kotlin';
 
 // ResolvedCall + GrammarShape moved to @vyuhlabs/dxkit-sdk (the frozen
 // extension surface, CLAUDE.md Rule 18) — grammar-shape ACCESS types are
@@ -174,6 +175,153 @@ function calleeFieldShape(g: CalleeFieldGrammar): GrammarShape {
     },
 
     functionNodes: g.functionNodes,
+
+    calleeCall(call: Node): Node | null {
+      const callee = call.childForFieldName('function');
+      return callee && callTypes.has(callee.type) ? callee : null;
+    },
+
+    receiverNode(call: Node): Node | null {
+      const callee = call.childForFieldName('function');
+      if (!callee || callee.type !== g.memberNode) return null;
+      return callee.childForFieldName(g.memberObjectField);
+    },
+  };
+}
+
+/** Trailing identifier segment of a dotted reference (`RequestMethod.GET` →
+ *  `GET`) — the G3 enum-ref contribution `listStrings` documents. */
+function dottedTail(text: string): string {
+  const parts = text.split('.');
+  return parts[parts.length - 1].trim();
+}
+
+/** Inputs to the fused-callee factory — grammars whose CALL node carries the
+ *  receiver/name fields directly (Java's `method_invocation` has
+ *  `object`/`name`/`arguments` on the call itself; there is no `function`
+ *  field). Annotations are the same fusion one level up: the annotation IS
+ *  the invocation, so `decoratorCall` returns the annotation node and
+ *  `resolveCall` accepts it alongside real calls. */
+interface FusedCalleeGrammar {
+  readonly callNode: string;
+  readonly nameField: string;
+  readonly objectField: string;
+  readonly argumentsField: string;
+  readonly stringNodes: readonly string[];
+  readonly decoratorNodes: readonly string[];
+  /** Keyword-argument analog inside annotation argument lists
+   *  (`element_value_pair {key, value}`). */
+  readonly annotationPair: { node: string; keyField: string; valueField: string };
+  /** List-literal analog (`element_value_array_initializer`). */
+  readonly listNode: string;
+  readonly functionNodes: readonly string[];
+  /** Node types of enum/member references inside a list whose trailing
+   *  segment is contributed by `listStrings` (Java `field_access`). */
+  readonly listRefNodes?: readonly string[];
+}
+
+function fusedCalleeShape(g: FusedCalleeGrammar): GrammarShape {
+  const stringTypes = new Set(g.stringNodes);
+  const decoratorTypes = new Set(g.decoratorNodes);
+
+  const stringText = (node: Node): string | null => (stringTypes.has(node.type) ? node.text : null);
+
+  /** The argument-list node of a call OR annotation, else null. */
+  const argList = (node: Node): Node | null => {
+    if (node.type === g.callNode) return node.childForFieldName(g.argumentsField);
+    if (decoratorTypes.has(node.type)) return node.childForFieldName(g.argumentsField);
+    return null;
+  };
+
+  const args = (node: Node): Node[] => {
+    const list = argList(node);
+    if (!list) return [];
+    const out: Node[] = [];
+    for (const c of list.namedChildren) if (c) out.push(c);
+    return out;
+  };
+
+  return {
+    callNodes: [g.callNode],
+
+    resolveCall(call: Node): ResolvedCall | null {
+      if (call.type === g.callNode) {
+        const name = call.childForFieldName(g.nameField);
+        if (!name) return null;
+        const obj = call.childForFieldName(g.objectField);
+        return obj
+          ? { kind: 'member', name: name.text, receiver: obj.text }
+          : { kind: 'bare', name: name.text, receiver: '' };
+      }
+      // An annotation IS the invocation in a fused grammar: `@GetMapping("/x")`
+      // has no inner call node, so the decorator round-trips through here.
+      // The name may be scoped (`@retrofit2.http.GET`) — the tail is the name.
+      if (decoratorTypes.has(call.type)) {
+        const name = call.childForFieldName(g.nameField);
+        if (!name) return null;
+        return { kind: 'bare', name: dottedTail(name.text), receiver: '' };
+      }
+      return null;
+    },
+
+    firstArg(node: Node): Node | null {
+      for (const a of args(node)) {
+        if (a.type === g.annotationPair.node) continue;
+        return a;
+      }
+      return null;
+    },
+
+    positionalArgs(node: Node): Node[] {
+      return args(node).filter((a) => a.type !== g.annotationPair.node);
+    },
+
+    stringText,
+
+    decoratorNodes: g.decoratorNodes,
+
+    decoratorCall(decorator: Node): Node | null {
+      // Fused: the annotation node itself is the invocation (marker forms
+      // included — a marker is a call with no arguments).
+      return decorator;
+    },
+
+    optionValue(node: Node, name: string): Node | null {
+      for (const a of args(node)) {
+        if (a.type !== g.annotationPair.node) continue;
+        const key = a.childForFieldName(g.annotationPair.keyField);
+        if (key && key.text === name) return a.childForFieldName(g.annotationPair.valueField);
+      }
+      return null;
+    },
+
+    listStrings(node: Node): string[] {
+      if (node.type !== g.listNode) return [];
+      const refTypes = new Set(g.listRefNodes ?? []);
+      const out: string[] = [];
+      for (const c of node.namedChildren) {
+        if (!c) continue;
+        const text = stringText(c);
+        if (text !== null) out.push(text);
+        // Dotted enum refs (`RequestMethod.GET`) contribute their tail — the
+        // consumer validates every token, so non-verbs drop out.
+        else if (refTypes.has(c.type)) out.push(dottedTail(c.text));
+      }
+      return out;
+    },
+
+    functionNodes: g.functionNodes,
+
+    calleeCall(): Node | null {
+      // A fused call node cannot have a call as its callee — chains link
+      // through the receiver (`object`) field instead.
+      return null;
+    },
+
+    receiverNode(call: Node): Node | null {
+      if (call.type !== g.callNode) return null;
+      return call.childForFieldName(g.objectField);
+    },
   };
 }
 
@@ -222,12 +370,33 @@ const GO: GrammarShape = calleeFieldShape({
   functionNodes: ['function_declaration', 'method_declaration'],
 });
 
+/** Java (verified vs the bundled tree-sitter-java wasm, ABI 14): the fused
+ *  grammar the factory above exists for — `method_invocation` carries
+ *  `object`/`name`/`arguments` on the call node, annotations come in a
+ *  with-arguments and a marker form, and annotation keyword arguments are
+ *  `element_value_pair` nodes. Enum refs in annotation arrays
+ *  (`{RequestMethod.GET}`) are `field_access` nodes. */
+const JAVA: GrammarShape = fusedCalleeShape({
+  callNode: 'method_invocation',
+  nameField: 'name',
+  objectField: 'object',
+  argumentsField: 'arguments',
+  stringNodes: ['string_literal'],
+  decoratorNodes: ['annotation', 'marker_annotation'],
+  annotationPair: { node: 'element_value_pair', keyField: 'key', valueField: 'value' },
+  listNode: 'element_value_array_initializer',
+  functionNodes: ['method_declaration'],
+  listRefNodes: ['field_access'],
+});
+
 const GRAMMAR_SHAPES: Readonly<Record<string, GrammarShape>> = {
   typescript: JS_FAMILY,
   tsx: JS_FAMILY,
   javascript: JS_FAMILY,
   python: PYTHON,
   go: GO,
+  java: JAVA,
+  kotlin: KOTLIN,
 };
 
 /** The shape for a logical grammar name, or null when no row exists yet —
