@@ -78,6 +78,16 @@ export function renderHistoryMarkdown(
     );
   }
 
+  // Extension inventory counts (additive — rendered only when the latest
+  // entry carries them; repos without inventory extensions see nothing).
+  const invLines = inventoryDeltaLines(
+    entries,
+    (name, kind, count, delta) => `| ${name} | ${kind} | ${count} | ${delta || '—'} |`,
+  );
+  if (invLines.length > 0) {
+    lines.push('', '| Inventory | Kind | Count | Δ |', '| --- | --- | ---: | :--- |', ...invLines);
+  }
+
   // Compact recent trend (most-recent last), so the table reads left→right in time.
   const limit = opts.limit && opts.limit > 0 ? opts.limit : 10;
   const recent = entries.slice(-limit);
@@ -133,6 +143,46 @@ export function renderTrendText(
         recent.map((e) => `${e.date.slice(5, 10)} ${score(e.scores.overall)}`).join('  '),
     );
   }
+  // Extension inventory counts, one compact line per extension (invisible
+  // for repos without inventory extensions).
+  const latestInv = entries[entries.length - 1]?.inventory;
+  if (latestInv) {
+    const prevInv = [...entries.slice(0, -1)].reverse().find((e) => e.inventory)?.inventory;
+    for (const [name, counts] of Object.entries(latestInv)) {
+      const parts = Object.entries(counts)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([kind, count]) => {
+          const before = prevInv?.[name]?.[kind];
+          const d = before === undefined ? null : count - before;
+          return `${kind} ${count}${d ? ` (${d > 0 ? '+' : ''}${d})` : ''}`;
+        });
+      out.push(`  inventory ${name}: ${parts.join(' · ')}`);
+    }
+  }
   void cur;
+  return out;
+}
+
+/**
+ * Per-(extension, kind) inventory rows for the LATEST entry, with a delta
+ * against the most recent prior entry that carried inventory. Empty when the
+ * latest entry has none — inventory rendering is invisible to repos without
+ * inventory extensions.
+ */
+function inventoryDeltaLines(
+  entries: readonly ReportHistoryEntry[],
+  row: (name: string, kind: string, count: number, delta: string) => string,
+): string[] {
+  const latest = entries[entries.length - 1]?.inventory;
+  if (!latest) return [];
+  const prev = [...entries.slice(0, -1)].reverse().find((e) => e.inventory)?.inventory;
+  const out: string[] = [];
+  for (const [name, counts] of Object.entries(latest)) {
+    for (const [kind, count] of Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))) {
+      const before = prev?.[name]?.[kind];
+      const d = before === undefined ? null : count - before;
+      out.push(row(name, kind, count, d ? `${d > 0 ? '+' : ''}${d}` : ''));
+    }
+  }
   return out;
 }
