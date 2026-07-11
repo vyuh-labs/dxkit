@@ -53,6 +53,15 @@ Exit code: `1` when the policy blocks any pair, `0` otherwise.
 | `probable_existing` | Heuristic match below the confidence threshold                             | warns          |
 | `uncertain`         | Below every threshold; manual review                                       | warns          |
 
+One `added` case that surprises people: a pure file RENAME can mint a
+net-new **test-gap** finding. That is not an identity bug — renamed
+findings relocate through git-aware matching — it is analysis truth: the
+test-naming convention link (`OwnerControllerTests` covers
+`OwnerController`) genuinely breaks when the source file's name changes,
+so the renamed file now reads untested. The honest remedies are renaming
+the test alongside the source, or an `allowlist add` with a reason when
+the naming divergence is deliberate.
+
 Customise the block/warn split with [`.dxkit/policy.json`](../configuration/policy.md).
 For **per-finding** suppression (false positives, intentional test
 fixtures, accepted risks), use the [allowlist](./allowlist.md) — the

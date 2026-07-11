@@ -88,6 +88,14 @@ export interface GrammarShape {
    * precision guard reads it. Optional (additive, SDK minor).
    */
   hasTrailingLambda?(call: Node): boolean;
+  /**
+   * The declared NAME of a function/method definition node (one of
+   * `functionNodes`) — for grammars whose wasm defines no `name` field
+   * (kotlin), where `childForFieldName('name')` cannot answer. The
+   * decorated-handler-name fallback consults it. Optional (additive,
+   * SDK minor).
+   */
+  functionName?(node: Node): string | null;
 }
 
 /** How to read one grammar's model-declaration syntax. */

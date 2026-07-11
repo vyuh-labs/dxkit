@@ -165,6 +165,11 @@ export const KOTLIN: GrammarShape = {
     return callee.namedChildren.find((c): c is Node => c != null) ?? null;
   },
 
+  functionName(node: Node): string | null {
+    if (node.type !== 'function_declaration') return null;
+    return childOfType(node, 'simple_identifier')?.text ?? null;
+  },
+
   hasTrailingLambda(call: Node): boolean {
     // Same-node form: a call_suffix carrying an annotated_lambda.
     const suffix = childOfType(call, 'call_suffix');

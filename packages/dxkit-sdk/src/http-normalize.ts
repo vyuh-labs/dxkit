@@ -203,14 +203,22 @@ export function normalizePath(
   s = s.replace(/<[^>]+>/g, PLACEHOLDER); // Django/Flask <int:pk>, <slug:s>, <name>
   s = s.replace(/\{[^}]*\}/g, (m) => (m === CATCHALL ? CATCHALL : PLACEHOLDER)); // {id}, keep {*}
 
-  // 7. single leading slash
+  // 7. single leading slash. Whether the input ALREADY had one is remembered
+  //    for the root-route case below: `@GetMapping("/")` / `app.get('/')`
+  //    declare a real endpoint, while a query-only relative URL (`?page=2`)
+  //    or a fully-stripped host helper reduces to `/` only synthetically.
+  const hadPathHead = s.startsWith('/');
   if (!s.startsWith('/')) s = '/' + s;
   s = s.replace(/\/{2,}/g, '/'); // collapse accidental doubles after prefix strip
 
   // 8. trailing slash
   if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
 
-  // 9. require a real path head (a literal, a single-segment {var}, or a catch-all {*})
+  // 9. the ROOT route: exactly `/`, valid only when the source string itself
+  //    was slash-headed (see step 7). Joins like any other exact key.
+  if (s === '/') return hadPathHead ? '/' : null;
+
+  // 10. require a real path head (a literal, a single-segment {var}, or a catch-all {*})
   if (!/^\/([A-Za-z]|\{var\}|\{\*\})/.test(s)) return null;
   return s;
 }

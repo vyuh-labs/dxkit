@@ -32,6 +32,17 @@ describe('flow normalizePath', () => {
     );
   });
 
+  it('the ROOT route: a slash-headed "/" is a real endpoint; a synthetic "/" is not', () => {
+    // @GetMapping("/"), app.get('/'), @app.get("/") all declare the root.
+    expect(normalizePath('"/"')).toBe('/');
+    expect(normalizePath('/')).toBe('/');
+    expect(normalizePath('"//"')).toBe('/');
+    // A query-only relative URL or a fully-stripped host helper reduces to
+    // "/" only synthetically — still not a route.
+    expect(normalizePath('"?page=2"')).toBeNull();
+    expect(normalizePath('`${Config.apiBase()}`', cfg)).toBeNull();
+  });
+
   it('canonicalizes Kotlin brace-less template vars ($id) to {var}', () => {
     expect(normalizePath('"/users/$id"')).toBe('/users/{var}');
     expect(normalizePath('"/users/$id/posts/$postId"')).toBe('/users/{var}/posts/{var}');
