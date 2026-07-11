@@ -387,6 +387,7 @@ export async function run(argv: string[]): Promise<void> {
       // extensions init: the run command line + optional Python starter
       command: { type: 'string' },
       stub: { type: 'boolean', default: false },
+      plugin: { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
@@ -872,6 +873,7 @@ export async function run(argv: string[]): Promise<void> {
         kind: values.kind as string | undefined,
         command: values.command as string | undefined,
         stub: !!values.stub,
+        plugin: !!values.plugin,
         land: values.land as string | undefined,
       });
       break;

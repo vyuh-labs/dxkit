@@ -4,10 +4,10 @@ dxkit's core owns the language-agnostic contract level: routes, models,
 dependencies, findings, gates. Everything app-specific or org-specific becomes
 an extension, and the SDK is the frozen surface extensions build against.
 
-This page documents the surface as of SDK 0.x. Rungs 1-3 are live: declared
-contract artifacts (`flow.sources`) and the external-extension orchestrator
-(`vyuh-dxkit extensions`) ship with dxkit 3.5; the in-process plugin runtime
-(rung 4) arrives in a later minor, speaking the shapes already frozen here.
+This page documents the surface as of SDK 0.x. All four rungs are live in
+dxkit 3.5: declared contract artifacts (`flow.sources`), the
+external-extension orchestrator (`vyuh-dxkit extensions`), and the
+in-process plugin runtime (rung 4 — `defineExtension`).
 
 ## The effort ladder
 
@@ -44,8 +44,54 @@ within a major, pinned by `test/sdk-surface-freeze.test.ts` in the main repo.
   functions dxkit runs. There is one normalizer; extensions never replicate
   it (wire URLs are re-normalized at ingest).
 - **AST access shapes** (`ParsedFile`, `walk`, `Node`/`Tree`,
-  `ParseFileFn`/`ParseSourceFn`): what the plugin host will bind parsing
-  through when the in-process runtime lands.
+  `ParseFileFn`/`ParseSourceFn`): the read contract for parsed source.
+- **The plugin surface** (`defineExtension`, `DxkitExtensionDefinition`,
+  `HttpFlowDialect`, `ContractSourceReader`, `UrlNormalizer`, the producer
+  types, `IntegrationVerifier`): the rung-4 contribution points. Each maps
+  1:1 onto an existing dxkit registry — a dialect merges into the named
+  pack's `httpFlow` descriptor (additive-only), a reader registers into the
+  contract-source registry, a `urlNormalizer` is the `rewriteUrl` hook on
+  the one normalizer, and producers speak the rung-3 wire protocol
+  in-process. `defineExtension` stamps the SDK major; a plain CommonJS
+  object with the same shape loads identically (validated field-precisely
+  at load), so a plugin has no hard runtime dependency on the SDK package.
+
+## Rung 4 in practice
+
+A plugin is a committed CommonJS module next to its manifest:
+
+```jsonc
+// .dxkit/extensions/acme-dialect/extension.json
+{ "schemaVersion": 1, "name": "acme-dialect", "plugin": { "module": "plugin.js" } }
+```
+
+```js
+// .dxkit/extensions/acme-dialect/plugin.js
+module.exports = {
+  name: 'acme-dialect',
+  sdkMajor: 0,
+  httpFlowDialect: {
+    pack: 'typescript',
+    clientMethodCallees: { methods: ['fetchJson'] },
+    methodAliases: { fetchjson: 'GET' },
+  },
+};
+```
+
+Scaffold with `vyuh-dxkit extensions init <name> --plugin [--kind <kind>]`
+and iterate with `extensions dev <name>`. A producer plugin (a declared
+`contributes` + `refresh` + `output`) behaves exactly like a rung-3
+extension — same wire validation, same stamped committed snapshot, same
+gate seams; the producer function is simply called in-process.
+
+Trust is tier-gated, not sandboxed by the OS: a plugin is committed code
+(review a PR that edits one like a PR that edits CI config), executes only
+on trusted surfaces (gather on a developer machine, `extensions
+refresh`/`dev`, the on-merge workflow), and never loads under
+`--untrusted` — gather-time contributions degrade symmetrically on both
+gate sides (never a false block) and producers fall back to their
+committed snapshots. A plugin declaring a different `sdkMajor` than the
+running SDK is refused at load with an error naming both.
 
 ## What is deliberately NOT in the SDK
 

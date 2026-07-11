@@ -318,7 +318,10 @@ export const COMMANDS = [
       'refresh time, validates its emitted contract/inventory/findings/export document, and routes ' +
       'it through the same machines native output gets (the flow join, the report trend, the ' +
       'net-new finding gate). `extensions dev <name>` is the seconds-fast authoring loop; ' +
-      '`extensions init` scaffolds a manifest that passes validation immediately.',
+      '`extensions init` scaffolds a manifest that passes validation immediately, and ' +
+      '`extensions init --plugin` scaffolds a rung-4 TypeScript plugin (flow dialects, custom ' +
+      'artifact readers, URL rewrites, integration verifiers) — the dxkit-author-extension ' +
+      'skill writes either rung from a prose description.',
     skill: 'dxkit-extensions',
     whenToRecommend: recommendExtensions,
     planConfig: planFlowSources,
