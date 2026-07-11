@@ -30,50 +30,13 @@
 
 import { walk, type Node } from './parse';
 
-/** A call site decomposed into its callee form. */
-export interface ResolvedCall {
-  /** `bare` — `fetch(...)`, `path(...)`; `member` — `requests.get(...)`. */
-  readonly kind: 'bare' | 'member';
-  /** Bare callee name, or the member property/method name (`get`). */
-  readonly name: string;
-  /** Member receiver text (`requests`, `this.http`); `''` for bare calls. */
-  readonly receiver: string;
-}
+// ResolvedCall + GrammarShape moved to @vyuhlabs/dxkit-sdk (the frozen
+// extension surface, CLAUDE.md Rule 18) — grammar-shape ACCESS types are
+// contract for rung-4 plugins; the factory + per-grammar rows below stay
+// internal. Re-exported so every existing consumer keeps this import path.
+import type { GrammarShape, ResolvedCall } from '@vyuhlabs/dxkit-sdk';
 
-/**
- * How to read one grammar's tree. Every function is total over arbitrary nodes
- * (returns null / empty rather than throwing) so the extractor stays fail-open.
- */
-export interface GrammarShape {
-  /** Node types that are invocations in this grammar. */
-  readonly callNodes: readonly string[];
-  /** Decompose a call node's callee; null when it is neither bare nor member. */
-  resolveCall(call: Node): ResolvedCall | null;
-  /** First positional (non-keyword) argument node of a call, else null. */
-  firstArg(call: Node): Node | null;
-  /** All positional (non-keyword) argument nodes of a call, in order. */
-  positionalArgs(call: Node): Node[];
-  /**
-   * A string literal's text — verbatim including quotes/backticks, with any
-   * language-level prefix (Python `f"..."` / `r"..."`) stripped so downstream
-   * normalization sees the quote first. Null for a non-string node.
-   */
-  stringText(node: Node): string | null;
-  /** Node types of decorator/annotation attachments (`[]` = grammar has none). */
-  readonly decoratorNodes: readonly string[];
-  /** The invocation inside a decorator (`@app.get('/x')` → the call), else null. */
-  decoratorCall(decorator: Node): Node | null;
-  /**
-   * Value node of a named option on a call — a keyword argument (Python
-   * `methods=[...]`) or an entry of a trailing object-literal argument (JS
-   * `fetch(url, { method: 'POST' })`). Null when absent.
-   */
-  optionValue(call: Node, name: string): Node | null;
-  /** Texts (verbatim, quoted) of the string elements of a list/array node. */
-  listStrings(node: Node): string[];
-  /** Function/method definition node types (decorated-handler-name fallback). */
-  readonly functionNodes: readonly string[];
-}
+export type { GrammarShape, ResolvedCall };
 
 /** Inputs to the shared factory for callee-field grammars — those whose call
  *  node carries a `function` field holding an identifier or a member node
