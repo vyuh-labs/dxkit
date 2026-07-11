@@ -66,7 +66,13 @@ export interface RouteEndpoint {
    *  `http.HandleFunc`). See `ANY_METHOD` in `normalize.ts`. */
   readonly method: ServedMethod;
   readonly path: string;
-  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
+  /** The four static-extraction provenances are the closed core; a declared
+   *  contract artifact contributes its registry kind ('openapi', 'postman',
+   *  'pact', 'http', 'har', a synthetic test kind) — the `(string & {})`
+   *  keeps those open (registry-driven) while preserving completion on the
+   *  core literals. Consumers treat `via` as display provenance; the one
+   *  semantic reader is the spec-preference dedup in `model.ts`. */
+  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec' | (string & {});
   readonly handler: string | null;
   readonly file: string;
   readonly line: number;

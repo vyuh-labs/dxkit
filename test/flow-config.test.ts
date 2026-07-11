@@ -25,6 +25,7 @@ describe('readFlowConfig', () => {
         mode: 'block',
         blockThreshold: 1,
         onMergeRefresh: false,
+        sources: [],
         refreshMode: 'pr',
       });
     } finally {
@@ -55,6 +56,27 @@ describe('readFlowConfig', () => {
     }
   });
 
+  it('reads flow.sources entries, dropping malformed ones (registry validates kinds later)', () => {
+    const dir = repoWith({
+      flow: {
+        sources: [
+          { kind: 'postman', path: 'col.json', side: 'consumed' },
+          { kind: 'har', path: 'session.har' },
+          { path: 'missing-kind.json' },
+          'not-an-object',
+        ],
+      },
+    });
+    try {
+      expect(readFlowConfig(dir).sources).toEqual([
+        { kind: 'postman', path: 'col.json', side: 'consumed' },
+        { kind: 'har', path: 'session.har' },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reads a full flow section', () => {
     const dir = repoWith({
       flow: {
@@ -71,6 +93,7 @@ describe('readFlowConfig', () => {
         mode: 'warn',
         blockThreshold: 0.5,
         onMergeRefresh: false,
+        sources: [],
         refreshMode: 'pr',
       });
     } finally {

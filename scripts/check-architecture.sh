@@ -1367,6 +1367,27 @@ if [ -n "$SIDEREF_INLINE_PUSH" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Contract-source discipline: artifact formats live in the registry ──────
+# A declared contract artifact (Postman collection, Pact contract, HAR
+# capture, …) is parsed by exactly one reader module under
+# src/analyzers/flow/contract-sources/. A format kind-literal appearing
+# elsewhere in src/ is the smoking-gun shape of a second parser (or a
+# hardcoded kind dispatch) growing outside the registry. 'http'/'openapi'
+# are too common as words to grep; the distinctive kinds are the tripwire.
+ROGUE_FORMAT=$(grep -rnE "'(postman|pact|har)'|\"(postman|pact|har)\"" src/ 2>/dev/null \
+  | grep -v "^src/analyzers/flow/contract-sources/" \
+  | grep -v -E ':[0-9]+:[[:space:]]*(//|\*)' \
+  | grep -v "// contract-source-ok" || true)
+if [ -n "$ROGUE_FORMAT" ]; then
+  echo "❌ Contract-source violation: artifact-format literal outside the reader registry:"
+  echo "$ROGUE_FORMAT"
+  echo "   → Formats are registry entries (CONTRACT_SOURCE_READERS). Extend the"
+  echo "     reader module or add a new one + one entry; never dispatch on a"
+  echo "     format kind elsewhere. Annotate '// contract-source-ok' for"
+  echo "     justified exceptions (docs strings, tests fixtures)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ─── Extension-runner discipline (mirror of Rule 17's custom-check gate) ────
 # runExtension EXECUTES repo-declared commands. It is callable only from
 # src/extensions/ (the orchestrator's own modules) and the extensions CLI —
