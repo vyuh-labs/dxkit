@@ -128,7 +128,10 @@ describe('deriveFileRoutePath — the central path algebra (framework-general)',
     expect(deriveFileRoutePath('pages/api/health/index.ts', pagesApi)).toBe('/api/health');
   });
 
-  it('returns null for a handler file at the base root (bare / route)', () => {
-    expect(d('app/route.ts')).toBeNull();
+  it('a handler file at the base root serves the ROOT route', () => {
+    // Pre-root-fix this derived null (the normalizer rejected a bare `/`);
+    // an `app/route.ts` genuinely serves `GET /`, and root routes are real
+    // routes since the wave-2 validation fix.
+    expect(d('app/route.ts')).toBe('/');
   });
 });

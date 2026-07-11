@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Root routes are real routes.** `@GetMapping("/")`, `app.get('/')`,
+  `@app.get("/")` — a route declared at the absolute root was invisible to
+  the normalizer on every pack (found by wave-2 real-repo validation:
+  petclinic's welcome page). A slash-headed `/` now normalizes and joins as
+  an exact key; a query-only relative URL (`?page=2`) or a fully-stripped
+  host helper still drops. Kotlin route handler NAMES also resolve now (the
+  zero-field kotlin grammar answers through a new optional `functionName`
+  shape accessor, SDK 0.2.0-additive).
+
 - **Java and Kotlin join the flow + schema gates (language-parity wave 2).**
   Java: Spring MVC/WebFlux annotations with class-level `@RequestMapping`
   prefixes and JAX-RS `@GET`+`@Path` pairs on the served side; RestTemplate
