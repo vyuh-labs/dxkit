@@ -29,10 +29,7 @@ import { changedFilesTouchModelSurface, detectActiveLanguages } from '../languag
 import { computeChangedFiles } from './changed-files';
 import { withRefWorktree } from './ref-baseline';
 import { gatherModelSet } from '../analyzers/model-schema/gather';
-import {
-  evaluateSchemaDriftGate,
-  type SchemaDriftFinding,
-} from '../analyzers/model-schema/gate';
+import { evaluateSchemaDriftGate, type SchemaDriftFinding } from '../analyzers/model-schema/gate';
 import { readSchemaConfig, type SchemaGateMode } from '../analyzers/model-schema/config';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';

@@ -327,10 +327,10 @@ for what counts as one) and gate breaking changes on the PR diff:
 ```jsonc
 {
   "schema": {
-    "mode": "warn",              // off (default) | warn | block
+    "mode": "warn", // off (default) | warn | block
     "specs": ["api/openapi.json"], // spec-declared models (any language)
-    "blockThreshold": 1          // confidence needed to BLOCK (default 1)
-  }
+    "blockThreshold": 1, // confidence needed to BLOCK (default 1)
+  },
 }
 ```
 

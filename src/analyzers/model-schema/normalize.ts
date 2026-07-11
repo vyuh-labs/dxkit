@@ -118,10 +118,7 @@ export function normalizeField(opts: {
 /** The wire field name carried by a Go-style struct tag for `key`
  *  (`json:"email,omitempty"` → `email`), plus its omitempty optionality.
  *  Null when the tag has no entry for the key or excludes the field (`-`). */
-export function tagWireName(
-  tag: string,
-  key: string,
-): { name: string; optional: boolean } | null {
+export function tagWireName(tag: string, key: string): { name: string; optional: boolean } | null {
   const m = new RegExp(`\\b${key}:"([^"]*)"`).exec(tag);
   if (!m) return null;
   const parts = m[1].split(',');

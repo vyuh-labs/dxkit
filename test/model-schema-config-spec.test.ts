@@ -115,10 +115,9 @@ describe('spec-declared models', () => {
       ).map((m) => m.name),
     ).toEqual(['Pet']);
     expect(
-      modelsFromSpec(
-        { $defs: { Leg: { properties: { len: { type: 'number' } } } } },
-        's.json',
-      ).map((m) => m.name),
+      modelsFromSpec({ $defs: { Leg: { properties: { len: { type: 'number' } } } } }, 's.json').map(
+        (m) => m.name,
+      ),
     ).toEqual(['Leg']);
   });
 

@@ -12,11 +12,7 @@ import {
 } from '../src/analyzers/model-schema/gate';
 import type { ModelEntity, ModelSet } from '../src/analyzers/model-schema/model';
 
-function entity(
-  name: string,
-  file: string,
-  fields: ModelEntity['fields'],
-): ModelEntity {
+function entity(name: string, file: string, fields: ModelEntity['fields']): ModelEntity {
   return { name, via: 'base-class', file, line: 1, fields };
 }
 function set(...models: ModelEntity[]): ModelSet {
@@ -51,7 +47,9 @@ describe('evaluateSchemaDriftGate — verdicts', () => {
     expect(schemaDriftGateBlocks(findings)).toBe(true);
     // Ordering: blocks first, then warns, then info.
     const ranks = findings.map((f) => f.verdict);
-    expect(ranks).toEqual([...ranks].sort((a, b) => 'block warn info'.indexOf(a) - 'block warn info'.indexOf(b)));
+    expect(ranks).toEqual(
+      [...ranks].sort((a, b) => 'block warn info'.indexOf(a) - 'block warn info'.indexOf(b)),
+    );
   });
 
   it('an unknown-degraded breaking finding WARNS, never blocks', () => {
