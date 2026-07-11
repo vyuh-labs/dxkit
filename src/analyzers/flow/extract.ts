@@ -3,9 +3,14 @@
  * HTTP integration: outbound client calls (CONSUMED) and inbound route
  * declarations (SERVED).
  *
- * It is the cross-cutting consumer of three seams and hardcodes none of them:
+ * It is the cross-cutting consumer of four seams and hardcodes none of them:
  *   - the canonical AST layer (`src/ast/`) for parsing — graphify-independent,
  *     and registered as its own concern, never folded into graphify's pass;
+ *   - the per-grammar shape table (`src/ast/grammar-shape.ts`) for HOW to read
+ *     a call / member / string / decorator from this grammar's tree — no
+ *     `call_expression` / `attribute` node name lives here, so the one
+ *     extractor walks any grammar and a new language adds flow with ZERO
+ *     extractor edits;
  *   - each pack's `httpFlow` descriptor (Rule 6) for WHICH constructs are HTTP
  *     — no `fetch`/`axios`/`@get` literal lives here;
  *   - the shared normalizer for canonical paths + verbs.
@@ -15,15 +20,19 @@
  * model — a participant is whatever its served/consumed sets make it). Role
  * assignment happens above this module, never inside it.
  *
- * Precision guard (validated): a member call with no declared receiver allowlist
- * (`axios.get`, `requests.get`, `agent.X.del`) only counts as a client call when
- * its first argument is a path-like literal — that filter keeps non-HTTP `.get`/
- * `.delete` (lodash, Maps) out while still catching app-specific wrappers.
+ * Precision guard (validated): a member call on an UNTRUSTED receiver (one not
+ * in the descriptor's `bases`) only counts as a client call when its first
+ * argument is a path-like literal — that filter keeps non-HTTP `.get`/`.delete`
+ * (lodash, Maps, dict.get) out while still catching app-specific wrappers.
+ * A TRUSTED receiver (`requests`, `httpx` — always HTTP by construction) skips
+ * the guard, so its dynamic-URL calls are COUNTED as unverifiable rather than
+ * silently dropped (coverage honesty).
  */
 
 import { getLanguage } from '../../languages';
 import type { HttpFlowSupport, LanguageId } from '../../languages/types';
 import { parseFile, walk, type Node } from '../../ast/parse';
+import { grammarShape, type GrammarShape, type ResolvedCall } from '../../ast/grammar-shape';
 import { normalizeMethod, normalizePath, type HttpMethod, type NormalizeConfig } from './normalize';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
 
@@ -72,34 +81,17 @@ export interface FileFlow {
   readonly dynamicCalls?: DynamicCallSite[];
 }
 
-const HTTP_VERB_METHODS = new Set([
-  'get',
-  'post',
-  'put',
-  'patch',
-  'delete',
-  'del',
-  'head',
-  'options',
-]);
-
 function line(node: Node): number {
   return node.startPosition.row + 1;
-}
-
-/** Text of a string/template-string node, else null (a dynamic argument). */
-function literalText(node: Node | null): string | null {
-  if (!node) return null;
-  return node.type === 'string' || node.type === 'template_string' ? node.text : null;
 }
 
 /**
  * Does a raw literal look like a URL/path at the source level — i.e. could this
  * `.get(...)`/`.post(...)` plausibly be an HTTP call rather than a Map/cache/
- * lodash accessor? Used only for member calls with NO declared receiver
- * allowlist, where it is the precision guard: a leading `/`, a leading template
- * (`${host}/…`), an explicit scheme, or any embedded `/` qualifies; a bare token
- * like `'config-key'` does not. (Route decorators are exempt — a framework route
+ * lodash accessor? Used only for member calls on UNTRUSTED receivers, where it
+ * is the precision guard: a leading `/`, a leading template (`${host}/…`), an
+ * explicit scheme, or any embedded `/` qualifies; a bare token like
+ * `'config-key'` does not. (Route decorators are exempt — a framework route
  * string is known to be a path even without a leading slash.)
  */
 function looksLikeUrlLiteral(raw: string | null): boolean {
@@ -109,37 +101,18 @@ function looksLikeUrlLiteral(raw: string | null): boolean {
   return s.startsWith('/') || s.startsWith('${') || s.includes('://') || s.includes('/');
 }
 
-function firstNamedArg(callOrArgs: Node | null): Node | null {
-  const args = callOrArgs?.childForFieldName('arguments') ?? null;
-  if (!args) return null;
-  for (const c of args.namedChildren) if (c) return c;
-  return null;
-}
-
 /** Does a member-call receiver match one of the declared bases (e.g. `app`, or
  *  `this.app`)? */
 function receiverMatchesBase(receiver: string, bases: readonly string[]): boolean {
   return bases.some((b) => receiver === b || receiver.endsWith(`.${b}`));
 }
 
-/** Pull `method: 'X'` out of a fetch options object (2nd arg), default GET. */
-function fetchMethod(call: Node, hf: HttpFlowSupport): HttpMethod {
-  const args = call.childForFieldName('arguments');
-  const opts = args?.namedChildren?.[1] ?? null;
-  if (opts && opts.type === 'object') {
-    let verb: HttpMethod | null = null;
-    walk(opts, (n) => {
-      if (verb) return false;
-      if (n.type === 'pair') {
-        const key = n.childForFieldName('key');
-        const val = n.childForFieldName('value');
-        const keyName = key ? key.text.replace(/['"`]/g, '') : '';
-        if (keyName === 'method') {
-          const raw = literalText(val);
-          if (raw) verb = normalizeMethod(raw.replace(/['"`]/g, ''), hf.methodAliases);
-        }
-      }
-    });
+/** Pull `method: 'X'` out of a fetch-style options argument, default GET. */
+function fetchMethod(call: Node, shape: GrammarShape, hf: HttpFlowSupport): HttpMethod {
+  const value = shape.optionValue(call, 'method');
+  const raw = value ? shape.stringText(value) : null;
+  if (raw) {
+    const verb = normalizeMethod(raw.replace(/['"`]/g, ''), hf.methodAliases);
     if (verb) return verb;
   }
   return 'GET';
@@ -147,18 +120,18 @@ function fetchMethod(call: Node, hf: HttpFlowSupport): HttpMethod {
 
 /**
  * The handler name a route decorator is attached to (best-effort). Decorators
- * are siblings preceding the member in the class body, so the handler is the
- * decorator's next named sibling (skipping any stacked decorators); a nested
- * grammar shape is handled by an ancestor fallback.
+ * are siblings preceding the definition, so the handler is the decorator's
+ * next named sibling (skipping any stacked decorators); a nested grammar shape
+ * is handled by an ancestor fallback over the shape's definition node types.
  */
-function decoratedHandlerName(decorator: Node): string | null {
+function decoratedHandlerName(decorator: Node, shape: GrammarShape): string | null {
   let sib: Node | null = decorator.nextNamedSibling;
-  while (sib && sib.type === 'decorator') sib = sib.nextNamedSibling;
+  while (sib && shape.decoratorNodes.includes(sib.type)) sib = sib.nextNamedSibling;
   const sibName = sib?.childForFieldName('name');
   if (sibName) return sibName.text;
   let cur: Node | null = decorator.parent;
   for (let i = 0; cur && i < 3; i++) {
-    if (cur.type === 'method_definition' || cur.type === 'function_declaration') {
+    if (shape.functionNodes.includes(cur.type)) {
       const name = cur.childForFieldName('name');
       if (name) return name.text;
     }
@@ -169,11 +142,13 @@ function decoratedHandlerName(decorator: Node): string | null {
 
 /**
  * Extract both HTTP surfaces from one already-parsed tree using a pack's
- * httpFlow descriptor. Pure over its inputs.
+ * httpFlow descriptor (WHAT is HTTP) and the grammar's shape (HOW to read the
+ * tree). Pure over its inputs.
  */
 export function extractFromTree(
   root: Node,
   hf: HttpFlowSupport,
+  shape: GrammarShape,
   file: string,
   config?: NormalizeConfig,
   relPath?: string,
@@ -216,64 +191,65 @@ export function extractFromTree(
   const routerMethods = new Set(hf.routeRouterCallees?.methods ?? []);
   const routerBases = hf.routeRouterCallees?.bases ?? [];
 
+  const literalText = (node: Node | null): string | null => (node ? shape.stringText(node) : null);
+
   walk(root, (node) => {
     // ── decorator routes: @get('/x') ──
-    if (node.type === 'decorator' && routeDecorators.size) {
-      const call = node.namedChildren.find((c) => c?.type === 'call_expression') ?? null;
-      const callee = call?.childForFieldName('function');
-      const name = callee && callee.type === 'identifier' ? callee.text : '';
-      if (call && routeDecorators.has(name)) {
-        const path = normalizePath(literalText(firstNamedArg(call)), config);
-        const method = normalizeMethod(name, hf.methodAliases);
+    if (shape.decoratorNodes.includes(node.type)) {
+      const call = shape.decoratorCall(node);
+      const callee = call ? shape.resolveCall(call) : null;
+      if (call && callee?.kind === 'bare' && routeDecorators.has(callee.name)) {
+        const path = normalizePath(literalText(shape.firstArg(call)), config);
+        const method = normalizeMethod(callee.name, hf.methodAliases);
         if (path && method) {
           routes.push({
             method,
             path,
             via: 'decorator',
-            handler: decoratedHandlerName(node),
+            handler: decoratedHandlerName(node, shape),
             file,
             line: line(node),
           });
         }
       }
-      return; // a decorator's call is bookkeeping, not a client call
+      // A decorator's call is a route declaration, never a client call — skip
+      // the subtree so `@app.get('/x')`'s inner member call isn't double-read
+      // as an outbound `app.get(...)`.
+      return false;
     }
 
-    if (node.type !== 'call_expression') return;
-    const callee = node.childForFieldName('function');
+    if (!shape.callNodes.includes(node.type)) return;
+    const callee = shape.resolveCall(node);
     if (!callee) return;
 
     // ── bare client call: fetch(url, opts) ──
-    if (callee.type === 'identifier' && clientCallees.has(callee.text)) {
-      const raw = literalText(firstNamedArg(node));
+    if (callee.kind === 'bare' && clientCallees.has(callee.name)) {
+      const raw = literalText(shape.firstArg(node));
       if (raw != null) {
         calls.push({
-          method: fetchMethod(node, hf),
+          method: fetchMethod(node, shape, hf),
           rawUrl: raw,
           path: normalizePath(raw, config),
-          receiver: callee.text,
+          receiver: callee.name,
           file,
           line: line(node),
         });
       } else {
         // A known client with a dynamically-built URL — count it (coverage
         // honesty), don't silently drop it.
-        dynamicCalls.push({ receiver: callee.text, file, line: line(node) });
+        dynamicCalls.push({ receiver: callee.name, file, line: line(node) });
       }
       return;
     }
 
     // ── member call: <recv>.<verb>(url|path, ...) ──
-    if (callee.type === 'member_expression') {
-      const prop = callee.childForFieldName('property');
-      const obj = callee.childForFieldName('object');
-      const verb = prop ? prop.text : '';
-      const receiver = obj ? obj.text : '';
-      if (!HTTP_VERB_METHODS.has(verb)) return;
+    if (callee.kind === 'member') {
+      const verb = callee.name;
+      const receiver = callee.receiver;
 
       // router/app route declaration
       if (routerMethods.has(verb) && receiverMatchesBase(receiver, routerBases)) {
-        const path = normalizePath(literalText(firstNamedArg(node)), config);
+        const path = normalizePath(literalText(shape.firstArg(node)), config);
         const method = normalizeMethod(verb, hf.methodAliases);
         if (path && method) {
           routes.push({
@@ -288,19 +264,18 @@ export function extractFromTree(
         return;
       }
 
-      // client call (bases optional). With no allowlist, require a path-like
-      // literal first arg — the precision guard against non-HTTP .get/.delete.
+      // client call. A TRUSTED receiver (declared in `bases` — `requests`,
+      // `httpx`: HTTP by construction) needs no URL-shaped literal, and its
+      // dynamic-URL calls are counted as unverifiable. An UNTRUSTED receiver
+      // must pass the path-like-literal precision guard — that is what admits
+      // app-specific wrappers (`api.get('/x')`) while keeping non-HTTP
+      // `.get`/`.delete` (lodash, Maps, dict.get) out.
       if (methodCallMethods.has(verb)) {
-        const baseOk =
-          !methodCallBases ||
-          receiverMatchesBase(receiver, methodCallBases) ||
-          methodCallBases.includes(receiver);
-        if (!baseOk) return;
-        const raw = literalText(firstNamedArg(node));
-        // Unallowlisted receiver → require a URL-looking literal (precision guard).
-        // That rejection is FILTERING (a non-HTTP map.get), not a blind spot,
-        // so it is deliberately not counted as dynamic.
-        if (!methodCallBases && !looksLikeUrlLiteral(raw)) return;
+        const trusted =
+          methodCallBases !== undefined &&
+          (receiverMatchesBase(receiver, methodCallBases) || methodCallBases.includes(receiver));
+        const raw = literalText(shape.firstArg(node));
+        if (!trusted && !looksLikeUrlLiteral(raw)) return;
         const method = normalizeMethod(verb, hf.methodAliases);
         if (raw != null && method) {
           calls.push({
@@ -312,8 +287,9 @@ export function extractFromTree(
             line: line(node),
           });
         } else if (raw == null && method) {
-          // An ALLOWLISTED client receiver with a dynamic URL — a call flow
+          // A TRUSTED client receiver with a dynamic URL — a call flow
           // recognizes but cannot verify. Counted, not silently dropped.
+          // (Only reachable when trusted: the guard already returned above.)
           dynamicCalls.push({ receiver, file, line: line(node) });
         }
       }
@@ -325,9 +301,9 @@ export function extractFromTree(
 
 /**
  * Extract both HTTP surfaces from one file on disk. Returns empty surfaces when
- * the language has no httpFlow descriptor, and `null` when the file can't be
- * parsed (engine/grammar unavailable or unreadable) — callers treat `null` as
- * "skip this file", never an error.
+ * the language has no httpFlow descriptor or its grammar has no shape row, and
+ * `null` when the file can't be parsed (engine/grammar unavailable or
+ * unreadable) — callers treat `null` as "skip this file", never an error.
  */
 export async function extractFileFlow(
   filePath: string,
@@ -337,10 +313,13 @@ export async function extractFileFlow(
   const parsed = await parseFile(filePath);
   if (!parsed) return null;
   const hf = httpFlowFor(parsed.languageId);
-  if (!hf) return { calls: [], routes: [] };
-  return extractFromTree(parsed.tree.rootNode, hf, filePath, config, relPath);
+  const shape = grammarShape(parsed.grammar);
+  if (!hf || !shape) return { calls: [], routes: [] };
+  return extractFromTree(parsed.tree.rootNode, hf, shape, filePath, config, relPath);
 }
 
 function httpFlowFor(languageId: LanguageId): HttpFlowSupport | undefined {
   return getLanguage(languageId)?.httpFlow;
 }
+
+export type { GrammarShape, ResolvedCall };

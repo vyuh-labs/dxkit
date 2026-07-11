@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseSource } from '../src/ast/parse';
+import { grammarShape } from '../src/ast/grammar-shape';
 import { extractFromTree, type FileFlow } from '../src/analyzers/flow/extract';
 import {
   joinFlow,
@@ -15,11 +16,12 @@ import { getLanguage } from '../src/languages';
 import type { HttpFlowSupport } from '../src/languages/types';
 
 const ts = getLanguage('typescript')!.httpFlow as HttpFlowSupport;
+const tsShape = grammarShape('typescript')!;
 const cfg = { stripUrlPrefixes: ['${Config.apiBase()}'] };
 
 async function fileFlow(src: string, file: string): Promise<FileFlow> {
   const tree = await parseSource(src, 'typescript');
-  return extractFromTree(tree!.rootNode, ts, file, cfg);
+  return extractFromTree(tree!.rootNode, ts, tsShape, file, cfg);
 }
 
 describe('flow join', () => {

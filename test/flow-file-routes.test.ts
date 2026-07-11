@@ -3,16 +3,18 @@ import { parseSource } from '../src/ast/parse';
 import { extractFromTree } from '../src/analyzers/flow/extract';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { getLanguage } from '../src/languages';
+import { grammarShape } from '../src/ast/grammar-shape';
 import type { FileRouteSupport, HttpFlowSupport } from '../src/languages/types';
 
 const ts = getLanguage('typescript')!.httpFlow as HttpFlowSupport;
+const tsShape = grammarShape('typescript')!;
 
 /** Extract routes as `${METHOD} ${path}` keys for a source string served from
  *  `relPath` (the repo-relative path a file-route framework derives its URL
  *  from). */
 async function routeKeys(src: string, relPath: string): Promise<string[]> {
   const tree = await parseSource(src, 'typescript');
-  const { routes } = extractFromTree(tree!.rootNode, ts, relPath, undefined, relPath);
+  const { routes } = extractFromTree(tree!.rootNode, ts, tsShape, relPath, undefined, relPath);
   return routes.map((r) => `${r.method} ${r.path}`).sort();
 }
 
@@ -46,6 +48,7 @@ describe('flow file-routes — Next.js App Router served side', () => {
     const { routes } = extractFromTree(
       tree!.rootNode,
       ts,
+      tsShape,
       'app/health/route.ts',
       undefined,
       'app/health/route.ts',
