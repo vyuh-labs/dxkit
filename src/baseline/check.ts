@@ -759,6 +759,9 @@ export async function runGuardrailCheck(
     now,
     ...(options.flowMode !== undefined ? { modeOverride: options.flowMode } : {}),
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+    // Hosted-PR posture reaches the gate so rung-4 plugins never load on
+    // untrusted source (the overlay degrades symmetrically on both sides).
+    ...(options.untrusted !== undefined ? { untrusted: options.untrusted } : {}),
   });
 
   // The model-schema drift gate — same additive, fail-open shape as the flow
