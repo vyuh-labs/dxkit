@@ -190,3 +190,118 @@ export const KOTLIN: GrammarShape = {
     return false;
   },
 };
+
+// ─── The Kotlin MODEL row (same zero-field grammar, same module) ────────────
+
+import type { GrammarModelShape } from '@vyuhlabs/dxkit-sdk';
+
+/** Annotations attached to a Kotlin declaration — under a `modifiers`
+ *  (classes, body properties) or `parameter_modifiers` (constructor params)
+ *  child. Returns the INNER node (`user_type` for markers,
+ *  `constructor_invocation` for called forms) so a use-site target
+ *  (`@field:Column`) never reaches `decoratorName`'s lexical read. */
+function kotlinAnnotationInners(node: Node): Node[] {
+  const out: Node[] = [];
+  for (const c of node.namedChildren) {
+    if (!c || (c.type !== 'modifiers' && c.type !== 'parameter_modifiers')) continue;
+    for (const ann of c.namedChildren) {
+      if (!ann || ann.type !== 'annotation') continue;
+      const inner = childOfType(ann, 'constructor_invocation') ?? childOfType(ann, 'user_type');
+      if (inner) out.push(inner);
+    }
+  }
+  return out;
+}
+
+/** The declared-type child of a parameter / variable declaration:
+ *  `nullable_type` (`String?`) or `user_type` (`String`, `List<Tag>`). */
+function kotlinTypeChild(node: Node): Node | null {
+  return childOfType(node, 'nullable_type') ?? childOfType(node, 'user_type');
+}
+
+export const KOTLIN_MODEL: GrammarModelShape = {
+  classNodes: ['class_declaration', 'object_declaration'],
+
+  className(node) {
+    return childOfType(node, 'type_identifier')?.text ?? null;
+  },
+
+  heritage(node) {
+    // `class User : BaseEntity(), Serializable` — each delegation_specifier
+    // wraps a user_type (interface) or constructor_invocation (superclass
+    // call; its user_type text matches markers without the `()`).
+    const out: string[] = [];
+    for (const c of node.namedChildren) {
+      if (!c || c.type !== 'delegation_specifier') continue;
+      const ctor = childOfType(c, 'constructor_invocation');
+      const ut = ctor ? childOfType(ctor, 'user_type') : childOfType(c, 'user_type');
+      out.push((ut ?? c).text);
+    }
+    return out;
+  },
+
+  classDecorators(node) {
+    return kotlinAnnotationInners(node);
+  },
+
+  fieldNodes(classNode) {
+    // Kotlin models keep fields in TWO places: primary-constructor
+    // parameters that bind a property (val/var — a plain parameter has no
+    // binding_pattern_kind), and class-body property declarations.
+    const out: Node[] = [];
+    const ctor = childOfType(classNode, 'primary_constructor');
+    if (ctor) {
+      for (const p of ctor.namedChildren) {
+        if (p && p.type === 'class_parameter' && childOfType(p, 'binding_pattern_kind')) {
+          out.push(p);
+        }
+      }
+    }
+    const body = childOfType(classNode, 'class_body');
+    if (body) {
+      for (const p of body.namedChildren) {
+        if (p && p.type === 'property_declaration') out.push(p);
+      }
+    }
+    return out;
+  },
+
+  fieldNames(field) {
+    if (field.type === 'class_parameter') {
+      const name = childOfType(field, 'simple_identifier');
+      return name ? [name.text] : [];
+    }
+    const decl = childOfType(field, 'variable_declaration');
+    const name = decl ? childOfType(decl, 'simple_identifier') : null;
+    return name ? [name.text] : [];
+  },
+
+  fieldTypeText(field) {
+    if (field.type === 'class_parameter') return kotlinTypeChild(field)?.text ?? null;
+    const decl = childOfType(field, 'variable_declaration');
+    return decl ? (kotlinTypeChild(decl)?.text ?? null) : null;
+  },
+
+  fieldOptionalMarker(field) {
+    // Kotlin gives REAL grammar-level optionality: `String?` is a
+    // nullable_type. No declared type (inferred `val id = integer("id")`)
+    // → null, the honest unknown.
+    const holder =
+      field.type === 'class_parameter' ? field : childOfType(field, 'variable_declaration');
+    if (!holder) return null;
+    if (childOfType(holder, 'nullable_type')) return true;
+    return childOfType(holder, 'user_type') !== null ? false : null;
+  },
+
+  fieldTag() {
+    return null;
+  },
+
+  fieldValueCall(field) {
+    return childOfType(field, 'call_expression');
+  },
+
+  fieldDecorators(field) {
+    return kotlinAnnotationInners(field);
+  },
+};
