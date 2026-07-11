@@ -164,3 +164,57 @@ describe('onboarding integration (registry-derived probe + planner)', () => {
     expect(planFlowSources({ cwd: tmp })).toBeNull();
   });
 });
+
+describe('extensions init --plugin (rung 4)', () => {
+  it('a gather-only plugin scaffold loads and validates via dev immediately', async () => {
+    const code = await runExtensionsCli(tmp, 'init', 'acme-dialect', { plugin: true });
+    expect(code).toBe(0);
+    const { extensions, errors } = discoverExtensions(tmp);
+    expect(errors).toEqual([]);
+    expect(extensions[0].manifest).toMatchObject({
+      name: 'acme-dialect',
+      plugin: { module: 'plugin.js' },
+    });
+    expect(extensions[0].manifest.contributes).toBeUndefined();
+    // The dev loop on the untouched scaffold: load + validate, exit 0.
+    expect(await runExtensionsCli(tmp, 'dev', 'acme-dialect', {})).toBe(0);
+  });
+
+  it('a producer plugin scaffold emits a valid document through dev', async () => {
+    const code = await runExtensionsCli(tmp, 'init', 'perm-audit', {
+      plugin: true,
+      kind: 'findings',
+    });
+    expect(code).toBe(0);
+    const { extensions, errors } = discoverExtensions(tmp);
+    expect(errors).toEqual([]);
+    expect(extensions[0].manifest).toMatchObject({
+      contributes: 'findings',
+      refresh: 'on-merge',
+      gating: 'warn',
+      output: '.dxkit/contrib/perm-audit.json',
+    });
+    expect(await runExtensionsCli(tmp, 'dev', 'perm-audit', {})).toBe(0);
+    const snap = JSON.parse(
+      fs.readFileSync(path.join(tmp, '.dxkit/contrib/perm-audit.json'), 'utf8'),
+    );
+    expect(snap.schema).toBe('findings.v1');
+    expect(typeof snap.generatedAt).toBe('string');
+  });
+
+  it('refresh runs a producer plugin alongside rung-3 extensions', async () => {
+    await runExtensionsCli(tmp, 'init', 'perm-audit', { plugin: true, kind: 'findings' });
+    expect(await runExtensionsCli(tmp, 'refresh', undefined, {})).toBe(0);
+    expect(fs.existsSync(path.join(tmp, '.dxkit/contrib/perm-audit.json'))).toBe(true);
+  });
+
+  it('list stays execution-free for plugins (a throwing module cannot break it)', async () => {
+    await runExtensionsCli(tmp, 'init', 'acme-dialect', { plugin: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit/extensions/acme-dialect/plugin.js'),
+      `throw new Error('kaput');`,
+    );
+    expect(await runExtensionsCli(tmp, 'list', undefined, {})).toBe(0);
+    expect(await runExtensionsCli(tmp, 'list', undefined, { json: true })).toBe(0);
+  });
+});

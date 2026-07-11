@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The rung-4 plugin runtime (`defineExtension`).** A committed CommonJS
+  module next to its manifest (`plugin: { module: "plugin.js" }`) can now
+  contribute in-process: an `httpFlowDialect` (teach flow a bespoke client
+  wrapper or niche framework with a data table — merged additive-only into
+  the pack's descriptor, one extractor), a `contractReader` (a custom
+  artifact format for `flow.sources`, dispatched exactly like a built-in),
+  a `urlNormalizer` (rewrite raw URLs ahead of the one canonical
+  normalizer — never bypassing it), the four wire producers (the rung-3
+  protocol called in-process; same validation, stamping, committed
+  snapshot, and gate seams), and an `integrationVerifier` (assert over the
+  gathered flow model — `ctx.flow.unserved` — with findings gating through
+  the committed snapshot like every findings extension). Plugins are
+  trusted-tier committed code: loaded only via the one plugin host,
+  validated field-precisely (a plain-JS typo fails loudly at load),
+  refused on an SDK-major mismatch, and never loaded under `--untrusted`
+  — the flow gate applies one lens to both sides, so degradation can never
+  mint a false block. `extensions init <name> --plugin [--kind <kind>]`
+  scaffolds a plugin that loads and validates immediately; `extensions
+  dev` reports where each contribution registers; the new
+  `dxkit-author-extension` agent skill writes an extension (any rung) from
+  a prose description of the repo's convention.
+
 - **The extension runtime (rungs 2-3 of the extension ladder).** Declared
   contract artifacts: point `flow.sources` at a Postman collection, Pact
   contract, `.http`/`.rest` file, or HAR capture (plus OpenAPI) and its

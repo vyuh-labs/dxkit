@@ -183,6 +183,10 @@ export const DXKIT_SKILLS = [
   // dxkit as rung-2 declared artifacts or rung-3 external extensions; owns
   // the authoring loop (extensions dev/init) and the trust-model explainer.
   'dxkit-extensions',
+  // dxkit-author-extension (3.5 / #11c): the agent WRITES an extension from
+  // a prose description of the repo's convention — rung selection, manifest/
+  // adapter/plugin generation, and the `extensions dev` loop until green.
+  'dxkit-author-extension',
   // dxkit-uninstall: cleanly remove all of dxkit from a repo, restoring the
   // pre-dxkit state (reverse each additive merge, delete created files),
   // dry-run first. Also captures optional, opt-in feedback via a prefilled
