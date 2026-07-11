@@ -29,7 +29,12 @@ import * as path from 'path';
 import type { WireDoc } from '@vyuhlabs/dxkit-sdk';
 import { makeCommandExec, type CommandExec } from '../analyzers/tools/bounded-exec';
 import { parseWireDocText } from './contributions';
-import { DEFAULT_TIMEOUT_SECONDS, type LoadedExtension } from './manifest';
+import {
+  DEFAULT_TIMEOUT_SECONDS,
+  isProducerExtension,
+  type LoadedExtension,
+  type ProducerExtension,
+} from './manifest';
 
 /** Canonical repo facts handed to every extension on stdin — extensions
  *  inherit the one source of truth for these instead of re-deriving it. */
@@ -84,7 +89,25 @@ export function runExtension(
   ext: LoadedExtension,
   opts: RunExtensionOptions = {},
 ): ExtensionRunOutcome {
+  if (!isProducerExtension(ext)) {
+    return {
+      status: 'skipped',
+      reason: 'gather-only plugin — its contributions load live at gather time, nothing to refresh',
+    };
+  }
+  return runProducer(cwd, ext, opts);
+}
+
+function runProducer(
+  cwd: string,
+  ext: ProducerExtension,
+  opts: RunExtensionOptions,
+): ExtensionRunOutcome {
   const { manifest } = ext;
+  if (manifest.run === undefined) {
+    // A rung-4 producer plugin — executed in-process via the plugin host.
+    return { status: 'skipped', reason: 'plugin producer — pending plugin-host wiring' };
+  }
   const timeoutMs = (manifest.run.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
   const exec = opts.exec ?? makeCommandExec(timeoutMs);
   const payload: ExtensionStdinPayload = {

@@ -57,6 +57,18 @@ export interface NormalizeConfig {
    * dominant host-helper found across client calls.
    */
   stripUrlPrefixes?: readonly string[];
+
+  /**
+   * Custom base-URL / host-helper rewrite beyond `stripUrlPrefixes` — the
+   * hook a rung-4 plugin's `urlNormalizer` registers into. Called with the
+   * quote-stripped raw URL before prefix stripping; a returned string
+   * replaces it for the rest of the canonical pipeline, `null` means "no
+   * opinion" (standard handling continues on the original). The hook can
+   * only re-express a URL — every result still flows through the full
+   * normalization pipeline, so it can never bypass canonical form.
+   * Additive field (SDK minor).
+   */
+  rewriteUrl?: (rawUrl: string) => string | null;
 }
 
 const PLACEHOLDER = '{var}';
@@ -99,7 +111,9 @@ export function catchAllStaticPrefix(path: string): string {
  * surrounding quotes/backticks (the extractor passes the node text verbatim).
  *
  * Steps (order matters):
- *  1. strip surrounding quotes / backticks;
+ *  1. strip surrounding quotes / backticks, then apply the plugin
+ *     `rewriteUrl` hook (a re-expression that still flows through every
+ *     step below);
  *  2. strip configured host-helper prefixes;
  *  3. reject external absolute URLs (`http(s)://…`, `${host}://…`) → `null`
  *     (a call to a host we don't serve is not an internal route binding);
@@ -121,6 +135,19 @@ export function normalizePath(
   // 1. surrounding quotes / backticks
   if (s.length >= 2 && (s[0] === "'" || s[0] === '"' || s[0] === '`') && s[s.length - 1] === s[0]) {
     s = s.slice(1, -1);
+  }
+
+  // 1.5 the plugin rewrite hook — a re-expression of the URL, applied here
+  // so the rewritten value goes through the whole remaining pipeline.
+  // Fail-open: a throwing hook is a no-opinion.
+  if (config?.rewriteUrl) {
+    try {
+      const rewritten = config.rewriteUrl(s);
+      if (typeof rewritten === 'string') s = rewritten.trim();
+      if (s.length === 0) return null;
+    } catch {
+      /* no opinion */
+    }
   }
 
   // 2. host-helper prefixes (longest first, so a more specific prefix wins)

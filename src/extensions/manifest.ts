@@ -19,8 +19,15 @@
  *   - `output` must be a repo-relative path without `..` traversal or an
  *     absolute head (an extension may only write its own committed
  *     snapshot location);
+ *   - `plugin.module` (rung 4) must be a traversal-free `.js`/`.cjs` path
+ *     relative to the extension directory (a plugin loads only its own
+ *     committed module);
  *   - the manifest's `name` must equal its directory name (one identity,
  *     no aliasing).
+ *
+ * Discovery is EXECUTION-FREE by design: this module never loads a plugin
+ * module — `list` and doctor stay safe on any context. Plugin loading is
+ * `plugin-host.ts`, reached only from trusted surfaces.
  */
 
 import * as fs from 'fs';
@@ -46,6 +53,33 @@ export interface LoadedExtension {
    * trust boundary). `{}` when absent.
    */
   readonly config: Record<string, unknown>;
+}
+
+/**
+ * The producer-shaped subset of the manifest: a wire kind is declared, so
+ * `refresh` + `output` are guaranteed present (validation enforces the
+ * implication). Both rungs can be producer-shaped — a rung-3 `run` manifest
+ * always is; a rung-4 `plugin` manifest is when it declares `contributes`.
+ */
+export interface ProducerManifest extends ExtensionManifest {
+  contributes: NonNullable<ExtensionManifest['contributes']>;
+  refresh: NonNullable<ExtensionManifest['refresh']>;
+  output: string;
+}
+
+/** A loaded extension whose manifest is producer-shaped. */
+export interface ProducerExtension extends LoadedExtension {
+  readonly manifest: ProducerManifest;
+}
+
+/**
+ * Narrow to the extensions that emit a wire document and own a committed
+ * snapshot — what every snapshot consumer (the gate seams, refresh, the
+ * inventory trend) iterates. A gather-only rung-4 plugin (dialect / reader /
+ * normalizer) has no snapshot and is invisible here by design.
+ */
+export function isProducerExtension(ext: LoadedExtension): ext is ProducerExtension {
+  return ext.manifest.contributes !== undefined;
 }
 
 export interface DiscoverResult {
@@ -83,52 +117,103 @@ function validateManifest(raw: unknown, dirName: string, at: string): string[] {
   } else if (name !== dirName) {
     add('name', `('${name}') must equal the extension directory name ('${dirName}')`);
   }
+  const run = raw['run'];
+  const plugin = raw['plugin'];
+  if ((run === undefined) === (plugin === undefined)) {
+    add(
+      'manifest',
+      run === undefined
+        ? "needs exactly one of 'run' (rung 3: external command) or 'plugin' (rung 4: committed module)"
+        : "declares both 'run' and 'plugin' — an extension is exactly one of the two",
+    );
+  }
+  if (run !== undefined) {
+    if (!isObject(run)) {
+      add('run', 'must be an object with command/args');
+    } else {
+      const command = run['command'];
+      if (typeof command !== 'string' || command.length === 0 || command.startsWith('-')) {
+        add('run.command', 'must be a non-empty string not starting with "-"');
+      }
+      const args = run['args'];
+      if (args !== undefined) {
+        if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
+          add('run.args', 'must be an array of strings when present');
+        }
+      }
+      const t = run['timeoutSeconds'];
+      if (
+        t !== undefined &&
+        (!Number.isInteger(t) || (t as number) < 1 || (t as number) > MAX_TIMEOUT_SECONDS)
+      ) {
+        add('run.timeoutSeconds', `must be an integer in [1, ${MAX_TIMEOUT_SECONDS}] when present`);
+      }
+    }
+  }
+  if (plugin !== undefined) {
+    if (!isObject(plugin)) {
+      add('plugin', 'must be an object with a module path');
+    } else {
+      const module = plugin['module'];
+      if (typeof module !== 'string' || !safeRelativePath(module) || !/\.(js|cjs)$/.test(module)) {
+        add(
+          'plugin.module',
+          'must be a .js/.cjs path relative to the extension directory (no absolute paths, no "..", no leading "-") — CommonJS; author in TypeScript and commit the compiled module',
+        );
+      }
+    }
+  }
+
   const contributes = raw['contributes'];
   const knownKinds = CONTRIBUTION_KINDS.map((d: ContributionKindDef) => d.kind);
-  if (typeof contributes !== 'string' || !knownKinds.includes(contributes as ContributionKind)) {
+  const hasKind =
+    typeof contributes === 'string' && knownKinds.includes(contributes as ContributionKind);
+  if (contributes !== undefined && !hasKind) {
     add(
       'contributes',
       `must be one of ${knownKinds.map((k) => `'${k}'`).join(' | ')} (got ${JSON.stringify(contributes)})`,
     );
   }
-  const run = raw['run'];
-  if (!isObject(run)) {
-    add('run', 'is missing (required object with command/args)');
-  } else {
-    const command = run['command'];
-    if (typeof command !== 'string' || command.length === 0 || command.startsWith('-')) {
-      add('run.command', 'must be a non-empty string not starting with "-"');
+  if (contributes === undefined && run !== undefined) {
+    add('contributes', "is required with 'run' — a rung-3 extension always emits a wire kind");
+  }
+
+  // The producer-shape implication, both directions: a declared wire kind
+  // needs its refresh policy + snapshot path; a gather-only plugin (no
+  // `contributes`) must not carry producer fields that would silently do
+  // nothing.
+  const refresh = raw['refresh'];
+  const output = raw['output'];
+  const gating = raw['gating'];
+  if (contributes !== undefined) {
+    if (refresh !== 'on-merge' && refresh !== 'manual') {
+      add('refresh', `must be 'on-merge' or 'manual' (got ${JSON.stringify(refresh)})`);
     }
-    const args = run['args'];
-    if (args !== undefined) {
-      if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
-        add('run.args', 'must be an array of strings when present');
+    if (typeof output !== 'string' || !safeRelativePath(output) || !output.endsWith('.json')) {
+      add(
+        'output',
+        'must be a repo-relative .json path (no absolute paths, no "..", no leading "-")',
+      );
+    }
+  } else if (plugin !== undefined) {
+    for (const [field, value] of [
+      ['refresh', refresh],
+      ['output', output],
+      ['gating', gating],
+    ] as const) {
+      if (value !== undefined) {
+        add(
+          field,
+          "only applies to a producer extension — declare 'contributes' or drop this field (a gather-only plugin has no snapshot)",
+        );
       }
     }
-    const t = run['timeoutSeconds'];
-    if (
-      t !== undefined &&
-      (!Number.isInteger(t) || (t as number) < 1 || (t as number) > MAX_TIMEOUT_SECONDS)
-    ) {
-      add('run.timeoutSeconds', `must be an integer in [1, ${MAX_TIMEOUT_SECONDS}] when present`);
-    }
   }
-  const refresh = raw['refresh'];
-  if (refresh !== 'on-merge' && refresh !== 'manual') {
-    add('refresh', `must be 'on-merge' or 'manual' (got ${JSON.stringify(refresh)})`);
-  }
-  const output = raw['output'];
-  if (typeof output !== 'string' || !safeRelativePath(output) || !output.endsWith('.json')) {
-    add(
-      'output',
-      'must be a repo-relative .json path (no absolute paths, no "..", no leading "-")',
-    );
-  }
+
   const config = raw['config'];
   if (config !== undefined && !isObject(config)) {
     add('config', 'must be an object when present');
   }
-  const gating = raw['gating'];
   if (gating !== undefined && gating !== 'block' && gating !== 'warn' && gating !== 'off') {
     add('gating', `must be 'block', 'warn', or 'off' when present (got ${JSON.stringify(gating)})`);
   }

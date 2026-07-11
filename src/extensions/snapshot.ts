@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { WireDoc } from '@vyuhlabs/dxkit-sdk';
 import { parseWireDocText } from './contributions';
-import type { LoadedExtension } from './manifest';
+import type { ProducerExtension } from './manifest';
 
 export type ExtensionSnapshot =
   | {
@@ -34,7 +34,7 @@ export type ExtensionSnapshot =
 
 export function readExtensionSnapshot(
   cwd: string,
-  ext: LoadedExtension,
+  ext: ProducerExtension,
   now: () => Date = () => new Date(),
 ): ExtensionSnapshot {
   const abs = path.join(cwd, ext.manifest.output);

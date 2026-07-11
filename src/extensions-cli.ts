@@ -27,7 +27,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from './logger';
-import { discoverExtensions, EXTENSIONS_DIR, type LoadedExtension } from './extensions/manifest';
+import {
+  discoverExtensions,
+  EXTENSIONS_DIR,
+  isProducerExtension,
+  type LoadedExtension,
+  type ProducerExtension,
+} from './extensions/manifest';
 import { runExtension, type ExtensionRunOutcome } from './extensions/run';
 import { readExtensionSnapshot } from './extensions/snapshot';
 import { CONTRIBUTION_KINDS } from './extensions/contributions';
@@ -78,7 +84,7 @@ function latestDelivery(cwd: string): unknown {
   }
 }
 
-function describeSnapshot(cwd: string, ext: LoadedExtension): string {
+function describeSnapshot(cwd: string, ext: ProducerExtension): string {
   const snap = readExtensionSnapshot(cwd, ext);
   if (snap.status === 'missing') return 'snapshot: missing (run `extensions refresh`)';
   if (snap.status === 'invalid') return `snapshot: INVALID (${snap.errors.length} error(s))`;
@@ -169,14 +175,23 @@ export function runExtensionsCli(
   switch (sub) {
     case 'list': {
       if (opts.json) {
-        const payload = extensions.map((ext) => ({
-          name: ext.manifest.name,
-          contributes: ext.manifest.contributes,
-          refresh: ext.manifest.refresh,
-          ...(ext.manifest.gating ? { gating: ext.manifest.gating } : {}),
-          output: ext.manifest.output,
-          snapshot: readExtensionSnapshot(cwd, ext),
-        }));
+        const payload = extensions.map((ext) =>
+          isProducerExtension(ext)
+            ? {
+                name: ext.manifest.name,
+                contributes: ext.manifest.contributes,
+                refresh: ext.manifest.refresh,
+                ...(ext.manifest.gating ? { gating: ext.manifest.gating } : {}),
+                output: ext.manifest.output,
+                ...(ext.manifest.plugin ? { plugin: ext.manifest.plugin.module } : {}),
+                snapshot: readExtensionSnapshot(cwd, ext),
+              }
+            : {
+                name: ext.manifest.name,
+                plugin: ext.manifest.plugin?.module,
+                gatherOnly: true,
+              },
+        );
         process.stdout.write(JSON.stringify({ extensions: payload, errors }) + '\n');
         return errors.length > 0 ? 1 : 0;
       }
@@ -189,12 +204,20 @@ export function runExtensionsCli(
         return 0;
       }
       for (const ext of extensions) {
+        if (!isProducerExtension(ext)) {
+          logger.info(
+            `  ${logger.bold(ext.manifest.name)}  (plugin · gather-time — loads live on trusted context)`,
+          );
+          logger.info(`    module: ${ext.manifest.plugin?.module ?? '?'}`);
+          continue;
+        }
         const gating =
           ext.manifest.contributes === 'findings'
             ? ` · gating: ${ext.manifest.gating ?? 'warn'}`
             : '';
+        const rung = ext.manifest.plugin ? 'plugin · ' : '';
         logger.info(
-          `  ${logger.bold(ext.manifest.name)}  (${ext.manifest.contributes} · ${ext.manifest.refresh}${gating})`,
+          `  ${logger.bold(ext.manifest.name)}  (${rung}${ext.manifest.contributes} · ${ext.manifest.refresh}${gating})`,
         );
         logger.info(`    ${describeSnapshot(cwd, ext)}`);
       }
@@ -217,7 +240,9 @@ export function runExtensionsCli(
       // Capture pre-refresh snapshot bytes so landing can ignore pure
       // generatedAt restamps (every run restamps; metadata churn must not
       // land a commit on every merge — the flow-refresh substance rule).
-      const landable = chosen.filter((e) => e.manifest.contributes !== 'export');
+      const landable = chosen
+        .filter(isProducerExtension)
+        .filter((e) => e.manifest.contributes !== 'export');
       const before = new Map<string, string | null>(
         landable.map((e) => {
           try {
