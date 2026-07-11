@@ -30,6 +30,9 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "files": [
     "dist/",
     "templates/",
@@ -39,10 +42,11 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node scripts/copy-templates.js && tsc",
+    "build:sdk": "tsc -p packages/dxkit-sdk",
+    "build": "npm run build:sdk && node scripts/copy-templates.js && tsc",
     "prepublishOnly": "node scripts/require-ci.js && npm run build",
-    "typecheck": "tsc --noEmit",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "npm run build:sdk && tsc --noEmit",
+    "typecheck:test": "npm run build:sdk && tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -105,6 +109,7 @@
     "vyuh"
   ],
   "dependencies": {
+    "@vyuhlabs/dxkit-sdk": "^0.1.0",
     "hosted-git-info": "^9.0.2",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "^0.25.10"

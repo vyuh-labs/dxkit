@@ -1,0 +1,52 @@
+{
+  "name": "@vyuhlabs/dxkit-sdk",
+  "version": "0.1.0",
+  "description": "The frozen extension surface of @vyuhlabs/dxkit: the declarative descriptor language (HTTP-flow and model-schema construct families), grammar-shape access types, the versioned extension wire schemas (contract.v1, inventory.v1, findings.v1, export.v1), and the shared URL/method normalization helpers. Types-first: build extensions against this package; the plugin runtime lands in a later minor.",
+  "license": "MIT",
+  "author": "Vyuh Labs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vyuh-labs/dxkit.git",
+    "directory": "packages/dxkit-sdk"
+  },
+  "homepage": "https://github.com/vyuh-labs/dxkit#readme",
+  "bugs": {
+    "url": "https://github.com/vyuh-labs/dxkit/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "prepublishOnly": "node ../../scripts/require-ci.js && npm run build"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.25.10"
+  },
+  "keywords": [
+    "dxkit",
+    "vyuh",
+    "sdk",
+    "extension",
+    "plugin",
+    "static-analysis",
+    "guardrails"
+  ]
+}
