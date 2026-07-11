@@ -2,14 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { parseSource } from '../src/ast/parse';
 import { extractFromTree, type FileFlow } from '../src/analyzers/flow/extract';
 import { getLanguage } from '../src/languages';
+import { grammarShape } from '../src/ast/grammar-shape';
 import type { HttpFlowSupport } from '../src/languages/types';
 
 const ts = getLanguage('typescript')!.httpFlow as HttpFlowSupport;
+const tsShape = grammarShape('typescript')!;
 const cfg = { stripUrlPrefixes: ['${Config.apiBase()}'] };
 
 async function extract(src: string): Promise<FileFlow> {
   const tree = await parseSource(src, 'typescript');
-  return extractFromTree(tree!.rootNode, ts, 'sample.ts', cfg);
+  return extractFromTree(tree!.rootNode, ts, tsShape, 'sample.ts', cfg);
 }
 
 describe('flow extract — client calls (consumed side)', () => {
@@ -79,7 +81,7 @@ describe('flow extract — client calls (consumed side)', () => {
     `,
       'typescript',
     );
-    const flow = extractFromTree(tree!.rootNode, withBases, 'sample.ts', cfg);
+    const flow = extractFromTree(tree!.rootNode, withBases, tsShape, 'sample.ts', cfg);
     expect(flow.calls).toHaveLength(1);
     expect(flow.dynamicCalls).toHaveLength(1); // api.* is a KNOWN client
     expect(flow.dynamicCalls?.[0].receiver).toBe('api');

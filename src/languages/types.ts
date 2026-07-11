@@ -257,13 +257,18 @@ export interface HttpFlowSupport {
    * Member-method client calls of the form `<base>.<method>(url, ...)`.
    * `methods` are the property names that map to HTTP verbs
    * (`get`/`post`/`put`/`delete`/`patch`); the verb is the method name.
-   * `bases`, when present, restricts which receiver identifiers count
-   * (`axios`, `http`, `api`, `client`, `request`, ...). When `bases` is
-   * omitted, any receiver whose `.<method>(...)` first argument is a
-   * path-like literal is treated as a client call — this covers
-   * app-specific wrappers (`requests.get('/x')`, `agent.Articles.del(...)`)
-   * that no fixed allowlist can enumerate; the path-like-literal filter
-   * keeps non-HTTP `.get`/`.delete` (lodash, Maps) out.
+   *
+   * `bases` declares TRUSTED receivers — module-level HTTP clients that are
+   * HTTP by construction (`requests`, `httpx`). A trusted receiver's call
+   * counts even when its URL argument is not a literal (recorded as a
+   * DYNAMIC call site — the coverage-honesty channel), because dropping it
+   * would silently understate what flow cannot see. Any OTHER receiver
+   * still counts when its first argument is a path-like literal — that
+   * precision guard is what admits app-specific wrappers
+   * (`api.get('/x')`, `agent.Articles.del(...)`) that no fixed allowlist
+   * can enumerate while keeping non-HTTP `.get`/`.delete` (lodash, Maps,
+   * dict.get) out. `bases` therefore only ever ADDS matches (trust
+   * elevation) — it never narrows the wrapper coverage.
    */
   clientMethodCallees?: { methods: string[]; bases?: string[] };
 

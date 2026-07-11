@@ -3,6 +3,7 @@ import { writeFileSync, mkdtempSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { parseSource } from '../src/ast/parse';
+import { grammarShape } from '../src/ast/grammar-shape';
 import { extractFromTree } from '../src/analyzers/flow/extract';
 import { buildFlowModel } from '../src/analyzers/flow/model';
 import { callsCsv, routesCsv, mappingCsv, flowCsvFiles } from '../src/analyzers/flow/csv';
@@ -11,10 +12,21 @@ import { getLanguage } from '../src/languages';
 import type { HttpFlowSupport } from '../src/languages/types';
 
 const ts = getLanguage('typescript')!.httpFlow as HttpFlowSupport;
+const tsShape = grammarShape('typescript')!;
 
 async function model(clientSrc: string, serverSrc: string) {
-  const c = extractFromTree((await parseSource(clientSrc, 'typescript'))!.rootNode, ts, 'web/a.ts');
-  const s = extractFromTree((await parseSource(serverSrc, 'typescript'))!.rootNode, ts, 'api/c.ts');
+  const c = extractFromTree(
+    (await parseSource(clientSrc, 'typescript'))!.rootNode,
+    ts,
+    tsShape,
+    'web/a.ts',
+  );
+  const s = extractFromTree(
+    (await parseSource(serverSrc, 'typescript'))!.rootNode,
+    ts,
+    tsShape,
+    'api/c.ts',
+  );
   return buildFlowModel([c, s]);
 }
 
