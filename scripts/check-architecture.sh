@@ -1042,6 +1042,28 @@ if [ -n "$DXKIT_VERSION" ] && [ -n "$LAST_DXKIT_VERSION" ] && [ "$DXKIT_VERSION"
       ERRORS=$((ERRORS + 1))
     fi
   fi
+
+  # Same tripwire for the SDK sibling. The publish itself is automatic
+  # (publish-dxkit-sdk.yml auto-fires when a bumped version reaches main
+  # with green CI) — what a human can still forget is the BUMP. Skipped
+  # when no dxkit-sdk@ tag exists yet (first publish rides the train).
+  SDK_VERSION=$(node -p "require('./packages/dxkit-sdk/package.json').version" 2>/dev/null || echo "")
+  LAST_SDK_TAG=$(git tag --list 'dxkit-sdk@v*' --sort=-v:refname 2>/dev/null | head -1)
+  LAST_SDK_VERSION=$(echo "$LAST_SDK_TAG" | sed 's/^dxkit-sdk@v//')
+
+  if [ -n "$LAST_SDK_TAG" ] && [ -n "$SDK_VERSION" ]; then
+    SDK_CHANGES=$(git diff --name-only "$LAST_SDK_TAG"...HEAD -- packages/dxkit-sdk/ 2>/dev/null | grep -v '^packages/dxkit-sdk/package\.json$' || true)
+    if [ -n "$SDK_CHANGES" ] && [ "$SDK_VERSION" = "$LAST_SDK_VERSION" ]; then
+      echo "❌ Release-prep state detected (dxkit ${LAST_DXKIT_VERSION} → ${DXKIT_VERSION})"
+      echo "   dxkit-sdk content has changed since ${LAST_SDK_TAG}:"
+      echo "$SDK_CHANGES" | sed 's/^/      /'
+      echo "   But packages/dxkit-sdk/package.json version is unchanged (${SDK_VERSION})."
+      echo "   → Bump packages/dxkit-sdk/package.json (keep SDK_MAJOR in step for a major)"
+      echo "     before tagging the dxkit release — the bump merging to main is what"
+      echo "     triggers the SDK auto-publish (publish-dxkit-sdk.yml)."
+      ERRORS=$((ERRORS + 1))
+    fi
+  fi
 fi
 
 # ─── Rule 13: external-findings ingestion flows through src/ingest ──────────

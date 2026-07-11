@@ -1033,9 +1033,15 @@ Rules, both directions:
   (Rule 9), never by an extension; the pack-id union and registries stay
   internal.
 - **Release ordering**: the main package's SDK dependency must resolve on
-  npm before a main release that raises its floor — publish `dxkit-sdk@vX.Y.Z`
-  (its own tag-scoped workflow) first, then dxkit. CI smokes the tarball
-  PAIR so PRs never depend on unpublished registry state.
+  npm before a main release that raises its floor. The ordering is
+  STRUCTURAL, not remembered: bumping `packages/dxkit-sdk/package.json` in a
+  reviewed PR is the publish intent — when the bump reaches main with green
+  CI, `publish-dxkit-sdk.yml` auto-creates the `dxkit-sdk@vX.Y.Z` tag +
+  Release and publishes (already-on-npm → silent no-op; the manual Release
+  path remains for recovery). `publish.yml` refuses to publish dxkit while
+  the SDK range doesn't resolve, and the release-prep arch gate blocks a
+  main bump when SDK content changed without an SDK bump. CI smokes the
+  tarball PAIR so PRs never depend on unpublished registry state.
 
 #### SDK-boundary enforcement
 

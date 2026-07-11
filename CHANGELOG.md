@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The SDK publishes itself.** `publish-dxkit-sdk.yml` gains an auto
+  entrance: when a bumped `packages/dxkit-sdk` version reaches main with
+  green CI and is not on npm, the workflow creates the `dxkit-sdk@vX.Y.Z`
+  tag + Release and publishes — bumping the version in a reviewed PR is
+  the publish intent, nothing to remember. The manual Release path stays
+  for recovery; dxkit's own publish preflights that its SDK dependency
+  resolves on npm first; and the release-prep architecture gate blocks a
+  main version bump when SDK content changed without an SDK bump.
+
 - **The rung-4 plugin runtime (`defineExtension`).** A committed CommonJS
   module next to its manifest (`plugin: { module: "plugin.js" }`) can now
   contribute in-process: an `httpFlowDialect` (teach flow a bespoke client

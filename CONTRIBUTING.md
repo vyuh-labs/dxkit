@@ -743,6 +743,15 @@ Three packages release from this repo, each on its own tag namespace:
 `@vyuhlabs/dxkit-sdk` dependency floor, the SDK publishes first so the
 dependency resolves on npm.
 
+The SDK's publish is AUTOMATIC: bumping `packages/dxkit-sdk/package.json`
+in a reviewed PR is the publish intent — once that bump reaches main with
+green CI, `publish-dxkit-sdk.yml` creates the `dxkit-sdk@vX.Y.Z` tag +
+Release and publishes (a version already on npm is a silent no-op). The
+manual Release path stays for recovery re-runs, `publish.yml` refuses to
+publish dxkit while its SDK dependency range does not resolve on npm, and
+the release-prep architecture gate blocks a main version bump when SDK
+content changed without an SDK version bump.
+
 ## Code style
 
 - **Prettier** is the source of truth for formatting. Run `npm run format`

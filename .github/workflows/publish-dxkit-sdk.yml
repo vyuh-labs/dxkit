@@ -1,40 +1,57 @@
 name: Publish dxkit-sdk
 
-# Sibling release pipeline for `@vyuhlabs/dxkit-sdk` (the frozen extension
-# surface). Fires on a release whose tag starts with `dxkit-sdk@` (e.g.
-# `dxkit-sdk@v0.1.0`). Mirrors the create-dxkit publish preflight set —
-# version-match, on-main, CI-green, not-already-on-npm — applied to the
-# sub-package's own `package.json` and `npm view` slot, plus a build step
-# (this package compiles TypeScript; the bootstrap shim does not).
+# Release pipeline for `@vyuhlabs/dxkit-sdk` (the frozen extension surface)
+# — ONE publish path with TWO entrances:
+#
+#   1. AUTO (the default lifecycle): when CI completes green on main and
+#      `packages/dxkit-sdk/package.json` carries a version that is not on
+#      npm yet, this workflow creates the `dxkit-sdk@vX.Y.Z` tag + GitHub
+#      Release itself and publishes. Bumping the SDK version in a reviewed
+#      PR IS the publish intent — nobody has to remember to tag (the
+#      create-dxkit lesson: a sibling package whose release depends on a
+#      human remembering ships stale). A version already on npm is a
+#      silent no-op, so this fires harmlessly on every main push.
+#   2. MANUAL (re-runs / recovery): publishing a `dxkit-sdk@vX.Y.Z` GitHub
+#      Release fires the same job with the same preflight set — version
+#      match, on-main, CI-green, not-already-on-npm. Use this when an auto
+#      run failed after creating the tag.
 #
 # RELEASE ORDERING (load-bearing): the main package depends on
 # `@vyuhlabs/dxkit-sdk`, so when a main release raises that dependency's
 # floor, the SDK version satisfying it MUST be live on npm BEFORE the main
-# release publishes — otherwise consumers of the new main version cannot
-# resolve the dependency. Publish order: dxkit-sdk first, then dxkit.
+# release publishes. The auto entrance makes that ordering structural: the
+# SDK publishes when its bump MERGES to main — before anyone can tag the
+# main release — and `publish.yml` refuses to publish dxkit while its SDK
+# dependency range does not resolve on npm.
 #
-# Release sequence (mirror of the main package, scoped to the SDK):
-#
-#   git tag -a dxkit-sdk@v0.1.0 -m "dxkit-sdk v0.1.0"
-#   git push origin dxkit-sdk@v0.1.0
-#   gh release create dxkit-sdk@v0.1.0 --title "dxkit-sdk v0.1.0"
-#
-# Bump the version in `packages/dxkit-sdk/package.json` (and keep
-# `SDK_MAJOR` in src/version.ts in step — the surface-freeze test pins the
-# pair) before tagging — preflight 1/4 catches the drift if you forget.
+# Keep `SDK_MAJOR` in src/version.ts in step with the version — the
+# surface-freeze test pins the pair.
 
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+
+# Serialize: two rapid merges to main must not race the tag creation.
+concurrency:
+  group: publish-dxkit-sdk
+  cancel-in-progress: false
 
 jobs:
   publish:
-    if: startsWith(github.ref_name, 'dxkit-sdk@')
+    if: >-
+      (github.event_name == 'release' && startsWith(github.ref_name, 'dxkit-sdk@')) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # auto entrance creates the dxkit-sdk@vX.Y.Z tag + Release
       id-token: write # npm provenance via OIDC
-      actions: read # required for `gh run list` against the tagged SHA
+      actions: read # required for `gh run list` against the target SHA
     defaults:
       run:
         working-directory: packages/dxkit-sdk
@@ -42,66 +59,123 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Auto entrance: the exact commit CI just validated on main.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Resolve mode, version, and skip state
+        id: ctx
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          AUTO_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            MODE=auto; SHA="$AUTO_SHA"
+          else
+            MODE=release; SHA="$RELEASE_SHA"
+          fi
+          SKIP=false
+          if [ "$MODE" = "auto" ]; then
+            if npm view "@vyuhlabs/dxkit-sdk@${VERSION}" version >/dev/null 2>&1; then
+              echo "@vyuhlabs/dxkit-sdk@${VERSION} is already on npm — nothing to publish."
+              SKIP=true
+            elif git -C "${GITHUB_WORKSPACE}" ls-remote --exit-code --tags origin "refs/tags/dxkit-sdk@v${VERSION}" >/dev/null 2>&1; then
+              echo "::warning::Tag dxkit-sdk@v${VERSION} exists but the version is not on npm — an earlier publish failed. Re-run via the manual Release path."
+              SKIP=true
+            fi
+          fi
+          {
+            echo "mode=$MODE"
+            echo "version=$VERSION"
+            echo "sha=$SHA"
+            echo "skip=$SKIP"
+          } >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE version=$VERSION sha=$SHA skip=$SKIP"
+
       - name: Preflight — tag matches packages/dxkit-sdk/package.json version
+        if: steps.ctx.outputs.skip != 'true' && steps.ctx.outputs.mode == 'release'
         run: |
           TAG_NAME="${GITHUB_REF_NAME}"
           # Strip the `dxkit-sdk@v` prefix to get the bare semver.
           TAG_VERSION="${TAG_NAME#dxkit-sdk@v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
+          PKG_VERSION="${{ steps.ctx.outputs.version }}"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::Tag $TAG_NAME (version $TAG_VERSION) does not match packages/dxkit-sdk/package.json version $PKG_VERSION"
             exit 1
           fi
           echo "✓ Tag $TAG_NAME matches package.json version $PKG_VERSION"
 
-      - name: Preflight — tagged commit is on main
+      - name: Preflight — target commit is on main
+        if: steps.ctx.outputs.skip != 'true'
         working-directory: ${{ github.workspace }}
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
-            echo "::error::Tagged commit ${GITHUB_SHA} is not reachable from origin/main"
+          if ! git merge-base --is-ancestor "${{ steps.ctx.outputs.sha }}" refs/remotes/origin/main; then
+            echo "::error::Target commit ${{ steps.ctx.outputs.sha }} is not reachable from origin/main"
             exit 1
           fi
-          echo "✓ Tagged commit ${GITHUB_SHA} is an ancestor of origin/main"
+          echo "✓ Target commit is an ancestor of origin/main"
 
-      - name: Preflight — CI is green on tagged commit
+      - name: Preflight — CI is green on target commit
+        if: steps.ctx.outputs.skip != 'true'
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CONCLUSION=$(gh run list \
             --workflow CI \
-            --commit "${GITHUB_SHA}" \
+            --commit "${{ steps.ctx.outputs.sha }}" \
             --json conclusion,status \
             --jq '.[0].conclusion // "missing"')
           if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::CI is not green on tagged commit ${GITHUB_SHA} (got: ${CONCLUSION})"
+            echo "::error::CI is not green on target commit (got: ${CONCLUSION})"
             exit 1
           fi
-          echo "✓ CI is green on ${GITHUB_SHA}"
+          echo "✓ CI is green on ${{ steps.ctx.outputs.sha }}"
 
       - name: Preflight — version not already on npm
+        if: steps.ctx.outputs.skip != 'true'
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ steps.ctx.outputs.version }}"
           if npm view "@vyuhlabs/dxkit-sdk@${VERSION}" version >/dev/null 2>&1; then
             echo "::error::@vyuhlabs/dxkit-sdk@${VERSION} is already published on npm"
             exit 1
           fi
           echo "✓ @vyuhlabs/dxkit-sdk@${VERSION} is available on npm"
 
+      # AUTO entrance only: stamp the tag + Release BEFORE publishing, so the
+      # audit trail (tag → Release → provenance) is identical on both paths.
+      # A GITHUB_TOKEN-created Release does not re-trigger this workflow
+      # (Actions recursion guard), which is exactly right — THIS run carries
+      # the publish through.
+      - name: Create tag + Release (auto entrance)
+        if: steps.ctx.outputs.skip != 'true' && steps.ctx.outputs.mode == 'auto'
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.ctx.outputs.version }}"
+          gh release create "dxkit-sdk@v${VERSION}" \
+            --target "${{ steps.ctx.outputs.sha }}" \
+            --title "dxkit-sdk v${VERSION}" \
+            --notes "Auto-published: packages/dxkit-sdk ${VERSION} landed on main with green CI and was not yet on npm. See CHANGELOG for the surface changes."
+          echo "✓ Created dxkit-sdk@v${VERSION}"
+
       - name: Install workspace + build
+        if: steps.ctx.outputs.skip != 'true'
         working-directory: ${{ github.workspace }}
         run: |
           npm ci
           npm run build:sdk
 
       - name: Pack tarball
+        if: steps.ctx.outputs.skip != 'true'
         id: pack
         run: |
           TARBALL=$(npm pack --silent)
@@ -111,6 +185,7 @@ jobs:
           echo "✓ Built $TARBALL (sha1: $SHASUM)"
 
       - name: Publish to npm
+        if: steps.ctx.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public "${{ steps.pack.outputs.tarball }}"
@@ -120,8 +195,9 @@ jobs:
       # (learned on create-dxkit@0.1.0, whose publish registered as workflow
       # "failure" on a short window even though it succeeded).
       - name: Verify npm shasum matches local tarball
+        if: steps.ctx.outputs.skip != 'true'
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ steps.ctx.outputs.version }}"
           REMOTE_SHASUM=""
           for i in $(seq 1 60); do
             REMOTE_SHASUM=$(npm view "@vyuhlabs/dxkit-sdk@${VERSION}" dist.shasum 2>/dev/null || true)
@@ -140,8 +216,9 @@ jobs:
           echo "✓ Shasum verified: ${REMOTE_SHASUM}"
 
       - name: Upload tarball as workflow artifact
+        if: steps.ctx.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: vyuhlabs-dxkit-sdk-${{ github.ref_name }}
+          name: vyuhlabs-dxkit-sdk-v${{ steps.ctx.outputs.version }}
           path: ${{ steps.pack.outputs.tarball }}
           retention-days: 90
