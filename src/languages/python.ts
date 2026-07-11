@@ -1292,6 +1292,9 @@ export const python: LanguageSupport = {
     // real-repo validation found unrelated homonym `Base` classes minted as
     // models. Weak: counts only when a Column/mapped_column field corroborates.
     weakModelBaseClasses: ['Base'],
+    // SQLAlchemy 2.0 annotates through a transparent wrapper:
+    // `so.Mapped[Optional[str]]` is an optional str, never a "Mapped" type.
+    transparentTypeWrappers: ['Mapped'],
     modelDecorators: ['dataclass'],
     fieldCallees: [
       {

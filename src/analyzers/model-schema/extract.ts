@@ -61,7 +61,11 @@ function resolveFieldCallee(
   call: Node,
   callShape: GrammarShape,
   specs: readonly FieldCalleeSpec[],
-): { rawType: string | null; descriptorOptional: boolean | null } | null {
+): {
+  rawType: string | null;
+  descriptorOptional: boolean | null;
+  descriptorDefaultOptional: boolean | null;
+} | null {
   const resolved = callShape.resolveCall(call);
   if (!resolved) return null;
   const spec = specs.find((s) => s.names.some((n) => n === resolved.name));
@@ -77,18 +81,21 @@ function resolveFieldCallee(
     rawType = resolved.name;
   }
 
+  // An EXPLICIT keyword (`null=True`, `nullable=False`) is authoritative.
+  // An ABSENT keyword yields only the framework DEFAULT, which ranks below
+  // a folded annotation — SQLAlchemy 2.0 derives nullability from
+  // `Mapped[Optional[X]]` when no kwarg is given (real-repo-validated).
   let descriptorOptional: boolean | null = null;
+  let descriptorDefaultOptional: boolean | null = null;
   if (spec.optionalityKeyword) {
     const value = callShape.optionValue(call, spec.optionalityKeyword);
     const truthy = value ? /^(true|True)$/.test(value.text) : null;
-    // An absent keyword means the framework default applies: nullable
-    // defaults to false (required), required defaults to false (optional).
     const optionalWhenTrue = (spec.optionalityPolarity ?? 'nullable') === 'nullable';
-    if (truthy === null) descriptorOptional = optionalWhenTrue ? false : true;
+    if (truthy === null) descriptorDefaultOptional = optionalWhenTrue ? false : true;
     else descriptorOptional = optionalWhenTrue ? truthy : !truthy;
   }
 
-  return { rawType, descriptorOptional };
+  return { rawType, descriptorOptional, descriptorDefaultOptional };
 }
 
 /** How a class node is marked as a model, or null when it is not one. */
@@ -148,6 +155,7 @@ function extractFields(
     let rawType = modelShape.fieldTypeText(field);
     const markerOptional = modelShape.fieldOptionalMarker(field);
     let descriptorOptional: boolean | null = null;
+    let descriptorDefaultOptional: boolean | null = null;
 
     // Field-constructor form (`models.CharField(null=True)`) — supplies the
     // type token and explicit optionality when the annotation does not.
@@ -158,6 +166,7 @@ function extractFields(
         sawFieldCallee = true;
         if (rawType === null) rawType = resolved.rawType;
         descriptorOptional = resolved.descriptorOptional;
+        descriptorDefaultOptional = resolved.descriptorDefaultOptional;
       }
     }
 
@@ -182,7 +191,9 @@ function extractFields(
         rawType,
         markerOptional,
         descriptorOptional: tagOptional ?? descriptorOptional,
+        descriptorDefaultOptional,
         typeAliases: descriptor.typeAliases,
+        typeWrappers: descriptor.transparentTypeWrappers,
       });
       out.push({ name, ...normalized });
     }

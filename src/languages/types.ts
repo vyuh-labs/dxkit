@@ -449,6 +449,14 @@ export interface ModelSchemaSupport {
     optionalityPolarity?: 'nullable' | 'required';
   }>;
   /**
+   * Transparent type wrappers folded OUT of annotation text before any
+   * other normalization: `Mapped[X]` (SQLAlchemy 2.0) reads as `X`, so the
+   * inner `Optional[...]` optionality still folds and a wrapper is never
+   * part of the compared type. Matched on the wrapper's trailing segment
+   * (`so.Mapped[...]` counts as `Mapped[...]`).
+   */
+  transparentTypeWrappers?: string[];
+  /**
    * Lexical type aliases folded by the shared normalizer (mirror of
    * `methodAliases`; keys MUST be lowercase): `{ charfield: 'string',
    * integerfield: 'int' }`. Values are the pack's chosen canonical token —
