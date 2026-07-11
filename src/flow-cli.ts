@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from './logger';
 import { gatherFlowModel } from './analyzers/flow/gather';
+import { loadFlowPluginOverlay } from './extensions/plugin-host';
 import { flowCsvFiles } from './analyzers/flow/csv';
 import { summarize, type FlowModel } from './analyzers/flow/model';
 import { buildFlowMap, buildFlowTrace } from './explore/flow-view';
@@ -78,14 +79,28 @@ export async function gatherModel(
 ): Promise<FlowModel> {
   const config = readFlowConfig(opts.cwd);
   const policySpecs = config.specs.map((s) => path.resolve(opts.cwd, s));
-  return gatherFlowModel({
+  // The rung-4 overlay loads here exactly as it does in gatherRepoFlowModel
+  // (this is the explicit-config sibling — custom roots + --specs merging —
+  // but it is still THIS repo's surface, so the repo's plugins apply; the
+  // Tier-1 validation caught the half-landed variant where map/extract
+  // silently ignored them). Flow CLI surfaces are trusted developer context.
+  const overlay = loadFlowPluginOverlay(opts.cwd);
+  const model = await gatherFlowModel({
     roots: resolveRoots(opts),
     specs: [...splitPaths(opts.specs, opts.cwd), ...policySpecs],
     stripUrlPrefixes: config.stripUrlPrefixes,
     sources: config.sources,
     sourcesBase: opts.cwd,
+    dialects: overlay.dialects,
+    extraReaders: overlay.readers,
+    ...(overlay.rewriteUrl ? { rewriteUrl: overlay.rewriteUrl } : {}),
     ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
   });
+  if (overlay.disclosures.length === 0) return model;
+  return {
+    ...model,
+    sourceDisclosures: [...(model.sourceDisclosures ?? []), ...overlay.disclosures],
+  };
 }
 
 export async function runFlowExtract(opts: FlowExtractOptions): Promise<void> {

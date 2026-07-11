@@ -21,6 +21,8 @@ import { readWorkspace, type WorkspaceParticipant } from '../../workspace';
 import { withRefWorktree, resolveRefToSha } from '../../baseline/ref-baseline';
 import { withRemoteRefWorktree } from '../../baseline/remote-ref';
 import { gatherFlowModel } from './gather';
+import type { FlowSourceDecl } from './contract-sources';
+import { loadFlowPluginOverlay } from '../../extensions/plugin-host';
 import {
   buildServedContract,
   buildConsumedContract,
@@ -62,6 +64,13 @@ export interface PublishResult {
 export interface PublishOptions {
   readonly stripUrlPrefixes?: readonly string[];
   readonly specs?: readonly string[];
+  /**
+   * Declared contract artifacts (`flow.sources`) for the SELF side —
+   * a pact/HAR-declared consumed call publishes exactly like an extracted
+   * one, and a served-side artifact seeds the mesh. (Participants gather
+   * without this repo's sources; theirs ride their own publish.)
+   */
+  readonly sources?: readonly FlowSourceDecl[];
   /** Stamped onto the snapshot meta (kept out of this module for testability). */
   readonly generatedAt: string;
   readonly commitSha?: string;
@@ -174,11 +183,21 @@ export async function publishFlow(cwd: string, opts: PublishOptions): Promise<Pu
   };
 
   // This repo's own model — its served routes seed the mesh; its consumed side
-  // is published as-is (consumed is inherently per-repo).
+  // is published as-is (consumed is inherently per-repo). The repo's OWN
+  // rung-4 overlay applies (publish runs on trusted context in this repo);
+  // participant repos below are gathered WITHOUT their plugins — publishing
+  // never executes another repo's code. A participant's plugin-widened
+  // served set reaches the mesh through ITS own `flow publish --land`
+  // committed served.json, which gatherParticipant prefers when present.
+  const selfOverlay = loadFlowPluginOverlay(cwd);
   const selfModel = await gatherFlowModel({
     roots: [cwd],
     ...(opts.specs ? { specs: opts.specs.map((s) => path.resolve(cwd, s)) } : {}),
     ...(opts.stripUrlPrefixes ? { stripUrlPrefixes: [...opts.stripUrlPrefixes] } : {}),
+    ...(opts.sources ? { sources: opts.sources, sourcesBase: cwd } : {}),
+    dialects: selfOverlay.dialects,
+    extraReaders: selfOverlay.readers,
+    ...(selfOverlay.rewriteUrl ? { rewriteUrl: selfOverlay.rewriteUrl } : {}),
     relativeTo: cwd,
   });
   const selfServed = buildServedContract(selfModel, baseMeta);
