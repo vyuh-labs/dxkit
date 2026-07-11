@@ -32,4 +32,4 @@ writeFileSync(readme, next);
 // The docs tree is prettier-formatted; normalize table padding the same way
 // the pre-commit hook would so the generated file is committable as-is.
 execFileSync('npx', ['prettier', '--write', 'docs/README.md'], { cwd: root, stdio: 'inherit' });
-console.log('✓ docs/README.md command table regenerated from the capability registry');
+console.log('✓ docs/README.md command table regenerated from the capability registry'); // slop-ok: build script
