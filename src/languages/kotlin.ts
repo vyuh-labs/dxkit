@@ -544,6 +544,142 @@ export const kotlin: LanguageSupport = {
     },
   },
 
+  // HTTP-flow descriptors. Served: the Ktor routing DSL (bare verb callees
+  // with trailing lambdas, nested route("…") group prefixes) and Spring
+  // annotations (identical to the java pack — they resolve through kotlin's
+  // constructor_invocation form). Consumed: the Ktor client (member verbs on
+  // client/httpClient — a trailing request lambda is transparent), Retrofit
+  // client interfaces, and WebClient/OkHttp builder chains. Deliberately NOT
+  // declared (documented): `client.request { method = … }` — its verb is
+  // assigned inside the lambda and would be silently dropped rather than
+  // honestly counted, so it stays out until a lambda-options read exists.
+  httpFlow: {
+    routeVerbCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+      requireTrailingLambda: true,
+    },
+    routeGroupCallees: { names: ['route'] },
+    routeDecorators: ['GetMapping', 'PostMapping', 'PutMapping', 'DeleteMapping', 'PatchMapping'],
+    routePathDecorators: {
+      names: ['RequestMapping'],
+      methodsKeyword: 'method',
+      defaultMethods: ['ANY'],
+    },
+    routePrefixDecorators: { names: ['RequestMapping'] },
+    decoratorPathKeywords: ['value', 'path'],
+    clientDecorators: { names: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] },
+    clientMethodCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+      bases: ['client', 'httpClient'],
+    },
+    clientBuilderChains: [
+      {
+        urlCallees: ['uri', 'url'],
+        verbCallees: ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+        methodArgCallees: ['method'],
+        unwrapArgCallees: ['create'],
+      },
+    ],
+    methodAliases: {
+      getmapping: 'GET',
+      postmapping: 'POST',
+      putmapping: 'PUT',
+      deletemapping: 'DELETE',
+      patchmapping: 'PATCH',
+    },
+    flowSignals: [
+      {
+        manifest: 'build.gradle.kts',
+        anyOf: [
+          'io.ktor',
+          'ktor-server',
+          'spring-boot-starter-web',
+          'spring-webflux',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+      {
+        manifest: 'build.gradle',
+        anyOf: [
+          'io.ktor',
+          'ktor-server',
+          'spring-boot-starter-web',
+          'spring-webflux',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+      {
+        manifest: 'pom.xml',
+        anyOf: [
+          'io.ktor',
+          'ktor-server',
+          'spring-boot-starter-web',
+          'spring-webflux',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+    ],
+  },
+
+  // Data models: JPA entities and kotlinx-serialization data classes,
+  // marker-based. Kotlin's grammar gives REAL optionality (`String?`), so
+  // no defaultFieldOptionality override; explicit @Column(nullable = …)
+  // still outranks the marker. Out of scope, documented: Exposed's
+  // `object … : Table()` chained column initializers (`integer("id")
+  // .autoIncrement()` — chain-head resolution is a wave-3 design item) and
+  // @SerialName wire naming (positional argument; wireNameKeyword reads
+  // keywords).
+  modelSchema: {
+    modelDecorators: ['Entity', 'Table', 'Embeddable', 'MappedSuperclass', 'Serializable'],
+    fieldDecoratorSpecs: [
+      {
+        names: ['Column', 'JoinColumn'],
+        optionalityKeyword: 'nullable',
+        optionalityPolarity: 'nullable',
+        wireNameKeyword: 'name',
+      },
+    ],
+    schemaSignals: [
+      {
+        manifest: 'build.gradle.kts',
+        anyOf: [
+          'kotlinx-serialization',
+          'jakarta.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+      {
+        manifest: 'build.gradle',
+        anyOf: [
+          'kotlinx-serialization',
+          'jakarta.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+      {
+        manifest: 'pom.xml',
+        anyOf: [
+          'kotlinx-serialization',
+          'jakarta.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+    ],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer. `.kts` is deliberately
+  // NOT mapped: Gradle build scripts parse fine but contribute no HTTP or
+  // model surface — only noise (implementation("…") calls everywhere).
+  treeSitterGrammars: {
+    '.kt': 'kotlin',
+  },
+
   clocLanguageNames: ['Kotlin'],
 
   detect: detectKotlin,

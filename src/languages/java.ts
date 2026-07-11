@@ -530,6 +530,178 @@ export const java: LanguageSupport = {
     },
   },
 
+  // HTTP-flow descriptors (SDK forms; the extractor is grammar-agnostic).
+  // Served: Spring MVC/WebFlux annotations — bare callees in the fused java
+  // grammar — with the class-level @RequestMapping prefix; JAX-RS split
+  // pairs (@GET marker + sibling/class @Path). Consumed: RestTemplate verb
+  // methods (`.exchange` degrades honestly to a dynamic site — its verb is
+  // an enum argument), builder chains (WebClient / java.net.http / OkHttp),
+  // and Retrofit's CALLED @GET("users/{id}") client interfaces (relative
+  // paths — they join a configured base URL). Out of scope, documented:
+  // programmatic RouterFunction DSL routes (Spring WebFlux functional
+  // endpoints) — `flow.specs` covers them.
+  httpFlow: {
+    routeDecorators: ['GetMapping', 'PostMapping', 'PutMapping', 'DeleteMapping', 'PatchMapping'],
+    routePathDecorators: {
+      names: ['RequestMapping'],
+      methodsKeyword: 'method',
+      // A bare @RequestMapping("/x") serves every verb.
+      defaultMethods: ['ANY'],
+    },
+    routePrefixDecorators: { names: ['RequestMapping', 'Path'] },
+    decoratorPathKeywords: ['value', 'path'],
+    routeAnnotationPairs: {
+      methodMarkers: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'],
+      pathNames: ['Path'],
+    },
+    clientDecorators: { names: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] },
+    clientMethodCallees: {
+      methods: [
+        'getForObject',
+        'getForEntity',
+        'postForObject',
+        'postForEntity',
+        'postForLocation',
+        'put',
+        'delete',
+        'patchForObject',
+        'headForHeaders',
+        'optionsForAllow',
+      ],
+      bases: ['restTemplate'],
+    },
+    // exchange("/x", HttpMethod.GET, …): the verb is an ENUM argument the
+    // string-first rule cannot read — recognized and COUNTED as dynamic.
+    clientRequestCallees: { names: ['exchange'], bases: ['restTemplate'] },
+    clientBuilderChains: [
+      {
+        urlCallees: ['uri', 'url'],
+        verbCallees: [
+          'get',
+          'post',
+          'put',
+          'patch',
+          'delete',
+          'head',
+          'options',
+          'GET',
+          'POST',
+          'PUT',
+          'DELETE',
+          'HEAD',
+        ],
+        methodArgCallees: ['method'],
+        unwrapArgCallees: ['create'],
+      },
+    ],
+    methodAliases: {
+      getmapping: 'GET',
+      postmapping: 'POST',
+      putmapping: 'PUT',
+      deletemapping: 'DELETE',
+      patchmapping: 'PATCH',
+      getforobject: 'GET',
+      getforentity: 'GET',
+      postforobject: 'POST',
+      postforentity: 'POST',
+      postforlocation: 'POST',
+      patchforobject: 'PATCH',
+      headforheaders: 'HEAD',
+      optionsforallow: 'OPTIONS',
+    },
+    flowSignals: [
+      {
+        manifest: 'pom.xml',
+        anyOf: [
+          'spring-boot-starter-web',
+          'spring-webmvc',
+          'spring-webflux',
+          'jersey',
+          'jakarta.ws.rs',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+      {
+        manifest: 'build.gradle',
+        anyOf: [
+          'spring-boot-starter-web',
+          'spring-webmvc',
+          'spring-webflux',
+          'jersey',
+          'jakarta.ws.rs',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+      {
+        manifest: 'build.gradle.kts',
+        anyOf: [
+          'spring-boot-starter-web',
+          'spring-webmvc',
+          'spring-webflux',
+          'jersey',
+          'jakarta.ws.rs',
+          'retrofit',
+          'okhttp',
+        ],
+      },
+    ],
+  },
+
+  // Data models for the schema drift gate: JPA/Hibernate entities,
+  // marker-based. Optionality is annotation-carried (@Column(nullable=…));
+  // an unannotated column defaults to NULLABLE in JPA and java's grammar
+  // cannot mark optionality, so the no-signal answer is the honest 'unknown'
+  // (never gates). Marker-less DTOs/records stay invisible by design —
+  // `schema.specs` covers them.
+  modelSchema: {
+    modelDecorators: ['Entity', 'Table', 'Embeddable', 'MappedSuperclass'],
+    defaultFieldOptionality: 'unknown',
+    fieldDecoratorSpecs: [
+      {
+        names: ['Column', 'JoinColumn'],
+        optionalityKeyword: 'nullable',
+        optionalityPolarity: 'nullable',
+        wireNameKeyword: 'name',
+      },
+    ],
+    schemaSignals: [
+      {
+        manifest: 'pom.xml',
+        anyOf: [
+          'jakarta.persistence',
+          'javax.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+      {
+        manifest: 'build.gradle',
+        anyOf: [
+          'jakarta.persistence',
+          'javax.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+      {
+        manifest: 'build.gradle.kts',
+        anyOf: [
+          'jakarta.persistence',
+          'javax.persistence',
+          'hibernate',
+          'spring-boot-starter-data-jpa',
+        ],
+      },
+    ],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/).
+  treeSitterGrammars: {
+    '.java': 'java',
+  },
+
   clocLanguageNames: ['Java'],
 
   detect: detectJava,
