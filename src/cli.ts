@@ -867,7 +867,7 @@ export async function run(argv: string[]): Promise<void> {
       const isSub = subs.includes(positionals[1] ?? '');
       const sub = (isSub ? positionals[1] : 'list') as 'list' | 'refresh' | 'dev' | 'init';
       const extTarget = isSub ? positionals[2] : undefined;
-      process.exitCode = runExtensionsCli(cwd, sub, extTarget, {
+      process.exitCode = await runExtensionsCli(cwd, sub, extTarget, {
         json: !!values.json,
         kind: values.kind as string | undefined,
         command: values.command as string | undefined,

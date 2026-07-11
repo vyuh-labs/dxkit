@@ -59,7 +59,7 @@ const FINDING = {
 };
 
 describe('gatherExtensionFindings', () => {
-  it('maps wire findings to located custom-check findings with gating', () => {
+  it('maps wire findings to located custom-check findings with gating', async () => {
     writeExtension('perm-audit', 'block', [FINDING]);
     const out = gatherExtensionFindings(tmp);
     expect(out).toEqual([
@@ -83,7 +83,7 @@ describe('gatherExtensionFindings', () => {
     expect(out[0].blocking).toBe(false);
   });
 
-  it('a missing or invalid snapshot contributes nothing (doctor owns the disclosure)', () => {
+  it('a missing or invalid snapshot contributes nothing (doctor owns the disclosure)', async () => {
     const dir = path.join(tmp, '.dxkit/extensions/no-snap');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -100,7 +100,7 @@ describe('gatherExtensionFindings', () => {
     expect(gatherExtensionFindings(tmp)).toEqual([]);
   });
 
-  it('non-findings extensions are ignored by this lane', () => {
+  it('non-findings extensions are ignored by this lane', async () => {
     const dir = path.join(tmp, '.dxkit/extensions/inv');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -124,7 +124,7 @@ describe('gatherExtensionFindings', () => {
 });
 
 describe('the seam entry point folds extensions in', () => {
-  it('gatherCustomCheckFindings returns extension findings with no checks configured', () => {
+  it('gatherCustomCheckFindings returns extension findings with no checks configured', async () => {
     writeExtension('perm-audit', 'block', [FINDING]);
     const out = gatherCustomCheckFindings({
       cwd: tmp,
@@ -135,7 +135,7 @@ describe('the seam entry point folds extensions in', () => {
     expect(out[0].check).toBe('extension:perm-audit');
   });
 
-  it('located identity is stable across runs and distinct per rule', () => {
+  it('located identity is stable across runs and distinct per rule', async () => {
     writeExtension('perm-audit', 'warn', [FINDING, { ...FINDING, rule: 'other-rule' }]);
     const [a, b] = gatherExtensionFindings(tmp);
     const idA = identityFor({
