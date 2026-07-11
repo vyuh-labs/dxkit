@@ -453,6 +453,8 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
 const goDepVulnsProvider: DepVulnsProvider = {
   source: 'go',
   manifestPatterns: ['go.mod', 'go.sum'],
+  // Every go.mod is an independent module root (multi-module repos).
+  lockfilePatterns: ['go.mod'],
   async gather(cwd) {
     const outcome = await gatherGoDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

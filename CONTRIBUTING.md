@@ -219,7 +219,16 @@ will fail CI if missing):
 - **Capabilities** — `capabilities?: { depVulns, lint, coverage,
 imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   with an async `gather(cwd)` method; return `null` when nothing to
-  report. The dispatcher fans out across every pack.
+  report. The dispatcher fans out across every pack. A `depVulns`
+  provider MUST declare `manifestPatterns` (the incremental dep-audit
+  skip reads them) and SHOULD declare `lockfilePatterns` — exact
+  basenames marking an INDEPENDENT dependency-resolution root
+  (`package-lock.json`, `Gemfile.lock`, `go.mod`). The dispatch then
+  audits every nested root and merges, so a vuln added to a nested
+  sub-project's lockfile is caught; a pack that omits it keeps
+  root-only auditing. Lockfiles, not plain manifests: a workspace
+  member / Maven module resolves from the root tree and is already
+  covered by the root audit.
 - **Correctness floor** (2.23) — `correctness?: CorrectnessProvider`,
   the loop-safety liveness gate ("does this change still compile, and
   do the tests it affects still pass?"). TWO pure command builders:

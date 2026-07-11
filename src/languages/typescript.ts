@@ -531,6 +531,17 @@ const tsDepVulnsProvider: DepVulnsProvider = {
     'yarn.lock',
     'pnpm-lock.yaml',
   ],
+  // Independent-resolution roots: a nested dir with its OWN lockfile is a
+  // sub-project the root audit cannot see (a workspace member has no
+  // nested lockfile, so workspaces are naturally excluded).
+  lockfilePatterns: [
+    'package-lock.json',
+    'npm-shrinkwrap.json',
+    'pnpm-lock.yaml',
+    'yarn.lock',
+    'bun.lock',
+    'bun.lockb',
+  ],
   async gather(cwd) {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

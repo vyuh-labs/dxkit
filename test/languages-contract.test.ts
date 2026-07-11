@@ -305,6 +305,23 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
+  it('depVulns lockfilePatterns, when declared, are exact basenames', () => {
+    const dep = lang.capabilities?.depVulns;
+    if (!dep?.lockfilePatterns) return; // root-only auditing is a valid choice
+    expect(
+      dep.lockfilePatterns.length,
+      `${lang.id}: an EMPTY lockfilePatterns is ambiguous — omit the field for ` +
+        `root-only auditing, or declare the independent-resolution lockfile names`,
+    ).toBeGreaterThan(0);
+    for (const p of dep.lockfilePatterns) {
+      // Nested-root discovery matches EXACT basenames via the canonical
+      // walker — a glob or path segment would silently never match.
+      expect(p.includes('*'), `${lang.id}: lockfilePattern "${p}" must not be a glob`).toBe(false);
+      expect(p.includes('/'), `${lang.id}: lockfilePattern "${p}" must be a basename`).toBe(false);
+      expect(p.length).toBeGreaterThan(0);
+    }
+  });
+
   // Correctness floor (2.23): EVERY built-in pack MUST declare the liveness
   // gate and supply BOTH command builders. The capability shipped optional
   // (TS/JS + Python first) and tightened to REQUIRED once all eight packs

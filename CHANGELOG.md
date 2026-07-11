@@ -35,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verbatim what the gate cannot see (constraints, aliased types, dynamic
   schemas, consumer impact).
 
+### Fixed
+
+- **Dependency audit covers nested lockfiles.** The dep audit ran at the
+  repo root only, so a vulnerability introduced in a nested sub-project's
+  lockfile (a `server/` app with its own `package-lock.json` that is not a
+  workspace member) was invisible to `health`, `vulnerabilities`, and the
+  guardrail gate. Each language pack now declares which lockfile basenames
+  mark an independent dependency-resolution root; the audit discovers every
+  nested root (exclusion-aware, depth-unlimited, capped with disclosure)
+  and runs once per root, merging findings on their true identity so the
+  same advisory in two sub-projects stays one finding. Deliberately
+  lockfiles, not manifests: workspace members and Maven modules resolve
+  from the root tree and were already covered. Verified against the
+  originally-reported case: a CVSS 9.8 advisory in a nested lockfile that
+  previously read CLEAN is now detected.
+
 ## [3.3.0] - 2026-07-10
 
 The polyglot release for the flow pillar: Python and Go join

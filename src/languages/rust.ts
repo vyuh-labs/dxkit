@@ -479,6 +479,9 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
 const rustDepVulnsProvider: DepVulnsProvider = {
   source: 'rust',
   manifestPatterns: ['Cargo.toml', 'Cargo.lock'],
+  // A workspace member has no own Cargo.lock; a nested one marks an
+  // independent crate the root audit cannot see.
+  lockfilePatterns: ['Cargo.lock'],
   async gather(cwd) {
     const outcome = await gatherRustDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;

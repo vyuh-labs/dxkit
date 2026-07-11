@@ -133,6 +133,26 @@ export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
    * identical on both sides and never net-new).
    */
   readonly manifestPatterns: readonly string[];
+  /**
+   * Lockfile basenames that mark an INDEPENDENT dependency-resolution root
+   * (`package-lock.json`, `Gemfile.lock`, `go.mod`, `Cargo.lock`). A nested
+   * directory containing one is a sub-project whose dependency tree the
+   * root audit cannot see — common in monorepos with a separate `server/`
+   * or `web/` app that is NOT a workspace member — so the dep audit runs
+   * once per discovered root and merges (the nested-lockfile gap: a
+   * critical vuln added to a nested lockfile read CLEAN at the root).
+   *
+   * Deliberately lockfiles, not manifests: a nested plain manifest (a Maven
+   * module's `pom.xml`, an npm workspace member's `package.json`) resolves
+   * from the ROOT tree and is already covered by the root audit — auditing
+   * it separately would duplicate work, not close a gap. Maven therefore
+   * declares no patterns (no lockfile concept); packs whose audit runs on a
+   * manifest that IS independently resolved (`requirements.txt`, `go.mod`)
+   * declare that manifest here.
+   *
+   * Optional — a pack that omits it keeps root-only auditing.
+   */
+  readonly lockfilePatterns?: readonly string[];
 }
 
 /**
