@@ -319,6 +319,40 @@ disagree. Because `large-file` identity is per-path (not line-based),
 changing the threshold only changes _which_ files are flagged; it never
 invalidates a baseline or allowlist.
 
+## `schema` — the model-schema drift gate (opt-in)
+
+Extract every declared data model (see [language packs](language-packs.md#model-schema-coverage)
+for what counts as one) and gate breaking changes on the PR diff:
+
+```jsonc
+{
+  "schema": {
+    "mode": "warn",              // off (default) | warn | block
+    "specs": ["api/openapi.json"], // spec-declared models (any language)
+    "blockThreshold": 1          // confidence needed to BLOCK (default 1)
+  }
+}
+```
+
+- `off` (default) — the gate does not run; the capability is opt-in.
+- `warn` — net-new breaking drift (field removed, type changed, optional →
+  required, model removed) surfaces as warnings; additions are informational.
+- `block` — breaking drift fails the check, confidence-gated: a finding
+  degraded by an unknown (an unreadable type) or a fuzzy model pairing can
+  warn but never block.
+
+The gate is additive and fail-open: it runs only when the diff touches a
+model-capable source file or a configured spec, self-skips when neither side
+declares any model, and any infrastructure failure means "did not gate",
+never a failed build. Preview locally with `vyuh-dxkit schema diff` — it
+runs the exact evaluation the guardrail runs. A deliberate breaking change
+ships with an expiring `accepted-risk` allowlist entry
+(`allowlist add --fingerprint=<id> --kind=model-schema-drift
+--category=accepted-risk`), which stays visible in the PR comment's
+suppressed section. Under an autonomous loop the `security-only` preset
+demotes schema blocks to warnings; the preset never activates a gate the
+repo did not configure.
+
 ## `loop.preset` — loop-scoped posture (not read by CI)
 
 A repo running the [loop pack](../commands/loop.md) carries a separate

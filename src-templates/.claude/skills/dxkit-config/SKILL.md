@@ -140,6 +140,21 @@ The UI→API integration gate has its own posture under `flow.mode` in the same 
 
 The gate is additive and fail-open: it only fires when a change touches a client call / route / spec, and self-skips when there is no served-side truth to check against. Set it up with `npx vyuh-dxkit init --flow`, or hand off to the **dxkit-flow** skill for setup / diagnosis / repair.
 
+### Switching the schema-gate posture (`schema.mode`)
+
+The model-schema drift gate (breaking data-model changes) has its own posture under `schema.mode`:
+
+```jsonc
+{ "schema": { "mode": "warn", "specs": ["api/openapi.json"] } }  // off (default) | warn | block
+```
+
+- `off` — the gate does not run (the capability is opt-in).
+- `warn` — net-new breaking drift (field removed, type changed, optional → required) warns, never fails a build.
+- `block` — breaking drift fails the check (confidence-gated: an unknown-degraded finding can only warn).
+- `schema.specs` — OpenAPI / JSON Schema files whose models gate alongside code extraction (the any-language bridge).
+
+Set it up via `npx vyuh-dxkit configure` (it plans `warn` when a data-model framework is detected), or hand off to the **dxkit-schema** skill for inventory / preview / shipping a deliberate breaking change.
+
 ### Keeping the code graph fresh in CI (`graph.refresh`)
 
 The code graph (`.dxkit/reports/graph.json`) is a **gitignored**, rebuilt-on-demand artifact. On a large repo, rebuilding it in CI is slow. Opt into a cache transport that keeps it warm:

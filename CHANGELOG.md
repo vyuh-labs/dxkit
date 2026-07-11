@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Model-schema drift gate.** dxkit now extracts every data model a repo
+  declares and gates breaking changes on the PR diff — a removed field, a
+  changed type, an optional field made required, a removed model. Additive
+  changes surface as warnings or information, never blocks. Recognition is
+  marker-based per language pack (precision over recall): TypeScript/
+  JavaScript entity decorators (TypeORM, MikroORM, sequelize-typescript,
+  NestJS-mongoose, type-graphql) and `BaseEntity` heritage; Python Django /
+  SQLAlchemy / pydantic / SQLModel base classes and `@dataclass`, with ORM
+  field constructors supplying types and `null=`/`nullable=` optionality; Go
+  struct tags (`json:`/`gorm:`/`db:`/`bson:`) with wire names, `omitempty`,
+  and pointer optionality. Any other language — and unmarked DTOs anywhere —
+  participates via spec-declared models: point `schema.specs` at an OpenAPI
+  (`components.schemas`) or JSON Schema document and its models gate
+  identically with zero code extraction. `vyuh-dxkit schema` lists the
+  inventory (with unreadable-type and dynamic-model disclosure);
+  `schema diff --ref <base>` previews the exact verdict the guardrail will
+  reach. The gate is opt-in (`.dxkit/policy.json:schema.mode`, default off),
+  additive, and fail-open; drift findings carry a location-free fingerprint
+  (`model` + `field` + change class), so a model can move files or lines
+  without re-minting, and a deliberate breaking change ships with an
+  expiring `accepted-risk` allowlist entry that stays disclosed in the PR
+  comment. Honesty rules throughout: an unknown never blocks, a rename reads
+  as remove + add, a pure file move produces no findings, and the docs list
+  verbatim what the gate cannot see (constraints, aliased types, dynamic
+  schemas, consumer impact).
+
 ## [3.3.0] - 2026-07-10
 
 The polyglot release for the flow pillar: Python and Go join

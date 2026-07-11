@@ -26,6 +26,7 @@ this file, so the sections below record what has shipped.
 - [x] Post-merge baseline-refresh workflow gated on PR-check pass
 - [x] CLI tools for `setup-branch-protection` and `setup-prebuild`
 - [x] `vyuh-dxkit issue` CLI for GitHub-routed issue reports
+- [x] Model-schema drift gate: pack-declared model extraction (TS/JS, Python, Go) + spec-declared models (OpenAPI/JSON Schema), `schema` inventory/diff CLI, and a guardrail gate that blocks breaking model changes with a per-finding accepted-risk escape
 
 ### Agent integration
 
