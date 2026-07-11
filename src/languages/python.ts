@@ -1269,6 +1269,13 @@ export const python: LanguageSupport = {
     },
     routePathDecorators: { names: ['route'], methodsKeyword: 'methods', defaultMethods: ['GET'] },
     routeCallees: { names: ['path'], excludeArgCallees: ['include'] },
+    // Discovery-only (doctor's flow recommendation + the config planner):
+    // a web framework in a Python manifest signals a served-side flow surface.
+    flowSignals: [
+      { manifest: 'requirements.txt', anyOf: ['fastapi', 'flask', 'django'] },
+      { manifest: 'pyproject.toml', anyOf: ['fastapi', 'flask', 'django'] },
+      { manifest: 'Pipfile', anyOf: ['fastapi', 'flask', 'django'] },
+    ],
   },
 
   // Tree-sitter grammar for the canonical AST layer (src/ast/). Logical name —
