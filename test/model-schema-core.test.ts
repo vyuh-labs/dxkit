@@ -66,6 +66,24 @@ describe('normalize', () => {
     });
   });
 
+  it('folds pack-declared transparent wrappers before other folds', () => {
+    expect(
+      normalizeField({
+        rawType: 'so.Mapped[Optional[str]]',
+        markerOptional: null,
+        typeWrappers: ['Mapped'],
+      }),
+    ).toEqual({ type: 'str', required: false });
+    expect(
+      normalizeField({ rawType: 'Mapped[int]', markerOptional: null, typeWrappers: ['Mapped'] }),
+    ).toEqual({ type: 'int', required: true });
+    // Undeclared wrapper stays — it IS the type.
+    expect(
+      normalizeField({ rawType: 'List[int]', markerOptional: null, typeWrappers: ['Mapped'] })
+        .type,
+    ).toBe('List[int]');
+  });
+
   it('resolves requiredness by specificity: descriptor > fold > marker', () => {
     // Marker says optional (`?`), no fold, no descriptor.
     expect(normalizeField({ rawType: 'string', markerOptional: true }).required).toBe(false);

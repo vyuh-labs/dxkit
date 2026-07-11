@@ -36,7 +36,10 @@ function stripWhitespace(text: string): string {
  * absence of a wrapper says nothing (the field's baseline requiredness comes
  * from the grammar marker / descriptor keyword, not from here).
  */
-function foldTypeText(raw: string): { type: string; optional: boolean } {
+function foldTypeText(
+  raw: string,
+  wrappers?: readonly string[],
+): { type: string; optional: boolean } {
   let text = stripWhitespace(raw);
   let optional = false;
 
@@ -46,11 +49,19 @@ function foldTypeText(raw: string): { type: string; optional: boolean } {
     optional = true;
   }
 
-  // Optional[X] → X, optional (Python typing).
-  const optionalMatch = /^Optional\[(.+)\]$/.exec(text);
-  if (optionalMatch) {
-    text = optionalMatch[1];
-    optional = true;
+  // Pack-declared transparent wrappers + Optional[X], folded in a loop so
+  // nesting resolves in any order: so.Mapped[Optional[str]] → str, optional.
+  for (;;) {
+    const wrapper = /^(?:[A-Za-z_][\w.]*\.)?([A-Za-z_]\w*)\[(.+)\]$/.exec(text);
+    if (!wrapper) break;
+    if (wrapper[1] === 'Optional') {
+      text = wrapper[2];
+      optional = true;
+    } else if (wrappers?.includes(wrapper[1])) {
+      text = wrapper[2];
+    } else {
+      break;
+    }
   }
 
   // Union with a nullish member: X|null, None|X, X|null|undefined → X.
@@ -78,36 +89,46 @@ export function applyTypeAliases(
  * Normalize one field's raw facts into its canonical `{ type, required }`.
  *
  * Requiredness resolution, most-specific wins:
- *   1. an explicit descriptor signal (`nullable=True` read off a field
+ *   1. an EXPLICIT descriptor signal (`nullable=True` written on a field
  *      constructor) — `descriptorOptional`;
  *   2. an optionality wrapper folded from the type text (`Optional[X]`,
  *      `| null`, `*X`);
  *   3. the grammar-level marker (`?`, pointer type) — `markerOptional`;
- *   4. otherwise: required when the grammar HAS a marker concept
- *      (markerOptional === false means "marker absent" there), unknown
- *      (null) when it does not (markerOptional === null).
+ *   4. the framework DEFAULT for an absent keyword —
+ *      `descriptorDefaultOptional` (Django's null=False, weakest signal);
+ *   5. otherwise: required when a type is known, unknown (null) when not.
  */
 export function normalizeField(opts: {
   rawType: string | null;
   markerOptional: boolean | null;
   descriptorOptional?: boolean | null;
+  /** The framework default when the optionality keyword is ABSENT — ranks
+   *  below a folded annotation (SQLAlchemy 2.0 derives nullability from
+   *  `Mapped[Optional[X]]`), above bare type-presence. */
+  descriptorDefaultOptional?: boolean | null;
   typeAliases?: Readonly<Record<string, string>>;
+  typeWrappers?: readonly string[];
 }): NormalizedField {
   let type: string | null = null;
   let foldedOptional = false;
   if (opts.rawType !== null && opts.rawType !== '') {
-    const folded = foldTypeText(opts.rawType);
+    const folded = foldTypeText(opts.rawType, opts.typeWrappers);
     type = applyTypeAliases(folded.type, opts.typeAliases);
     foldedOptional = folded.optional;
   }
 
   let required: boolean | null;
   if (opts.descriptorOptional !== undefined && opts.descriptorOptional !== null) {
-    required = !opts.descriptorOptional;
+    required = !opts.descriptorOptional; // explicit kwarg — authoritative
   } else if (foldedOptional) {
-    required = false;
+    required = false; // the annotation said Optional/| null
   } else if (opts.markerOptional !== null) {
     required = !opts.markerOptional;
+  } else if (
+    opts.descriptorDefaultOptional !== undefined &&
+    opts.descriptorDefaultOptional !== null
+  ) {
+    required = !opts.descriptorDefaultOptional; // framework default (weakest signal)
   } else {
     required = type === null ? null : true;
   }
