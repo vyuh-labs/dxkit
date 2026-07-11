@@ -50,6 +50,8 @@ import {
   installCiReportsRefresh,
   reportsRefreshEnabled,
   installCiFlowRefresh,
+  installCiExtensionsRefresh,
+  extensionsRefreshEnabled,
   flowRefreshEnabled,
   installCiGuardrails,
   installDevcontainer,
@@ -74,6 +76,7 @@ type PrimaryFlag =
   | 'withGraphRefresh'
   | 'withReportsRefresh'
   | 'withFlowRefresh'
+  | 'withExtensionsRefresh'
   | 'withClaudeLoop';
 
 /**
@@ -272,6 +275,19 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-reports-refresh.yml'),
   },
   {
+    // On-merge extension-snapshot refresh (keep committed extension
+    // snapshots current). Opt-in via --with-extensions-refresh, or
+    // automatically when a committed manifest declares refresh: on-merge;
+    // presence uninstall detection mirrors flow-refresh.
+    id: 'ci-extensions-refresh',
+    gate: { kind: 'flag', flag: 'withExtensionsRefresh' },
+    artifacts: () => ['.github/workflows/dxkit-extensions-refresh.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiExtensionsRefresh(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-extensions-refresh.yml'),
+  },
+  {
     // On-merge flow-contract refresh (task: keep committed served/consumed
     // snapshots current). Opt-in via policy flow.onMergeRefresh; presence
     // uninstall detection mirrors reports-refresh.
@@ -348,6 +364,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
     withGraphRefresh: false,
     withReportsRefresh: false,
     withFlowRefresh: false,
+    withExtensionsRefresh: false,
   };
   for (const surface of MANAGED_SHIP_SURFACES) {
     if (surface.gate.kind === 'flag' && surface.detectPresent) {
@@ -360,6 +377,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
   flags.withGraphRefresh = flags.withGraphRefresh || graphRefreshEnabled(cwd);
   flags.withReportsRefresh = flags.withReportsRefresh || reportsRefreshEnabled(cwd);
   flags.withFlowRefresh = flags.withFlowRefresh || flowRefreshEnabled(cwd);
+  flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
   return flags;
 }
 

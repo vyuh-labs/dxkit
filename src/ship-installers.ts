@@ -32,6 +32,7 @@ import {
 } from './baseline/modes';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { readFlowConfig } from './analyzers/flow/config';
+import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
 
@@ -835,6 +836,30 @@ export function installCiFlowRefresh(cwd: string, opts: InstallerOpts = {}): Shi
  *  the ONE flow-section reader (Rule 2), same as every other flow surface. */
 export function flowRefreshEnabled(cwd: string): boolean {
   return readFlowConfig(cwd).onMergeRefresh;
+}
+
+export function installCiExtensionsRefresh(
+  cwd: string,
+  opts: InstallerOpts = {},
+): ShipInstallResult {
+  const result = installWorkflow(cwd, 'dxkit-extensions-refresh.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+  });
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'extensions-refresh workflow installed: after each merge it re-runs the committed ' +
+        'extension manifests and lands snapshot updates via one standing PR (a pure ' +
+        'timestamp restamp never lands a commit).',
+    );
+  }
+  return result;
+}
+
+/** Whether any committed extension declares an on-merge refresh — resolved
+ *  through the ONE manifest reader (Rule 2), same as every extension surface. */
+export function extensionsRefreshEnabled(cwd: string): boolean {
+  return discoverExtensions(cwd).extensions.some((e) => e.manifest.refresh === 'on-merge');
 }
 
 export function installCiDeepSastRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {

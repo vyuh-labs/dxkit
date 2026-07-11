@@ -152,7 +152,7 @@ describe('landFlowRefresh (real git)', () => {
           if (args[1] === 'create') return 'https://github.com/o/r/pull/7\n';
           return '';
         }
-        return real(cmd, args);
+        return real(cmd, [...args]);
       },
     });
     expect(out.outcome).toBe('pr-opened');
@@ -171,7 +171,7 @@ describe('landFlowRefresh (real git)', () => {
           if (args[1] === 'list') return '[{"url":"https://github.com/o/r/pull/7"}]';
           return '';
         }
-        return real(cmd, args);
+        return real(cmd, [...args]);
       },
     });
     expect(out.outcome).toBe('pr-updated');

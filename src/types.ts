@@ -165,6 +165,7 @@ export interface ManifestInstallFlags {
   /** Flow-refresh workflow (re-publish + land the contract snapshots on merge;
    *  opt-in via `.dxkit/policy.json:flow.onMergeRefresh: true`). */
   withFlowRefresh?: boolean;
+  withExtensionsRefresh?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf
