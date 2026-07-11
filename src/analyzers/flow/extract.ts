@@ -117,6 +117,19 @@ function receiverMatchesBase(receiver: string, bases: readonly string[]): boolea
   return bases.some((b) => receiver === b || receiver.endsWith(`.${b}`));
 }
 
+/**
+ * Does a CHAINED receiver's head identifier match a base? Router registration
+ * is frequently chained through middleware helpers — chi's
+ * `r.With(paginate).Get("/", h)`, `r.Route("/x").Get(...)` — where the
+ * receiver TEXT is the whole chain expression. The chain head (`r`) is what
+ * identifies the router; without this, a chained registration falls through
+ * to the client branch and a served route reads as a consumed call.
+ */
+function receiverHeadMatchesBase(receiver: string, bases: readonly string[]): boolean {
+  const head = receiver.split(/[.([]/, 1)[0].trim();
+  return head.length > 0 && bases.includes(head);
+}
+
 /** Pull `method: 'X'` out of a fetch-style options argument, default GET. */
 function fetchMethod(call: Node, shape: GrammarShape, hf: HttpFlowSupport): HttpMethod {
   const value = shape.optionValue(call, 'method');
@@ -443,7 +456,8 @@ export function extractFromTree(
       // branch below instead of minting a phantom route.
       if (
         routerMethods.has(verb) &&
-        receiverMatchesBase(receiver, routerBases) &&
+        (receiverMatchesBase(receiver, routerBases) ||
+          receiverHeadMatchesBase(receiver, routerBases)) &&
         shape.positionalArgs(node).length >= 2
       ) {
         const path = normalizePath(literalText(shape.firstArg(node)), config);
