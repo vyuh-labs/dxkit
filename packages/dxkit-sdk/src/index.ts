@@ -7,3 +7,4 @@
  * code path), so an extension and dxkit itself always agree on the shapes.
  */
 export { SDK_MAJOR } from './version';
+export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from './descriptors';
