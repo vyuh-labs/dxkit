@@ -31,6 +31,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Install dxkit agent DX in this repo',
+    typicalRuntime: '5-30 sec',
     docsBlurb:
       'Scaffold dxkit into a repo: agent skills, CLAUDE.md, and any opted-in hooks/CI/devcontainer.',
     skill: 'dxkit-init',
@@ -40,6 +41,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Re-generate managed files (preserves your edits)',
+    typicalRuntime: '5-30 sec',
     docsBlurb:
       'Refresh dxkit-owned files to the current version, provenance-aware — never clobbers files you evolved.',
     skill: 'dxkit-update',
@@ -49,6 +51,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Remove dxkit, restoring the exact pre-dxkit state',
+    typicalRuntime: '< 30 sec',
     docsBlurb:
       'Delete files dxkit created and surgically revert its additive merges. Dry-run by default; --yes applies.',
     skill: 'dxkit-uninstall',
@@ -58,6 +61,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Verify setup — and recommend capabilities you are not using',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
   },
@@ -66,6 +70,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Compute + apply a deterministic config plan for this repo',
+    typicalRuntime: '< 30 sec',
     docsBlurb:
       'Walk every capability the registry exposes and compute the config each should take from observable repo facts — a pure, reproducible plan (same repo → same plan). `--plan` shows it, `--apply` merge-writes it into .dxkit/policy.json without clobbering your edits. New capabilities join the plan automatically.',
     skill: 'dxkit-onboard',
@@ -76,6 +81,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'List every dxkit capability + what this repo should adopt',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'The capability catalog — every command with its group, summary, and driving skill, plus repo-grounded recommendations. `--json` is the agent-queryable menu for configuring dxkit conversationally.',
     skill: 'dxkit-learn',
@@ -85,6 +91,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Show / install required analysis tools',
+    typicalRuntime: '< 5 sec (list); install varies',
     docsBlurb:
       'Report the status of external analysis tools (semgrep, gitleaks, …) and install missing ones.',
   },
@@ -93,6 +100,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Activate the dxkit git hooks (core.hooksPath)',
+    typicalRuntime: '< 5 sec',
     docsBlurb: 'Idempotently point git at .githooks so the pre-push guardrail runs on every push.',
     skill: 'dxkit-hooks',
   },
@@ -102,6 +110,7 @@ export const COMMANDS = [
     group: 'setup',
     aliases: ['protect'],
     summary: 'Set up branch protection / required checks (dry-run by default)',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'Configure branch protection so the guardrail check is a required status, and add a ' +
       'deletion-protection ruleset for the dxkit anchor side branches. `protect` is the ' +
@@ -112,6 +121,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Set up the devcontainer prebuild workflow',
+    typicalRuntime: '< 5 sec',
     docsBlurb: 'Install a GitHub Actions workflow that prebuilds the dxkit devcontainer image.',
   },
   {
@@ -119,6 +129,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Plan / apply a dxkit version upgrade',
+    typicalRuntime: '1-3 min',
     docsBlurb:
       'Show a package-manager-aware upgrade plan for the dxkit devDependency and its transition steps.',
   },
@@ -127,6 +138,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary: 'Open a pre-filled GitHub issue against dxkit',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'Compose a typed feedback issue (false-positive / bug / feature-request / …); nothing submits until you confirm in the browser.',
   },
@@ -137,6 +149,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Run the deterministic 6-dimension health analysis',
+    typicalRuntime: '1-4 min',
     docsBlurb:
       'Score Security, Code Quality, Tests, Docs, Maintainability, and Developer Experience with structured deductions.',
     skill: 'dxkit-reports',
@@ -147,6 +160,7 @@ export const COMMANDS = [
     group: 'assess',
     aliases: ['vuln'],
     summary: 'Run the deep security scan',
+    typicalRuntime: '1-3 min',
     docsBlurb:
       'Secrets, SAST, and dependency-vulnerability findings with CVSS scoring and remediation proposals.',
     skill: 'dxkit-reports',
@@ -156,6 +170,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Analyze test coverage gaps',
+    typicalRuntime: '30-90 sec',
     docsBlurb:
       'Surface untested source files by risk tier, crediting coverage artifacts and import-graph reachability.',
     skill: 'dxkit-test',
@@ -165,6 +180,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Select tests affected by a diff via the code graph',
+    typicalRuntime: '< 5 sec (queries the graph)',
     docsBlurb:
       '`tests affected --diff <ref>` lists the test files a change reaches, computed from the call graph (beats module-graph selection in composition-root repos). Fails safe to the full suite when the graph is missing, stale, or unreliable for a changed language.',
     skill: 'dxkit-test',
@@ -174,6 +190,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Code quality + slop detection',
+    typicalRuntime: '1-8 min (jscpd is the long-pole)',
     docsBlurb:
       'Duplication, complexity, and AI-slop signals rolled into the Code Quality dimension.',
   },
@@ -182,6 +199,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Developer activity analysis',
+    typicalRuntime: '5-30 sec',
     docsBlurb: 'Recency-weighted git activity: active owners, bus-factor, and contribution shape.',
   },
   {
@@ -189,6 +207,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Dependency license inventory',
+    typicalRuntime: '30-60 sec',
     docsBlurb: 'Enumerate dependency licenses and attribution for the dependency tree.',
   },
   {
@@ -196,6 +215,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Bill of Materials (licenses + vulnerabilities joined)',
+    typicalRuntime: '1-3 min',
     docsBlurb: 'Join the license inventory with the vulnerability scan into one dependency BOM.',
   },
   {
@@ -203,6 +223,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Run per-pack test-with-coverage (materializes the artifact)',
+    typicalRuntime: 'varies (runs your tests)',
     docsBlurb:
       'Side-effecting: run each active pack’s coverage command so health/test-gaps read line-level truth.',
   },
@@ -211,6 +232,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Render .dxkit/reports/ into one HTML dashboard',
+    typicalRuntime: '< 5 sec (renders existing reports)',
     docsBlurb: 'Combine the generated reports into a single browsable HTML dashboard.',
     skill: 'dxkit-reports',
   },
@@ -219,6 +241,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Full audit (report), or publish/read a score snapshot (report snapshot|history)',
+    typicalRuntime: '5-30 min',
     docsBlurb:
       'One command to run all analyzers and render the dashboard — the full-audit entry point. ' +
       '`report snapshot` publishes a per-merge score snapshot to the dxkit-reports ref; ' +
@@ -232,6 +255,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'assess',
     summary: 'Findings the gate stopped before merge + the score-over-time trend',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'The champion ROI report, computed not narrated: net-new findings the guardrail intercepted before they reached the base branch, per week and by category, from the append-only loop ledger. Interceptions are the ungameable number; --since <ref|date> scopes the window. Also surfaces the score-over-time trend (how each dimension moved) from the dxkit-reports snapshots when on-merge reports are enabled.',
     skill: 'dxkit-reports',
@@ -243,6 +267,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Capture / publish / show per-finding baselines for the guardrail',
+    typicalRuntime: '30 sec - 2 min',
     docsBlurb:
       'Record per-finding identities the guardrail check diffs against to gate net-new ' +
       'regressions. `baseline publish` pushes the captured anchor to the side branch on the ' +
@@ -255,6 +280,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Diff current scan vs baseline; block on net-new regressions',
+    typicalRuntime: '30 sec - 2 min',
     docsBlurb:
       'The brownfield gate: fail on findings introduced by a change, grandfathering pre-existing debt.',
     skill: 'dxkit-action',
@@ -264,6 +290,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Emit the PR "dxkit signals" block (verdict + allowlist + score delta)',
+    typicalRuntime: '< 30 sec',
     docsBlurb:
       'The ready-to-paste PR signals block, computed not narrated: the guardrail verdict, the allowlist delta, and (with --since) health-score movement vs the base ref. Reuses the session verdict cache so it never re-runs an unchanged scan.',
     skill: 'dxkit-pr',
@@ -273,6 +300,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Suppress / audit individual findings with typed reasons',
+    typicalRuntime: '< 1 sec',
     docsBlurb:
       'Accept a finding with a typed category + required reason + optional expiry; audit and prune entries.',
     skill: 'dxkit-allowlist',
@@ -282,6 +310,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Ingest external SAST (SARIF) findings as first-class',
+    typicalRuntime: 'varies (reads engine SARIF)',
     docsBlurb:
       'Pull CodeQL / Snyk / Semgrep-Pro SARIF into dxkit so external findings share one fingerprint + gate.',
     skill: 'dxkit-ingest',
@@ -291,6 +320,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Autonomous-loop utilities (doctor / ledger / snapshot)',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'Inspect and verify the autonomous-loop Stop-gate wiring, its ledger, and the correctness-floor snapshot.',
     skill: 'dxkit-loop',
@@ -301,6 +331,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'List / dry-run your custom repo-invariant + lint gates',
+    typicalRuntime: 'varies (runs your checks)',
     docsBlurb:
       'Declare repo invariants (a project rule, a lint gate) as first-class gate citizens: the guardrail fingerprints their failures and blocks only net-new ones, grandfathering pre-existing debt. `checks list` shows what is configured; `checks run` dry-runs them.',
     skill: 'dxkit-checks',
@@ -313,6 +344,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Plug your own extractors and sinks into dxkit (any language)',
+    typicalRuntime: 'seconds (the `dev` loop)',
     docsBlurb:
       'Declare an extension — a manifest pointing at your existing script — and dxkit runs it at ' +
       'refresh time, validates its emitted contract/inventory/findings/export document, and routes ' +
@@ -333,6 +365,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'gate',
     summary: 'Data-model inventory + the schema drift gate',
+    typicalRuntime: '5-30 sec',
     docsBlurb:
       'Extract every declared data model (ORM entities, tagged structs, spec schemas) and ' +
       'gate breaking changes — a removed field, a changed type, an optional field made ' +
@@ -348,6 +381,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'integrate',
     summary: 'UI→API integration mapping + the broken-integration gate',
+    typicalRuntime: '5-30 sec',
     docsBlurb:
       'Map client calls to served endpoints and gate changes that break a UI→API contract across ' +
       'repos. `flow publish --land` refreshes + lands the committed contract snapshots (the ' +
@@ -364,6 +398,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Repo exploration via the code graph',
+    typicalRuntime: '< 5 sec (queries the graph)',
     docsBlurb:
       'Query the graphify artifact: hot-files, entry-points, communities, api-surface, per-file/feature context.',
   },
@@ -372,6 +407,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Slim structural code slice for a query (token-efficient)',
+    typicalRuntime: '< 5 sec (queries the graph)',
     docsBlurb:
       'Budget-bounded structural context for a query — a compact codebase slice for an LLM.',
   },
@@ -380,6 +416,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Suggest reviewers via the active-owner model',
+    typicalRuntime: '< 5 sec',
     docsBlurb:
       'Rank reviewers by recency-weighted ownership of the touched files, blended with CODEOWNERS, with a bus-factor signal.',
   },
@@ -390,6 +427,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'export',
     summary: 'Convert a dxkit JSON report to XLSX',
+    typicalRuntime: '< 5 sec',
     docsBlurb: 'Render a dxkit JSON report into a 15-column spreadsheet for sharing.',
   },
 
@@ -417,6 +455,7 @@ export const COMMANDS = [
     audience: 'user',
     group: 'explore',
     summary: 'Offline, no-API demonstration walkthroughs',
+    typicalRuntime: '1-2 min (interactive walkthrough)',
     docsBlurb:
       'Run a self-contained walkthrough (default: the loop-guardrail demo) with no network or API key.',
   },

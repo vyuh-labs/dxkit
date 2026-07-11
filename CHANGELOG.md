@@ -5,6 +5,27 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The docs command table is generated from the capability registry.**
+  `docs/README.md`'s "What you can run" table is now rendered from the
+  Rule-16 command registry between marker comments (`npm run docs:commands`
+  rewrites it; a parity test pins the committed table against the
+  registry), so a new command cannot ship without its docs row. The
+  hand-maintained table had silently lost `tests`, `hooks`, `checks`, and
+  `demo` across waves — that drift class is closed. Each command's typical
+  runtime now lives on its registry descriptor.
+
+### Fixed
+
+- **Publish verification waits out slow npm visibility.** Both publish
+  workflows verify the registry shasum on a ~15-minute window (was ~3
+  minutes): a first-ever package name can take ~10 minutes to become
+  readable after publish, which made a successful release read as a
+  workflow failure.
+
 ## [3.5.0] - 2026-07-11
 
 ### Added

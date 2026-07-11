@@ -45,46 +45,56 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 
 ## What you can run
 
-Once dxkit + its tools are installed, here's the command surface:
+Once dxkit + its tools are installed, here's the command surface. This
+table is generated from the capability registry, so it is complete by
+construction; commands with a linked page have a full reference under
+`docs/commands/`.
 
-| Command                                                          | Question it answers                                                | Typical runtime                    |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
-| [`health`](commands/health.md)                                   | "What's the overall shape of this codebase?"                       | 1-4 min                            |
-| [`vulnerabilities`](commands/vulnerabilities.md)                 | "What security issues are there?"                                  | 1-3 min                            |
-| [`test-gaps`](commands/test-gaps.md)                             | "Which untested files are riskiest?"                               | 30-90 sec                          |
-| [`quality`](commands/quality.md)                                 | "Where's the technical debt + duplication?"                        | 1-8 min (jscpd is the long-pole)   |
-| [`dev-report`](commands/dev-report.md)                           | "Who's working on what, where are the hot files?"                  | 5-30 sec                           |
-| [`licenses`](commands/licenses.md)                               | "What licenses are in my dependency tree?"                         | 30-60 sec                          |
-| [`bom`](commands/bom.md)                                         | "Full dependency × license × CVE × upgrade view"                   | 1-3 min                            |
-| [`coverage`](commands/coverage.md)                               | "Materialize real line-coverage data"                              | varies (runs your tests)           |
-| [`dashboard`](commands/dashboard.md)                             | "Single HTML view of everything I've run"                          | < 5 sec (renders existing reports) |
-| [`explore`](commands/explore.md)                                 | "What does this repo do / where does X live?"                      | < 5 sec (queries the graph)        |
-| [`context`](commands/context.md)                                 | "Token-budgeted structural slice for an LLM"                       | < 5 sec (queries the graph)        |
-| [`report`](commands/report.md)                                   | "Run all of the above in one shot" (+ `report history` trend)      | 5-30 min                           |
-| `metrics`                                                        | "What did the gate stop before merge, and how's the score trend?"  | < 5 sec                            |
-| `flow`                                                           | "Which client calls bind to which served routes?"                  | 5-30 sec                           |
-| `schema` / `schema diff`                                         | "What data models do we declare / does my change break one?"       | 5-30 sec                           |
-| `capabilities`                                                   | "What can dxkit do here, and what should this repo adopt?"         | < 5 sec                            |
-| `configure`                                                      | "Compute + apply the config this repo should have"                 | < 30 sec                           |
-| `ingest`                                                         | "Bring Snyk Code / CodeQL / SARIF findings into the gate"          | varies                             |
-| `extensions`                                                     | "Plug our own extractor/scanner/sink into dxkit" (4-rung ladder)   | seconds (`dev` loop)               |
-| `receipt`                                                        | "Emit the PR signals block (verdict + allowlist + score delta)"    | < 30 sec                           |
-| [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                               | < 5 sec                            |
-| [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                            | < 5 sec                            |
-| [`init`](commands/init.md)                                       | "Scaffold a new project with dxkit pre-configured"                 | 5-30 sec                           |
-| [`loop doctor` / `loop ledger`](commands/loop.md)                | "Run a safe autonomous coding loop behind the Stop-gate"           | < 5 sec                            |
-| [`update`](commands/update.md)                                   | "Re-generate scaffolded files, preserving customizations"          | 5-30 sec                           |
-| [`upgrade`](commands/upgrade.md)                                 | "Plan + execute a dxkit version upgrade (binary + scaffold)"       | 1-3 min                            |
-| `uninstall`                                                      | "Remove dxkit, restoring the exact pre-dxkit state (dry-run 1st)"  | < 30 sec                           |
-| [`to-xlsx`](commands/to-xlsx.md)                                 | "Convert a licenses/bom JSON report to 15-col XLSX"                | < 5 sec                            |
-| [`baseline create`](commands/baseline.md)                        | "Capture today's findings as a brownfield anchor"                  | 30s-2m                             |
-| [`baseline show`](commands/baseline.md)                          | "Inspect/filter the on-disk baseline"                              | < 1 sec                            |
-| [`guardrail check`](commands/guardrail.md)                       | "Block on net-new regressions vs. the baseline"                    | 30s-2m                             |
-| [`setup-branch-protection`](commands/setup-branch-protection.md) | "Mark `dxkit-guardrails` as required check on default branch"      | < 5 sec                            |
-| [`setup-prebuild`](commands/setup-prebuild.md)                   | "Configure Codespaces prebuild (cold-start ~7 min → ~30s)"         | < 5 sec                            |
-| [`allowlist`](commands/allowlist.md)                             | "Suppress a specific finding with typed reason + expiry"           | < 1 sec                            |
-| [`reviewers`](commands/reviewers.md)                             | "Who should review this change?" (active-owner model + CODEOWNERS) | < 5 sec                            |
-| [`issue`](commands/issue.md)                                     | "Open a pre-filled GitHub Issue against dxkit"                     | < 5 sec                            |
+<!-- dxkit:command-table:begin — generated from src/discovery/command-defs.ts by `npm run docs:commands`; do not edit by hand -->
+
+| Command                                                          | What it does                                                                     | Typical runtime                    |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------- |
+| [`health`](commands/health.md)                                   | Run the deterministic 6-dimension health analysis                                | 1-4 min                            |
+| [`vulnerabilities`](commands/vulnerabilities.md)                 | Run the deep security scan                                                       | 1-3 min                            |
+| [`test-gaps`](commands/test-gaps.md)                             | Analyze test coverage gaps                                                       | 30-90 sec                          |
+| `tests`                                                          | Select tests affected by a diff via the code graph                               | < 5 sec (queries the graph)        |
+| [`quality`](commands/quality.md)                                 | Code quality + slop detection                                                    | 1-8 min (jscpd is the long-pole)   |
+| [`dev-report`](commands/dev-report.md)                           | Developer activity analysis                                                      | 5-30 sec                           |
+| [`licenses`](commands/licenses.md)                               | Dependency license inventory                                                     | 30-60 sec                          |
+| [`bom`](commands/bom.md)                                         | Bill of Materials (licenses + vulnerabilities joined)                            | 1-3 min                            |
+| [`coverage`](commands/coverage.md)                               | Run per-pack test-with-coverage (materializes the artifact)                      | varies (runs your tests)           |
+| [`dashboard`](commands/dashboard.md)                             | Render .dxkit/reports/ into one HTML dashboard                                   | < 5 sec (renders existing reports) |
+| [`report`](commands/report.md)                                   | Full audit (report), or publish/read a score snapshot (report snapshot\|history) | 5-30 min                           |
+| `metrics`                                                        | Findings the gate stopped before merge + the score-over-time trend               | < 5 sec                            |
+| [`baseline`](commands/baseline.md)                               | Capture / publish / show per-finding baselines for the guardrail                 | 30 sec - 2 min                     |
+| [`guardrail`](commands/guardrail.md)                             | Diff current scan vs baseline; block on net-new regressions                      | 30 sec - 2 min                     |
+| `receipt`                                                        | Emit the PR "dxkit signals" block (verdict + allowlist + score delta)            | < 30 sec                           |
+| [`allowlist`](commands/allowlist.md)                             | Suppress / audit individual findings with typed reasons                          | < 1 sec                            |
+| `ingest`                                                         | Ingest external SAST (SARIF) findings as first-class                             | varies (reads engine SARIF)        |
+| [`loop`](commands/loop.md)                                       | Autonomous-loop utilities (doctor / ledger / snapshot)                           | < 5 sec                            |
+| [`checks`](commands/checks.md)                                   | List / dry-run your custom repo-invariant + lint gates                           | varies (runs your checks)          |
+| `extensions`                                                     | Plug your own extractors and sinks into dxkit (any language)                     | seconds (the `dev` loop)           |
+| `schema`                                                         | Data-model inventory + the schema drift gate                                     | 5-30 sec                           |
+| `flow`                                                           | UI→API integration mapping + the broken-integration gate                         | 5-30 sec                           |
+| [`explore`](commands/explore.md)                                 | Repo exploration via the code graph                                              | < 5 sec (queries the graph)        |
+| [`context`](commands/context.md)                                 | Slim structural code slice for a query (token-efficient)                         | < 5 sec (queries the graph)        |
+| [`reviewers`](commands/reviewers.md)                             | Suggest reviewers via the active-owner model                                     | < 5 sec                            |
+| `demo`                                                           | Offline, no-API demonstration walkthroughs                                       | 1-2 min (interactive walkthrough)  |
+| [`init`](commands/init.md)                                       | Install dxkit agent DX in this repo                                              | 5-30 sec                           |
+| [`update`](commands/update.md)                                   | Re-generate managed files (preserves your edits)                                 | 5-30 sec                           |
+| `uninstall`                                                      | Remove dxkit, restoring the exact pre-dxkit state                                | < 30 sec                           |
+| [`doctor`](commands/doctor.md)                                   | Verify setup — and recommend capabilities you are not using                      | < 5 sec                            |
+| `configure`                                                      | Compute + apply a deterministic config plan for this repo                        | < 30 sec                           |
+| `capabilities`                                                   | List every dxkit capability + what this repo should adopt                        | < 5 sec                            |
+| [`tools`](commands/tools.md)                                     | Show / install required analysis tools                                           | < 5 sec (list); install varies     |
+| `hooks`                                                          | Activate the dxkit git hooks (core.hooksPath)                                    | < 5 sec                            |
+| [`setup-branch-protection`](commands/setup-branch-protection.md) | Set up branch protection / required checks (dry-run by default)                  | < 5 sec                            |
+| [`setup-prebuild`](commands/setup-prebuild.md)                   | Set up the devcontainer prebuild workflow                                        | < 5 sec                            |
+| [`upgrade`](commands/upgrade.md)                                 | Plan / apply a dxkit version upgrade                                             | 1-3 min                            |
+| [`issue`](commands/issue.md)                                     | Open a pre-filled GitHub issue against dxkit                                     | < 5 sec                            |
+| [`to-xlsx`](commands/to-xlsx.md)                                 | Convert a dxkit JSON report to XLSX                                              | < 5 sec                            |
+
+<!-- dxkit:command-table:end -->
 
 ## Configuration
 
