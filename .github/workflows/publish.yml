@@ -127,19 +127,20 @@ jobs:
       # A mismatch means something replaced the tarball mid-publish or
       # the registry accepted a different file; bail loudly.
       #
-      # Poll loop: up to 60 iterations × 3s = ~180s window. First-publish
-      # of a new scoped package commonly takes 30-90s for the CDN to
-      # propagate; both 2.5.1 publishes registered as workflow "failure"
-      # on the old 6-iteration / 18s window even though the publish
-      # actually succeeded. Hence the wider tolerance.
+      # Poll loop: up to 90 iterations × 10s = ~15min window. Registry
+      # visibility after a publish is unbounded in practice: both 2.5.1
+      # publishes registered as workflow "failure" on an 18s window, and
+      # dxkit-sdk@0.1.0 (a first-ever name) took ~10 minutes to become
+      # readable. The wide window keeps a slow-but-successful publish from
+      # reading as a failed release.
       - name: Verify npm shasum matches local tarball
         run: |
           VERSION=$(node -p "require('./package.json').version")
           REMOTE_SHASUM=""
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             REMOTE_SHASUM=$(npm view "@vyuhlabs/dxkit@${VERSION}" dist.shasum 2>/dev/null || true)
             if [ -n "$REMOTE_SHASUM" ]; then break; fi
-            sleep 3
+            sleep 10
           done
           LOCAL_SHASUM="${{ steps.pack.outputs.shasum }}"
           if [ -z "$REMOTE_SHASUM" ]; then
