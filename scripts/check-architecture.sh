@@ -1407,6 +1407,24 @@ if [ -n "$ROGUE_EXT_EXEC" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# loadPluginDefinition executes a committed plugin module IN-PROCESS. The
+# loader is confined to src/extensions/plugin-host.ts (createRequire is its
+# smoking-gun shape); every other consumer goes through loadPluginDefinition /
+# loadFlowPluginOverlay so the trust gating (--untrusted disable, snapshot
+# fallback, disclosure collection) cannot be bypassed by a second loader.
+ROGUE_PLUGIN_LOAD=$(grep -rnE "createRequire[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// plugin-host-ok" \
+  | grep -v "^src/extensions/plugin-host.ts" || true)
+if [ -n "$ROGUE_PLUGIN_LOAD" ]; then
+  echo "❌ Plugin-host violation: createRequire() outside the plugin host:"
+  echo "$ROGUE_PLUGIN_LOAD"
+  echo "   → Rung-4 plugin modules load ONLY via src/extensions/plugin-host.ts"
+  echo "     (loadPluginDefinition / loadFlowPluginOverlay) — the one place the"
+  echo "     trust tier is enforced. Annotate '// plugin-host-ok' for justified"
+  echo "     non-plugin uses of createRequire (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ─── Rule 18 (SDK boundary): the frozen extension surface stays one-way ─────
 # The frozen surface lives in packages/dxkit-sdk; the main package depends on
 # it and re-exports. Two invariants keep the freeze real:
