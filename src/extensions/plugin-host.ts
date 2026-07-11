@@ -88,7 +88,9 @@ const DIALECT_FIELD_SHAPES: Record<string, (v: unknown) => boolean> = {
   flowSignals: (v) => Array.isArray(v),
 };
 
-const PRODUCER_KEY_BY_KIND = {
+/** Which definition key supplies the producer for each wire kind — shared
+ *  with the runner so selection and validation agree (one concept). */
+export const PRODUCER_KEY_BY_KIND = {
   contract: 'contractProducer',
   inventory: 'inventoryProducer',
   findings: 'findingProducer',

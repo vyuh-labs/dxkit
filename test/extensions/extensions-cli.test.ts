@@ -24,8 +24,8 @@ afterEach(() => {
 });
 
 describe('extensions init', () => {
-  it('scaffolds a manifest + stub that pass discovery validation', () => {
-    const code = runExtensionsCli(tmp, 'init', 'ui-inventory', {
+  it('scaffolds a manifest + stub that pass discovery validation', async () => {
+    const code = await runExtensionsCli(tmp, 'init', 'ui-inventory', {
       kind: 'inventory',
       stub: true,
     });
@@ -42,8 +42,8 @@ describe('extensions init', () => {
     expect(fs.existsSync(path.join(tmp, '.dxkit/extensions/ui-inventory/run.py'))).toBe(true);
   });
 
-  it('findings kind gets the default warn gating in the scaffold', () => {
-    runExtensionsCli(tmp, 'init', 'perm-audit', {
+  it('findings kind gets the default warn gating in the scaffold', async () => {
+    await runExtensionsCli(tmp, 'init', 'perm-audit', {
       kind: 'findings',
       command: 'python3 tools/audit.py',
     });
@@ -55,10 +55,12 @@ describe('extensions init', () => {
     });
   });
 
-  it('rejects unknown kinds naming the registry set, and refuses to overwrite', () => {
-    expect(runExtensionsCli(tmp, 'init', 'x', { kind: 'telemetry', command: 'node x' })).toBe(1);
-    expect(runExtensionsCli(tmp, 'init', 'x', { kind: 'export', command: 'node x' })).toBe(0);
-    expect(runExtensionsCli(tmp, 'init', 'x', { kind: 'export', command: 'node x' })).toBe(1);
+  it('rejects unknown kinds naming the registry set, and refuses to overwrite', async () => {
+    expect(await runExtensionsCli(tmp, 'init', 'x', { kind: 'telemetry', command: 'node x' })).toBe(
+      1,
+    );
+    expect(await runExtensionsCli(tmp, 'init', 'x', { kind: 'export', command: 'node x' })).toBe(0);
+    expect(await runExtensionsCli(tmp, 'init', 'x', { kind: 'export', command: 'node x' })).toBe(1);
   });
 });
 
@@ -80,7 +82,7 @@ describe('extensions dev + refresh (real runner, node interpreter)', () => {
     fs.writeFileSync(path.join(dir, 'run.js'), script);
   }
 
-  it('dev: a valid emit reports ok and writes the stamped snapshot', () => {
+  it('dev: a valid emit reports ok and writes the stamped snapshot', async () => {
     writeNodeExtension(
       'screens',
       `process.stdout.write(JSON.stringify({
@@ -88,7 +90,7 @@ describe('extensions dev + refresh (real runner, node interpreter)', () => {
          entities: [{ kind: 'screen', name: 'Checkout' }],
        }));`,
     );
-    const code = runExtensionsCli(tmp, 'dev', 'screens', {});
+    const code = await runExtensionsCli(tmp, 'dev', 'screens', {});
     expect(code).toBe(0);
     const snap = JSON.parse(
       fs.readFileSync(path.join(tmp, '.dxkit/contrib/screens.json'), 'utf8'),
@@ -97,39 +99,39 @@ describe('extensions dev + refresh (real runner, node interpreter)', () => {
     expect(typeof snap['generatedAt']).toBe('string');
   });
 
-  it('dev: an invalid emit exits 1 (field-precise errors are the loop)', () => {
+  it('dev: an invalid emit exits 1 (field-precise errors are the loop)', async () => {
     writeNodeExtension(
       'broken',
       `process.stdout.write(JSON.stringify({ schema: 'inventory.v1', entities: [{ kind: 'k' }] }));`,
     );
-    expect(runExtensionsCli(tmp, 'dev', 'broken', {})).toBe(1);
+    expect(await runExtensionsCli(tmp, 'dev', 'broken', {})).toBe(1);
   });
 
-  it('refresh: runs everything; list shows snapshot health', () => {
+  it('refresh: runs everything; list shows snapshot health', async () => {
     writeNodeExtension(
       'screens',
       `process.stdout.write(JSON.stringify({ schema: 'inventory.v1', entities: [] }));`,
     );
-    expect(runExtensionsCli(tmp, 'refresh', undefined, {})).toBe(0);
-    expect(runExtensionsCli(tmp, 'list', undefined, {})).toBe(0);
-    expect(runExtensionsCli(tmp, 'refresh', 'nope', {})).toBe(1);
+    expect(await runExtensionsCli(tmp, 'refresh', undefined, {})).toBe(0);
+    expect(await runExtensionsCli(tmp, 'list', undefined, {})).toBe(0);
+    expect(await runExtensionsCli(tmp, 'refresh', 'nope', {})).toBe(1);
   });
 
-  it('refresh --land with no substantive change lands nothing (restamp-only)', () => {
+  it('refresh --land with no substantive change lands nothing (restamp-only)', async () => {
     writeNodeExtension(
       'screens',
       `process.stdout.write(JSON.stringify({ schema: 'inventory.v1', entities: [] }));`,
     );
     // First refresh writes the snapshot; commit it so the second refresh's
     // restamp is the only diff.
-    expect(runExtensionsCli(tmp, 'refresh', undefined, {})).toBe(0);
+    expect(await runExtensionsCli(tmp, 'refresh', undefined, {})).toBe(0);
     execFileSync('git', ['add', '-A'], { cwd: tmp });
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'snap'], {
       cwd: tmp,
     });
     // --land push against a repo with no remote: the substance check must
     // return false (generatedAt-only diff) BEFORE any push is attempted.
-    expect(runExtensionsCli(tmp, 'refresh', undefined, { land: 'push' })).toBe(0);
+    expect(await runExtensionsCli(tmp, 'refresh', undefined, { land: 'push' })).toBe(0);
     const status = execFileSync('git', ['status', '--porcelain'], {
       cwd: tmp,
       encoding: 'utf8',

@@ -161,6 +161,16 @@ function validateManifest(raw: unknown, dirName: string, at: string): string[] {
           'must be a .js/.cjs path relative to the extension directory (no absolute paths, no "..", no leading "-") — CommonJS; author in TypeScript and commit the compiled module',
         );
       }
+      const t = plugin['timeoutSeconds'];
+      if (
+        t !== undefined &&
+        (!Number.isInteger(t) || (t as number) < 1 || (t as number) > MAX_TIMEOUT_SECONDS)
+      ) {
+        add(
+          'plugin.timeoutSeconds',
+          `must be an integer in [1, ${MAX_TIMEOUT_SECONDS}] when present`,
+        );
+      }
     }
   }
 
