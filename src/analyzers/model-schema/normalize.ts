@@ -108,6 +108,10 @@ export function normalizeField(opts: {
   descriptorDefaultOptional?: boolean | null;
   typeAliases?: Readonly<Record<string, string>>;
   typeWrappers?: readonly string[];
+  /** What a typed field with NO optionality signal means (pack-declared):
+   *  `'required'` (TS/Pydantic semantics — the engine default) or
+   *  `'unknown'` (JPA — an honest null that never gates). */
+  defaultFieldOptionality?: 'required' | 'unknown';
 }): NormalizedField {
   let type: string | null = null;
   let foldedOptional = false;
@@ -129,8 +133,10 @@ export function normalizeField(opts: {
     opts.descriptorDefaultOptional !== null
   ) {
     required = !opts.descriptorDefaultOptional; // framework default (weakest signal)
+  } else if (type !== null && opts.defaultFieldOptionality !== 'unknown') {
+    required = true;
   } else {
-    required = type === null ? null : true;
+    required = null;
   }
 
   return { type, required };

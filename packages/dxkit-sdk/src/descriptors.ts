@@ -397,6 +397,18 @@ export interface ModelSchemaSupport {
     optionalityPolarity?: 'nullable' | 'required';
   }>;
   /**
+   * What a TYPED field with NO optionality signal at all means in this
+   * pack's frameworks. The engine default (`'required'`) matches TS and
+   * Pydantic semantics — a plain `name: str` is required. JPA is the
+   * opposite: an unannotated column defaults to nullable, and Java's
+   * grammar cannot mark optionality, so stamping `required` would fabricate
+   * a fact and let the drift gate block on it — such packs declare
+   * `'unknown'` (an honest null that never gates; explicit
+   * `fieldDecoratorSpecs`/marker/fold signals still win). Additive
+   * (SDK minor).
+   */
+  defaultFieldOptionality?: 'required' | 'unknown';
+  /**
    * FIELD-decorator facts: annotations on a field that carry its wire name
    * and/or optionality — JPA's `@Column(name = "wire_name",
    * nullable = false)`. Matched on the decorator name's trailing segment.
