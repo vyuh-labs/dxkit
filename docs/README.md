@@ -36,6 +36,7 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 | `flow`                                             | UI→API integration map + the broken-integration gate            |
 | `schema` / `schema diff`                           | Data-model inventory + the schema drift gate (preview = gate)   |
 | `ingest`                                           | Bring external SAST (SARIF) findings into the same gate         |
+| `extensions`                                       | Run your own extractors/sinks through the gate (any language)   |
 | `receipt`                                          | Emit the PR "dxkit signals" block (verdict + allowlist + score) |
 | [`allowlist add`](commands/allowlist.md)           | Suppress a specific finding (typed category + reason + expiry)  |
 | [`allowlist audit`](commands/allowlist.md)         | Surface stale / soon-to-expire / orphaned / missing-rationale   |
@@ -66,6 +67,7 @@ Once dxkit + its tools are installed, here's the command surface:
 | `capabilities`                                                   | "What can dxkit do here, and what should this repo adopt?"         | < 5 sec                            |
 | `configure`                                                      | "Compute + apply the config this repo should have"                 | < 30 sec                           |
 | `ingest`                                                         | "Bring Snyk Code / CodeQL / SARIF findings into the gate"          | varies                             |
+| `extensions`                                                     | "Plug our own extractor/scanner/sink into dxkit" (4-rung ladder)   | seconds (`dev` loop)               |
 | `receipt`                                                        | "Emit the PR signals block (verdict + allowlist + score delta)"    | < 30 sec                           |
 | [`tools`](commands/tools.md)                                     | "What tools are detected / missing?"                               | < 5 sec                            |
 | [`doctor`](commands/doctor.md)                                   | "Why is X not working?"                                            | < 5 sec                            |
