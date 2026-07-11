@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Python flow extraction.** The flow pillar's second language: the python
+  pack declares `httpFlow` + its tree-sitter grammar, and every flow surface
+  (map, doctor, contract snapshots, the integration gate) picks it up with
+  zero analyzer changes. Consumed side: `requests` / `httpx` (trusted — their
+  runtime-built URLs are disclosed as dynamic call sites) plus wrapper clients
+  through the same path-literal precision guard the TS pack uses. Served side:
+  FastAPI member verb decorators (`@app.get('/x')`), Flask
+  `@app.route('/x', methods=[...])` (GET-only default), and Django
+  `path('users/<int:pk>/', view)`. Django/Flask angle-bracket converters
+  (`<int:pk>`, `<path:rest>`) canonicalize in the shared normalizer. Django's
+  regex `re_path(...)` routes are out of scope — point `flow.specs` at an
+  OpenAPI document for those.
+- **Method-agnostic (`ANY`) served routes.** A routing layer that binds a path
+  for EVERY verb (Django `path()`, Go's `http.HandleFunc` next wave) publishes
+  one `ANY` route; the join and the gate resolve a call with any method
+  against it, through the same shared predicate (additive on the served.json
+  schema).
+- **Grammar-shape adapter.** The one flow extractor now reads any tree-sitter
+  grammar through a per-grammar node-type table (`src/ast/grammar-shape.ts`),
+  so adding flow for a language is declaration-only: grammars + a descriptor,
+  zero extractor edits. The scaffold, the pack-contract tests, and the
+  synthetic-pack playbook enforce the recipe end to end.
+- **Pack-declared flow discovery.** doctor's "you would benefit from flow"
+  recommendation and `configure`'s warn-mode seed now key off each pack's
+  declared framework signals — a FastAPI/Flask/Django repo is offered the
+  gate, not just JS UI repos.
+
 ## [3.2.0] - 2026-07-10
 
 The freshness-and-honesty release for the flow pillar: the committed contract
