@@ -1,6 +1,21 @@
+import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // Resolve the SDK workspace package to its TypeScript SOURCE, not the
+  // built dist behind the node_modules symlink. Two reasons: (1) the whole
+  // suite tests src/ directly (vitest transpiles); testing the SDK through
+  // dist would be the one inconsistent island, and (2) coverage — v8
+  // instruments repo sources, so without the alias the SDK's lines (the
+  // moved normalizer among them) would silently leave the coverage ratio
+  // while still being executed. Reference-identity assertions in
+  // test/sdk-surface-freeze.test.ts hold either way: main src and tests
+  // resolve the same specifier to the same module instance.
+  resolve: {
+    alias: {
+      '@vyuhlabs/dxkit-sdk': resolve(__dirname, 'packages/dxkit-sdk/src/index.ts'),
+    },
+  },
   test: {
     // Default suite = unit tests only. The slow integration test lives
     // under `test/integration/` and runs via `npm run test:integration`
@@ -56,7 +71,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       reportsDirectory: 'coverage',
-      include: ['src/**/*.ts'],
+      include: ['src/**/*.ts', 'packages/dxkit-sdk/src/**/*.ts'],
       exclude: ['src/analyzers/tools/default-exclusions.gitignore'],
     },
   },
