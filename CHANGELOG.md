@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-07-10
+
+The polyglot release for the flow pillar: Python and Go join
+TypeScript/JavaScript as natively-extracted languages, and the extractor was
+rebuilt so every further language is a declaration, not an engineering
+project — a pack states its grammar and which constructs are HTTP; one shared
+engine does the rest.
+
 ### Added
 
 - **Go flow extraction.** The flow pillar's third language, again by
@@ -38,10 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regex `re_path(...)` routes are out of scope — point `flow.specs` at an
   OpenAPI document for those.
 - **Method-agnostic (`ANY`) served routes.** A routing layer that binds a path
-  for EVERY verb (Django `path()`, Go's `http.HandleFunc` next wave) publishes
-  one `ANY` route; the join and the gate resolve a call with any method
-  against it, through the same shared predicate (additive on the served.json
-  schema).
+  for EVERY verb (Django `path()`, Go's `http.HandleFunc`) publishes one `ANY`
+  route; the join and the gate resolve a call with any method against it,
+  through the same shared predicate (additive on the served.json schema).
 - **Grammar-shape adapter.** The one flow extractor now reads any tree-sitter
   grammar through a per-grammar node-type table (`src/ast/grammar-shape.ts`),
   so adding flow for a language is declaration-only: grammars + a descriptor,
