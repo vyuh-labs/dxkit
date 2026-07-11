@@ -174,6 +174,11 @@ export function normalizePath(
   //    only the inner braces and leave a stray `}` (`{{x}}` → `{var}}`).
   s = s.replace(/\{\{[^}]*\}\}/g, PLACEHOLDER);
   s = s.replace(/\$\{[^}]*\}/g, PLACEHOLDER);
+  //    Brace-less template vars — Kotlin `"/users/$id"` (and shell-style
+  //    interpolation in declared artifacts). Runs after the braced form so
+  //    `${x}` never leaves a stray token, and requires an identifier head so
+  //    Go's `{$}` end-marker (handled in 6a) is untouched.
+  s = s.replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, PLACEHOLDER);
 
   // 5. drop query string
   const q = s.indexOf('?');

@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The frozen extension surface of @vyuhlabs/dxkit: the declarative descriptor language (HTTP-flow and model-schema construct families), grammar-shape access types, the versioned extension wire schemas (contract.v1, inventory.v1, findings.v1, export.v1), and the shared URL/method normalization helpers. Types-first: build extensions against this package; the plugin runtime lands in a later minor.",
   "license": "MIT",
   "author": "Vyuh Labs",
