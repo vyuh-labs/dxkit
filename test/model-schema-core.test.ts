@@ -79,8 +79,7 @@ describe('normalize', () => {
     ).toEqual({ type: 'int', required: true });
     // Undeclared wrapper stays — it IS the type.
     expect(
-      normalizeField({ rawType: 'List[int]', markerOptional: null, typeWrappers: ['Mapped'] })
-        .type,
+      normalizeField({ rawType: 'List[int]', markerOptional: null, typeWrappers: ['Mapped'] }).type,
     ).toBe('List[int]');
   });
 
