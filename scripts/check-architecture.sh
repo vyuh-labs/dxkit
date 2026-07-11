@@ -1367,6 +1367,25 @@ if [ -n "$SIDEREF_INLINE_PUSH" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Extension-runner discipline (mirror of Rule 17's custom-check gate) ────
+# runExtension EXECUTES repo-declared commands. It is callable only from
+# src/extensions/ (the orchestrator's own modules) and the extensions CLI —
+# every other consumer reads committed snapshots via snapshot.ts. A second
+# call site is how "gates execute extensions" ships by accident.
+ROGUE_EXT_EXEC=$(grep -rnE "runExtension[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// extension-runner-ok" \
+  | grep -v "^src/extensions/" \
+  | grep -v "^src/extensions-cli.ts" || true)
+if [ -n "$ROGUE_EXT_EXEC" ]; then
+  echo "❌ Extension-runner violation: runExtension() called outside the orchestrator:"
+  echo "$ROGUE_EXT_EXEC"
+  echo "   → Execution happens at refresh time only (extensions refresh / the"
+  echo "     on-merge workflow). Gates and reports read committed snapshots via"
+  echo "     src/extensions/snapshot.ts. Annotate '// extension-runner-ok' for"
+  echo "     justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ─── Rule 18 (SDK boundary): the frozen extension surface stays one-way ─────
 # The frozen surface lives in packages/dxkit-sdk; the main package depends on
 # it and re-exports. Two invariants keep the freeze real:
