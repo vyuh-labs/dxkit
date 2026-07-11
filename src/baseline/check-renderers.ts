@@ -31,6 +31,8 @@ import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
 import type { FlowGateOutcome } from './flow-gate-check';
+import { describeSchemaDrift } from '../analyzers/model-schema/gate';
+import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
 
@@ -70,14 +72,29 @@ export interface VerdictCounts {
   readonly warning: number;
   readonly resolved: number;
 }
+/** Active findings of the ADDITIVE gates (flow + schema drift) tallied by
+ *  verdict — the one counting path every surface (verdict banner, summary
+ *  sentence, cached verdict counts) folds gate findings through, so a second
+ *  gate cannot re-introduce the "one report, two stories" divergence flow
+ *  once threaded by hand. Schema `info` findings are disclosure-only and
+ *  never counted. */
+function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: number } {
+  const findings = [
+    ...(result.flowGate?.findings ?? []),
+    ...(result.schemaDriftGate?.findings ?? []),
+  ];
+  return {
+    block: findings.filter((f) => f.verdict === 'block').length,
+    warn: findings.filter((f) => f.verdict === 'warn').length,
+  };
+}
+
 export function verdictCounts(result: GuardrailCheckResult): VerdictCounts {
-  const flow = result.flowGate?.findings ?? [];
+  const extra = extraGateTallies(result);
   return {
     verdict: result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED',
-    blocking:
-      result.pairs.filter(isBlocking).length + flow.filter((f) => f.verdict === 'block').length,
-    warning:
-      result.pairs.filter(isWarning).length + flow.filter((f) => f.verdict === 'warn').length,
+    blocking: result.pairs.filter(isBlocking).length + extra.block,
+    warning: result.pairs.filter(isWarning).length + extra.warn,
     resolved: result.pairs.filter((p) => p.classification.status === 'removed').length,
   };
 }
@@ -176,6 +193,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   }
 
   lines.push(...formatFlowGate(result.flowGate));
+  lines.push(...formatSchemaDriftGate(result.schemaDriftGate));
 
   // Always show a summary footer — sets expectations for what
   // happens next (exit code, what to read on a fail).
@@ -198,6 +216,18 @@ export function renderConsole(result: GuardrailCheckResult): string {
     lines.push(
       `  Flow:        ${flowFindings.length + flowSuppressed.length} ` +
         `(blocking: ${fBlock}, warning: ${fWarn}, suppressed: ${flowSuppressed.length})`,
+    );
+  }
+  // Same reconciliation line for the schema drift gate.
+  const schemaFindings = result.schemaDriftGate?.findings ?? [];
+  const schemaSuppressed = result.schemaDriftGate?.suppressed ?? [];
+  if (schemaFindings.length > 0 || schemaSuppressed.length > 0) {
+    const sBlock = schemaFindings.filter((f) => f.verdict === 'block').length;
+    const sWarn = schemaFindings.filter((f) => f.verdict === 'warn').length;
+    const sInfo = schemaFindings.filter((f) => f.verdict === 'info').length;
+    lines.push(
+      `  Schema:      ${schemaFindings.length + schemaSuppressed.length} ` +
+        `(blocking: ${sBlock}, warning: ${sWarn}, info: ${sInfo}, suppressed: ${schemaSuppressed.length})`,
     );
   }
   lines.push(
@@ -292,16 +322,71 @@ function flowFingerprintLine(id: string): string {
   );
 }
 
+/**
+ * Console lines for the model-schema drift gate. Silent unless the gate
+ * produced findings. Blocking drift first, then warnings, then the
+ * disclosure-only info class (additions/relaxations), then suppressions.
+ */
+function formatSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) return [];
+  const out: string[] = [];
+  const blocking = gate.findings.filter((f) => f.verdict === 'block');
+  const warning = gate.findings.filter((f) => f.verdict === 'warn');
+  const info = gate.findings.filter((f) => f.verdict === 'info');
+  if (blocking.length > 0) {
+    out.push(logger.bold(`Schema drift — blocking (${blocking.length})`));
+    for (const f of blocking) {
+      out.push(`  ${describeSchemaDrift(f)}`);
+      out.push(schemaFingerprintLine(f.id));
+    }
+    out.push('');
+  }
+  if (warning.length > 0) {
+    out.push(logger.bold(`Schema drift — warning (${warning.length})`));
+    for (const f of warning) {
+      out.push(`  ${describeSchemaDrift(f)}`);
+      out.push(schemaFingerprintLine(f.id));
+    }
+    out.push('');
+  }
+  if (info.length > 0) {
+    out.push(logger.bold(`Schema drift — informational (${info.length})`));
+    for (const f of info) out.push(`  ${describeSchemaDrift(f)}`);
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push(logger.bold(`Schema drift — suppressed by allowlist (${suppressed.length})`));
+    for (const s of suppressed) {
+      const exp = s.expiresAt ? `, expires ${s.expiresAt}` : '';
+      out.push(`  ${describeSchemaDrift(s.finding)}`);
+      out.push(`    · allowlisted: ${s.category}${exp} (waived from the verdict)`);
+    }
+    out.push('');
+  }
+  return out;
+}
+
+/** The drift fingerprint line + the concrete accept command. The documented
+ *  escape hatch for a DELIBERATE breaking change is accepted-risk (ideally
+ *  with an expiry), so the hint spells that category — contrast flow's
+ *  false-positive default. */
+function schemaFingerprintLine(id: string): string {
+  return (
+    `    · fingerprint: ${id}  (accept if intentional: allowlist add ` +
+    `--fingerprint=${id} --kind=model-schema-drift --category=accepted-risk --reason="<why>")`
+  );
+}
+
 function verdictBanner(result: GuardrailCheckResult): string {
-  const flow = result.flowGate?.findings ?? [];
+  const extra = extraGateTallies(result);
   if (result.blocks) {
-    const count =
-      result.pairs.filter(isBlocking).length + flow.filter((f) => f.verdict === 'block').length;
+    const count = result.pairs.filter(isBlocking).length + extra.block;
     return logger.bold(`Guardrail BLOCKED — ${count} new regression${count === 1 ? '' : 's'}`);
   }
   if (result.warns) {
-    const count =
-      result.pairs.filter(isWarning).length + flow.filter((f) => f.verdict === 'warn').length;
+    const count = result.pairs.filter(isWarning).length + extra.warn;
     return logger.bold(`Guardrail PASSED — ${count} warning${count === 1 ? '' : 's'}`);
   }
   return logger.bold('Guardrail PASSED');
@@ -532,6 +617,38 @@ export interface GuardrailJsonPayload {
       readonly expiresAt?: string;
     }>;
   };
+  /** The model-schema drift gate — net-new breaking model changes from the
+   *  base↔HEAD diff. Absent when the gate is off (the default) or no base
+   *  commit was resolvable. `info` findings are disclosure-only. */
+  readonly schemaDriftGate?: {
+    readonly ran: boolean;
+    readonly skipped?: string;
+    readonly mode: string;
+    readonly blocks: boolean;
+    readonly warns: boolean;
+    readonly findings: ReadonlyArray<{
+      readonly id: string;
+      readonly changeClass: string;
+      readonly model: string;
+      readonly field: string | null;
+      readonly from: string | null;
+      readonly to: string | null;
+      readonly file: string;
+      readonly line: number;
+      readonly confidence: number;
+      readonly verdict: 'block' | 'warn' | 'info';
+    }>;
+    readonly suppressed: ReadonlyArray<{
+      readonly id: string;
+      readonly changeClass: string;
+      readonly model: string;
+      readonly field: string | null;
+      readonly file: string;
+      readonly line: number;
+      readonly category: string;
+      readonly expiresAt?: string;
+    }>;
+  };
 }
 
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
@@ -645,6 +762,41 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
           },
         }
       : {}),
+    ...(result.schemaDriftGate !== undefined
+      ? {
+          schemaDriftGate: {
+            ran: result.schemaDriftGate.ran,
+            ...(result.schemaDriftGate.skipped !== undefined
+              ? { skipped: result.schemaDriftGate.skipped }
+              : {}),
+            mode: result.schemaDriftGate.mode,
+            blocks: result.schemaDriftGate.blocks,
+            warns: result.schemaDriftGate.warns,
+            findings: result.schemaDriftGate.findings.map((f) => ({
+              id: f.id,
+              changeClass: f.changeClass,
+              model: f.model,
+              field: f.field,
+              from: f.from,
+              to: f.to,
+              file: f.file,
+              line: f.line,
+              confidence: f.confidence,
+              verdict: f.verdict,
+            })),
+            suppressed: (result.schemaDriftGate.suppressed ?? []).map((s) => ({
+              id: s.finding.id,
+              changeClass: s.finding.changeClass,
+              model: s.finding.model,
+              field: s.finding.field,
+              file: s.finding.file,
+              line: s.finding.line,
+              category: s.category,
+              ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}),
+            })),
+          },
+        }
+      : {}),
   };
 }
 
@@ -671,14 +823,12 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   const verdict = result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED';
   lines.push(`## Guardrail: ${verdict}`);
   lines.push('');
-  const flow = result.flowGate?.findings ?? [];
-  const flowBlocking = flow.filter((f) => f.verdict === 'block').length;
-  const flowWarning = flow.filter((f) => f.verdict === 'warn').length;
+  const extra = extraGateTallies(result);
   lines.push(
     summarySentence(
       result,
-      blocking.length + flowBlocking,
-      warning.length + flowWarning,
+      blocking.length + extra.block,
+      warning.length + extra.warn,
       resolved.length,
     ),
   );
@@ -714,6 +864,7 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   }
 
   lines.push(...markdownFlowGate(result.flowGate));
+  lines.push(...markdownSchemaDriftGate(result.schemaDriftGate));
 
   if (suppressed.length > 0) {
     lines.push('<details>');
@@ -839,6 +990,85 @@ function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
       const f = s.finding;
       out.push(
         `| ${escapeMd(`${f.method} ${f.path}`)} | ${escapeMd(f.reason)} | ` +
+          `${escapeMd(`${f.file}:${f.line}`)} | ${escapeMd(s.category)} | ` +
+          `${escapeMd(s.expiresAt ?? '—')} |`,
+      );
+    }
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  return out;
+}
+
+/**
+ * Markdown for the model-schema drift gate. Blocking drift renders as a
+ * top-level table (it fails the PR); warnings and the disclosure-only info
+ * class collapse into `<details>`. Silent when the gate produced nothing.
+ */
+function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) return [];
+  const out: string[] = [];
+  const blocking = gate.findings.filter((f) => f.verdict === 'block');
+  const warning = gate.findings.filter((f) => f.verdict === 'warn');
+  const info = gate.findings.filter((f) => f.verdict === 'info');
+  const subject = (f: { model: string; field: string | null }): string =>
+    f.field ? `${f.model}.${f.field}` : f.model;
+  const row = (f: SchemaDriftGateOutcome['findings'][number]): string =>
+    `| ${escapeMd(subject(f))} | ${escapeMd(f.changeClass)} | ` +
+    `${escapeMd(f.from ?? '—')} → ${escapeMd(f.to ?? '—')} | ` +
+    `${escapeMd(`${f.file}:${f.line}`)} | ${f.confidence.toFixed(2)} | \`${escapeMd(f.id)}\` |`;
+  const header = [
+    '| Model / field | Change | From → To | Location | Confidence | Fingerprint |',
+    '|---|---|---|---|---|---|',
+  ];
+  if (blocking.length > 0) {
+    out.push('### Breaking schema drift');
+    out.push('');
+    out.push(...header);
+    for (const f of blocking) out.push(row(f));
+    out.push('');
+    out.push(
+      '_A deliberate breaking change ships with its migration and an expiring ' +
+        '`accepted-risk` allowlist entry (`allowlist add --fingerprint=<id> ' +
+        '--kind=model-schema-drift --category=accepted-risk`)._',
+    );
+    out.push('');
+  }
+  if (warning.length > 0) {
+    out.push('<details>');
+    out.push(`<summary>Schema drift warnings (${warning.length})</summary>`);
+    out.push('');
+    out.push(...header);
+    for (const f of warning) out.push(row(f));
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  if (info.length > 0) {
+    out.push('<details>');
+    out.push(`<summary>Schema changes (informational, ${info.length})</summary>`);
+    out.push('');
+    out.push(...header);
+    for (const f of info) out.push(row(f));
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push('<details>');
+    out.push(`<summary>Schema drift suppressed by allowlist (${suppressed.length})</summary>`);
+    out.push('');
+    out.push('These would block/warn, but an active allowlist entry accepted them.');
+    out.push('');
+    out.push('| Model / field | Change | Location | Category | Expires |');
+    out.push('|---|---|---|---|---|');
+    for (const s of suppressed) {
+      const f = s.finding;
+      out.push(
+        `| ${escapeMd(subject(f))} | ${escapeMd(f.changeClass)} | ` +
           `${escapeMd(`${f.file}:${f.line}`)} | ${escapeMd(s.category)} | ` +
           `${escapeMd(s.expiresAt ?? '—')} |`,
       );

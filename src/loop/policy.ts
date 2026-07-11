@@ -32,6 +32,7 @@ import {
 } from '../baseline/policy';
 import type { FindingStatus } from '../baseline/types';
 import type { FlowGateMode } from '../analyzers/flow/config';
+import type { SchemaGateMode } from '../analyzers/model-schema/config';
 
 /**
  * The two shipped loop postures.
@@ -65,6 +66,13 @@ interface PresetDef {
    * (only exact bindings can block even under `block`).
    */
   readonly flowMode: FlowGateMode;
+  /**
+   * Posture for the model-schema drift gate — same reasoning as `flowMode`
+   * (a contract-drift false positive must never wedge an unattended loop).
+   * The guardrail applies it only when the repo has ENABLED the gate:
+   * schema defaults to off, and a loop preset never activates it.
+   */
+  readonly schemaMode: SchemaGateMode;
 }
 
 /** The security class: secrets, crit/high SAST, crit/high reachable dep
@@ -88,6 +96,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
     block: [],
     blockRules: SECURITY_BLOCK_RULES,
     flowMode: 'warn',
+    schemaMode: 'warn',
   },
   'full-debt': {
     // Any net-new finding blocks (generic `added`), plus every escalation.
@@ -98,6 +107,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
       newSevereQualityIssueInChangedFiles: true,
     },
     flowMode: 'block',
+    schemaMode: 'block',
   },
 });
 
@@ -108,6 +118,7 @@ export interface ResolvedLoopPolicy {
   readonly policy: BrownfieldPolicy;
   readonly preset: LoopPreset;
   readonly flowMode: FlowGateMode;
+  readonly schemaMode: SchemaGateMode;
 }
 
 function isLoopPreset(v: unknown): v is LoopPreset {
@@ -186,6 +197,7 @@ export function resolveLoopPolicy(cwd: string): ResolvedLoopPolicy {
   return {
     preset,
     flowMode: def.flowMode,
+    schemaMode: def.schemaMode,
     policy: {
       ...base,
       block: def.block,

@@ -67,6 +67,9 @@ import { computeChangedFiles } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { evaluateFlowGateForGuardrail } from './flow-gate-check';
 import type { FlowGateOutcome } from './flow-gate-check';
+import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
+import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
+import type { SchemaGateMode } from '../analyzers/model-schema/config';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
@@ -170,6 +173,13 @@ export interface RunGuardrailCheckOptions {
    * regardless.
    */
   readonly flowMode?: FlowGateMode;
+  /**
+   * Loop-seam override for the model-schema drift gate's posture, mirroring
+   * `flowMode` with one difference: schema defaults to OFF (opt-in), so the
+   * override softens/hardens an enabled gate but never activates one the
+   * repo did not configure.
+   */
+  readonly schemaMode?: SchemaGateMode;
 }
 
 /**
@@ -288,11 +298,18 @@ export interface GuardrailCheckResult {
     readonly currentCount: number;
   }>;
   /** The flow integration-gate pass — an additive, fail-open layer that flags
-   *  net-new UI→API breakage from a base↔HEAD contract diff. Runs only in
-   *  ref-based mode; `undefined` in committed modes (nothing to diff a base
-   *  flow model against). Its `blocks` / `warns` are folded into the top-level
-   *  verdict above. Renderers surface `findings` alongside the matched pairs. */
+   *  net-new UI→API breakage from a base↔HEAD contract diff. Runs in BOTH
+   *  modes (the base commit is the resolved ref in ref-based mode, the
+   *  committed baseline's anchor SHA in committed modes); `undefined` only
+   *  when no base commit is resolvable at all. Its `blocks` / `warns` are
+   *  folded into the top-level verdict above. Renderers surface `findings`
+   *  alongside the matched pairs. */
   readonly flowGate?: FlowGateOutcome;
+  /** The model-schema drift-gate pass — additive + fail-open like the flow
+   *  gate, diffing declared data models across the same base↔HEAD pair.
+   *  Opt-in (`.dxkit/policy.json:schema.mode`, default off); `undefined`
+   *  when off or when no base commit is resolvable. */
+  readonly schemaDriftGate?: SchemaDriftGateOutcome;
   /** Set when the CURRENT dependency-vulnerability scan could not run — the
    *  scanner was absent / timed out / failed — AND the scan was actually
    *  REQUESTED this run (not incrementally skipped because no manifest changed,
@@ -744,6 +761,18 @@ export async function runGuardrailCheck(
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
   });
 
+  // The model-schema drift gate — same additive, fail-open shape as the flow
+  // gate, sharing its base-commit resolution, allowlist, and clock. Opt-in:
+  // with no `schema` policy block it skips as 'off' at zero cost.
+  const schemaDriftGate = await evaluateSchemaDriftGateForGuardrail({
+    cwd,
+    ...(flowBaseRef ? { baseRef: flowBaseRef } : {}),
+    allowlist,
+    now,
+    ...(options.schemaMode !== undefined ? { modeOverride: options.schemaMode } : {}),
+    ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+  });
+
   const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
   const baseWarns = options.changedOnly ? filteredWarns : warns;
 
@@ -756,11 +785,18 @@ export async function runGuardrailCheck(
     pairs: filteredPairs,
     envelopeDrift,
     policy,
-    blocks: baseBlocks || flowGate.blocks,
-    warns: baseWarns || flowGate.warns,
+    blocks: baseBlocks || flowGate.blocks || schemaDriftGate.blocks,
+    warns: baseWarns || flowGate.warns || schemaDriftGate.warns,
     allowlistDelta,
     refExcludedKinds,
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),
+    // Attach when the gate is configured on (ran, or skipped for a reason
+    // worth disclosing); an off/no-base-ref skip stays out of the result so
+    // unconfigured repos see nothing new.
+    ...(schemaDriftGate.ran ||
+    (schemaDriftGate.skipped !== 'off' && schemaDriftGate.skipped !== 'no-base-ref')
+      ? { schemaDriftGate }
+      : {}),
     // Fail-loud: a dep scan that was REQUESTED but could not run must not read as
     // a clean "no net-new dep vulns" — surface it. Incrementally-skipped scans
     // (scope.depVulns false) and nothing-to-scan stacks are legitimately silent.

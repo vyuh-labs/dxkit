@@ -330,7 +330,7 @@ export async function runStopGate(cwd: string): Promise<void> {
   // Resolve the loop-scoped posture ONCE (preset → policy). This is the
   // only place the loop preset is read; the CI guardrail never sees it.
   const { resolveLoopPolicy } = await import('./policy');
-  const { policy, preset, flowMode } = resolveLoopPolicy(repoDir);
+  const { policy, preset, flowMode, schemaMode } = resolveLoopPolicy(repoDir);
 
   // ── Fast path: replay the last verdict when the working tree is
   // byte-identical to what was last gathered (a no-change stop — an
@@ -393,6 +393,7 @@ export async function runStopGate(cwd: string): Promise<void> {
       scope,
       incremental: true,
       flowMode,
+      schemaMode,
     });
     const json = renderJson(result);
     // Persist the full machine-readable verdict so the model (and a human)
