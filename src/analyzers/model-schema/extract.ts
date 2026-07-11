@@ -98,6 +98,49 @@ function resolveFieldCallee(
   return { rawType, descriptorOptional, descriptorDefaultOptional };
 }
 
+type FieldDecoratorSpec = NonNullable<ModelSchemaSupport['fieldDecoratorSpecs']>[number];
+
+/** The keyword value carried by a decorator node — read off the node itself
+ *  (JVM shapes: the annotation/constructor_invocation IS the invocation) or
+ *  its inner call (TS-style `@Column({...})` wrapping). */
+function decoratorOption(dec: Node, keyword: string, callShape: GrammarShape): Node | null {
+  const direct = callShape.optionValue(dec, keyword);
+  if (direct) return direct;
+  const inner = callShape.decoratorCall(dec);
+  return inner && inner.id !== dec.id ? callShape.optionValue(inner, keyword) : null;
+}
+
+/** Resolve a field's ANNOTATIONS against the descriptor's
+ *  `fieldDecoratorSpecs` (JPA `@Column(nullable = false, name = "wire")`):
+ *  explicit optionality and a wire-name override. Only EXPLICIT keyword
+ *  values contribute — an absent keyword keeps the grammar/lexical answer. */
+function resolveFieldDecorators(
+  field: Node,
+  modelShape: GrammarModelShape,
+  callShape: GrammarShape,
+  specs: readonly FieldDecoratorSpec[],
+): { optional: boolean | null; wireName: string | null } {
+  let optional: boolean | null = null;
+  let wireName: string | null = null;
+  for (const dec of modelShape.fieldDecorators(field)) {
+    const spec = specs.find((s) => s.names.includes(decoratorName(dec)));
+    if (!spec) continue;
+    if (spec.optionalityKeyword && optional === null) {
+      const value = decoratorOption(dec, spec.optionalityKeyword, callShape);
+      if (value && /^(true|false|True|False)$/.test(value.text)) {
+        const truthy = /^(true|True)$/.test(value.text);
+        optional = (spec.optionalityPolarity ?? 'nullable') === 'nullable' ? truthy : !truthy;
+      }
+    }
+    if (spec.wireNameKeyword && wireName === null) {
+      const value = decoratorOption(dec, spec.wireNameKeyword, callShape);
+      const raw = value ? callShape.stringText(value) : null;
+      if (raw != null) wireName = raw.replace(/['"`]/g, '');
+    }
+  }
+  return { optional, wireName };
+}
+
 /** How a class node is marked as a model, or null when it is not one. */
 function recognizeModel(
   node: Node,
@@ -170,10 +213,22 @@ function extractFields(
       }
     }
 
+    // Field-ANNOTATION form (JPA `@Column(nullable = false, name = "wire")`)
+    // — explicit optionality and wire naming; absent keywords change nothing.
+    let decoratorWireName: string | null = null;
+    const decoratorSpecs = descriptor.fieldDecoratorSpecs ?? [];
+    if (decoratorSpecs.length > 0 && callShape) {
+      const resolved = resolveFieldDecorators(field, modelShape, callShape, decoratorSpecs);
+      if (resolved.optional !== null && descriptorOptional === null) {
+        descriptorOptional = resolved.optional;
+      }
+      decoratorWireName = resolved.wireName;
+    }
+
     // Struct-tag wire naming + omitempty (Go): the tag's name replaces the
     // declared one; a tag-excluded field keeps its declared name.
     for (const declared of declaredNames) {
-      let name = declared;
+      let name = decoratorWireName ?? declared;
       let tagOptional: boolean | null = null;
       const tag = modelShape.fieldTag(field);
       if (tag) {
@@ -194,6 +249,7 @@ function extractFields(
         descriptorDefaultOptional,
         typeAliases: descriptor.typeAliases,
         typeWrappers: descriptor.transparentTypeWrappers,
+        defaultFieldOptionality: descriptor.defaultFieldOptionality,
       });
       out.push({ name, ...normalized });
     }

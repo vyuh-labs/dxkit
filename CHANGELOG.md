@@ -23,7 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   three optional accessors (`calleeCall`, `receiverNode`,
   `hasTrailingLambda`) for trailing-lambda and builder-chain navigation,
   and the shared normalizer folds brace-less template vars
-  (Kotlin `"/users/$id"`) to `{var}`. All additive within SDK major 0.
+  (Kotlin `"/users/$id"`) to `{var}`. `ModelSchemaSupport` also gains
+  `defaultFieldOptionality` — what a typed field with no optionality
+  signal means; JPA packs declare `'unknown'` (an honest null that never
+  gates) because an unannotated column defaults to nullable, the
+  opposite of the TS/Pydantic `'required'` engine default. All additive
+  within SDK major 0.
 
 - **The docs command table is generated from the capability registry.**
   `docs/README.md`'s "What you can run" table is now rendered from the
