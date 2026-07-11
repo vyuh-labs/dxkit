@@ -21,3 +21,21 @@ export {
 export type { HttpMethod, NormalizeConfig, ServedMethod } from './http-normalize';
 export { walk } from './ast';
 export type { Node, ParsedFile, ParseFileFn, ParseSourceFn, Tree } from './ast';
+export { WIRE_SCHEMA_IDS } from './wire';
+export type {
+  WireConsumedCall,
+  WireContractDoc,
+  WireDoc,
+  WireDynamicCall,
+  WireExportReceipt,
+  WireFinding,
+  WireFindingsDoc,
+  WireInventoryDoc,
+  WireInventoryEntity,
+  WireInventoryField,
+  WireInventoryRelation,
+  WireSchemaId,
+  WireServedRoute,
+  WireSeverity,
+} from './wire';
+export type { ContributionKind, ExtensionManifest, ExtensionRunSpec } from './manifest';
