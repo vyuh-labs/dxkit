@@ -32,12 +32,15 @@ export const CONSUMED_SNAPSHOT = 'consumed.json';
  *  `test/flow-contract-freeze.test.ts`. */
 export const SERVED_CONSUMED_SCHEMA_VERSION = 1;
 
-/** One served endpoint in the served-side inventory. */
+/** One served endpoint in the served-side inventory. `via` widened for
+ *  declared contract artifacts (registry kinds — 'openapi', 'postman', …):
+ *  WIRE-ADDITIVE on schema v1, since `via` was always a free string on the
+ *  serialized JSON and consumers read it as display provenance only. */
 export interface ServedRoute {
   readonly method: string;
   readonly path: string;
   readonly handler: string | null;
-  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
+  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec' | (string & {});
 }
 
 /** One binding in the consumed-side inventory — a UI call site's dependency on

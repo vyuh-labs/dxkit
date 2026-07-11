@@ -103,7 +103,7 @@ export interface HttpEndpointNode {
   readonly label: string;
   readonly method: string;
   readonly path: string;
-  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec';
+  readonly via: 'decorator' | 'router-call' | 'file-route' | 'spec' | (string & {});
   readonly handler: string | null;
   readonly sourceFile: string;
   readonly line?: number;

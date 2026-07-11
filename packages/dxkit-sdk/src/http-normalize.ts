@@ -141,7 +141,11 @@ export function normalizePath(
   // 3. external absolute URL (not one of our host helpers) → not internal
   if (/^https?:\/\//i.test(s) || /^\$\{[^}]*\}:\/\//.test(s)) return null;
 
-  // 4. template expressions → placeholder
+  // 4. template expressions → placeholder. The mustache form `{{host}}`
+  //    (Postman collections, .http files) must collapse BEFORE the
+  //    single-brace param rule in 6b, whose `{…}` would otherwise consume
+  //    only the inner braces and leave a stray `}` (`{{x}}` → `{var}}`).
+  s = s.replace(/\{\{[^}]*\}\}/g, PLACEHOLDER);
   s = s.replace(/\$\{[^}]*\}/g, PLACEHOLDER);
 
   // 5. drop query string

@@ -38,6 +38,12 @@ export interface FlowConfig {
   readonly stripUrlPrefixes: string[];
   /** OpenAPI/spec files whose served routes union with static extraction. */
   readonly specs: string[];
+  /** Declared contract artifacts (Postman/Pact/.http/HAR/OpenAPI) resolved
+   *  through the contract-source reader registry. v1-additive: absent reads
+   *  as none, old readers ignore it. Entries are validated against the
+   *  registry at LOAD time (`loadContractSources`), where the unknown-kind
+   *  error can name the known kinds — config reading stays fail-open. */
+  readonly sources: FlowSourceConfigEntry[];
   /** Guardrail posture for net-new broken integrations. */
   readonly mode: FlowGateMode;
   /** Confidence at/above which a net-new break BLOCKS (else warns). Default 1 —
@@ -50,9 +56,17 @@ export interface FlowConfig {
   readonly refreshMode: FlowRefreshMode;
 }
 
+/** One `flow.sources[]` declaration as committed (pre-registry-validation). */
+export interface FlowSourceConfigEntry {
+  readonly kind: string;
+  readonly path: string;
+  readonly side?: string;
+}
+
 const DEFAULTS: FlowConfig = {
   stripUrlPrefixes: [],
   specs: [],
+  sources: [],
   mode: 'block',
   blockThreshold: 1,
   onMergeRefresh: false,
@@ -71,6 +85,7 @@ export const FLOW_CONFIG_SCHEMA_VERSION = 1;
 interface RawFlow {
   stripUrlPrefixes?: unknown;
   specs?: unknown;
+  sources?: unknown;
   mode?: unknown;
   blockThreshold?: unknown;
   onMergeRefresh?: unknown;
@@ -79,6 +94,20 @@ interface RawFlow {
 
 function stringList(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
+}
+
+/** Keep any object entry carrying string kind+path; deeper validation (kind
+ *  known? side legal?) happens against the registry at load time so its
+ *  errors can name the known kinds. */
+function sourceList(v: unknown): FlowSourceConfigEntry[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (e): e is FlowSourceConfigEntry =>
+      typeof e === 'object' &&
+      e !== null &&
+      typeof (e as { kind?: unknown }).kind === 'string' &&
+      typeof (e as { path?: unknown }).path === 'string',
+  );
 }
 
 function isMode(v: unknown): v is FlowGateMode {
@@ -101,6 +130,7 @@ export function readFlowConfig(cwd: string): FlowConfig {
   return {
     stripUrlPrefixes: stringList(raw.stripUrlPrefixes),
     specs: stringList(raw.specs),
+    sources: sourceList(raw.sources),
     mode: isMode(raw.mode) ? raw.mode : DEFAULTS.mode,
     blockThreshold:
       typeof raw.blockThreshold === 'number' && raw.blockThreshold > 0
