@@ -18,6 +18,7 @@ import { extractFileFlow, type FileFlow } from './extract';
 import { buildFlowModel, type FlowModel } from './model';
 import { loadOpenApiRoutes } from './spec-source';
 import { readFlowConfig } from './config';
+import { loadContractSources, type FlowSourceDecl } from './contract-sources';
 import type { NormalizeConfig } from './normalize';
 
 export interface GatherFlowOptions {
@@ -38,6 +39,15 @@ export interface GatherFlowOptions {
    * thing on any machine.
    */
   readonly relativeTo?: string;
+  /**
+   * Declared contract artifacts (`flow.sources`) resolved through the
+   * contract-source reader registry, exactly as `specs` resolves OpenAPI.
+   * `sourcesBase` is the directory artifact paths are relative to (the repo
+   * root of the side being gathered — the base-ref worktree on the gate's
+   * base side, so grandfathering reads the artifacts as they were at base).
+   */
+  readonly sources?: readonly FlowSourceDecl[];
+  readonly sourcesBase?: string;
 }
 
 /** Extensions of packs that can contribute flow (httpFlow + a grammar). */
@@ -74,7 +84,22 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
   // Served side = extracted routes UNION spec routes (dedup is implicit: the
   // join indexes routes by (method, path), so a duplicate collapses).
   const specRoutes = (opts.specs ?? []).flatMap((spec) => loadOpenApiRoutes(spec));
-  return buildFlowModel([...fileFlows, { calls: [], routes: specRoutes }]);
+
+  // Declared contract artifacts (rung 2) union in through the reader
+  // registry — both sides, one normalizer, disclosures carried on the model.
+  const sourceLoad =
+    opts.sources && opts.sources.length > 0
+      ? loadContractSources(opts.sourcesBase ?? opts.roots[0] ?? '.', opts.sources, config)
+      : undefined;
+
+  const model = buildFlowModel([
+    ...fileFlows,
+    { calls: [], routes: specRoutes },
+    ...(sourceLoad ? [{ calls: [...sourceLoad.calls], routes: [...sourceLoad.routes] }] : []),
+  ]);
+  return sourceLoad && sourceLoad.disclosures.length > 0
+    ? { ...model, sourceDisclosures: [...sourceLoad.disclosures] }
+    : model;
 }
 
 /**
@@ -98,6 +123,8 @@ export async function gatherRepoFlowModel(
     roots: opts.roots ?? [cwd],
     specs: config.specs.map((s) => resolve(cwd, s)),
     stripUrlPrefixes: config.stripUrlPrefixes,
+    sources: config.sources,
+    sourcesBase: cwd,
     ...(opts.relativeTo !== undefined ? { relativeTo: opts.relativeTo } : {}),
   });
 }
