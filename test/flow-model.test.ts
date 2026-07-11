@@ -67,6 +67,27 @@ describe('flow join', () => {
     expect(bindings[0].confidence).toBeLessThan(1);
     expect(bindings[0].route).not.toBeNull();
   });
+
+  it('a method-agnostic (ANY) route resolves any verb on its path', async () => {
+    const client = await fileFlow(
+      'axios.get(`/users/${id}`); axios.post(`/users/${id}`); axios.delete(`/other`);',
+      'web/a.ts',
+    );
+    const anyRoute = {
+      method: 'ANY' as const,
+      path: '/users/{var}',
+      via: 'router-call' as const,
+      handler: 'user_view',
+      file: 'api/urls.py',
+      line: 3,
+    };
+    const bindings = joinFlow(client.calls, [anyRoute]);
+    const byPath = Object.fromEntries(bindings.map((b) => [`${b.call.method} ${b.call.path}`, b]));
+    expect(byPath['GET /users/{var}'].reason).toBe('exact');
+    expect(byPath['POST /users/{var}'].reason).toBe('exact');
+    expect(byPath['POST /users/{var}'].route?.handler).toBe('user_view');
+    expect(byPath['DELETE /other'].reason).toBe('no-route');
+  });
 });
 
 describe('flow model + summary', () => {
@@ -122,6 +143,24 @@ describe('served matcher (gate ↔ join parity)', () => {
     expect(catchAllPrefixCovers('/api', '/api')).toBe(true);
     expect(catchAllPrefixCovers('', '/anything')).toBe(true);
     expect(catchAllPrefixCovers('/api', '/apix')).toBe(false);
+  });
+
+  it('a method-agnostic (ANY) key resolves every verb on its path', () => {
+    const m = buildServedMatcher(['ANY /users', 'GET /articles']);
+    expect(servedMatch('GET', '/users', m)).toBe(true);
+    expect(servedMatch('POST', '/users', m)).toBe(true);
+    expect(servedMatch('DELETE', '/users', m)).toBe(true);
+    // A concrete-method key stays method-scoped — ANY never leaks sideways.
+    expect(servedMatch('POST', '/articles', m)).toBe(false);
+    expect(servedMatch('GET', '/other', m)).toBe(false);
+  });
+
+  it('a method-agnostic catch-all covers any verb under its prefix', () => {
+    const m = buildServedMatcher(['ANY /api/{*}']);
+    expect(servedMatch('POST', '/api/users', m)).toBe(true);
+    expect(servedMatch('GET', '/api/deep/x', m)).toBe(true);
+    expect(servedMatch('GET', '/elsewhere', m)).toBe(false);
+    expect(servedMatch('GET', '/{var}', m)).toBe(false); // no static signal
   });
 });
 

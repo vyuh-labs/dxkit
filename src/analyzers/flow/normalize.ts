@@ -30,6 +30,22 @@
 /** Canonical HTTP verbs the flow feature recognizes. */
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
+/**
+ * The method-agnostic marker for a SERVED route declared without a verb.
+ * Several routing layers genuinely bind a path to a handler for EVERY method —
+ * Django's `path('users/', view)`, Go's `http.HandleFunc("/x", h)`, Rails'
+ * `match` — and dispatch (or 405) by method INSIDE the handler. Flow models the
+ * routing layer, so such a declaration is one `ANY` route: a consumed call with
+ * any verb on that path resolves against it (see `servedMatch` / `joinFlow` in
+ * `model.ts`). Only served routes ever carry it — a client call always has a
+ * concrete verb. On the wire (`served.json`) it serializes as the method string
+ * `"ANY"`, additive on schema v1.
+ */
+export const ANY_METHOD = 'ANY';
+
+/** A served route's method: a concrete verb, or the method-agnostic marker. */
+export type ServedMethod = HttpMethod | typeof ANY_METHOD;
+
 /** Per-app normalization inputs (not language facts — see module header). */
 export interface NormalizeConfig {
   /**
