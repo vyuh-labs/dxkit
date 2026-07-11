@@ -98,6 +98,35 @@ check** in `policy.json:checks` pointing at your build's checkstyle/PMD task.
 See [`vyuh-dxkit checks`](../commands/checks.md) for the full model (user
 checks + the lint gate, binary vs located findings, the trust boundary).
 
+## Flow (UI→API) coverage
+
+The flow feature — mapping client calls to served routes and gating changes
+that break an integration — extracts from source **per pack**: each pack
+declares which constructs are HTTP (`httpFlow`), and one shared extractor
+reads them through a per-grammar syntax table. Current coverage:
+
+| Pack       | Consumed side (client calls)          | Served side (route declarations)                                             |
+| ---------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| typescript | `fetch`, axios, app-specific wrappers | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes |
+| python     | `requests`, `httpx`, wrapper clients  | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic) |
+| others     | — (next waves)                        | via `flow.specs` (OpenAPI) today                                             |
+
+Two notes that keep the model honest:
+
+- A **verb-less declaration** (Django `path('users/', view)`) is served for
+  every method at the routing layer, so it is published as an `ANY` route —
+  a client's `PUT` resolves against it. Django's regex `re_path(...)` routes
+  are out of scope (no canonical path to join on); point `flow.specs` at an
+  OpenAPI document for such repos.
+- **Any language can participate in the served side without pack coverage**
+  by publishing an OpenAPI spec (`flow.specs`) or a `served.json` snapshot as
+  a workspace participant — pack coverage adds native source extraction on
+  top.
+
+Remaining packs (Go, Java, Kotlin, C#, Ruby, Rust) gain `httpFlow` in the
+language-parity waves; the recipe is declaration-only (see CONTRIBUTING.md
+"Adding a new language").
+
 ## Forcing pack activation
 
 If detection misses a pack (rare — typically a missing manifest), you
