@@ -82,6 +82,8 @@ export async function gatherModel(
     roots: resolveRoots(opts),
     specs: [...splitPaths(opts.specs, opts.cwd), ...policySpecs],
     stripUrlPrefixes: config.stripUrlPrefixes,
+    sources: config.sources,
+    sourcesBase: opts.cwd,
     ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
   });
 }

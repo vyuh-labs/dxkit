@@ -178,7 +178,12 @@ export async function evaluateFlowGateForGuardrail(opts: {
     const changed = computeChangedFiles(cwd, ref) ?? undefined;
     if (
       changed &&
-      !changedFilesTouchFlowSurface(changed, detectActiveLanguages(cwd), config.specs)
+      !changedFilesTouchFlowSurface(
+        changed,
+        detectActiveLanguages(cwd),
+        config.specs,
+        config.sources.map((src) => src.path),
+      )
     ) {
       return skip(gateMode, 'no-flow-surface-change');
     }
@@ -189,6 +194,8 @@ export async function evaluateFlowGateForGuardrail(opts: {
       roots: [cwd],
       specs: config.specs.map((s) => path.resolve(cwd, s)),
       stripUrlPrefixes: config.stripUrlPrefixes,
+      sources: config.sources,
+      sourcesBase: cwd,
       // Repo-relative locators so a binding's identity is the same whether it
       // was gathered here or from the base worktree below (Rule 9).
       relativeTo: cwd,
@@ -205,6 +212,10 @@ export async function evaluateFlowGateForGuardrail(opts: {
         roots: [wt],
         specs: config.specs.map((s) => path.resolve(wt, s)),
         stripUrlPrefixes: config.stripUrlPrefixes,
+        // Artifacts as they were AT BASE (the worktree), so a call a pact
+        // declared before this PR is grandfathered, not net-new.
+        sources: config.sources,
+        sourcesBase: wt,
         relativeTo: wt, // same repo-relative locators as the HEAD side
       });
       const baseServed = servedKeySet(buildServedContract(baseModel, GATE_META));

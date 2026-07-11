@@ -130,6 +130,26 @@ const FIXTURES: { name: string; calls: Keyed[]; routes: Keyed[] }[] = [
     calls: ['POST /a', 'POST /b', 'GET /a'],
     routes: ['GET /a', 'ANY /b'],
   },
+  {
+    name: 'var routes resolve concrete calls (pact/HAR artifact paths)',
+    calls: ['/articles/1', '/articles/1/comments', '/typo/9/x'],
+    routes: ['/articles/{var}', '/articles/{var}/comments'],
+  },
+  {
+    name: 'var-route specificity: literals beat params, exact beats var',
+    calls: ['/a/b', '/a/c', 'GET /a/b/c'],
+    routes: ['/a/b', '/a/{var}', '/a/{var}/c'],
+  },
+  {
+    name: 'method-agnostic var route serves every verb on the shape',
+    calls: ['DELETE /users/42', 'PATCH /users/42/roles', 'GET /users'],
+    routes: ['ANY /users/{var}', 'ANY /users/{var}/roles'],
+  },
+  {
+    name: 'a var route never absorbs a different segment COUNT',
+    calls: ['/things/1/extra', '/things'],
+    routes: ['/things/{var}'],
+  },
 ];
 
 describe('gate ↔ join resolution parity (catch-all regression net)', () => {

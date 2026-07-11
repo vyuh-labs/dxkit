@@ -42,7 +42,13 @@ import {
  *   - `external`         — the URL is an external/absolute address we don't
  *                          serve (path is null), so it is not an internal binding.
  */
-export type BindingReason = 'exact' | 'catch-all' | 'placeholder-only' | 'no-route' | 'external';
+export type BindingReason =
+  | 'exact'
+  | 'var-match'
+  | 'catch-all'
+  | 'placeholder-only'
+  | 'no-route'
+  | 'external';
 
 /** One client call resolved (or not) against the served routes. */
 export interface FlowBinding {
@@ -60,6 +66,11 @@ export interface FlowModel {
   /** Recognized client call sites whose URL is dynamic — seen but not
    *  verifiable (the coverage-honesty channel; see extract.ts). */
   readonly dynamicCalls: readonly DynamicCallSite[];
+  /** Disclosures from declared contract artifacts (`flow.sources`): unknown
+   *  kinds, unreadable/unparseable files, dropped external URLs. Absent when
+   *  no sources are declared or every declaration loaded cleanly — the
+   *  fail-open channel, surfaced by the map and doctor, never fatal. */
+  readonly sourceDisclosures?: readonly string[];
 }
 
 /** A path made up entirely of `{var}` segments carries no static signal. One
@@ -108,9 +119,38 @@ export function catchAllPrefixCovers(prefix: string, callPath: string): boolean 
  * of them. Built from the SAME served key set `servedKeySet` produces, so the
  * gate inherits the join's catch-all awareness without re-deriving routes.
  */
+/**
+ * Does a `{var}`-bearing route path cover a CONCRETE call path, segment-wise?
+ * `/articles/{var}` covers `/articles/1` (a route param matches any one
+ * segment); literals must match exactly, and a call's own `{var}` segment
+ * only matches a route `{var}` (an unknown segment never satisfies a literal
+ * claim). This is what lets artifact-declared calls — pact interactions, HAR
+ * captures, .http examples, which always carry concrete example paths — bind
+ * against parameterized routes; source-extracted calls rarely need it (their
+ * dynamic segments already normalize to `{var}`, aligning on the exact key).
+ * One predicate, shared by the join AND the gate matcher (Rule 2 parity).
+ */
+export function varRouteCovers(routePath: string, callPath: string): boolean {
+  if (!routePath.includes('{var}')) return false;
+  const rs = routePath.split('/');
+  const cs = callPath.split('/');
+  if (rs.length !== cs.length) return false;
+  for (let i = 0; i < rs.length; i++) {
+    if (rs[i] === '{var}') {
+      if (cs[i].length === 0) return false;
+      continue;
+    }
+    if (rs[i] !== cs[i]) return false;
+  }
+  return true;
+}
+
 export interface ServedMatcher {
   readonly exact: ReadonlySet<string>;
   readonly catchAllPrefixesByMethod: ReadonlyMap<string, readonly string[]>;
+  /** Non-catch-all served paths containing `{var}`, by method — the
+   *  segment-match candidates for concrete (artifact-borne) call paths. */
+  readonly varPathsByMethod: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -121,6 +161,7 @@ export interface ServedMatcher {
 export function buildServedMatcher(servedKeys: Iterable<string>): ServedMatcher {
   const exact = new Set<string>();
   const catchAll = new Map<string, string[]>();
+  const varPaths = new Map<string, string[]>();
   for (const key of servedKeys) {
     exact.add(key);
     const sp = key.indexOf(' ');
@@ -131,9 +172,13 @@ export function buildServedMatcher(servedKeys: Iterable<string>): ServedMatcher 
       const list = catchAll.get(method) ?? [];
       list.push(catchAllStaticPrefix(routePath));
       catchAll.set(method, list);
+    } else if (routePath.includes('{var}')) {
+      const list = varPaths.get(method) ?? [];
+      list.push(routePath);
+      varPaths.set(method, list);
     }
   }
-  return { exact, catchAllPrefixesByMethod: catchAll };
+  return { exact, catchAllPrefixesByMethod: catchAll, varPathsByMethod: varPaths };
 }
 
 /**
@@ -151,6 +196,11 @@ export function servedMatch(method: string, callPath: string, m: ServedMatcher):
   if (m.exact.has(`${method} ${callPath}`)) return true;
   if (m.exact.has(`${ANY_METHOD} ${callPath}`)) return true;
   if (isPlaceholderOnlyPath(callPath)) return false;
+  const varPaths = [
+    ...(m.varPathsByMethod.get(method) ?? []),
+    ...(m.varPathsByMethod.get(ANY_METHOD) ?? []),
+  ];
+  if (varPaths.some((p) => varRouteCovers(p, callPath))) return true;
   const prefixes = [
     ...(m.catchAllPrefixesByMethod.get(method) ?? []),
     ...(m.catchAllPrefixesByMethod.get(ANY_METHOD) ?? []),
@@ -172,12 +222,17 @@ export function joinFlow(
   // for its method — a splat route (`/api/{*}` from `[...slug]`, Express `/*`,
   // Spring `/**`) genuinely serves every path under its prefix.
   const catchAllsByMethod = new Map<HttpMethodKey, { route: RouteEndpoint; prefix: string }[]>();
+  const varRoutesByMethod = new Map<HttpMethodKey, RouteEndpoint[]>();
   for (const r of routes) {
     routeIndex.set(`${r.method} ${r.path}`, r);
     if (isCatchAllPath(r.path)) {
       const list = catchAllsByMethod.get(r.method) ?? [];
       list.push({ route: r, prefix: catchAllStaticPrefix(r.path) });
       catchAllsByMethod.set(r.method, list);
+    } else if (r.path.includes('{var}')) {
+      const list = varRoutesByMethod.get(r.method) ?? [];
+      list.push(r);
+      varRoutesByMethod.set(r.method, list);
     }
   }
 
@@ -196,6 +251,11 @@ export function joinFlow(
       }
       return { call, route, confidence: 1, reason: 'exact' };
     }
+    const varRoute = bestVarMatch(call.path, [
+      ...(varRoutesByMethod.get(call.method) ?? []),
+      ...(varRoutesByMethod.get(ANY_METHOD) ?? []),
+    ]);
+    if (varRoute) return { call, route: varRoute, confidence: 0.9, reason: 'var-match' };
     const catchAll = bestCatchAllMatch(call.path, [
       ...(catchAllsByMethod.get(call.method) ?? []),
       ...(catchAllsByMethod.get(ANY_METHOD) ?? []),
@@ -203,6 +263,20 @@ export function joinFlow(
     if (catchAll) return { call, route: catchAll, confidence: 0.7, reason: 'catch-all' };
     return { call, route: null, confidence: 0, reason: 'no-route' };
   });
+}
+
+/** The most-specific `{var}` route covering a concrete call path — most
+ *  literal segments wins (`/a/b/{var}` beats `/a/{var}/{var}`); ties break on
+ *  declaration order. Not applied to an all-placeholder call (no signal). */
+function bestVarMatch(callPath: string, candidates: RouteEndpoint[]): RouteEndpoint | null {
+  if (candidates.length === 0 || isPlaceholderOnlyPath(callPath)) return null;
+  let best: { route: RouteEndpoint; literals: number } | null = null;
+  for (const r of candidates) {
+    if (!varRouteCovers(r.path, callPath)) continue;
+    const literals = r.path.split('/').filter((seg) => seg.length > 0 && seg !== '{var}').length;
+    if (!best || literals > best.literals) best = { route: r, literals };
+  }
+  return best?.route ?? null;
 }
 
 /** The most-specific catch-all route whose static prefix covers `callPath`
