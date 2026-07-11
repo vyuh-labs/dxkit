@@ -46,4 +46,12 @@ export interface ExtensionManifest {
   refresh: 'on-merge' | 'manual';
   /** Repo-relative path of the committed snapshot the run writes. */
   output: string;
+  /**
+   * For `findings` extensions: how a NET-NEW finding gates. 'block' fails
+   * the guardrail, 'warn' (the default) surfaces without failing, 'off'
+   * keeps the snapshot out of gating entirely. Pre-existing findings are
+   * grandfathered by the baseline machine either way. Ignored for other
+   * contribution kinds. Additive field (SDK minor).
+   */
+  gating?: 'block' | 'warn' | 'off';
 }
