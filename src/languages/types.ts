@@ -387,6 +387,72 @@ export interface HttpFlowSupport {
 }
 
 /**
+ * Declares WHICH constructs in this pack's source are data models — the
+ * mirror of {@link HttpFlowSupport} for the model-schema capability.
+ * Framework facts only: HOW to read a class/field/annotation from a grammar
+ * lives in `src/ast/grammar-model-shape.ts`, and WHAT a model diff means
+ * lives in `src/analyzers/model-schema/` (semantics, grammar-agnostic).
+ *
+ * Recognition is marker-based, never path-based: a construct is a model when
+ * it carries a declared marker (base class, decorator, struct-tag
+ * convention). Unmarked types are deliberately invisible to code extraction
+ * — the honest answer for those is a spec-declared model (`schema.specs`),
+ * exactly as `flow.specs` covers un-extractable routes. Bias every list
+ * toward precision: a missed model is a disclosed gap, a false model floods
+ * the drift diff.
+ */
+export interface ModelSchemaSupport {
+  /**
+   * Heritage markers: a class inheriting one of these is a model. Matched
+   * against each heritage expression's verbatim text AND its trailing
+   * identifier segment, so `'Model'` matches `models.Model` and
+   * `'BaseModel'` matches `pydantic.BaseModel`.
+   */
+  modelBaseClasses?: string[];
+  /**
+   * Decorator markers: `@Entity()`, `@Table(...)`, `@dataclass`. Matched on
+   * the decorator's callee/name trailing segment; bare and called forms both
+   * count.
+   */
+  modelDecorators?: string[];
+  /**
+   * Struct-tag markers (Go): a struct any of whose fields carries one of
+   * these tag keys is a model. The tag's value also supplies the wire field
+   * name (first comma-separated token), with `omitempty` read as optional.
+   */
+  structTagKeys?: string[];
+  /**
+   * Field-initializer callees that carry the field's type and optionality
+   * (ORM column constructors): `models.CharField(max_length=…, null=True)`,
+   * `Column(String, nullable=False)`, `db.Column(db.Integer)`. Matched on
+   * the callee's trailing segment. The callee name becomes the field's type
+   * token (folded through `typeAliases`); `optionalityKeyword` names the
+   * keyword argument that carries optionality and `optionalityPolarity` its
+   * meaning (`'nullable'`: true ⇒ optional; `'required'`: true ⇒ required).
+   */
+  fieldCallees?: Array<{
+    names: string[];
+    optionalityKeyword?: string;
+    optionalityPolarity?: 'nullable' | 'required';
+  }>;
+  /**
+   * Lexical type aliases folded by the shared normalizer (mirror of
+   * `methodAliases`; keys MUST be lowercase): `{ charfield: 'string',
+   * integerfield: 'int' }`. Values are the pack's chosen canonical token —
+   * comparison stays within one language, so cross-language agreement is
+   * neither needed nor attempted.
+   */
+  typeAliases?: Record<string, string>;
+  /**
+   * Cheap dependency-manifest signals that this language's model surface is
+   * present (mirror of `flowSignals`). Drives DISCOVERY only — doctor's
+   * "you'd benefit from the schema gate" recommendation and the config
+   * planner — never extraction.
+   */
+  schemaSignals?: Array<{ manifest: string; anyOf: string[] }>;
+}
+
+/**
  * Everything dxkit needs to know about a language lives in one implementation
  * of this interface. See `src/languages/index.ts` for the registry.
  *
@@ -617,6 +683,22 @@ export interface LanguageSupport {
    * sees the empty union for that language. See `HttpFlowSupport`.
    */
   httpFlow?: HttpFlowSupport;
+
+  /**
+   * Model-schema descriptors for this pack: which constructs declare data
+   * models (base classes, decorators, struct tags, ORM field constructors).
+   * Consumed through `allModelSchema` in `src/languages/index.ts` by the
+   * cross-cutting model-schema extractor (`src/analyzers/model-schema/`) —
+   * never a per-language branch, never a hardcoded framework literal in the
+   * analyzer (Rule 6 + Rule 5). Extraction additionally requires
+   * `treeSitterGrammars` and a grammar-model-shape row (the contract test
+   * loud-fails a descriptor missing either).
+   *
+   * Optional — a pack with no canonical model conventions omits it; the
+   * extractor sees the empty union for that language. See
+   * `ModelSchemaSupport`.
+   */
+  modelSchema?: ModelSchemaSupport;
 
   /**
    * Tree-sitter grammars this pack's source files parse with, keyed by file

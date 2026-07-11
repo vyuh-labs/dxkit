@@ -6,6 +6,7 @@ import type {
   HttpFlowSupport,
   LanguageId,
   LanguageSupport,
+  ModelSchemaSupport,
 } from './types';
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
@@ -24,6 +25,7 @@ export type {
   LanguageId,
   LanguageSupport,
   LintSeverity,
+  ModelSchemaSupport,
 } from './types';
 
 export const LANGUAGES: readonly LanguageSupport[] = [
@@ -508,6 +510,61 @@ export function changedFilesTouchFlowSurface(
   const exts = allFlowSourceExtensions(packs);
   if (exts.length === 0) return false;
   const specSet = new Set(specPaths.map((s) => s.replace(/\\/g, '/')));
+  return changedFiles.some((f) => {
+    const norm = f.replace(/\\/g, '/');
+    return exts.some((e) => norm.endsWith(e)) || specSet.has(norm);
+  });
+}
+
+/**
+ * Active packs' `modelSchema` descriptors (defined-only) — the model-schema
+ * mirror of `allHttpFlow`. Consumed by the cross-cutting extractor in
+ * `src/analyzers/model-schema/`: it resolves the per-file descriptor by the
+ * file's language and uses this union to decide whether model extraction
+ * applies at all (Rule 6 — no per-language branch, no framework literal in
+ * the analyzer). `recipe-playbook.test.ts` asserts a synthetic pack's
+ * contribution flows through this helper.
+ */
+export function allModelSchema(flags: DetectedStack['languages']): ModelSchemaSupport[] {
+  return activeLanguagesFromFlags(flags)
+    .map((l) => l.modelSchema)
+    .filter((m): m is ModelSchemaSupport => m !== undefined);
+}
+
+/**
+ * Source-file extensions of packs that can contribute models — those
+ * declaring BOTH a `modelSchema` descriptor and a tree-sitter grammar
+ * (extraction needs both). One source of truth (Rule 2) for the model file
+ * walk and the changed-files model-surface trigger; the mirror of
+ * `allFlowSourceExtensions`.
+ */
+export function allModelSchemaSourceExtensions(packs: readonly LanguageSupport[]): string[] {
+  const exts = new Set<string>();
+  for (const pack of packs) {
+    if (pack.modelSchema && pack.treeSitterGrammars) {
+      for (const ext of Object.keys(pack.treeSitterGrammars)) exts.add(ext);
+    }
+  }
+  return [...exts];
+}
+
+/**
+ * Does any changed-file path touch a model surface — a source file in a
+ * model-capable pack's extension set, or a configured schema spec? Drives
+ * the incremental drift-gate trigger-skip in `runGuardrailCheck`: net-new
+ * schema drift requires a change to a model declaration or a spec, so when
+ * this returns false the two-ref gate is skipped entirely. Same fail-safe
+ * contract as `changedFilesTouchFlowSurface`: false only when nothing could
+ * have introduced drift. `specPaths` are repo-relative.
+ */
+export function changedFilesTouchModelSurface(
+  changedFiles: readonly string[],
+  packs: readonly LanguageSupport[],
+  specPaths: readonly string[] = [],
+): boolean {
+  const exts = allModelSchemaSourceExtensions(packs);
+  const specSet = new Set(specPaths.map((s) => s.replace(/\\/g, '/')));
+  if (exts.length === 0 && specSet.size === 0) return false;
   return changedFiles.some((f) => {
     const norm = f.replace(/\\/g, '/');
     return exts.some((e) => norm.endsWith(e)) || specSet.has(norm);
