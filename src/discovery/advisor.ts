@@ -11,6 +11,7 @@ import * as path from 'path';
 import { resolveBaselineMode } from '../baseline/modes';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { isClaudeLoopInstalled } from '../loop/scaffold';
+import { LANGUAGES } from '../languages';
 import type {
   RecommendContext,
   Recommendation,
@@ -64,33 +65,59 @@ export function recommendBaseline(ctx: RecommendContext): Recommendation | null 
 }
 
 /**
- * Signal: this repo has a UI framework but no flow setup yet — the case where
- * flow's UI→API integration gate adds value. Shared by BOTH the doctor probe
- * (`recommendFlow`) and the deterministic planner (`planFlowMode`) so the two
- * never diverge (Rule 2 — one concept, one code path).
+ * Signal: this repo has an HTTP framework a flow-capable pack declares but no
+ * flow setup yet — the case where flow's integration gate adds value. Shared
+ * by BOTH the doctor probe (`recommendFlow`) and the deterministic planner
+ * (`planFlowMode`) so the two never diverge (Rule 2 — one concept, one code
+ * path). The framework tokens are PACK-DECLARED (`httpFlow.flowSignals`,
+ * Rule 6) — pre-M6 this probe hardcoded a JS UI-framework list against
+ * package.json, so a pure FastAPI/Django repo was never recommended the
+ * capability its pack had just gained.
  */
 function hasFlowSignal(cwd: string): boolean {
-  const pkg = readJsonSafe(path.join(cwd, 'package.json'));
-  if (!pkg) return false;
-  const deps = {
-    ...((pkg.dependencies as Record<string, unknown>) ?? {}),
-    ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
-  };
-  const uiFrameworks = ['react', 'next', 'vue', 'svelte', '@angular/core'];
-  if (!uiFrameworks.some((f) => f in deps)) return false;
   // Already configured? workspace.json or a flow policy block means yes.
   if (existsAt(cwd, '.dxkit', 'workspace.json')) return false;
   const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
   if (policy && 'flow' in policy) return false;
-  return true;
+
+  for (const pack of LANGUAGES) {
+    for (const signal of pack.httpFlow?.flowSignals ?? []) {
+      if (signal.manifest === 'package.json') {
+        // JSON manifests match on dependency KEYS (a word-boundary text search
+        // would also hit versions/scripts).
+        const pkg = readJsonSafe(path.join(cwd, signal.manifest));
+        if (!pkg) continue;
+        const deps = {
+          ...((pkg.dependencies as Record<string, unknown>) ?? {}),
+          ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
+        };
+        if (signal.anyOf.some((f) => f in deps)) return true;
+      } else {
+        // Plain-text manifests (requirements.txt, pyproject.toml, Pipfile…)
+        // match on word-boundary tokens — precise enough for a fail-open
+        // recommendation probe.
+        let text: string;
+        try {
+          text = fs.readFileSync(path.join(cwd, signal.manifest), 'utf8');
+        } catch {
+          continue;
+        }
+        const hit = signal.anyOf.some((f) =>
+          new RegExp(`\\b${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text),
+        );
+        if (hit) return true;
+      }
+    }
+  }
+  return false;
 }
 
-/** Recommend `flow init` on a UI repo with no flow setup. */
+/** Recommend flow setup on a repo with an HTTP-framework signal and no flow config. */
 export function recommendFlow(ctx: RecommendContext): Recommendation | null {
   if (!hasFlowSignal(ctx.cwd)) return null;
   return {
     reason:
-      'detected a UI framework but no flow setup — flow maps UI→API calls and gates changes that break an integration',
+      'detected an HTTP framework but no flow setup — flow maps client calls to served routes and gates changes that break an integration',
     command: 'vyuh-dxkit flow init',
   };
 }
@@ -208,7 +235,7 @@ export function planFlowMode(ctx: ConfigContext): ConfigPlanItem | null {
     summary: 'warn',
     patch: { flow: { mode: 'warn', schemaVersion: FLOW_CONFIG_SCHEMA_VERSION } },
     reason: 'seed the UI→API integration gate at the safe default (warn, never fails a build)',
-    evidence: 'UI framework in package.json, no flow config yet',
+    evidence: 'HTTP framework in a dependency manifest, no flow config yet',
   };
 }
 

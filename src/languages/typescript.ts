@@ -1791,6 +1791,11 @@ export const typescript: LanguageSupport = {
       baseDirs: ['src/app', 'app'],
       methodExports: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
     },
+    // Discovery-only (doctor's flow recommendation + the config planner):
+    // a UI framework in package.json signals a consumed-side flow surface.
+    flowSignals: [
+      { manifest: 'package.json', anyOf: ['react', 'next', 'vue', 'svelte', '@angular/core'] },
+    ],
   },
 
   // Tree-sitter grammars by extension for the canonical AST layer (src/ast/).

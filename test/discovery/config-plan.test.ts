@@ -88,6 +88,22 @@ describe('config planners — pure functions of repo facts', () => {
     expect(gatherConfigPlan(d, privateProbes).find((p) => p.capability === 'flow')).toBeUndefined();
   });
 
+  it('flow: a PYTHON web framework triggers the same plan (signals are pack-declared)', () => {
+    // Pre-M6 the flow signal hardcoded JS UI frameworks against package.json,
+    // so a pure FastAPI/Django repo was never seeded the gate its pack
+    // supports. The signal now unions every pack's httpFlow.flowSignals.
+    const d = mkTmp();
+    fs.writeFileSync(path.join(d, 'requirements.txt'), 'fastapi==0.111.0\nuvicorn\n');
+    const flow = gatherConfigPlan(d, privateProbes).find((p) => p.capability === 'flow');
+    expect(flow?.summary).toBe('warn');
+    // An unrelated python repo (no web framework) stays silent.
+    const d2 = mkTmp();
+    fs.writeFileSync(path.join(d2, 'requirements.txt'), 'numpy\npandas\n');
+    expect(
+      gatherConfigPlan(d2, privateProbes).find((p) => p.capability === 'flow'),
+    ).toBeUndefined();
+  });
+
   it('checks: linter present + no lint policy → enabled warn-only; opted-in → silent', () => {
     const d = mkTmp();
     fs.writeFileSync(path.join(d, 'eslint.config.mjs'), 'export default {}');

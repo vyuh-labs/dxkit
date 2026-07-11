@@ -341,6 +341,20 @@ export interface HttpFlowSupport {
    * Optional — a pack whose frameworks route only in-source omits it.
    */
   fileRoutes?: FileRouteSupport;
+
+  /**
+   * Cheap dependency-manifest signals that this language's HTTP-flow surface
+   * is present in a repo — each entry names a manifest file and the framework
+   * tokens to look for in it. Drives DISCOVERY only (doctor's "you'd benefit
+   * from flow" recommendation and the config planner's warn-mode seed), never
+   * extraction: extraction runs wherever the descriptor matches source. A
+   * `package.json` manifest is matched on its dependency KEYS; any other
+   * manifest (requirements.txt, pyproject.toml, Gemfile, go.mod) on a
+   * word-boundary text search — precise enough for a fail-open
+   * recommendation probe. Without this field a pack's repos are simply never
+   * proactively recommended flow (extraction still works once configured).
+   */
+  flowSignals?: Array<{ manifest: string; anyOf: string[] }>;
 }
 
 /**
