@@ -410,6 +410,16 @@ export interface ModelSchemaSupport {
    */
   modelBaseClasses?: string[];
   /**
+   * WEAK heritage markers: names too generic to trust alone (SQLAlchemy's
+   * conventional `Base` — any codebase can have an unrelated class named
+   * `Base`). A weak match marks a model only when corroborated: at least
+   * one field resolves through `fieldCallees` (a `Column(...)`-style
+   * constructor). Real-repo validation forced this split — a strong
+   * `'Base'` marker minted an e-commerce framework's strategy/policy
+   * classes as models.
+   */
+  weakModelBaseClasses?: string[];
+  /**
    * Decorator markers: `@Entity()`, `@Table(...)`, `@dataclass`. Matched on
    * the decorator's callee/name trailing segment; bare and called forms both
    * count.
