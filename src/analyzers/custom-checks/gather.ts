@@ -17,6 +17,7 @@ import type { BrownfieldPolicy } from '../../baseline/policy';
 import { lintGateSpecs, normalizeCustomChecks } from './config';
 import { runCustomChecks } from './run';
 import type { CommandExec } from '../tools/bounded-exec';
+import { gatherExtensionFindings } from '../../extensions/extension-findings';
 import type { CustomCheckFinding, CustomCheckSpec } from './types';
 
 export interface GatherCustomChecksOptions {
@@ -56,12 +57,20 @@ export function gatherCustomCheckFindings(
   opts: GatherCustomChecksOptions,
 ): readonly CustomCheckFinding[] {
   const specs = resolveCustomCheckSpecs(opts);
-  if (specs.length === 0) return [];
-  const result = runCustomChecks({
-    cwd: opts.cwd,
-    specs,
-    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-    ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
-  });
-  return result.findings;
+  const commandFindings =
+    specs.length === 0
+      ? []
+      : runCustomChecks({
+          cwd: opts.cwd,
+          specs,
+          ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+          ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
+        }).findings;
+  // The seam's third consumer (after user checks + pack lint): findings
+  // committed by findings-kind EXTENSIONS. Snapshot reads only — nothing
+  // executes here (extensions run at refresh time; gates stay offline) —
+  // and both the baseline producer and the guardrail current scan reach
+  // extension findings through THIS one entry point, so the two sides
+  // always see the identical set (Rule 2).
+  return [...commandFindings, ...gatherExtensionFindings(opts.cwd)];
 }

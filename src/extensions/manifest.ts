@@ -128,6 +128,10 @@ function validateManifest(raw: unknown, dirName: string, at: string): string[] {
   if (config !== undefined && !isObject(config)) {
     add('config', 'must be an object when present');
   }
+  const gating = raw['gating'];
+  if (gating !== undefined && gating !== 'block' && gating !== 'warn' && gating !== 'off') {
+    add('gating', `must be 'block', 'warn', or 'off' when present (got ${JSON.stringify(gating)})`);
+  }
   return errors;
 }
 
