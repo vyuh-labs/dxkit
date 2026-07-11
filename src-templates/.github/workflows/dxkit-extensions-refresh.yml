@@ -1,0 +1,78 @@
+name: dxkit extensions refresh
+
+# Keeps the committed extension snapshots (`.dxkit/contrib/*.json`) current
+# after each merge to the default branch (or weekly / on demand). Gates read
+# those snapshots OFFLINE — extensions never execute on a gate surface — so
+# their freshness is what keeps extension-backed verdicts honest.
+#
+# How the refresh LANDS is the CLI's job, not this workflow's bash:
+#   - `--land pr` (default here): one STANDING `dxkit/extensions-refresh` PR,
+#     force-updated in place. Protected-branch-safe; enable auto-merge if
+#     additions-only updates need no ceremony.
+#   - `--land push`: direct [skip ci] commit — unprotected trunks only.
+# A pure generatedAt restamp never lands a commit (the substance check
+# reverts it), so quiet merges stay quiet.
+#
+# Opt-in: installed by `init --with-extensions-refresh`, or automatically
+# when a committed extension declares `refresh: "on-merge"`.
+
+on:
+  push:
+    branches: [__DXKIT_DEFAULT_BRANCH__]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+# contents: write pushes the refresh branch (or the [skip ci] commit in push
+# mode); pull-requests: write lets the CLI open/update the standing PR.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  extensions-refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Language runtime(s) for the detected stack, so an extension's
+      # interpreter (python3, ruby, …) is present. Empty on a Node-only repo.
+__DXKIT_CI_RUNTIME_SETUP__
+      - name: Install dependencies + dxkit
+        run: |
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Refresh + land the extension snapshots
+        env:
+          # The CLI shells `gh` to open/update the standing PR in `pr` mode.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          # Runs every committed extension manifest and lands the snapshot
+          # delta — execution/validation/landing logic lives in the tested
+          # CLI, never in this workflow's bash.
+          "${DXKIT}" extensions refresh --land pr

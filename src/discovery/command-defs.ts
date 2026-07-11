@@ -16,6 +16,8 @@ import {
   planSchemaMode,
   planLintGate,
   planLoopPreset,
+  recommendExtensions,
+  planFlowSources,
 } from './advisor';
 
 /**
@@ -304,6 +306,22 @@ export const COMMANDS = [
     skill: 'dxkit-checks',
     whenToRecommend: recommendChecks,
     planConfig: planLintGate,
+  },
+
+  {
+    id: 'extensions',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Plug your own extractors and sinks into dxkit (any language)',
+    docsBlurb:
+      'Declare an extension — a manifest pointing at your existing script — and dxkit runs it at ' +
+      'refresh time, validates its emitted contract/inventory/findings/export document, and routes ' +
+      'it through the same machines native output gets (the flow join, the report trend, the ' +
+      'net-new finding gate). `extensions dev <name>` is the seconds-fast authoring loop; ' +
+      '`extensions init` scaffolds a manifest that passes validation immediately.',
+    skill: 'dxkit-extensions',
+    whenToRecommend: recommendExtensions,
+    planConfig: planFlowSources,
   },
 
   // ── Integrate ──────────────────────────────────────────────────────────

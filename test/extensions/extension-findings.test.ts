@@ -126,7 +126,11 @@ describe('gatherExtensionFindings', () => {
 describe('the seam entry point folds extensions in', () => {
   it('gatherCustomCheckFindings returns extension findings with no checks configured', () => {
     writeExtension('perm-audit', 'block', [FINDING]);
-    const out = gatherCustomCheckFindings({ cwd: tmp, policy: DEFAULT_BROWNFIELD_POLICY, packs: [] });
+    const out = gatherCustomCheckFindings({
+      cwd: tmp,
+      policy: DEFAULT_BROWNFIELD_POLICY,
+      packs: [],
+    });
     expect(out).toHaveLength(1);
     expect(out[0].check).toBe('extension:perm-audit');
   });
