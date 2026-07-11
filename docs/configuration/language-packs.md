@@ -105,12 +105,14 @@ that break an integration — extracts from source **per pack**: each pack
 declares which constructs are HTTP (`httpFlow`), and one shared extractor
 reads them through a per-grammar syntax table. Current coverage:
 
-| Pack       | Consumed side (client calls)                                | Served side (route declarations)                                                                  |
-| ---------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| typescript | `fetch`, axios, app-specific wrappers                       | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes                      |
-| python     | `requests`, `httpx`, wrapper clients                        | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic)                      |
-| go         | `http.Get/Post`, `http.NewRequest`, `*http.Client` wrappers | stdlib `HandleFunc`/`Handle` (incl. Go 1.22 `"GET /x"` patterns), chi/echo/gin/fiber verb methods |
-| others     | — (next waves)                                              | via `flow.specs` (OpenAPI) today                                                                  |
+| Pack       | Consumed side (client calls)                                                                      | Served side (route declarations)                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| typescript | `fetch`, axios, app-specific wrappers                                                             | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes                                 |
+| python     | `requests`, `httpx`, wrapper clients                                                              | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic)                                 |
+| go         | `http.Get/Post`, `http.NewRequest`, `*http.Client` wrappers                                       | stdlib `HandleFunc`/`Handle` (incl. Go 1.22 `"GET /x"` patterns), chi/echo/gin/fiber verb methods            |
+| java       | RestTemplate verb methods, WebClient / java.net.http / OkHttp builder chains, Retrofit interfaces | Spring MVC/WebFlux annotations (incl. class-level `@RequestMapping` prefixes), JAX-RS `@GET` + `@Path` pairs |
+| kotlin     | Ktor client verbs, Retrofit interfaces, WebClient/OkHttp chains                                   | Ktor routing DSL (`get("/x") { }`, nested `route(...)` prefixes), Spring annotations                         |
+| others     | — (next waves)                                                                                    | via `flow.specs` (OpenAPI) today                                                                             |
 
 Notes that keep the model honest:
 
@@ -127,14 +129,21 @@ Notes that keep the model honest:
   conventional names (`r`, `router`, `mux`, `e`, `app`, `api`, `g`, `group`,
   `engine`, `v1`, `v2`, and struct fields like `s.router`). A router bound to
   an unusual name falls back to `flow.specs`.
+- RestTemplate's `exchange(url, HttpMethod.GET, …)` carries its verb as an
+  enum argument — the call is recognized and **counted as dynamic** (the
+  coverage-honesty channel), not extracted. Ktor's
+  `client.request { method = … }` assigns the verb inside the lambda and is
+  deliberately **undeclared** — omitting it beats silently dropping it.
+- Spring's programmatic `RouterFunction` DSL (WebFlux functional endpoints)
+  is out of scope; `flow.specs` covers such services.
 - **Any language can participate in the served side without pack coverage**
   by publishing an OpenAPI spec (`flow.specs`) or a `served.json` snapshot as
   a workspace participant — pack coverage adds native source extraction on
   top.
 
-Remaining packs (Java, Kotlin, C#, Ruby, Rust) gain `httpFlow` in the
-language-parity waves; the recipe is declaration-only (see CONTRIBUTING.md
-"Adding a new language").
+Remaining packs (C#, Ruby, Rust) gain `httpFlow` in the language-parity
+waves; the recipe is declaration-only (see CONTRIBUTING.md "Adding a new
+language").
 
 ## Model-schema coverage
 
@@ -144,12 +153,14 @@ recognizes models **by marker, per pack**: each pack declares which
 constructs are models (`modelSchema`), and one shared extractor reads them
 through a per-grammar syntax table. Current coverage:
 
-| Pack       | Recognition markers                                                                               | Field facts                                                               |
-| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| typescript | `@Entity` / `@Table` / `@Schema` / `@ObjectType` / `@InputType` decorators, `BaseEntity` heritage | type annotations (`?`, `\| null`)                                         |
-| python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`     | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=` |
-| go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                 | field types (pointer = optional), tag wire names, `omitempty`             |
-| any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                    | the spec's own types + `required` list                                    |
+| Pack       | Recognition markers                                                                               | Field facts                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| typescript | `@Entity` / `@Table` / `@Schema` / `@ObjectType` / `@InputType` decorators, `BaseEntity` heritage | type annotations (`?`, `\| null`)                                                                                                       |
+| python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`     | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=`                                                               |
+| go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                 | field types (pointer = optional), tag wire names, `omitempty`                                                                           |
+| java       | JPA `@Entity` / `@Table` / `@Embeddable` / `@MappedSuperclass`                                    | `@Column(nullable = …, name = …)`; an unannotated column is an honest unknown (JPA defaults to nullable — never fabricated as required) |
+| kotlin     | JPA annotations + kotlinx `@Serializable` data classes                                            | `String?` nullability (real grammar optionality), `@Column` overrides                                                                   |
+| any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                    | the spec's own types + `required` list                                                                                                  |
 
 What the gate deliberately does **not** see — each either disclosed at run
 time or documented here, never implied covered:
@@ -177,8 +188,11 @@ time or documented here, never implied covered:
 
 A rename reads honestly as remove + add (the name is part of the contract);
 a pure file move produces no findings (relocating an unchanged declaration
-is never drift). Remaining packs gain `modelSchema` in the language-parity
-waves — the recipe is declaration-only.
+is never drift). Remaining packs (C#, Ruby, Rust) gain `modelSchema` in the
+language-parity waves — the recipe is declaration-only. Known kotlin gaps,
+documented rather than half-covered: Exposed's chained column initializers
+(`integer("id").autoIncrement()`) and `@SerialName` wire naming (a
+positional argument) are not yet read.
 
 ## Forcing pack activation
 

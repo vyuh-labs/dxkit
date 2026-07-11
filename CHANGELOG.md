@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Java and Kotlin join the flow + schema gates (language-parity wave 2).**
+  Java: Spring MVC/WebFlux annotations with class-level `@RequestMapping`
+  prefixes and JAX-RS `@GET`+`@Path` pairs on the served side; RestTemplate
+  verb methods, WebClient / java.net.http / OkHttp builder chains, and
+  Retrofit client interfaces on the consumed side (`exchange(...)`'s enum
+  verb is disclosed as a dynamic call, never silently dropped); JPA entities
+  with `@Column`-carried optionality + wire naming — an unannotated column
+  stays an honest unknown, since JPA defaults to nullable. Kotlin: the Ktor
+  routing DSL (trailing-lambda verb callees, nested `route(...)` prefixes)
+  and Spring annotations; the Ktor client (`"/users/$id"` templates
+  canonicalize), Retrofit, and builder chains; JPA + kotlinx `@Serializable`
+  models with real `String?` optionality. Both packs join the
+  fixture-analysis matrix; the java grammar lands the fused-callee shape
+  factory and kotlin a hand-written row over its zero-field grammar.
+
 - **SDK 0.2.0 — the descriptor language grows six route/client forms and a
   field-decorator spec (additive).** New on `HttpFlowSupport`:
   `routePrefixDecorators` (class-level `@RequestMapping`/`@Path` prefixes),
