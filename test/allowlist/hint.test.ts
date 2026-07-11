@@ -63,6 +63,17 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     file: 'web/List.tsx',
     line: 20,
   },
+  'model-schema-drift': {
+    id: FP,
+    kind: 'model-schema-drift',
+    model: 'User',
+    field: 'email',
+    changeClass: 'field-removed',
+    from: 'string',
+    to: null,
+    file: 'src/user.entity.ts',
+    line: 7,
+  },
   'custom-check': {
     id: FP,
     kind: 'custom-check',
