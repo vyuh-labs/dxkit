@@ -8,3 +8,4 @@
  */
 export { SDK_MAJOR } from './version';
 export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from './descriptors';
+export type { GrammarModelShape, GrammarShape, ResolvedCall } from './grammar';

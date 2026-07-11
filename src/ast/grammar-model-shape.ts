@@ -28,42 +28,11 @@
 
 import type { Node } from './parse';
 
-/** How to read one grammar's model-declaration syntax. */
-export interface GrammarModelShape {
-  /** Node types that can declare a named, field-bearing type. */
-  readonly classNodes: readonly string[];
-  /** The declared name, or null when this node is not a model-bearing
-   *  declaration in this grammar (a Go `type_spec` aliasing a non-struct). */
-  className(node: Node): string | null;
-  /** Heritage expressions as verbatim identifier-path texts (`models.Model`,
-   *  `BaseEntity`). Empty when the grammar/node has none. */
-  heritage(node: Node): string[];
-  /** Decorator nodes attached to this class — encapsulates per-grammar
-   *  attachment quirks (TS hoists decorators of an exported class onto the
-   *  `export_statement`; Python wraps in `decorated_definition`). */
-  classDecorators(node: Node): Node[];
-  /** Field/property declarations in the class body, in source order. */
-  fieldNodes(classNode: Node): Node[];
-  /** Declared names of one field node — plural because Go allows
-   *  `X, Y int` in a single declaration. Empty for unnamed (embedded) fields. */
-  fieldNames(field: Node): string[];
-  /** Verbatim text of the field's declared type, or null when absent. */
-  fieldTypeText(field: Node): string | null;
-  /**
-   * Grammar-level optionality marker ONLY: the TS `?` token, a Go pointer
-   * type. Lexical forms (`| null`, `Optional[...]`, `| None`) fold in the
-   * shared normalizer, and framework forms (`nullable=True`) come from the
-   * pack descriptor. Null when this grammar has no such marker.
-   */
-  fieldOptionalMarker(field: Node): boolean | null;
-  /** The field's struct tag text (Go), verbatim including backticks. */
-  fieldTag(field: Node): string | null;
-  /** The call node initializing this field (`Column(...)`,
-   *  `models.CharField(...)`), for descriptor `fieldCallees` resolution. */
-  fieldValueCall(field: Node): Node | null;
-  /** Decorator nodes attached to this field (`@Column(...)`). */
-  fieldDecorators(field: Node): Node[];
-}
+// GrammarModelShape moved to @vyuhlabs/dxkit-sdk (Rule 18, sibling of
+// GrammarShape). The per-grammar rows + dispatch below stay internal.
+import type { GrammarModelShape } from '@vyuhlabs/dxkit-sdk';
+
+export type { GrammarModelShape };
 
 /** Children of `node` occupying grammar field `field`, cursor-collected
  *  (works for repeated fields, which `childForFieldName` truncates). */
