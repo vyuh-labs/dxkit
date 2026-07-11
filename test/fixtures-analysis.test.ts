@@ -12,8 +12,9 @@
  * single Payload/Next.js fixture — the language-agnostic invariants
  * (`.env.example` is not a finding; a placeholder secret is dropped) are
  * asserted on TS, Python, AND Go, so a fix that only works for one stack fails
- * here. Flow-specific invariants run on the flow-capable pack (TS today); a new
- * language pack (M6) adds a fixture dir + a row and inherits the checks.
+ * here. Flow-specific invariants run on every flow-capable pack (TS + Python
+ * today); a new language pack adds a fixture dir + a row and inherits the
+ * checks — the flow rows additionally pin that stack's served/consumed forms.
  *
  * Each fixture is copied to a throwaway git repo (env-in-git needs `git
  * ls-files`), then the gathers run in-process.
@@ -64,11 +65,13 @@ function stageFixture(stack: string): string {
   return dir;
 }
 
-// Every stack in the matrix. `flow: true` marks the flow-capable packs whose
-// route/call resolution is additionally asserted.
-const STACKS: Array<{ stack: string; flow?: boolean }> = [
-  { stack: 'ts-webapp', flow: true },
-  { stack: 'python-svc' },
+// Every stack in the matrix. `flow` marks the flow-capable packs whose
+// route/call resolution is additionally asserted, with the stack's expected
+// consumed-call count (every one of which must resolve — 0 unresolved is the
+// last-mile of flow correctness on every flow-capable stack, not just TS).
+const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
+  { stack: 'ts-webapp', flow: { calls: 2 } },
+  { stack: 'python-svc', flow: { calls: 4 } },
   { stack: 'go-svc' },
 ];
 
@@ -145,15 +148,34 @@ describe('analysis fixtures — test-gap import-graph credits non-relative impor
 
 describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   for (const { stack, flow } of STACKS.filter((s) => s.flow)) {
-    it(`${stack}: base-URL-helper calls resolve via policy stripUrlPrefixes + catch-all`, async () => {
-      // The user-facing surface loads .dxkit/policy.json:flow.stripUrlPrefixes
-      // itself. Both calls use `${getClientSideURL()}`, which the policy strips,
-      // then bind the served catch-all `app/(payload)/api/[...slug]/route.ts`.
-      void flow;
+    it(`${stack}: every consumed call resolves against the stack's served surface`, async () => {
+      // The user-facing surface loads .dxkit/policy.json:flow config itself
+      // (ts-webapp: stripUrlPrefixes + the [...slug] catch-all; python-svc:
+      // FastAPI decorators + Flask methods-kwarg + a Django ANY route).
       const model = await gatherRepoFlowModel(staged[stack]);
       const s = summarize(model);
-      expect(s.calls).toBe(2);
-      expect(s.unresolved).toBe(0); // 0/4 unresolved — the last-mile of flow correctness
+      expect(s.calls).toBe(flow!.calls);
+      expect(s.unresolved).toBe(0); // the last-mile of flow correctness
     });
   }
+
+  it('python-svc: the three Python served forms + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['python-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // FastAPI member decorators, Flask methods-kwarg (one route per verb),
+    // Django path() as ANY — and the include('admin/') mount mints NOTHING.
+    expect(served).toEqual([
+      'ANY /reports/{var}',
+      'GET /items/{var}',
+      'GET /legacy',
+      'POST /legacy',
+      'POST /users',
+    ]);
+    // A PUT against the Django route resolves via the ANY rule.
+    const put = model.bindings.find((b) => b.call.method === 'PUT');
+    expect(put?.route?.path).toBe('/reports/{var}');
+    // The runtime-built requests.get(url) is DISCLOSED as dynamic, not dropped.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('requests');
+  });
 });

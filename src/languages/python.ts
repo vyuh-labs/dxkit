@@ -1237,6 +1237,46 @@ export const python: LanguageSupport = {
     },
   },
 
+  // HTTP flow (CLAUDE.md Rule 6): how Python source expresses outbound HTTP
+  // calls + route declarations, consumed by the one flow extractor via the
+  // grammar-shape adapter (`src/ast/grammar-shape.ts`) — zero extractor code
+  // is Python-specific. CLIENT: `requests` / `httpx` are TRUSTED bases (HTTP
+  // by construction — their dynamic-URL calls are counted as unverifiable,
+  // never silently dropped), and any other receiver's `.get('/x')` with a
+  // path-like literal is admitted as a wrapper (`session`, `client`, an
+  // app-specific api object) — the same precision guard the TS pack relies
+  // on keeps `dict.get('key')` out. SERVED, three declarative forms:
+  //   - FastAPI/Sanic/Flask-2 member verb decorators `@app.get('/x')`
+  //     (leading-slash guard keeps `@mock.patch('pkg.attr')` out);
+  //   - Flask `@app.route('/x', methods=['GET','POST'])` via the
+  //     methods-kwarg reader, defaulting to Flask's GET-only;
+  //   - Django `path('users/<int:pk>/', view)` in urls.py, emitted as an
+  //     `ANY` (method-agnostic) route — the routing layer accepts every
+  //     verb there; `include(...)` mounts are prefixes, not routes, and are
+  //     excluded. Django's regex `re_path(...)` routes are OUT of scope
+  //     (a regex route has no canonical path form to join on) — a repo that
+  //     needs them can point `flow.specs` at an OpenAPI document instead.
+  // Angle-bracket converters (`<int:pk>`, `<path:rest>`) canonicalize in the
+  // shared normalizer, so both Django and Flask param forms join client
+  // template URLs.
+  httpFlow: {
+    clientMethodCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete'],
+      bases: ['requests', 'httpx'],
+    },
+    routeMemberDecorators: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+    },
+    routePathDecorators: { names: ['route'], methodsKeyword: 'methods', defaultMethods: ['GET'] },
+    routeCallees: { names: ['path'], excludeArgCallees: ['include'] },
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/). Logical name —
+  // src/ast/ resolves it to the bundled wasm artifact and its shape row.
+  treeSitterGrammars: {
+    '.py': 'python',
+  },
+
   clocLanguageNames: ['Python'],
 
   detect(cwd) {
