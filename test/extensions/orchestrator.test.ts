@@ -195,6 +195,40 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
   });
 });
 
+describe('export sinks (delivery payload + receipt)', () => {
+  it('the delivery document rides stdin and the receipt round-trips', () => {
+    writeManifest('influx-sink', {
+      schemaVersion: 1,
+      name: 'influx-sink',
+      contributes: 'export',
+      run: { command: 'python3', args: ['push.py'] },
+      refresh: 'manual',
+      output: '.dxkit/reports/export-influx-sink.json',
+    });
+    const r = discoverExtensions(tmp);
+    expect(r.errors).toEqual([]);
+    let seenDelivery: unknown;
+    const exec: CommandExec = (cmd) => {
+      seenDelivery = (JSON.parse(cmd.stdin ?? '{}') as { delivery?: unknown }).delivery;
+      return {
+        available: true,
+        code: 0,
+        output: JSON.stringify({ schema: 'export.v1', delivered: true, detail: '3 rows' }),
+      };
+    };
+    const out = runExtension(tmp, r.extensions[0], {
+      exec,
+      delivery: { overall: 81, sha: 'abc' },
+    });
+    expect(seenDelivery).toEqual({ overall: 81, sha: 'abc' });
+    expect(out.status).toBe('ok');
+    if (out.status === 'ok') {
+      expect(out.schemaId).toBe('export.v1');
+      expect(out.outputPath).toBe('.dxkit/reports/export-influx-sink.json');
+    }
+  });
+});
+
 describe('committed snapshots (the offline half)', () => {
   it('round-trips a runner-written snapshot with staleness age', () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: VALID_DOC });

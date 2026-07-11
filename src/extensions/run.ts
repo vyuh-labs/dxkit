@@ -44,6 +44,13 @@ export interface ExtensionStdinPayload {
     /** Active language-pack ids in this repo. */
     readonly activeLanguages: readonly string[];
   };
+  /**
+   * For EXPORT extensions only: the post-run document to deliver (a report
+   * / verdict JSON the refresh surface hands over). The sink reads it from
+   * here, delivers it wherever it likes, and returns an export.v1 receipt.
+   * Absent for every other contribution kind.
+   */
+  readonly delivery?: unknown;
 }
 
 export type ExtensionRunOutcome =
@@ -62,6 +69,8 @@ export interface RunExtensionOptions {
   /** Repo facts for the stdin payload; callers pass the canonical values. */
   readonly excludeDirs?: readonly string[];
   readonly activeLanguages?: readonly string[];
+  /** The document an EXPORT extension delivers (see stdin payload). */
+  readonly delivery?: unknown;
   /** Clock injection for the generatedAt stamp (tests). */
   readonly now?: () => Date;
 }
@@ -86,6 +95,7 @@ export function runExtension(
       excludeDirs: opts.excludeDirs ?? [],
       activeLanguages: opts.activeLanguages ?? [],
     },
+    ...(opts.delivery !== undefined ? { delivery: opts.delivery } : {}),
   };
 
   const outputAbs = path.join(cwd, manifest.output);
