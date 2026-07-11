@@ -1367,6 +1367,48 @@ if [ -n "$SIDEREF_INLINE_PUSH" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Rule 18 (SDK boundary): the frozen extension surface stays one-way ─────
+# The frozen surface lives in packages/dxkit-sdk; the main package depends on
+# it and re-exports. Two invariants keep the freeze real:
+#
+# (a) The SDK is SELF-CONTAINED. Nothing under packages/dxkit-sdk/src may
+#     import dxkit internals (relative escapes, the main package) or node
+#     builtins — the SDK is types + pure helpers, so an import beyond
+#     'web-tree-sitter' or a same-package relative path means internals are
+#     leaking into the frozen surface.
+SDK_ROGUE_IMPORTS=$(grep -rnE "(from '[^']+'|require\()" packages/dxkit-sdk/src/ 2>/dev/null \
+  | grep -v "// rule18-sdk-ok" \
+  | grep -vE "from '\./" \
+  | grep -v "from 'web-tree-sitter'" || true)
+if [ -n "$SDK_ROGUE_IMPORTS" ]; then
+  echo "❌ Rule 18 violation: packages/dxkit-sdk imports outside the frozen surface:"
+  echo "$SDK_ROGUE_IMPORTS"
+  echo "   → The SDK is self-contained (types + pure helpers). If the surface needs"
+  echo "     a new concept, MOVE it into the SDK and re-export from the main package"
+  echo "     — never import main-package internals into the SDK."
+  echo "   → Annotate '// rule18-sdk-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# (b) Frozen names have ONE definition. A re-declaration of a frozen type or
+#     helper in src/ forks the concept the SDK froze (the main package must
+#     import + re-export instead). Line-start declarations only — import
+#     braces and local helpers with coincidental names don't match.
+FROZEN_REDECL=$(grep -rnE "^(export )?(interface|type) (HttpFlowSupport|FileRouteSupport|ModelSchemaSupport|GrammarShape|GrammarModelShape|ResolvedCall|WireContractDoc|WireInventoryDoc|WireFindingsDoc|WireExportReceipt|ExtensionManifest|ContributionKind)\b" src/ 2>/dev/null \
+  | grep -v "// rule18-sdk-ok" || true)
+FROZEN_REIMPL=$(grep -rnE "^export (async )?function (normalizePath|normalizeMethod|bindingKey|isCatchAllPath|catchAllStaticPrefix|walk)\(|^export const (ANY_METHOD|CATCHALL|WIRE_SCHEMA_IDS|SDK_MAJOR)\b" src/ 2>/dev/null \
+  | grep -v "// rule18-sdk-ok" || true)
+if [ -n "$FROZEN_REDECL$FROZEN_REIMPL" ]; then
+  echo "❌ Rule 18 violation: a frozen SDK name is re-declared in src/:"
+  [ -n "$FROZEN_REDECL" ] && echo "$FROZEN_REDECL"
+  [ -n "$FROZEN_REIMPL" ] && echo "$FROZEN_REIMPL"
+  echo "   → The one definition lives in packages/dxkit-sdk. Import it from"
+  echo "     '@vyuhlabs/dxkit-sdk' and re-export; a second definition is the"
+  echo "     drift class the freeze exists to kill."
+  echo "   → Annotate '// rule18-sdk-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
