@@ -132,3 +132,35 @@ describe('flow bindingKey', () => {
     );
   });
 });
+
+describe('the rewriteUrl hook (rung-4 urlNormalizer seam)', () => {
+  it('a rewritten URL flows through the whole canonical pipeline', () => {
+    const rewriteUrl = (u: string): string | null =>
+      u.startsWith('internal://svc') ? u.slice('internal://svc'.length) : null;
+    expect(normalizePath("'internal://svc/users/:id'", { rewriteUrl })).toBe('/users/{var}');
+  });
+
+  it('null means no opinion — standard handling continues on the original', () => {
+    expect(normalizePath("'/plain/path'", { rewriteUrl: () => null })).toBe('/plain/path');
+  });
+
+  it('a throwing hook is a no-opinion, never a crash', () => {
+    const rewriteUrl = (): string | null => {
+      throw new Error('boom');
+    };
+    expect(normalizePath("'/still/works'", { rewriteUrl })).toBe('/still/works');
+  });
+
+  it('the hook cannot bypass normalization — an external rewrite still drops', () => {
+    expect(normalizePath("'/x'", { rewriteUrl: () => 'https://evil.example.com/x' })).toBeNull();
+  });
+
+  it('composes with stripUrlPrefixes (hook first, then prefixes)', () => {
+    expect(
+      normalizePath('`${tenantBase()}/orders/${id}`', {
+        rewriteUrl: (u) =>
+          u.startsWith('${tenantBase()}') ? u.replace('${tenantBase()}', '') : null,
+      }),
+    ).toBe('/orders/{var}');
+  });
+});

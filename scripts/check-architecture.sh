@@ -1434,9 +1434,9 @@ fi
 #     helper in src/ forks the concept the SDK froze (the main package must
 #     import + re-export instead). Line-start declarations only — import
 #     braces and local helpers with coincidental names don't match.
-FROZEN_REDECL=$(grep -rnE "^(export )?(interface|type) (HttpFlowSupport|FileRouteSupport|ModelSchemaSupport|GrammarShape|GrammarModelShape|ResolvedCall|WireContractDoc|WireInventoryDoc|WireFindingsDoc|WireExportReceipt|ExtensionManifest|ContributionKind)\b" src/ 2>/dev/null \
+FROZEN_REDECL=$(grep -rnE "^(export )?(interface|type) (HttpFlowSupport|FileRouteSupport|ModelSchemaSupport|GrammarShape|GrammarModelShape|ResolvedCall|WireContractDoc|WireInventoryDoc|WireFindingsDoc|WireExportReceipt|ExtensionManifest|ContributionKind|ContractSourceReader|ContractSourceParse|ContractSide|RawConsumedCall|RawServedRoute|DxkitExtensionDefinition|HttpFlowDialect|ExtensionPluginSpec|IntegrationVerifierContext|VerifierFlowContext)\b" src/ 2>/dev/null \
   | grep -v "// rule18-sdk-ok" || true)
-FROZEN_REIMPL=$(grep -rnE "^export (async )?function (normalizePath|normalizeMethod|bindingKey|isCatchAllPath|catchAllStaticPrefix|walk)\(|^export const (ANY_METHOD|CATCHALL|WIRE_SCHEMA_IDS|SDK_MAJOR)\b" src/ 2>/dev/null \
+FROZEN_REIMPL=$(grep -rnE "^export (async )?function (normalizePath|normalizeMethod|bindingKey|isCatchAllPath|catchAllStaticPrefix|walk|defineExtension)\(|^export const (ANY_METHOD|CATCHALL|WIRE_SCHEMA_IDS|SDK_MAJOR)\b" src/ 2>/dev/null \
   | grep -v "// rule18-sdk-ok" || true)
 if [ -n "$FROZEN_REDECL$FROZEN_REIMPL" ]; then
   echo "❌ Rule 18 violation: a frozen SDK name is re-declared in src/:"
