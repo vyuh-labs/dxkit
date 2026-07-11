@@ -1287,7 +1287,11 @@ export const python: LanguageSupport = {
   // Known limitation (documented): relation fields fold to their constructor
   // alias (`fk` / `m2m`), so a re-targeted ForeignKey is not a type change.
   modelSchema: {
-    modelBaseClasses: ['Model', 'BaseModel', 'DeclarativeBase', 'Base', 'SQLModel'],
+    modelBaseClasses: ['Model', 'BaseModel', 'DeclarativeBase', 'SQLModel'],
+    // `Base` (classic SQLAlchemy declarative) is too generic to trust alone —
+    // real-repo validation found unrelated homonym `Base` classes minted as
+    // models. Weak: counts only when a Column/mapped_column field corroborates.
+    weakModelBaseClasses: ['Base'],
     modelDecorators: ['dataclass'],
     fieldCallees: [
       {

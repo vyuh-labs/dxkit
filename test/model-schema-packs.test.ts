@@ -89,6 +89,25 @@ class NotAModel:
     ]);
   });
 
+  it('weak Base heritage needs Column corroboration (the homonym-Base class)', async () => {
+    // Real-repo validation: frameworks carry their own unrelated `Base`
+    // classes (pricing/availability strategies). A bare `Base` heritage with
+    // no ORM field constructor must NOT mint a model; with one, it must.
+    const { models } = await extractWithPack(
+      `
+class Unavailable(Base):
+    code = "unavailable"
+    message = "n/a"
+
+class OrderRow(Base):
+    id = Column(Integer, primary_key=True)
+`,
+      'python',
+      'python',
+    );
+    expect(models.map((m) => m.name)).toEqual(['OrderRow']);
+  });
+
   it('extracts pydantic + SQLAlchemy + dataclass forms', async () => {
     const { models } = await extractWithPack(
       `

@@ -97,23 +97,34 @@ function recognizeModel(
   descriptor: ModelSchemaSupport,
   modelShape: GrammarModelShape,
   callShape: GrammarShape | null,
-): ModelEntity['via'] | null {
+): { via: ModelEntity['via']; weak: boolean } | null {
   if (descriptor.modelBaseClasses?.length) {
     const heritage = modelShape.heritage(node);
     if (heritage.some((h) => heritageMatches(h, descriptor.modelBaseClasses!))) {
-      return 'base-class';
+      return { via: 'base-class', weak: false };
     }
   }
   if (descriptor.modelDecorators?.length && callShape) {
     const names = modelShape.classDecorators(node).map((d) => decoratorName(d));
-    if (names.some((n) => descriptor.modelDecorators!.includes(n))) return 'decorator';
+    if (names.some((n) => descriptor.modelDecorators!.includes(n))) {
+      return { via: 'decorator', weak: false };
+    }
   }
   if (descriptor.structTagKeys?.length) {
     for (const field of modelShape.fieldNodes(node)) {
       const tag = modelShape.fieldTag(field);
       if (tag && descriptor.structTagKeys.some((k) => tagWireName(tag, k) !== null)) {
-        return 'struct-tag';
+        return { via: 'struct-tag', weak: false };
       }
+    }
+  }
+  // WEAK heritage last: a too-generic name (`Base`) marks a model only when
+  // field extraction corroborates it (≥1 fieldCallees hit) — the caller
+  // enforces that, discarding uncorroborated weak matches.
+  if (descriptor.weakModelBaseClasses?.length) {
+    const heritage = modelShape.heritage(node);
+    if (heritage.some((h) => heritageMatches(h, descriptor.weakModelBaseClasses!))) {
+      return { via: 'base-class', weak: true };
     }
   }
   return null;
@@ -124,10 +135,11 @@ function extractFields(
   descriptor: ModelSchemaSupport,
   modelShape: GrammarModelShape,
   callShape: GrammarShape | null,
-): ModelField[] {
+): { fields: ModelField[]; sawFieldCallee: boolean } {
   const out: ModelField[] = [];
   const tagKeys = descriptor.structTagKeys ?? [];
   const calleeSpecs = descriptor.fieldCallees ?? [];
+  let sawFieldCallee = false;
 
   for (const field of modelShape.fieldNodes(classNode)) {
     const declaredNames = modelShape.fieldNames(field);
@@ -143,6 +155,7 @@ function extractFields(
       const call = modelShape.fieldValueCall(field);
       const resolved = call ? resolveFieldCallee(call, callShape, calleeSpecs) : null;
       if (resolved) {
+        sawFieldCallee = true;
         if (rawType === null) rawType = resolved.rawType;
         descriptorOptional = resolved.descriptorOptional;
       }
@@ -174,7 +187,7 @@ function extractFields(
       out.push({ name, ...normalized });
     }
   }
-  return out;
+  return { fields: out, sawFieldCallee };
 }
 
 /**
@@ -197,11 +210,14 @@ export function extractModelsFromTree(
     if (!classTypes.has(node.type)) return undefined;
     const name = modelShape.className(node);
     if (name === null) return undefined;
-    const via = recognizeModel(node, descriptor, modelShape, callShape);
-    if (via === null) return undefined;
+    const recognized = recognizeModel(node, descriptor, modelShape, callShape);
+    if (recognized === null) return undefined;
 
-    const fields = extractFields(node, descriptor, modelShape, callShape);
-    const entity: ModelEntity = { name, via, file, line: line(node), fields };
+    const { fields, sawFieldCallee } = extractFields(node, descriptor, modelShape, callShape);
+    // A weak heritage match (a too-generic base name) needs corroboration:
+    // no ORM field constructor in the body → not a model, skip silently.
+    if (recognized.weak && !sawFieldCallee) return undefined;
+    const entity: ModelEntity = { name, via: recognized.via, file, line: line(node), fields };
     models.push(entity);
     if (fields.length === 0) {
       dynamicModels.push({ name, file, line: line(node) });
