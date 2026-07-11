@@ -34,7 +34,12 @@ import {
   type ServedMethod,
 } from './normalize';
 import type { ClientCall, RouteEndpoint } from './extract';
-import { collectDecoratorPrefix, decoratorPathRaw, joinNormalizedPaths } from './extract-prefix';
+import {
+  collectDecoratorPrefix,
+  decoratorPathRaw,
+  decoratorPathsRaw,
+  joinNormalizedPaths,
+} from './extract-prefix';
 
 /** Both surfaces one decorator can declare (a route OR a Retrofit-style
  *  consumed call — never both). */
@@ -73,26 +78,40 @@ function receiverMatchesBase(receiver: string, bases: readonly string[]): boolea
 }
 
 /**
- * The route path of a member/path decorator — its first string argument (or a
- * `decoratorPathKeywords` keyword), REQUIRED to begin with `/` once unquoted.
- * FastAPI/Flask/Sanic/Spring mandate the leading slash, and requiring it is
- * the precision guard that keeps look-alike member decorators
- * (`@mock.patch('pkg.attr')`) from minting phantom routes. (Bare
- * `routeDecorators` keep their historical exemption — LoopBack allows
- * `@post('zen/x')` — and JAX-RS pair paths are exempt too.)
+ * The route paths of a member/path decorator — its declared path strings
+ * (positional, list, or a `decoratorPathKeywords` keyword), each REQUIRED to
+ * begin with `/` once unquoted. FastAPI/Flask/Sanic/Spring mandate the
+ * leading slash, and requiring it is the precision guard that keeps
+ * look-alike member decorators (`@mock.patch('pkg.attr')`) from minting
+ * phantom routes. (Bare `routeDecorators` keep their historical exemption —
+ * LoopBack allows `@post('zen/x')` — and JAX-RS pair paths are exempt too.)
  */
-function slashedDecoratorPath(
+function slashedDecoratorPaths(
   call: Node,
   shape: GrammarShape,
   hf: HttpFlowSupport,
   config?: NormalizeConfig,
-): string | null {
-  const raw = decoratorPathRaw(call, shape, hf);
-  if (raw == null) return null;
-  let s = raw.trim();
-  if (s.length >= 2 && /^['"`]/.test(s) && s.endsWith(s[0])) s = s.slice(1, -1);
-  if (!s.startsWith('/')) return null;
-  return normalizePath(raw, config);
+): string[] {
+  const out: string[] = [];
+  for (const raw of decoratorPathsRaw(call, shape, hf)) {
+    let s = raw.trim();
+    if (s.length >= 2 && /^['"`]/.test(s) && s.endsWith(s[0])) s = s.slice(1, -1);
+    if (!s.startsWith('/')) continue;
+    const norm = normalizePath(raw, config);
+    if (norm) out.push(norm);
+  }
+  return out;
+}
+
+/** Join every declared own-path with the ancestor prefix, deduplicated;
+ *  no own path at all → the prefix alone (a marker @PostMapping serves its
+ *  class path). */
+function prefixedPaths(prefix: string | null, owns: readonly (string | null)[]): string[] {
+  const source = owns.filter((o): o is string => o !== null);
+  const joined = (source.length > 0 ? source : [null]).map((own) =>
+    joinNormalizedPaths(prefix, own),
+  );
+  return [...new Set(joined.filter((p): p is string => p !== null))];
 }
 
 /** A single method token off a non-list keyword value (`method =
@@ -255,12 +274,13 @@ export function extractDecoratorFlow(
   }
 
   // BARE verb decorator: @get('/x'), Spring @GetMapping("/x") /
-  // @GetMapping(path = "/y") / marker @GetMapping (class prefix alone).
+  // @GetMapping(path = "/y") / @GetMapping({"/a", "/b"}) (one route per
+  // entry) / marker @GetMapping (class prefix alone).
   if (callee.kind === 'bare' && (hf.routeDecorators ?? []).includes(callee.name)) {
-    const own = normalizePath(decoratorPathRaw(call, shape, hf), config);
-    const path = joinNormalizedPaths(prefix(), own);
+    const owns = decoratorPathsRaw(call, shape, hf).map((raw) => normalizePath(raw, config));
+    const paths = prefixedPaths(prefix(), owns);
     const method = normalizeMethod(callee.name, hf.methodAliases);
-    return { routes: path && method ? [{ method, path, ...base }] : [], calls: [] };
+    return { routes: method ? paths.map((path) => ({ method, path, ...base })) : [], calls: [] };
   }
 
   // MEMBER verb decorator: FastAPI @app.get('/x').
@@ -271,25 +291,27 @@ export function extractDecoratorFlow(
     member.methods.includes(callee.name) &&
     (member.bases === undefined || receiverMatchesBase(callee.receiver, member.bases))
   ) {
-    const own = slashedDecoratorPath(call, shape, hf, config);
-    const path = joinNormalizedPaths(prefix(), own);
+    const paths = prefixedPaths(prefix(), slashedDecoratorPaths(call, shape, hf, config));
     const method = normalizeMethod(callee.name, hf.methodAliases);
-    return { routes: path && method ? [{ method, path, ...base }] : [], calls: [] };
+    return { routes: method ? paths.map((path) => ({ method, path, ...base })) : [], calls: [] };
   }
 
   // PATH-first decorator with a methods keyword: Flask @app.route(...),
-  // Spring @RequestMapping(...).
+  // Spring @RequestMapping(...). The leading-slash precision guard applies
+  // to the MEMBER form only (Flask's @app.route — where a look-alike
+  // @mock.patch('pkg.attr') must not mint a route); a BARE-resolved
+  // annotation (Spring @RequestMapping(path = "{id}")) legally declares a
+  // slash-less path RELATIVE to its class prefix.
   const pathSpec = hf.routePathDecorators;
   if (pathSpec && pathSpec.names.includes(callee.name)) {
-    const own = slashedDecoratorPath(call, shape, hf, config);
-    const path = joinNormalizedPaths(prefix(), own);
-    if (!path) return { routes: [], calls: [] };
+    const owns =
+      callee.kind === 'member'
+        ? slashedDecoratorPaths(call, shape, hf, config)
+        : decoratorPathsRaw(call, shape, hf).map((raw) => normalizePath(raw, config));
+    const paths = prefixedPaths(prefix(), owns);
+    const methods = pathDecoratorMethods(call, shape, hf, pathSpec);
     return {
-      routes: pathDecoratorMethods(call, shape, hf, pathSpec).map((method) => ({
-        method,
-        path,
-        ...base,
-      })),
+      routes: paths.flatMap((path) => methods.map((method) => ({ method, path, ...base }))),
       calls: [],
     };
   }
