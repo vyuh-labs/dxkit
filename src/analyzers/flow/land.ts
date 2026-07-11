@@ -23,7 +23,7 @@
  * refresh never hard-fails on missing tooling (the workflow's job is the
  * snapshot; the PR is the vehicle).
  */
-import { landRefreshPaths, makeExec, type Exec } from '../../land-refresh';
+import { landRefreshPaths, type Exec } from '../../land-refresh';
 import {
   contractKey,
   FLOW_DIR,
