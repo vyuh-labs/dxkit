@@ -27,6 +27,7 @@
  */
 
 import type { Node } from './parse';
+import { KOTLIN_MODEL } from './grammar-shape-kotlin';
 
 // GrammarModelShape moved to @vyuhlabs/dxkit-sdk (Rule 18, sibling of
 // GrammarShape). The per-grammar rows + dispatch below stay internal.
@@ -264,12 +265,102 @@ const GO: GrammarModelShape = {
   },
 };
 
+/** Annotations attached to a Java declaration — they sit inside a `modifiers`
+ *  child (never as siblings), in with-arguments and marker forms. */
+function javaAnnotations(node: Node): Node[] {
+  const out: Node[] = [];
+  for (const c of node.namedChildren) {
+    if (!c || c.type !== 'modifiers') continue;
+    out.push(
+      ...namedChildrenOfType(c, 'annotation'),
+      ...namedChildrenOfType(c, 'marker_annotation'),
+    );
+  }
+  return out;
+}
+
+/** Java (verified vs the bundled wasm): `class_declaration` +
+ *  `record_declaration` (a record's components are its `parameters`), fields
+ *  as `field_declaration` with REPEATED `declarator` children (`int a, b;` —
+ *  the Go multi-name pattern), annotations under a `modifiers` child. Java
+ *  has NO grammar-level optionality marker — `@Column(nullable = …)` is a
+ *  framework fact (`fieldDecoratorSpecs`), so the marker read is null. */
+const JAVA: GrammarModelShape = {
+  classNodes: ['class_declaration', 'record_declaration'],
+
+  className(node) {
+    return node.childForFieldName('name')?.text ?? null;
+  },
+
+  heritage(node) {
+    const out: string[] = [];
+    const sup = node.childForFieldName('superclass');
+    if (sup) for (const c of sup.namedChildren) if (c) out.push(c.text);
+    const ifaces = node.childForFieldName('interfaces');
+    if (ifaces) {
+      for (const list of namedChildrenOfType(ifaces, 'type_list')) {
+        for (const t of list.namedChildren) if (t) out.push(t.text);
+      }
+    }
+    return out;
+  },
+
+  classDecorators(node) {
+    return javaAnnotations(node);
+  },
+
+  fieldNodes(classNode) {
+    // Records carry their components as parameters; classes as body fields.
+    if (classNode.type === 'record_declaration') {
+      const params = classNode.childForFieldName('parameters');
+      return params ? namedChildrenOfType(params, 'formal_parameter') : [];
+    }
+    const body = classNode.childForFieldName('body');
+    return body ? namedChildrenOfType(body, 'field_declaration') : [];
+  },
+
+  fieldNames(field) {
+    if (field.type === 'formal_parameter') {
+      const name = field.childForFieldName('name');
+      return name ? [name.text] : [];
+    }
+    // `private int a, b;` → repeated `declarator` children, one name each.
+    return childrenForField(field, 'declarator')
+      .map((d) => d.childForFieldName('name')?.text)
+      .filter((t): t is string => t !== undefined);
+  },
+
+  fieldTypeText(field) {
+    return field.childForFieldName('type')?.text ?? null;
+  },
+
+  fieldOptionalMarker() {
+    return null;
+  },
+
+  fieldTag() {
+    return null;
+  },
+
+  fieldValueCall(field) {
+    const decl = childrenForField(field, 'declarator')[0];
+    const value = decl?.childForFieldName('value');
+    return value && value.type === 'method_invocation' ? value : null;
+  },
+
+  fieldDecorators(field) {
+    return javaAnnotations(field);
+  },
+};
+
 const MODEL_SHAPES: Readonly<Record<string, GrammarModelShape>> = {
   typescript: JS_FAMILY,
   tsx: JS_FAMILY,
   javascript: JS_FAMILY,
   python: PYTHON,
   go: GO,
+  java: JAVA,
+  kotlin: KOTLIN_MODEL,
 };
 
 /** The model shape for a logical grammar name, or null when no row exists —
