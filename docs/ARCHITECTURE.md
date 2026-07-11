@@ -195,6 +195,49 @@ pack has native extraction. The design discipline (enforced by the
 synthetic-pack playbook test): a framework quirk lands as a new
 descriptor capability — never an `if` in the extractor.
 
+## The extension system (`src/extensions/`, `packages/dxkit-sdk`)
+
+Everything team-specific plugs in through one committed surface,
+`.dxkit/extensions/<name>/extension.json`, on a four-rung effort ladder
+(config, declared artifact, external script, TypeScript plugin). The
+architecture is a set of registries, each with a synthetic-injection
+playbook test, so a new format or contribution point is an entry, never
+an engine edit:
+
+- **[`contract-sources/`](../src/analyzers/flow/contract-sources/)** (rung
+  2): one reader per artifact format (OpenAPI, Postman, Pact, `.http`,
+  HAR) in the `CONTRACT_SOURCE_READERS` registry; `flow.sources` entries
+  dispatch through it and reduce through the ONE URL normalizer.
+- **[`contributions/`](../src/extensions/contributions/)** (rung 3): the
+  `CONTRIBUTION_KINDS` registry maps each wire kind (`contract.v1`,
+  `inventory.v1`, `findings.v1`, `export.v1`) to its versioned,
+  field-precise validators. Shipped schema versions are read forever.
+- **[`run.ts`](../src/extensions/run.ts)**: the ONE runner. Rung 3 speaks
+  the wire protocol over stdin/stdout in a subprocess; a rung-4 producer
+  is the same protocol called in-process; both share one
+  validate-stamp-snapshot tail. Execution happens only on trusted context
+  at refresh time; gates read committed snapshots offline via
+  [`snapshot.ts`](../src/extensions/snapshot.ts) with staleness disclosed.
+- **[`plugin-host.ts`](../src/extensions/plugin-host.ts)** (rung 4): the
+  ONE loader for committed CommonJS plugins (`createRequire` is
+  arch-banned elsewhere). Each `defineExtension` contribution point
+  registers into an EXISTING registry: `httpFlowDialect` merges
+  additive-only into a pack's `httpFlow` descriptor, `contractReader`
+  joins the contract-source registry, `urlNormalizer` rides the
+  normalizer's `rewriteUrl` hook, producers use the runner above. Under
+  `--untrusted` nothing loads, symmetrically on both gate sides, so a
+  degraded lens can never produce a false block.
+- **[`packages/dxkit-sdk`](../packages/dxkit-sdk)**: the frozen surface
+  all of this speaks (descriptor language, wire schemas, the normalizer,
+  the plugin types). Additive-only within a major; pinned by the
+  three-layer surface-freeze test and arch Rule 18. It publishes itself:
+  a version bump reaching main with green CI triggers the tag, Release,
+  and npm publish.
+
+Extension findings enter the gate as the custom-check seam's third
+consumer (`extension:<name>` labels), inheriting located identity,
+grandfathering, and allowlisting with no parallel pipeline.
+
 ## The AnalysisResult cache
 
 Every analyzer command builds (or reads) a cached

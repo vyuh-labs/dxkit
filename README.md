@@ -321,6 +321,23 @@ guardrails, brownfield baselines, durable finding identity, SARIF, CodeQL, and
 Snyk ingest, a six-dimension health report, code-graph context, and a set of
 Claude Code skills. See **[the docs](docs/README.md)**.
 
+### Extensions: your conventions, the same gate
+
+dxkit understands languages and frameworks natively. Everything specific to
+your team plugs in as an extension, and the ladder starts at zero code:
+declare a Postman collection, Pact contract, `.http` file, or HAR capture in
+`flow.sources` and it joins the integration map like extracted calls. Point a
+manifest at a script you already have, in any language, and dxkit runs it at
+refresh time, validates its output, and routes it through the same reporting
+and gating as native findings: your custom scanner blocks PRs on net-new
+findings only, your screens-and-permissions inventory trends in reports. For
+what only code can express, a small TypeScript plugin
+([`@vyuhlabs/dxkit-sdk`](packages/dxkit-sdk)) can teach the flow extractor a
+bespoke HTTP client, read a custom contract format, or assert over the
+gathered flow model. `vyuh-dxkit extensions init` scaffolds either kind;
+`extensions dev` validates in seconds. See
+**[the extension SDK docs](docs/extension-sdk.md)**.
+
 ## Languages
 
 dxkit covers 8 ecosystems. Detection is automatic from your manifests and
