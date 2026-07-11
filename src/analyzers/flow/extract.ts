@@ -43,7 +43,9 @@ import {
 } from './normalize';
 import { mergeHttpFlow } from './dialects';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
-import { extractDecoratorRoutes } from './extract-decorators';
+import { extractDecoratorFlow } from './extract-decorators';
+import { collectGroupPrefix, joinNormalizedPaths } from './extract-prefix';
+import { matchChainCall } from './extract-chains';
 
 /** An outbound HTTP call found in source (the consumed side). */
 export interface ClientCall {
@@ -215,10 +217,13 @@ export function extractFromTree(
   };
 
   walk(root, (node) => {
-    // ── decorator routes: @get('/x') / @app.get('/x') / @app.route('/x', methods=[...]) ──
+    // ── decorator flow: routes (@get('/x'), @app.route(...), JAX-RS pairs)
+    //    and decorator-declared client calls (Retrofit @GET("users/{id}")) ──
     if (shape.decoratorNodes.includes(node.type)) {
-      routes.push(...extractDecoratorRoutes(node, shape, hf, file, line(node), config));
-      // A decorator's call is a route declaration, never a client call — skip
+      const dec = extractDecoratorFlow(node, shape, hf, file, line(node), config);
+      routes.push(...dec.routes);
+      calls.push(...dec.calls);
+      // A decorator's invocation is a declaration, never a call site — skip
       // the subtree so `@app.get('/x')`'s inner member call isn't double-read
       // as an outbound `app.get(...)`.
       return false;
@@ -227,6 +232,29 @@ export function extractFromTree(
     if (!shape.callNodes.includes(node.type)) return;
     const callee = shape.resolveCall(node);
     if (!callee) return;
+
+    // ── bare VERB route callee: Ktor `get("/x") { … }` — the callee IS the
+    //    verb, the first argument is the path (leading `/` required), the
+    //    handler is a trailing lambda. Ancestor `route("/api") { … }` groups
+    //    prefix the path (extract-prefix.ts).
+    const verbCallees = hf.routeVerbCallees;
+    if (callee.kind === 'bare' && verbCallees && verbCallees.methods.includes(callee.name)) {
+      const raw = literalText(shape.firstArg(node));
+      const lambdaOk =
+        verbCallees.requireTrailingLambda !== true ||
+        (shape.hasTrailingLambda !== undefined && shape.hasTrailingLambda(node));
+      if (raw != null && unquote(raw).startsWith('/') && lambdaOk) {
+        const own = normalizePath(raw, config);
+        const path = joinNormalizedPaths(collectGroupPrefix(node, shape, hf, config), own);
+        const method = normalizeMethod(callee.name, hf.methodAliases);
+        if (path && method) {
+          routes.push({ method, path, via: 'router-call', handler: null, file, line: line(node) });
+          return;
+        }
+      }
+      // Not route-shaped (no slashed literal / no lambda) — fall through to
+      // the client branches: `get(...)` may still be a declared client callee.
+    }
 
     // ── verb-less route callee: Django `path('users/<int:pk>/', view)`,
     //    Go `http.HandleFunc("/x", h)` / `mux.HandleFunc("GET /users/{id}", h)` ──
@@ -351,6 +379,26 @@ export function extractFromTree(
     if (callee.kind === 'member') {
       const verb = callee.name;
       const receiver = callee.receiver;
+
+      // builder-chain client: the verb and URL live on DIFFERENT calls of one
+      // chain (WebClient .get().uri(), java.net.http .uri().GET(), OkHttp
+      // .url().get()). Anchored on the URL-bearing call; see extract-chains.
+      const chain = matchChainCall(node, callee, hf, shape, config);
+      if (chain) {
+        if (chain.kind === 'call' && chain.rawUrl != null) {
+          calls.push({
+            method: chain.method,
+            rawUrl: chain.rawUrl,
+            path: chain.path,
+            receiver: chain.receiver,
+            file,
+            line: line(node),
+          });
+        } else {
+          dynamicCalls.push({ receiver: chain.receiver, file, line: line(node) });
+        }
+        return;
+      }
 
       // router/app route declaration. A route DECLARATION always carries a
       // handler after the path (`app.get('/x', h)`), so a 1-argument
