@@ -56,6 +56,14 @@ export interface ExtensionPluginSpec {
    * export (or `module.exports`) is a `DxkitExtensionDefinition`.
    */
   module: string;
+  /**
+   * Wall-clock bound for a producer call (async producers are raced
+   * against it; on expiry the run is a disclosed skip). Hosts apply a
+   * default when omitted. A synchronous producer that blocks the event
+   * loop cannot be preempted in-process — the refresh surface's own CI
+   * timeout is the backstop.
+   */
+  timeoutSeconds?: number;
 }
 
 export interface ExtensionManifest {

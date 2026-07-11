@@ -35,13 +35,24 @@ import {
   type ProducerExtension,
 } from './extensions/manifest';
 import { runExtension, type ExtensionRunOutcome } from './extensions/run';
+import { loadPluginDefinition } from './extensions/plugin-host';
+import { gatherRepoFlowModel } from './analyzers/flow/gather';
+import { joinFlow } from './analyzers/flow/model';
+import type { ClientCall } from './analyzers/flow/extract';
 import { readExtensionSnapshot } from './extensions/snapshot';
 import { CONTRIBUTION_KINDS } from './extensions/contributions';
 import { loadExclusions } from './analyzers/tools/exclusions';
 import { detectActiveLanguages } from './languages';
 import { landRefreshPaths, type LandMode } from './land-refresh';
 import { detectDefaultBranch } from './ship-installers';
-import type { WireContractDoc, WireFindingsDoc, WireInventoryDoc } from '@vyuhlabs/dxkit-sdk';
+import type {
+  DxkitExtensionDefinition,
+  VerifierFlowContext,
+  WireConsumedCall,
+  WireContractDoc,
+  WireFindingsDoc,
+  WireInventoryDoc,
+} from '@vyuhlabs/dxkit-sdk';
 
 export type ExtensionsSubcommand = 'list' | 'refresh' | 'dev' | 'init';
 
@@ -134,7 +145,35 @@ function summarizeDoc(
   return lines;
 }
 
-function runOne(cwd: string, ext: LoadedExtension): ExtensionRunOutcome {
+/** Wire shape of one consumed call (canonical path preferred). */
+function wireCall(c: ClientCall): WireConsumedCall {
+  return { method: c.method, url: c.path ?? c.rawUrl, file: c.file, line: c.line };
+}
+
+/**
+ * The flow evidence an `integrationVerifier` receives: the repo's gathered
+ * model in wire shapes, with `unserved` = consumed calls the canonical join
+ * resolved against NO serving route (the gate's block candidates).
+ */
+async function verifierFlowContext(cwd: string): Promise<VerifierFlowContext> {
+  const model = await gatherRepoFlowModel(cwd, { relativeTo: cwd });
+  const bindings = joinFlow(model.calls, model.routes);
+  return {
+    consumed: model.calls.map(wireCall),
+    served: model.routes.map((r) => ({
+      method: r.method,
+      path: r.path,
+      ...(r.handler ? { handler: r.handler } : {}),
+      file: r.file,
+      line: r.line,
+    })),
+    unserved: bindings
+      .filter((b) => b.route === null && b.reason !== 'external')
+      .map((b) => wireCall(b.call)),
+  };
+}
+
+async function runOne(cwd: string, ext: LoadedExtension): Promise<ExtensionRunOutcome> {
   const facts = repoFacts(cwd);
   const delivery = ext.manifest.contributes === 'export' ? latestDelivery(cwd) : undefined;
   if (ext.manifest.contributes === 'export' && delivery === undefined) {
@@ -143,10 +182,26 @@ function runOne(cwd: string, ext: LoadedExtension): ExtensionRunOutcome {
       reason: 'nothing to deliver yet (run `vyuh-dxkit health` to produce a report first)',
     };
   }
+  // A producer plugin loads once here — for verifier detection (the flow
+  // model is gathered only when one asks for it) — and the definition is
+  // handed to the runner so it is not required twice.
+  let pluginDefinition: DxkitExtensionDefinition | undefined;
+  let flow: VerifierFlowContext | undefined;
+  if (ext.manifest.plugin !== undefined) {
+    const loadedPlugin = loadPluginDefinition(cwd, ext);
+    if (!loadedPlugin.ok) return { status: 'invalid', errors: loadedPlugin.errors };
+    for (const d of loadedPlugin.disclosures) logger.warn(`  ${d}`);
+    pluginDefinition = loadedPlugin.definition;
+    if (pluginDefinition.integrationVerifier !== undefined) {
+      flow = await verifierFlowContext(cwd);
+    }
+  }
   return runExtension(cwd, ext, {
     excludeDirs: facts.excludeDirs,
     activeLanguages: facts.activeLanguages,
     ...(delivery !== undefined ? { delivery } : {}),
+    ...(pluginDefinition !== undefined ? { pluginDefinition } : {}),
+    ...(flow !== undefined ? { flow } : {}),
   });
 }
 
@@ -164,12 +219,12 @@ function reportOutcome(name: string, outcome: ExtensionRunOutcome): boolean {
   return false;
 }
 
-export function runExtensionsCli(
+export async function runExtensionsCli(
   cwd: string,
   sub: ExtensionsSubcommand,
   target: string | undefined,
   opts: ExtensionsOptions = {},
-): number {
+): Promise<number> {
   const { extensions, errors } = discoverExtensions(cwd);
 
   switch (sub) {
@@ -255,7 +310,7 @@ export function runExtensionsCli(
       let ok = true;
       const refreshedNames: string[] = [];
       for (const ext of chosen) {
-        const r = runOne(cwd, ext);
+        const r = await runOne(cwd, ext);
         if (r.status === 'ok') refreshedNames.push(ext.manifest.name);
         ok = reportOutcome(ext.manifest.name, r) && ok;
       }
@@ -316,7 +371,34 @@ export function runExtensionsCli(
         return 1;
       }
       logger.header(`vyuh-dxkit extensions dev — ${target}`);
-      const outcome = runOne(cwd, ext);
+      if (ext.manifest.plugin !== undefined && !isProducerExtension(ext)) {
+        // Gather-only plugin: the dev loop is load + validate + show what
+        // registered — there is no document to emit.
+        const loadedPlugin = loadPluginDefinition(cwd, ext);
+        if (!loadedPlugin.ok) {
+          logger.fail('  plugin is INVALID — fix the fields below and re-run:');
+          for (const e of loadedPlugin.errors) logger.info(`    ${e}`);
+          return 1;
+        }
+        logger.success('  plugin loads and is VALID');
+        for (const d of loadedPlugin.disclosures) logger.warn(`  ${d}`);
+        const def = loadedPlugin.definition;
+        if (def.httpFlowDialect) {
+          logger.info(
+            `  httpFlowDialect → merges into the '${def.httpFlowDialect.pack}' pack at gather time`,
+          );
+        }
+        if (def.contractReader) {
+          logger.info(
+            `  contractReader '${def.contractReader.kind}' → declare it in flow.sources to use: { "kind": "${def.contractReader.kind}", "path": "<artifact>" }`,
+          );
+        }
+        if (def.urlNormalizer) {
+          logger.info('  urlNormalizer → rewrites raw URLs ahead of canonical normalization');
+        }
+        return 0;
+      }
+      const outcome = await runOne(cwd, ext);
       if (outcome.status === 'ok') {
         logger.success('  emit is VALID');
         for (const line of summarizeDoc(ext, outcome)) logger.info(line);

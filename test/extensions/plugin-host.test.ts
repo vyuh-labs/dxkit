@@ -308,3 +308,165 @@ describe('loadFlowPluginOverlay (the gather-time trust tier)', () => {
     expect(overlay).toEqual({ dialects: [], readers: [], disclosures: [] });
   });
 });
+
+describe('rung-4 producers (the in-process transport of the ONE runner)', () => {
+  const FINDINGS_MANIFEST = {
+    contributes: 'findings',
+    refresh: 'manual',
+    output: '.dxkit/contrib/perm-audit.json',
+  };
+
+  async function run(name: string) {
+    const { runExtension } = await import('../../src/extensions/run');
+    return runExtension(tmp, firstExtension(name), { now: () => new Date('2026-07-11T00:00:00Z') });
+  }
+
+  it('a findingProducer emits, validates, stamps, and snapshots like rung 3', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: (ctx) => ({ schema: 'findings.v1', findings: [
+          { rule: 'unguarded', message: 'screen ' + ctx.name, severity: 'high', file: 'src/A.jsx', line: 3 },
+        ] }) };`,
+      FINDINGS_MANIFEST,
+    );
+    const out = await run('perm-audit');
+    expect(out.status).toBe('ok');
+    const snap = JSON.parse(
+      fs.readFileSync(path.join(tmp, '.dxkit/contrib/perm-audit.json'), 'utf8'),
+    );
+    expect(snap.schema).toBe('findings.v1');
+    expect(snap.generatedAt).toBe('2026-07-11T00:00:00.000Z');
+    expect(snap.findings[0].message).toBe('screen perm-audit');
+  });
+
+  it('the snapshot enters the custom-check seam exactly like a rung-3 emit', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: () => ({ schema: 'findings.v1', findings: [
+          { rule: 'unguarded', message: 'no guard', severity: 'high', file: 'src/A.jsx', line: 3 },
+        ] }) };`,
+      { ...FINDINGS_MANIFEST, gating: 'block' },
+    );
+    await run('perm-audit');
+    const { gatherExtensionFindings } = await import('../../src/extensions/extension-findings');
+    const findings = gatherExtensionFindings(tmp);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].check).toBe('extension:perm-audit');
+    expect(findings[0].blocking).toBe(true);
+  });
+
+  it('an async producer is awaited', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: async () => ({ schema: 'findings.v1', findings: [] }) };`,
+      FINDINGS_MANIFEST,
+    );
+    const out = await run('perm-audit');
+    expect(out.status).toBe('ok');
+  });
+
+  it('a throwing producer is an invalid outcome, never a crash', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: () => { throw new Error('sideways'); } };`,
+      FINDINGS_MANIFEST,
+    );
+    const out = await run('perm-audit');
+    expect(out.status).toBe('invalid');
+    if (out.status === 'invalid') expect(out.errors[0]).toContain('sideways');
+  });
+
+  it('an invalid emission gets the field-precise wire errors', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: () => ({ schema: 'findings.v1', findings: [{ rule: 'x' }] }) };`,
+      FINDINGS_MANIFEST,
+    );
+    const out = await run('perm-audit');
+    expect(out.status).toBe('invalid');
+    if (out.status === 'invalid') {
+      expect(out.errors.join('\n')).toContain('findings[0]');
+    }
+  });
+
+  it('a hung async producer is a disclosed timeout skip (plugin.timeoutSeconds)', async () => {
+    writePlugin(
+      'perm-audit',
+      `module.exports = { name: 'perm-audit', sdkMajor: ${SDK_MAJOR},
+        findingProducer: () => new Promise(() => {}) };`,
+      FINDINGS_MANIFEST,
+    );
+    // Tighten the bound via the plugin spec so the test stays fast.
+    const manifestPath = path.join(tmp, '.dxkit/extensions/perm-audit/extension.json');
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    m.plugin.timeoutSeconds = 1;
+    fs.writeFileSync(manifestPath, JSON.stringify(m));
+    const out = await run('perm-audit');
+    expect(out.status).toBe('skipped');
+    if (out.status === 'skipped') expect(out.reason).toBe('timed out after 1s');
+  }, 10_000);
+
+  it('an exporter receives the delivery document and its receipt persists', async () => {
+    writePlugin(
+      'sink',
+      `module.exports = { name: 'sink', sdkMajor: ${SDK_MAJOR},
+        exporter: (ctx) => ({ schema: 'export.v1', delivered: true,
+          detail: 'score=' + ctx.delivery.score }) };`,
+      { contributes: 'export', refresh: 'manual', output: '.dxkit/reports/export-sink.json' },
+    );
+    const { runExtension } = await import('../../src/extensions/run');
+    const out = await runExtension(tmp, firstExtension('sink'), {
+      delivery: { score: 87 },
+      now: () => new Date('2026-07-11T00:00:00Z'),
+    });
+    expect(out.status).toBe('ok');
+    const receipt = JSON.parse(
+      fs.readFileSync(path.join(tmp, '.dxkit/reports/export-sink.json'), 'utf8'),
+    );
+    expect(receipt).toMatchObject({ schema: 'export.v1', delivered: true, detail: 'score=87' });
+  });
+
+  it('an integrationVerifier receives the flow context and asserts over it', async () => {
+    writePlugin(
+      'contract-verify',
+      `module.exports = { name: 'contract-verify', sdkMajor: ${SDK_MAJOR},
+        integrationVerifier: (ctx) => ({ schema: 'findings.v1',
+          findings: ctx.flow.unserved.map((c) => ({
+            rule: 'unserved-call', severity: 'high',
+            message: c.method + ' ' + c.url + ' has no serving route',
+            file: c.file || 'unknown', ...(c.line !== undefined ? { line: c.line } : {}),
+          })) }) };`,
+      { contributes: 'findings', refresh: 'manual', output: '.dxkit/contrib/contract-verify.json' },
+    );
+    const { runExtension } = await import('../../src/extensions/run');
+    const flow = {
+      consumed: [{ method: 'GET', url: '/orphan', file: 'src/app.ts', line: 4 }],
+      served: [],
+      unserved: [{ method: 'GET', url: '/orphan', file: 'src/app.ts', line: 4 }],
+    };
+    const out = await runExtension(tmp, firstExtension('contract-verify'), { flow });
+    expect(out.status).toBe('ok');
+    if (out.status === 'ok') {
+      const doc = out.doc as { findings: Array<{ message: string }> };
+      expect(doc.findings[0].message).toBe('GET /orphan has no serving route');
+    }
+  });
+
+  it('a verifier without a flow context is a disclosed skip, not a lie', async () => {
+    writePlugin(
+      'contract-verify',
+      `module.exports = { name: 'contract-verify', sdkMajor: ${SDK_MAJOR},
+        integrationVerifier: () => ({ schema: 'findings.v1', findings: [] }) };`,
+      { contributes: 'findings', refresh: 'manual', output: '.dxkit/contrib/contract-verify.json' },
+    );
+    const { runExtension } = await import('../../src/extensions/run');
+    const out = await runExtension(tmp, firstExtension('contract-verify'));
+    expect(out.status).toBe('skipped');
+    if (out.status === 'skipped') expect(out.reason).toContain('flow model');
+  });
+});

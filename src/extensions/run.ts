@@ -3,14 +3,20 @@
  * `runExtension` (arch-gated; mirror of Rule 17's custom-check runner
  * discipline). Nothing else in the codebase may spawn an extension.
  *
- * Execution model (the design's rung 3): the extension gets its committed
- * config block + canonical repo facts as JSON on stdin, runs with the repo
- * root as cwd under the shared bounded-exec primitive, and its emitted wire
- * document (the manifest's `output` file, or stdout as the fallback) is
- * validated against its contribution kind's registry entry. A valid emit is
- * rewritten to the output path as pretty-printed canonical JSON with a
- * `generatedAt` stamp (an additive extra field — the snapshot format IS the
- * wire format), ready to commit.
+ * Execution model — ONE protocol, two transports (rungs above never fork
+ * rungs below):
+ *   - rung 3 (`run`): the extension gets its committed config block +
+ *     canonical repo facts as JSON on stdin, runs with the repo root as cwd
+ *     under the shared bounded-exec primitive, and emits its wire document
+ *     via the manifest's `output` file (or stdout as the fallback);
+ *   - rung 4 (`plugin` + `contributes`): the same context is passed as a
+ *     call argument to the plugin's producer function, in-process; the
+ *     returned object IS the emission.
+ * Either way the document is validated against the contribution kind's
+ * registry entry and a valid emit is rewritten to the output path as
+ * pretty-printed canonical JSON with a `generatedAt` stamp (an additive
+ * extra field — the snapshot format IS the wire format), ready to commit —
+ * one validation + persist tail for both rungs.
  *
  * Fail-open policy, in one place: a missing interpreter or a timeout is a
  * disclosed SKIP (`status: 'skipped'`), never a broken gate — the backstop
@@ -26,9 +32,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { WireDoc } from '@vyuhlabs/dxkit-sdk';
+import type { DxkitExtensionDefinition, VerifierFlowContext, WireDoc } from '@vyuhlabs/dxkit-sdk';
 import { makeCommandExec, type CommandExec } from '../analyzers/tools/bounded-exec';
-import { parseWireDocText } from './contributions';
+import { parseWireDoc, parseWireDocText } from './contributions';
+import { loadPluginDefinition, PRODUCER_KEY_BY_KIND } from './plugin-host';
 import {
   DEFAULT_TIMEOUT_SECONDS,
   isProducerExtension,
@@ -78,35 +85,142 @@ export interface RunExtensionOptions {
   readonly delivery?: unknown;
   /** Clock injection for the generatedAt stamp (tests). */
   readonly now?: () => Date;
+  /**
+   * A pre-loaded plugin definition (the CLI loads once for verifier/flow
+   * detection; passing it here avoids a second require). When absent, a
+   * plugin producer loads its own module via the plugin host.
+   */
+  readonly pluginDefinition?: DxkitExtensionDefinition;
+  /**
+   * The gathered flow evidence for an `integrationVerifier` — supplied by
+   * the refresh/dev surface (the runner never gathers; it runs).
+   */
+  readonly flow?: VerifierFlowContext;
 }
 
 /**
  * Run one extension and validate + persist its emission. See the module
  * header for policy; this function owns the mechanics only.
  */
-export function runExtension(
+export async function runExtension(
   cwd: string,
   ext: LoadedExtension,
   opts: RunExtensionOptions = {},
-): ExtensionRunOutcome {
+): Promise<ExtensionRunOutcome> {
   if (!isProducerExtension(ext)) {
     return {
       status: 'skipped',
       reason: 'gather-only plugin — its contributions load live at gather time, nothing to refresh',
     };
   }
-  return runProducer(cwd, ext, opts);
+  if (ext.manifest.plugin !== undefined) return runPluginProducer(cwd, ext, opts);
+  return runCommandProducer(cwd, ext, opts);
 }
 
-function runProducer(
+/**
+ * The rung-4 in-process branch: same protocol as the subprocess path —
+ * config + repo facts in, ONE wire document out, validated against the
+ * manifest's kind, stamped, snapshotted — with the producer function
+ * called directly instead of over stdin/stdout. A throwing producer is an
+ * invalid outcome; a producer that outlives its manifest timeout is a
+ * disclosed skip (the promise is raced against an unref'd timer — the
+ * honest bound for async producers; a synchronous producer that blocks
+ * the event loop cannot be preempted in-process, which is why the refresh
+ * surface's own CI timeout is the backstop).
+ */
+async function runPluginProducer(
+  cwd: string,
+  ext: ProducerExtension,
+  opts: RunExtensionOptions,
+): Promise<ExtensionRunOutcome> {
+  const { manifest } = ext;
+  const loaded =
+    opts.pluginDefinition !== undefined
+      ? ({ ok: true, definition: opts.pluginDefinition, disclosures: [] } as const)
+      : loadPluginDefinition(cwd, ext);
+  if (!loaded.ok) return { status: 'invalid', errors: loaded.errors };
+  const def = loaded.definition;
+
+  const verifier = manifest.contributes === 'findings' ? def.integrationVerifier : undefined;
+  const producer = verifier ?? def[PRODUCER_KEY_BY_KIND[manifest.contributes]];
+  if (typeof producer !== 'function') {
+    return {
+      status: 'invalid',
+      errors: [`${ext.dir}: plugin exports no producer for contributes: '${manifest.contributes}'`],
+    };
+  }
+  if (verifier && opts.flow === undefined) {
+    return {
+      status: 'skipped',
+      reason:
+        'integration verifier needs the gathered flow model — run via `extensions refresh`/`dev`',
+    };
+  }
+
+  const ctx = {
+    name: manifest.name,
+    config: ext.config,
+    repo: {
+      root: path.resolve(cwd),
+      excludeDirs: opts.excludeDirs ?? [],
+      activeLanguages: opts.activeLanguages ?? [],
+    },
+    ...(manifest.contributes === 'export' ? { delivery: opts.delivery } : {}),
+    ...(verifier ? { flow: opts.flow } : {}),
+  };
+
+  const timeoutSeconds = manifest.plugin?.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+  let emitted: unknown;
+  try {
+    emitted = await withTimeout(
+      Promise.resolve((producer as (c: unknown) => unknown | Promise<unknown>)(ctx)),
+      timeoutSeconds * 1000,
+    );
+  } catch (e) {
+    if (e instanceof ProducerTimeout) {
+      return { status: 'skipped', reason: `timed out after ${timeoutSeconds}s` };
+    }
+    return {
+      status: 'invalid',
+      errors: [`plugin producer threw — ${e instanceof Error ? e.message : String(e)}`],
+    };
+  }
+
+  const parsed = parseWireDoc(manifest.contributes, emitted);
+  if (!parsed.ok) return { status: 'invalid', errors: parsed.errors };
+  return persistSnapshot(cwd, manifest.output, parsed.doc, parsed.schemaId, opts.now);
+}
+
+class ProducerTimeout extends Error {}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ProducerTimeout()), ms);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
+function runCommandProducer(
   cwd: string,
   ext: ProducerExtension,
   opts: RunExtensionOptions,
 ): ExtensionRunOutcome {
   const { manifest } = ext;
   if (manifest.run === undefined) {
-    // A rung-4 producer plugin — executed in-process via the plugin host.
-    return { status: 'skipped', reason: 'plugin producer — pending plugin-host wiring' };
+    return {
+      status: 'invalid',
+      errors: [`${ext.dir}: producer manifest has neither run nor plugin`],
+    };
   }
   const timeoutMs = (manifest.run.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
   const exec = opts.exec ?? makeCommandExec(timeoutMs);
@@ -176,14 +290,26 @@ function runProducer(
 
   const parsed = parseWireDocText(manifest.contributes, text);
   if (!parsed.ok) return { status: 'invalid', errors: parsed.errors };
+  return persistSnapshot(cwd, manifest.output, parsed.doc, parsed.schemaId, opts.now);
+}
 
-  // Persist the canonical snapshot: the validated wire doc + a generatedAt
-  // stamp (additive extra — validators tolerate it by design, so the
-  // snapshot round-trips through the same parse path).
-  const stamped = { ...(parsed.doc as unknown as Record<string, unknown>) };
-  stamped['generatedAt'] = (opts.now?.() ?? new Date()).toISOString();
+/**
+ * The shared persist tail (both rungs): the validated wire doc + a
+ * generatedAt stamp (additive extra — validators tolerate it by design, so
+ * the snapshot round-trips through the same parse path), pretty-printed at
+ * the manifest's output path, ready to commit.
+ */
+function persistSnapshot(
+  cwd: string,
+  outputPath: string,
+  doc: WireDoc,
+  schemaId: string,
+  now?: () => Date,
+): ExtensionRunOutcome {
+  const outputAbs = path.join(cwd, outputPath);
+  const stamped = { ...(doc as unknown as Record<string, unknown>) };
+  stamped['generatedAt'] = (now?.() ?? new Date()).toISOString();
   fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
   fs.writeFileSync(outputAbs, `${JSON.stringify(stamped, null, 2)}\n`);
-
-  return { status: 'ok', doc: parsed.doc, schemaId: parsed.schemaId, outputPath: manifest.output };
+  return { status: 'ok', doc, schemaId, outputPath };
 }

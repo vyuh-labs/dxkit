@@ -43,7 +43,7 @@ function writeInventoryExtension(name: string, entities: unknown[]): void {
 }
 
 describe('gatherInventoryCounts', () => {
-  it('counts entities by kind per extension; undefined when none', () => {
+  it('counts entities by kind per extension; undefined when none', async () => {
     expect(gatherInventoryCounts(tmp)).toBeUndefined();
     writeInventoryExtension('ui-inventory', [
       { kind: 'screen', name: 'A' },
@@ -77,7 +77,7 @@ function entry(sha: string, inventory?: ReportHistoryEntry['inventory']): Report
 }
 
 describe('history entry + rendering', () => {
-  it('parseHistory round-trips the inventory field', () => {
+  it('parseHistory round-trips the inventory field', async () => {
     const jsonl = [
       JSON.stringify(entry('a'.repeat(40))),
       JSON.stringify(entry('b'.repeat(40), { 'ui-inventory': { screen: 3 } })),
@@ -87,7 +87,7 @@ describe('history entry + rendering', () => {
     expect(parsed[1].inventory).toEqual({ 'ui-inventory': { screen: 3 } });
   });
 
-  it('renders counts with deltas vs the previous inventory-bearing entry', () => {
+  it('renders counts with deltas vs the previous inventory-bearing entry', async () => {
     const entries = [
       entry('a'.repeat(40), { 'ui-inventory': { screen: 210, permission: 890 } }),
       entry('b'.repeat(40), { 'ui-inventory': { screen: 214, permission: 888 } }),
@@ -101,7 +101,7 @@ describe('history entry + rendering', () => {
     );
   });
 
-  it('repos without inventory render nothing extra (zero bloat)', () => {
+  it('repos without inventory render nothing extra (zero bloat)', async () => {
     const entries = [entry('a'.repeat(40)), entry('b'.repeat(40))];
     expect(renderHistoryMarkdown(entries)).not.toContain('Inventory');
     expect(renderTrendText(entries).join('\n')).not.toContain('inventory');

@@ -48,13 +48,13 @@ const GOOD = {
 };
 
 describe('manifest discovery', () => {
-  it('returns nothing quietly when no extensions dir exists', () => {
+  it('returns nothing quietly when no extensions dir exists', async () => {
     const r = discoverExtensions(tmp);
     expect(r.extensions).toEqual([]);
     expect(r.errors).toEqual([]);
   });
 
-  it('loads a valid manifest with its committed config block', () => {
+  it('loads a valid manifest with its committed config block', async () => {
     writeManifest('ui-inventory', { ...GOOD, config: { screensDir: 'src/screens' } });
     const r = discoverExtensions(tmp);
     expect(r.errors).toEqual([]);
@@ -64,7 +64,7 @@ describe('manifest discovery', () => {
     expect(r.extensions[0].dir).toBe('.dxkit/extensions/ui-inventory');
   });
 
-  it('a broken manifest is reported and never hides healthy siblings', () => {
+  it('a broken manifest is reported and never hides healthy siblings', async () => {
     writeManifest('ui-inventory', GOOD);
     writeManifest('broken', { schemaVersion: 1 });
     const r = discoverExtensions(tmp);
@@ -73,7 +73,7 @@ describe('manifest discovery', () => {
     expect(r.errors[0]).toContain('.dxkit/extensions/broken/extension.json');
   });
 
-  it('rejects argument injection, path traversal, and name aliasing', () => {
+  it('rejects argument injection, path traversal, and name aliasing', async () => {
     writeManifest('inj', { ...GOOD, name: 'inj', run: { command: '--rm-rf' } });
     writeManifest('trav', { ...GOOD, name: 'trav', output: '../../etc/cron.json' });
     writeManifest('abs', { ...GOOD, name: 'abs', output: '/etc/cron.json' });
@@ -87,7 +87,7 @@ describe('manifest discovery', () => {
     );
   });
 
-  it('rejects an unknown contribution kind naming the known set', () => {
+  it('rejects an unknown contribution kind naming the known set', async () => {
     writeManifest('bad-kind', { ...GOOD, name: 'bad-kind', contributes: 'telemetry' });
     const r = discoverExtensions(tmp);
     expect(r.errors[0]).toContain("'contract' | 'inventory' | 'findings' | 'export'");
@@ -109,7 +109,7 @@ describe('rung-4 plugin manifests', () => {
     output: '.dxkit/contrib/acme-verify.json',
   };
 
-  it('accepts a gather-only plugin manifest (no wire kind, no snapshot)', () => {
+  it('accepts a gather-only plugin manifest (no wire kind, no snapshot)', async () => {
     writeManifest('acme-dialect', PLUGIN_GATHER);
     const r = discoverExtensions(tmp);
     expect(r.errors).toEqual([]);
@@ -117,14 +117,14 @@ describe('rung-4 plugin manifests', () => {
     expect(isProducerExtension(r.extensions[0])).toBe(false);
   });
 
-  it('accepts a producer plugin manifest (contributes ⇒ refresh + output)', () => {
+  it('accepts a producer plugin manifest (contributes ⇒ refresh + output)', async () => {
     writeManifest('acme-verify', PLUGIN_PRODUCER);
     const r = discoverExtensions(tmp);
     expect(r.errors).toEqual([]);
     expect(isProducerExtension(r.extensions[0])).toBe(true);
   });
 
-  it('rejects a manifest with both run and plugin, and one with neither', () => {
+  it('rejects a manifest with both run and plugin, and one with neither', async () => {
     writeManifest('both', { ...GOOD, name: 'both', plugin: { module: 'plugin.js' } });
     writeManifest('neither', { schemaVersion: 1, name: 'neither', contributes: 'findings' });
     const r = discoverExtensions(tmp);
@@ -133,7 +133,7 @@ describe('rung-4 plugin manifests', () => {
     expect(r.errors).toContainEqual(expect.stringContaining('needs exactly one of'));
   });
 
-  it('rejects unsafe plugin module paths (traversal, absolute, non-CJS)', () => {
+  it('rejects unsafe plugin module paths (traversal, absolute, non-CJS)', async () => {
     writeManifest('trav', { ...PLUGIN_GATHER, name: 'trav', plugin: { module: '../../x.js' } });
     writeManifest('abs', { ...PLUGIN_GATHER, name: 'abs', plugin: { module: '/etc/x.js' } });
     writeManifest('ts', { ...PLUGIN_GATHER, name: 'ts', plugin: { module: 'plugin.ts' } });
@@ -142,7 +142,7 @@ describe('rung-4 plugin manifests', () => {
     expect(r.errors.filter((e) => e.includes('plugin.module'))).toHaveLength(3);
   });
 
-  it('rejects producer fields on a gather-only plugin (silent no-ops banned)', () => {
+  it('rejects producer fields on a gather-only plugin (silent no-ops banned)', async () => {
     writeManifest('noisy', {
       ...PLUGIN_GATHER,
       name: 'noisy',
@@ -154,7 +154,7 @@ describe('rung-4 plugin manifests', () => {
     expect(r.errors).toContainEqual(expect.stringContaining('only applies to a producer'));
   });
 
-  it('requires contributes with run (a rung-3 extension always emits a kind)', () => {
+  it('requires contributes with run (a rung-3 extension always emits a kind)', async () => {
     const rest: Record<string, unknown> = { ...GOOD };
     delete rest['contributes'];
     writeManifest('ui-inventory', rest);
@@ -162,10 +162,10 @@ describe('rung-4 plugin manifests', () => {
     expect(r.errors).toContainEqual(expect.stringContaining("required with 'run'"));
   });
 
-  it('runner skips a gather-only plugin with a live-loading disclosure', () => {
+  it('runner skips a gather-only plugin with a live-loading disclosure', async () => {
     writeManifest('acme-dialect', PLUGIN_GATHER);
     const r = discoverExtensions(tmp);
-    const out = runExtension(tmp, r.extensions[0]);
+    const out = await runExtension(tmp, r.extensions[0]);
     expect(out.status).toBe('skipped');
     if (out.status === 'skipped') expect(out.reason).toContain('gather-only');
   });
@@ -186,22 +186,22 @@ const VALID_DOC = JSON.stringify({
 });
 
 describe('the ONE runner (policy matrix via injected exec)', () => {
-  it('missing interpreter → disclosed skip', () => {
+  it('missing interpreter → disclosed skip', async () => {
     const exec: CommandExec = () => ({ available: false, code: -1, output: '' });
-    const r = runExtension(tmp, loaded(), { exec });
+    const r = await runExtension(tmp, loaded(), { exec });
     expect(r).toEqual({ status: 'skipped', reason: "interpreter 'python3' not found" });
   });
 
-  it('timeout → disclosed skip naming the budget', () => {
+  it('timeout → disclosed skip naming the budget', async () => {
     const exec: CommandExec = () => ({ available: true, timedOut: true, code: -1, output: '' });
-    const r = runExtension(tmp, loaded(), { exec });
+    const r = await runExtension(tmp, loaded(), { exec });
     expect(r.status).toBe('skipped');
     if (r.status === 'skipped') expect(r.reason).toContain('60s');
   });
 
-  it('non-zero exit → invalid with the output tail disclosed', () => {
+  it('non-zero exit → invalid with the output tail disclosed', async () => {
     const exec: CommandExec = () => ({ available: true, code: 3, output: 'Traceback: boom' });
-    const r = runExtension(tmp, loaded(), { exec });
+    const r = await runExtension(tmp, loaded(), { exec });
     expect(r.status).toBe('invalid');
     if (r.status === 'invalid') {
       expect(r.errors[0]).toContain('exited 3');
@@ -209,13 +209,13 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
     }
   });
 
-  it('stdin payload carries the config block and canonical repo facts', () => {
+  it('stdin payload carries the config block and canonical repo facts', async () => {
     let seen: ExtensionStdinPayload | undefined;
     const exec: CommandExec = (cmd) => {
       seen = JSON.parse(cmd.stdin ?? '{}') as ExtensionStdinPayload;
       return { available: true, code: 0, output: VALID_DOC };
     };
-    runExtension(tmp, loaded(), {
+    await runExtension(tmp, loaded(), {
       exec,
       excludeDirs: ['node_modules', 'dist'],
       activeLanguages: ['python'],
@@ -227,10 +227,10 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
     expect(seen?.repo.activeLanguages).toEqual(['python']);
   });
 
-  it('valid stdout emit → ok + stamped canonical snapshot on disk', () => {
+  it('valid stdout emit → ok + stamped canonical snapshot on disk', async () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: VALID_DOC });
     const now = () => new Date('2026-07-11T12:00:00Z');
-    const r = runExtension(tmp, loaded(), { exec, now });
+    const r = await runExtension(tmp, loaded(), { exec, now });
     expect(r.status).toBe('ok');
     const onDisk = JSON.parse(
       fs.readFileSync(path.join(tmp, '.dxkit/contrib/ui-inventory.json'), 'utf-8'),
@@ -239,14 +239,14 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
     expect(onDisk['generatedAt']).toBe('2026-07-11T12:00:00.000Z');
   });
 
-  it('output-file emit wins over stdout, and a stale file never counts as this run', () => {
+  it('output-file emit wins over stdout, and a stale file never counts as this run', async () => {
     const outAbs = path.join(tmp, '.dxkit/contrib/ui-inventory.json');
     fs.mkdirSync(path.dirname(outAbs), { recursive: true });
     fs.writeFileSync(outAbs, JSON.stringify({ schema: 'inventory.v1', entities: [] }));
     // The exec does NOT rewrite the file → the runner must not read the
     // stale pre-run file; with empty stdout the emit is missing.
     const exec: CommandExec = () => ({ available: true, code: 0, output: '' });
-    const r = runExtension(tmp, loaded(), { exec });
+    const r = await runExtension(tmp, loaded(), { exec });
     expect(r.status).toBe('invalid');
     if (r.status === 'invalid') expect(r.errors[0]).toContain('neither its output file');
     // Now an exec that writes the file during the run:
@@ -257,20 +257,20 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
       );
       return { available: true, code: 0, output: VALID_DOC };
     };
-    const r2 = runExtension(tmp, loaded(), { exec: writingExec });
+    const r2 = await runExtension(tmp, loaded(), { exec: writingExec });
     expect(r2.status).toBe('ok');
     if (r2.status === 'ok') {
       expect(JSON.stringify(r2.doc)).toContain('FromFile');
     }
   });
 
-  it('invalid emit → the field-precise wire errors surface verbatim', () => {
+  it('invalid emit → the field-precise wire errors surface verbatim', async () => {
     const exec: CommandExec = () => ({
       available: true,
       code: 0,
       output: JSON.stringify({ schema: 'inventory.v1', entities: [{ kind: 'screen' }] }),
     });
-    const r = runExtension(tmp, loaded(), { exec });
+    const r = await runExtension(tmp, loaded(), { exec });
     expect(r.status).toBe('invalid');
     if (r.status === 'invalid') {
       expect(r.errors).toContainEqual(expect.stringContaining('entities[0].name'));
@@ -279,7 +279,7 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
 });
 
 describe('export sinks (delivery payload + receipt)', () => {
-  it('the delivery document rides stdin and the receipt round-trips', () => {
+  it('the delivery document rides stdin and the receipt round-trips', async () => {
     writeManifest('influx-sink', {
       schemaVersion: 1,
       name: 'influx-sink',
@@ -299,7 +299,7 @@ describe('export sinks (delivery payload + receipt)', () => {
         output: JSON.stringify({ schema: 'export.v1', delivered: true, detail: '3 rows' }),
       };
     };
-    const out = runExtension(tmp, r.extensions[0], {
+    const out = await runExtension(tmp, r.extensions[0], {
       exec,
       delivery: { overall: 81, sha: 'abc' },
     });
@@ -313,10 +313,10 @@ describe('export sinks (delivery payload + receipt)', () => {
 });
 
 describe('committed snapshots (the offline half)', () => {
-  it('round-trips a runner-written snapshot with staleness age', () => {
+  it('round-trips a runner-written snapshot with staleness age', async () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: VALID_DOC });
     const ext = loaded();
-    runExtension(tmp, ext, { exec, now: () => new Date('2026-07-01T00:00:00Z') });
+    await runExtension(tmp, ext, { exec, now: () => new Date('2026-07-01T00:00:00Z') });
     const snap = readExtensionSnapshot(tmp, ext, () => new Date('2026-07-11T00:00:00Z'));
     expect(snap.status).toBe('ok');
     if (snap.status === 'ok') {
@@ -325,12 +325,12 @@ describe('committed snapshots (the offline half)', () => {
     }
   });
 
-  it('missing snapshot is a disclosed state naming the expected path', () => {
+  it('missing snapshot is a disclosed state naming the expected path', async () => {
     const snap = readExtensionSnapshot(tmp, loaded());
     expect(snap).toEqual({ status: 'missing', outputPath: '.dxkit/contrib/ui-inventory.json' });
   });
 
-  it('a hand-edited invalid snapshot is disclosed with wire errors', () => {
+  it('a hand-edited invalid snapshot is disclosed with wire errors', async () => {
     const ext = loaded();
     const outAbs = path.join(tmp, ext.manifest.output);
     fs.mkdirSync(path.dirname(outAbs), { recursive: true });
