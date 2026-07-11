@@ -226,7 +226,7 @@ blocks, and there is no baseline artifact to maintain).
 
 ### Per-pack capability parity
 
-- [ ] Flow (UI→API) extraction for every pack. TypeScript/JavaScript and Python extract natively today (fetch/axios/Express/Next.js; requests/httpx/FastAPI/Flask/Django); Go is next, then the remaining packs once the extension SDK freezes. Any language can already participate on the served side via `flow.specs` (OpenAPI) or a published `served.json`.
+- [ ] Flow (UI→API) extraction for every pack. TypeScript/JavaScript, Python, and Go extract natively today (fetch/axios/Express/Next.js; requests/httpx/FastAPI/Flask/Django; net/http + chi/echo/gin/fiber); the remaining packs follow once the extension SDK freezes. Any language can already participate on the served side via `flow.specs` (OpenAPI) or a published `served.json`.
 - [ ] Import-graph resolvers for Rust, C#, Kotlin, Java, Ruby. Currently TS, Python, and Go have full reachability and import-graph test-gap credit. The other packs use the fallback path.
 - [ ] Severity-tiered C# linter (Roslyn analyzers or StyleCop)
 - [ ] License providers for Kotlin, Java, Ruby

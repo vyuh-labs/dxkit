@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Go flow extraction.** The flow pillar's third language, again by
+  declaration only. Consumed side: `http.Get/Post/Head` (trusted — a
+  runtime-built URL is disclosed as a dynamic call site), `*http.Client`-style
+  wrappers through the shared path-literal guard, and
+  `http.NewRequest(WithContext)` request constructors (verb from the first
+  string argument, URL from the next). Served side: stdlib
+  `HandleFunc`/`Handle` registrars as method-agnostic `ANY` routes with Go
+  1.22 verb patterns (`"GET /users/{id}"`) read as concrete methods and
+  `{id}` / `{rest...}` / `{$}` pattern forms canonicalized, plus
+  chi/echo/gin/fiber verb methods on the conventional router receiver names.
+  gorilla/mux's chained `.Methods()` refinement is out of scope (those routes
+  surface as `ANY`); an unusually-named router falls back to `flow.specs`.
+  Route declarations now also require a handler argument everywhere, so a
+  1-argument `.Get('/slashed/key')` on a router-named receiver (a cache
+  client) no longer risks minting a phantom route.
+
 - **Python flow extraction.** The flow pillar's second language: the python
   pack declares `httpFlow` + its tree-sitter grammar, and every flow surface
   (map, doctor, contract snapshots, the integration gate) picks it up with

@@ -105,25 +105,34 @@ that break an integration — extracts from source **per pack**: each pack
 declares which constructs are HTTP (`httpFlow`), and one shared extractor
 reads them through a per-grammar syntax table. Current coverage:
 
-| Pack       | Consumed side (client calls)          | Served side (route declarations)                                             |
-| ---------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| typescript | `fetch`, axios, app-specific wrappers | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes |
-| python     | `requests`, `httpx`, wrapper clients  | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic) |
-| others     | — (next waves)                        | via `flow.specs` (OpenAPI) today                                             |
+| Pack       | Consumed side (client calls)                                | Served side (route declarations)                                                                  |
+| ---------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| typescript | `fetch`, axios, app-specific wrappers                       | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes                      |
+| python     | `requests`, `httpx`, wrapper clients                        | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic)                      |
+| go         | `http.Get/Post`, `http.NewRequest`, `*http.Client` wrappers | stdlib `HandleFunc`/`Handle` (incl. Go 1.22 `"GET /x"` patterns), chi/echo/gin/fiber verb methods |
+| others     | — (next waves)                                              | via `flow.specs` (OpenAPI) today                                                                  |
 
-Two notes that keep the model honest:
+Notes that keep the model honest:
 
-- A **verb-less declaration** (Django `path('users/', view)`) is served for
-  every method at the routing layer, so it is published as an `ANY` route —
-  a client's `PUT` resolves against it. Django's regex `re_path(...)` routes
-  are out of scope (no canonical path to join on); point `flow.specs` at an
-  OpenAPI document for such repos.
+- A **verb-less declaration** (Django `path('users/', view)`, Go's
+  `http.HandleFunc("/x", h)`) is served for every method at the routing
+  layer, so it is published as an `ANY` route — a client's `PUT` resolves
+  against it. A Go 1.22 pattern with a verb head (`"GET /users/{id}"`) is
+  read as that concrete method.
+- Django's regex `re_path(...)` routes are out of scope (no canonical path to
+  join on); point `flow.specs` at an OpenAPI document for such repos. Same
+  for gorilla/mux's chained `.Methods("GET")` refinement — those routes
+  surface as `ANY`.
+- Go router packages register on user-named receivers; the pack covers the
+  conventional names (`r`, `router`, `mux`, `e`, `app`, `api`, `g`, `group`,
+  `engine`, `v1`, `v2`, and struct fields like `s.router`). A router bound to
+  an unusual name falls back to `flow.specs`.
 - **Any language can participate in the served side without pack coverage**
   by publishing an OpenAPI spec (`flow.specs`) or a `served.json` snapshot as
   a workspace participant — pack coverage adds native source extraction on
   top.
 
-Remaining packs (Go, Java, Kotlin, C#, Ruby, Rust) gain `httpFlow` in the
+Remaining packs (Java, Kotlin, C#, Ruby, Rust) gain `httpFlow` in the
 language-parity waves; the recipe is declaration-only (see CONTRIBUTING.md
 "Adding a new language").
 
