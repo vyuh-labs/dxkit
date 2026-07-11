@@ -15,7 +15,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const distModule = path.join(root, 'dist', 'discovery', 'docs-tables.js');
 if (!existsSync(distModule)) {
-  console.error('dist/discovery/docs-tables.js not found — run `npm run build` first.');
+  console.error('dist/discovery/docs-tables.js not found — run `npm run build` first.'); // slop-ok: build script
   process.exit(1);
 }
 
