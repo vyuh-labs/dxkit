@@ -41,6 +41,7 @@ import {
   type NormalizeConfig,
   type ServedMethod,
 } from './normalize';
+import { mergeHttpFlow } from './dialects';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
 import { extractDecoratorRoutes } from './extract-decorators';
 
@@ -422,10 +423,16 @@ export async function extractFileFlow(
   filePath: string,
   config?: NormalizeConfig,
   relPath?: string,
+  /**
+   * Plugin dialect overlay, indexed by pack id (`dialectsByPack`). The
+   * file's pack descriptor and its dialects fold through `mergeHttpFlow`
+   * (additive-only) before extraction — one extractor, widened tables.
+   */
+  dialects?: ReadonlyMap<string, HttpFlowSupport[]>,
 ): Promise<FileFlow | null> {
   const parsed = await parseFile(filePath);
   if (!parsed) return null;
-  const hf = httpFlowFor(parsed.languageId);
+  const hf = mergeHttpFlow(httpFlowFor(parsed.languageId), dialects?.get(parsed.languageId) ?? []);
   const shape = grammarShape(parsed.grammar);
   if (!hf || !shape) return { calls: [], routes: [] };
   return extractFromTree(parsed.tree.rootNode, hf, shape, filePath, config, relPath);

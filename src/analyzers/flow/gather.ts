@@ -18,7 +18,15 @@ import { extractFileFlow, type FileFlow } from './extract';
 import { buildFlowModel, type FlowModel } from './model';
 import { loadOpenApiRoutes } from './spec-source';
 import { readFlowConfig } from './config';
-import { loadContractSources, type FlowSourceDecl } from './contract-sources';
+import {
+  CONTRACT_SOURCE_READERS,
+  loadContractSources,
+  type ContractSourceReader,
+  type FlowSourceDecl,
+} from './contract-sources';
+import { dialectsByPack } from './dialects';
+import { loadFlowPluginOverlay } from '../../extensions/plugin-host';
+import type { HttpFlowDialect } from '@vyuhlabs/dxkit-sdk';
 import type { NormalizeConfig } from './normalize';
 
 export interface GatherFlowOptions {
@@ -48,6 +56,17 @@ export interface GatherFlowOptions {
    */
   readonly sources?: readonly FlowSourceDecl[];
   readonly sourcesBase?: string;
+  /**
+   * Plugin overlay (rung 4), pre-loaded by the caller via the plugin host:
+   * dialects widen pack descriptors per file, extra readers augment the
+   * contract-source registry for this load, and rewriteUrl rides the ONE
+   * normalizer's hook. Explicit-config callers (the two-ref gate) pass the
+   * SAME overlay to both sides so a degraded lens can never mint a false
+   * block; `gatherRepoFlowModel` loads it itself.
+   */
+  readonly dialects?: readonly HttpFlowDialect[];
+  readonly extraReaders?: readonly ContractSourceReader[];
+  readonly rewriteUrl?: (rawUrl: string) => string | null;
 }
 
 /** Extensions of packs that can contribute flow (httpFlow + a grammar). */
@@ -67,8 +86,13 @@ function relabelFileFlow(flow: FileFlow, base: string): FileFlow {
 
 /** Walk + extract + assemble. Files that don't parse are skipped, never fatal. */
 export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowModel> {
-  const config: NormalizeConfig = { stripUrlPrefixes: opts.stripUrlPrefixes };
+  const config: NormalizeConfig = {
+    stripUrlPrefixes: opts.stripUrlPrefixes,
+    ...(opts.rewriteUrl ? { rewriteUrl: opts.rewriteUrl } : {}),
+  };
   const extensions = flowExtensions();
+  const dialects =
+    opts.dialects && opts.dialects.length > 0 ? dialectsByPack(opts.dialects) : undefined;
   const fileFlows: FileFlow[] = [];
 
   for (const root of opts.roots) {
@@ -76,7 +100,7 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
       // `rel` (root-relative) is what file-convention routing derives its URL
       // from — the routing base (`app`, `src/app`) is relative to the scanned
       // participant root, not the absolute path or the repo-root relabel.
-      const flow = await extractFileFlow(join(root, rel), config, rel);
+      const flow = await extractFileFlow(join(root, rel), config, rel, dialects);
       if (flow) fileFlows.push(opts.relativeTo ? relabelFileFlow(flow, opts.relativeTo) : flow);
     }
   }
@@ -89,7 +113,14 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
   // registry — both sides, one normalizer, disclosures carried on the model.
   const sourceLoad =
     opts.sources && opts.sources.length > 0
-      ? loadContractSources(opts.sourcesBase ?? opts.roots[0] ?? '.', opts.sources, config)
+      ? loadContractSources(
+          opts.sourcesBase ?? opts.roots[0] ?? '.',
+          opts.sources,
+          config,
+          opts.extraReaders && opts.extraReaders.length > 0
+            ? [...CONTRACT_SOURCE_READERS, ...opts.extraReaders]
+            : undefined,
+        )
       : undefined;
 
   const model = buildFlowModel([
@@ -116,15 +147,28 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
  */
 export async function gatherRepoFlowModel(
   cwd: string,
-  opts: { roots?: readonly string[]; relativeTo?: string } = {},
+  opts: { roots?: readonly string[]; relativeTo?: string; untrusted?: boolean } = {},
 ): Promise<FlowModel> {
   const config = readFlowConfig(cwd);
-  return gatherFlowModel({
+  // The rung-4 overlay loads here — the canonical repo entry — so every
+  // single-repo surface (map, diagnose, detect) sees plugin dialects,
+  // readers, and the rewriteUrl hook without threading them itself. Under
+  // `untrusted` nothing loads (trust tier) and the skip is disclosed.
+  const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
+  const model = await gatherFlowModel({
     roots: opts.roots ?? [cwd],
     specs: config.specs.map((s) => resolve(cwd, s)),
     stripUrlPrefixes: config.stripUrlPrefixes,
     sources: config.sources,
     sourcesBase: cwd,
+    dialects: overlay.dialects,
+    extraReaders: overlay.readers,
+    ...(overlay.rewriteUrl ? { rewriteUrl: overlay.rewriteUrl } : {}),
     ...(opts.relativeTo !== undefined ? { relativeTo: opts.relativeTo } : {}),
   });
+  if (overlay.disclosures.length === 0) return model;
+  return {
+    ...model,
+    sourceDisclosures: [...(model.sourceDisclosures ?? []), ...overlay.disclosures],
+  };
 }

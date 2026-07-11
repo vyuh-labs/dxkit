@@ -32,6 +32,7 @@ import { changedFilesTouchFlowSurface, detectActiveLanguages } from '../language
 import { computeChangedFiles } from './changed-files';
 import { withRefWorktree } from './ref-baseline';
 import { gatherFlowModel } from '../analyzers/flow/gather';
+import { loadFlowPluginOverlay } from '../extensions/plugin-host';
 import {
   buildConsumedContract,
   buildServedContract,
@@ -161,6 +162,9 @@ export async function evaluateFlowGateForGuardrail(opts: {
   readonly verbose?: boolean;
   readonly allowlist?: AllowlistFile | null;
   readonly now?: Date;
+  /** Hosted-PR posture: plugins never load (trust tier); the overlay is
+   *  empty on BOTH sides, so the narrower lens cannot mint a false block. */
+  readonly untrusted?: boolean;
 }): Promise<FlowGateOutcome> {
   const cwd = path.resolve(opts.cwd);
   const config = readFlowConfig(cwd);
@@ -188,6 +192,20 @@ export async function evaluateFlowGateForGuardrail(opts: {
       return skip(gateMode, 'no-flow-surface-change');
     }
 
+    // The rung-4 overlay, loaded ONCE from the working tree's committed
+    // plugin set and applied to BOTH sides. One lens for the whole diff: if
+    // a dialect makes a call visible, it is visible at base too, so a
+    // pre-existing call can never read as net-new because of a plugin (and
+    // a PR that edits the plugin changes both sides' lens — intended, the
+    // same rule the gate's policy config follows). Under --untrusted the
+    // overlay is empty on both sides — symmetric degradation.
+    const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
+    const overlayGather = {
+      dialects: overlay.dialects,
+      extraReaders: overlay.readers,
+      ...(overlay.rewriteUrl ? { rewriteUrl: overlay.rewriteUrl } : {}),
+    };
+
     // HEAD side (the working tree). Served truth = live routes ∪ any committed
     // counterpart snapshot (split-repo case).
     const headModel = await gatherFlowModel({
@@ -196,6 +214,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
       stripUrlPrefixes: config.stripUrlPrefixes,
       sources: config.sources,
       sourcesBase: cwd,
+      ...overlayGather,
       // Repo-relative locators so a binding's identity is the same whether it
       // was gathered here or from the base worktree below (Rule 9).
       relativeTo: cwd,
@@ -216,6 +235,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
         // declared before this PR is grandfathered, not net-new.
         sources: config.sources,
         sourcesBase: wt,
+        ...overlayGather, // the SAME lens as the HEAD side (see above)
         relativeTo: wt, // same repo-relative locators as the HEAD side
       });
       const baseServed = servedKeySet(buildServedContract(baseModel, GATE_META));
