@@ -136,6 +136,50 @@ Remaining packs (Java, Kotlin, C#, Ruby, Rust) gain `httpFlow` in the
 language-parity waves; the recipe is declaration-only (see CONTRIBUTING.md
 "Adding a new language").
 
+## Model-schema coverage
+
+The schema feature — extracting declared data models and gating breaking
+changes (a removed field, a changed type, an optional field made required) —
+recognizes models **by marker, per pack**: each pack declares which
+constructs are models (`modelSchema`), and one shared extractor reads them
+through a per-grammar syntax table. Current coverage:
+
+| Pack       | Recognition markers                                                                                      | Field facts                                                              |
+| ---------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| typescript | `@Entity` / `@Table` / `@Schema` / `@ObjectType` / `@InputType` decorators, `BaseEntity` heritage         | type annotations (`?`, `\| null`)                                        |
+| python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`              | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=` |
+| go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                          | field types (pointer = optional), tag wire names, `omitempty`             |
+| any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                             | the spec's own types + `required` list                                    |
+
+What the gate deliberately does **not** see — each either disclosed at run
+time or documented here, never implied covered:
+
+- **Unmarked models** — a plain interface/class/struct with no framework
+  marker is invisible to code extraction. The honest answer is a spec:
+  point `schema.specs` at an OpenAPI / JSON Schema document and its models
+  gate identically, in any language.
+- **Dynamically-built models** — recognized but statically unenumerable
+  schemas surface in the inventory's dynamic list; their drift is not
+  diffable.
+- **Constraint-level changes** — the diff covers name/type/requiredness. A
+  tightened max-length, a removed enum member, a changed default or
+  validation rule is invisible.
+- **Aliased types** — comparison is lexical after normalization; a type
+  alias whose underlying type changed does not read as drift (resolving it
+  would need a type-checker, which would break the gate's ability to run at
+  a bare git ref).
+- **Serialization renames** outside Go struct tags (a pydantic
+  `Field(alias=...)`).
+- **Migration files / raw SQL** — the gate diffs the code's declaration,
+  not the database.
+- **Consumer impact** — the gate says "this declaration changed
+  breakingly", not "something still reads the removed field".
+
+A rename reads honestly as remove + add (the name is part of the contract);
+a pure file move produces no findings (relocating an unchanged declaration
+is never drift). Remaining packs gain `modelSchema` in the language-parity
+waves — the recipe is declaration-only.
+
 ## Forcing pack activation
 
 If detection misses a pack (rare — typically a missing manifest), you

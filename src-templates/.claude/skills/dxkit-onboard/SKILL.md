@@ -169,7 +169,7 @@ git commit -m "chore: pin baseline mode in policy.json"
 ### 6. Deep configuration — the deterministic, registry-driven pass
 
 Beyond the operational wiring above, dxkit has per-capability configuration —
-what the guardrail blocks on, the loop posture, the flow-gate posture, whether
+what the guardrail blocks on, the loop posture, the flow-gate posture, the schema-gate posture, whether
 the lint gate is on, and so on. The right value for each is not a matter of
 taste; it follows from observable facts about the repo. So dxkit **computes**
 it — the decision lives in code (`vyuh-dxkit configure`), not in your judgment
@@ -198,9 +198,10 @@ present, no lint policy yet`). Present the plan to the customer in plain terms:
   exposes (`capabilities --json` is the same source), so as dxkit grows, new
   capabilities appear in the plan automatically — you never maintain a checklist.
 - **It's a floor, not a ceiling.** The planner seeds each capability at its
-  *safe* default (flow `warn`, lint `warn-only`, the visibility-derived baseline
-  mode). Stricter postures (flow `block`, lint `blocking`) are a deliberate
-  later choice — hand off to the capability's own skill (dxkit-flow,
+  *safe* default (flow `warn`, schema `warn`, lint `warn-only`, the
+  visibility-derived baseline mode). Stricter postures (flow `block`, schema
+  `block`, lint `blocking`) are a deliberate later choice — hand off to the
+  capability's own skill (dxkit-flow, dxkit-schema,
   dxkit-checks, dxkit-loop) when the customer wants to tighten one. Each plan
   item names its driving `skill` for exactly this.
 - **Nothing to do is a valid outcome.** On a repo that's already configured (or
@@ -232,7 +233,7 @@ the values.
 **Never hand-edit policy.json to "configure" a capability the planner covers** —
 run `configure` so the value stays computed and reproducible. Hand-editing is
 for a deliberate override *after* the plan (e.g. bumping flow to `block`), and
-even then the capability's own skill (dxkit-flow, dxkit-checks, dxkit-loop) is
+even then the capability's own skill (dxkit-flow, dxkit-schema, dxkit-checks, dxkit-loop) is
 the better path.
 
 **Enforce it in CI.** `vyuh-dxkit configure check` exits non-zero when a
