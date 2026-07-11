@@ -80,6 +80,26 @@ jobs:
           fi
           echo "✓ @vyuhlabs/dxkit@${VERSION} is available on npm"
 
+      # Preflight 5/5 — the release-ordering rule, made structural: dxkit's
+      # @vyuhlabs/dxkit-sdk dependency must resolve on the registry BEFORE
+      # dxkit itself publishes, or consumers of the new version cannot
+      # install it. Normally a non-event — the SDK auto-publishes when its
+      # bump merges to main (publish-dxkit-sdk.yml) — this catches the case
+      # where that run failed or is still in flight.
+      - name: Preflight — SDK dependency resolves on npm
+        run: |
+          RANGE=$(node -p "(require('./package.json').dependencies || {})['@vyuhlabs/dxkit-sdk'] || ''")
+          if [ -z "$RANGE" ]; then
+            echo "✓ no @vyuhlabs/dxkit-sdk dependency declared"
+            exit 0
+          fi
+          MATCH=$(npm view "@vyuhlabs/dxkit-sdk@${RANGE}" version 2>/dev/null | tail -1)
+          if [ -z "$MATCH" ]; then
+            echo "::error::@vyuhlabs/dxkit-sdk@${RANGE} does not resolve on npm — the SDK publishes FIRST (publish-dxkit-sdk.yml; auto-fires on green main CI, or re-run via a dxkit-sdk@vX.Y.Z Release)."
+            exit 1
+          fi
+          echo "✓ @vyuhlabs/dxkit-sdk@${RANGE} resolves on npm (${MATCH})"
+
       - name: Install dependencies
         run: npm ci
 
