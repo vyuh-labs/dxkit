@@ -45,6 +45,7 @@ import { loadExclusions } from './analyzers/tools/exclusions';
 import { detectActiveLanguages } from './languages';
 import { landRefreshPaths, type LandMode } from './land-refresh';
 import { detectDefaultBranch } from './ship-installers';
+import { SDK_MAJOR } from '@vyuhlabs/dxkit-sdk';
 import type {
   DxkitExtensionDefinition,
   VerifierFlowContext,
@@ -67,6 +68,9 @@ export interface ExtensionsOptions {
   readonly command?: string;
   /** init: also write a Python starter script that passes validation. */
   readonly stub?: boolean;
+  /** init: scaffold a rung-4 TypeScript/CommonJS plugin instead of a
+   *  rung-3 command extension. */
+  readonly plugin?: boolean;
 }
 
 /** Repo facts every run receives — the canonical sources, resolved once. */
@@ -449,7 +453,15 @@ json.dump(doc, sys.stdout)
 
 function initExtension(cwd: string, name: string, opts: ExtensionsOptions): number {
   const kinds = CONTRIBUTION_KINDS.map((d) => d.kind);
-  if (!opts.kind || !kinds.includes(opts.kind as (typeof kinds)[number])) {
+  if (!opts.plugin && (!opts.kind || !kinds.includes(opts.kind as (typeof kinds)[number]))) {
+    logger.fail(`--kind must be one of ${kinds.map((k) => `'${k}'`).join(' | ')}.`);
+    return 1;
+  }
+  if (
+    opts.plugin &&
+    opts.kind !== undefined &&
+    !kinds.includes(opts.kind as (typeof kinds)[number])
+  ) {
     logger.fail(`--kind must be one of ${kinds.map((k) => `'${k}'`).join(' | ')}.`);
     return 1;
   }
@@ -463,6 +475,7 @@ function initExtension(cwd: string, name: string, opts: ExtensionsOptions): numb
     logger.fail(`${EXTENSIONS_DIR}/${name}/extension.json already exists.`);
     return 1;
   }
+  if (opts.plugin) return initPluginExtension(cwd, name, opts, dir, manifestPath);
   const kindDef = CONTRIBUTION_KINDS.find((d) => d.kind === opts.kind)!;
   const stubRel = `${EXTENSIONS_DIR}/${name}/run.py`;
   const commandLine = opts.command ?? (opts.stub ? `python3 ${stubRel}` : undefined);
@@ -489,5 +502,99 @@ function initExtension(cwd: string, name: string, opts: ExtensionsOptions): numb
   logger.info('  Next:');
   logger.info(`    1. vyuh-dxkit extensions dev ${name}   # run + validate in seconds`);
   logger.info('    2. commit the manifest (and snapshot) — gates read snapshots offline');
+  return 0;
+}
+
+/**
+ * Rung-4 scaffold: a manifest + a CommonJS plugin stub that loads and
+ * validates immediately. With `--kind` the stub exports the matching
+ * producer returning a minimal valid document; without it the stub is a
+ * gather-time dialect starter (zero-effect until tokens are filled in),
+ * with the other contribution points shown as comments.
+ */
+function initPluginExtension(
+  cwd: string,
+  name: string,
+  opts: ExtensionsOptions,
+  dir: string,
+  manifestPath: string,
+): number {
+  const kind = opts.kind as 'contract' | 'inventory' | 'findings' | 'export' | undefined;
+  const kindDef = kind ? CONTRIBUTION_KINDS.find((d) => d.kind === kind) : undefined;
+  const manifest = {
+    schemaVersion: 1,
+    name,
+    ...(kind ? { contributes: kind } : {}),
+    plugin: { module: 'plugin.js' },
+    ...(kind ? { refresh: 'on-merge', output: kindDef!.snapshotPathFor(name) } : {}),
+    ...(kind === 'findings' ? { gating: 'warn' } : {}),
+  };
+
+  const producerStubs: Record<string, string> = {
+    contract: `contractProducer: (ctx) => ({
+    schema: 'contract.v1',
+    consumed: [], // { method: 'GET', url: '/api/x', file: 'src/a.ts', line: 3 }
+  }),`,
+    inventory: `inventoryProducer: (ctx) => ({
+    schema: 'inventory.v1',
+    entities: [], // { kind: 'screen', name: 'Checkout', file: 'src/screens/Checkout.jsx' }
+  }),`,
+    findings: `findingProducer: (ctx) => ({
+    schema: 'findings.v1',
+    findings: [], // { rule: 'my-rule', message: '…', severity: 'high', file: 'src/a.ts', line: 3 }
+  }),`,
+    export: `exporter: (ctx) => ({
+    schema: 'export.v1',
+    delivered: false,
+    detail: 'stub — ctx.delivery carries the report to deliver',
+  }),`,
+  };
+  const contribution = kind
+    ? producerStubs[kind]
+    : `httpFlowDialect: {
+    pack: 'typescript', // which language pack's files this dialect widens
+    // Teach flow a bespoke client wrapper: api.fetchJson('/x') → GET /x
+    clientMethodCallees: { methods: [] }, // e.g. ['fetchJson']
+    // methodAliases: { fetchjson: 'GET' },
+  },`;
+
+  const stub = `// dxkit rung-4 plugin (CommonJS — author in TypeScript and commit the
+// compiled module, or write plain JS like this starter). Docs: the
+// dxkit-author-extension skill, or docs/extension-sdk.md in the dxkit repo.
+// Iterate with: vyuh-dxkit extensions dev ${name}
+module.exports = {
+  name: '${name}',
+  // The SDK major this plugin targets (defineExtension from
+  // @vyuhlabs/dxkit-sdk stamps this for you in TypeScript).
+  sdkMajor: ${SDK_MAJOR},
+
+  ${contribution}
+
+  // Other contribution points (see DxkitExtensionDefinition in the SDK):
+  //   contractReader:  parse a custom artifact format for flow.sources
+  //   urlNormalizer:   (rawUrl) => string | null — rewrite ahead of the
+  //                    canonical normalizer (base-URL/tenant schemes)
+  //   integrationVerifier: assert over the gathered flow model; its
+  //                    findings gate through the committed snapshot
+};
+`;
+
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify(manifest, null, 2)}
+`,
+  );
+  fs.writeFileSync(path.join(dir, 'plugin.js'), stub);
+  logger.header('vyuh-dxkit extensions init');
+  logger.success(`  Wrote ${EXTENSIONS_DIR}/${name}/extension.json (rung-4 plugin)`);
+  logger.success(`  Wrote ${EXTENSIONS_DIR}/${name}/plugin.js (loads + validates immediately)`);
+  logger.info('  Next:');
+  logger.info(`    1. vyuh-dxkit extensions dev ${name}   # load + validate in seconds`);
+  logger.info(
+    kind
+      ? '    2. fill in the producer, then commit the manifest + snapshot'
+      : '    2. fill in the dialect tokens, then commit — it applies at the next gather',
+  );
   return 0;
 }

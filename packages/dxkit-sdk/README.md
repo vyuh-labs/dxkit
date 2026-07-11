@@ -12,7 +12,7 @@ internals evolve.
 
 - **Descriptor types**: `HttpFlowSupport`, `FileRouteSupport`, `ModelSchemaSupport`.
   The construct-family tables dxkit's packs declare, and the same language rung-4
-  plugin dialects will use.
+  plugin dialects use.
 - **Grammar-shape types**: `GrammarShape`, `GrammarModelShape`, `ResolvedCall`. How
   a tree-sitter grammar's calls, decorators, strings, classes, and fields are read.
 - **Wire schemas**: the versioned JSON documents an external extension (any
@@ -23,6 +23,12 @@ internals evolve.
   are the exact functions dxkit runs; there is one normalizer, and this is it.
 - **AST access types**: `ParsedFile`, `walk`, and the tree-sitter `Node` / `Tree`
   type re-exports that grammar shapes are written against.
+- **The plugin surface**: `defineExtension` and `DxkitExtensionDefinition` — the
+  rung-4 contribution points (`httpFlowDialect`, `contractReader`,
+  `urlNormalizer`, the wire producers, `integrationVerifier`), each registering
+  into an existing dxkit registry. `defineExtension` stamps the SDK major the
+  plugin targets; a plain CommonJS object with the same shape loads identically,
+  so a plugin has no hard runtime dependency on this package.
 
 ## Versioning contract
 
@@ -37,10 +43,10 @@ internals evolve.
 
 ## Status
 
-Types-first. This package currently ships the frozen types, wire schemas, and pure
-helpers. The extension orchestrator (external extractors declared by manifest) and
-the in-process plugin runtime (`defineExtension`) arrive in later minors; see the
-[dxkit roadmap](https://github.com/vyuh-labs/dxkit#readme) for the rung ladder.
+The full extension ladder is live in dxkit 3.5: declared contract artifacts
+(`flow.sources`), the external-extension orchestrator (`vyuh-dxkit extensions`),
+and the in-process plugin runtime (`defineExtension`). This package ships the
+frozen types, wire schemas, pure helpers, and the plugin authoring surface.
 
 ## License
 

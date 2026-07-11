@@ -31,8 +31,13 @@ Before writing one, climb the ladder from the bottom — most needs stop early:
    Zero code; the artifacts join the flow map and gate like extracted calls.
 3. **External extension** (this skill's core) — a committed manifest points at
    your existing script.
-4. **TypeScript plugin** — only for AST-level integration; you probably don't
-   need it (it lands with the plugin runtime).
+4. **TypeScript plugin** — only for what the rungs above can't express: a
+   bespoke HTTP-client wrapper flow can't see (`httpFlowDialect`), a custom
+   artifact format for `flow.sources` (`contractReader`), base-URL logic
+   beyond `stripUrlPrefixes` (`urlNormalizer`), or an assertion over the
+   gathered flow model (`integrationVerifier`). Scaffold with
+   `vyuh-dxkit extensions init <name> --plugin`; the dxkit-author-extension
+   skill writes one from a prose description. You probably don't need it.
 
 ## What an extension can contribute
 
