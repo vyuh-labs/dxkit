@@ -62,8 +62,9 @@ function decoratedHandlerName(decorator: Node, shape: GrammarShape): string | nu
   let cur: Node | null = decorator.parent;
   for (let i = 0; cur && i < 3; i++) {
     if (shape.functionNodes.includes(cur.type)) {
-      const name = cur.childForFieldName('name');
-      if (name) return name.text;
+      // Field-less grammars (kotlin) answer through the shape accessor.
+      const name = cur.childForFieldName('name')?.text ?? shape.functionName?.(cur) ?? null;
+      if (name) return name;
     }
     cur = cur.parent;
   }

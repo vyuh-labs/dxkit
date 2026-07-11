@@ -269,6 +269,30 @@ describe('Spring forms on kotlin', () => {
   });
 });
 
+describe('root routes + kotlin handler names (the boarded wave-2 findings)', () => {
+  it('java @GetMapping("/") extracts the ROOT route', async () => {
+    const flow = await extract(
+      `public class WelcomeController { @GetMapping("/") public String welcome() { return "w"; } }`,
+      'java',
+      SPRING,
+    );
+    expect(routeKeys(flow)).toEqual(['GET /']);
+  });
+
+  it('kotlin Spring handler names resolve through the functionName accessor', async () => {
+    const flow = await extract(
+      `@RestController
+       class C {
+         @GetMapping("/kt/{id}") fun findOne(@PathVariable id: Long): T? = null
+       }`,
+      'kotlin',
+      SPRING,
+    );
+    expect(flow.routes).toHaveLength(1);
+    expect(flow.routes[0].handler).toBe('findOne');
+  });
+});
+
 describe('array-path decorators (the real-repo validation catch)', () => {
   it('java @GetMapping({ "/vets", "/vets.json" }) serves one route per entry', async () => {
     const flow = await extract(
