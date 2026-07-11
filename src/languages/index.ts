@@ -506,13 +506,28 @@ export function changedFilesTouchFlowSurface(
   changedFiles: readonly string[],
   packs: readonly LanguageSupport[],
   specPaths: readonly string[] = [],
+  /**
+   * Declared contract-artifact paths (`flow.sources[].path`) — exact paths
+   * or basename `*` globs. A PR that only edits a Postman collection or a
+   * pact MUST NOT skip the gate: the artifact IS flow surface.
+   */
+  sourcePatterns: readonly string[] = [],
 ): boolean {
   const exts = allFlowSourceExtensions(packs);
-  if (exts.length === 0) return false;
+  if (exts.length === 0 && specPaths.length === 0 && sourcePatterns.length === 0) return false;
   const specSet = new Set(specPaths.map((s) => s.replace(/\\/g, '/')));
+  const sourceRes = sourcePatterns.map((p) => {
+    const norm = p.replace(/\\/g, '/');
+    const escaped = norm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '[^/]*');
+    return new RegExp(`^${escaped}$`);
+  });
   return changedFiles.some((f) => {
     const norm = f.replace(/\\/g, '/');
-    return exts.some((e) => norm.endsWith(e)) || specSet.has(norm);
+    return (
+      exts.some((e) => norm.endsWith(e)) ||
+      specSet.has(norm) ||
+      sourceRes.some((re) => re.test(norm))
+    );
   });
 }
 
