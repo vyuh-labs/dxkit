@@ -205,9 +205,20 @@ export function extractFromTree(
   const pathDecorators = hf.routePathDecorators;
   const pathDecoratorNames = new Set(pathDecorators?.names ?? []);
   const routeCalleeNames = new Set(hf.routeCallees?.names ?? []);
+  const routeCalleeMemberNames = new Set(hf.routeCallees?.memberNames ?? []);
   const routeCalleeExcludes = new Set(hf.routeCallees?.excludeArgCallees ?? []);
+  const routeCalleeMethodPrefix = hf.routeCallees?.methodPrefixInPath === true;
+  const requestCallees = hf.clientRequestCallees;
+  const requestCalleeNames = new Set(requestCallees?.names ?? []);
 
   const literalText = (node: Node | null): string | null => (node ? shape.stringText(node) : null);
+
+  /** Strip surrounding quotes/backticks off a literal's verbatim text. */
+  const unquote = (raw: string): string => {
+    const s = raw.trim();
+    if (s.length >= 2 && /^['"`]/.test(s) && s.endsWith(s[0])) return s.slice(1, -1);
+    return s;
+  };
 
   /** The route path of a member/path decorator — its first string argument,
    *  REQUIRED to begin with `/` once unquoted. FastAPI/Flask/Sanic mandate the
@@ -301,13 +312,21 @@ export function extractFromTree(
     const callee = shape.resolveCall(node);
     if (!callee) return;
 
-    // ── bare route callee: Django `path('users/<int:pk>/', view)` ──
+    // ── verb-less route callee: Django `path('users/<int:pk>/', view)`,
+    //    Go `http.HandleFunc("/x", h)` / `mux.HandleFunc("GET /users/{id}", h)` ──
     // Method-agnostic at the routing layer → emitted as an `ANY` route (the
-    // join/gate resolve any verb against it). Guards: a string-literal first
-    // arg, a present second arg (the handler), and no argument that is a call
-    // to an excluded name (`include(...)` mounts a sub-conf — its first arg is
-    // a PREFIX, not a served route).
-    if (callee.kind === 'bare' && routeCalleeNames.has(callee.name)) {
+    // join/gate resolve any verb against it), unless `methodPrefixInPath`
+    // reads a concrete verb off the pattern head (Go 1.22 mux). Guards: a
+    // string-literal first arg, a present second arg (the handler), and no
+    // argument that is a call to an excluded name (`include(...)` mounts a
+    // sub-conf — its first arg is a PREFIX, not a served route). A MEMBER
+    // match (`.Handle(...)` sits on any receiver) additionally requires the
+    // pattern to begin with `/` — every Go pattern does, and the guard keeps
+    // generic `.Handle('event', fn)` registrations out.
+    const routeCalleeMatch =
+      (callee.kind === 'bare' && routeCalleeNames.has(callee.name)) ||
+      (callee.kind === 'member' && routeCalleeMemberNames.has(callee.name));
+    if (routeCalleeMatch) {
       const args = shape.positionalArgs(node);
       const raw = args[0] ? shape.stringText(args[0]) : null;
       const excluded = args.some((a) => {
@@ -316,11 +335,25 @@ export function extractFromTree(
         return inner !== null && routeCalleeExcludes.has(inner.name);
       });
       if (raw != null && args.length >= 2 && !excluded) {
-        const path = normalizePath(raw, config);
+        // Method-prefix pattern: `"GET /users/{id}"` → a concrete verb route.
+        let method: HttpMethod | typeof ANY_METHOD = ANY_METHOD;
+        let pattern = unquote(raw);
+        if (routeCalleeMethodPrefix) {
+          const sp = pattern.indexOf(' ');
+          if (sp > 0) {
+            const verb = normalizeMethod(pattern.slice(0, sp), hf.methodAliases);
+            if (verb) {
+              method = verb;
+              pattern = pattern.slice(sp + 1).trim();
+            }
+          }
+        }
+        if (callee.kind === 'member' && !pattern.startsWith('/')) return;
+        const path = normalizePath(pattern, config);
         if (path) {
           const handlerText = args[1]?.text ?? '';
           routes.push({
-            method: ANY_METHOD,
+            method,
             path,
             via: 'router-call',
             handler: /^\S+$/.test(handlerText) ? handlerText : null,
@@ -328,6 +361,52 @@ export function extractFromTree(
             line: line(node),
           });
         }
+      }
+      return;
+    }
+
+    // ── request-constructor client: http.NewRequest("GET", url, body) ──
+    // The METHOD is a positional string argument and the URL the next one.
+    // `NewRequestWithContext(ctx, "GET", url, …)` shifts both right, so the
+    // rule is positional-shape-independent: the first argument whose text is a
+    // verb literal is the method; its successor is the URL. These constructors
+    // are HTTP by definition, so a runtime-built URL (the common case) is
+    // COUNTED as a dynamic call site, never silently dropped.
+    if (
+      requestCallees &&
+      requestCalleeNames.has(callee.name) &&
+      (callee.kind === 'bare' ||
+        requestCallees.bases === undefined ||
+        receiverMatchesBase(callee.receiver, requestCallees.bases) ||
+        requestCallees.bases.includes(callee.receiver))
+    ) {
+      const receiver = callee.kind === 'member' ? callee.receiver : callee.name;
+      const args = shape.positionalArgs(node);
+      let method: HttpMethod | null = null;
+      let urlArg: Node | null = null;
+      for (let i = 0; i < args.length; i++) {
+        const text = shape.stringText(args[i]);
+        if (text == null) continue;
+        const verb = normalizeMethod(unquote(text), hf.methodAliases);
+        if (verb) {
+          method = verb;
+          urlArg = args[i + 1] ?? null;
+        }
+        break; // the first string argument decides — verb or not
+      }
+      const rawUrl = urlArg ? shape.stringText(urlArg) : null;
+      if (method && rawUrl != null) {
+        calls.push({
+          method,
+          rawUrl,
+          path: normalizePath(rawUrl, config),
+          receiver,
+          file,
+          line: line(node),
+        });
+      } else {
+        // Unreadable method or runtime-built URL — recognized, unverifiable.
+        dynamicCalls.push({ receiver, file, line: line(node) });
       }
       return;
     }
@@ -357,8 +436,16 @@ export function extractFromTree(
       const verb = callee.name;
       const receiver = callee.receiver;
 
-      // router/app route declaration
-      if (routerMethods.has(verb) && receiverMatchesBase(receiver, routerBases)) {
+      // router/app route declaration. A route DECLARATION always carries a
+      // handler after the path (`app.get('/x', h)`), so a 1-argument
+      // `.Get('/slashed/key')` on a router-named receiver (a cache client
+      // named `r`, an HTTP wrapper named `app`) falls through to the CLIENT
+      // branch below instead of minting a phantom route.
+      if (
+        routerMethods.has(verb) &&
+        receiverMatchesBase(receiver, routerBases) &&
+        shape.positionalArgs(node).length >= 2
+      ) {
         const path = normalizePath(literalText(shape.firstArg(node)), config);
         const method = normalizeMethod(verb, hf.methodAliases);
         if (path && method) {

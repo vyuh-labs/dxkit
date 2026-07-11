@@ -488,7 +488,10 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
       hf.routeRouterCallees?.methods,
       hf.routeMemberDecorators?.methods,
       hf.routePathDecorators?.names,
-      hf.routeCallees?.names,
+      hf.routeCallees
+        ? [...(hf.routeCallees.names ?? []), ...(hf.routeCallees.memberNames ?? [])]
+        : undefined,
+      hf.clientRequestCallees?.names,
       hf.fileRoutes ? [hf.fileRoutes.handlerFile] : undefined,
     ].filter((f): f is string[] => f !== undefined);
     expect(

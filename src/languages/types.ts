@@ -311,18 +311,47 @@ export interface HttpFlowSupport {
   routePathDecorators?: { names: string[]; methodsKeyword: string; defaultMethods: string[] };
 
   /**
-   * BARE-callee route declarations that bind a path to a handler with NO verb:
-   * Django's `path('users/<int:pk>/', view)` in `urls.py`. The declaration is
-   * method-agnostic at the routing layer, so the route is emitted with the
-   * `ANY` method (see `ANY_METHOD` in `analyzers/flow/normalize.ts`) and
-   * resolves a consumed call with any verb on that path. Guards: the callee
-   * name must match, the first argument must be a string literal, and a
-   * second argument (the handler) must be present — `excludeArgCallees` skips
-   * declarations whose arguments include a call to one of these names
-   * (Django's `include(...)` mounts a sub-conf; its first argument is a
-   * PREFIX, not a served route).
+   * Route declarations that bind a path to a handler with NO verb in the
+   * callee name: Django's `path('users/<int:pk>/', view)` in `urls.py`, Go's
+   * `http.HandleFunc("/x", h)`. The route is emitted with the `ANY` method
+   * (see `ANY_METHOD` in `analyzers/flow/normalize.ts`) — method-agnostic at
+   * the routing layer, resolving a consumed call with any verb on that path —
+   * unless `methodPrefixInPath` extracts a concrete verb (below).
+   *
+   * - `names` matches BARE callees (`path(...)`). Bare route strings keep
+   *   their framework's shape (Django routes carry no leading `/`).
+   * - `memberNames` matches MEMBER callees on ANY receiver
+   *   (`http.HandleFunc(...)`, `mux.Handle(...)`). Member matches REQUIRE the
+   *   route literal to begin with `/` (after any method prefix) — every Go
+   *   pattern does, and the guard keeps generic `.Handle('event', fn)`
+   *   registrations from minting phantom routes.
+   * - `methodPrefixInPath` reads Go 1.22 mux patterns: a first argument of
+   *   `"GET /users/{id}"` yields a concrete `GET` route; no prefix → `ANY`.
+   * - Common guards: string-literal first argument, a second (handler)
+   *   argument present, and `excludeArgCallees` skips declarations whose
+   *   arguments include a call to one of these names (Django's `include(...)`
+   *   mounts a sub-conf; its first argument is a PREFIX, not a served route).
    */
-  routeCallees?: { names: string[]; excludeArgCallees?: string[] };
+  routeCallees?: {
+    names?: string[];
+    memberNames?: string[];
+    excludeArgCallees?: string[];
+    methodPrefixInPath?: boolean;
+  };
+
+  /**
+   * Request-CONSTRUCTOR clients whose METHOD is the first argument and URL the
+   * second: Go's `http.NewRequest("GET", url, body)` /
+   * `http.NewRequestWithContext(ctx, ...)` is the stdlib way to make non-GET
+   * requests, and Python's `requests.request("GET", url)` fits the same shape.
+   * `names` are the callee names (bare or member); `bases`, when declared,
+   * restricts member receivers (`http`) so a same-named constructor elsewhere
+   * doesn't count. A literal method + literal URL yields a binding; a literal
+   * method with a runtime-built URL (the common case) is COUNTED as a dynamic
+   * call site rather than silently dropped — these constructors are HTTP by
+   * definition, so invisibility would understate what flow cannot verify.
+   */
+  clientRequestCallees?: { names: string[]; bases?: string[] };
 
   /**
    * Canonicalize a matched method token to an uppercase HTTP verb where the

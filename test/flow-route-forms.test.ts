@@ -182,3 +182,79 @@ urlpatterns = [
     expect(flow.routes).toHaveLength(0);
   });
 });
+
+describe('routeCallees — MEMBER registrars + method-prefix patterns (Go stdlib shape)', () => {
+  const hf: HttpFlowSupport = {
+    routeCallees: { memberNames: ['HandleFunc', 'Handle'], methodPrefixInPath: true },
+  };
+  const go = grammarShape('go')!;
+
+  async function extractGo(src: string, d: HttpFlowSupport = hf): Promise<FileFlow> {
+    const tree = await parseSource(`package main\nfunc main() {\n${src}\n}`, 'go');
+    return extractFromTree(tree!.rootNode, d, go, 'sample.go');
+  }
+
+  it('a plain pattern registers an ANY route; a 1.22 verb prefix makes it concrete', async () => {
+    const flow = await extractGo(`
+  http.HandleFunc("/items", itemsHandler)
+  mux.HandleFunc("GET /users/{id}", userHandler)
+  mux.Handle("/metrics", promhttp.Handler())
+`);
+    expect(routeKeys(flow)).toEqual(['ANY /items', 'ANY /metrics', 'GET /users/{var}']);
+    expect(flow.routes.find((r) => r.path === '/items')?.handler).toBe('itemsHandler');
+  });
+
+  it('leading-slash guard: a member registrar with a non-path pattern mints nothing', async () => {
+    // `.Handle(...)` is a generic name — an event registration must not
+    // become a served route.
+    const flow = await extractGo(`emitter.Handle("user-created", onUserCreated)`);
+    expect(flow.routes).toHaveLength(0);
+  });
+
+  it('Go 1.22 pattern forms canonicalize: {id} → {var}, {rest...} → catch-all', async () => {
+    const flow = await extractGo(`
+  mux.HandleFunc("GET /files/{p...}", filesHandler)
+  mux.HandleFunc("POST /orders/{id}/lines", linesHandler)
+`);
+    expect(routeKeys(flow)).toEqual(['GET /files/{*}', 'POST /orders/{var}/lines']);
+  });
+
+  it('arity guard: a registrar without a handler argument mints nothing', async () => {
+    const flow = await extractGo(`x.HandleFunc("/lonely")`);
+    expect(flow.routes).toHaveLength(0);
+  });
+});
+
+describe('clientRequestCallees — request constructors (http.NewRequest shape)', () => {
+  const hf: HttpFlowSupport = {
+    clientRequestCallees: { names: ['NewRequest', 'NewRequestWithContext'], bases: ['http'] },
+  };
+  const go = grammarShape('go')!;
+
+  async function extractGo(src: string): Promise<FileFlow> {
+    const tree = await parseSource(`package main\nfunc f(ctx C, url string) {\n${src}\n}`, 'go');
+    return extractFromTree(tree!.rootNode, hf, go, 'sample.go');
+  }
+
+  it('literal method + literal URL yields a binding; ctx-shifted args resolve too', async () => {
+    const flow = await extractGo(`
+  req, _ := http.NewRequest("DELETE", "/api/items/9", nil)
+  req2, _ := http.NewRequestWithContext(ctx, "PUT", "/api/items/9", nil)
+`);
+    const keys = flow.calls.map((c) => `${c.method} ${c.path}`).sort();
+    expect(keys).toEqual(['DELETE /api/items/9', 'PUT /api/items/9']);
+  });
+
+  it('a runtime-built URL is DISCLOSED as dynamic, never silently dropped', async () => {
+    const flow = await extractGo(`req, _ := http.NewRequest("POST", url, body)`);
+    expect(flow.calls).toHaveLength(0);
+    expect(flow.dynamicCalls).toHaveLength(1);
+    expect(flow.dynamicCalls?.[0].receiver).toBe('http');
+  });
+
+  it('bases restrict receivers: an unrelated NewRequest is invisible', async () => {
+    const flow = await extractGo(`q := queue.NewRequest("job-name", payload)`);
+    expect(flow.calls).toHaveLength(0);
+    expect(flow.dynamicCalls ?? []).toHaveLength(0);
+  });
+});

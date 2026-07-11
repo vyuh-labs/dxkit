@@ -249,11 +249,22 @@ const PYTHON: GrammarShape = calleeFieldShape({
   listNode: 'list',
 });
 
+const GO: GrammarShape = calleeFieldShape({
+  callNodes: ['call_expression'],
+  identifierNodes: ['identifier'],
+  memberNode: 'selector_expression',
+  memberObjectField: 'operand',
+  memberPropertyField: 'field',
+  stringNodes: ['interpreted_string_literal', 'raw_string_literal'],
+  functionNodes: ['function_declaration', 'method_declaration'],
+});
+
 const GRAMMAR_SHAPES: Readonly<Record<string, GrammarShape>> = {
   typescript: JS_FAMILY,
   tsx: JS_FAMILY,
   javascript: JS_FAMILY,
   python: PYTHON,
+  go: GO,
 };
 
 /** The shape for a logical grammar name, or null when no row exists yet —
