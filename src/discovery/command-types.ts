@@ -99,6 +99,12 @@ export interface CapabilityDescriptor {
   aliases?: readonly string[];
   /** A sentence for generated docs/README. Required for user-facing commands. */
   docsBlurb?: string;
+  /**
+   * What a run costs in wall-clock time (e.g. `'< 5 sec'`, `'1-4 min'`) —
+   * the "Typical runtime" column of the generated docs command table.
+   * Required for user-facing commands.
+   */
+  typicalRuntime?: string;
   /** Primary agent-facing skill basename under `.claude/skills/`, if any. */
   skill?: string;
   /**

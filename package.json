@@ -56,6 +56,7 @@
     "test:changed": "vitest run --changed",
     "test:coverage": "npm run build && vitest run --coverage",
     "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
+    "docs:commands": "node scripts/generate-command-docs.js",
     "new-lang": "node scripts/scaffold-language.js",
     "dxkit:health": "npm run build && node dist/index.js health",
     "dxkit:guardrail": "npm run build && node dist/index.js guardrail check",
