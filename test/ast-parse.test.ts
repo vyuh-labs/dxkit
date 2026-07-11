@@ -75,10 +75,12 @@ describe('grammarForExtension (pack-driven resolution)', () => {
     expect(grammarForExtension('.tsx')).toEqual({ grammar: 'tsx', languageId: 'typescript' });
     expect(grammarForExtension('.js')?.grammar).toBe('javascript');
     expect(grammarForExtension('.JSX')?.grammar).toBe('javascript'); // case-insensitive
+    // The python pack declares its grammar as of the M6 wave.
+    expect(grammarForExtension('.py')).toEqual({ grammar: 'python', languageId: 'python' });
   });
 
   it('returns null for an extension no pack parses yet', () => {
-    expect(grammarForExtension('.py')).toBeNull(); // python pack has no treeSitterGrammars yet
+    expect(grammarForExtension('.rb')).toBeNull(); // ruby pack: grammar lands in its M6 wave
     expect(grammarForExtension('.zzz')).toBeNull();
   });
 });
