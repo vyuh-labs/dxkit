@@ -173,6 +173,12 @@ export const DXKIT_SKILLS = [
   // broken integration the guardrail flagged (never suppresses it),
   // and the handshake mode drives `flow publish` for cross-repo meshes.
   'dxkit-flow',
+  // dxkit-schema: configure/read/act-on the model-schema drift gate.
+  // Thin orchestration over the CLI — setup folds into `configure`,
+  // inventory + pre-push preview via `schema` / `schema diff`, and the
+  // fix mode ships a deliberate breaking change the safe way (migration
+  // + expiring accepted-risk allowlist entry), never a posture bypass.
+  'dxkit-schema',
   // dxkit-uninstall: cleanly remove all of dxkit from a repo, restoring the
   // pre-dxkit state (reverse each additive merge, delete created files),
   // dry-run first. Also captures optional, opt-in feedback via a prefilled

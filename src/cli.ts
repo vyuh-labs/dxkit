@@ -855,6 +855,26 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'schema': {
+      // `schema [inventory]` — the model catalog; `schema diff [--ref]` —
+      // the drift preview through the SAME evaluation the guardrail runs.
+      const sub = positionals[1];
+      const schemaTarget = resolveRepoPath(
+        sub === 'inventory' || sub === 'diff' ? positionals[2] : positionals[1],
+      );
+      if (sub === 'diff') {
+        const { runSchemaDiff } = await import('./schema-cli');
+        await runSchemaDiff(schemaTarget, {
+          ref: values.ref as string | undefined,
+          json: !!values.json,
+        });
+        break;
+      }
+      const { runSchemaInventory } = await import('./schema-cli');
+      await runSchemaInventory(schemaTarget, { json: !!values.json });
+      break;
+    }
+
     case 'receipt': {
       const { runReceipt, receiptFailureHint } = await import('./receipt-cli');
       try {
