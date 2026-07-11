@@ -167,6 +167,34 @@ SARIF parsing and snapshot access can't leak outside `src/ingest/`, and
 ingested findings get identity from the aggregator (Rule 9), never a
 parallel hash.
 
+## The declarative contract gates (`src/analyzers/flow/`, `src/analyzers/model-schema/`)
+
+Two guardrail passes go beyond findings-in-files and gate CONTRACTS the
+code declares: the flow gate (a UI call must resolve to a served route)
+and the model-schema drift gate (a declared data model must not change
+breakingly). Both follow one architecture, layered so a new language is a
+declaration and a framework surprise cannot reach the engine:
+
+- a pack DESCRIPTOR on `LanguageSupport` says WHICH constructs matter
+  (`httpFlow`: clients + routes; `modelSchema`: model markers + field
+  constructors);
+- a per-grammar SYNTAX table in `src/ast/` (`grammar-shape.ts`,
+  `grammar-model-shape.ts`) says HOW to read a call / class / field from
+  that grammar's tree;
+- ONE shared extractor per pillar says WHAT they mean — it contains no
+  grammar node name and no framework literal, and is never edited for a
+  language;
+- a pure two-ref gate core + a fail-open guardrail glue module
+  (`src/baseline/{flow,schema-drift}-gate-check.ts`) fold the verdict
+  into `guardrail check` additively: typed skips, trigger-skip on
+  untouched surfaces, and "unknown never blocks" honesty rules.
+
+Both pillars also accept SPEC-declared truth (OpenAPI / JSON Schema via
+`flow.specs` / `schema.specs`), so any language participates before its
+pack has native extraction. The design discipline (enforced by the
+synthetic-pack playbook test): a framework quirk lands as a new
+descriptor capability — never an `if` in the extractor.
+
 ## The AnalysisResult cache
 
 Every analyzer command builds (or reads) a cached
@@ -230,6 +258,9 @@ dxkit uses layered identity, in priority order:
    - Secrets via `secret-hmac` kind: HMAC of the secret value, so a
      leaked token recognises itself when moved between files
    - Duplicate blocks: normalized content hash of the block
+   - Flow bindings: `(method, path, consuming file)`, line-independent
+   - Schema drift: `(model, field, change class)` — fully location-free,
+     so the finding survives the model moving files
 2. **Location fingerprints** with a 3-line bucket for code,
    secret, config, and hygiene findings. Bucketing absorbs small
    formatter or unrelated-edit drift.

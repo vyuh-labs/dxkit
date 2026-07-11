@@ -149,6 +149,26 @@ git config --unset core.hooksPath
 | `git <cmd> --no-verify`        | standard git bypass (skips ALL git hooks, not just dxkit's)  |
 | `DXKIT_BASELINE_NAME=<n>`      | switch which baseline file the hook checks against           |
 
+### Additive contract gates in the same check
+
+Beyond the finding diff, `guardrail check` runs two additive, fail-open
+gates when configured, and folds their verdicts into the same
+block/warn result and PR comment:
+
+- **Flow** (`policy.json:flow.mode`) — net-new broken UI→API
+  integrations (a call to a route nobody serves, a removed route a
+  consumer still calls).
+- **Schema drift** (`policy.json:schema.mode`, opt-in, default off) —
+  breaking data-model changes (field removed, type changed, optional →
+  required, model removed); additive changes warn or inform. Preview
+  locally with `vyuh-dxkit schema diff` — it runs the same evaluation.
+
+Both skip (with a disclosed reason in `--json`) rather than fail when
+they cannot gate honestly: no base commit, no surface touched by the
+diff, no truth to compare against. A deliberate breaking change ships
+via a per-finding allowlist entry, never a posture flip — see
+[the policy reference](../configuration/policy.md).
+
 ### Existing hooks (additive install)
 
 If `.githooks/<name>` or `.husky/<name>` already exists, the dxkit hook lands as `.githooks/<name>.dxkit` instead. Chain by adding `sh .githooks/<name>.dxkit` to the existing hook. `--force` overrides.

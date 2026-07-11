@@ -279,6 +279,50 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   `test/recipe-playbook.test.ts` proves extraction is descriptor-driven
   end-to-end with the synthetic pack.
 
+- **Model schema** — `modelSchema?: ModelSchemaSupport` +
+  `treeSitterGrammars?`, the data-model extraction surface behind the
+  schema drift gate. Same DECLARATION-ONLY recipe as flow — the one
+  extractor (`src/analyzers/model-schema/extract.ts`) reads any grammar
+  through the model-shape table (`src/ast/grammar-model-shape.ts`):
+  1. Declare `treeSitterGrammars`, plus a MODEL-shape row in
+     `src/ast/grammar-model-shape.ts` if the grammar has none (class /
+     field / heritage / tag syntax — verify every node and field name
+     against a real parse first).
+  2. Fill the descriptor from `ModelSchemaSupport`
+     (`src/languages/types.ts`): `modelBaseClasses` (heritage markers),
+     `weakModelBaseClasses` (too-generic names like `Base` — they mark a
+     model only when a `fieldCallees` constructor corroborates),
+     `modelDecorators` (`@Entity`, `@dataclass`), `structTagKeys`
+     (Go-style tags), `fieldCallees` (ORM field constructors carrying
+     type + optionality; `typeFrom: 'callee' | 'firstArg'`),
+     `transparentTypeWrappers` (`Mapped[X]` → `X`), `typeAliases`, and
+     `schemaSignals` for doctor discovery. Worked examples:
+     `typescript.ts`, `python.ts`, `go.ts`. Recognition is
+     PRECISION-FIRST: a missed model is a disclosed gap, a false model
+     floods the drift diff — when unsure, leave it out; `schema.specs`
+     is the honest fallback.
+  3. Pin it: pack extraction tests + a model fixture/row in
+     `test/fixtures-analysis.test.ts`, then real-repo-validate the wave
+     (inventory accuracy, a mutation battery with exact expected drift
+     classes, and a refactor-only battery that must produce ZERO
+     findings).
+
+  `test/languages-contract.test.ts` loud-fails a modelSchema pack whose
+  grammar is missing, model-unshaped, or whose recognition set is
+  vacuous; `test/recipe-playbook.test.ts` proves extraction is
+  descriptor-driven end-to-end with the synthetic pack.
+
+  **Design discipline for the declarative layers (flow + model schema):
+  a framework surprise must land as a DESCRIPTOR capability, never an
+  engine special case.** Every real-repo bug this gate's validation
+  found was fixed by making the descriptor language richer
+  (`weakModelBaseClasses`, `transparentTypeWrappers`, a three-valued
+  optionality marker) — not by teaching the extractor about a framework.
+  If you find yourself adding an `if` for your language inside
+  `src/analyzers/flow/` or `src/analyzers/model-schema/`, the right fix
+  is a new (or extended) descriptor field plus a synthetic-pack
+  assertion, so every other pack inherits it.
+
 - **Init metadata** (LP-recipe — needed by `vyuh-dxkit init` and
   `doctor`) — `permissions[]` (Bash entries for `.claude/settings.json`),
   `ruleFile?` (filename under `src-templates/.claude/rules/`),
