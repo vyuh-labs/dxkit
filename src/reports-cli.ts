@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VERSION } from './constants';
 import { analyzeHealth } from './analyzers/health';
+import { gatherInventoryCounts } from './extensions/inventory';
 import {
   reportToHistoryEntry,
   publishReportSnapshot,
@@ -83,12 +84,18 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   const branch = gitLine(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) || undefined;
   const date = opts.now ?? new Date().toISOString();
 
-  const entry = reportToHistoryEntry(report, {
-    sha,
-    date,
-    dxkitVersion: VERSION,
-    ...(branch ? { branch } : {}),
-  });
+  const inventory = gatherInventoryCounts(cwd);
+  const entry = {
+    ...reportToHistoryEntry(report, {
+      sha,
+      date,
+      dxkitVersion: VERSION,
+      ...(branch ? { branch } : {}),
+    }),
+    // Extension inventory counts ride the same history entry (additive
+    // field) so entity trends chart beside dimension scores.
+    ...(inventory ? { inventory } : {}),
+  };
   const artifacts = collectArtifacts(cwd);
 
   if (opts.dryRun) {

@@ -45,6 +45,12 @@ export interface ReportHistoryEntry {
   readonly branch?: string;
   readonly scores: ReportScores;
   readonly findings?: ReportFindingCounts;
+  /** Extension inventory entity counts (extension name → entity kind →
+   *  count), captured from committed inventory.v1 snapshots at snapshot
+   *  time. Additive: absent for repos without inventory extensions, and
+   *  older dxkit readers ignore it. Counts only — the committed snapshot
+   *  (with git history) remains the per-entity store. */
+  readonly inventory?: Record<string, Record<string, number>>;
 }
 
 /** The score keys, in canonical display order — the ONE list every consumer
@@ -101,6 +107,9 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
       scores,
       ...(o.findings && typeof o.findings === 'object'
         ? { findings: o.findings as ReportFindingCounts }
+        : {}),
+      ...(o.inventory && typeof o.inventory === 'object'
+        ? { inventory: o.inventory as Record<string, Record<string, number>> }
         : {}),
     };
     out.push(entry);
