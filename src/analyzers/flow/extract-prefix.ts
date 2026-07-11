@@ -34,25 +34,46 @@ export function joinNormalizedPaths(prefix: string | null, own: string | null): 
   return prefix + own;
 }
 
+/** String(s) carried by one argument node: a literal, or every string
+ *  element of a list literal (`@GetMapping({"/a", "/b"})`, `path = ["/x"]` —
+ *  Spring serves each entry). */
+function argStrings(node: Node, shape: GrammarShape): string[] {
+  const direct = shape.stringText(node);
+  if (direct != null) return [direct];
+  return shape.listStrings(node);
+}
+
 /**
- * The PATH text a prefix-bearing decorator/call declares: its first
- * positional string argument, else the first `decoratorPathKeywords` keyword
- * that holds a string (`@RequestMapping(value = "/x")`).
+ * The PATH texts a decorator declares: its first positional argument (string
+ * or string list), else the first `decoratorPathKeywords` keyword that holds
+ * one (`@RequestMapping(value = "/x")`). Multiple entries mean the handler
+ * serves every one of them.
  */
+export function decoratorPathsRaw(call: Node, shape: GrammarShape, hf: HttpFlowSupport): string[] {
+  const first = shape.firstArg(call);
+  if (first) {
+    const strings = argStrings(first, shape);
+    if (strings.length > 0) return strings;
+  }
+  for (const kw of hf.decoratorPathKeywords ?? []) {
+    const v = shape.optionValue(call, kw);
+    if (v) {
+      const strings = argStrings(v, shape);
+      if (strings.length > 0) return strings;
+    }
+  }
+  return [];
+}
+
+/** The single-path view of {@link decoratorPathsRaw} — prefix composition
+ *  and pair siblings take the first declared path (a multi-path PREFIX is
+ *  ambiguous; the first entry is the dominant convention). */
 export function decoratorPathRaw(
   call: Node,
   shape: GrammarShape,
   hf: HttpFlowSupport,
 ): string | null {
-  const first = shape.firstArg(call);
-  const raw = first ? shape.stringText(first) : null;
-  if (raw != null) return raw;
-  for (const kw of hf.decoratorPathKeywords ?? []) {
-    const v = shape.optionValue(call, kw);
-    const text = v ? shape.stringText(v) : null;
-    if (text != null) return text;
-  }
-  return null;
+  return decoratorPathsRaw(call, shape, hf)[0] ?? null;
 }
 
 /** Decorator nodes attached to an ancestor DECLARATION node — its decorator-
