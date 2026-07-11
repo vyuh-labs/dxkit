@@ -182,12 +182,7 @@ export interface WireExportReceipt {
  * (new kinds, new versions), never removed. Pinned by the main repo's
  * `test/sdk-surface-freeze.test.ts`.
  */
-export const WIRE_SCHEMA_IDS = [
-  'contract.v1',
-  'inventory.v1',
-  'findings.v1',
-  'export.v1',
-] as const;
+export const WIRE_SCHEMA_IDS = ['contract.v1', 'inventory.v1', 'findings.v1', 'export.v1'] as const;
 
 export type WireSchemaId = (typeof WIRE_SCHEMA_IDS)[number];
 

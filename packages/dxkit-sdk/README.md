@@ -2,7 +2,7 @@
 
 The frozen extension surface of [`@vyuhlabs/dxkit`](https://github.com/vyuh-labs/dxkit).
 
-dxkit's own language packs are built as declarations: a pack says *which* constructs
+dxkit's own language packs are built as declarations: a pack says _which_ constructs
 in a language are HTTP calls, routes, or data models, and one shared engine reads
 them. This package publishes that same declarative surface, plus the wire schemas
 external extensions speak, so anything you build against it keeps working as dxkit's

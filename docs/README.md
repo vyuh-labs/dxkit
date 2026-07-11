@@ -95,6 +95,9 @@ Once dxkit + its tools are installed, here's the command surface:
   thresholds, per-finding-kind block rules
 - [Language packs](configuration/language-packs.md) — how dxkit detects
   your stack and which tools it activates per language
+- [The extension SDK](extension-sdk.md) — `@vyuhlabs/dxkit-sdk`, the frozen
+  surface extensions build against (descriptor tables, wire schemas, the
+  shared normalizer), and the effort ladder for extending dxkit
 
 ## Scoring methodology
 
