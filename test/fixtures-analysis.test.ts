@@ -74,6 +74,8 @@ const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   { stack: 'ts-webapp', flow: { calls: 2 } },
   { stack: 'python-svc', flow: { calls: 4 } },
   { stack: 'go-svc', flow: { calls: 3 } },
+  { stack: 'java-svc', flow: { calls: 2 } },
+  { stack: 'kotlin-svc', flow: { calls: 2 } },
 ];
 
 const staged: Record<string, string> = {};
@@ -152,6 +154,18 @@ describe('analysis fixtures — model-schema extraction (marker-based, every sta
       expected: ['Report'],
       optionalField: { model: 'Report', field: 'note' }, // pointer + omitempty
       invisible: 'reportCache',
+    },
+    {
+      stack: 'java-svc',
+      expected: ['Report'],
+      optionalField: { model: 'Report', field: 'note' }, // @Column(nullable = true)
+      invisible: 'ReportIndexer',
+    },
+    {
+      stack: 'kotlin-svc',
+      expected: ['Item'],
+      optionalField: { model: 'Item', field: 'note' }, // String? marker
+      invisible: 'ItemIndexer',
     },
   ];
 
@@ -245,5 +259,36 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
     // The runtime-built http.Get(url) is DISCLOSED as dynamic, not dropped.
     expect(model.dynamicCalls).toHaveLength(1);
     expect(model.dynamicCalls[0].receiver).toBe('http');
+  });
+
+  it('java-svc: Spring class prefix + builder chain + enum-verb exchange hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['java-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // Class-level @RequestMapping("/api/reports") prefixes both handlers —
+    // the marker @PostMapping is the prefix alone; the class annotation
+    // itself minted NO route.
+    expect(served).toEqual(['GET /api/reports/{var}', 'POST /api/reports']);
+    // getForObject binds the GET; the WebClient chain binds the POST.
+    const byMethod = Object.fromEntries(model.bindings.map((b) => [b.call.method, b]));
+    expect(byMethod['GET']?.route?.path).toBe('/api/reports/{var}');
+    expect(byMethod['POST']?.route?.path).toBe('/api/reports');
+    // exchange(url, HttpMethod.GET, …) — enum verb, runtime URL — is
+    // DISCLOSED as dynamic, never silently dropped.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('restTemplate');
+  });
+
+  it('kotlin-svc: Ktor DSL nesting + $id templates + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['kotlin-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // route("/api") { … } prefixes the nested verbs; the top-level get
+    // stays unprefixed; {id} and $id both canonicalize to {var}.
+    expect(served).toEqual(['GET /api/items/{var}', 'GET /healthz', 'POST /api/items']);
+    const byMethod = Object.fromEntries(model.bindings.map((b) => [b.call.method, b]));
+    expect(byMethod['GET']?.route?.path).toBe('/api/items/{var}');
+    expect(byMethod['POST']?.route?.path).toBe('/api/items');
+    // The runtime-built client.get(url) is DISCLOSED as dynamic.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('client');
   });
 });
