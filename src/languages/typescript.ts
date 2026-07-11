@@ -1798,6 +1798,33 @@ export const typescript: LanguageSupport = {
     ],
   },
 
+  // Data-model declarations for the model-schema drift gate. Marker-based
+  // (precision-first): decorator-marked entity classes (TypeORM / MikroORM
+  // @Entity, sequelize-typescript @Table, NestJS-mongoose @Schema,
+  // type-graphql @ObjectType/@InputType) plus TypeORM's active-record
+  // BaseEntity heritage. Field facts come from the TS annotations (`?`,
+  // `| null`); JS-only entity classes surface fields with honest unknown
+  // types. Plain unmarked interfaces/DTOs are deliberately invisible — the
+  // documented answer is a spec (`schema.specs`), and builder-style schemas
+  // (zod, Prisma's DSL) are out of code-extraction scope for the same
+  // precision reason.
+  modelSchema: {
+    modelBaseClasses: ['BaseEntity'],
+    modelDecorators: ['Entity', 'Table', 'Schema', 'ObjectType', 'InputType'],
+    schemaSignals: [
+      {
+        manifest: 'package.json',
+        anyOf: [
+          'typeorm',
+          'sequelize-typescript',
+          '@mikro-orm/core',
+          '@nestjs/mongoose',
+          'type-graphql',
+        ],
+      },
+    ],
+  },
+
   // Tree-sitter grammars by extension for the canonical AST layer (src/ast/).
   // .tsx needs the tsx grammar (JSX-aware); .ts uses typescript; .js/.jsx/.mjs/
   // .cjs use javascript. Logical names — src/ast/ resolves them to artifacts.

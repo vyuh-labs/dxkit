@@ -1278,6 +1278,96 @@ export const python: LanguageSupport = {
     ],
   },
 
+  // Data-model declarations for the model-schema drift gate. Marker-based
+  // (precision-first): Django/SQLAlchemy/pydantic base classes and
+  // @dataclass. Field facts come from annotations where present; ORM
+  // constructor fields (`models.CharField(null=True)`, `Column(String,
+  // nullable=False)`) are enriched via fieldCallees — an unlisted exotic
+  // field constructor still surfaces its field with an honest unknown type.
+  // Known limitation (documented): relation fields fold to their constructor
+  // alias (`fk` / `m2m`), so a re-targeted ForeignKey is not a type change.
+  modelSchema: {
+    modelBaseClasses: ['Model', 'BaseModel', 'DeclarativeBase', 'Base', 'SQLModel'],
+    modelDecorators: ['dataclass'],
+    fieldCallees: [
+      {
+        // Django field constructors — the callee IS the type token.
+        names: [
+          'CharField',
+          'TextField',
+          'EmailField',
+          'SlugField',
+          'URLField',
+          'UUIDField',
+          'IntegerField',
+          'BigIntegerField',
+          'SmallIntegerField',
+          'PositiveIntegerField',
+          'PositiveSmallIntegerField',
+          'AutoField',
+          'BigAutoField',
+          'BooleanField',
+          'FloatField',
+          'DecimalField',
+          'DateField',
+          'DateTimeField',
+          'TimeField',
+          'DurationField',
+          'JSONField',
+          'BinaryField',
+          'FileField',
+          'ImageField',
+          'GenericIPAddressField',
+          'ForeignKey',
+          'OneToOneField',
+          'ManyToManyField',
+        ],
+        optionalityKeyword: 'null',
+      },
+      {
+        // SQLAlchemy column forms — the type is the first argument.
+        names: ['Column', 'mapped_column'],
+        typeFrom: 'firstArg',
+        optionalityKeyword: 'nullable',
+      },
+    ],
+    typeAliases: {
+      charfield: 'string',
+      textfield: 'string',
+      emailfield: 'string',
+      slugfield: 'string',
+      urlfield: 'string',
+      genericipaddressfield: 'string',
+      uuidfield: 'uuid',
+      integerfield: 'int',
+      bigintegerfield: 'int',
+      smallintegerfield: 'int',
+      positiveintegerfield: 'int',
+      positivesmallintegerfield: 'int',
+      autofield: 'int',
+      bigautofield: 'int',
+      booleanfield: 'bool',
+      floatfield: 'float',
+      decimalfield: 'decimal',
+      datefield: 'date',
+      datetimefield: 'datetime',
+      timefield: 'time',
+      durationfield: 'duration',
+      jsonfield: 'json',
+      binaryfield: 'bytes',
+      filefield: 'file',
+      imagefield: 'file',
+      foreignkey: 'fk',
+      onetoonefield: 'fk',
+      manytomanyfield: 'm2m',
+    },
+    schemaSignals: [
+      { manifest: 'requirements.txt', anyOf: ['django', 'sqlalchemy', 'pydantic', 'sqlmodel'] },
+      { manifest: 'pyproject.toml', anyOf: ['django', 'sqlalchemy', 'pydantic', 'sqlmodel'] },
+      { manifest: 'Pipfile', anyOf: ['django', 'sqlalchemy', 'pydantic', 'sqlmodel'] },
+    ],
+  },
+
   // Tree-sitter grammar for the canonical AST layer (src/ast/). Logical name —
   // src/ast/ resolves it to the bundled wasm artifact and its shape row.
   treeSitterGrammars: {
