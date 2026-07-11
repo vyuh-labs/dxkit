@@ -34,6 +34,7 @@ import {
   installCiFlowRefresh,
   reportsRefreshEnabled,
   flowRefreshEnabled,
+  extensionsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
   installHooksPostinstall,
@@ -382,6 +383,10 @@ export async function run(argv: string[]): Promise<void> {
       'with-graph-refresh': { type: 'boolean', default: false },
       'with-reports-refresh': { type: 'boolean', default: false },
       'with-flow-refresh': { type: 'boolean', default: false },
+      'with-extensions-refresh': { type: 'boolean', default: false },
+      // extensions init: the run command line + optional Python starter
+      command: { type: 'string' },
+      stub: { type: 'boolean', default: false },
       'with-pr-review': { type: 'boolean', default: false },
       // loop pack: register the Stop-gate hook + CLAUDE.md loop norm
       'claude-loop': { type: 'boolean', default: false },
@@ -789,6 +794,7 @@ export async function run(argv: string[]): Promise<void> {
         // Flow-refresh: same stamp discipline (flag or flow.onMergeRefresh),
         // so update refreshes the workflow and uninstall removes it.
         withFlowRefresh: !!values['with-flow-refresh'] || flowRefreshEnabled(cwd),
+        withExtensionsRefresh: !!values['with-extensions-refresh'] || extensionsRefreshEnabled(cwd),
       });
 
       console.log('');
@@ -852,6 +858,22 @@ export async function run(argv: string[]): Promise<void> {
       const sub = positionals[1] === 'run' ? 'run' : 'list';
       const target = resolveRepoPath(isSub ? positionals[2] : positionals[1]);
       runChecks(target, sub, { json: !!values.json });
+      break;
+    }
+
+    case 'extensions': {
+      const { runExtensionsCli } = await import('./extensions-cli');
+      const subs = ['list', 'refresh', 'dev', 'init'];
+      const isSub = subs.includes(positionals[1] ?? '');
+      const sub = (isSub ? positionals[1] : 'list') as 'list' | 'refresh' | 'dev' | 'init';
+      const extTarget = isSub ? positionals[2] : undefined;
+      process.exitCode = runExtensionsCli(cwd, sub, extTarget, {
+        json: !!values.json,
+        kind: values.kind as string | undefined,
+        command: values.command as string | undefined,
+        stub: !!values.stub,
+        land: values.land as string | undefined,
+      });
       break;
     }
 

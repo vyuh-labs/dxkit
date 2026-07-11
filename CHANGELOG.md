@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The extension runtime (rungs 2-3 of the extension ladder).** Declared
+  contract artifacts: point `flow.sources` at a Postman collection, Pact
+  contract, `.http`/`.rest` file, or HAR capture (plus OpenAPI) and its
+  calls/routes join the flow map and gate with zero code — readers live in
+  one registry, formats are entries, and the join now resolves concrete
+  artifact paths against `{var}` routes. External extensions: a committed
+  `.dxkit/extensions/<name>/extension.json` points at your existing script
+  (any language); dxkit runs it at refresh time under the bounded-exec
+  primitive, validates its emitted `contract.v1` / `inventory.v1` /
+  `findings.v1` / `export.v1` document field-precisely, and routes it
+  through the same machines native output gets: findings gate net-new-only
+  through the custom-check seam (`gating: block|warn|off` per manifest),
+  inventory entity counts trend on `report history`, export sinks receive
+  the post-run report and deliver it with your existing tooling. Gates and
+  untrusted runs never execute extensions — they read committed snapshots
+  offline with staleness disclosed. New `extensions` CLI (`list`,
+  `refresh [--land pr|push]`, `dev` — the seconds-fast authoring loop,
+  `init` — a scaffold that passes validation immediately), a doctor probe +
+  deterministic `configure` planner that discover undeclared artifacts via
+  the reader registry's own filename signals, an opt-in on-merge refresh
+  workflow (auto-enabled when a manifest declares `refresh: "on-merge"`),
+  and the `dxkit-extensions` agent skill.
+
 - **`@vyuhlabs/dxkit-sdk`: the frozen extension surface (types-first).**
   A new sibling package publishes the contract extensions build against:
   the declarative descriptor language (`HttpFlowSupport`,

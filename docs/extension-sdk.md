@@ -4,10 +4,10 @@ dxkit's core owns the language-agnostic contract level: routes, models,
 dependencies, findings, gates. Everything app-specific or org-specific becomes
 an extension, and the SDK is the frozen surface extensions build against.
 
-This page documents the surface as of SDK 0.x (types-first). The extension
-orchestrator (external extractors in any language) and the in-process plugin
-runtime arrive in later minors; the shapes they will speak are already frozen
-here so nothing you build now gets rewritten.
+This page documents the surface as of SDK 0.x. Rungs 1-3 are live: declared
+contract artifacts (`flow.sources`) and the external-extension orchestrator
+(`vyuh-dxkit extensions`) ship with dxkit 3.5; the in-process plugin runtime
+(rung 4) arrives in a later minor, speaking the shapes already frozen here.
 
 ## The effort ladder
 

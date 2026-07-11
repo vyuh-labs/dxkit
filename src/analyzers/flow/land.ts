@@ -23,7 +23,7 @@
  * refresh never hard-fails on missing tooling (the workflow's job is the
  * snapshot; the PR is the vehicle).
  */
-import { execFileSync } from 'child_process';
+import { landRefreshPaths, makeExec, type Exec } from '../../land-refresh';
 import {
   contractKey,
   FLOW_DIR,
@@ -112,27 +112,6 @@ export function refreshPrText(delta: ContractDelta): { title: string; body: stri
   return { title, body: parts.join('\n\n') };
 }
 
-interface Exec {
-  (cmd: string, args: string[], opts?: { allowFail?: boolean }): string;
-}
-
-function makeExec(cwd: string): Exec {
-  return (cmd, args, opts = {}) => {
-    try {
-      return execFileSync(cmd, args, {
-        cwd,
-        encoding: 'utf8',
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        timeout: 60_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).toString();
-    } catch (e) {
-      if (opts.allowFail) return '';
-      throw e;
-    }
-  };
-}
-
 export interface LandOptions {
   readonly cwd: string;
   readonly mode: FlowLandMode;
@@ -148,25 +127,21 @@ export interface LandOptions {
   readonly exec?: Exec;
 }
 
-const BOT = { name: 'dxkit-bot', email: 'dxkit-bot@users.noreply.github.com' };
-
 /**
  * Land the already-published snapshot changes per `mode`. Call AFTER
  * `publishFlow` wrote `.dxkit/flow/`; reads the delta against the caller's
  * pre-publish snapshot. No-op ('clean') when git sees no snapshot change.
+ *
+ * The git/gh mechanics live in the ONE generic lander
+ * (`src/land-refresh.ts`, shared with the extensions refresh — Rule 2);
+ * this function owns only the flow-shaped parts: the served delta, the
+ * substance check (a publish restamps `generatedAt`/`commitSha` on every
+ * run, and metadata churn must never land a commit), and the PR prose.
  */
 export function landFlowRefresh(opts: LandOptions): LandResult {
-  const exec = opts.exec ?? makeExec(opts.cwd);
-  const identity = opts.identity ?? BOT;
   const delta = servedDelta(opts.before, readServedContract(opts.cwd));
+  const { title, body } = refreshPrText(delta);
 
-  const status = exec('git', ['status', '--porcelain', '--', FLOW_DIR]).trim();
-  if (status === '') return { outcome: 'clean', mode: opts.mode, delta };
-
-  // Every publish restamps `generatedAt` (and possibly `commitSha`), so a
-  // byte-diff alone would land a metadata-churn commit on EVERY merge. Land
-  // only on SUBSTANCE: routes, bindings, or participant provenance changed.
-  // A pure-timestamp refresh reverts the files and reports clean.
   const volatile = (c: ServedContract | ConsumedContract | undefined): string => {
     if (!c) return 'absent';
     const rest: Record<string, unknown> = { ...c };
@@ -174,95 +149,28 @@ export function landFlowRefresh(opts: LandOptions): LandResult {
     delete rest.commitSha;
     return JSON.stringify(rest);
   };
-  const substantive =
-    volatile(opts.before) !== volatile(readServedContract(opts.cwd)) ||
-    volatile(opts.beforeConsumed) !== volatile(readConsumedContract(opts.cwd));
-  if (!substantive) {
-    exec('git', ['checkout', '--', FLOW_DIR], { allowFail: true });
-    return { outcome: 'clean', mode: opts.mode, delta };
-  }
 
-  const commit = (message: string): void => {
-    exec('git', ['add', FLOW_DIR]);
-    exec('git', [
-      '-c',
-      `user.name=${identity.name}`,
-      '-c',
-      `user.email=${identity.email}`,
-      'commit',
-      '-m',
-      message,
-    ]);
-  };
+  const result = landRefreshPaths({
+    cwd: opts.cwd,
+    mode: opts.mode,
+    paths: [FLOW_DIR],
+    branchName: FLOW_REFRESH_BRANCH,
+    defaultBranch: opts.defaultBranch,
+    commitTitle: 'chore(flow): refresh contract snapshots',
+    prTitle: title,
+    prBody: body,
+    isSubstantive: () =>
+      volatile(opts.before) !== volatile(readServedContract(opts.cwd)) ||
+      volatile(opts.beforeConsumed) !== volatile(readConsumedContract(opts.cwd)),
+    ...(opts.identity !== undefined ? { identity: opts.identity } : {}),
+    ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
+  });
 
-  if (opts.mode === 'push') {
-    // Zero-ceremony mode: straight to the default branch. `[skip ci]` keeps the
-    // refresh from re-triggering itself; a protected branch rejects the push
-    // loudly (the caller surfaces the error — switch to `pr`).
-    commit('chore(flow): refresh contract snapshots [skip ci]');
-    exec('git', ['push', 'origin', `HEAD:${opts.defaultBranch}`]);
-    return { outcome: 'pushed', mode: 'push', delta };
-  }
-
-  // PR mode: one standing branch, force-updated (never a pile). Created at
-  // HEAD with the snapshot change committed on top. On a LOCAL run, restore
-  // whatever the user had checked out afterwards (CI checkouts are detached /
-  // ephemeral and skip the restore) — landing a refresh must never leave a
-  // human stranded on the bot branch.
-  const priorRef = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true }).trim();
-  exec('git', ['checkout', '-B', FLOW_REFRESH_BRANCH]);
-  const { title, body } = refreshPrText(delta);
-  commit(`${title}\n\n[skip ci]`);
-  exec('git', ['push', '--force', 'origin', FLOW_REFRESH_BRANCH]);
-  if (priorRef && priorRef !== 'HEAD' && priorRef !== FLOW_REFRESH_BRANCH) {
-    exec('git', ['checkout', priorRef], { allowFail: true });
-  }
-
-  // The PR itself is best-effort: no gh / not GitHub → the branch still landed.
-  const existing = exec(
-    'gh',
-    ['pr', 'list', '--head', FLOW_REFRESH_BRANCH, '--state', 'open', '--json', 'url'],
-    { allowFail: true },
-  ).trim();
-  let parsed: Array<{ url: string }> = [];
-  try {
-    parsed = existing ? (JSON.parse(existing) as Array<{ url: string }>) : [];
-  } catch {
-    parsed = [];
-  }
-  if (parsed.length > 0) {
-    // Standing PR exists — refresh its face to match the new delta.
-    exec('gh', ['pr', 'edit', FLOW_REFRESH_BRANCH, '--title', title, '--body', body], {
-      allowFail: true,
-    });
-    return { outcome: 'pr-updated', mode: 'pr', delta, prUrl: parsed[0].url };
-  }
-  const created = exec(
-    'gh',
-    [
-      'pr',
-      'create',
-      '--head',
-      FLOW_REFRESH_BRANCH,
-      '--base',
-      opts.defaultBranch,
-      '--title',
-      title,
-      '--body',
-      body,
-    ],
-    { allowFail: true },
-  ).trim();
-  if (created) {
-    const url = created.split('\n').pop() ?? '';
-    return { outcome: 'pr-opened', mode: 'pr', delta, ...(url ? { prUrl: url } : {}) };
-  }
   return {
-    outcome: 'branch-pushed-no-pr',
-    mode: 'pr',
+    outcome: result.outcome,
+    mode: opts.mode,
     delta,
-    note:
-      `Pushed '${FLOW_REFRESH_BRANCH}' but could not open the PR (no gh CLI / not GitHub / ` +
-      `no permission). Open it manually: ${FLOW_REFRESH_BRANCH} → ${opts.defaultBranch}.`,
+    ...(result.prUrl !== undefined ? { prUrl: result.prUrl } : {}),
+    ...(result.note !== undefined ? { note: result.note } : {}),
   };
 }

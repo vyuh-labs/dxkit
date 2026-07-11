@@ -9,6 +9,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveBaselineMode } from '../baseline/modes';
+import { execFileSync } from 'child_process';
+import { CONTRACT_SOURCE_READERS } from '../analyzers/flow/contract-sources';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { isClaudeLoopInstalled } from '../loop/scaffold';
@@ -292,6 +294,76 @@ export function planSchemaMode(ctx: ConfigContext): ConfigPlanItem | null {
     patch: { schema: { mode: 'warn', schemaVersion: SCHEMA_CONFIG_SCHEMA_VERSION } },
     reason: 'seed the model-schema drift gate at the safe default (warn, never fails a build)',
     evidence: 'data-model framework in a dependency manifest, no schema config yet',
+  };
+}
+
+/**
+ * One signal for the declared-artifact capability, shared by the doctor probe
+ * (`recommendExtensions`) and the planner (`planFlowSources`) so they never
+ * diverge (Rule 2). Kinds and filename signals are REGISTRY-DERIVED (each
+ * reader's `sniff`) — no format literal lives here, so a new reader extends
+ * this probe automatically. Conservative: silent the moment ANY
+ * `flow.sources` entry exists (a configured repo is never re-nagged), scans
+ * the git-tracked list only (bounded), openapi excluded (`flow.specs` and
+ * the flow planner own specs).
+ */
+function undeclaredContractArtifacts(cwd: string): Array<{ kind: string; path: string }> {
+  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json')) ?? {};
+  const flow = policy.flow as Record<string, unknown> | undefined;
+  const sources = flow?.sources;
+  if (Array.isArray(sources) && sources.length > 0) return [];
+  let files: string[];
+  try {
+    files = execFileSync('git', ['ls-files'], { cwd, encoding: 'utf8', timeout: 10_000 })
+      .split('\n')
+      .slice(0, 20_000);
+  } catch {
+    return [];
+  }
+  const readers = CONTRACT_SOURCE_READERS.filter((r) => r.kind !== 'openapi');
+  const out: Array<{ kind: string; path: string }> = [];
+  for (const f of files) {
+    if (out.length >= 10) break;
+    const reader = readers.find((r) => r.sniff(f));
+    if (reader) out.push({ kind: reader.kind, path: f });
+  }
+  return out;
+}
+
+/** Recommend declaring contract artifacts the repo already has (a Postman
+ *  collection, a pact, a HAR capture, .http files) — zero-code flow evidence. */
+export function recommendExtensions(ctx: RecommendContext): Recommendation | null {
+  const found = undeclaredContractArtifacts(ctx.cwd);
+  if (found.length === 0) return null;
+  const sample = found
+    .slice(0, 3)
+    .map((a) => `${a.path} (${a.kind})`)
+    .join(', ');
+  return {
+    reason:
+      `found contract artifact(s) not declared to dxkit — ${sample} — declaring them in ` +
+      'flow.sources joins them to the integration map + gate with zero code',
+    command: 'vyuh-dxkit extensions',
+  };
+}
+
+/**
+ * Declared artifacts: propose `flow.sources` entries for the contract
+ * artifacts the repo already has. Deterministic from the git-tracked file
+ * list + the reader registry's own filename signals; the user confirms the
+ * plan before anything is written. Reuses `undeclaredContractArtifacts`
+ * (shared with the doctor probe, Rule 2).
+ */
+export function planFlowSources(ctx: ConfigContext): ConfigPlanItem | null {
+  const found = undeclaredContractArtifacts(ctx.cwd);
+  if (found.length === 0) return null;
+  return {
+    capability: 'extensions',
+    section: 'flow.sources',
+    summary: `${found.length} artifact(s) declared`,
+    patch: { flow: { sources: found } },
+    reason: 'join the contract artifacts this repo already has to the flow map + gate (zero code)',
+    evidence: found.map((a) => `${a.path} (${a.kind})`).join(', '),
   };
 }
 

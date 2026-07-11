@@ -179,6 +179,10 @@ export const DXKIT_SKILLS = [
   // fix mode ships a deliberate breaking change the safe way (migration
   // + expiring accepted-risk allowlist entry), never a posture bypass.
   'dxkit-schema',
+  // dxkit-extensions: plug the repo's own extractors/inventories/sinks into
+  // dxkit as rung-2 declared artifacts or rung-3 external extensions; owns
+  // the authoring loop (extensions dev/init) and the trust-model explainer.
+  'dxkit-extensions',
   // dxkit-uninstall: cleanly remove all of dxkit from a repo, restoring the
   // pre-dxkit state (reverse each additive merge, delete created files),
   // dry-run first. Also captures optional, opt-in feedback via a prefilled
