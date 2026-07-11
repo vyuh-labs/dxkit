@@ -88,6 +88,16 @@ describe('flow normalizePath', () => {
     expect(server).toBe(client);
     expect(spec).toBe(client);
   });
+
+  it('Django/Flask angle-bracket converters canonicalize like every other param form', () => {
+    // Single-segment converters (<int:pk>, <slug:s>, bare <name>) → {var},
+    // joining a client's `/users/${id}`.
+    expect(normalizePath("'users/<int:pk>/'")).toBe('/users/{var}');
+    expect(normalizePath("'/users/<slug:the_slug>'")).toBe('/users/{var}');
+    expect(normalizePath("'/users/<pk>'")).toBe('/users/{var}');
+    // The <path:...> converter consumes the REST of the path → catch-all.
+    expect(normalizePath("'/files/<path:subpath>'")).toBe('/files/{*}');
+  });
 });
 
 describe('flow normalizeMethod', () => {

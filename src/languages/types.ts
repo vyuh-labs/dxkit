@@ -288,6 +288,43 @@ export interface HttpFlowSupport {
   routeRouterCallees?: { methods: string[]; bases: string[] };
 
   /**
+   * MEMBER-callee route decorators: `@<recv>.<method>('/path')` on a handler
+   * (FastAPI `@app.get('/x')` / `@router.post('/x')`, Sanic, Flask 2's
+   * `@app.get`). The property name maps to the HTTP verb; the first string
+   * argument is the route path and MUST begin with `/` once unquoted — these
+   * frameworks mandate a leading slash, and requiring it is the precision
+   * guard that keeps look-alike member decorators (`@mock.patch('pkg.attr')`)
+   * out. `bases`, when present, restricts which receiver identifiers count;
+   * omit it for frameworks whose app/router objects are user-named.
+   */
+  routeMemberDecorators?: { methods: string[]; bases?: string[] };
+
+  /**
+   * PATH-first route decorators whose methods ride a keyword argument:
+   * Flask's `@app.route('/x', methods=['GET', 'POST'])`. `names` are the
+   * decorator callee names (member or bare — `@app.route` and `@route` both
+   * match on `route`); the first string argument is the path (leading `/`
+   * required, as above). `methodsKeyword` names the keyword argument carrying
+   * the verb list; when absent the route is emitted once per entry in
+   * `defaultMethods` (Flask's default is GET-only).
+   */
+  routePathDecorators?: { names: string[]; methodsKeyword: string; defaultMethods: string[] };
+
+  /**
+   * BARE-callee route declarations that bind a path to a handler with NO verb:
+   * Django's `path('users/<int:pk>/', view)` in `urls.py`. The declaration is
+   * method-agnostic at the routing layer, so the route is emitted with the
+   * `ANY` method (see `ANY_METHOD` in `analyzers/flow/normalize.ts`) and
+   * resolves a consumed call with any verb on that path. Guards: the callee
+   * name must match, the first argument must be a string literal, and a
+   * second argument (the handler) must be present — `excludeArgCallees` skips
+   * declarations whose arguments include a call to one of these names
+   * (Django's `include(...)` mounts a sub-conf; its first argument is a
+   * PREFIX, not a served route).
+   */
+  routeCallees?: { names: string[]; excludeArgCallees?: string[] };
+
+  /**
    * Canonicalize a matched method token to an uppercase HTTP verb where the
    * token differs from the verb. The motivating alias is LoopBack's `del` →
    * `DELETE`. Tokens absent from the map default to upper-casing

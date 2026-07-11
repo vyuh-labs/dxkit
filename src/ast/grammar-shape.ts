@@ -51,6 +51,8 @@ export interface GrammarShape {
   resolveCall(call: Node): ResolvedCall | null;
   /** First positional (non-keyword) argument node of a call, else null. */
   firstArg(call: Node): Node | null;
+  /** All positional (non-keyword) argument nodes of a call, in order. */
+  positionalArgs(call: Node): Node[];
   /**
    * A string literal's text — verbatim including quotes/backticks, with any
    * language-level prefix (Python `f"..."` / `r"..."`) stripped so downstream
@@ -148,6 +150,10 @@ function calleeFieldShape(g: CalleeFieldGrammar): GrammarShape {
         return arg;
       }
       return null;
+    },
+
+    positionalArgs(call: Node): Node[] {
+      return namedArgs(call).filter((arg) => !(g.keywordArg && arg.type === g.keywordArg.node));
     },
 
     stringText,

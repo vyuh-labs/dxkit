@@ -152,6 +152,7 @@ export function normalizePath(
   //     BEFORE the single-segment collapse below so FastAPI's `{p:path}` and
   //     Next.js `[...slug]` do not degrade to a one-segment `{var}`.
   s = s.replace(/\{[A-Za-z0-9_]+:path\}/g, CATCHALL); // FastAPI/Starlette {file_path:path}
+  s = s.replace(/<path:[A-Za-z0-9_]+>/g, CATCHALL); // Django/Flask <path:rest> (rest-of-path)
   s = s.replace(/\[\[?\.\.\.[^\]]+\]\]?/g, CATCHALL); // Next.js [...slug] / [[...slug]]
   s = s.replace(/\*\*/g, CATCHALL); // Spring /**
   s = s.replace(/(?<=\/)\*[A-Za-z0-9_]*/g, CATCHALL); // Express /*, Rails /*path
@@ -161,6 +162,7 @@ export function normalizePath(
   //     a catch-all is not misconsumed as a one-segment param.
   s = s.replace(/:[A-Za-z0-9_]+/g, PLACEHOLDER); // Express/Rails :id
   s = s.replace(/\[[^\]]+\]/g, PLACEHOLDER); // Next.js file-route [id]
+  s = s.replace(/<[^>]+>/g, PLACEHOLDER); // Django/Flask <int:pk>, <slug:s>, <name>
   s = s.replace(/\{[^}]*\}/g, (m) => (m === CATCHALL ? CATCHALL : PLACEHOLDER)); // {id}, keep {*}
 
   // 7. single leading slash
