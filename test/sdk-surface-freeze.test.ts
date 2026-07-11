@@ -27,10 +27,29 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import * as sdk from '@vyuhlabs/dxkit-sdk';
 import type {
+  ContractProducer,
+  ContractSide,
+  ContractSourceParse,
+  ContractSourceReader,
   ContributionKind,
+  DxkitExtensionDefinition,
+  Exporter,
+  ExporterContext,
+  ExtensionContext,
   ExtensionManifest,
+  ExtensionPluginSpec,
+  ExtensionRepoFacts,
   ExtensionRunSpec,
   FileRouteSupport,
+  FindingProducer,
+  HttpFlowDialect,
+  IntegrationVerifier,
+  IntegrationVerifierContext,
+  InventoryProducer,
+  RawConsumedCall,
+  RawServedRoute,
+  UrlNormalizer,
+  VerifierFlowContext,
   GrammarModelShape,
   GrammarShape,
   HttpFlowSupport,
@@ -73,6 +92,7 @@ import type {
   HttpFlowSupport as MainHttpFlowSupport,
   ModelSchemaSupport as MainModelSchemaSupport,
 } from '../src/languages/types';
+import type { ContractSourceReader as MainContractSourceReader } from '../src/analyzers/flow/contract-sources';
 import type {
   DepVulnGatherOptions,
   DepVulnsProvider,
@@ -91,6 +111,7 @@ const FROZEN_RUNTIME_EXPORTS = [
   'WIRE_SCHEMA_IDS',
   'bindingKey',
   'catchAllStaticPrefix',
+  'defineExtension',
   'isCatchAllPath',
   'normalizeMethod',
   'normalizePath',
@@ -145,10 +166,29 @@ type Equal<A, B> =
 
 /** Every frozen TYPE export must stay importable — removal fails typecheck. */
 export type FrozenTypeSurface = [
+  ContractProducer,
+  ContractSide,
+  ContractSourceParse,
+  ContractSourceReader,
   ContributionKind,
+  DxkitExtensionDefinition,
+  Exporter,
+  ExporterContext,
+  ExtensionContext,
   ExtensionManifest,
+  ExtensionPluginSpec,
+  ExtensionRepoFacts,
   ExtensionRunSpec,
   FileRouteSupport,
+  FindingProducer,
+  HttpFlowDialect,
+  IntegrationVerifier,
+  IntegrationVerifierContext,
+  InventoryProducer,
+  RawConsumedCall,
+  RawServedRoute,
+  UrlNormalizer,
+  VerifierFlowContext,
   GrammarModelShape,
   GrammarShape,
   HttpFlowSupport,
@@ -182,6 +222,7 @@ export type FrozenTypeSurface = [
 export type MainReexportsAreTheSdkTypes = [
   Expect<Equal<MainHttpFlowSupport, HttpFlowSupport>>,
   Expect<Equal<MainModelSchemaSupport, ModelSchemaSupport>>,
+  Expect<Equal<MainContractSourceReader, ContractSourceReader>>,
 ];
 
 /** The verb vocabulary is frozen content, not just a frozen name. */

@@ -16,7 +16,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { CommandExec } from '../../src/analyzers/tools/bounded-exec';
-import { discoverExtensions, type LoadedExtension } from '../../src/extensions/manifest';
+import {
+  discoverExtensions,
+  isProducerExtension,
+  type ProducerExtension,
+} from '../../src/extensions/manifest';
 import { runExtension, type ExtensionStdinPayload } from '../../src/extensions/run';
 import { readExtensionSnapshot } from '../../src/extensions/snapshot';
 
@@ -90,11 +94,90 @@ describe('manifest discovery', () => {
   });
 });
 
-function loaded(): LoadedExtension {
+describe('rung-4 plugin manifests', () => {
+  const PLUGIN_GATHER = {
+    schemaVersion: 1,
+    name: 'acme-dialect',
+    plugin: { module: 'plugin.js' },
+  };
+  const PLUGIN_PRODUCER = {
+    schemaVersion: 1,
+    name: 'acme-verify',
+    contributes: 'findings',
+    plugin: { module: 'plugin.js' },
+    refresh: 'manual',
+    output: '.dxkit/contrib/acme-verify.json',
+  };
+
+  it('accepts a gather-only plugin manifest (no wire kind, no snapshot)', () => {
+    writeManifest('acme-dialect', PLUGIN_GATHER);
+    const r = discoverExtensions(tmp);
+    expect(r.errors).toEqual([]);
+    expect(r.extensions).toHaveLength(1);
+    expect(isProducerExtension(r.extensions[0])).toBe(false);
+  });
+
+  it('accepts a producer plugin manifest (contributes ⇒ refresh + output)', () => {
+    writeManifest('acme-verify', PLUGIN_PRODUCER);
+    const r = discoverExtensions(tmp);
+    expect(r.errors).toEqual([]);
+    expect(isProducerExtension(r.extensions[0])).toBe(true);
+  });
+
+  it('rejects a manifest with both run and plugin, and one with neither', () => {
+    writeManifest('both', { ...GOOD, name: 'both', plugin: { module: 'plugin.js' } });
+    writeManifest('neither', { schemaVersion: 1, name: 'neither', contributes: 'findings' });
+    const r = discoverExtensions(tmp);
+    expect(r.extensions).toEqual([]);
+    expect(r.errors).toContainEqual(expect.stringContaining("declares both 'run' and 'plugin'"));
+    expect(r.errors).toContainEqual(expect.stringContaining('needs exactly one of'));
+  });
+
+  it('rejects unsafe plugin module paths (traversal, absolute, non-CJS)', () => {
+    writeManifest('trav', { ...PLUGIN_GATHER, name: 'trav', plugin: { module: '../../x.js' } });
+    writeManifest('abs', { ...PLUGIN_GATHER, name: 'abs', plugin: { module: '/etc/x.js' } });
+    writeManifest('ts', { ...PLUGIN_GATHER, name: 'ts', plugin: { module: 'plugin.ts' } });
+    const r = discoverExtensions(tmp);
+    expect(r.extensions).toEqual([]);
+    expect(r.errors.filter((e) => e.includes('plugin.module'))).toHaveLength(3);
+  });
+
+  it('rejects producer fields on a gather-only plugin (silent no-ops banned)', () => {
+    writeManifest('noisy', {
+      ...PLUGIN_GATHER,
+      name: 'noisy',
+      output: '.dxkit/contrib/noisy.json',
+      gating: 'block',
+    });
+    const r = discoverExtensions(tmp);
+    expect(r.extensions).toEqual([]);
+    expect(r.errors).toContainEqual(expect.stringContaining('only applies to a producer'));
+  });
+
+  it('requires contributes with run (a rung-3 extension always emits a kind)', () => {
+    const rest: Record<string, unknown> = { ...GOOD };
+    delete rest['contributes'];
+    writeManifest('ui-inventory', rest);
+    const r = discoverExtensions(tmp);
+    expect(r.errors).toContainEqual(expect.stringContaining("required with 'run'"));
+  });
+
+  it('runner skips a gather-only plugin with a live-loading disclosure', () => {
+    writeManifest('acme-dialect', PLUGIN_GATHER);
+    const r = discoverExtensions(tmp);
+    const out = runExtension(tmp, r.extensions[0]);
+    expect(out.status).toBe('skipped');
+    if (out.status === 'skipped') expect(out.reason).toContain('gather-only');
+  });
+});
+
+function loaded(): ProducerExtension {
   writeManifest('ui-inventory', { ...GOOD, config: { a: 1 } });
   const r = discoverExtensions(tmp);
   expect(r.errors).toEqual([]);
-  return r.extensions[0];
+  const ext = r.extensions[0];
+  if (!isProducerExtension(ext)) throw new Error('fixture manifest must be producer-shaped');
+  return ext;
 }
 
 const VALID_DOC = JSON.stringify({

@@ -21,6 +21,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import type {
+  ContractSide,
+  ContractSourceParse,
+  ContractSourceReader,
+  RawConsumedCall,
+  RawServedRoute,
+} from '@vyuhlabs/dxkit-sdk';
 import type { ClientCall, RouteEndpoint } from '../extract';
 import { ANY_METHOD, normalizeMethod, normalizePath, type NormalizeConfig } from '../normalize';
 import { harReader } from './har';
@@ -29,45 +36,18 @@ import { openapiReader } from './openapi';
 import { pactReader } from './pact';
 import { postmanReader } from './postman';
 
-/** Which contract side(s) a declared artifact may testify to. */
-export type ContractSide = 'consumed' | 'served';
-
-/** Raw (pre-normalization) observations a reader emits. */
-export interface RawConsumedCall {
-  readonly method: string;
-  readonly url: string;
-  readonly file: string;
-  readonly line: number;
-}
-export interface RawServedRoute {
-  readonly method: string;
-  readonly path: string;
-  readonly handler?: string | null;
-  readonly file: string;
-  readonly line: number;
-}
-export interface ContractSourceParse {
-  readonly consumed: readonly RawConsumedCall[];
-  readonly served: readonly RawServedRoute[];
-  /** Format-level problems, already file-prefixed. */
-  readonly errors: readonly string[];
-}
-
-/** One registered artifact format. */
-export interface ContractSourceReader {
-  /** The `flow.sources[].kind` token. */
-  readonly kind: string;
-  readonly displayName: string;
-  /** Sides this format can testify to ('both' → the declaration may choose). */
-  readonly sides: ContractSide | 'both';
-  /** Side used when the declaration omits one. */
-  readonly defaultSide: ContractSide;
-  /** Cheap filename signal for doctor's "declare this artifact" probe. */
-  sniff(filePath: string): boolean;
-  /** Parse one artifact file into raw observations. Total: parse errors are
-   *  returned, never thrown. */
-  parse(content: string, filePath: string): ContractSourceParse;
-}
+// The reader contract is FROZEN SDK surface (Rule 18): a rung-4 plugin's
+// `contractReader` implements the same interface built-in readers do, so the
+// shapes live in @vyuhlabs/dxkit-sdk and are re-exported here (one
+// definition). This module keeps everything cross-cutting: the registry,
+// dispatch, side legality, pattern expansion, and normalization.
+export type {
+  ContractSide,
+  ContractSourceParse,
+  ContractSourceReader,
+  RawConsumedCall,
+  RawServedRoute,
+};
 
 export const CONTRACT_SOURCE_READERS: readonly ContractSourceReader[] = [
   openapiReader,

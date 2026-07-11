@@ -38,4 +38,32 @@ export type {
   WireServedRoute,
   WireSeverity,
 } from './wire';
-export type { ContributionKind, ExtensionManifest, ExtensionRunSpec } from './manifest';
+export type {
+  ContributionKind,
+  ExtensionManifest,
+  ExtensionPluginSpec,
+  ExtensionRunSpec,
+} from './manifest';
+export type {
+  ContractSide,
+  ContractSourceParse,
+  ContractSourceReader,
+  RawConsumedCall,
+  RawServedRoute,
+} from './contract-reader';
+export { defineExtension } from './extension';
+export type {
+  ContractProducer,
+  DxkitExtensionDefinition,
+  Exporter,
+  ExporterContext,
+  ExtensionContext,
+  ExtensionRepoFacts,
+  FindingProducer,
+  HttpFlowDialect,
+  IntegrationVerifier,
+  IntegrationVerifierContext,
+  InventoryProducer,
+  UrlNormalizer,
+  VerifierFlowContext,
+} from './extension';

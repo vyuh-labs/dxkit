@@ -15,7 +15,7 @@
  */
 
 import type { WireInventoryDoc } from '@vyuhlabs/dxkit-sdk';
-import { discoverExtensions } from './manifest';
+import { discoverExtensions, isProducerExtension } from './manifest';
 import { readExtensionSnapshot } from './snapshot';
 
 /** `{ 'ui-inventory': { screen: 214, permission: 890 } }` — extension name →
@@ -28,6 +28,7 @@ export function gatherInventoryCounts(cwd: string): InventoryCounts | undefined 
   const out: InventoryCounts = {};
   let any = false;
   for (const ext of extensions) {
+    if (!isProducerExtension(ext)) continue;
     if (ext.manifest.contributes !== 'inventory') continue;
     const snap = readExtensionSnapshot(cwd, ext);
     if (snap.status !== 'ok') continue;

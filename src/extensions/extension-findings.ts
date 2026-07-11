@@ -21,7 +21,7 @@
 
 import type { CustomCheckFinding } from '../analyzers/custom-checks/types';
 import type { WireFindingsDoc } from '@vyuhlabs/dxkit-sdk';
-import { discoverExtensions } from './manifest';
+import { discoverExtensions, isProducerExtension } from './manifest';
 import { readExtensionSnapshot } from './snapshot';
 
 /** The check-label namespace extension findings mint under. */
@@ -37,6 +37,7 @@ export function gatherExtensionFindings(cwd: string): readonly CustomCheckFindin
   const { extensions } = discoverExtensions(cwd);
   const out: CustomCheckFinding[] = [];
   for (const ext of extensions) {
+    if (!isProducerExtension(ext)) continue;
     if (ext.manifest.contributes !== 'findings') continue;
     if (ext.manifest.gating === 'off') continue;
     const snap = readExtensionSnapshot(cwd, ext);
