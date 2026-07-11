@@ -263,10 +263,47 @@ describe('Spring forms on kotlin', () => {
       'kotlin',
       SPRING,
     );
-    // NOTE: @PostMapping(path = ["/kt"]) carries the path in a LIST literal —
-    // decoratorPathKeywords reads string values, so the list form falls back
-    // to the class prefix alone (honest; kotlin idiom usually uses a plain
-    // string). The plain-string keyword form is covered on java above.
-    expect(routeKeys(flow)).toContain('GET /api/kt/{var}');
+    // @PostMapping(path = ["/kt"]) carries the path in a LIST literal — each
+    // entry is served (the petclinic-validation catch, kotlin spelling).
+    expect(routeKeys(flow)).toEqual(['GET /api/kt/{var}', 'POST /api/kt']);
+  });
+});
+
+describe('array-path decorators (the real-repo validation catch)', () => {
+  it('java @GetMapping({ "/vets", "/vets.json" }) serves one route per entry', async () => {
+    const flow = await extract(
+      `public class VetController {
+         @GetMapping({ "/vets", "/vets.json" })
+         public Vets list() { return null; }
+       }`,
+      'java',
+      SPRING,
+    );
+    expect(routeKeys(flow)).toEqual(['GET /vets', 'GET /vets.json']);
+  });
+
+  it('a slash-less @RequestMapping path is RELATIVE to its class prefix (realworld catch)', async () => {
+    const flow = await extract(
+      `@RequestMapping(path = "/articles/{slug}/comments")
+       public class CommentsApi {
+         @RequestMapping(path = "{id}", method = RequestMethod.DELETE)
+         public ResponseEntity del(@PathVariable("id") String id) { return null; }
+       }`,
+      'java',
+      SPRING,
+    );
+    expect(routeKeys(flow)).toEqual(['DELETE /articles/{var}/comments/{var}']);
+  });
+
+  it('array paths compose with the class prefix', async () => {
+    const flow = await extract(
+      `@RequestMapping("/api")
+       public class C {
+         @GetMapping({ "/a", "/b" }) public Object f() { return null; }
+       }`,
+      'java',
+      SPRING,
+    );
+    expect(routeKeys(flow)).toEqual(['GET /api/a', 'GET /api/b']);
   });
 });
