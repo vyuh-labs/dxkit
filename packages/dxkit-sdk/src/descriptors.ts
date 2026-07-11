@@ -147,14 +147,116 @@ export interface HttpFlowSupport {
 
   /**
    * PATH-first route decorators whose methods ride a keyword argument:
-   * Flask's `@app.route('/x', methods=['GET', 'POST'])`. `names` are the
+   * Flask's `@app.route('/x', methods=['GET', 'POST'])`, Spring's
+   * `@RequestMapping("/x", method = RequestMethod.GET)`. `names` are the
    * decorator callee names (member or bare — `@app.route` and `@route` both
    * match on `route`); the first string argument is the path (leading `/`
-   * required, as above). `methodsKeyword` names the keyword argument carrying
-   * the verb list; when absent the route is emitted once per entry in
-   * `defaultMethods` (Flask's default is GET-only).
+   * required, as above — see `decoratorPathKeywords` for keyword-carried
+   * paths). `methodsKeyword` names the keyword argument carrying the verb
+   * list (a single non-list value is read as a one-verb list; dotted enum
+   * refs like `RequestMethod.GET` contribute their trailing segment); when
+   * absent the route is emitted once per entry in `defaultMethods` (Flask's
+   * default is GET-only). A `defaultMethods` entry of `'ANY'` emits the
+   * method-agnostic route instead of a concrete verb — Spring's bare
+   * `@RequestMapping("/x")` accepts every method.
    */
   routePathDecorators?: { names: string[]; methodsKeyword: string; defaultMethods: string[] };
+
+  /**
+   * Keyword/attribute arguments that may carry a route decorator's PATH when
+   * it has no positional string argument: Spring's
+   * `@RequestMapping(value = "/x")` / `@GetMapping(path = "/y")`. Read in
+   * declaration order via the grammar's keyword-argument shape wherever a
+   * decorator form (`routeDecorators`, `routeMemberDecorators`,
+   * `routePathDecorators`, `routePrefixDecorators`) finds no positional
+   * path. Additive (SDK minor).
+   */
+  decoratorPathKeywords?: string[];
+
+  /**
+   * Ancestor route-PREFIX decorators: an annotation on an ENCLOSING
+   * declaration whose path prefixes every route its descendants declare —
+   * Spring's class-level `@RequestMapping("/api/users")`, JAX-RS's
+   * class-level `@Path("/widgets")`. When a route is extracted from a
+   * decorator form, the extractor walks the handler's ancestor declarations
+   * (starting ABOVE the handler's own declaration, so a same-declaration
+   * annotation is never read as its own prefix) and joins each matching
+   * prefix, outermost first. The prefix path is the decorator's first
+   * positional string or a `decoratorPathKeywords` keyword; no leading-slash
+   * requirement (JAX-RS allows `@Path("widgets")`). Additive (SDK minor).
+   */
+  routePrefixDecorators?: { names: string[] };
+
+  /**
+   * Ancestor route-GROUP calls: a call whose first string argument prefixes
+   * every route declared inside its body/lambda — Ktor's
+   * `route("/api") { get("/x") { … } }`. On a matched call-declared route,
+   * the extractor walks ancestor call nodes (via the grammar shape's
+   * `calleeCall` chain for trailing-lambda forms) and joins each matching
+   * group's path, outermost first. Additive (SDK minor).
+   */
+  routeGroupCallees?: { names: string[] };
+
+  /**
+   * BARE verb-named route callees: the callee IS the verb and the first
+   * argument is the path — Ktor's `get("/x") { … }` / `post("/y") { … }`.
+   * Precision guards: the first positional argument must be a string literal
+   * beginning with `/`, and `requireTrailingLambda` (for grammars whose
+   * shape implements `hasTrailingLambda`) additionally requires the handler
+   * lambda — together they keep an app-local `get("key")` helper from
+   * minting a route. Combine with `routeGroupCallees` for nested prefixes.
+   * Additive (SDK minor).
+   */
+  routeVerbCallees?: { methods: string[]; requireTrailingLambda?: boolean };
+
+  /**
+   * SPLIT verb/path annotation pairs: one MARKER annotation names the verb
+   * and a SIBLING annotation on the same declaration carries the path —
+   * JAX-RS `@GET` + `@Path("/x")` on one handler method. `methodMarkers`
+   * match only argument-less marker forms (a CALLED `@GET("path")` is a
+   * `clientDecorators` fact — Retrofit — and never a pair match; that
+   * asymmetry is the disambiguator when one pack declares both). The path
+   * comes from the sibling in `pathNames` (first positional or
+   * `decoratorPathKeywords`; no leading-slash requirement), or from ancestor
+   * `routePrefixDecorators` alone when the handler has no own path (JAX-RS
+   * class-level `@Path` + bare method `@GET`). Additive (SDK minor).
+   */
+  routeAnnotationPairs?: { methodMarkers: string[]; pathNames: string[] };
+
+  /**
+   * CLIENT-side call decorators: an annotation on a method declaration that
+   * declares an OUTBOUND call — Retrofit's `@GET("users/{id}")` on an
+   * interface method. The decorator name maps to the verb (via
+   * `methodAliases`); the path is the first positional string argument.
+   * Deliberately NO leading-slash guard: these paths are RELATIVE (joined
+   * against a configured base URL at runtime), which is also what
+   * disambiguates them from `routeAnnotationPairs` markers — only a CALLED
+   * decorator with a string argument matches here. Additive (SDK minor).
+   */
+  clientDecorators?: { names: string[] };
+
+  /**
+   * BUILDER-CHAIN clients: the verb and the URL live on DIFFERENT calls of
+   * one method chain — Spring WebClient
+   * (`webClient.get().uri("/x").retrieve()`), java.net.http
+   * (`HttpRequest.newBuilder().uri(URI.create("/x")).GET()`), OkHttp
+   * (`new Request.Builder().url("…").get().build()`). On a member call whose
+   * name is in `urlCallees` with a string-literal argument, the extractor
+   * scans the chain (receiver links via the shape's `receiverNode`, and
+   * ancestor links where this call is itself a receiver) for a call named in
+   * `verbCallees` (the verb, via `methodAliases`) or `methodArgCallees`
+   * (verb as ITS first string argument — `.method("POST")`). Both found →
+   * one client call; a URL argument wrapped in an `unwrapArgCallees` call
+   * (`URI.create("/x")`) is unwrapped first. A chain with a verb but a
+   * runtime-built URL is counted as a dynamic call site (coverage honesty),
+   * never silently dropped. Additive (SDK minor).
+   */
+  clientBuilderChains?: Array<{
+    urlCallees: string[];
+    verbCallees: string[];
+    methodArgCallees?: string[];
+    unwrapArgCallees?: string[];
+  }>;
 
   /**
    * Route declarations that bind a path to a handler with NO verb in the
@@ -293,6 +395,24 @@ export interface ModelSchemaSupport {
     typeFrom?: 'callee' | 'firstArg';
     optionalityKeyword?: string;
     optionalityPolarity?: 'nullable' | 'required';
+  }>;
+  /**
+   * FIELD-decorator facts: annotations on a field that carry its wire name
+   * and/or optionality — JPA's `@Column(name = "wire_name",
+   * nullable = false)`. Matched on the decorator name's trailing segment.
+   * `optionalityKeyword` names the annotation argument carrying optionality
+   * and `optionalityPolarity` its meaning (`'nullable'`: true ⇒ optional;
+   * `'required'`: true ⇒ required) — read only when EXPLICITLY present, so
+   * an unannotated field keeps the grammar/lexical answer (or an honest
+   * `null`, which never gates). `wireNameKeyword` names the argument whose
+   * string value replaces the declared field name on the wire. Mirror of
+   * `fieldCallees` for annotation-carried facts. Additive (SDK minor).
+   */
+  fieldDecoratorSpecs?: Array<{
+    names: string[];
+    optionalityKeyword?: string;
+    optionalityPolarity?: 'nullable' | 'required';
+    wireNameKeyword?: string;
   }>;
   /**
    * Transparent type wrappers folded OUT of annotation text before any

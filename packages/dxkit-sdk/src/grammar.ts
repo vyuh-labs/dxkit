@@ -55,10 +55,39 @@ export interface GrammarShape {
    * `fetch(url, { method: 'POST' })`). Null when absent.
    */
   optionValue(call: Node, name: string): Node | null;
-  /** Texts (verbatim, quoted) of the string elements of a list/array node. */
+  /**
+   * Texts of the string elements of a list/array node — verbatim, quoted.
+   * A grammar whose lists can carry dotted ENUM references in place of
+   * strings (Java's `{RequestMethod.GET, RequestMethod.POST}`) may also
+   * contribute each reference's trailing identifier segment (unquoted) —
+   * the consumer normalizes and validates every token, so a non-verb tail
+   * simply drops out.
+   */
   listStrings(node: Node): string[];
   /** Function/method definition node types (decorated-handler-name fallback). */
   readonly functionNodes: readonly string[];
+  /**
+   * The callee node of a call whose callee is ITSELF a call — the outer node
+   * of a trailing-lambda pair (Kotlin `get("/x") { … }` → the inner
+   * `get("/x")` call) or a curried `f(x)(y)`. Null when the callee is a
+   * plain identifier/member. Optional (additive, SDK minor): grammars whose
+   * shapes predate it simply don't participate in ancestor group-prefix
+   * walks.
+   */
+  calleeCall?(call: Node): Node | null;
+  /**
+   * The receiver EXPRESSION NODE of a member call (`webClient.get()` →
+   * the `webClient` node; `a.b().c()` → the `a.b()` call node), for
+   * builder-chain traversal. Null for bare calls. Optional (additive,
+   * SDK minor).
+   */
+  receiverNode?(call: Node): Node | null;
+  /**
+   * Does this call carry a trailing lambda/block argument (Kotlin
+   * `get("/x") { … }`)? The `routeVerbCallees.requireTrailingLambda`
+   * precision guard reads it. Optional (additive, SDK minor).
+   */
+  hasTrailingLambda?(call: Node): boolean;
 }
 
 /** How to read one grammar's model-declaration syntax. */
