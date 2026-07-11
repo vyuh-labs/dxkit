@@ -58,6 +58,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'secret-hmac',
   'stale-allow',
   'flow-binding',
+  'model-schema-drift',
   'custom-check',
 ];
 

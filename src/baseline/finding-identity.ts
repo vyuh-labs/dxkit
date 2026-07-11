@@ -19,6 +19,7 @@ import {
   computeFingerprint,
   computeFingerprintV1,
   computeFlowBindingFingerprint,
+  computeModelSchemaDriftFingerprint,
   lineWindowFor,
   SECRET_CANONICAL_RULE,
 } from '../analyzers/tools/fingerprint';
@@ -133,6 +134,12 @@ export function identityFor(
       // (method, path, file) triple — all tool-independent + dxkit-derived
       // (Rule 9). The call can move anywhere in the file without re-minting.
       return computeFlowBindingFingerprint(input.method, input.path, input.file);
+    case 'model-schema-drift':
+      // Version-independent + LOCATION-free: hashes only (model, field,
+      // changeClass) — the dep-vuln doctrine applied to a contract-domain
+      // finding, so identity survives line AND file moves and a follow-up
+      // tweak to the same field keeps one allowlist decision (Rule 9).
+      return computeModelSchemaDriftFingerprint(input.model, input.field, input.changeClass);
     case 'custom-check':
       // Version-independent. Two shapes: a LOCATED finding (a linter's
       // per-line diagnostic) hashes (check, file, lineWindow, rule) — the

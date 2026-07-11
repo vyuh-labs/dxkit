@@ -143,6 +143,11 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // accepted-risk or deferred
   'flow-binding': ['false-positive', 'accepted-risk', 'deferred'],
 
+  // Schema drift: accepted-risk is THE intended escape hatch (a deliberate
+  // breaking change shipping with its migration, ideally with an expiry);
+  // false-positive covers a misread declaration; deferred parks a decision
+  'model-schema-drift': ['false-positive', 'accepted-risk', 'deferred'],
+
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale
   // annotation" — allowlisting the warning that an annotation is

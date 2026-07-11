@@ -217,6 +217,14 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'the current route, or — if a cross-repo consumer the scan cannot see is ' +
         'intended — allowlist with category=false-positive.'
       );
+    case 'model-schema-drift':
+      return (
+        'A declared data model changed in a breaking way (field removed, type ' +
+        'changed, requiredness tightened, or the model removed). Restore the ' +
+        'contract, or — for a deliberate breaking change shipping with its ' +
+        'migration — allowlist with category=accepted-risk (ideally with an ' +
+        'expiry) so the decision stays visible and time-boxed.'
+      );
     case 'custom-check':
       return (
         'A repo-declared check (a custom `.dxkit/policy.json` invariant, or a ' +
@@ -249,6 +257,7 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'hygiene':
     case 'stale-allow':
     case 'flow-binding':
+    case 'model-schema-drift':
       return { file: entry.file, line: entry.line };
     case 'coverage-gap':
     case 'test-gap':

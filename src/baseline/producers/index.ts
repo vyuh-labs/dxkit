@@ -197,6 +197,15 @@ export const DEFERRED_KINDS: Readonly<
       'Substitute: none — net-new broken-integration detection is inert until the gate wires in.',
     landingPhase: 'Flow M3 (the integration gate)',
   },
+  'model-schema-drift': {
+    reason:
+      'drift is a two-ref RELATION, not a standing finding: a change class exists ' +
+      'only between a base and a head model set, so there is no full-scan prior ' +
+      'side for baseline-create to capture. The drift gate mints these findings ' +
+      'itself (mirror of flow-binding), gathering both sides fresh at check time. ' +
+      'Substitute: none needed — the gate is the complete producer for this kind.',
+    landingPhase: 'model-schema drift gate (ships with the kind)',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────
