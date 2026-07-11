@@ -72,7 +72,7 @@ function stageFixture(stack: string): string {
 const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   { stack: 'ts-webapp', flow: { calls: 2 } },
   { stack: 'python-svc', flow: { calls: 4 } },
-  { stack: 'go-svc' },
+  { stack: 'go-svc', flow: { calls: 3 } },
 ];
 
 const staged: Record<string, string> = {};
@@ -177,5 +177,26 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
     // The runtime-built requests.get(url) is DISCLOSED as dynamic, not dropped.
     expect(model.dynamicCalls).toHaveLength(1);
     expect(model.dynamicCalls[0].receiver).toBe('requests');
+  });
+
+  it('go-svc: stdlib registrars + 1.22 patterns + chi verbs + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['go-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // Plain HandleFunc → ANY; 1.22 "GET /…" patterns → concrete verbs with
+    // {id} canonicalized; the chi-style r.Post rides routeRouterCallees.
+    expect(served).toEqual([
+      'ANY /healthz',
+      'GET /reports/export',
+      'GET /reports/{var}',
+      'POST /reports',
+    ]);
+    // A GET against the plain HandleFunc route resolves via the ANY rule, and
+    // the NewRequest constructor binds like any member client call.
+    const byPath = Object.fromEntries(model.bindings.map((b) => [b.call.path, b]));
+    expect(byPath['/healthz']?.route?.path).toBe('/healthz');
+    expect(byPath['/reports/export']?.route?.method).toBe('GET');
+    // The runtime-built http.Get(url) is DISCLOSED as dynamic, not dropped.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('http');
   });
 });

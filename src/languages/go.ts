@@ -1019,6 +1019,91 @@ export const go: LanguageSupport = {
     },
   },
 
+  // HTTP flow (CLAUDE.md Rule 6): how Go source expresses outbound HTTP calls
+  // + route declarations, consumed by the one flow extractor via the
+  // grammar-shape adapter (`src/ast/grammar-shape.ts`) — zero extractor code
+  // is Go-specific. CLIENT: the `http` package receiver is TRUSTED
+  // (`http.Get(url)` with a runtime-built URL is disclosed as a dynamic call
+  // site, never dropped); any other receiver's `.Get('/x')` with a path-like
+  // literal is admitted as a wrapper (an *http.Client named `client`, an
+  // app-specific api struct) through the same precision guard the TS/Python
+  // packs rely on. `http.NewRequest(WithContext)` — the stdlib way to make
+  // non-GET requests — is a request CONSTRUCTOR: verb from its first string
+  // argument, URL from the next. SERVED, two forms:
+  //   - stdlib registrars `HandleFunc` / `Handle` on any receiver
+  //     (`http.HandleFunc`, `mux.Handle`) → method-agnostic `ANY` routes,
+  //     with the Go 1.22 pattern head (`"GET /users/{id}"`) read as a
+  //     concrete verb; the leading-slash guard keeps generic
+  //     `.Handle("event", fn)` registrations out. `{id}` / `{rest...}` /
+  //     `{$}` pattern forms canonicalize in the shared normalizer.
+  //   - router-package verb methods (chi `r.Get`, echo/gin `e.GET`/`r.POST`,
+  //     fiber `app.Get`) on the conventional receiver names below. A router
+  //     bound to an unconventional name falls back to `flow.specs` (OpenAPI)
+  //     — declared coverage, not silence.
+  // gorilla/mux's chained `.Methods("GET")` refinement is NOT read: its
+  // `HandleFunc` routes surface as `ANY` (route exists; the verb restriction
+  // is applied by a chained call outside the declaration this extractor
+  // models).
+  httpFlow: {
+    clientMethodCallees: {
+      methods: ['Get', 'Post', 'Head', 'PostForm', 'Put', 'Patch', 'Delete'],
+      bases: ['http'],
+    },
+    clientRequestCallees: {
+      names: ['NewRequest', 'NewRequestWithContext'],
+      bases: ['http'],
+    },
+    routeRouterCallees: {
+      methods: [
+        'Get',
+        'Post',
+        'Put',
+        'Patch',
+        'Delete',
+        'Head',
+        'Options',
+        'GET',
+        'POST',
+        'PUT',
+        'PATCH',
+        'DELETE',
+        'HEAD',
+        'OPTIONS',
+      ],
+      // The receiver names Go routers conventionally bind to (chi/echo/gin/
+      // fiber idioms + versioned gin groups). `receiverMatchesBase` also
+      // matches struct fields (`s.router.Get(...)`).
+      bases: ['r', 'router', 'mux', 'e', 'app', 'api', 'g', 'group', 'engine', 'v1', 'v2'],
+    },
+    routeCallees: {
+      memberNames: ['HandleFunc', 'Handle'],
+      methodPrefixInPath: true,
+    },
+    methodAliases: { postform: 'POST' },
+    // Discovery-only (doctor's flow recommendation + the config planner): a
+    // router framework in go.mod signals a served-side flow surface. A
+    // stdlib-only `net/http` server has no manifest signal (the stdlib is not
+    // a go.mod entry) — extraction still works once flow is configured.
+    flowSignals: [
+      {
+        manifest: 'go.mod',
+        anyOf: [
+          'github.com/gin-gonic/gin',
+          'github.com/labstack/echo',
+          'github.com/go-chi/chi',
+          'github.com/gorilla/mux',
+          'github.com/gofiber/fiber',
+        ],
+      },
+    ],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/). Logical name —
+  // src/ast/ resolves it to the bundled wasm artifact and its shape row.
+  treeSitterGrammars: {
+    '.go': 'go',
+  },
+
   clocLanguageNames: ['Go'],
 
   detect(cwd) {
