@@ -9,9 +9,11 @@ import {
   recommendConfigure,
   recommendBaseline,
   recommendFlow,
+  recommendSchema,
   recommendChecks,
   planBaselineMode,
   planFlowMode,
+  planSchemaMode,
   planLintGate,
   planLoopPreset,
 } from './advisor';
@@ -305,6 +307,21 @@ export const COMMANDS = [
   },
 
   // ── Integrate ──────────────────────────────────────────────────────────
+  {
+    id: 'schema',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Data-model inventory + the schema drift gate',
+    docsBlurb:
+      'Extract every declared data model (ORM entities, tagged structs, spec schemas) and ' +
+      'gate breaking changes — a removed field, a changed type, an optional field made ' +
+      'required. `schema` lists the inventory, `schema diff --ref <base>` previews the exact ' +
+      'verdict the guardrail will reach; a deliberate breaking change ships via an expiring ' +
+      'accepted-risk allowlist entry.',
+    skill: 'dxkit-schema',
+    whenToRecommend: recommendSchema,
+    planConfig: planSchemaMode,
+  },
   {
     id: 'flow',
     audience: 'user',

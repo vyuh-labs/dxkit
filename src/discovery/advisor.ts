@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveBaselineMode } from '../baseline/modes';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
+import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { isClaudeLoopInstalled } from '../loop/scaffold';
 import { LANGUAGES } from '../languages';
 import type {
@@ -79,37 +80,63 @@ function hasFlowSignal(cwd: string): boolean {
   if (existsAt(cwd, '.dxkit', 'workspace.json')) return false;
   const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
   if (policy && 'flow' in policy) return false;
+  return manifestSignalHit(
+    cwd,
+    LANGUAGES.flatMap((p) => p.httpFlow?.flowSignals ?? []),
+  );
+}
 
-  for (const pack of LANGUAGES) {
-    for (const signal of pack.httpFlow?.flowSignals ?? []) {
-      if (signal.manifest === 'package.json') {
-        // JSON manifests match on dependency KEYS (a word-boundary text search
-        // would also hit versions/scripts).
-        const pkg = readJsonSafe(path.join(cwd, signal.manifest));
-        if (!pkg) continue;
-        const deps = {
-          ...((pkg.dependencies as Record<string, unknown>) ?? {}),
-          ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
-        };
-        if (signal.anyOf.some((f) => f in deps)) return true;
-      } else {
-        // Plain-text manifests (requirements.txt, pyproject.toml, Pipfile…)
-        // match on word-boundary tokens — precise enough for a fail-open
-        // recommendation probe.
-        let text: string;
-        try {
-          text = fs.readFileSync(path.join(cwd, signal.manifest), 'utf8');
-        } catch {
-          continue;
-        }
-        const hit = signal.anyOf.some((f) =>
-          new RegExp(`\\b${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text),
-        );
-        if (hit) return true;
+/**
+ * Does any pack-declared manifest signal match this repo? The ONE
+ * signal-matching implementation (Rule 2), shared by the flow and schema
+ * probes. `package.json` matches on dependency KEYS (a word-boundary text
+ * search would also hit versions/scripts); plain-text manifests
+ * (requirements.txt, pyproject.toml, go.mod…) match on word-boundary tokens
+ * — precise enough for a fail-open recommendation probe.
+ */
+function manifestSignalHit(
+  cwd: string,
+  signals: ReadonlyArray<{ manifest: string; anyOf: string[] }>,
+): boolean {
+  for (const signal of signals) {
+    if (signal.manifest === 'package.json') {
+      const pkg = readJsonSafe(path.join(cwd, signal.manifest));
+      if (!pkg) continue;
+      const deps = {
+        ...((pkg.dependencies as Record<string, unknown>) ?? {}),
+        ...((pkg.devDependencies as Record<string, unknown>) ?? {}),
+      };
+      if (signal.anyOf.some((f) => f in deps)) return true;
+    } else {
+      let text: string;
+      try {
+        text = fs.readFileSync(path.join(cwd, signal.manifest), 'utf8');
+      } catch {
+        continue;
       }
+      const hit = signal.anyOf.some((f) =>
+        new RegExp(`\\b${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text),
+      );
+      if (hit) return true;
     }
   }
   return false;
+}
+
+/**
+ * One signal function for the schema-gate capability, shared by the doctor
+ * probe (`recommendSchema`) and the planner (`planSchemaMode`) so the two
+ * never diverge (Rule 2). Tokens are PACK-DECLARED
+ * (`modelSchema.schemaSignals`, Rule 6). Silenced once a `schema` policy
+ * block exists — configured repos are never re-recommended.
+ */
+function hasSchemaSignal(cwd: string): boolean {
+  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  if (policy && 'schema' in policy) return false;
+  return manifestSignalHit(
+    cwd,
+    LANGUAGES.flatMap((p) => p.modelSchema?.schemaSignals ?? []),
+  );
 }
 
 /** Recommend flow setup on a repo with an HTTP-framework signal and no flow config. */
@@ -119,6 +146,17 @@ export function recommendFlow(ctx: RecommendContext): Recommendation | null {
     reason:
       'detected an HTTP framework but no flow setup — flow maps client calls to served routes and gates changes that break an integration',
     command: 'vyuh-dxkit flow init',
+  };
+}
+
+/** Recommend the schema gate on a repo with an ORM/model-framework signal
+ *  and no schema config. */
+export function recommendSchema(ctx: RecommendContext): Recommendation | null {
+  if (!hasSchemaSignal(ctx.cwd)) return null;
+  return {
+    reason:
+      'detected a data-model framework but no schema gate — the gate blocks breaking model changes (field removed, type changed, required tightened) while a deliberate migration ships via an expiring allowlist entry',
+    command: 'vyuh-dxkit schema',
   };
 }
 
@@ -236,6 +274,24 @@ export function planFlowMode(ctx: ConfigContext): ConfigPlanItem | null {
     patch: { flow: { mode: 'warn', schemaVersion: FLOW_CONFIG_SCHEMA_VERSION } },
     reason: 'seed the UI→API integration gate at the safe default (warn, never fails a build)',
     evidence: 'HTTP framework in a dependency manifest, no flow config yet',
+  };
+}
+
+/**
+ * Schema gate: on a repo with a data-model framework and no schema config,
+ * seed the safe default posture — `warn` (surface breaking drift, never fail
+ * a build). The team moves it to `block` once the inventory reads clean.
+ * Reuses `hasSchemaSignal` (shared with the doctor probe, Rule 2).
+ */
+export function planSchemaMode(ctx: ConfigContext): ConfigPlanItem | null {
+  if (!hasSchemaSignal(ctx.cwd)) return null;
+  return {
+    capability: 'schema',
+    section: 'schema.mode',
+    summary: 'warn',
+    patch: { schema: { mode: 'warn', schemaVersion: SCHEMA_CONFIG_SCHEMA_VERSION } },
+    reason: 'seed the model-schema drift gate at the safe default (warn, never fails a build)',
+    evidence: 'data-model framework in a dependency manifest, no schema config yet',
   };
 }
 
