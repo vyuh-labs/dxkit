@@ -7,6 +7,7 @@ export default [
   {
     ignores: [
       'dist/**',
+      'packages/*/dist/**',
       'templates/**',
       'src-templates/**',
       'node_modules/**',
