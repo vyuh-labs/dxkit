@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -8,6 +9,12 @@ import { defineConfig } from 'vitest/config';
  * `npm run test:integration` or in CI before merges to main.
  */
 export default defineConfig({
+  // Same SDK source alias as vitest.config.ts (see its comment).
+  resolve: {
+    alias: {
+      '@vyuhlabs/dxkit-sdk': resolve(__dirname, 'packages/dxkit-sdk/src/index.ts'),
+    },
+  },
   test: {
     include: ['test/integration/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**'],
