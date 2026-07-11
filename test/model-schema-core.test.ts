@@ -170,9 +170,7 @@ class Item(Base):
       'python',
       {
         modelBaseClasses: ['Base'],
-        fieldCallees: [
-          { names: ['Column'], typeFrom: 'firstArg', optionalityKeyword: 'nullable' },
-        ],
+        fieldCallees: [{ names: ['Column'], typeFrom: 'firstArg', optionalityKeyword: 'nullable' }],
       },
     );
     expect(models[0].fields).toEqual([
@@ -231,7 +229,10 @@ describe('pairModels — name-anchored, relocation-tolerant', () => {
   const fields = [{ name: 'id', type: 'int', required: true }];
 
   it('a pure file move pairs as relocated with confidence 1', () => {
-    const join = pairModels(set(entity('User', 'a/models.ts', fields)), set(entity('User', 'b/models.ts', fields)));
+    const join = pairModels(
+      set(entity('User', 'a/models.ts', fields)),
+      set(entity('User', 'b/models.ts', fields)),
+    );
     expect(join.pairs).toHaveLength(1);
     expect(join.pairs[0].reason).toBe('relocated');
     expect(join.pairs[0].confidence).toBe(1);
@@ -305,7 +306,10 @@ describe('pairModels — name-anchored, relocation-tolerant', () => {
   });
 
   it('a rename is an honest remove + add', () => {
-    const join = pairModels(set(entity('User', 'a.ts', fields)), set(entity('Person', 'a.ts', fields)));
+    const join = pairModels(
+      set(entity('User', 'a.ts', fields)),
+      set(entity('Person', 'a.ts', fields)),
+    );
     expect(join.pairs).toEqual([]);
     expect(join.removed.map((e) => e.name)).toEqual(['User']);
     expect(join.added.map((e) => e.name)).toEqual(['Person']);
@@ -348,9 +352,7 @@ describe('diffModelSets — taxonomy and unknown rules', () => {
   });
 
   it('a pure file move produces ZERO findings', () => {
-    const moved = set(
-      entity('User', 'relocated/models.ts', [...base.models[0].fields]),
-    );
+    const moved = set(entity('User', 'relocated/models.ts', [...base.models[0].fields]));
     expect(diffModelSets(base, moved)).toEqual([]);
   });
 

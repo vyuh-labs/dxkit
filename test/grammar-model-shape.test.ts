@@ -146,8 +146,18 @@ class Item(BaseModel):
 
   it('enumerates class-level assignments only (method bodies excluded)', async () => {
     const [point, user, item] = await classesOf(SRC, 'python');
-    expect(py.fieldNodes(point).map((f) => py.fieldNames(f)).flat()).toEqual(['x', 'y']);
-    expect(py.fieldNodes(item).map((f) => py.fieldNames(f)).flat()).toEqual(['name']);
+    expect(
+      py
+        .fieldNodes(point)
+        .map((f) => py.fieldNames(f))
+        .flat(),
+    ).toEqual(['x', 'y']);
+    expect(
+      py
+        .fieldNodes(item)
+        .map((f) => py.fieldNames(f))
+        .flat(),
+    ).toEqual(['name']);
 
     const [email] = py.fieldNodes(user);
     expect(py.fieldNames(email)).toEqual(['email']);

@@ -562,9 +562,10 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         `modelDecorators / structTagKeys) — a vacuous descriptor that can never mark a model`,
     ).toBeGreaterThan(0);
     for (const family of recognition) {
-      expect(family.length, `${lang.id}: a modelSchema recognition family is empty`).toBeGreaterThan(
-        0,
-      );
+      expect(
+        family.length,
+        `${lang.id}: a modelSchema recognition family is empty`,
+      ).toBeGreaterThan(0);
     }
     for (const fc of ms.fieldCallees ?? []) {
       expect(fc.names.length, `${lang.id}: a fieldCallees entry has no names`).toBeGreaterThan(0);
@@ -573,9 +574,7 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
       }
     }
     for (const [key, value] of Object.entries(ms.typeAliases ?? {})) {
-      expect(key, `${lang.id}: typeAliases key "${key}" must be lowercase`).toBe(
-        key.toLowerCase(),
-      );
+      expect(key, `${lang.id}: typeAliases key "${key}" must be lowercase`).toBe(key.toLowerCase());
       expect(value.length).toBeGreaterThan(0);
     }
     // Discovery signals, when declared, must be well-formed.

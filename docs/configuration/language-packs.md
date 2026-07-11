@@ -144,12 +144,12 @@ recognizes models **by marker, per pack**: each pack declares which
 constructs are models (`modelSchema`), and one shared extractor reads them
 through a per-grammar syntax table. Current coverage:
 
-| Pack       | Recognition markers                                                                                      | Field facts                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| typescript | `@Entity` / `@Table` / `@Schema` / `@ObjectType` / `@InputType` decorators, `BaseEntity` heritage         | type annotations (`?`, `\| null`)                                        |
-| python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`              | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=` |
-| go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                          | field types (pointer = optional), tag wire names, `omitempty`             |
-| any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                             | the spec's own types + `required` list                                    |
+| Pack       | Recognition markers                                                                               | Field facts                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| typescript | `@Entity` / `@Table` / `@Schema` / `@ObjectType` / `@InputType` decorators, `BaseEntity` heritage | type annotations (`?`, `\| null`)                                         |
+| python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`     | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=` |
+| go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                 | field types (pointer = optional), tag wire names, `omitempty`             |
+| any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                    | the spec's own types + `required` list                                    |
 
 What the gate deliberately does **not** see — each either disclosed at run
 time or documented here, never implied covered:

@@ -113,10 +113,10 @@ describe('evaluateSchemaDriftGateForGuardrail — real ref-based gate', () => {
     // Working tree: email removed, nick becomes required, org added optional.
     writeFileSync(
       join(dir, 'openapi.json'),
-      specDoc(
-        { id: { type: 'integer' }, nick: { type: 'string' }, org: { type: 'string' } },
-        ['id', 'nick'],
-      ),
+      specDoc({ id: { type: 'integer' }, nick: { type: 'string' }, org: { type: 'string' } }, [
+        'id',
+        'nick',
+      ]),
     );
     const out = await evaluateSchemaDriftGateForGuardrail({ cwd: dir, baseRef: 'main' });
     expect(out.ran).toBe(true);
