@@ -5,6 +5,7 @@ import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages'
 import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { grammarShape } from '../src/ast/grammar-shape';
+import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
 
 const REQUIRED_IDS: LanguageId[] = ['typescript', 'python', 'go', 'rust', 'csharp'];
 
@@ -513,6 +514,72 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     // Discovery signals, when declared, must be well-formed (an empty anyOf
     // silently recommends nothing).
     for (const signal of hf.flowSignals ?? []) {
+      expect(signal.manifest.length).toBeGreaterThan(0);
+      expect(signal.anyOf.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('modelSchema, when declared, is extraction-complete (grammar + model shape + wasm) and non-vacuous', () => {
+    if (!lang.modelSchema) return; // packs without canonical model conventions skip
+    const ms = lang.modelSchema;
+
+    // 1. A model descriptor without a grammar can never parse a file.
+    const grammars = Object.entries(lang.treeSitterGrammars ?? {});
+    expect(
+      grammars.length,
+      `${lang.id}: declares modelSchema but no treeSitterGrammars — no file would ever ` +
+        `parse, so the descriptor is dead. Declare the grammar(s) for its source extensions.`,
+    ).toBeGreaterThan(0);
+
+    for (const [ext, grammar] of grammars) {
+      // 2. The grammar must have a MODEL shape row (grammar-model-shape.ts) —
+      //    the extractor skips files whose class/field syntax it cannot read.
+      expect(
+        modelShapeForGrammar(grammar),
+        `${lang.id}: grammar "${grammar}" has no model-shape row in ` +
+          `src/ast/grammar-model-shape.ts — model extraction would silently skip every ` +
+          `${ext} file. Add the row, verified against the bundled wasm.`,
+      ).not.toBeNull();
+      // 3. The wasm artifact must actually ship (shared with the flow check,
+      //    re-asserted here so a model-only pack still fails loud).
+      const wasmsDir = path.dirname(require.resolve('tree-sitter-wasms/package.json'));
+      const wasm = path.join(wasmsDir, 'out', `tree-sitter-${grammar}.wasm`);
+      expect(
+        fs.existsSync(wasm),
+        `${lang.id}: no bundled wasm for grammar "${grammar}" (${wasm})`,
+      ).toBe(true);
+    }
+
+    // 4. Non-vacuous: at least one RECOGNITION family (base classes /
+    //    decorators / struct tags — fieldCallees only enrich, they cannot
+    //    recognize), and every present family/sub-shape well-formed.
+    const recognition = [ms.modelBaseClasses, ms.modelDecorators, ms.structTagKeys].filter(
+      (f): f is string[] => f !== undefined,
+    );
+    expect(
+      recognition.length,
+      `${lang.id}: modelSchema declares no recognition family (modelBaseClasses / ` +
+        `modelDecorators / structTagKeys) — a vacuous descriptor that can never mark a model`,
+    ).toBeGreaterThan(0);
+    for (const family of recognition) {
+      expect(family.length, `${lang.id}: a modelSchema recognition family is empty`).toBeGreaterThan(
+        0,
+      );
+    }
+    for (const fc of ms.fieldCallees ?? []) {
+      expect(fc.names.length, `${lang.id}: a fieldCallees entry has no names`).toBeGreaterThan(0);
+      if (fc.optionalityKeyword !== undefined) {
+        expect(fc.optionalityKeyword.length).toBeGreaterThan(0);
+      }
+    }
+    for (const [key, value] of Object.entries(ms.typeAliases ?? {})) {
+      expect(key, `${lang.id}: typeAliases key "${key}" must be lowercase`).toBe(
+        key.toLowerCase(),
+      );
+      expect(value.length).toBeGreaterThan(0);
+    }
+    // Discovery signals, when declared, must be well-formed.
+    for (const signal of ms.schemaSignals ?? []) {
       expect(signal.manifest.length).toBeGreaterThan(0);
       expect(signal.anyOf.length).toBeGreaterThan(0);
     }

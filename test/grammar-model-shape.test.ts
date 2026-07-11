@@ -108,7 +108,9 @@ class Plain {
     expect(fields.map((f) => js.fieldNames(f)).flat()).toEqual(['a', 'b']);
     const [a, b] = fields;
     expect(js.fieldTypeText(a)).toBeNull();
-    expect(js.fieldOptionalMarker(a)).toBe(false);
+    // No annotation at all → the marker is honestly unknown (three-valued):
+    // a fabricated `required` would let the drift diff block on it.
+    expect(js.fieldOptionalMarker(a)).toBeNull();
     expect(js.fieldDecorators(b).map((d) => d.text)).toEqual(['@Dec()']);
     expect(js.fieldValueCall(b)?.text).toBe('relation(1)');
   });

@@ -28,6 +28,7 @@ import { tmpdir } from 'os';
 import { gatherFileFindings } from '../src/analyzers/security/gather';
 import { gatherGrepSecretsResult } from '../src/analyzers/tools/grep-secrets';
 import { gatherRepoFlowModel } from '../src/analyzers/flow/gather';
+import { gatherRepoModelSet } from '../src/analyzers/model-schema/gather';
 import { summarize } from '../src/analyzers/flow/model';
 import { buildReachable } from '../src/analyzers/tests/import-graph';
 
@@ -118,6 +119,52 @@ describe('analysis fixtures — language-agnostic invariants (every stack)', () 
       // `password: 'password'` / `api_key = 'your-api-key'` are placeholders.
       expect(result!.findings).toHaveLength(0);
       expect(result!.suppressedCount).toBeGreaterThanOrEqual(1);
+    });
+  }
+});
+
+describe('analysis fixtures — model-schema extraction (marker-based, every stack)', () => {
+  // The language-agnostic invariants: a MARKED model extracts with its
+  // optionality forms normalized; an unmarked helper next to it stays
+  // invisible (precision over recall — the capability's documented posture).
+  // One matrix, three stacks: a fix that only works for one framework
+  // overfits and fails here.
+  const MODEL_ROWS: Array<{
+    stack: string;
+    expected: string[];
+    optionalField: { model: string; field: string };
+    invisible: string;
+  }> = [
+    {
+      stack: 'ts-webapp',
+      expected: ['User'],
+      optionalField: { model: 'User', field: 'nick' }, // `?` marker
+      invisible: 'UserMapper',
+    },
+    {
+      stack: 'python-svc',
+      expected: ['Article', 'ArticleDto'],
+      optionalField: { model: 'Article', field: 'summary' }, // null=True
+      invisible: 'ArticleIndexer',
+    },
+    {
+      stack: 'go-svc',
+      expected: ['Report'],
+      optionalField: { model: 'Report', field: 'note' }, // pointer + omitempty
+      invisible: 'reportCache',
+    },
+  ];
+
+  for (const row of MODEL_ROWS) {
+    it(`${row.stack}: marked models extract, helpers stay invisible, optionality normalizes`, async () => {
+      const set = await gatherRepoModelSet(staged[row.stack]);
+      const names = set.models.map((m) => m.name);
+      for (const name of row.expected) expect(names, `missing model ${name}`).toContain(name);
+      expect(names).not.toContain(row.invisible);
+      const model = set.models.find((m) => m.name === row.optionalField.model)!;
+      const field = model.fields.find((f) => f.name === row.optionalField.field);
+      expect(field, `${row.optionalField.model}.${row.optionalField.field}`).toBeDefined();
+      expect(field!.required).toBe(false);
     });
   }
 });

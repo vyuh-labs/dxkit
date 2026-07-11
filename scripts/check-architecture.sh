@@ -1191,6 +1191,47 @@ if [ -n "$RULE_FLOWGATHER" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Model-schema mirror of the flow one-concept rules (Rule 2):
+#   (a) raw gatherModelSet() is reserved for explicit-config callers — the
+#       model-schema module itself, the two-ref drift gate, and the schema
+#       CLI's base-side gather. Every single-repo surface goes through
+#       gatherRepoModelSet(cwd), which loads .dxkit/policy.json:schema itself
+#       so the configured specs are always applied.
+RULE_MODELGATHER=$(grep -rn "gatherModelSet(" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/analyzers/model-schema/gather.ts:" \
+  | grep -v "^src/baseline/schema-drift-gate-check.ts:" \
+  | grep -v "^src/schema-cli.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// model-gather-ok")
+if [ -n "$RULE_MODELGATHER" ]; then
+  echo "❌ One-concept violation: raw gatherModelSet() on a single-repo surface:"
+  echo "$RULE_MODELGATHER"
+  echo "   → Use gatherRepoModelSet(cwd) from src/analyzers/model-schema/gather.ts — it"
+  echo "     loads .dxkit/policy.json:schema so the configured specs are always applied."
+  echo "   → Annotate '// model-gather-ok' for a justified explicit-config caller."
+  ERRORS=$((ERRORS + 1))
+fi
+
+#   (b) the `schema` policy section has ONE reader/writer —
+#       src/analyzers/model-schema/config.ts. A second ad-hoc read of
+#       policy.json's schema block re-opens the split-config bug class the
+#       flow config module closed. (The advisor's presence-probe reads the
+#       block's EXISTENCE via readJsonSafe, which this rule doesn't match.)
+RULE_SCHEMACONFIG=$(grep -rn "policy.json" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -E "\.schema\b|\['schema'\]|\"schema\"" \
+  | grep -v "^src/analyzers/model-schema/config.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "// schema-config-ok")
+if [ -n "$RULE_SCHEMACONFIG" ]; then
+  echo "❌ One-concept violation: .dxkit/policy.json:schema read outside the config module:"
+  echo "$RULE_SCHEMACONFIG"
+  echo "   → Route through readSchemaConfig / writeSchemaPolicy in src/analyzers/model-schema/config.ts."
+  echo "   → Annotate '// schema-config-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 14 (2.13.1 self-invocation class-fix): generated artifacts invoke the
 # dxkit CLI through ONE canonical helper, and every auto-running surface is
 # in ONE registry.
