@@ -245,6 +245,57 @@ export const c = () => api.fetchJson('/brand-new/call');
   }, 30_000);
 });
 
+describe('every canonical flow surface applies the overlay (no half-landed lens)', () => {
+  // The Tier-1 validation caught `flow extract` (the flow CLI's explicit-
+  // config gather) ignoring plugins while gatherRepoFlowModel applied them —
+  // the exact one-concept/two-paths class. Pin BOTH entry points.
+  it('flow-cli gatherModel sees a plugin urlNormalizer', async () => {
+    const { gatherModel } = await import('../../src/flow-cli');
+    write('.dxkit/extensions/svc-urls/extension.json', {
+      schemaVersion: 1,
+      name: 'svc-urls',
+      plugin: { module: 'plugin.js' },
+    });
+    write(
+      '.dxkit/extensions/svc-urls/plugin.js',
+      `module.exports = { name: 'svc-urls', sdkMajor: ${SDK_MAJOR},
+        urlNormalizer: (u) => u.startsWith('internal://svc') ? u.slice('internal://svc'.length) : null };`,
+    );
+    write('.dxkit/policy.json', {
+      flow: { sources: [{ kind: 'http', path: 'requests/smoke.http' }] },
+    });
+    write('requests/smoke.http', 'GET internal://svc/users/42\n');
+    const model = await gatherModel({ cwd: tmp });
+    expect(model.calls).toHaveLength(1);
+    expect(model.calls[0].path).toBe('/users/42');
+  });
+
+  it("flow publish's self model sees the repo's own overlay and its declared sources", async () => {
+    const { runFlowPublish } = await import('../../src/flow-contract-cli');
+    const { execFileSync: exec } = await import('child_process');
+    exec('git', ['init', '-q'], { cwd: tmp });
+    write('.dxkit/extensions/svc-urls/extension.json', {
+      schemaVersion: 1,
+      name: 'svc-urls',
+      plugin: { module: 'plugin.js' },
+    });
+    write(
+      '.dxkit/extensions/svc-urls/plugin.js',
+      `module.exports = { name: 'svc-urls', sdkMajor: ${SDK_MAJOR},
+        urlNormalizer: (u) => u.startsWith('internal://svc') ? u.slice('internal://svc'.length) : null };`,
+    );
+    write('.dxkit/policy.json', {
+      flow: { sources: [{ kind: 'http', path: 'requests/smoke.http' }] },
+    });
+    write('requests/smoke.http', 'GET internal://svc/users/42\n');
+    await runFlowPublish({ cwd: tmp, json: true });
+    const consumed = JSON.parse(
+      fs.readFileSync(path.join(tmp, '.dxkit/flow/consumed.json'), 'utf8'),
+    ) as { bindings: Array<{ path: string }> };
+    expect(consumed.bindings.map((b) => b.path)).toEqual(['/users/42']);
+  });
+});
+
 describe('mergeHttpFlow (additive-only discipline)', () => {
   it('unions token lists and grouped tables without dropping pack facts', async () => {
     const { mergeHttpFlow } = await import('../../src/analyzers/flow/dialects');

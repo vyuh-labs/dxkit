@@ -95,6 +95,7 @@ export async function runFlowPublish(opts: FlowViewOptions & { land?: string }):
   const beforeConsumed = opts.land !== undefined ? readConsumedContract(opts.cwd) : undefined;
   const result = await publishFlow(opts.cwd, {
     stripUrlPrefixes: config.stripUrlPrefixes,
+    sources: config.sources,
     specs: [
       ...splitPaths(opts.specs, opts.cwd),
       ...config.specs.map((s) => path.resolve(opts.cwd, s)),
