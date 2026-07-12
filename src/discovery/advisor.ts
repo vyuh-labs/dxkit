@@ -54,6 +54,19 @@ function dirHasEntries(dir: string): boolean {
   }
 }
 
+/** Recommend the zero-write trial where dxkit is NOT installed yet — the
+ *  pre-adoption step. Once the manifest exists the gate itself answers the
+ *  question the trial answers, so the probe goes silent. */
+export function recommendEvaluate(ctx: RecommendContext): Recommendation | null {
+  if (existsAt(ctx.cwd, '.vyuh-dxkit.json')) return null;
+  if (!existsAt(ctx.cwd, '.git')) return null;
+  return {
+    reason:
+      'dxkit is not installed here — the zero-write trial replays your recent landings through the gate without touching the repo',
+    command: 'vyuh-dxkit evaluate',
+  };
+}
+
 /** Recommend `baseline create` when dxkit is installed but has no baseline. */
 export function recommendBaseline(ctx: RecommendContext): Recommendation | null {
   // Only relevant once dxkit is installed (the manifest exists). Without a

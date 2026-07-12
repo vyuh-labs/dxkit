@@ -8,6 +8,7 @@ import type { CapabilityDescriptor } from './command-types';
 import {
   recommendConfigure,
   recommendBaseline,
+  recommendEvaluate,
   recommendFlow,
   recommendSchema,
   recommendChecks,
@@ -184,6 +185,17 @@ export const COMMANDS = [
     docsBlurb:
       '`tests affected --diff <ref>` lists the test files a change reaches, computed from the call graph (beats module-graph selection in composition-root repos). Fails safe to the full suite when the graph is missing, stale, or unreliable for a changed language.',
     skill: 'dxkit-test',
+  },
+  {
+    id: 'evaluate',
+    audience: 'user',
+    group: 'assess',
+    summary: 'Zero-write trial: replay your recent landings through the gate',
+    typicalRuntime: '30 sec - 1 min per landing',
+    docsBlurb:
+      'What dxkit would have blocked on your last N merged changes, plus what enabling it costs (measured gate latency, interruption rate, setup) — computed in disposable worktrees, writing nothing to your repo.',
+    skill: 'dxkit-evaluate',
+    whenToRecommend: recommendEvaluate,
   },
   {
     id: 'quality',
