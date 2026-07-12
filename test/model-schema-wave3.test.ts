@@ -13,10 +13,8 @@ import { describe, it, expect } from 'vitest';
 import { parseSource } from '../src/ast/parse';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
-import {
-  extractModelsFromTree,
-  extractSchemaFileTables,
-} from '../src/analyzers/model-schema/extract';
+import { extractModelsFromTree } from '../src/analyzers/model-schema/extract';
+import { extractSchemaFileTables } from '../src/analyzers/model-schema/schema-file';
 import { mergePartialEntities } from '../src/analyzers/model-schema/model';
 import { gatherModelSet } from '../src/analyzers/model-schema/gather';
 import type { ModelSchemaSupport } from '../src/languages/types';

@@ -44,7 +44,8 @@ import {
 import { mergeHttpFlow } from './dialects';
 import { deriveFileRoutePath, exportedMethodNames } from './file-routes';
 import { extractDecoratorFlow } from './extract-decorators';
-import { collectGroupPrefix, hasAncestorCallee, joinNormalizedPaths } from './extract-prefix';
+import { collectGroupPrefix, joinNormalizedPaths } from './extract-prefix';
+import { resourceRoutes, verbCalleeRoutes } from './extract-verbs';
 import { matchChainCall } from './extract-chains';
 
 /** An outbound HTTP call found in source (the consumed side). */
@@ -140,108 +141,6 @@ function receiverHeadMatchesBase(receiver: string, bases: readonly string[]): bo
   return head.length > 0 && bases.includes(head);
 }
 
-type VerbCalleeSpec = NonNullable<HttpFlowSupport['routeVerbCallees']>;
-
-/**
- * Does a verb-named route call pass its declared QUALIFIER SET? When one or
- * more qualifiers are declared, at least one must hold — that is what keeps
- * a bare `get '/x'` in a request spec (no handler block, no `to:`, not
- * inside `draw`) from minting a route while Sinatra blocks, Rails `to:`
- * bindings, and routes.rb ancestry all qualify. No declared qualifier →
- * qualified (the slash-literal guard alone, the pre-3.6 behavior).
- */
-function verbCalleeQualifies(call: Node, shape: GrammarShape, spec: VerbCalleeSpec): boolean {
-  const lambdaDeclared = spec.requireTrailingLambda === true;
-  const keywordsDeclared = (spec.handlerKeywords?.length ?? 0) > 0;
-  const ancestorsDeclared = (spec.ancestorCallees?.length ?? 0) > 0;
-  if (!lambdaDeclared && !keywordsDeclared && !ancestorsDeclared) return true;
-  if (lambdaDeclared && shape.hasTrailingLambda !== undefined && shape.hasTrailingLambda(call)) {
-    return true;
-  }
-  if (
-    keywordsDeclared &&
-    spec.handlerKeywords!.some((kw) => shape.optionValue(call, kw) !== null)
-  ) {
-    return true;
-  }
-  if (ancestorsDeclared && hasAncestorCallee(call, spec.ancestorCallees!, shape)) return true;
-  return false;
-}
-
-/**
- * The served methods a verb-named route call declares: the callee's own name
- * when it IS a verb (`get`), else the explicit `methodsKeyword` list
- * (Rails' `match '/x', via: [:get, :post]`), where the token `all` reads as
- * the method-agnostic ANY. A non-verb callee with no readable keyword verbs
- * declares nothing.
- */
-function verbCalleeMethods(
-  call: Node,
-  calleeName: string,
-  shape: GrammarShape,
-  hf: HttpFlowSupport,
-  spec: VerbCalleeSpec,
-): ServedMethod[] {
-  const own = normalizeMethod(calleeName, hf.methodAliases);
-  if (own) return [own];
-  if (spec.methodsKeyword === undefined) return [];
-  const value = shape.optionValue(call, spec.methodsKeyword);
-  if (!value) return [];
-  let tokens = shape.listStrings(value).map((s) => s.replace(/['"`]/g, ''));
-  if (tokens.length === 0) {
-    const single = shape.stringText(value);
-    if (single != null) tokens = [single.replace(/['"`]/g, '')];
-  }
-  return tokens
-    .map((t) => (t.toLowerCase() === 'all' ? ANY_METHOD : normalizeMethod(t, hf.methodAliases)))
-    .filter((m): m is ServedMethod => m !== null);
-}
-
-/** One RESTful action of the framework resource-expansion contract. The
- *  suffix joins the resource base (`/articles`); singular resources
- *  (`resource :profile`) have no index and no `/{var}` id segment. */
-const RESOURCE_ACTIONS: ReadonlyArray<{
-  action: string;
-  method: ServedMethod;
-  plural: string;
-  singular: string | null;
-}> = [
-  { action: 'index', method: 'GET', plural: '', singular: null },
-  { action: 'create', method: 'POST', plural: '', singular: '' },
-  { action: 'new', method: 'GET', plural: '/new', singular: '/new' },
-  { action: 'edit', method: 'GET', plural: '/{var}/edit', singular: '/edit' },
-  { action: 'show', method: 'GET', plural: '/{var}', singular: '' },
-  { action: 'update', method: 'PATCH', plural: '/{var}', singular: '' },
-  { action: 'update', method: 'PUT', plural: '/{var}', singular: '' },
-  { action: 'destroy', method: 'DELETE', plural: '/{var}', singular: '' },
-];
-
-/** The `only:` / `except:`-filtered expansion rows of one resource call. */
-function resourceActions(
-  call: Node,
-  shape: GrammarShape,
-  singular: boolean,
-): Array<{ method: ServedMethod; suffix: string }> {
-  const readList = (kw: string): Set<string> | null => {
-    const v = shape.optionValue(call, kw);
-    if (!v) return null;
-    let tokens = shape.listStrings(v).map((s) => s.replace(/['"`]/g, ''));
-    if (tokens.length === 0) {
-      const single = shape.stringText(v);
-      if (single != null) tokens = [single.replace(/['"`]/g, '')];
-    }
-    return new Set(tokens);
-  };
-  const only = readList('only');
-  const except = readList('except');
-  return RESOURCE_ACTIONS.filter((a) => {
-    if (singular && a.singular === null) return false;
-    if (only && !only.has(a.action)) return false;
-    if (except !== null && except.has(a.action)) return false;
-    return true;
-  }).map((a) => ({ method: a.method, suffix: singular ? a.singular! : a.plural }));
-}
-
 /** Pull `method: 'X'` out of a fetch-style options argument, default GET. */
 function fetchMethod(call: Node, shape: GrammarShape, hf: HttpFlowSupport): HttpMethod {
   const value = shape.optionValue(call, 'method');
@@ -335,86 +234,20 @@ export function extractFromTree(
     const callee = shape.resolveCall(node);
     if (!callee) return;
 
-    // ── bare VERB route callee: Ktor `get("/x") { … }`, Sinatra
-    //    `get '/x' do`, Rails `get '/x', to: '…'` — the callee IS the verb
-    //    (or `methodsKeyword` carries the verbs), the first argument is the
-    //    path (leading `/` required), and the declared qualifier set keeps
-    //    non-routing look-alikes out. Ancestor `route("/api") { … }` /
-    //    `namespace :api do` groups prefix the path (extract-prefix.ts).
-    const verbCallees = hf.routeVerbCallees;
-    if (callee.kind === 'bare' && verbCallees && verbCallees.methods.includes(callee.name)) {
-      const raw = literalText(shape.firstArg(node));
-      if (
-        raw != null &&
-        unquote(raw).startsWith('/') &&
-        verbCalleeQualifies(node, shape, verbCallees)
-      ) {
-        const own = normalizePath(raw, config);
-        const path = joinNormalizedPaths(collectGroupPrefix(node, shape, hf, config), own);
-        const methods = verbCalleeMethods(node, callee.name, shape, hf, verbCallees);
-        if (path && methods.length > 0) {
-          for (const method of methods) {
-            routes.push({
-              method,
-              path,
-              via: 'router-call',
-              handler: null,
-              file,
-              line: line(node),
-            });
-          }
-          return;
-        }
-      }
-      // Not route-shaped (no slashed literal / no qualifier) — fall through
-      // to the client branches: `get(...)` may still be a declared client
-      // callee.
+    // ── verb-named + resource-expansion route callees (Ktor/Sinatra/Rails)
+    //    live in extract-verbs.ts: a returned array means the call was a
+    //    route declaration (possibly empty — a skipped nested resource); null
+    //    falls through, since `get(...)` may still be a declared client
+    //    callee.
+    const verbRoutes = verbCalleeRoutes(node, callee, shape, hf, file, config);
+    if (verbRoutes !== null) {
+      routes.push(...verbRoutes);
+      return;
     }
-
-    // ── RESOURCE-expansion route callee: Rails `resources :articles` /
-    //    `resource :profile` — one call expands to the framework's fixed
-    //    RESTful route set, filtered by only:/except:. Nested resource
-    //    blocks are skipped (their paths would need the parent's id segment
-    //    — a WRONG path is worse than a missing one; disclosed in docs).
-    const resourceCallees = hf.routeResourceCallees;
-    if (callee.kind === 'bare' && resourceCallees) {
-      const singularNames = resourceCallees.singularNames ?? [];
-      const isPlural = resourceCallees.names.includes(callee.name);
-      const isSingular = singularNames.includes(callee.name);
-      if (isPlural || isSingular) {
-        const raw = literalText(shape.firstArg(node));
-        const nameToken = raw == null ? null : unquote(raw);
-        const guardOk =
-          (resourceCallees.ancestorCallees?.length ?? 0) === 0 ||
-          hasAncestorCallee(node, resourceCallees.ancestorCallees!, shape);
-        const nestedInResource = hasAncestorCallee(
-          node,
-          [...resourceCallees.names, ...singularNames],
-          shape,
-        );
-        if (nameToken && nameToken.length > 0 && !nameToken.includes('/') && guardOk) {
-          if (!nestedInResource) {
-            const base = normalizePath('/' + nameToken, config);
-            const prefix = collectGroupPrefix(node, shape, hf, config);
-            if (base) {
-              for (const { method, suffix } of resourceActions(node, shape, isSingular)) {
-                const path = joinNormalizedPaths(prefix, base + suffix);
-                if (path) {
-                  routes.push({
-                    method,
-                    path,
-                    via: 'router-call',
-                    handler: null,
-                    file,
-                    line: line(node),
-                  });
-                }
-              }
-            }
-          }
-          return;
-        }
-      }
+    const resRoutes = resourceRoutes(node, callee, shape, hf, file, config);
+    if (resRoutes !== null) {
+      routes.push(...resRoutes);
+      return;
     }
 
     // ── verb-less route callee: Django `path('users/<int:pk>/', view)`,
