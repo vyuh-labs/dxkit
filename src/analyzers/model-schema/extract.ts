@@ -22,7 +22,7 @@
 
 import { getLanguage } from '../../languages';
 import type { ModelSchemaSupport } from '../../languages/types';
-import { parseFile, walk, type Node } from '../../ast/parse';
+import { walk, withParsedFile, type Node } from '../../ast/parse';
 import { grammarShape, type GrammarShape } from '../../ast/grammar-shape';
 import { modelShapeForGrammar, type GrammarModelShape } from '../../ast/grammar-model-shape';
 import { normalizeField, tagWireName } from './normalize';
@@ -507,18 +507,18 @@ export async function extractFileModels(
   relPath?: string,
   descriptorOverrides?: ReadonlyMap<string, ModelSchemaSupport>,
 ): Promise<FileModelExtract | null> {
-  const parsed = await parseFile(filePath);
-  if (!parsed) return null;
-  const descriptor =
-    descriptorOverrides?.get(parsed.languageId) ?? getLanguage(parsed.languageId)?.modelSchema;
-  const modelShape = modelShapeForGrammar(parsed.grammar);
-  if (!descriptor || !modelShape) return EMPTY;
-  const callShape = grammarShape(parsed.grammar);
-  return extractModelsFromTree(
-    parsed.tree.rootNode,
-    descriptor,
-    modelShape,
-    callShape,
-    relPath ?? filePath,
-  );
+  return withParsedFile(filePath, (parsed) => {
+    const descriptor =
+      descriptorOverrides?.get(parsed.languageId) ?? getLanguage(parsed.languageId)?.modelSchema;
+    const modelShape = modelShapeForGrammar(parsed.grammar);
+    if (!descriptor || !modelShape) return EMPTY;
+    const callShape = grammarShape(parsed.grammar);
+    return extractModelsFromTree(
+      parsed.tree.rootNode,
+      descriptor,
+      modelShape,
+      callShape,
+      relPath ?? filePath,
+    );
+  });
 }

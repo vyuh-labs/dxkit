@@ -160,6 +160,13 @@ export function grammarForExtension(
  * Read + parse a file, resolving its grammar from the extension via the pack
  * registry. Returns `null` if the extension maps to no grammar, the file is
  * unreadable, or the engine is unavailable.
+ *
+ * OWNERSHIP: the returned tree lives on the wasm heap, which the JS GC
+ * cannot reclaim — the caller must call `tree.delete()` when done. Repo-scale
+ * consumers (anything parsing more than a handful of files) go through
+ * {@link withParsedFile}, which guarantees it: without the delete, a large
+ * repo exhausts the emscripten heap mid-gather (~1,900 files on a real .NET
+ * monorepo) and every later parse fails for the rest of the process.
  */
 export async function parseFile(filePath: string): Promise<ParsedFile | null> {
   const resolved = grammarForExtension(extname(filePath));
@@ -173,6 +180,26 @@ export async function parseFile(filePath: string): Promise<ParsedFile | null> {
   const tree = await parseSource(source, resolved.grammar);
   if (!tree) return null;
   return { tree, source, grammar: resolved.grammar, languageId: resolved.languageId };
+}
+
+/**
+ * Parse a file, run `fn` over it, and FREE the tree's wasm memory — the
+ * repo-scale entry point every per-file gather uses. Returns `fn`'s result,
+ * or `null` when the file cannot be parsed (same contract as
+ * {@link parseFile}). The tree (and every node handle derived from it) is
+ * invalid after this returns — `fn` must not let nodes escape.
+ */
+export async function withParsedFile<T>(
+  filePath: string,
+  fn: (parsed: ParsedFile) => T,
+): Promise<T | null> {
+  const parsed = await parseFile(filePath);
+  if (!parsed) return null;
+  try {
+    return fn(parsed);
+  } finally {
+    parsed.tree.delete();
+  }
 }
 
 /** Test seam: drop cached engine/grammars/parsers so a test can re-init. */
