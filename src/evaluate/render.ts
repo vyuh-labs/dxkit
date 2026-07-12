@@ -136,19 +136,40 @@ function nextSteps(doc: EvaluateEvidenceDoc): string[] {
   return lines;
 }
 
-/** The full text report. */
 /**
  * The seam-visibility lane — what dxkit SEES in the repo (structural duplicates,
  * dead surfaces, and the convergence between them), shown INDEPENDENT of the
- * gate verdict. This is where the trial demonstrates dxkit's differentiator even
- * on a repo that hasn't enabled the seam gates. Silent when nothing was seen.
+ * gate verdict. This is the trial's differentiator: on a repo where the gate is
+ * clean (the common case), it is the one thing that separates dxkit's output
+ * from "your CI is fine" — the structural insight a linter, CI, and a token
+ * duplicate-checker do not surface at all. So it speaks even when the scan is
+ * clean (mirror of the clean-gate framing), and stays silent only when the seam
+ * scan could not run (no head / analysis failed → `doc.seams` absent).
  */
 function seamsSection(doc: EvaluateEvidenceDoc): string[] {
   const s = doc.seams;
-  if (!s) return [];
+  if (!s) return []; // the seam scan did not run — nothing honest to say
   const deadTotal = s.dead.removable + s.dead.likely + s.dead.expected;
-  if (s.duplicates === 0 && deadTotal === 0) return [];
-  const lines: string[] = ['What dxkit sees beyond the gate (seam signals):'];
+  const hasSignal = s.converged.length > 0 || s.duplicates > 0 || deadTotal > 0;
+
+  // Computed, nothing surfaced — the value lens still speaks: dxkit looked at a
+  // class no linter/CI covers, and the repo read structurally clean.
+  if (!hasSignal) {
+    return [
+      'What dxkit sees beyond the verdict (structural seams):',
+      '  dxkit mapped the call graph for copy-paste re-implementations and served ' +
+        'surfaces with no consumer — none surfaced at the trial head.',
+      '  (no linter or CI sees this class; `vyuh-dxkit flow` / `quality` show the full inventory)',
+    ];
+  }
+
+  // A content-aware header so a loud signal (a removable copy-paste-and-dead
+  // route) reads as the headline it is, not a footnote.
+  const header =
+    s.converged.length > 0
+      ? `What dxkit sees beyond the verdict — ${s.converged.length} structural seam(s) worth removing:`
+      : 'What dxkit sees beyond the verdict (structural seams):';
+  const lines: string[] = [header];
   if (s.duplicates > 0) {
     lines.push(`  ${s.duplicates} structural duplicate(s) — copy-paste the call graph caught:`);
     for (const d of s.topDuplicates.slice(0, 3)) {
@@ -176,17 +197,29 @@ function seamsSection(doc: EvaluateEvidenceDoc): string[] {
   return lines;
 }
 
+/**
+ * The full text report, in three acts:
+ *   1. THE VERDICT — would the gate have blocked your recent work? (the safety
+ *      promise + the brownfield "existing debt is grandfathered" framing).
+ *   2. WHAT DXKIT SEES — the seam-visibility lane, elevated to right after the
+ *      verdict because on a clean gate it is the differentiator (structural
+ *      insight no linter/CI shows), not a footnote below the plumbing.
+ *   3. SUPPORTING — what was watched (coverage honesty), what it costs, next.
+ */
 export function renderEvaluateText(doc: EvaluateEvidenceDoc): string {
   const sections: string[][] = [];
+  // Act 1 — the verdict.
   sections.push([headline(doc)]);
   sections.push(doc.runs.map(landingLine));
   if (doc.totals.blocked === 0) {
     const framing = cleanFraming(doc);
     if (framing.length) sections.push(framing);
   }
-  sections.push(watchedSection(doc));
+  // Act 2 — the differentiator.
   const seams = seamsSection(doc);
   if (seams.length) sections.push(seams);
+  // Act 3 — supporting detail.
+  sections.push(watchedSection(doc));
   sections.push(costsSection(doc));
   if (doc.notes.length) sections.push(['Notes:', ...doc.notes.map((n) => `  ${n}`)]);
   sections.push(nextSteps(doc));
