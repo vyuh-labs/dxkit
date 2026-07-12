@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precise `Option<T>` optionality and token-soup `#[serde(rename = "x")]`
   wire names. All three stacks join the fixture-analysis matrix (now eight).
 
+- **Spring WebFlux functional endpoints extract (the documented java gap
+  closes).** The static-import predicate style — `route(GET("/x"), handler)`
+  / `.andRoute(POST("/y"), h)` — mints concrete routes, guarded by
+  route/andRoute/nest ancestry so a bare `GET(...)` helper outside a router
+  composition never mints one. The builder style stays documented out of
+  scope.
+
 - **Exposed tables extract (the documented kotlin gap closes).** Fluent
   column chains — `varchar("name", 50).nullable()` — defeated the field
   reader (the initializer resolves to the chain tail); the engine now walks

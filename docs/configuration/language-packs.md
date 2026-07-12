@@ -136,8 +136,11 @@ Notes that keep the model honest:
   coverage-honesty channel), not extracted. Ktor's
   `client.request { method = … }` assigns the verb inside the lambda and is
   deliberately **undeclared** — omitting it beats silently dropping it.
-- Spring's programmatic `RouterFunction` DSL (WebFlux functional endpoints)
-  is out of scope; `flow.specs` covers such services.
+- Spring's `RouterFunction` DSL (WebFlux functional endpoints) covers the
+  static-import predicate style — `route(GET("/x"), handler)` /
+  `.andRoute(POST("/y"), h)` — with route/andRoute/nest ancestry as the
+  precision guard. The builder style (`route().GET("/x", h)`) is out of
+  scope; `flow.specs` covers such services.
 - ASP.NET's `[Route("api/[controller]")]` token substitutes the enclosing
   class name (minus `Controller`, lowercased). When the class cannot be
   resolved the path is **dropped** rather than guessed — a wrong prefix
