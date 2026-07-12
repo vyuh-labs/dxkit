@@ -53,6 +53,7 @@ import {
   changedFilesTouchFlowSurface,
   allPrimaryComponentPaths,
   allRoutePaths,
+  allNonConsumerRoutePaths,
   allSourceExtensions,
   allTestFilePatterns,
   allTestGapPriorityPaths,
@@ -122,6 +123,7 @@ const mockPlaybookPack = {
       high: ['/playbookplane/'],
       medium: ['/playbookbinder/', '/playbookforms/'],
     },
+    nonConsumerRoutePaths: ['/playbookwebhook/'],
   },
   // CI runtime-setup contribution (2.32). Distinctive action ref + version so
   // the assertion verifies the synthetic pack's ciSetup flows through
@@ -810,6 +812,23 @@ describe('recipe playbook — synthetic pack', () => {
     } as any;
     const paths = allRoutePaths(flags);
     expect(paths).toContain('/playbookroutes/');
+  });
+
+  it('allNonConsumerRoutePaths includes the mock pack convention patterns (C8)', () => {
+    const flags = {
+      typescript: false,
+      python: false,
+      go: false,
+      rust: false,
+      csharp: false,
+      kotlin: false,
+      java: false,
+      ruby: false,
+      playbook: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const paths = allNonConsumerRoutePaths(flags);
+    expect(paths).toContain('/playbookwebhook/');
   });
 
   it('allModelPaths includes the mock pack model patterns (C8)', () => {

@@ -1582,6 +1582,38 @@ export function flowMapQuery(graph: Graph): FlowMap {
   };
 }
 
+/**
+ * The set of function/method symbol NAMES that are the target of at least one
+ * `calls` edge — i.e. every symbol invoked directly somewhere in the graph.
+ * Names are the label with the trailing `()` stripped and any `receiver.`
+ * qualifier dropped (`data.getDivisions()` → `getDivisions`), the same
+ * normalization the flow overlay uses to name a consumer symbol.
+ *
+ * The DIRECT-CALL seam (Rule 12): flow's HTTP model sees only `fetch`-style
+ * consumption, so on a server-rendered stack (Next.js App Router, Remix
+ * loaders, SvelteKit) where a page calls its data layer DIRECTLY
+ * (`await getDivisions()`) rather than over HTTP, flow reads the route as
+ * "unconsumed" when the data IS consumed. Intersecting a route's handler symbol
+ * with this set lets the dead-surface analyzer recognize that direct-call
+ * consumption and NOT flag the route as dead.
+ *
+ * Honest limit (bias to FALSE-NEGATIVE — safe for a warn-tier signal): a
+ * generic handler name (`GET`, `POST`, `handler`) collides across the codebase,
+ * so a route whose handler is a bare HTTP verb may match spuriously and be
+ * treated as consumed. That errs toward NOT flagging a dead route, never toward
+ * a false dead-surface warning — the correct direction for precision. The
+ * caller decides whether a handler name is specific enough to trust.
+ */
+export function calledSymbolNames(graph: Graph): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const e of graph.edges) {
+    if (e.relation !== 'calls') continue;
+    const target = graph.nodeById.get(e.to);
+    if (target) names.add(stripParens(target.label));
+  }
+  return names;
+}
+
 function roleLabel(community: Community | undefined): string {
   if (!community) return 'unclustered';
   if (community.dominantSourceDir) return community.dominantSourceDir;

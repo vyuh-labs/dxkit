@@ -1792,6 +1792,25 @@ export const typescript: LanguageSupport = {
         '/screens/',
       ],
     },
+    // Routes driven by an EXTERNAL actor, not in-repo code — so "no in-repo
+    // consumer" is expected, never dead-surface slop. Substrings of the route
+    // file path OR the URL path. Generous by design (bias to false-negative):
+    // it is safer to dim a genuinely-dead webhook-shaped route than to loudly
+    // flag a real webhook. Covers the common Next.js / Nest / Express shapes.
+    nonConsumerRoutePaths: [
+      '/webhook', // matches /webhook and /webhooks/... (inbound stripe/clerk/github)
+      '/callback', // OAuth / inbound provider callbacks
+      '/cron/',
+      '/scheduled/',
+      '/health',
+      '/healthz',
+      '/livez',
+      '/readyz',
+      '/metrics',
+      '/.well-known/',
+      '/public-api/',
+      '/cli/', // CLI-facing endpoints driven by an external CLI, not the app UI
+    ],
   },
 
   // HTTP flow (CLAUDE.md Rule 6): how TS/JS source expresses outbound HTTP
