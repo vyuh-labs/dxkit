@@ -144,7 +144,10 @@ Notes that keep the model honest:
 - ASP.NET's `[Route("api/[controller]")]` token substitutes the enclosing
   class name (minus `Controller`, lowercased). When the class cannot be
   resolved the path is **dropped** rather than guessed — a wrong prefix
-  would corrupt every route under it. Out of scope for C#: `MapGroup`
+  would corrupt every route under it. The same drop applies to any
+  UNDECLARED bracket token (`[area]` — its value lives in the `[Area]`
+  attribute): the route is disclosed missing coverage, never an
+  over-matching `{var}`. Out of scope for C#: `MapGroup`
   chains (the group lives on a variable — statically opaque; those routes
   surface unprefixed), `new HttpRequestMessage(HttpMethod.Post, …)` (the
   verb is an enum argument), and URLs inside C#-11 raw string literals

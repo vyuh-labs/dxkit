@@ -113,6 +113,19 @@ public class OrderController : Controller {
     expect(routes.map(key).sort()).toEqual(['GET /order/detail/{var}', 'GET /order/myorders']);
   });
 
+  it('an UNDECLARED bracket token ([area]) drops the path — never an over-matching {var}', async () => {
+    const src = `
+[Area("Admin")]
+[Route("[area]/[controller]/[action]")]
+public class ReportsController : Controller {
+    [HttpGet] public IActionResult Index() => null;
+}`;
+    const { routes } = await extract(src, 'c_sharp', CSHARP_HF);
+    // [area] is not a declared token: the route is DROPPED (disclosed
+    // missing coverage), not minted as /{var}/reports/index.
+    expect(routes).toEqual([]);
+  });
+
   it('minimal APIs route through MapGet/MapPost on app', async () => {
     const src = `
 class P { static void Main() {
