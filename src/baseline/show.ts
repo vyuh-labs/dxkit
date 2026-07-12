@@ -218,6 +218,10 @@ function describeEntry(entry: BaselineEntry): string {
       return `${entry.method} ${entry.path}  ← ${entry.file}:${entry.line}`;
     case 'model-schema-drift':
       return `${entry.model}${entry.field ? '.' + entry.field : ''}  [${entry.changeClass}]  ${entry.file}:${entry.line}`;
+    case 'code-reimplementation': {
+      const [a, b] = entry.anchors;
+      return `${a.symbol} @ ${a.file}:${a.line}  ≈  ${b.symbol} @ ${b.file}:${b.line}  [dup ${entry.score.toFixed(2)}]`;
+    }
     case 'custom-check':
       return entry.file !== undefined
         ? `${entry.file}:${entry.line ?? '?'}  [${entry.check}${entry.rule ? '/' + entry.rule : ''}]`

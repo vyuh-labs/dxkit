@@ -83,6 +83,15 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     line: 5,
     rule: 'no-unused-vars',
   },
+  'code-reimplementation': {
+    id: FP,
+    kind: 'code-reimplementation',
+    anchors: [
+      { file: 'src/api/divisions.ts', symbol: 'GET', line: 10 },
+      { file: 'src/api/cli/divisions.ts', symbol: 'GET', line: 12 },
+    ],
+    score: 1.0,
+  },
 };
 
 const ALL_KINDS = Object.keys(ENTRIES) as BaselineEntry['kind'][];

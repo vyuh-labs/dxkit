@@ -141,7 +141,17 @@ function validateAndUpgrade(absPath: string, raw: unknown): GraphJson {
   return { ...(raw as GraphJson), endpoints: endpoints as HttpEndpointNode[] };
 }
 
-function indexGraph(json: GraphJson): Graph {
+/**
+ * Build the in-memory `Graph` (convenience indices) from an ALREADY-VALIDATED
+ * `GraphJson`. The pure, in-memory sibling of {@link loadGraph}: `loadGraph`
+ * reads + JSON-parses + validates the disk artifact and then calls this;
+ * consumers that already hold a `GraphJson` from the PRODUCER
+ * (`gatherGraphifyGraph`, in-memory, never touching disk) index it here without
+ * a disk round-trip — so a zero-write gate can query the graph without writing
+ * `graph.json`. JSON.parse + validation stay in `loadGraph` (Rule 12); this only
+ * builds maps, so it is safe to expose and use from within `src/explore/`.
+ */
+export function indexGraph(json: GraphJson): Graph {
   const nodeById = new Map<string, GraphNode>();
   for (const n of json.nodes) nodeById.set(n.id, n);
 
@@ -172,13 +182,21 @@ function indexGraph(json: GraphJson): Graph {
 
   const endpointById = new Map<string, HttpEndpointNode>();
   const endpointByKey = new Map<string, HttpEndpointNode>();
-  for (const ep of json.endpoints) {
+  // The disk loader guarantees `endpoints` (validateAndUpgrade defaults it to
+  // []), but the RAW producer graph from `gatherGraphifyGraph` — indexed
+  // in-memory by the zero-write seam gate — carries only the structural
+  // node/edge layers; the flow overlay is added at disk-write. Default to [] so
+  // indexing a producer graph never throws (the flow overlay is not needed for
+  // structural queries like duplicate detection).
+  const endpoints = json.endpoints ?? [];
+  for (const ep of endpoints) {
     endpointById.set(ep.id, ep);
     endpointByKey.set(`${ep.method} ${ep.path}`, ep);
   }
 
   return {
     ...json,
+    endpoints,
     nodeById,
     edgesFromNode,
     edgesToNode,

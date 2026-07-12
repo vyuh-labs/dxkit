@@ -206,6 +206,17 @@ export const DEFERRED_KINDS: Readonly<
       'Substitute: none needed — the gate is the complete producer for this kind.',
     landingPhase: 'model-schema drift gate (ships with the kind)',
   },
+  'code-reimplementation': {
+    reason:
+      'a structural-duplicate PAIR is a two-ref RELATION, not a standing finding: ' +
+      'the seam gate gathers the duplicate-pair set at base AND head and mints only ' +
+      'the pairs the diff INTRODUCES (a pair present at the base ref is grandfathered), ' +
+      'mirror of flow-binding / model-schema-drift. A full-scan producer would FLOOD ' +
+      'the gate on upgrade — an older baseline has zero entries of this kind, so every ' +
+      'pre-existing duplicate would read net-new. Substitute: none — the gate is the ' +
+      'complete producer for this kind.',
+    landingPhase: 'seam gate (ships with the kind)',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────

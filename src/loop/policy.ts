@@ -24,6 +24,7 @@ import {
 } from '../baseline/presets';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
+import type { DuplicationGateMode } from '../analyzers/duplication/config';
 
 // Re-exported so existing consumers (stop-gate, scaffold, doctor, CLI) keep
 // one import site for the loop posture vocabulary.
@@ -37,6 +38,7 @@ export interface ResolvedLoopPolicy {
   readonly preset: LoopPreset;
   readonly flowMode: FlowGateMode;
   readonly schemaMode: SchemaGateMode;
+  readonly duplicationMode: DuplicationGateMode;
 }
 
 /**
@@ -112,6 +114,7 @@ export function resolveLoopPolicy(cwd: string): ResolvedLoopPolicy {
     preset,
     flowMode: applied.flowMode,
     schemaMode: applied.schemaMode,
+    duplicationMode: applied.duplicationMode,
     policy: applied.policy,
   };
 }
