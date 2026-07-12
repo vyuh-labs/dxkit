@@ -1287,6 +1287,39 @@ if [ -n "$RULE14_SELFINVOKE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# AST tree-lifecycle rule (wave-3 class-fix): repo-scale parsing goes through
+# the scoped withParsedFile(path, fn), never a raw parseFile loop.
+#
+# What this prevents:
+#   A parsed tree lives on the wasm heap, which the JS GC cannot reclaim —
+#   only tree.delete() frees it. A gather that loops parseFile without
+#   deleting exhausts the emscripten heap on a large repo (~1,900 files on a
+#   real .NET monorepo), after which EVERY parse in the process fails and
+#   extraction silently reports the rest of the repo as empty. That class
+#   shipped: flow/schema extraction covered ~60% of a 3,235-file repo.
+#
+# Canonical replacement: withParsedFile(path, fn) in src/ast/parse.ts —
+#   parse → fn → delete in finally. parseFile remains for single-file use
+#   where the caller owns the delete (annotate '// single-parse-ok').
+#
+# Allowlist rationale:
+#   - src/ast/parse.ts — defines both; withParsedFile calls parseFile.
+RULE_TREE_LIFECYCLE=$(grep -rn "parseFile(" src/ 2>/dev/null \
+  | grep -E '\.ts:' \
+  | grep -v "^src/ast/parse.ts:" \
+  | grep -v "withParsedFile(" \
+  | grep -v "// single-parse-ok")
+if [ -n "$RULE_TREE_LIFECYCLE" ]; then
+  echo "❌ Tree-lifecycle violation: raw parseFile() outside src/ast/parse.ts:"
+  echo "$RULE_TREE_LIFECYCLE"
+  echo "   → Use withParsedFile(path, fn) — it frees the tree's wasm memory in"
+  echo "     finally; a raw parseFile loop exhausts the heap on large repos and"
+  echo "     kills every later parse in the process."
+  echo "   → Annotate '// single-parse-ok' for a justified single-file exception"
+  echo "     that owns its tree.delete()."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # Rule 15 (managed-artifact lifecycle class-fix): a module that WRITES a managed
 # ship artifact — a CI workflow (.github/workflows), a git hook (.githooks), or
 # the devcontainer (.devcontainer) — must do so through src/ship-installers.ts,
