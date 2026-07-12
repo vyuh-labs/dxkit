@@ -5,6 +5,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   scopeForPolicy,
+  scopeForRefBasedDiff,
   scopeSignature,
   isFullScope,
   isEmptyScope,
@@ -40,6 +41,27 @@ const SECURITY_ONLY: BrownfieldPolicy = {
     newSevereQualityIssueInChangedFiles: false,
   },
 };
+
+describe('scopeForRefBasedDiff', () => {
+  it('clears exactly the analyzers whose kinds a ref diff discards, and names them', () => {
+    const { scope, skippedKinds } = scopeForRefBasedDiff(FULL_SCOPE);
+    expect(scope.duplication).toBe(false);
+    expect(scope.testGaps).toBe(false);
+    expect(scope.customChecks).toBe(false);
+    // The secrets analyzer stays on: secret-hmac is its companion output
+    // and the located `secret` kind still gates.
+    expect(scope.secrets).toBe(true);
+    expect(scope.codePatterns).toBe(true);
+    expect(scope.depVulns).toBe(true);
+    expect([...skippedKinds].sort()).toEqual(['custom-check', 'duplication', 'test-gap']);
+  });
+
+  it('is a no-op on a scope that never enabled the discarded analyzers', () => {
+    const { scope, skippedKinds } = scopeForRefBasedDiff(scopeForPolicy(SECURITY_ONLY));
+    expect(skippedKinds).toEqual([]);
+    expect(scope).toEqual(scopeForPolicy(SECURITY_ONLY));
+  });
+});
 
 describe('scopeForPolicy', () => {
   it('security-only enables ONLY the analyzers feeding its blockable kinds', () => {

@@ -163,6 +163,49 @@ export function scopeSignature(s: GatherScope): string {
  * `depVulns` for it so the mapping stays a faithful, future-proof mirror of
  * the rule table rather than relying on that downstream gap.
  */
+/** The finding kinds a ref-based diff structurally excludes, mapped to the
+ *  scope flags of the analyzers that produce them. `secret-hmac` is absent
+ *  deliberately: it is a companion output of the secrets analyzer, which
+ *  must still run for the located `secret` kind. */
+export type RefSkippableKind = 'duplication' | 'test-gap' | 'custom-check';
+
+/**
+ * Drop the analyzers whose finding kinds a ref-based diff throws away
+ * (`REF_UNRELIABLE_KINDS` in check.ts: duplication, test-gap,
+ * custom-check). Gathering them in ref-based mode pays the jscpd /
+ * coverage / check-runner cost on BOTH sides for findings
+ * `partitionForRefBasedDiff` then discards — found by stress-running the
+ * zero-write trial under full-debt, where the discarded gathers dominated
+ * the per-landing cost (the same waste applied to ref-based CI runs and
+ * full-debt loop gates).
+ *
+ * Returns the adjusted scope plus the kinds whose analyzers were skipped,
+ * so the caller still DISCLOSES the exclusion — the honest "not gated in
+ * ref-based mode" note must not disappear just because the thrown-away
+ * gather stopped being paid for. Pure.
+ */
+export function scopeForRefBasedDiff(scope: GatherScope): {
+  readonly scope: GatherScope;
+  readonly skippedKinds: ReadonlyArray<RefSkippableKind>;
+} {
+  const skipped: RefSkippableKind[] = [];
+  const next = { ...scope };
+  if (next.duplication) {
+    next.duplication = false;
+    skipped.push('duplication');
+  }
+  if (next.testGaps) {
+    next.testGaps = false;
+    skipped.push('test-gap');
+  }
+  if (next.customChecks) {
+    next.customChecks = false;
+    skipped.push('custom-check');
+  }
+  if (skipped.length === 0) return { scope, skippedKinds: skipped };
+  return { scope: Object.freeze(next), skippedKinds: skipped };
+}
+
 export function scopeForPolicy(policy: BrownfieldPolicy): GatherScope {
   // Any status-based block applies across all kinds — nothing is safe to skip.
   if (policy.block.length > 0) return FULL_SCOPE;
