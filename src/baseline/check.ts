@@ -63,7 +63,7 @@ import type { BrownfieldPolicy, BaselineSection } from './policy';
 import type { ClassifyContext, ClassifyResult } from './classify';
 import { hydrateAnchorFromBranch, loadAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
-import { type GatherScope, FULL_SCOPE, scopeForPolicy } from './gather-scope';
+import { type GatherScope, FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { evaluateFlowGateForGuardrail } from './flow-gate-check';
@@ -516,6 +516,19 @@ export async function runGuardrailCheck(
     }
   }
 
+  // Ref-based mode structurally discards the REF_UNRELIABLE kinds from the
+  // diff (see partitionForRefBasedDiff), so don't pay to gather them on
+  // either side — under full-debt this was minutes of jscpd + coverage +
+  // check-runner per run for output that got thrown away. The skipped
+  // kinds are recorded so the "not gated in ref-based mode" disclosure
+  // survives the optimization.
+  let refScopeSkippedKinds: ReadonlyArray<BaselineEntry['kind']> = [];
+  if (mode.mode === 'ref-based') {
+    const adjusted = scopeForRefBasedDiff(gatherScope);
+    gatherScope = adjusted.scope;
+    refScopeSkippedKinds = adjusted.skippedKinds;
+  }
+
   // Load the prior side. Committed modes read from the baseline
   // file on disk; ref-based mode recomputes prior state by checking
   // out a git ref into a temporary worktree. Both paths produce a
@@ -582,11 +595,21 @@ export async function runGuardrailCheck(
   // In ref-based mode the prior side came from a detached worktree that
   // can't gather the build-artifact-dependent kinds; drop them from both
   // sides so the diff stays symmetric (see partitionForRefBasedDiff).
-  const { diffablePrior, diffableCurrent, refExcludedKinds } = partitionForRefBasedDiff(
+  const partitioned = partitionForRefBasedDiff(
     baseline.findings,
     current.findings,
     mode.mode === 'ref-based',
   );
+  const { diffablePrior, diffableCurrent } = partitioned;
+  // Union in the kinds whose analyzers were scope-skipped up front: their
+  // gathers never ran, so the partition saw no findings to record, but the
+  // disclosure ("not gated in ref-based mode") must still surface.
+  const refExcludedKinds: GuardrailCheckResult['refExcludedKinds'] = [
+    ...partitioned.refExcludedKinds,
+    ...refScopeSkippedKinds
+      .filter((k) => !partitioned.refExcludedKinds.some((e) => e.kind === k))
+      .map((kind) => ({ kind, currentCount: 0 })),
+  ];
 
   const priorLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(diffablePrior);
   const currentLocated: ReadonlyArray<LocatedIdentity> = entriesToLocated(diffableCurrent);
