@@ -39,9 +39,43 @@ describe('diagnoseFlow', () => {
       expect(dead).toBeDefined();
       expect(dead!.reason).toBe('no-route');
       expect(dead!.suggestion).toBe('add-route');
-      // The orphan route nobody calls is surfaced as served-but-unconsumed.
-      expect(d!.servedUnconsumed.map((r) => r.path)).toContain('/orphan');
+      // The orphan route nobody calls is surfaced as served-but-unconsumed,
+      // carrying its handler symbol for the dead-surface direct-call seam.
+      const orphan = d!.servedUnconsumed.find((r) => r.path === '/orphan');
+      expect(orphan).toBeDefined();
+      expect(orphan!.handler).toBe('b');
       expect(d!.connection.rung).toBe('monorepo');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts frontend consumers — calls originating from a component/page path', async () => {
+    const dir = makeRepo({
+      // A call from a FRONTEND component path (matches primaryComponentPaths) —
+      // the co-located-UI signal the dead-surface tier uses to trust deadness.
+      'src/components/List.tsx': "axios.get('/articles');\n",
+      'api/ctrl.ts': "class C { @get('/articles') a() {} }\n",
+    });
+    try {
+      const d = await diagnoseFlow(dir);
+      expect(d).not.toBeNull();
+      expect(d!.frontendConsumers).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports zero frontend consumers for a backend (calls from non-component paths)', async () => {
+    const dir = makeRepo({
+      // A server-to-server call from a service path — NOT a frontend consumer.
+      'src/services/sync.ts': "axios.get('/articles');\n",
+      'api/ctrl.ts': "class C { @get('/articles') a() {} @get('/orphan') b() {} }\n",
+    });
+    try {
+      const d = await diagnoseFlow(dir);
+      expect(d).not.toBeNull();
+      expect(d!.frontendConsumers).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

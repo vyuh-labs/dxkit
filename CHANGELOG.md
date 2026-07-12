@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dead-surface inventory + seam convergence in `vyuh-dxkit flow`.** The flow map's
+  flat "served but unconsumed" list is now an honest **confidence ladder**: each
+  served-but-unconsumed route is tiered `removable` / `likely` / `expected` with the
+  reason it landed there, so an uncertain route is never presented as certain. A
+  route whose consumer is an external actor (webhook / cron / health / CLI, declared
+  per language pack) or a server-side direct call (RSC / server action) drops to
+  `expected`; a route with no in-repo consumer is `likely` (with the nudge to declare
+  `workspace.json` so cross-repo consumers can be ruled out); and a route that is BOTH
+  ladder-confirmed dead AND a structural duplicate **converges** to `removable` — the
+  ranked "remove or consolidate this copy-paste nobody uses" signal, surfaced only
+  when every consumer is visible (an explicit workspace mesh or a co-located UI), so
+  it never false-flags a cross-repo-consumed route. Available as prose and, for
+  agents, in `flow --json` under `deadSurfaces`. Validated read-only across 8 diverse
+  real repos (TS backend / full-stack / SPA, Next.js App Router, Python, C#, Rust)
+  with zero false `removable` on any of them.
+
 - **Structural-duplicate (seam) gate — catches the copy-paste-instead-of-parameterize
   pattern.** A new opt-in guardrail layer flags a net-new function that
   structurally re-implements another: same helper set, same name shape, read from
