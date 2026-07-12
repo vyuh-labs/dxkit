@@ -22,13 +22,19 @@ export interface ModelField {
 
 /** One extracted data model. `file` is repo-relative when gathered with
  *  `relativeTo` (Rule 9 discipline); `line` is display metadata, never
- *  identity. */
+ *  identity. `via` is display provenance: the marker that recognized the
+ *  model — `type-ref` (referenced from a container property, EF Core's
+ *  `DbSet<T>`) and `schema-file` (minted from a declared schema file's
+ *  table calls, Rails `db/schema.rb`) join the source-marker kinds. */
 export interface ModelEntity {
   readonly name: string;
-  readonly via: 'base-class' | 'decorator' | 'struct-tag' | 'spec';
+  readonly via: 'base-class' | 'decorator' | 'struct-tag' | 'spec' | 'type-ref' | 'schema-file';
   readonly file: string;
   readonly line: number;
   readonly fields: readonly ModelField[];
+  /** The declaration carries a partial-class marker (C#) — same-name
+   *  entities that are ALL partial merge into one at model-set assembly. */
+  readonly partial?: boolean;
 }
 
 /** A recognized model with no statically readable fields — either genuinely
@@ -45,6 +51,44 @@ export interface DynamicModelSite {
 export interface ModelSet {
   readonly models: readonly ModelEntity[];
   readonly dynamicModels: readonly DynamicModelSite[];
+}
+
+/**
+ * Merge same-name entities that are ALL partial-marked into one (fields =
+ * name-deduplicated union, location = the first declaration) — the model-set
+ * ASSEMBLY step for C# partial classes. One logical type is split across
+ * several declarations (typically codegen), so without the merge a field
+ * moving between partials reads as remove+add and a second declaration reads
+ * as a duplicate model. A same-name group with ANY non-partial member is
+ * left untouched: the C# compiler rejects same-name-same-namespace
+ * non-partial duplicates, so a mixed group means genuinely distinct types
+ * (different namespaces) and merging would fabricate one.
+ */
+export function mergePartialEntities(models: readonly ModelEntity[]): ModelEntity[] {
+  const byName = new Map<string, ModelEntity[]>();
+  for (const m of models) {
+    const group = byName.get(m.name);
+    if (group) group.push(m);
+    else byName.set(m.name, [m]);
+  }
+  const out: ModelEntity[] = [];
+  for (const group of byName.values()) {
+    if (group.length < 2 || !group.every((m) => m.partial === true)) {
+      out.push(...group);
+      continue;
+    }
+    const fields: ModelField[] = [];
+    const seen = new Set<string>();
+    for (const m of group) {
+      for (const f of m.fields) {
+        if (seen.has(f.name)) continue;
+        seen.add(f.name);
+        fields.push(f);
+      }
+    }
+    out.push({ ...group[0], fields });
+  }
+  return out;
 }
 
 export type ModelPairReason = 'exact' | 'relocated' | 'similarity';

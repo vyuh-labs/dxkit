@@ -137,6 +137,17 @@ function resolveFieldDecorators(
       const raw = value ? callShape.stringText(value) : null;
       if (raw != null) wireName = raw.replace(/['"`]/g, '');
     }
+    // Positional wire name — C# `[Column("user_name")]`, kotlinx
+    // `@SerialName("wire")`. A keyword match above wins when both exist.
+    if (spec.wireNameFrom === 'firstArg' && wireName === null) {
+      let first = callShape.firstArg(dec);
+      if (!first) {
+        const inner = callShape.decoratorCall(dec);
+        if (inner && inner.id !== dec.id) first = callShape.firstArg(inner);
+      }
+      const raw = first ? callShape.stringText(first) : null;
+      if (raw != null) wireName = raw.replace(/['"`]/g, '');
+    }
   }
   return { optional, wireName };
 }
@@ -257,6 +268,37 @@ function extractFields(
   return { fields: out, sawFieldCallee };
 }
 
+/** One file's extraction, extended with the cross-file join inputs the
+ *  gather assembles: `typeRefs` are model names referenced from container
+ *  properties (EF Core `DbSet<Order>` on a DbContext), `candidates` are
+ *  otherwise-unrecognized classes that a repo-wide type reference may
+ *  promote. Both are populated only when the descriptor declares
+ *  `modelTypeRefContainers` — the returned `ModelSet` proper never carries
+ *  them past the gather. */
+export interface FileModelExtract extends ModelSet {
+  readonly typeRefs?: readonly string[];
+  readonly candidates?: readonly ModelEntity[];
+}
+
+/** The type names referenced by a container class's wrapped properties:
+ *  `DbSet<Order>` → `Order` (qualified inner names keep their tail). */
+function containerTypeRefs(
+  classNode: Node,
+  spec: NonNullable<ModelSchemaSupport['modelTypeRefContainers']>,
+  modelShape: GrammarModelShape,
+): string[] {
+  const out: string[] = [];
+  for (const field of modelShape.fieldNodes(classNode)) {
+    const type = modelShape.fieldTypeText(field);
+    if (type === null) continue;
+    const generic = /^([A-Za-z_][\w.]*)<(.+)>$/.exec(type.trim());
+    if (!generic || !spec.propertyTypeWrappers.includes(tailSegment(generic[1]))) continue;
+    const inner = generic[2].split(',')[0].trim();
+    if (inner.length > 0) out.push(tailSegment(inner));
+  }
+  return out;
+}
+
 /**
  * Extract every marked model from a parsed tree — PURE over its inputs.
  * `callShape` may be null (a grammar with a model row but no call row);
@@ -268,23 +310,60 @@ export function extractModelsFromTree(
   modelShape: GrammarModelShape,
   callShape: GrammarShape | null,
   file: string,
-): ModelSet {
+): FileModelExtract {
   const models: ModelEntity[] = [];
   const dynamicModels: DynamicModelSite[] = [];
+  const typeRefs: string[] = [];
+  const candidates: ModelEntity[] = [];
   const classTypes = new Set(modelShape.classNodes);
+  const containers = descriptor.modelTypeRefContainers;
 
   walk(root, (node) => {
     if (!classTypes.has(node.type)) return undefined;
     const name = modelShape.className(node);
     if (name === null) return undefined;
+
+    // Container pass (EF Core): a DbContext subclass's DbSet<T> properties
+    // reference the model classes — collected for the gather's repo-wide
+    // promotion join.
+    if (containers) {
+      const heritage = modelShape.heritage(node);
+      if (heritage.some((h) => heritageMatches(h, containers.containerBaseClasses))) {
+        typeRefs.push(...containerTypeRefs(node, containers, modelShape));
+      }
+    }
+
+    const partial = modelShape.partialMarker?.(node) === true;
     const recognized = recognizeModel(node, descriptor, modelShape, callShape);
-    if (recognized === null) return undefined;
+    if (recognized === null) {
+      // Not marked — but a repo-wide type reference may promote it, so a
+      // container-declaring pack keeps it as a candidate.
+      if (containers) {
+        const { fields } = extractFields(node, descriptor, modelShape, callShape);
+        candidates.push({
+          name,
+          via: 'type-ref',
+          file,
+          line: line(node),
+          fields,
+          ...(partial ? { partial } : {}),
+        });
+      }
+      return undefined;
+    }
 
     const { fields, sawFieldCallee } = extractFields(node, descriptor, modelShape, callShape);
     // A weak heritage match (a too-generic base name) needs corroboration:
     // no ORM field constructor in the body → not a model, skip silently.
     if (recognized.weak && !sawFieldCallee) return undefined;
-    const entity: ModelEntity = { name, via: recognized.via, file, line: line(node), fields };
+    const entity: ModelEntity = {
+      name,
+      via: recognized.via,
+      file,
+      line: line(node),
+      fields,
+      ...(partial ? { partial } : {}),
+    };
     models.push(entity);
     if (fields.length === 0) {
       dynamicModels.push({ name, file, line: line(node) });
@@ -292,7 +371,84 @@ export function extractModelsFromTree(
     return undefined;
   });
 
-  return { models, dynamicModels };
+  return {
+    models,
+    dynamicModels,
+    ...(typeRefs.length > 0 ? { typeRefs } : {}),
+    ...(candidates.length > 0 ? { candidates } : {}),
+  };
+}
+
+/**
+ * Extract the table-declared models of a SCHEMA FILE (Rails `db/schema.rb`)
+ * — the engine half of `ModelSchemaSupport.schemaFileTables`. One entity per
+ * `tableCallees` call (name = the first string argument — the table name,
+ * the wire contract); each MEMBER call in its body with a string first
+ * argument contributes a field (name = the argument, type = the member
+ * method's name, folded through the descriptor's aliases). An ABSENT
+ * optionality keyword reads as the framework default (nullable ⇒ optional —
+ * a schema-file fact); an explicit `null: false` is authoritative. PURE
+ * over its inputs.
+ */
+export function extractSchemaFileTables(
+  root: Node,
+  spec: NonNullable<ModelSchemaSupport['schemaFileTables']>,
+  descriptor: ModelSchemaSupport,
+  callShape: GrammarShape,
+  file: string,
+): ModelEntity[] {
+  const out: ModelEntity[] = [];
+  const tableNames = new Set(spec.tableCallees);
+
+  walk(root, (node) => {
+    if (!callShape.callNodes.includes(node.type)) return undefined;
+    const callee = callShape.resolveCall(node);
+    if (!callee || !tableNames.has(callee.name)) return undefined;
+    const first = callShape.firstArg(node);
+    const rawName = first ? callShape.stringText(first) : null;
+    if (rawName == null) return undefined;
+    const name = rawName.replace(/['"`]/g, '');
+    if (name.length === 0) return undefined;
+
+    const fields: ModelField[] = [];
+    const seen = new Set<string>();
+    walk(node, (col) => {
+      if (col.id === node.id || !callShape.callNodes.includes(col.type)) return undefined;
+      const colCallee = callShape.resolveCall(col);
+      if (!colCallee || colCallee.kind !== 'member') return undefined;
+      const colFirst = callShape.firstArg(col);
+      const colRaw = colFirst ? callShape.stringText(colFirst) : null;
+      if (colRaw == null) return undefined;
+      const colName = colRaw.replace(/['"`]/g, '');
+      if (colName.length === 0 || seen.has(colName)) return undefined;
+
+      let descriptorOptional: boolean | null = null;
+      let descriptorDefaultOptional: boolean | null = true; // framework default: nullable
+      if (spec.optionalityKeyword !== undefined) {
+        const v = callShape.optionValue(col, spec.optionalityKeyword);
+        if (v && /^(true|false)$/i.test(v.text)) {
+          descriptorOptional = /^true$/i.test(v.text);
+          descriptorDefaultOptional = null;
+        }
+      }
+      const normalized = normalizeField({
+        rawType: colCallee.name,
+        markerOptional: null,
+        descriptorOptional,
+        descriptorDefaultOptional,
+        typeAliases: descriptor.typeAliases,
+        typeWrappers: descriptor.transparentTypeWrappers,
+      });
+      seen.add(colName);
+      fields.push({ name: colName, ...normalized });
+      return undefined;
+    });
+
+    out.push({ name, via: 'schema-file', file, line: line(node), fields });
+    return false; // the body was just walked — don't descend again
+  });
+
+  return out;
 }
 
 /** Empty result for files that cannot contribute (no grammar/descriptor/
@@ -303,14 +459,19 @@ const EMPTY: ModelSet = { models: [], dynamicModels: [] };
  * Extract one file's models: parse via the canonical AST layer, resolve the
  * pack descriptor by the file's language and the shapes by its grammar.
  * Returns null when the file cannot be parsed — callers skip, never error.
+ * `descriptorOverrides` lets the gather adjust a pack's descriptor for this
+ * run (a present schema file demotes class markers to discovery-only — see
+ * `gather.ts`).
  */
 export async function extractFileModels(
   filePath: string,
   relPath?: string,
-): Promise<ModelSet | null> {
+  descriptorOverrides?: ReadonlyMap<string, ModelSchemaSupport>,
+): Promise<FileModelExtract | null> {
   const parsed = await parseFile(filePath);
   if (!parsed) return null;
-  const descriptor = getLanguage(parsed.languageId)?.modelSchema;
+  const descriptor =
+    descriptorOverrides?.get(parsed.languageId) ?? getLanguage(parsed.languageId)?.modelSchema;
   const modelShape = modelShapeForGrammar(parsed.grammar);
   if (!descriptor || !modelShape) return EMPTY;
   const callShape = grammarShape(parsed.grammar);

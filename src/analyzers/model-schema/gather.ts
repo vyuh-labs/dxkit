@@ -8,6 +8,18 @@
  * tree-sitter grammar, so a non-model language's files are never parsed and
  * adding a pack auto-extends the scan (Rule 6).
  *
+ * Three ASSEMBLY steps live here (per-repo joins no single file can make):
+ *   - `schemaFileTables` — a declared schema file's table calls mint
+ *     entities (Rails `db/schema.rb`), and while such a file EXISTS the
+ *     pack's class markers are demoted to discovery-only (the class body
+ *     declares no fields there; minting both `users` and `User` would give
+ *     one logical model two identities);
+ *   - `modelTypeRefContainers` — type names referenced from container
+ *     properties (EF Core `DbSet<Order>`) promote the so-named candidate
+ *     classes repo-wide (`via: 'type-ref'`);
+ *   - `mergePartialEntities` — same-name all-partial declarations merge into
+ *     one entity, so a field moving between C# partials is never drift.
+ *
  * `gatherRepoModelSet` is the canonical single-repo entry point (Rule 2): it
  * reads `.dxkit/policy.json:schema` itself, so a caller cannot forget the
  * configured specs — the half-landed-config bug class flow closed. The raw
@@ -15,12 +27,17 @@
  * gate's base side, where config comes from the HEAD checkout's policy).
  */
 
+import { existsSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { LANGUAGES, allModelSchemaSourceExtensions } from '../../languages';
+import type { ModelSchemaSupport } from '../../languages/types';
+import { parseFile } from '../../ast/parse';
+import { grammarShape } from '../../ast/grammar-shape';
 import { walkSourceFiles } from '../tools/walk-source-files';
-import { extractFileModels } from './extract';
+import { extractFileModels, extractSchemaFileTables } from './extract';
 import { loadSpecModels } from './spec-source';
 import { readSchemaConfig } from './config';
+import { mergePartialEntities } from './model';
 import type { DynamicModelSite, ModelEntity, ModelSet } from './model';
 
 export interface GatherModelOptions {
@@ -37,23 +54,82 @@ export interface GatherModelOptions {
   readonly relativeTo?: string;
 }
 
-/** Walk + extract + union. Files that don't parse are skipped, never fatal. */
+/** The schema-file models of one root, plus the per-language descriptor
+ *  demotions their presence implies (class markers → discovery-only). */
+async function gatherSchemaFiles(
+  root: string,
+  relativeTo?: string,
+): Promise<{ models: ModelEntity[]; overrides: Map<string, ModelSchemaSupport> }> {
+  const models: ModelEntity[] = [];
+  const overrides = new Map<string, ModelSchemaSupport>();
+  for (const lang of LANGUAGES) {
+    const descriptor = lang.modelSchema;
+    const spec = descriptor?.schemaFileTables;
+    if (!descriptor || !spec) continue;
+    let present = false;
+    for (const file of spec.files) {
+      const abs = join(root, file);
+      if (!existsSync(abs)) continue;
+      const parsed = await parseFile(abs);
+      if (!parsed) continue;
+      const callShape = grammarShape(parsed.grammar);
+      if (!callShape) continue;
+      present = true;
+      const label = relativeTo ? relative(relativeTo, abs) : abs;
+      models.push(
+        ...extractSchemaFileTables(parsed.tree.rootNode, spec, descriptor, callShape, label),
+      );
+    }
+    if (present) {
+      // The schema file is the field source — class markers would mint the
+      // same logical model a second time under its class name.
+      const demoted: ModelSchemaSupport = { ...descriptor };
+      delete demoted.modelBaseClasses;
+      delete demoted.weakModelBaseClasses;
+      overrides.set(lang.id, demoted);
+    }
+  }
+  return { models, overrides };
+}
+
+/** Walk + extract + assemble + union. Files that don't parse are skipped,
+ *  never fatal. */
 export async function gatherModelSet(opts: GatherModelOptions): Promise<ModelSet> {
   const extensions = allModelSchemaSourceExtensions(LANGUAGES);
   const models: ModelEntity[] = [];
   const dynamicModels: DynamicModelSite[] = [];
+  const typeRefs = new Set<string>();
+  const candidates: ModelEntity[] = [];
 
-  if (extensions.length > 0) {
-    for (const root of opts.roots) {
+  for (const root of opts.roots) {
+    const schemaFiles = await gatherSchemaFiles(root, opts.relativeTo);
+    models.push(...schemaFiles.models);
+
+    if (extensions.length > 0) {
       for (const rel of walkSourceFiles(root, { extensions })) {
         const abs = join(root, rel);
         const set = await extractFileModels(
           abs,
           opts.relativeTo ? relative(opts.relativeTo, abs) : abs,
+          schemaFiles.overrides,
         );
         if (!set) continue;
         models.push(...set.models);
         dynamicModels.push(...set.dynamicModels);
+        for (const ref of set.typeRefs ?? []) typeRefs.add(ref);
+        candidates.push(...(set.candidates ?? []));
+      }
+    }
+  }
+
+  // Type-reference promotion (EF Core): a candidate class named by some
+  // container's wrapped property is a model, wherever it lives.
+  if (typeRefs.size > 0) {
+    for (const c of candidates) {
+      if (!typeRefs.has(c.name)) continue;
+      models.push(c);
+      if (c.fields.length === 0) {
+        dynamicModels.push({ name: c.name, file: c.file, line: c.line });
       }
     }
   }
@@ -64,7 +140,7 @@ export async function gatherModelSet(opts: GatherModelOptions): Promise<ModelSet
     models.push(...specModels.map((m) => ({ ...m, file: label })));
   }
 
-  return { models, dynamicModels };
+  return { models: mergePartialEntities(models), dynamicModels };
 }
 
 /**
