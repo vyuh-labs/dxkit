@@ -641,6 +641,9 @@ export const kotlin: LanguageSupport = {
         optionalityPolarity: 'nullable',
         wireNameKeyword: 'name',
       },
+      // kotlinx.serialization wire naming — the argument is POSITIONAL
+      // (@SerialName("created_at")), the form the keyword read cannot see.
+      { names: ['SerialName'], wireNameFrom: 'firstArg' },
     ],
     schemaSignals: [
       {

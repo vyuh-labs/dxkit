@@ -849,6 +849,64 @@ export const ruby: LanguageSupport = {
     },
   },
 
+  // HTTP flow: Rails routes.rb (explicit verbs guarded by the qualifier set
+  // — a handler block, a `to:` binding, or `draw`/`namespace`/`scope`
+  // ancestry — so a request spec's bare `get '/x'` never mints a route;
+  // `resources`/`resource` expand to the canonical RESTful set honoring
+  // only:/except:), Sinatra (verb + block), and Net::HTTP / HTTParty /
+  // Faraday clients (`#{…}` interpolation canonicalizes to {var}). Out of
+  // scope, documented: Grape's path-less `get do` blocks, nested-resources
+  // id-segment prefixes (nested blocks are skipped — a wrong path is worse
+  // than a missing one), `Net::HTTP::Post.new` (the verb lives in the
+  // receiver tail).
+  httpFlow: {
+    routeVerbCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'options', 'head', 'match'],
+      requireTrailingLambda: true,
+      handlerKeywords: ['to'],
+      ancestorCallees: ['draw', 'namespace', 'scope', 'resources', 'resource'],
+      methodsKeyword: 'via',
+    },
+    routeGroupCallees: { names: ['namespace', 'scope'] },
+    routeResourceCallees: {
+      names: ['resources'],
+      singularNames: ['resource'],
+      ancestorCallees: ['draw', 'namespace', 'scope'],
+    },
+    clientMethodCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'head'],
+      bases: ['HTTParty', 'Net::HTTP', 'Faraday'],
+    },
+    flowSignals: [
+      { manifest: 'Gemfile', anyOf: ['rails', 'sinatra', 'httparty', 'faraday', 'grape'] },
+    ],
+  },
+
+  // Data models for the schema drift gate: Rails' field source is
+  // db/schema.rb (`create_table` blocks — entity per table, name = the
+  // table name, the wire contract; fields typed by the column method with
+  // `null:` optionality, absent ⇒ nullable). While a schema file exists the
+  // ActiveRecord class markers are demoted to discovery-only, so one
+  // logical model never carries two identities (`users` vs `User`); without
+  // one, marker classes surface with attr_accessor fields (untyped, honest
+  // unknowns). Table↔class inflection joining is out of scope, documented.
+  modelSchema: {
+    modelBaseClasses: ['ApplicationRecord', 'ActiveRecord::Base'],
+    schemaFileTables: {
+      files: ['db/schema.rb'],
+      tableCallees: ['create_table'],
+      optionalityKeyword: 'null',
+    },
+    schemaSignals: [{ manifest: 'Gemfile', anyOf: ['rails', 'activerecord'] }],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/). Only .rb is
+  // mapped — Rakefiles/Gemfiles parse as Ruby but carry route-looking DSL
+  // calls that would be noise.
+  treeSitterGrammars: {
+    '.rb': 'ruby',
+  },
+
   clocLanguageNames: ['Ruby'],
 
   detect: detectRuby,

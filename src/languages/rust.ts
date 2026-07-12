@@ -1027,6 +1027,47 @@ export const rust: LanguageSupport = {
     },
   },
 
+  // HTTP flow: actix-web / Rocket attribute routes (#[get("/x")] — bare and
+  // crate-scoped forms), axum routers (.route(...) mints method-agnostic ANY
+  // routes — the verb lives on the handler argument's callee chain, not the
+  // registration; .nest prefixes its ARGUMENT side only, never a chain-link
+  // sibling), and reqwest clients (`reqwest::get` resolves as a member via
+  // the scoped-identifier form; a format!-built URL is a macro, not a
+  // string — counted as a dynamic call site). Out of scope, documented:
+  // Rocket mount prefixes (`routes![]` macro linkage — routes mint
+  // unprefixed), axum verb sharpening from the handler argument,
+  // variable-held routers.
+  httpFlow: {
+    routeDecorators: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
+    routeCallees: { memberNames: ['route'] },
+    routeGroupCallees: { names: ['nest'] },
+    clientMethodCallees: {
+      methods: ['get', 'post', 'put', 'patch', 'delete', 'head'],
+      bases: ['client', 'reqwest'],
+    },
+    flowSignals: [
+      { manifest: 'Cargo.toml', anyOf: ['actix-web', 'axum', 'rocket', 'warp', 'reqwest'] },
+    ],
+  },
+
+  // Data models for the schema drift gate: serde structs
+  // (#[derive(Serialize/Deserialize)] — the model row expands derive lists
+  // so each trait reads as a marker), with #[serde(rename = "x")] wire
+  // names read from the attribute token soup and Option<T> as precise
+  // grammar-level optionality. Out of scope, documented:
+  // #[serde(rename_all)] container transforms, #[serde(default)] /
+  // skip_serializing_if optionality nuances.
+  modelSchema: {
+    modelDecorators: ['Serialize', 'Deserialize'],
+    fieldDecoratorSpecs: [{ names: ['serde'], wireNameKeyword: 'rename' }],
+    schemaSignals: [{ manifest: 'Cargo.toml', anyOf: ['serde', 'diesel', 'sea-orm'] }],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/).
+  treeSitterGrammars: {
+    '.rs': 'rust',
+  },
+
   clocLanguageNames: ['Rust'],
 
   detect(cwd) {

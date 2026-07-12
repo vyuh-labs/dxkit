@@ -1648,6 +1648,122 @@ export const csharp: LanguageSupport = {
     },
   },
 
+  // HTTP flow: ASP.NET Core attribute routing ([HttpGet]/[Route] with the
+  // [controller] token substituted from the enclosing class — the token MUST
+  // resolve or the path is dropped; a placeholder there would over-match
+  // every route under it), minimal APIs (app.MapGet), and HttpClient
+  // clients (interpolated $"…" URLs canonicalize; a runtime-built URL on a
+  // trusted client counts as a dynamic call site). Out of scope, documented:
+  // MapGroup chains (the group lives on a variable — statically opaque),
+  // HttpRequestMessage constructors (the verb is an HttpMethod enum
+  // argument), C#-11 raw string literals (parse as soup in the bundled
+  // grammar — their URLs are unread).
+  httpFlow: {
+    routeDecorators: [
+      'HttpGet',
+      'HttpPost',
+      'HttpPut',
+      'HttpDelete',
+      'HttpPatch',
+      'HttpHead',
+      'HttpOptions',
+    ],
+    routePrefixDecorators: { names: ['Route'] },
+    // A standalone method-level [Route("x")] with no verb attribute serves
+    // every verb; one sharing its method with a verb MARKER belongs to the
+    // pair form (the engine suppresses the double mint).
+    routePathDecorators: { names: ['Route'], methodsKeyword: 'method', defaultMethods: ['ANY'] },
+    routeAnnotationPairs: {
+      methodMarkers: [
+        'HttpGet',
+        'HttpPost',
+        'HttpPut',
+        'HttpDelete',
+        'HttpPatch',
+        'HttpHead',
+        'HttpOptions',
+      ],
+      pathNames: ['Route'],
+    },
+    decoratorPathKeywords: ['template'],
+    routeTokenFromEnclosingType: [
+      { token: '[controller]', stripSuffix: 'Controller', lowercase: true },
+    ],
+    routeRouterCallees: {
+      methods: ['MapGet', 'MapPost', 'MapPut', 'MapDelete', 'MapPatch'],
+      bases: ['app'],
+    },
+    clientMethodCallees: {
+      methods: [
+        'GetAsync',
+        'PostAsync',
+        'PutAsync',
+        'PatchAsync',
+        'DeleteAsync',
+        'GetFromJsonAsync',
+        'GetStringAsync',
+        'GetByteArrayAsync',
+        'PostAsJsonAsync',
+        'PutAsJsonAsync',
+        'PatchAsJsonAsync',
+      ],
+      bases: ['client', 'httpClient', '_client', '_httpClient'],
+    },
+    methodAliases: {
+      httpget: 'GET',
+      httppost: 'POST',
+      httpput: 'PUT',
+      httpdelete: 'DELETE',
+      httppatch: 'PATCH',
+      httphead: 'HEAD',
+      httpoptions: 'OPTIONS',
+      mapget: 'GET',
+      mappost: 'POST',
+      mapput: 'PUT',
+      mapdelete: 'DELETE',
+      mappatch: 'PATCH',
+      getasync: 'GET',
+      postasync: 'POST',
+      putasync: 'PUT',
+      patchasync: 'PATCH',
+      deleteasync: 'DELETE',
+      getfromjsonasync: 'GET',
+      getstringasync: 'GET',
+      getbytearrayasync: 'GET',
+      postasjsonasync: 'POST',
+      putasjsonasync: 'PUT',
+      patchasjsonasync: 'PATCH',
+    },
+    // No flowSignals: .NET manifests are variable-named .csproj files, which
+    // the fixed-name manifest probe cannot express — discovery simply never
+    // proactively recommends flow here (extraction works once configured).
+  },
+
+  // Data models for the schema drift gate: EF Core entities — both the
+  // annotated forms ([Table]/[Keyless]/[Owned]) and the DbSet<T> convention
+  // (the marker lives on the DbContext CONTAINER; referenced classes promote
+  // repo-wide via modelTypeRefContainers). Partial classes merge at
+  // model-set assembly (partialMarker), so codegen splits are never drift.
+  // Optionality is the nullable-reference-type annotation (string? — the
+  // declared-intent stance; non-NRT projects overstate requiredness, the
+  // documented trade-off). Wire names ride positional [Column("x")] /
+  // [JsonPropertyName("x")] arguments. Marker-less DTOs stay invisible by
+  // design — `schema.specs` covers them.
+  modelSchema: {
+    modelDecorators: ['Table', 'Keyless', 'Owned'],
+    modelTypeRefContainers: {
+      containerBaseClasses: ['DbContext'],
+      propertyTypeWrappers: ['DbSet'],
+    },
+    fieldDecoratorSpecs: [{ names: ['Column', 'JsonPropertyName'], wireNameFrom: 'firstArg' }],
+  },
+
+  // Tree-sitter grammar for the canonical AST layer (src/ast/). NB: the
+  // bundled wasm is tree-sitter-c_sharp.wasm — underscore, not hyphen.
+  treeSitterGrammars: {
+    '.cs': 'c_sharp',
+  },
+
   clocLanguageNames: ['C#'],
 
   detect(cwd) {

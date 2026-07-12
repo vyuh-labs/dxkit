@@ -76,6 +76,9 @@ const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   { stack: 'go-svc', flow: { calls: 3 } },
   { stack: 'java-svc', flow: { calls: 2 } },
   { stack: 'kotlin-svc', flow: { calls: 2 } },
+  { stack: 'csharp-svc', flow: { calls: 2 } },
+  { stack: 'ruby-svc', flow: { calls: 2 } },
+  { stack: 'rust-svc', flow: { calls: 2 } },
 ];
 
 const staged: Record<string, string> = {};
@@ -166,6 +169,28 @@ describe('analysis fixtures — model-schema extraction (marker-based, every sta
       expected: ['Item'],
       optionalField: { model: 'Item', field: 'note' }, // String? marker
       invisible: 'ItemIndexer',
+    },
+    {
+      stack: 'csharp-svc',
+      // Order via [Table] (its two PARTIAL declarations assemble into one
+      // entity); Customer via the DbSet<Customer> container reference.
+      expected: ['Order', 'Customer'],
+      optionalField: { model: 'Order', field: 'Note' }, // string? marker
+      invisible: 'OrderMapper',
+    },
+    {
+      stack: 'ruby-svc',
+      // The db/schema.rb table is the entity (name = the wire contract)…
+      expected: ['articles'],
+      optionalField: { model: 'articles', field: 'summary' }, // absent null: ⇒ nullable
+      // …and the ActiveRecord class is demoted to discovery while it exists.
+      invisible: 'Article',
+    },
+    {
+      stack: 'rust-svc',
+      expected: ['Report'],
+      optionalField: { model: 'Report', field: 'note' }, // Option<String>
+      invisible: 'ReportCache',
     },
   ];
 
@@ -288,6 +313,52 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
     expect(byMethod['GET']?.route?.path).toBe('/api/items/{var}');
     expect(byMethod['POST']?.route?.path).toBe('/api/items');
     // The runtime-built client.get(url) is DISCLOSED as dynamic.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('client');
+  });
+
+  it('csharp-svc: the [controller] token + attribute pairs + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['csharp-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // [Route("api/[controller]")] substitutes the class name (never an
+    // over-matching {var}); the marker [HttpPost] serves the prefix alone.
+    expect(served).toEqual(['GET /api/reports/{var}', 'POST /api/reports']);
+    const byMethod = Object.fromEntries(model.bindings.map((b) => [b.call.method, b]));
+    // The interpolated $"/api/reports/{id}" binds the GET; PostAsync the POST.
+    expect(byMethod['GET']?.route?.path).toBe('/api/reports/{var}');
+    expect(byMethod['POST']?.route?.path).toBe('/api/reports');
+    // The runtime-built client.GetAsync(BuildUrl()) is DISCLOSED as dynamic.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('client');
+  });
+
+  it('ruby-svc: resources expansion + draw qualifiers + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['ruby-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // resources :articles, only: [:index, :create] under namespace :api →
+    // exactly two routes with the /api prefix; the explicit get qualifies
+    // via its to: binding + draw ancestry.
+    expect(served).toEqual(['GET /api/articles', 'GET /health', 'POST /api/articles']);
+    const byMethod = Object.fromEntries(model.bindings.map((b) => [b.call.method, b]));
+    expect(byMethod['GET']?.route?.path).toBe('/api/articles');
+    expect(byMethod['POST']?.route?.path).toBe('/api/articles');
+    // The runtime-built HTTParty.get(url) is DISCLOSED as dynamic.
+    expect(model.dynamicCalls).toHaveLength(1);
+    expect(model.dynamicCalls[0].receiver).toBe('HTTParty');
+  });
+
+  it('rust-svc: axum nest argument-side prefixing + ANY routes + coverage honesty hold end-to-end', async () => {
+    const model = await gatherRepoFlowModel(staged['rust-svc']);
+    const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
+    // .nest("/api", …) prefixes ONLY its argument router; the chain-link
+    // /healthz sibling stays unprefixed; .route mints ANY routes.
+    expect(served).toEqual(['ANY /api/reports', 'ANY /api/reports/{var}', 'ANY /healthz']);
+    const byPath = Object.fromEntries(model.bindings.map((b) => [b.call.path, b]));
+    // A concrete /api/reports/1 resolves against the {var} route (the ANY
+    // rule + var matching), and the scoped reqwest::get binds /healthz.
+    expect(byPath['/api/reports/1']?.route?.path).toBe('/api/reports/{var}');
+    expect(byPath['/healthz']?.route?.path).toBe('/healthz');
+    // The format!-built URL is DISCLOSED as dynamic.
     expect(model.dynamicCalls).toHaveLength(1);
     expect(model.dynamicCalls[0].receiver).toBe('client');
   });
