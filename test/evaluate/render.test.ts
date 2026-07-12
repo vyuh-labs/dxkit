@@ -80,6 +80,60 @@ describe('renderEvaluateText — the clean replay is a first-class result', () =
   });
 });
 
+describe('renderEvaluateText — the seam-visibility lane (the value lens)', () => {
+  const cleanSeams = {
+    duplicates: 0,
+    dead: { removable: 0, likely: 0, expected: 0 },
+    crossRepoConsumersVisible: true,
+    converged: [],
+    topDuplicates: [],
+  };
+
+  function docWithSeams(seams: unknown) {
+    return buildEvidenceDoc({
+      branch: 'main',
+      ref: 'HEAD',
+      preset: 'security-only',
+      presetSource: 'default',
+      policyBase: 'defaults',
+      incremental: true,
+      untrusted: false,
+      runs: [fakeRun()],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      seams: seams as any,
+    });
+  }
+
+  it('speaks even when the seam scan is clean (computed-but-clean is not silence)', () => {
+    const text = renderEvaluateText(docWithSeams(cleanSeams));
+    expect(text).toContain('What dxkit sees beyond the verdict');
+    expect(text).toContain('none surfaced at the trial head');
+    // and it foregrounds the differentiator — above the cost plumbing.
+    expect(text.indexOf('What dxkit sees beyond the verdict')).toBeLessThan(
+      text.indexOf('What enabling dxkit costs'),
+    );
+  });
+
+  it('stays silent only when the seam scan did not run (doc.seams absent)', () => {
+    const text = renderEvaluateText(docWith([fakeRun()])); // no seams attached
+    expect(text).not.toContain('What dxkit sees beyond the verdict');
+  });
+
+  it('leads on the loud signal when routes are both dead and duplicated', () => {
+    const text = renderEvaluateText(
+      docWithSeams({
+        duplicates: 2,
+        dead: { removable: 1, likely: 0, expected: 0 },
+        crossRepoConsumersVisible: true,
+        converged: [{ method: 'GET', path: '/legacy', file: 'a.ts', twin: ['f', 'g'] }],
+        topDuplicates: [{ a: 'f', b: 'g', score: 0.97 }],
+      }),
+    );
+    expect(text).toContain('1 structural seam(s) worth removing');
+    expect(text).toContain('GET /legacy');
+  });
+});
+
 describe('redactEvidence', () => {
   it('strips file/line from blocking entries and the embedded payload, and says so', () => {
     const payload = fakePayload(1);
