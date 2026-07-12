@@ -130,7 +130,7 @@ visible test did. That needs a richer-graph substrate to demonstrate and is not
 claimed here. The defensible product statement is: tests-pass is an
 under-specified stop condition, and the defense is richer specification, more
 tests or structural context. That is also why configurable loop exit conditions
-are on the roadmap (issue #93).
+are tracked in issue #93.
 
 ## Caveats and retractions
 

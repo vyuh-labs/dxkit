@@ -373,11 +373,11 @@ cloc, jscpd, graphify).
 ¹ Rust, C#, Kotlin, Java, and Ruby populate `imports.extracted` but the
 file-level resolver is a no-op. Downstream analyses that need an edge graph
 (reachability, import-graph test-gap credit) degrade to conservative
-defaults for those packs. Resolvers are tracked on the [roadmap](docs/roadmap.md).
+defaults for those packs. Resolver support for these packs is planned.
 
 ² C# uses `dotnet-format` for formatting violations only. A real
-severity-tiered C# linter (Roslyn analyzers or StyleCop) is on the
-roadmap. Today every C# formatting violation is counted at `low` tier
+severity-tiered C# linter (Roslyn analyzers or StyleCop) is planned.
+Today every C# formatting violation is counted at `low` tier
 so it does not inflate the Code Quality score.
 
 </details>
@@ -412,8 +412,8 @@ replace them. Thank you to the maintainers of
 [cloc](https://github.com/AlDanial/cloc). Each tool is installed separately and
 keeps its own license.
 
-## Contributing and roadmap
+## Contributing
 
 - Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Roadmap: [docs/roadmap.md](docs/roadmap.md)
+- Ideas and plans: [GitHub issues](https://github.com/vyuh-labs/dxkit/issues)
 - License: MIT
