@@ -12,12 +12,7 @@
  * (any error → `null`, and doctor simply omits the flow section).
  */
 
-import {
-  detectActiveLanguages,
-  allFlowSourceExtensions,
-  allPrimaryComponentPaths,
-} from '../../languages';
-import { detect } from '../../detect';
+import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
 import { gatherRepoFlowModel } from './gather';
 import { hasOpaqueLeadingSegment, isPlaceholderOnlyPath, type FlowModel } from './model';
 import { readServedContract } from './contract';
@@ -179,6 +174,17 @@ function classifyUnresolved(
   };
 }
 
+/** File extensions that render UI by construction — a call site in one of these
+ *  is a frontend consumer. Not a role-path (Rule 8), an intrinsic file type. */
+const UI_COMPONENT_EXTENSIONS = ['.tsx', '.jsx', '.vue', '.svelte'];
+
+/** Whether a call-site file is a UI component (renders UI → a frontend
+ *  consumer), by its extension. */
+function isUiComponentFile(file: string): boolean {
+  const f = file.toLowerCase();
+  return UI_COMPONENT_EXTENSIONS.some((ext) => f.endsWith(ext));
+}
+
 function resolveConnection(cwd: string, model: FlowModel): { rung: ConnectionRung; note: string } {
   if (model.routes.length > 0) {
     return { rung: 'monorepo', note: 'This repo serves the routes its calls target.' };
@@ -247,19 +253,17 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
       handler: r.handler,
     }));
 
-  // Frontend-consumer count: resolved calls whose SITE is a frontend component
-  // /page file (a pack-declared `primaryComponentPath`). A positive count means a
-  // co-located UI consumes this repo's routes — a full-stack monorepo whose
-  // consumers are visible, vs a backend making internal service calls (zero).
-  const componentPaths = allPrimaryComponentPaths(detect(cwd).languages);
-  const frontendConsumers =
-    componentPaths.length === 0
-      ? 0
-      : model.bindings.filter(
-          (b) =>
-            b.route !== null &&
-            componentPaths.some((p) => b.call.file.toLowerCase().includes(p.toLowerCase())),
-        ).length;
+  // Frontend-consumer count: resolved calls whose SITE is a UI-COMPONENT file —
+  // a file whose extension renders UI by construction (`.tsx` / `.jsx` / `.vue`
+  // / `.svelte`). A positive count means a co-located UI in THIS repo consumes
+  // its own routes — a full-stack monorepo whose consumers are visible — vs a
+  // backend making internal service-to-service calls (`.ts` / `.js` service
+  // files, count zero). Keyed on the UI-rendering extension rather than a role
+  // PATH because `primaryComponentPaths` mixes frontend (`/components/`) with
+  // backend (`/services/`), so a server call would falsely read as a UI consumer.
+  const frontendConsumers = model.bindings.filter(
+    (b) => b.route !== null && isUiComponentFile(b.call.file),
+  ).length;
 
   // Freshness disclosure for a committed contract — stale-but-declared beats
   // stale-and-silent. May probe participant tips (local rev-parse / bounded

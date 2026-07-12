@@ -37,12 +37,40 @@ npx vyuh-dxkit doctor --json   → read the top-level `flow` field
 `flow` (when the repo has a UI→API surface) contains:
 - `topology` (monorepo / consumer-only / provider-only), `calls`, `routes`, `resolved`
 - `unresolved[]` — each `{ method, path, reason, suggestion, file, line }`. `reason` is `no-route` / `external` / `placeholder-only`; `suggestion` is `add-route` / `configure-participant` / `adopt-spec` / `annotate`.
-- `servedUnconsumed[]` — served routes no in-repo call hits (dead route, or a cross-repo consumer).
+- `servedUnconsumed[]` — served routes no in-repo call hits (dead route, or a cross-repo consumer). For the TIERED view of these — each route classified `removable` / `likely` / `expected` with its reason, plus the seam-convergence callout — run `vyuh-dxkit flow --json` and read `deadSurfaces` (see "The dead-surface inventory" below).
 - `connection.rung` — how the served side is resolved (`monorepo` / `committed-counterpart` / `configured-participants` / `unresolved`).
 - `coverage` — the honesty block: `callSitesSeen` / `extracted` / `dynamic` (recognized client calls whose URL is built at runtime — flow saw them and CANNOT verify them; `dynamicSites[]` lists their locations), a `paths` anchoring distribution (`exact` / `templated` / `opaque`), and a standing `note` (dynamic URLs + GraphQL are out of scope). Read this before ever telling a user "all integrations verified" — green means "everything extractable resolves", not "everything checked".
 - `contract` (when a committed `served.json` exists) — freshness of the snapshot: `generatedAt`, and per participant the commit its routes were gathered at (`sha`), its current `tip`, and `moved` (tri-state: `true` = the provider has shipped commits since this publish → recommend `flow publish` + commit; `false` = current; `null` = unknowable, e.g. offline — never treated as stale). `stale: true` only on a CONFIRMED move.
 
 Walk the `unresolved` tail and, per item, act on its `suggestion`: add the missing route, configure a participant (handshake mode), or adopt the provider's spec so an external call resolves. There is no inline "ignore this line" marker — an intentional break is accepted per-finding via the allowlist once the gate surfaces it as a net-new breakage (see **fix** mode below), so the acceptance is reviewed and diff-tracked rather than a silent inline comment.
+
+### The dead-surface inventory — `vyuh-dxkit flow` (+ `--json`)
+
+The flow map tiers every served-but-unconsumed route by an honest confidence
+ladder (never presents an uncertain route as dead). In `flow --json`, read
+`deadSurfaces`:
+
+- `crossRepoConsumersVisible` — whether every consumer could be SEEN (an explicit
+  `workspace.json` mesh, a committed counterpart, or a co-located UI in this repo).
+  When `false`, the loud `removable` tier is suppressed — a route might be consumed
+  by an unscanned repo, so deadness is unconfirmed. The nudge to unlock it is to
+  declare the system in `workspace.json`.
+- `byTier` — counts of `removable` / `likely` / `expected`.
+- `surfaces[]` — each `{ method, path, file, tier, reason, convergesWithDuplicate }`.
+  `reason` is `convention` (webhook/cron/health/CLI — an external actor drives it),
+  `direct-call` (consumed by a server-side call, not HTTP — RSC / server action),
+  `converged-dead` (removable), or `unconfirmed` (likely).
+- `converged[]` — the ranked "removable slop": a route that is BOTH ladder-confirmed
+  dead AND a structural duplicate (two independent seam signals agreeing). Each
+  carries the duplicate twin. This is the highest-confidence "remove or consolidate
+  this copy-paste nobody uses" signal — surface these first.
+
+Act on the tiers: **`removable` / `converged`** → remove the dead route or
+consolidate the duplicate (name the twin from `converged[].duplicate`); **`likely`**
+→ confirm it's truly dead (or declare `workspace.json` if a cross-repo UI consumes
+it); **`expected`** → leave alone (a webhook/cron/health/CLI route with no in-repo
+consumer is correct). The dead-surface inventory is a review signal, never a gate —
+it does not block a build.
 
 ### fix — repair a net-new broken integration ⭐
 
