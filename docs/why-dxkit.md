@@ -66,4 +66,3 @@ Snyk and CodeQL _detect_; dxkit makes their output enforceable and fixable.
 - [`README.md`](../README.md) for the product pitch and quick install
 - [`docs/SCORING.md`](SCORING.md) for the deterministic scoring rubric
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the system design
-- [`docs/roadmap.md`](roadmap.md) for what is shipped and what is planned

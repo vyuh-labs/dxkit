@@ -104,7 +104,7 @@ export const TEST_FRAMEWORK: CapabilityDescriptor<TestFrameworkResult> = {
   aggregate(results) {
     // Last-wins. Mixed-stack repos resolve to a single framework name
     // deterministically by provider-registration order; per-language
-    // reporting is future work (see Phase 10f roadmap).
+    // reporting is future work.
     return results[results.length - 1];
   },
 };
