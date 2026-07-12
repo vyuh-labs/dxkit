@@ -55,7 +55,7 @@ export type CategorizedFinding = AnnotatableFinding & { readonly category: Findi
  * carry a stamped fingerprint, so they are annotatable — see the dep
  * wrapper below).
  */
-function kindForCategory(category: FindingCategory): IdentityKind {
+export function kindForCategory(category: FindingCategory): IdentityKind {
   switch (category) {
     case 'secret':
       return 'secret';

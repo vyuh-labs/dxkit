@@ -70,8 +70,11 @@ import {
   annotateFindingsWithAllowlist,
   annotateDepFindingsWithAllowlist,
   allowlistLiftsScore,
+  kindForCategory,
 } from '../../allowlist/annotate';
 import type { AllowlistFile } from '../../allowlist/file';
+import { synthesizeInlineEntries, augmentAllowlistWithInline } from '../../allowlist/inline-synth';
+import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
 
@@ -307,6 +310,13 @@ export interface SecurityAggregateInput {
    * lifts the score (`false-positive` / `test-fixture`). Absent/null →
    * `scoreable*` buckets equal the raw buckets. */
   allowlist?: AllowlistFile | null;
+  /** Inline `dxkit-allow:` annotations walked from the source tree by the
+   * caller (I/O stays out of this pure aggregate). Each annotation adjacent to
+   * a code/secret/config finding is resolved into an ephemeral allowlist entry
+   * keyed on that finding's fingerprint (`synthesizeInlineEntries`), so an
+   * inline suppression waives a finding exactly like a file-level entry — one
+   * suppression core, two sources (Rule 2). Absent/empty → file-level only. */
+  inlineAnnotations?: readonly InlineAllowlistOccurrence[];
 }
 
 /**
@@ -655,7 +665,24 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
     ...codeFindingsByCategory.code,
     ...codeFindingsByCategory.config,
   ];
-  annotateFindingsWithAllowlist(allCodeSideFindings, input.allowlist ?? null);
+  // Inline `dxkit-allow:` annotations are resolved to ephemeral entries keyed on
+  // each covered finding's fingerprint, then merged into the loaded allowlist —
+  // so inline and file-level suppressions flow through the ONE fingerprint-based
+  // annotator below (Rule 2). Fingerprints are already stamped on the findings by
+  // this point (the annotator matches on them too).
+  const effectiveAllowlist = augmentAllowlistWithInline(
+    input.allowlist ?? null,
+    synthesizeInlineEntries(
+      input.inlineAnnotations ?? [],
+      allCodeSideFindings.map((f) => ({
+        file: f.file,
+        line: f.line,
+        fingerprint: f.fingerprint,
+        kind: kindForCategory(f.category),
+      })),
+    ),
+  );
+  annotateFindingsWithAllowlist(allCodeSideFindings, effectiveAllowlist);
 
   const scoreableCodeBySeverity = emptyCounts();
   const scoreableSecretsBySeverity = emptyCounts();
