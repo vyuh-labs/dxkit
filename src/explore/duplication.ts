@@ -12,7 +12,7 @@
  * gate, `evaluate`, the dashboard) gets identity-stamped findings from ONE path.
  */
 
-import type { GraphJson } from './types';
+import type { Graph, GraphJson } from './types';
 import { indexGraph } from './load';
 import { duplicatePairsQuery, type DuplicatePairsOpts } from './queries';
 import { computeCodeReimplementationFingerprint } from '../analyzers/tools/fingerprint';
@@ -55,7 +55,19 @@ export function duplicateFindingsFromJson(
   json: GraphJson,
   opts: DuplicatePairsOpts = {},
 ): DuplicateFinding[] {
-  const graph = indexGraph(json);
+  return duplicateFindingsFromGraph(indexGraph(json), opts);
+}
+
+/**
+ * Compute structural-duplicate findings from an ALREADY-INDEXED `Graph` — the
+ * sibling of {@link duplicateFindingsFromJson} for a caller that already holds an
+ * indexed graph (e.g. one loaded from a fresh on-disk `graph.json` via
+ * `loadGraph`), so it need not re-index. Pure.
+ */
+export function duplicateFindingsFromGraph(
+  graph: Graph,
+  opts: DuplicatePairsOpts = {},
+): DuplicateFinding[] {
   const pairs = duplicatePairsQuery(graph, opts);
   return pairs.map((p) => {
     const a = anchorOf(p.a);

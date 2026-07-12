@@ -20,13 +20,8 @@ import {
 } from './analyzers/flow/console';
 import { computeChangedFiles } from './baseline/changed-files';
 import { evaluateFlowGateForGuardrail } from './baseline/flow-gate-check';
-import {
-  gatherDeadSurfaces,
-  type TieredDeadSurface,
-} from './analyzers/convergence/dead-surface-gather';
-import { convergeSeams } from './analyzers/convergence';
-import { gatherGraphifyGraph } from './analyzers/tools/graphify';
-import { duplicateFindingsFromJson } from './explore/duplication';
+import { type TieredDeadSurface } from './analyzers/convergence/dead-surface-gather';
+import { gatherSeamInventory, type SeamInventory } from './analyzers/convergence/inventory';
 import { loadAllowlist } from './allowlist/file';
 import { readVisNetworkBundle } from './dashboard/vendor';
 import { readDxkitVersion } from './issue-cli';
@@ -145,17 +140,18 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
   const map = buildFlowMap(opts.cwd, model);
 
   // The tiered dead-surface inventory + convergence — the honest confidence
-  // ladder over served-but-unconsumed routes. Zero-write; gathered once and
-  // shared by the console + JSON surfaces.
-  const dead = await gatherDeadInventory(opts.cwd);
+  // ladder over served-but-unconsumed routes. Zero-write; gathered once (the ONE
+  // seam-inventory orchestration, shared with `evaluate`) and used by both the
+  // console + JSON surfaces.
+  const inv = await gatherSeamInventory(opts.cwd);
 
   if (opts.json) {
     emitJson({
       ...map,
       deadSurfaces: {
-        crossRepoConsumersVisible: dead.result.crossRepoConsumersVisible,
-        byTier: dead.result.byTier,
-        surfaces: dead.result.surfaces.map((s) => ({
+        crossRepoConsumersVisible: inv.dead.crossRepoConsumersVisible,
+        byTier: inv.dead.byTier,
+        surfaces: inv.dead.surfaces.map((s) => ({
           method: s.route.method,
           path: s.route.path,
           file: s.route.file,
@@ -163,7 +159,7 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
           reason: s.reason,
           convergesWithDuplicate: s.convergesWithDuplicate,
         })),
-        converged: dead.converged.map((c) => ({
+        converged: inv.converged.map((c) => ({
           method: c.route.method,
           path: c.route.path,
           file: c.file,
@@ -189,7 +185,7 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
   }
   // The tiered dead-surface inventory — the honest confidence ladder replacing
   // the old flat "dead route or cross-repo consumer" list.
-  renderDeadSurfaceInventory(dead);
+  renderDeadSurfaceInventory(inv);
 
   logger.info('');
   logger.info('Trace one: vyuh-dxkit flow trace "<METHOD> <path>"');
@@ -201,32 +197,14 @@ function deadSurfaceLine(s: TieredDeadSurface): string {
   return `  ${s.route.method} ${s.route.path}${loc}`;
 }
 
-/** Gather the tiered dead-surface inventory + convergence for a repo. Fail-open,
- *  zero-write: reads diagnoseFlow + the graph in memory. The dup findings power
- *  both the convergence callout and each surface's `convergesWithDuplicate`. */
-async function gatherDeadInventory(cwd: string): Promise<{
-  result: Awaited<ReturnType<typeof gatherDeadSurfaces>>;
-  converged: ReturnType<typeof convergeSeams>;
-}> {
-  const graph = await gatherGraphifyGraph(cwd, { writeToDisk: false });
-  const dupFindings =
-    graph.kind === 'success' ? duplicateFindingsFromJson(graph.graph, { minScore: 0.75 }) : [];
-  const result = await gatherDeadSurfaces(cwd, { dupFindings });
-  const converged = convergeSeams(result.surfaces, dupFindings);
-  return { result, converged };
-}
-
 /**
  * Render the tiered dead-surface inventory + the seam-convergence callout to the
  * console. Silent when there are no unconsumed routes.
  */
-function renderDeadSurfaceInventory(dead: {
-  result: Awaited<ReturnType<typeof gatherDeadSurfaces>>;
-  converged: ReturnType<typeof convergeSeams>;
-}): void {
-  const res = dead.result;
+function renderDeadSurfaceInventory(inv: SeamInventory): void {
+  const res = inv.dead;
   if (res.surfaces.length === 0) return;
-  const converged = dead.converged;
+  const converged = inv.converged;
 
   const removable = res.surfaces.filter((s) => s.tier === 'removable');
   const likely = res.surfaces.filter((s) => s.tier === 'likely');

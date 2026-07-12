@@ -100,6 +100,39 @@ export interface EvaluateEvidenceDoc extends EvidenceEnvelope {
    *  itself wherever possible, static facts otherwise. Answers "the gate
    *  would have blocked X, but at what price?" */
   readonly costs: EvaluateCosts;
+  /** The seam VISIBILITY lane — what dxkit SEES in the repo right now, computed
+   *  once on the trial head, INDEPENDENT of the gate verdict. Surfaces the
+   *  structural-duplicate + dead-surface + convergence signals so the trial shows
+   *  dxkit's differentiator even on a repo that hasn't enabled those gates.
+   *  Absent when the head could not be analyzed (fail-open). */
+  readonly seams?: SeamVisibility;
+}
+
+/** The seam-visibility summary attached to an evaluate doc. Counts + the ranked
+ *  convergence, kept compact (the full per-route inventory lives in `flow`). */
+export interface SeamVisibility {
+  /** Structural duplicates the graph surfaced at the trial head. */
+  readonly duplicates: number;
+  /** Dead-surface counts by tier. */
+  readonly dead: { readonly removable: number; readonly likely: number; readonly expected: number };
+  /** Whether every route consumer was visible (an explicit mesh or co-located
+   *  UI) — when false, the `removable` tier is suppressed and deadness is
+   *  unconfirmed cross-repo. */
+  readonly crossRepoConsumersVisible: boolean;
+  /** The ranked "removable slop": routes that are BOTH dead AND a copy-paste,
+   *  each with the duplicate twin's symbols. The highest-confidence seam signal. */
+  readonly converged: ReadonlyArray<{
+    readonly method: string;
+    readonly path: string;
+    readonly file: string;
+    readonly twin: ReadonlyArray<string>;
+  }>;
+  /** A few top structural duplicates (score-ranked) for the visibility lane. */
+  readonly topDuplicates: ReadonlyArray<{
+    readonly a: string;
+    readonly b: string;
+    readonly score: number;
+  }>;
 }
 
 /**
@@ -271,6 +304,9 @@ export function buildEvidenceDoc(input: {
   readonly incremental: boolean;
   readonly untrusted: boolean;
   readonly runs: ReadonlyArray<EvaluateRunEvidence>;
+  /** The seam-visibility summary for the trial head (optional — absent when the
+   *  head could not be analyzed). */
+  readonly seams?: SeamVisibility;
 }): EvaluateEvidenceDoc {
   const evaluated = input.runs.filter((r) => !r.error);
   const blocked = evaluated.filter((r) => r.verdict.blocks).length;
@@ -314,5 +350,44 @@ export function buildEvidenceDoc(input: {
     },
     notes,
     costs: buildCosts(input.runs),
+    ...(input.seams ? { seams: input.seams } : {}),
+  };
+}
+
+/** Project a gathered `SeamInventory` to the compact `SeamVisibility` summary the
+ *  evidence doc carries. Pure. */
+export function seamVisibilityFrom(inv: {
+  duplicates: ReadonlyArray<{
+    anchors: readonly [{ file: string; symbol: string }, { file: string; symbol: string }];
+    score: number;
+  }>;
+  dead: {
+    crossRepoConsumersVisible: boolean;
+    byTier: { removable: number; likely: number; expected: number };
+  };
+  converged: ReadonlyArray<{
+    route: { method: string; path: string; file: string };
+    duplicate: { anchors: readonly [{ symbol: string }, { symbol: string }] };
+  }>;
+}): SeamVisibility {
+  const anchorLabel = (a: { file: string; symbol: string }) => `${a.symbol} @ ${a.file}`;
+  return {
+    duplicates: inv.duplicates.length,
+    dead: inv.dead.byTier,
+    crossRepoConsumersVisible: inv.dead.crossRepoConsumersVisible,
+    converged: inv.converged.map((c) => ({
+      method: c.route.method,
+      path: c.route.path,
+      file: c.route.file,
+      twin: c.duplicate.anchors.map((a) => a.symbol),
+    })),
+    topDuplicates: [...inv.duplicates]
+      .sort((x, y) => y.score - x.score)
+      .slice(0, 5)
+      .map((d) => ({
+        a: anchorLabel(d.anchors[0]),
+        b: anchorLabel(d.anchors[1]),
+        score: d.score,
+      })),
   };
 }

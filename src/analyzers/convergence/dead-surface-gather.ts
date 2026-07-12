@@ -19,6 +19,7 @@
 import type { FlowDiagnosis, UnconsumedRoute } from '../flow/diagnose';
 import { diagnoseFlow } from '../flow/diagnose';
 import { tryLoadGraph } from '../../explore/load';
+import type { Graph } from '../../explore/types';
 import { calledSymbolNames } from '../../explore/queries';
 import { allNonConsumerRoutePaths } from '../../languages';
 import { detect } from '../../detect';
@@ -127,11 +128,17 @@ export function tierDeadSurfaces(
       isSpecificHandlerName(route.handler) &&
       opts.calledSymbols.has(stripHandler(route.handler as string));
     const convergesWithDuplicate = opts.duplicateFiles.has(route.file);
+    // Deadness is only CONFIRMABLE for a specific-handler route: a bare HTTP-verb
+    // handler (App-Router `GET`/`POST`) can be consumed by a server component
+    // without a resolvable call, so its "unconsumed" is ambiguous and it can
+    // never reach the loud `removable` tier.
+    const deadnessConfirmable = isSpecificHandlerName(route.handler);
     const tier = deadSurfaceTier({
       isConventionRoute,
       isDirectlyCalled,
       crossRepoConsumersVisible: opts.crossRepoConsumersVisible,
       isStructuralDuplicate: convergesWithDuplicate,
+      deadnessConfirmable,
     });
     const reason: DeadSurfaceReason = isConventionRoute
       ? 'convention'
@@ -155,12 +162,16 @@ function stripHandler(handler: string): string {
  * surface, no graph, or any error → an empty result (never throws). The optional
  * `dupFindings` supply the convergence join; omit them for a dead-only view.
  *
- * Zero-write: reads the graph via `tryLoadGraph` (or none) and diagnoseFlow,
- * both read-only.
+ * Zero-write: reads diagnoseFlow + a graph, both read-only. The graph powers the
+ * direct-call seam (is a route's handler invoked directly?). The caller may pass
+ * a pre-built `graph` (so the inventory reuses the SAME graph it computed the
+ * duplicates from — one build, consistent seam); otherwise it falls back to the
+ * on-disk `graph.json` via `tryLoadGraph`, and to no direct-call resolution when
+ * neither is present.
  */
 export async function gatherDeadSurfaces(
   cwd: string,
-  opts: { readonly dupFindings?: readonly DuplicateFinding[] } = {},
+  opts: { readonly dupFindings?: readonly DuplicateFinding[]; readonly graph?: Graph } = {},
 ): Promise<DeadSurfaceResult> {
   const empty: DeadSurfaceResult = {
     surfaces: [],
@@ -177,9 +188,10 @@ export async function gatherDeadSurfaces(
 
   const stack = detect(cwd);
   const conventionPatterns = allNonConsumerRoutePaths(stack.languages);
-  // Direct-call seam from the graph when one is present; empty set otherwise
-  // (degrades to "no direct-call resolution", never an error).
-  const graph = tryLoadGraph(cwd);
+  // Direct-call seam from the graph when one is present: the caller's pre-built
+  // graph (shared with the duplicate pass), else the on-disk graph.json, else an
+  // empty set (degrades to "no direct-call resolution", never an error).
+  const graph = opts.graph ?? tryLoadGraph(cwd);
   const calledSymbols = graph ? calledSymbolNames(graph) : new Set<string>();
   // The convergence + direct-call joins compare FILE paths, so both sides must
   // be in the same format. Graph-derived dup anchors are repo-relative; flow's
