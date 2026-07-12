@@ -154,8 +154,10 @@ Notes that keep the model honest:
   resource's id segment — a wrong path is worse than a missing one) and
   member/collection extras are not expanded. `match ... via:` reads its
   verb list (`via: :all` serves every method); `Net::HTTP::Post.new` (the
-  verb lives in the receiver) and Grape's path-less `get do` blocks are
-  out of scope.
+  verb lives in the receiver), Grape's path-less `get do` blocks, and
+  ENGINE-MOUNTED routes (`devise_for`, `mount SomeEngine => …` — those
+  routes live in the gem, not the repo) are out of scope; `flow.specs`
+  covers an engine's surface when it matters.
 - axum registrations are method-agnostic at the routing layer here —
   `.route("/x", get(h).post(h2))` carries its verbs on the handler
   argument, which is not read — so they surface as `ANY` routes (a client
@@ -163,6 +165,12 @@ Notes that keep the model honest:
   only the router passed **as its argument**; a variable-held router and
   Rocket's `.mount("/api", routes![…])` prefixes are statically opaque
   (Rocket attribute routes surface unprefixed — most apps mount at `/`).
+  actix's builder form (`service(resource("/x").route(get().to(h)))`) is
+  not extracted — its calls surface as unresolved consumed entries, the
+  gap's honest signal — and is queued with the axum verb-from-arg work
+  (both need the verb-on-the-argument machinery). Tail matchers
+  (`{key}*`, `{tail:.*}`, Rocket `<path..>`) canonicalize to the
+  catch-all.
 - **Any language can participate in the served side without pack coverage**
   by publishing an OpenAPI spec (`flow.specs`) or a `served.json` snapshot as
   a workspace participant — pack coverage adds native source extraction on
