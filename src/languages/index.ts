@@ -415,6 +415,25 @@ export function allRoutePaths(flags: DetectedStack['languages']): string[] {
 }
 
 /**
+ * Union of every active pack's `architecturalShape.nonConsumerRoutePaths`,
+ * deduplicated — the routes whose consumer is an external actor
+ * (webhook / cron / health / public-API / CLI), so a "no in-repo consumer"
+ * reading is EXPECTED, not dead-surface slop. Consumed by the dead-surface
+ * analyzer to drop a matching route to the "expected" tier. Pack-driven
+ * (Rule 6/8): a new framework declares its convention shapes and inherits the
+ * filter, and the arch-check keeps the literals out of analyzers.
+ */
+export function allNonConsumerRoutePaths(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(
+      activeLanguagesFromFlags(flags).flatMap(
+        (l) => l.architecturalShape?.nonConsumerRoutePaths ?? [],
+      ),
+    ),
+  ];
+}
+
+/**
  * Union of every active pack's `architecturalShape.modelPaths`,
  * deduplicated. Consumed by `gatherGenericMetrics` to populate
  * `HealthMetrics.models` (the "data model files" count surfaced in

@@ -1239,6 +1239,22 @@ export const python: LanguageSupport = {
       high: ['/views/', '/services/', '/handlers/', '/tasks/'],
       medium: ['/viewsets/', '/routers/', '/api/', '/serializers/'],
     },
+    // Routes driven by an external actor (webhook/cron/health/CLI), so "no
+    // in-repo consumer" is expected — the dead-surface analyzer dims these
+    // rather than flagging them. Substrings of the route file path OR URL path
+    // (Rule 6/8, pack-declared). Bias to false-negative — generous patterns.
+    nonConsumerRoutePaths: [
+      '/webhook',
+      '/callback',
+      '/cron/',
+      '/tasks/', // Celery/RQ task endpoints, triggered out-of-band
+      '/health',
+      '/healthz',
+      '/readiness',
+      '/liveness',
+      '/metrics',
+      '/.well-known/',
+    ],
   },
 
   // HTTP flow (CLAUDE.md Rule 6): how Python source expresses outbound HTTP
