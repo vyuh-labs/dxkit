@@ -82,6 +82,19 @@ describe('loop policy presets', () => {
     expect(policy.blockRules.newHighSecurity).toBe(true);
     expect(policy.blockRules.newCriticalDependencyVulnerability).toBe(true);
     expect(policy.blockRules.newHighReachableDependencyVulnerability).toBe(true);
+    // Malware blocks under every posture regardless of CVSS.
+    expect(policy.blockRules.newMaliciousDependency).toBe(true);
+  });
+
+  it('security-only WARNS on net-new findings its rules do not escalate (never silent)', () => {
+    const { policy } = resolveLoopPolicy(repo);
+    // The supply-chain-replay gap: an added finding outside the block rules
+    // (a high dep vuln without a reachability signal, a quality issue) must
+    // surface as a warning, not vanish.
+    expect(policy.warn).toContain('added');
+    // The base drift/uncertainty warns survive the union.
+    expect(policy.warn).toContain('tooling_drift');
+    expect(policy.warn).toContain('uncertain');
   });
 
   it('full-debt blocks every net-new finding incl. test-gap + quality', () => {
@@ -91,8 +104,11 @@ describe('loop policy presets', () => {
     expect(policy.block).toEqual(['added']);
     expect(policy.blockRules.newUntestedChangedSource).toBe(true);
     expect(policy.blockRules.newSevereQualityIssueInChangedFiles).toBe(true);
+    expect(policy.blockRules.newMaliciousDependency).toBe(true);
     // Full-debt blocks integration breakage too.
     expect(flowMode).toBe('block');
+    // No warn addition needed: the generic block list already covers `added`.
+    expect(policy.warn).not.toContain('added');
   });
 
   it('reads loop.preset from .dxkit/policy.json', () => {

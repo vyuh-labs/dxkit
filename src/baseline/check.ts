@@ -40,6 +40,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { dxkitCli } from '../self-invocation';
+import { isMaliciousAdvisory } from '../analyzers/security/malicious';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
 import {
@@ -603,6 +604,7 @@ export async function runGuardrailCheck(
   const priorById = indexById(baseline.findings);
   const currentById = indexById(current.findings);
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
+  const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
   const envelopeDrift = diffEnvelopes(baseline, current);
 
   // Per-kind tool attribution drives the per-pair
@@ -666,6 +668,9 @@ export async function runGuardrailCheck(
     // file is in the diff (a brand-new file has all its lines added).
     const fileChangedInDiff = file !== undefined && (linesChangedFor(file)?.size ?? 0) > 0;
 
+    const malicious =
+      pair.currentId !== undefined && maliciousByCurrentId.has(pair.currentId) ? true : undefined;
+
     const context: ClassifyContext = {
       severity,
       kind: anchorEntry.kind,
@@ -673,6 +678,7 @@ export async function runGuardrailCheck(
       ...(configDiffers ? { configDiffers: true } : {}),
       ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
+      ...(malicious ? { malicious } : {}),
     };
 
     // `classify` is kind-agnostic; fold in the custom-check block INTENT (a
@@ -846,6 +852,22 @@ function buildSeverityIndex(aggregate: SecurityAggregate): Map<FindingId, Findin
   }
   for (const f of aggregate.findingsByCategory.dependency) {
     if (f.fingerprint) out.set(f.fingerprint, f.severity);
+  }
+  return out;
+}
+
+/**
+ * Fingerprints of current-scan dependency findings whose advisory reports
+ * the package itself as malicious code — the `newMaliciousDependency`
+ * block rule's signal. Computed from the CURRENT side only: block rules
+ * fire on `added` pairs, which always carry a currentId, so the committed
+ * baseline needs no schema change. Classification comes from the one
+ * canonical predicate (`src/analyzers/security/malicious.ts`).
+ */
+function buildMaliciousIndex(aggregate: SecurityAggregate): Set<FindingId> {
+  const out = new Set<FindingId>();
+  for (const f of aggregate.findingsByCategory.dependency) {
+    if (f.fingerprint && isMaliciousAdvisory(f)) out.add(f.fingerprint);
   }
   return out;
 }

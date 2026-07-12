@@ -72,6 +72,17 @@ interface PresetDef {
    * schema defaults to off, and a preset never activates it.
    */
   readonly schemaMode: SchemaGateMode;
+  /**
+   * Statuses ADDED to the base policy's warn list (union, never a
+   * replacement — the base's drift/uncertainty warns always survive).
+   * `security-only` adds `added` so a net-new finding its block rules do
+   * not escalate (a high dep vuln without a reachability signal, a
+   * quality issue) is still REPORTED as a warning instead of passing
+   * silently — the gap a real supply-chain-incident replay exposed.
+   * `full-debt` needs no addition: its generic block list already covers
+   * `added`.
+   */
+  readonly warn: ReadonlyArray<FindingStatus>;
 }
 
 /** The security class: secrets, crit/high SAST, crit/high reachable dep
@@ -82,6 +93,13 @@ const SECURITY_BLOCK_RULES: BrownfieldBlockRules = {
   newHighSecurity: true,
   newCriticalDependencyVulnerability: true,
   newHighReachableDependencyVulnerability: true,
+  // Malware is not "debt": a net-new dependency carrying a malicious-code
+  // advisory blocks under EVERY posture regardless of CVSS — install-time
+  // malware runs at install, so severity and reachability are the wrong
+  // lens. Added after a zero-write replay of the July 2025
+  // eslint-config-prettier compromise showed the default posture passing
+  // it silently.
+  newMaliciousDependency: true,
   // Open-ended debt — OFF in security-only (warn, never block).
   newUntestedChangedSource: false,
   newSevereQualityIssueInChangedFiles: false,
@@ -94,6 +112,10 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
     // Blocking comes solely from SECURITY_BLOCK_RULES.
     block: [],
     blockRules: SECURITY_BLOCK_RULES,
+    // Every net-new finding the rules don't escalate is still a warning —
+    // silence is reserved for pre-existing debt, never for something this
+    // change introduced.
+    warn: ['added'],
     flowMode: 'warn',
     schemaMode: 'warn',
   },
@@ -105,6 +127,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
       newUntestedChangedSource: true,
       newSevereQualityIssueInChangedFiles: true,
     },
+    warn: [],
     flowMode: 'block',
     schemaMode: 'block',
   },
@@ -136,6 +159,9 @@ export function policyForPreset(preset: LoopPreset, base: BrownfieldPolicy): Pre
       ...base,
       block: def.block,
       blockRules: def.blockRules,
+      // Union, never replacement: the base's drift/uncertainty warns
+      // survive; the preset can only ADD warn statuses (see PresetDef.warn).
+      warn: def.warn.length > 0 ? [...new Set([...base.warn, ...def.warn])] : base.warn,
     },
   };
 }
