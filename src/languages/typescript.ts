@@ -11,7 +11,10 @@ import {
   enrichWithUpgradePlans,
   gatherOsvScannerFixPlans,
 } from '../analyzers/tools/osv-scanner-fix';
-import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
+import {
+  gatherOsvScannerDepVulnsResult,
+  mergeMaliciousOsvFindings,
+} from '../analyzers/tools/osv-scanner-deps';
 import { detectLockfile } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
@@ -363,7 +366,26 @@ async function gatherTsDepVulnsResult(
     return gatherOsvScannerDepVulnsResult(cwd, 'typescript', 'npm', [lock.lockfile]);
   }
 
-  return gatherTsDepVulnsViaNpmAudit(cwd, opts);
+  // npm lockfile: npm audit stays the canonical source (richest feed —
+  // embedded CVSS, fix targets), and osv-scanner joins BEST-EFFORT for the
+  // one signal npm audit's advisory feed structurally lacks: OSV `MAL-*`
+  // malicious-package entries from OpenSSF's ecosystem-maintained database.
+  // Without the overlay, the malicious-package gate rule on the npm path
+  // depends on fallback signals (the CWE-506 family, advisory titles)
+  // instead of the canonical source. An unavailable or failing osv-scanner
+  // never degrades the npm-audit result (fail-open on infrastructure).
+  const audit = await gatherTsDepVulnsViaNpmAudit(cwd, opts);
+  if (audit.kind !== 'success') return audit;
+  try {
+    const overlay = await gatherOsvScannerDepVulnsResult(cwd, 'typescript', 'npm', [lock.lockfile]);
+    if (overlay.kind !== 'success') return audit;
+    return {
+      kind: 'success',
+      envelope: mergeMaliciousOsvFindings(audit.envelope, overlay.envelope),
+    };
+  } catch {
+    return audit;
+  }
 }
 
 /**

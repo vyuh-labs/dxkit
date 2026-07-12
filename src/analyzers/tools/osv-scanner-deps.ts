@@ -32,6 +32,7 @@ import {
   resolveCvssScores,
   type OsvVuln,
 } from './osv';
+import { isMaliciousAdvisory } from '../security/malicious';
 import { fileExists, run } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import type {
@@ -225,9 +226,69 @@ export async function gatherOsvScannerDepVulnsResult(
     counts,
     findings,
   };
-  // G_v4_4 (2.4.7): `packId` is forwarded into `parseOsvScannerFindings`
-  // so each finding carries the producing pack, which `buildUpgradeCommand`
-  // dispatches on. Envelope-level `tool: 'osv-scanner'` stays as the
-  // tool-attribution string used in `toolsUsed`.
+  // `packId` is forwarded into `parseOsvScannerFindings` so each finding
+  // carries the producing pack, which `buildUpgradeCommand` dispatches on.
+  // Envelope-level `tool: 'osv-scanner'` stays as the tool-attribution
+  // string used in `toolsUsed`.
   return { kind: 'success', envelope };
+}
+
+/**
+ * Overlay the ecosystem-maintained malicious-package feed onto a native
+ * scanner's result — the canonical-source answer to malware detection.
+ *
+ * Several packs use a native Tier-1 scanner (npm audit, cargo-audit,
+ * govulncheck, `dotnet list --vulnerable`) whose advisory feed does NOT
+ * carry OSV's `MAL-*` malicious-package entries, fed by OpenSSF's
+ * malicious-packages database. Those packs run osv-scanner as a
+ * best-effort second source and merge JUST the malicious findings in via
+ * this helper, so the `newMaliciousDependency` gate rule rides the
+ * maintained database on every path — never a list dxkit maintains.
+ * (Packs whose canonical scanner already IS osv-scanner — java, kotlin,
+ * ruby — and pip-audit, which queries OSV natively, need no overlay.)
+ *
+ * Merge semantics, deliberately narrow:
+ *   - ONLY findings the canonical `isMaliciousAdvisory` predicate flags
+ *     are appended. Ordinary advisories both scanners see would
+ *     double-count, and the native scanner stays the richer source for
+ *     them (embedded CVSS, fix targets).
+ *   - A malicious finding already represented in the base (same package
+ *     with an overlapping advisory id or alias) is skipped.
+ *   - Counts are recomputed to include the appended findings, keeping
+ *     the envelope's counts consistent with its findings.
+ *
+ * Pure; callers treat the overlay as best-effort (an unavailable
+ * osv-scanner never degrades the native result — fail-open on
+ * infrastructure, per the gate's standing policy).
+ */
+export function mergeMaliciousOsvFindings(
+  base: DepVulnResult,
+  overlay: DepVulnResult,
+): DepVulnResult {
+  const overlayFindings = overlay.findings ?? [];
+  if (overlayFindings.length === 0) return base;
+
+  const seen = new Set<string>();
+  for (const f of base.findings ?? []) {
+    seen.add(`${f.package} ${f.id}`);
+    for (const a of f.aliases ?? []) seen.add(`${f.package} ${a}`);
+  }
+
+  const appended = overlayFindings.filter((f) => {
+    if (!isMaliciousAdvisory(f)) return false;
+    if (seen.has(`${f.package} ${f.id}`)) return false;
+    if ((f.aliases ?? []).some((a) => seen.has(`${f.package} ${a}`))) return false;
+    return true;
+  });
+  if (appended.length === 0) return base;
+
+  const counts = { ...base.counts };
+  for (const f of appended) {
+    if (f.severity in counts) counts[f.severity as keyof typeof counts] += 1;
+  }
+  return {
+    ...base,
+    counts,
+    findings: [...(base.findings ?? []), ...appended],
+  };
 }
