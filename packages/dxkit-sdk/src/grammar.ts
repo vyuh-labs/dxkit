@@ -96,6 +96,14 @@ export interface GrammarShape {
    * SDK minor).
    */
   functionName?(node: Node): string | null;
+  /**
+   * The name of the TYPE DECLARATION enclosing a node (the nearest ancestor
+   * class/record), or null when the node is not inside one. Consumed by the
+   * `routeTokenFromEnclosingType` descriptor (ASP.NET's `[controller]`
+   * token substitutes the enclosing class name). Optional (additive,
+   * SDK minor).
+   */
+  enclosingTypeName?(node: Node): string | null;
 }
 
 /** How to read one grammar's model-declaration syntax. */
@@ -133,4 +141,13 @@ export interface GrammarModelShape {
   fieldValueCall(field: Node): Node | null;
   /** Decorator nodes attached to this field (`@Column(...)`). */
   fieldDecorators(field: Node): Node[];
+  /**
+   * Is this class declaration marked PARTIAL (C#'s `partial class` modifier —
+   * one logical type split across several declarations, typically for
+   * codegen)? The model-set assembly merges same-name entities into one when
+   * EVERY declaration is partial-marked, so a field moving between partials
+   * never reads as remove+add. Optional (additive, SDK minor); grammars
+   * without the concept omit it.
+   */
+  partialMarker?(classNode: Node): boolean;
 }

@@ -43,6 +43,15 @@ describe('flow normalizePath', () => {
     expect(normalizePath('`${Config.apiBase()}`', cfg)).toBeNull();
   });
 
+  it('canonicalizes Ruby string interpolation (#{…}) to {var}', () => {
+    expect(normalizePath('"/items/#{id}"')).toBe('/items/{var}');
+    expect(normalizePath('"/users/#{user.id}/posts/#{post_id}"')).toBe(
+      '/users/{var}/posts/{var}',
+    );
+    // A fully dynamic base stays faithful (the join treats it as unresolved).
+    expect(normalizePath('"#{base_url}/items"')).toBe('/{var}/items');
+  });
+
   it('canonicalizes Kotlin brace-less template vars ($id) to {var}', () => {
     expect(normalizePath('"/users/$id"')).toBe('/users/{var}');
     expect(normalizePath('"/users/$id/posts/$postId"')).toBe('/users/{var}/posts/{var}');

@@ -199,15 +199,78 @@ export interface HttpFlowSupport {
 
   /**
    * BARE verb-named route callees: the callee IS the verb and the first
-   * argument is the path — Ktor's `get("/x") { … }` / `post("/y") { … }`.
-   * Precision guards: the first positional argument must be a string literal
-   * beginning with `/`, and `requireTrailingLambda` (for grammars whose
-   * shape implements `hasTrailingLambda`) additionally requires the handler
-   * lambda — together they keep an app-local `get("key")` helper from
-   * minting a route. Combine with `routeGroupCallees` for nested prefixes.
+   * argument is the path — Ktor's `get("/x") { … }`, Sinatra's
+   * `get '/items' do … end`, Rails' `get '/x', to: 'ctrl#show'`.
+   *
+   * Precision guards. The first positional argument must be a string
+   * literal beginning with `/` — always. Beyond that, the optional guards
+   * form a QUALIFIER SET: when one or more are declared, a call must
+   * satisfy AT LEAST ONE of them (a bare `get '/x'` in a request spec
+   * satisfies none and is kept out):
+   *   - `requireTrailingLambda` — the call carries a trailing lambda/block
+   *     (grammars whose shape implements `hasTrailingLambda`; Ktor/Sinatra
+   *     handler blocks);
+   *   - `handlerKeywords` — the call carries one of these keyword
+   *     arguments (Rails' `to:` — the argument that names a handler);
+   *   - `ancestorCallees` — the call sits (transitively) inside a call to
+   *     one of these names (Rails' `draw`/`namespace`/`scope` blocks —
+   *     routes.rb is always inside `routes.draw do … end`).
+   *
+   * `methodsKeyword`, when declared, names a keyword argument carrying an
+   * EXPLICIT verb list (Rails' `match '/x', via: [:get, :post]`) — read
+   * for a callee whose own name is not a verb (`match`); tokens normalize
+   * through `methodAliases` and non-verbs drop out. A non-verb callee with
+   * no readable keyword verbs declares nothing.
+   *
+   * Combine with `routeGroupCallees` for nested prefixes. Additive
+   * (SDK minor).
+   */
+  routeVerbCallees?: {
+    methods: string[];
+    requireTrailingLambda?: boolean;
+    handlerKeywords?: string[];
+    ancestorCallees?: string[];
+    methodsKeyword?: string;
+  };
+
+  /**
+   * RESOURCE-expansion route callees: a call whose SYMBOL/string argument
+   * expands to the framework's fixed RESTful route set — Rails'
+   * `resources :articles` (7 actions / 8 verb+path routes) and its singular
+   * `resource :profile`. The expansion table is a documented framework
+   * contract, not speculation, and lives in the engine; `only:` / `except:`
+   * keyword lists filter it. `singularNames` entries expand WITHOUT the
+   * `/{var}` id segment and without an index action (the Rails `resource`
+   * semantics). `ancestorCallees` is the same precision guard as
+   * `routeVerbCallees`' — when declared, the call must sit inside one.
+   * Ancestor `routeGroupCallees` prefixes apply (`namespace :api do`).
    * Additive (SDK minor).
    */
-  routeVerbCallees?: { methods: string[]; requireTrailingLambda?: boolean };
+  routeResourceCallees?: {
+    names: string[];
+    singularNames?: string[];
+    ancestorCallees?: string[];
+  };
+
+  /**
+   * Framework TOKENS inside a route/prefix path that substitute a fact from
+   * the ENCLOSING TYPE — ASP.NET's `[Route("api/[controller]")]`, where
+   * `[controller]` is the enclosing class name minus its `Controller`
+   * suffix, lowercased. Substitution happens BEFORE normalization (the
+   * normalizer's `[…]` param rule would otherwise silently turn the token
+   * into an over-matching `{var}`). Requires the grammar shape to implement
+   * `enclosingTypeName`; when the type cannot be resolved, the path is
+   * DROPPED rather than emitted with a placeholder — a wrong prefix
+   * corrupts every route under it. Additive (SDK minor).
+   */
+  routeTokenFromEnclosingType?: Array<{
+    /** The literal token as it appears in the raw path (`'[controller]'`). */
+    token: string;
+    /** Suffix stripped from the type name before substitution (`'Controller'`). */
+    stripSuffix?: string;
+    /** Lowercase the substituted name (ASP.NET convention). */
+    lowercase?: boolean;
+  }>;
 
   /**
    * SPLIT verb/path annotation pairs: one MARKER annotation names the verb
@@ -417,15 +480,63 @@ export interface ModelSchemaSupport {
    * `'required'`: true ⇒ required) — read only when EXPLICITLY present, so
    * an unannotated field keeps the grammar/lexical answer (or an honest
    * `null`, which never gates). `wireNameKeyword` names the argument whose
-   * string value replaces the declared field name on the wire. Mirror of
-   * `fieldCallees` for annotation-carried facts. Additive (SDK minor).
+   * string value replaces the declared field name on the wire.
+   * `wireNameFrom: 'firstArg'` reads the wire name from the decorator's
+   * FIRST POSITIONAL string argument instead — the C# convention
+   * (`[Column("user_name")]`, `[JsonPropertyName("created_at")]`) and
+   * kotlinx's `@SerialName("wire")`; a declared `wireNameKeyword` match
+   * wins when both are present. Mirror of `fieldCallees` for
+   * annotation-carried facts. Additive (SDK minor).
    */
   fieldDecoratorSpecs?: Array<{
     names: string[];
     optionalityKeyword?: string;
     optionalityPolarity?: 'nullable' | 'required';
     wireNameKeyword?: string;
+    wireNameFrom?: 'firstArg';
   }>;
+  /**
+   * SCHEMA-FILE tables: a declared file whose table-definition calls ARE the
+   * model source — Rails' `db/schema.rb`, where `create_table "users" do |t|
+   * … t.string "email", null: false` is the authoritative field list (the
+   * ActiveRecord class body declares none). The engine parses each declared
+   * file with the pack's grammar and mints ONE entity per `tableCallees`
+   * call: entity name = the call's first string argument (the table name —
+   * the wire contract), each MEMBER call in its block with a string first
+   * argument contributes a field (name = the argument, type = the member
+   * method's name, folded through `typeAliases`). `optionalityKeyword`
+   * names the keyword carrying nullability (`null: false` ⇒ required);
+   * an ABSENT keyword reads as the framework default (nullable ⇒ optional —
+   * a schema-file fact, unlike source classes where absence is unknown).
+   * Class markers (`modelBaseClasses`) then serve DISCOVERY only — the
+   * engine does not ALSO mint marker classes as empty entities when this
+   * field is declared, so one logical model never appears twice under two
+   * names. Additive (SDK minor).
+   */
+  schemaFileTables?: {
+    /** Repo-relative schema files to parse (`['db/schema.rb']`). */
+    files: string[];
+    /** Table-definition callee names (`['create_table']`). */
+    tableCallees: string[];
+    /** Keyword argument carrying nullability on a column call (`'null'`). */
+    optionalityKeyword?: string;
+  };
+  /**
+   * TYPE-REFERENCE model containers: a container class whose PROPERTY TYPE
+   * ARGUMENTS mark the referenced classes as models — EF Core's `DbSet<Order>`
+   * properties on a `DbContext` subclass (the marker lives on the container,
+   * not the entity). The engine collects every referenced type name from
+   * classes inheriting a `containerBaseClasses` entry (property types
+   * wrapped in a `propertyTypeWrappers` name — `DbSet<Order>` → `Order`)
+   * and promotes the so-named classes to models (`via: 'type-ref'`),
+   * repo-wide. Additive (SDK minor).
+   */
+  modelTypeRefContainers?: {
+    /** Base classes marking a container (`['DbContext']`). */
+    containerBaseClasses: string[];
+    /** Generic wrappers whose type argument is a model (`['DbSet']`). */
+    propertyTypeWrappers: string[];
+  };
   /**
    * Transparent type wrappers folded OUT of annotation text before any
    * other normalization: `Mapped[X]` (SQLAlchemy 2.0) reads as `X`, so the
