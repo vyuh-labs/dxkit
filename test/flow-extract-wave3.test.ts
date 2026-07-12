@@ -32,8 +32,9 @@ const CSHARP_HF: HttpFlowSupport = {
     pathNames: ['Route'],
   },
   decoratorPathKeywords: ['template'],
-  routeTokenFromEnclosingType: [
-    { token: '[controller]', stripSuffix: 'Controller', lowercase: true },
+  routeTemplateTokens: [
+    { token: '[controller]', from: 'enclosingType', stripSuffix: 'Controller', lowercase: true },
+    { token: '[action]', from: 'enclosingFunction', lowercase: true },
   ],
   routeRouterCallees: {
     methods: ['MapGet', 'MapPost', 'MapPut', 'MapDelete', 'MapPatch'],
@@ -98,6 +99,20 @@ public class LegacyController {
     expect(routes.map(key)).toEqual(['ANY /api/legacy/old']);
   });
 
+  it('[action] tokens resolve per handler from a class-level prefix (the MVC shape)', async () => {
+    const src = `
+[Route("[controller]/[action]")]
+public class OrderController : Controller {
+    [HttpGet] public IActionResult MyOrders() => null;
+    [HttpGet("{orderId}")] public IActionResult Detail(int orderId) => null;
+}`;
+    const { routes } = await extract(src, 'c_sharp', CSHARP_HF);
+    // One class prefix, TWO distinct paths — the [action] token substitutes
+    // each handler's own name; the bracket rule would have minted a single
+    // over-matching /order/{var}.
+    expect(routes.map(key).sort()).toEqual(['GET /order/detail/{var}', 'GET /order/myorders']);
+  });
+
   it('minimal APIs route through MapGet/MapPost on app', async () => {
     const src = `
 class P { static void Main() {
@@ -134,7 +149,7 @@ class S { async Task M() {
     // No enclosing class — file-scoped attribute soup; the route must not
     // surface as /api/{var}.
     const src = `class C { [HttpGet("api/[controller]/x")] void M() {} }`;
-    const hfNoToken: HttpFlowSupport = { ...CSHARP_HF, routeTokenFromEnclosingType: undefined };
+    const hfNoToken: HttpFlowSupport = { ...CSHARP_HF, routeTemplateTokens: undefined };
     const withToken = await extract(src, 'c_sharp', CSHARP_HF);
     // Token declared → substituted from the enclosing class C (no suffix to strip).
     expect(withToken.routes.map(key)).toEqual(['GET /api/c/x']);

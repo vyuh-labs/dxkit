@@ -99,7 +99,7 @@ export interface GrammarShape {
   /**
    * The name of the TYPE DECLARATION enclosing a node (the nearest ancestor
    * class/record), or null when the node is not inside one. Consumed by the
-   * `routeTokenFromEnclosingType` descriptor (ASP.NET's `[controller]`
+   * `routeTemplateTokens` descriptor (ASP.NET's `[controller]`
    * token substitutes the enclosing class name). Optional (additive,
    * SDK minor).
    */
