@@ -179,6 +179,10 @@ export function normalizePath(
   //    `${x}` never leaves a stray token, and requires an identifier head so
   //    Go's `{$}` end-marker (handled in 6a) is untouched.
   s = s.replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, PLACEHOLDER);
+  //    Ruby string interpolation — `"/items/#{id}"`. The `#{…}` form is
+  //    uniform lexical interpolation (the normalizer's stated scope), same
+  //    contract as `${…}` above.
+  s = s.replace(/#\{[^}]*\}/g, PLACEHOLDER);
 
   // 5. drop query string
   const q = s.indexOf('?');
