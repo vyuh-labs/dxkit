@@ -124,6 +124,15 @@ describe('flow normalizePath', () => {
     expect(normalizePath("'/items/{$}'")).toBe('/items');
   });
 
+  it('Rust tail-match forms canonicalize to the catch-all', () => {
+    // actix {key}* and {tail:.*} both serve everything under their prefix;
+    // Rocket's <path..> is the segments-tail form. All three are prefix
+    // matchers — a single-segment {var} would under-match them.
+    expect(normalizePath('"/file/{s3_key}*"')).toBe('/file/{*}');
+    expect(normalizePath('"/static/{tail:.*}"')).toBe('/static/{*}');
+    expect(normalizePath('"/page/<path..>"')).toBe('/page/{*}');
+  });
+
   it('Django/Flask angle-bracket converters canonicalize like every other param form', () => {
     // Single-segment converters (<int:pk>, <slug:s>, bare <name>) → {var},
     // joining a client's `/users/${id}`.
