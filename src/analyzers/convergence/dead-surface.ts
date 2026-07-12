@@ -48,6 +48,15 @@ export interface DeadSurfaceSignals {
    *  independent seam signals agreeing is what earns the loud `removable` tier
    *  without a false-block. */
   readonly isStructuralDuplicate: boolean;
+  /** Whether this route's DEADNESS can be CONFIRMED — true only when the handler
+   *  is a specific symbol (a named method), so "no consumer" genuinely means
+   *  unreferenced. A bare HTTP-verb handler (`GET` / `POST`, as App-Router /
+   *  file-route handlers are exported) can be consumed by a server component or
+   *  framework WITHOUT a resolvable call, so its "unconsumed" is ambiguous — it
+   *  can never reach the loud `removable` tier (it stays `likely`). This is the
+   *  precision boundary the App-Router case surfaced: HTTP-unconsumed ≠ dead when
+   *  the framework consumes the route out of band. */
+  readonly deadnessConfirmable: boolean;
 }
 
 /**
@@ -68,7 +77,13 @@ export interface DeadSurfaceSignals {
  */
 export function deadSurfaceTier(signals: DeadSurfaceSignals): DeadSurfaceTier {
   if (signals.isConventionRoute || signals.isDirectlyCalled) return 'expected';
-  if (signals.crossRepoConsumersVisible && signals.isStructuralDuplicate) return 'removable';
+  if (
+    signals.crossRepoConsumersVisible &&
+    signals.isStructuralDuplicate &&
+    signals.deadnessConfirmable
+  ) {
+    return 'removable';
+  }
   return 'likely';
 }
 
