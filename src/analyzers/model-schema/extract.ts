@@ -54,9 +54,17 @@ function decoratorName(decorator: Node): string {
 
 type FieldCalleeSpec = NonNullable<ModelSchemaSupport['fieldCallees']>[number];
 
+/** How many receiver links a fluent-chain walk follows from an
+ *  initializer's tail call to its constructor head. */
+const MAX_FIELD_CHAIN_HOPS = 8;
+
 /** Resolve a field-initializer constructor against the descriptor's
  *  `fieldCallees`: the matched spec plus the raw type token and explicit
- *  optionality it carries. */
+ *  optionality it carries. Fluent ORMs put the constructor at the CHAIN
+ *  HEAD and facts on the links (Exposed's `varchar("name", 50).nullable()`
+ *  — the initializer node is the tail `.nullable()` call), so the walk
+ *  follows receiver links until a spec matches, remembering the link names
+ *  passed for `optionalityChainCallees`. */
 function resolveFieldCallee(
   call: Node,
   callShape: GrammarShape,
@@ -66,11 +74,31 @@ function resolveFieldCallee(
   descriptorOptional: boolean | null;
   descriptorDefaultOptional: boolean | null;
 } | null {
-  const resolved = callShape.resolveCall(call);
-  if (!resolved) return null;
-  const spec = specs.find((s) => s.names.some((n) => n === resolved.name));
-  if (!spec) return null;
+  const chainLinks: string[] = [];
+  let cur: Node | null = call;
+  for (let hop = 0; cur && hop < MAX_FIELD_CHAIN_HOPS; hop++) {
+    const resolved = callShape.resolveCall(cur);
+    if (!resolved) return null;
+    const spec = specs.find((s) => s.names.some((n) => n === resolved.name));
+    if (spec) return resolveMatchedFieldCallee(cur, resolved.name, callShape, spec, chainLinks);
+    chainLinks.push(resolved.name);
+    const recv: Node | null = callShape.receiverNode?.(cur) ?? null;
+    cur = recv !== null && callShape.callNodes.includes(recv.type) ? recv : null;
+  }
+  return null;
+}
 
+function resolveMatchedFieldCallee(
+  call: Node,
+  calleeName: string,
+  callShape: GrammarShape,
+  spec: FieldCalleeSpec,
+  chainLinks: readonly string[],
+): {
+  rawType: string | null;
+  descriptorOptional: boolean | null;
+  descriptorDefaultOptional: boolean | null;
+} {
   let rawType: string | null;
   if (spec.typeFrom === 'firstArg') {
     // Column(String, …) / db.Column(db.Integer(80)) — the first positional
@@ -78,7 +106,7 @@ function resolveFieldCallee(
     const first = callShape.firstArg(call);
     rawType = first ? tailSegment(first.text.split('(')[0].trim()) : null;
   } else {
-    rawType = resolved.name;
+    rawType = calleeName;
   }
 
   // An EXPLICIT keyword (`null=True`, `nullable=False`) is authoritative.
@@ -93,6 +121,17 @@ function resolveFieldCallee(
     const optionalWhenTrue = (spec.optionalityPolarity ?? 'nullable') === 'nullable';
     if (truthy === null) descriptorDefaultOptional = optionalWhenTrue ? false : true;
     else descriptorOptional = optionalWhenTrue ? truthy : !truthy;
+  }
+
+  // Chain-carried optionality: a declared link (`.nullable()`) marks the
+  // field optional; its declared-but-absent state is the framework default
+  // (Exposed columns are non-null unless chained otherwise).
+  if (spec.optionalityChainCallees?.length) {
+    if (spec.optionalityChainCallees.some((n) => chainLinks.includes(n))) {
+      descriptorOptional = true;
+    } else if (descriptorOptional === null && descriptorDefaultOptional === null) {
+      descriptorDefaultOptional = false;
+    }
   }
 
   return { rawType, descriptorOptional, descriptorDefaultOptional };
