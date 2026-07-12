@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **C#, Ruby, and Rust join the flow + schema gates (language-parity
+  wave 3) — every built-in pack now covers both.** C#: ASP.NET attribute
+  routing with the `[Route("api/[controller]")]` token substituted from the
+  enclosing class (an unresolvable token drops the path — never an
+  over-matching `{var}` prefix), minimal APIs (`app.MapGet`), and HttpClient
+  clients (interpolated `$"…"` URLs canonicalize) on the flow side; EF Core
+  models via `[Table]`-style markers AND the `DbSet<T>` container convention
+  (referenced classes promote repo-wide), partial-class declarations merged
+  into one entity at assembly (a field moving between codegen splits is
+  never drift), `string?` optionality, and positional `[Column("x")]` /
+  `[JsonPropertyName("x")]` wire names on the schema side. Ruby: Rails
+  routes.rb behind a precision qualifier set (a handler block, a `to:`
+  binding, or `draw`/`namespace`/`scope` ancestry — a request spec's bare
+  `get '/x'` never mints a route), `resources`/`resource` expanded to the
+  canonical RESTful set honoring `only:`/`except:` (nested blocks are
+  skipped rather than mis-pathed), Sinatra, and Net::HTTP/HTTParty/Faraday
+  clients (`#{…}` interpolation canonicalizes to `{var}`); models come from
+  `db/schema.rb` — one entity per `create_table`, named by the table (the
+  wire contract), with the ActiveRecord class marker demoted to
+  discovery-only while a schema file exists. Rust: actix-web/Rocket route
+  attributes (bare and crate-scoped), axum routers (`.route(...)` as
+  method-agnostic ANY routes; `.nest(...)` prefixes its argument side only —
+  a chain-link sibling never inherits the prefix), and reqwest clients
+  (`reqwest::get` resolves through the scoped-identifier member form;
+  `format!`-built URLs are disclosed as dynamic); serde-derive models with
+  precise `Option<T>` optionality and token-soup `#[serde(rename = "x")]`
+  wire names. All three stacks join the fixture-analysis matrix (now eight).
+
+- **Exposed tables extract (the documented kotlin gap closes).** Fluent
+  column chains — `varchar("name", 50).nullable()` — defeated the field
+  reader (the initializer resolves to the chain tail); the engine now walks
+  receiver links to the constructor head, and the `.nullable()` link marks
+  the column optional (absent ⇒ the Exposed non-null default). kotlinx
+  `@SerialName("wire")` positional wire names are read too, via the same
+  additive spec field C# uses.
+
 - **Root routes are real routes.** `@GetMapping("/")`, `app.get('/')`,
   `@app.get("/")` — a route declared at the absolute root was invisible to
   the normalizer on every pack (found by wave-2 real-repo validation:
@@ -51,8 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `defaultFieldOptionality` — what a typed field with no optionality
   signal means; JPA packs declare `'unknown'` (an honest null that never
   gates) because an unannotated column defaults to nullable, the
-  opposite of the TS/Pydantic `'required'` engine default. All additive
-  within SDK major 0.
+  opposite of the TS/Pydantic `'required'` engine default. Wave 3 extends
+  the same unpublished 0.2.0 additively: `routeVerbCallees` qualifier
+  guards (`handlerKeywords`/`ancestorCallees`) + `methodsKeyword`,
+  `routeResourceCallees` (the Rails RESTful expansion),
+  `routeTokenFromEnclosingType` + a `GrammarShape.enclosingTypeName`
+  accessor (ASP.NET's `[controller]`), `fieldDecoratorSpecs.wireNameFrom`
+  (positional wire names), `fieldCallees.optionalityChainCallees` (fluent
+  ORM chains), `schemaFileTables` (Rails `db/schema.rb`),
+  `modelTypeRefContainers` (EF Core `DbSet<T>`),
+  `GrammarModelShape.partialMarker` (C# partials), and `#{…}` → `{var}` in
+  the shared normalizer. All additive within SDK major 0.
 
 - **The docs command table is generated from the capability registry.**
   `docs/README.md`'s "What you can run" table is now rendered from the
