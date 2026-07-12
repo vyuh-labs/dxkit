@@ -137,6 +137,45 @@ function nextSteps(doc: EvaluateEvidenceDoc): string[] {
 }
 
 /** The full text report. */
+/**
+ * The seam-visibility lane — what dxkit SEES in the repo (structural duplicates,
+ * dead surfaces, and the convergence between them), shown INDEPENDENT of the
+ * gate verdict. This is where the trial demonstrates dxkit's differentiator even
+ * on a repo that hasn't enabled the seam gates. Silent when nothing was seen.
+ */
+function seamsSection(doc: EvaluateEvidenceDoc): string[] {
+  const s = doc.seams;
+  if (!s) return [];
+  const deadTotal = s.dead.removable + s.dead.likely + s.dead.expected;
+  if (s.duplicates === 0 && deadTotal === 0) return [];
+  const lines: string[] = ['What dxkit sees beyond the gate (seam signals):'];
+  if (s.duplicates > 0) {
+    lines.push(`  ${s.duplicates} structural duplicate(s) — copy-paste the call graph caught:`);
+    for (const d of s.topDuplicates.slice(0, 3)) {
+      lines.push(`    ${d.a}  ≈  ${d.b}  (similarity ${d.score.toFixed(2)})`);
+    }
+  }
+  if (deadTotal > 0) {
+    lines.push(
+      `  ${deadTotal} served-but-unconsumed route(s) — ` +
+        `${s.dead.removable} removable, ${s.dead.likely} likely, ${s.dead.expected} expected` +
+        (s.crossRepoConsumersVisible
+          ? ''
+          : ' (cross-repo consumers unverified — declare workspace.json to confirm deadness)'),
+    );
+  }
+  if (s.converged.length > 0) {
+    lines.push(
+      `  ⛔ ${s.converged.length} converged — a route that is BOTH unconsumed AND a copy-paste (remove or consolidate):`,
+    );
+    for (const c of s.converged.slice(0, 5)) {
+      lines.push(`    ${c.method} ${c.path}  (twin: ${c.twin.join(' ≈ ')})`);
+    }
+  }
+  lines.push('  Run `vyuh-dxkit flow` for the full tiered inventory.');
+  return lines;
+}
+
 export function renderEvaluateText(doc: EvaluateEvidenceDoc): string {
   const sections: string[][] = [];
   sections.push([headline(doc)]);
@@ -146,6 +185,8 @@ export function renderEvaluateText(doc: EvaluateEvidenceDoc): string {
     if (framing.length) sections.push(framing);
   }
   sections.push(watchedSection(doc));
+  const seams = seamsSection(doc);
+  if (seams.length) sections.push(seams);
   sections.push(costsSection(doc));
   if (doc.notes.length) sections.push(['Notes:', ...doc.notes.map((n) => `  ${n}`)]);
   sections.push(nextSteps(doc));

@@ -31,11 +31,14 @@ import {
   buildErrorEvidence,
   buildEvidenceDoc,
   buildRunEvidence,
+  seamVisibilityFrom,
   type EvaluateEvidenceDoc,
   type EvaluateRunEvidence,
+  type SeamVisibility,
   runLabel,
 } from './evidence';
 import { enumerateLandings, type LandingPair } from './pr-ranges';
+import { gatherSeamInventory } from '../analyzers/convergence/inventory';
 
 export interface EvaluateOptions {
   readonly cwd: string;
@@ -181,6 +184,14 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
     }
   }
 
+  // The seam VISIBILITY lane — what dxkit SEES at the trial head, computed ONCE
+  // (independent of the gate verdict + gate config), so the trial demonstrates
+  // the duplicate + dead-surface + convergence differentiator even on a repo
+  // that has not enabled those gates. Runs in a disposable worktree at the head
+  // (zero-write, the same spine as the per-landing checks); fail-open — a head
+  // that can't be analyzed simply omits the lane.
+  const seams = await gatherTrialSeams(cwd, pairs[0]?.pair.headSha);
+
   return buildEvidenceDoc({
     branch: currentBranch(cwd),
     ref: trialRef,
@@ -190,5 +201,23 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
     incremental,
     untrusted,
     runs,
+    ...(seams ? { seams } : {}),
   });
+}
+
+/** Gather the seam-visibility summary at the trial head, in a disposable
+ *  worktree (zero-write). Returns undefined on any failure (fail-open) so the
+ *  visibility lane never breaks the trial. */
+async function gatherTrialSeams(
+  cwd: string,
+  headSha: string | undefined,
+): Promise<SeamVisibility | undefined> {
+  if (!headSha) return undefined;
+  try {
+    return await withRefWorktree({ cwd, ref: headSha }, async (wt) =>
+      seamVisibilityFrom(await gatherSeamInventory(wt)),
+    );
+  } catch {
+    return undefined;
+  }
 }

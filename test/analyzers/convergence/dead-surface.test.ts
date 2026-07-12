@@ -21,6 +21,7 @@ const base: DeadSurfaceSignals = {
   isDirectlyCalled: false,
   crossRepoConsumersVisible: false,
   isStructuralDuplicate: false,
+  deadnessConfirmable: true,
 };
 
 describe('deadSurfaceTier — the confidence ladder', () => {
@@ -58,6 +59,19 @@ describe('deadSurfaceTier — the confidence ladder', () => {
 
   it('a bare unconsumed route is likely', () => {
     expect(deadSurfaceTier(base)).toBe('likely');
+  });
+
+  it('a generic-handler route can never be removable, even dead + dup + visible', () => {
+    // App-Router `GET`/`POST` handlers can be consumed by a server component
+    // without a resolvable call → deadness is unconfirmable → stays likely.
+    expect(
+      deadSurfaceTier({
+        ...base,
+        crossRepoConsumersVisible: true,
+        isStructuralDuplicate: true,
+        deadnessConfirmable: false,
+      }),
+    ).toBe('likely');
   });
 });
 

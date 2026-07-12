@@ -4,9 +4,11 @@ import {
   ANACHRONISM_NOTE,
   buildCosts,
   buildEvidenceDoc,
+  seamVisibilityFrom,
   EVALUATE_EVIDENCE_SCHEMA,
   type EvaluateRunEvidence,
 } from '../../src/evaluate/evidence';
+import { renderEvaluateText } from '../../src/evaluate/render';
 
 /** A minimal guardrail payload carrying only the fields evidence/render
  *  read. Narrow test-fixture cast; the real payload is produced by
@@ -86,6 +88,56 @@ describe('evaluate evidence schema freeze', () => {
       ].sort(),
     );
     expect(doc.zeroWrite).toBe(true);
+  });
+
+  it('carries the optional seam-visibility lane when provided (reviewed addition)', () => {
+    const inv = {
+      duplicates: [
+        {
+          anchors: [
+            { file: 'src/api/ctrl.ts', symbol: 'listTeams' },
+            { file: 'src/api/ctrl.ts', symbol: 'listTeamsLegacy' },
+          ] as const,
+          score: 0.9,
+        },
+      ],
+      dead: {
+        crossRepoConsumersVisible: true,
+        byTier: { removable: 1, likely: 0, expected: 2 },
+      },
+      converged: [
+        {
+          route: { method: 'GET', path: '/teams-legacy', file: 'src/api/ctrl.ts' },
+          duplicate: { anchors: [{ symbol: 'listTeams' }, { symbol: 'listTeamsLegacy' }] as const },
+        },
+      ],
+    };
+    const seams = seamVisibilityFrom(inv);
+    expect(seams.duplicates).toBe(1);
+    expect(seams.dead).toEqual({ removable: 1, likely: 0, expected: 2 });
+    expect(seams.converged[0]).toEqual({
+      method: 'GET',
+      path: '/teams-legacy',
+      file: 'src/api/ctrl.ts',
+      twin: ['listTeams', 'listTeamsLegacy'],
+    });
+    const doc = buildEvidenceDoc({
+      branch: 'main',
+      ref: 'HEAD',
+      preset: 'security-only',
+      presetSource: 'default',
+      policyBase: 'defaults',
+      incremental: true,
+      untrusted: false,
+      runs: [fakeRun()],
+      seams,
+    });
+    expect(doc.seams).toEqual(seams);
+    // The visibility lane renders the convergence story in the human output.
+    const text = renderEvaluateText(doc);
+    expect(text).toContain('What dxkit sees beyond the gate');
+    expect(text).toContain('converged');
+    expect(text).toContain('/teams-legacy');
   });
 });
 
