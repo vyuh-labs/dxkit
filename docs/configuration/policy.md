@@ -42,6 +42,7 @@ tuning belongs here.
     "newHighSecurity": true,
     "newCriticalDependencyVulnerability": true,
     "newHighReachableDependencyVulnerability": true,
+    "newMaliciousDependency": true,
     "newUntestedChangedSource": true,
     "newSevereQualityIssueInChangedFiles": true
   },
@@ -191,15 +192,16 @@ shapes, and troubleshooting live in [`vyuh-dxkit checks`](../commands/checks.md)
 The block-rules object captures the "block on any net-new X regardless
 of confidence" policy lines. Set any flag to `false` to suppress.
 
-| Flag                                      | Meaning                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------- |
-| `newSecret`                               | Block any newly-introduced secret (gitleaks finding)                |
-| `newCriticalSecurity`                     | Block newly-introduced critical-severity code findings              |
-| `newHighSecurity`                         | Block newly-introduced high-severity code findings                  |
-| `newCriticalDependencyVulnerability`      | Block newly-introduced critical dep-vuln advisories                 |
-| `newHighReachableDependencyVulnerability` | Block newly-introduced high-severity reachable dep-vulns            |
-| `newUntestedChangedSource`                | Block when an untested source file appears alongside changed code   |
-| `newSevereQualityIssueInChangedFiles`     | Block newly-introduced severe quality issues touching changed lines |
+| Flag                                      | Meaning                                                                                                                                                                                                                       |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `newSecret`                               | Block any newly-introduced secret (gitleaks finding)                                                                                                                                                                          |
+| `newCriticalSecurity`                     | Block newly-introduced critical-severity code findings                                                                                                                                                                        |
+| `newHighSecurity`                         | Block newly-introduced high-severity code findings                                                                                                                                                                            |
+| `newCriticalDependencyVulnerability`      | Block newly-introduced critical dep-vuln advisories                                                                                                                                                                           |
+| `newHighReachableDependencyVulnerability` | Block newly-introduced high-severity reachable dep-vulns                                                                                                                                                                      |
+| `newMaliciousDependency`                  | Block a newly-introduced dependency carrying a malicious-code advisory (OSV `MAL-*`, CWE-506 family, malware-titled GHSA) at ANY severity — install-time malware runs at install, so CVSS and reachability are the wrong lens |
+| `newUntestedChangedSource`                | Block when an untested source file appears alongside changed code                                                                                                                                                             |
+| `newSevereQualityIssueInChangedFiles`     | Block newly-introduced severe quality issues touching changed lines                                                                                                                                                           |
 
 ## Common customisations
 

@@ -171,7 +171,11 @@ export function scopeForPolicy(policy: BrownfieldPolicy): GatherScope {
   const scope = { ...EMPTY_SCOPE };
   if (r.newSecret) scope.secrets = true;
   if (r.newCriticalSecurity || r.newHighSecurity) scope.codePatterns = true;
-  if (r.newCriticalDependencyVulnerability || r.newHighReachableDependencyVulnerability) {
+  if (
+    r.newCriticalDependencyVulnerability ||
+    r.newHighReachableDependencyVulnerability ||
+    r.newMaliciousDependency
+  ) {
     scope.depVulns = true;
   }
   if (r.newUntestedChangedSource) scope.testGaps = true;

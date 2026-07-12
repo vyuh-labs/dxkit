@@ -91,6 +91,13 @@ export interface BrownfieldBlockRules {
   readonly newCriticalDependencyVulnerability?: boolean;
   /** Block any newly-introduced high-severity reachable dep vuln. */
   readonly newHighReachableDependencyVulnerability?: boolean;
+  /** Block a newly-introduced dependency carrying a malicious-code
+   *  advisory (OSV `MAL-*`, the CWE-506 family, a malware-titled GHSA),
+   *  REGARDLESS of CVSS severity: install-time malware executes at
+   *  install, so severity scores and code-reachability are the wrong
+   *  lens. Classified by the one canonical predicate,
+   *  `src/analyzers/security/malicious.ts`. */
+  readonly newMaliciousDependency?: boolean;
   /** Block when an untested source file is added in a changed file. */
   readonly newUntestedChangedSource?: boolean;
   /** Block any newly-introduced severe quality issue in changed files. */
@@ -305,6 +312,7 @@ export const DEFAULT_BROWNFIELD_POLICY: BrownfieldPolicy = Object.freeze({
     newHighSecurity: true,
     newCriticalDependencyVulnerability: true,
     newHighReachableDependencyVulnerability: true,
+    newMaliciousDependency: true,
     newUntestedChangedSource: true,
     newSevereQualityIssueInChangedFiles: true,
   }),
