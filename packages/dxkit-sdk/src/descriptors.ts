@@ -254,19 +254,26 @@ export interface HttpFlowSupport {
 
   /**
    * Framework TOKENS inside a route/prefix path that substitute a fact from
-   * the ENCLOSING TYPE — ASP.NET's `[Route("api/[controller]")]`, where
-   * `[controller]` is the enclosing class name minus its `Controller`
-   * suffix, lowercased. Substitution happens BEFORE normalization (the
-   * normalizer's `[…]` param rule would otherwise silently turn the token
-   * into an over-matching `{var}`). Requires the grammar shape to implement
-   * `enclosingTypeName`; when the type cannot be resolved, the path is
-   * DROPPED rather than emitted with a placeholder — a wrong prefix
-   * corrupts every route under it. Additive (SDK minor).
+   * the route's enclosing declarations — ASP.NET's
+   * `[Route("[controller]/[action]")]`, where `[controller]` is the
+   * enclosing class name (minus its `Controller` suffix) and `[action]` is
+   * the handler method's name. Substitution happens BEFORE normalization
+   * (the normalizer's `[…]` param rule would otherwise silently turn a
+   * token into an over-matching `{var}`). `from` names the source:
+   * `'enclosingType'` reads the grammar shape's `enclosingTypeName`;
+   * `'enclosingFunction'` reads the route handler's declaration name — in a
+   * class-level PREFIX it resolves against the handler whose route is being
+   * minted, so one prefix yields each method's own path. When the source
+   * cannot be resolved, the path is DROPPED rather than emitted with a
+   * placeholder — a wrong prefix corrupts every route under it. Additive
+   * (SDK minor).
    */
-  routeTokenFromEnclosingType?: Array<{
+  routeTemplateTokens?: Array<{
     /** The literal token as it appears in the raw path (`'[controller]'`). */
     token: string;
-    /** Suffix stripped from the type name before substitution (`'Controller'`). */
+    /** Which enclosing declaration's name substitutes the token. */
+    from: 'enclosingType' | 'enclosingFunction';
+    /** Suffix stripped from the name before substitution (`'Controller'`). */
     stripSuffix?: string;
     /** Lowercase the substituted name (ASP.NET convention). */
     lowercase?: boolean;
