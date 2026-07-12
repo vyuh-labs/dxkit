@@ -197,6 +197,11 @@ export const DXKIT_SKILLS = [
   // failures and blocks only net-new ones (pre-existing debt grandfathered).
   // Drives `vyuh-dxkit checks` + the policy.json:checks/lint config. Rule 17.
   'dxkit-checks',
+  // dxkit-evaluate: the zero-write trial. Replays recent landings through
+  // the gate in disposable worktrees and reports what would have blocked
+  // plus what enabling dxkit costs — the honest pre-adoption answer, and
+  // useful post-install for "would the gate have caught this range".
+  'dxkit-evaluate',
 ] as const;
 
 interface GenerateResult {

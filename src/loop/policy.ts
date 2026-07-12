@@ -1,115 +1,33 @@
 /**
- * Loop policy presets — a curated blocking posture scoped to autonomous
- * coding loops ONLY.
+ * Loop policy resolution — how an autonomous loop picks its blocking
+ * posture. The preset TABLE itself (what each posture blocks) lives in
+ * `src/baseline/presets.ts`, shared with the zero-write trial
+ * (`vyuh-dxkit evaluate`); this module owns the loop-scoped RESOLUTION:
+ * which preset is active for a repo's unattended loop, read from
+ * `DXKIT_LOOP_PRESET` / `.dxkit/policy.json:loop.preset`.
  *
- * ──────────────────────────────────────────────────────────────────────
- *  SCOPE: this layer is read by exactly one consumer — the Stop-gate
- *  (`src/loop/stop-gate.ts`). The CI / PR guardrail (`vyuh-dxkit baseline
- *  check`) and `createBaseline` resolve the shared `BrownfieldPolicy`
- *  directly via `resolvePolicy` and NEVER read `loop.preset`. So setting a
- *  preset changes how an unattended loop blocks WITHOUT silently
- *  downgrading a repo's CI posture. The `loop.*` namespace in
- *  `.dxkit/policy.json` and the `Loop`-prefixed names here both signal
- *  that boundary.
- * ──────────────────────────────────────────────────────────────────────
- *
- * Why a loop-only posture exists: in CI a guardrail block just fails a
- * check a human then reads — blocking on every debt class (test-gap,
- * quality) is fine. In a loop a block instead FEEDS THE MODEL a repair
- * instruction, so blocking on open-ended debt makes the agent grind on it
- * unattended (writing tests / refactoring until the gap closes), which is
- * expensive and unbounded. The default loop posture therefore blocks only
- * on the unambiguous, must-fix security class; the open-ended debt classes
- * are an explicit opt-in.
+ * The `loop.*` namespace in `.dxkit/policy.json` and the `Loop`-prefixed
+ * names signal the boundary: the CI / PR guardrail (`vyuh-dxkit baseline
+ * check`) and `createBaseline` resolve the shared `BrownfieldPolicy`
+ * directly via `resolvePolicy` and NEVER read `loop.preset`, so setting a
+ * preset changes how an unattended loop blocks WITHOUT silently
+ * downgrading a repo's CI posture.
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { type BrownfieldPolicy, DEFAULT_POLICY_FILENAME, resolvePolicy } from '../baseline/policy';
 import {
-  type BrownfieldBlockRules,
-  type BrownfieldPolicy,
-  DEFAULT_POLICY_FILENAME,
-  resolvePolicy,
-} from '../baseline/policy';
-import type { FindingStatus } from '../baseline/types';
+  DEFAULT_LOOP_PRESET,
+  isLoopPreset,
+  type LoopPreset,
+  policyForPreset,
+} from '../baseline/presets';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
 
-/**
- * The two shipped loop postures.
- *   - `security-only` (default): block only on net-new secrets + crit/high
- *     security + crit/high reachable dependency vulns. test-gap + quality
- *     are NOT blocked — they warn. Cost-bounded; safe to run unattended.
- *   - `full-debt`: block on every net-new finding (adds test-gap +
- *     quality). Exhaustive but can drive an open-ended repair; opt-in.
- */
-export type LoopPreset = 'security-only' | 'full-debt';
-
-/** The cost-bounded default — the posture an unattended loop gets unless
- *  the repo explicitly opts into `full-debt`. */
-export const DEFAULT_LOOP_PRESET: LoopPreset = 'security-only';
-
-interface PresetDef {
-  /**
-   * Generic block list (statuses that fail regardless of kind).
-   * `security-only` leaves this EMPTY so a net-new test-gap / quality
-   * finding (status `added`) does not auto-block; blocking is driven
-   * entirely by the security `blockRules` below.
-   */
-  readonly block: ReadonlyArray<FindingStatus>;
-  /** Per-kind escalation rules (see `BrownfieldBlockRules`). */
-  readonly blockRules: BrownfieldBlockRules;
-  /**
-   * Posture for the flow integration gate. `security-only` WARNS on a net-new
-   * broken integration (like test-gap / quality — it isn't a security class,
-   * and a cross-repo integration false positive must never wedge an unattended
-   * loop); `full-debt` BLOCKS on it. Both keep the gate's own confidence gating
-   * (only exact bindings can block even under `block`).
-   */
-  readonly flowMode: FlowGateMode;
-  /**
-   * Posture for the model-schema drift gate — same reasoning as `flowMode`
-   * (a contract-drift false positive must never wedge an unattended loop).
-   * The guardrail applies it only when the repo has ENABLED the gate:
-   * schema defaults to off, and a loop preset never activates it.
-   */
-  readonly schemaMode: SchemaGateMode;
-}
-
-/** The security class: secrets, crit/high SAST, crit/high reachable dep
- *  vulns. Shared by both presets — full-debt is this plus the debt rules. */
-const SECURITY_BLOCK_RULES: BrownfieldBlockRules = {
-  newSecret: true,
-  newCriticalSecurity: true,
-  newHighSecurity: true,
-  newCriticalDependencyVulnerability: true,
-  newHighReachableDependencyVulnerability: true,
-  // Open-ended debt — OFF in security-only (warn, never block in a loop).
-  newUntestedChangedSource: false,
-  newSevereQualityIssueInChangedFiles: false,
-};
-
-const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
-  'security-only': {
-    // Empty generic block list: nothing auto-blocks by status alone, so
-    // test-gap + quality net-new findings warn but never block the loop.
-    // Blocking comes solely from SECURITY_BLOCK_RULES.
-    block: [],
-    blockRules: SECURITY_BLOCK_RULES,
-    flowMode: 'warn',
-    schemaMode: 'warn',
-  },
-  'full-debt': {
-    // Any net-new finding blocks (generic `added`), plus every escalation.
-    block: ['added'],
-    blockRules: {
-      ...SECURITY_BLOCK_RULES,
-      newUntestedChangedSource: true,
-      newSevereQualityIssueInChangedFiles: true,
-    },
-    flowMode: 'block',
-    schemaMode: 'block',
-  },
-});
+// Re-exported so existing consumers (stop-gate, scaffold, doctor, CLI) keep
+// one import site for the loop posture vocabulary.
+export { DEFAULT_LOOP_PRESET, type LoopPreset } from '../baseline/presets';
 
 /** Resolved loop posture: the policy the Stop-gate hands to the guardrail,
  *  plus the preset name that produced it (recorded in the ledger) and the
@@ -119,10 +37,6 @@ export interface ResolvedLoopPolicy {
   readonly preset: LoopPreset;
   readonly flowMode: FlowGateMode;
   readonly schemaMode: SchemaGateMode;
-}
-
-function isLoopPreset(v: unknown): v is LoopPreset {
-  return v === 'security-only' || v === 'full-debt';
 }
 
 /**
@@ -193,15 +107,11 @@ export function resolveLoopTestCommand(cwd: string): string | undefined {
 export function resolveLoopPolicy(cwd: string): ResolvedLoopPolicy {
   const base = resolvePolicy(undefined, cwd);
   const preset = resolveLoopPreset(cwd);
-  const def = PRESETS[preset];
+  const applied = policyForPreset(preset, base);
   return {
     preset,
-    flowMode: def.flowMode,
-    schemaMode: def.schemaMode,
-    policy: {
-      ...base,
-      block: def.block,
-      blockRules: def.blockRules,
-    },
+    flowMode: applied.flowMode,
+    schemaMode: applied.schemaMode,
+    policy: applied.policy,
   };
 }
