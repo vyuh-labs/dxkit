@@ -76,32 +76,52 @@ export function decoratorPathRaw(
   return decoratorPathsRaw(call, shape, hf)[0] ?? null;
 }
 
+/** The declared NAME of the function/method enclosing `node` (nearest
+ *  `functionNodes` ancestor), read through the grammar's `name` field with
+ *  the field-less-grammar accessor as fallback. Null outside any. */
+function enclosingFunctionName(node: Node, shape: GrammarShape): string | null {
+  let cur: Node | null = node.parent;
+  for (let hop = 0; cur && hop < MAX_ANCESTOR_HOPS; hop++, cur = cur.parent) {
+    if (!shape.functionNodes.includes(cur.type)) continue;
+    return cur.childForFieldName('name')?.text ?? shape.functionName?.(cur) ?? null;
+  }
+  return null;
+}
+
 /**
- * Substitute declared `routeTokenFromEnclosingType` tokens in a raw
- * decorator path — ASP.NET's `[Route("api/[controller]")]`, where the token
- * is the enclosing class name minus its suffix, lowercased. Runs BEFORE
- * `normalizePath` (whose `[…]` param rule would otherwise silently turn the
- * token into an over-matching `{var}`). `anchor` is the decorator/call node
- * whose enclosing type answers the token. When the type cannot be resolved
- * the path is DROPPED (null) rather than emitted with a placeholder — a
- * wrong prefix corrupts every route under it. A raw path without any
- * declared token passes through untouched.
+ * Substitute declared `routeTemplateTokens` in a raw decorator path —
+ * ASP.NET's `[Route("[controller]/[action]")]`, where `[controller]` is the
+ * enclosing class name minus its suffix and `[action]` the handler method's
+ * name. Runs BEFORE `normalizePath` (whose `[…]` param rule would otherwise
+ * silently turn a token into an over-matching `{var}`). `typeAnchor` is the
+ * node whose enclosing TYPE answers type-sourced tokens (the decorator
+ * carrying the path — for a class-level prefix, the class's own attribute);
+ * `functionAnchor` answers function-sourced tokens and is always the ROUTE
+ * decorator (so a class-level prefix containing `[action]` resolves to each
+ * handler's own name). When a source cannot be resolved the path is DROPPED
+ * (null) rather than emitted with a placeholder — a wrong prefix corrupts
+ * every route under it. A raw path without any declared token passes
+ * through untouched.
  */
 export function resolveRouteTokens(
   raw: string | null,
-  anchor: Node,
+  typeAnchor: Node,
   shape: GrammarShape,
   hf: HttpFlowSupport,
+  functionAnchor?: Node,
 ): string | null {
   if (raw == null) return null;
-  const specs = hf.routeTokenFromEnclosingType;
+  const specs = hf.routeTemplateTokens;
   if (!specs || specs.length === 0) return raw;
   let s = raw;
   for (const spec of specs) {
     if (!s.includes(spec.token)) continue;
-    const typeName = shape.enclosingTypeName?.(anchor) ?? null;
-    if (typeName === null) return null;
-    let sub = typeName;
+    const name =
+      spec.from === 'enclosingFunction'
+        ? enclosingFunctionName(functionAnchor ?? typeAnchor, shape)
+        : (shape.enclosingTypeName?.(typeAnchor) ?? null);
+    if (name === null) return null;
+    let sub = name;
     if (
       spec.stripSuffix !== undefined &&
       sub.endsWith(spec.stripSuffix) &&
@@ -187,7 +207,11 @@ export function collectDecoratorPrefix(
       const call = shape.decoratorCall(d);
       const callee = call ? shape.resolveCall(call) : null;
       if (!call || !callee || !names.has(callee.name)) continue;
-      const raw = resolveRouteTokens(decoratorPathRaw(call, shape, hf), d, shape, hf);
+      // Type tokens anchor on the PREFIX's own attribute (its enclosing
+      // class); function tokens anchor on the ROUTE decorator, so a
+      // class-level "[controller]/[action]" prefix yields each handler's
+      // own path.
+      const raw = resolveRouteTokens(decoratorPathRaw(call, shape, hf), d, shape, hf, decorator);
       const norm = normalizePath(raw, config);
       if (norm) parts.unshift(norm); // climbing inner→outer; outermost first
     }

@@ -1686,8 +1686,14 @@ export const csharp: LanguageSupport = {
       pathNames: ['Route'],
     },
     decoratorPathKeywords: ['template'],
-    routeTokenFromEnclosingType: [
-      { token: '[controller]', stripSuffix: 'Controller', lowercase: true },
+    routeTemplateTokens: [
+      { token: '[controller]', from: 'enclosingType', stripSuffix: 'Controller', lowercase: true },
+      // [action] substitutes the handler method's name — in a class-level
+      // "[controller]/[action]" prefix it resolves per handler. Lowercased
+      // like [controller] (ASP.NET routing is case-insensitive; API clients
+      // conventionally call lowercase paths — the casing trade-off is
+      // documented with the pack's coverage notes).
+      { token: '[action]', from: 'enclosingFunction', lowercase: true },
     ],
     routeRouterCallees: {
       methods: ['MapGet', 'MapPost', 'MapPut', 'MapDelete', 'MapPatch'],
