@@ -13,6 +13,8 @@ import {
   recommendSchema,
   recommendChecks,
   recommendDuplication,
+  recommendLoopPreset,
+  recommendReportsOnMerge,
   planBaselineMode,
   planFlowMode,
   planSchemaMode,
@@ -269,6 +271,7 @@ export const COMMANDS = [
       'block for a CI job summary or PR comment). Automate snapshots on merge with ' +
       '`policy.json:reports.onMerge` (the dxkit-reports-refresh workflow).',
     skill: 'dxkit-reports',
+    whenToRecommend: recommendReportsOnMerge,
   },
   {
     id: 'metrics',
@@ -344,6 +347,7 @@ export const COMMANDS = [
     docsBlurb:
       'Inspect and verify the autonomous-loop Stop-gate wiring, its ledger, and the correctness-floor snapshot.',
     skill: 'dxkit-loop',
+    whenToRecommend: recommendLoopPreset,
     planConfig: planLoopPreset,
   },
   {

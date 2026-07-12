@@ -65,6 +65,7 @@ tuning belongs here.
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 | `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
+| `graph`                     | `object`       | Code-graph freshness transport. `{ "refresh": "cache" \| "off" }` (default `off`). See "Code-graph refresh transport" below.                                                                                                                                                                                        |
 
 ## Baseline mode pinning
 
@@ -432,6 +433,28 @@ and block completion if they fail. Configure that command durably here:
 precedence, but an env var is the easiest part of the loop config to silently
 lose (per-shell, per-machine) — committing it to policy keeps it durable and
 reviewable. `vyuh-dxkit loop doctor` shows which source (if any) supplied it.
+
+## `graph.refresh` — code-graph refresh transport (CI performance)
+
+The code graph (`.dxkit/reports/graph.json`) backs `explore`, `context`, the
+affected-tests selector, and the structural-duplicate (seam) gate. By default it
+is rebuilt on demand by whichever consumer needs it — correct, but a cold rebuild
+on every CI run. Opt into caching it instead:
+
+```json
+{ "graph": { "refresh": "cache" } }
+```
+
+| Value           | Effect                                                                                                                                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off` (default) | rebuild on demand; a repo that never configured it never pays a build it does not use                                                                                                                                        |
+| `cache`         | `init`/`update` installs the `dxkit-graph-refresh` workflow, which rebuilds the graph on merge and stores it in the **Actions cache** (never git — no repo bloat) so the guardrail run restores it instead of a cold rebuild |
+
+This is a **performance transport, not a gate** — it changes no finding and no
+verdict, only how fast the graph is available in CI. Because there is no
+behavioral difference to surface, `doctor` / `configure` do not recommend it (it
+is a declared exemption in the posture-knob discovery registry); enable it here
+when cold graph builds are a CI cost you want to remove.
 
 ## Loading order
 
