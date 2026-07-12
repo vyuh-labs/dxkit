@@ -12,7 +12,12 @@
  * (any error → `null`, and doctor simply omits the flow section).
  */
 
-import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
+import {
+  detectActiveLanguages,
+  allFlowSourceExtensions,
+  allPrimaryComponentPaths,
+} from '../../languages';
+import { detect } from '../../detect';
 import { gatherRepoFlowModel } from './gather';
 import { hasOpaqueLeadingSegment, isPlaceholderOnlyPath, type FlowModel } from './model';
 import { readServedContract } from './contract';
@@ -47,6 +52,11 @@ export interface UnconsumedRoute {
   readonly path: string;
   readonly file: string;
   readonly line: number;
+  /** The route's handler symbol (best-effort, may be null / a bare HTTP verb).
+   *  Carried so the dead-surface tier can check the direct-call seam — is this
+   *  handler invoked directly (RSC / server action) rather than over HTTP? —
+   *  without re-gathering the flow model. */
+  readonly handler: string | null;
 }
 
 /** Which rung of the connection-resolution ladder produced the served set. */
@@ -66,6 +76,15 @@ export interface FlowDiagnosis {
   /** Served routes with no consuming call (dead-route / cross-repo candidates). */
   readonly servedUnconsumed: readonly UnconsumedRoute[];
   readonly connection: { readonly rung: ConnectionRung; readonly note: string };
+  /** How many resolved client calls originate from a FRONTEND component/page
+   *  file (a `primaryComponentPath`). A positive count means this repo hosts a
+   *  co-located UI that consumes its own routes — a full-stack monorepo whose
+   *  route consumers are all in-repo and therefore VISIBLE, distinguishing it
+   *  from a backend that merely makes internal service-to-service HTTP calls
+   *  (which has zero frontend consumers). The dead-surface tier uses this to know
+   *  whether an unconsumed route's deadness can be trusted without a workspace
+   *  declaration. Pack-driven (component paths are `architecturalShape` data). */
+  readonly frontendConsumers: number;
   /** Freshness of the committed served contract, when one exists: when it was
    *  published, per-participant provenance, and whether a provider's tip has
    *  moved since (doctor may probe the network for this; the per-commit gate
@@ -220,7 +239,27 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
   );
   const servedUnconsumed: UnconsumedRoute[] = model.routes
     .filter((r) => !consumedKeys.has(`${r.method} ${r.path}`) && !isPlaceholderOnlyPath(r.path))
-    .map((r) => ({ method: r.method, path: r.path, file: r.file, line: r.line }));
+    .map((r) => ({
+      method: r.method,
+      path: r.path,
+      file: r.file,
+      line: r.line,
+      handler: r.handler,
+    }));
+
+  // Frontend-consumer count: resolved calls whose SITE is a frontend component
+  // /page file (a pack-declared `primaryComponentPath`). A positive count means a
+  // co-located UI consumes this repo's routes — a full-stack monorepo whose
+  // consumers are visible, vs a backend making internal service calls (zero).
+  const componentPaths = allPrimaryComponentPaths(detect(cwd).languages);
+  const frontendConsumers =
+    componentPaths.length === 0
+      ? 0
+      : model.bindings.filter(
+          (b) =>
+            b.route !== null &&
+            componentPaths.some((p) => b.call.file.toLowerCase().includes(p.toLowerCase())),
+        ).length;
 
   // Freshness disclosure for a committed contract — stale-but-declared beats
   // stale-and-silent. May probe participant tips (local rev-parse / bounded
@@ -235,6 +274,7 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
     unresolved,
     servedUnconsumed,
     connection: resolveConnection(cwd, model),
+    frontendConsumers,
     ...(contract ? { contract } : {}),
     coverage: flowCoverage(model),
   };
