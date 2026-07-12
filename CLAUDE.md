@@ -921,6 +921,24 @@ Mirror of Rule 15's managed-write gate, three escalating layers:
    the same empirical guard as `managed-artifacts-playbook.test.ts` /
    `recipe-playbook.test.ts`.
 
+The above gate COMMAND discoverability. But a command can be registered while an
+opt-in CONFIG KNOB it gates is discovery-invisible — `configure` never plans it
+(no `planConfig`) and `doctor` / `capabilities` never surface it (no
+`whenToRecommend`) — so an agent onboarding a repo via `capabilities --json`
+never enables the gate and `configure --apply` silently under-initializes the
+repo. That class shipped the seam gate's `duplication.mode` invisible until it
+was caught by hand. The **config-knob layer** closes it: every posture / opt-in
+knob is named in `src/discovery/posture-knobs.ts:POSTURE_KNOBS`, declaring per
+knob which probes its owning command MUST carry (`requiresPlan` /
+`requiresRecommend`), and `checkPostureKnobCoverage` turns that into a mechanical
+assertion pinned by `test/discovery-posture-playbook.test.ts` (synthetic-
+injection-guarded, mirror of the command playbook). A knob that deliberately
+carries no probe is a **declared exemption with a reason** (`exemptionReason` —
+same discipline as the `internal` audience and Rule 10's `DEFERRED_KINDS`), never
+a silent omission. Guardrail-TUNING fields (`confidence`, `blockRules`,
+`largeFileThreshold`) are not posture knobs — they refine an adopted gate, they
+are not a capability a repo opts into, so they carry no discovery contract.
+
 ### 17. Custom checks are one seam — user checks and lint share it
 
 A **custom check** is any repo command dxkit runs as a first-class gate

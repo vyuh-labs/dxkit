@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Config-knob discovery coverage (the Rule 16 gap the seam gate exposed).** Rule
+  16's enforcement guaranteed a COMMAND was discoverable, but not that an opt-in
+  CONFIG KNOB it gates was reachable through `configure` (via `planConfig`) or
+  `doctor` / `capabilities` (via `whenToRecommend`) — so a new gate could ship with
+  a knob an onboarding agent never learns to enable. A new `POSTURE_KNOBS` registry
+  names every posture knob and declares which discovery probes its owning command
+  must carry; `test/discovery-posture-playbook.test.ts` (synthetic-injection-guarded)
+  turns that into a mechanical assertion so the class is auto-caught, not left to
+  human review. Closes the actual gaps found in the audit: `doctor` now recommends
+  pinning `loop.preset` when the Stop-gate is installed but the posture is unpinned,
+  and recommends `reports.onMerge` for a repo that gates but does not track the
+  score-over-time trend. `graph.refresh` (a CI-performance transport, not a gate) is
+  now documented in `policy.md` and recorded as a declared discovery exemption.
+
 - **Dead-surface inventory + seam convergence in `vyuh-dxkit flow`.** The flow map's
   flat "served but unconsumed" list is now an honest **confidence ladder**: each
   served-but-unconsumed route is tiered `removable` / `likely` / `expected` with the
