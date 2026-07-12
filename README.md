@@ -375,10 +375,12 @@ file-level resolver is a no-op. Downstream analyses that need an edge graph
 (reachability, import-graph test-gap credit) degrade to conservative
 defaults for those packs. Resolver support for these packs is planned.
 
-² C# uses `dotnet-format` for formatting violations only. A real
-severity-tiered C# linter (Roslyn analyzers or StyleCop) is planned.
-Today every C# formatting violation is counted at `low` tier
-so it does not inflate the Code Quality score.
+² C# lint is severity-tiered via the Roslyn analyzers (`dotnet build`
+diagnostics: security analyzer families rank high, design/compiler
+warnings medium, style low). A repo the SDK cannot build (legacy .NET
+Framework projects) falls back to `dotnet-format`, whose formatting
+violations count at `low` tier so they do not inflate the Code Quality
+score.
 
 </details>
 
