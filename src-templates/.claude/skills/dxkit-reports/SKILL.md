@@ -96,7 +96,7 @@ Use these in CI for hard floors.
 `vulnerabilities` (and `bom`) carry severity + CVSS where available. The severity column is computed via OSV.dev's enrichment — when OSV reports no severity, dxkit assigns one via CVSS v4.0 base-score math (see `src/analyzers/tools/cvss-v4.ts`).
 
 When the user asks "is this CVE worth fixing today" the answer depends on:
-1. **Reachability** — does the codebase actually call the vulnerable function? (Today: heuristic via graphify call-graph; reachability tiers are a roadmap item.)
+1. **Reachability** — does the codebase actually call the vulnerable function? (Today: heuristic via graphify call-graph; reachability tiers are planned.)
 2. **Exploitability** — public PoC? Authentication required? Network exposure?
 3. **Patch availability** — is there a fixed version?
 
