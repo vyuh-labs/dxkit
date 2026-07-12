@@ -537,11 +537,19 @@ export const java: LanguageSupport = {
   // methods (`.exchange` degrades honestly to a dynamic site — its verb is
   // an enum argument), builder chains (WebClient / java.net.http / OkHttp),
   // and Retrofit's CALLED @GET("users/{id}") client interfaces (relative
-  // paths — they join a configured base URL). Out of scope, documented:
-  // programmatic RouterFunction DSL routes (Spring WebFlux functional
-  // endpoints) — `flow.specs` covers them.
+  // paths — they join a configured base URL). WebFlux FUNCTIONAL endpoints
+  // (RouterFunction DSL) cover the static-import predicate style —
+  // `route(GET("/x"), handler).andRoute(POST("/y"), h2)` — via verb-named
+  // callees guarded by route/andRoute/nest ancestry (a bare GET(...) helper
+  // outside a router composition never mints a route). The builder style
+  // (`route().GET("/x", h)`) is out of scope, documented — `flow.specs`
+  // covers such services.
   httpFlow: {
     routeDecorators: ['GetMapping', 'PostMapping', 'PutMapping', 'DeleteMapping', 'PatchMapping'],
+    routeVerbCallees: {
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
+      ancestorCallees: ['route', 'andRoute', 'nest'],
+    },
     routePathDecorators: {
       names: ['RequestMapping'],
       methodsKeyword: 'method',

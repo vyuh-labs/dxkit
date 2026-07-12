@@ -331,3 +331,34 @@ describe('array-path decorators (the real-repo validation catch)', () => {
     expect(routeKeys(flow)).toEqual(['GET /api/a', 'GET /api/b']);
   });
 });
+
+describe('java RouterFunction predicates (WebFlux functional endpoints)', () => {
+  const HF: HttpFlowSupport = {
+    routeVerbCallees: {
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      ancestorCallees: ['route', 'andRoute', 'nest'],
+    },
+  };
+
+  it('static-import predicates inside route()/andRoute() mint concrete routes', async () => {
+    const src = `class Routes {
+      RouterFunction<ServerResponse> routes() {
+        return RouterFunctions.route(GET("/api/items"), this::list)
+            .andRoute(POST("/api/items"), this::create);
+      }
+    }`;
+    const tree = await parseSource(src, 'java');
+    const { routes } = extractFromTree(tree!.rootNode, HF, grammarShape('java')!, 'f');
+    expect(routes.map((r) => `${r.method} ${r.path}`).sort()).toEqual([
+      'GET /api/items',
+      'POST /api/items',
+    ]);
+  });
+
+  it('a bare GET(...) helper outside a router composition mints nothing', async () => {
+    const src = `class Helper { Object probe() { return GET("/api/items"); } }`;
+    const tree = await parseSource(src, 'java');
+    const { routes } = extractFromTree(tree!.rootNode, HF, grammarShape('java')!, 'f');
+    expect(routes).toEqual([]);
+  });
+});
