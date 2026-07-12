@@ -58,7 +58,13 @@ Rules for a scoped pass:
   writing docs is a dedicated loop — route to `dxkit-test` / `dxkit-docs`
   rather than half-doing it here.
 - **Verify within the scope.** Step [5] re-runs the scope's own report; the
-  scoped dimension should move and nothing else should regress (guardrail).
+  scoped dimension should move and nothing else should regress (guardrail). For a
+  SUPPRESSION (you allowlisted a finding — inline `dxkit-allow:` or file-level —
+  rather than fixing it), the raw count is unchanged BY DESIGN (raw-truth model):
+  verify instead that the finding now prints `(allowlisted: <category>)` in the
+  report and that the score moved, or confirm the gate impact with
+  `vyuh-dxkit guardrail check` (a suppressed finding drops out of the verdict and
+  is counted under "suppressed"). Do not expect the raw total to drop.
 
 Without a named scope, work the full **Priority order** below.
 

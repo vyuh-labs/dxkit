@@ -1270,13 +1270,35 @@ export async function run(argv: string[]): Promise<void> {
       if (values.json) {
         await emitJson(stampSchema(report, 'vulnerabilities'));
       } else {
+        const { summarizeAllowlist } = await import('./allowlist/annotate');
         const s = report.summary.findings;
         const d = report.summary.dependencies;
+        // Live-vs-allowlisted split, so a headline count reflects suppression
+        // (raw count is unchanged — dxkit's raw-truth model — but the terminal
+        // now SAYS how many are accepted, instead of alarming with a flat total).
+        const split = summarizeAllowlist(report.findings);
+        const byCat = Object.entries(split.byCategory)
+          .map(([c, n]) => `${n} ${c}`)
+          .join(', ');
+        const allowSuffix =
+          split.allowlisted > 0
+            ? `  (${split.allowlisted} allowlisted${byCat ? `: ${byCat}` : ''})`
+            : '';
         console.log('');
         console.log(`  ${logger.bold('Code findings:')}`);
         console.log(
-          `    CRITICAL: ${s.critical}  HIGH: ${s.high}  MEDIUM: ${s.medium}  LOW: ${s.low}  Total: ${s.total}`,
+          `    CRITICAL: ${s.critical}  HIGH: ${s.high}  MEDIUM: ${s.medium}  LOW: ${s.low}  Total: ${s.total}${allowSuffix}`,
         );
+        // Enumerate secrets — the worklist a user needs to triage. Previously the
+        // terminal printed only counts and secrets were visible in `--json` alone.
+        const secrets = report.findings.filter((f) => f.category === 'secret');
+        if (secrets.length > 0) {
+          console.log(`  ${logger.bold(`Secrets (${secrets.length}):`)}`); // slop-ok: CLI report output, matches this block
+          for (const f of secrets) {
+            const tag = f.allowlisted ? ` (allowlisted: ${f.allowlistCategory})` : '';
+            console.log(`    [${f.severity}] ${f.rule}  ${f.file}:${f.line}${tag}`); // slop-ok: CLI report output
+          }
+        }
         if (d.tool) {
           console.log(`  ${logger.bold('Dependency vulns:')}`);
           console.log(`    ${d.critical}C ${d.high}H ${d.medium}M ${d.low}L (${d.total} total)`);

@@ -82,6 +82,8 @@ import {
   type AllowlistDelta,
 } from '../allowlist/diff';
 import { findEntry, isEntryActive, loadAllowlist } from '../allowlist/file';
+import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
+import { synthesizeInlineEntries, augmentAllowlistWithInline } from '../allowlist/inline-synth';
 import type { AllowlistFile } from '../allowlist/file';
 import type { AllowlistCategory } from '../allowlist/categories';
 
@@ -631,7 +633,25 @@ export async function runGuardrailCheck(
   // this is what makes "I reviewed and accepted this finding" actually
   // suppress a net-new regression, not just annotate it. Null when no
   // allowlist file is present (the common case).
-  const allowlist = loadAllowlist(cwd);
+  // Load the file-level allowlist, then augment it with entries synthesized from
+  // inline `dxkit-allow:` annotations in the current tree — so an inline
+  // suppression on a NET-NEW finding waives its block exactly like a file-level
+  // entry (one suppression core, two sources — Rule 2). Only current-side findings
+  // with a resolvable file+line can be inline-covered; the synth mints an entry
+  // only when an annotation sits on/above that finding, keyed on its fingerprint.
+  const inlineSynthFindings = current.findings
+    .map((e) => {
+      const file = locatorFile(e);
+      const line = locatorLine(e);
+      return file !== undefined && line !== undefined
+        ? { file, line, fingerprint: e.id, kind: e.kind }
+        : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  const allowlist = augmentAllowlistWithInline(
+    loadAllowlist(cwd),
+    synthesizeInlineEntries(gatherInlineAllowlistAnnotations(cwd), inlineSynthFindings),
+  );
   const now = new Date();
 
   const classifiedPairs: ClassifiedPair[] = [];

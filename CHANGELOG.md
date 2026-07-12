@@ -5,6 +5,27 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Inline `dxkit-allow:` annotations now suppress the finding they sit on.**
+  An inline annotation was inserted into the source but never waived anything —
+  neither the scan report nor the guardrail — so the documented "annotate a test
+  fixture" path did nothing. Each annotation adjacent to a code/secret/config
+  finding is now resolved into an allowlist decision keyed on that finding's
+  fingerprint, so it suppresses exactly like a file-level entry, in both the
+  report and the gate. Works for gitleaks and grep-secrets findings, not only
+  semgrep.
+- **`allowlist add <file>:<line>` no longer strands later annotations.** The
+  inline insert now always appends to the finding's own line instead of adding a
+  line above it, so a second add in the same file — using line numbers from the
+  original scan — still lands on its real finding rather than one line off.
+- **The `vulnerabilities` scan shows what is allowlisted.** The terminal summary
+  now prints `(N allowlisted)` alongside the count and lists each secret with its
+  file, line, and suppression status, so an accepted test fixture is visible
+  instead of leaving a flat total that looks unchanged.
+
 ## [3.6.0] - 2026-07-12
 
 ### Changed

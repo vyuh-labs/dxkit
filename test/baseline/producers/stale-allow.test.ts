@@ -177,4 +177,25 @@ describe('staleAllowToBaselineEntries', () => {
     });
     expect(a[0].id).toBe(b[0].id);
   });
+
+  it('an ABOVE-line annotation is NOT stale when the finding sits on the line it covers', () => {
+    // Annotation comment on line 2, finding on line 3 (the line the annotation
+    // covers). Historically this checked the annotation's OWN line and, when 2
+    // and 3 fell in different line-windows, wrongly reported the annotation
+    // orphaned — spawning a net-new stale-allow block from a working inline
+    // suppression. It must use the covered line (Rule 2: same rule as the synth).
+    const out = staleAllowToBaselineEntries({
+      annotations: [makeOccurrence({ file: 'src/a.ts', line: 2, position: 'above' })],
+      aggregate: makeAggregate({ secrets: [makeFinding('src/a.ts', 3)] }),
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it('an ABOVE-line annotation IS stale when the covered line has no finding', () => {
+    const out = staleAllowToBaselineEntries({
+      annotations: [makeOccurrence({ file: 'src/a.ts', line: 2, position: 'above' })],
+      aggregate: makeAggregate({ secrets: [makeFinding('src/a.ts', 20)] }),
+    });
+    expect(out).toHaveLength(1);
+  });
 });
