@@ -20,6 +20,13 @@ import {
 } from './analyzers/flow/console';
 import { computeChangedFiles } from './baseline/changed-files';
 import { evaluateFlowGateForGuardrail } from './baseline/flow-gate-check';
+import {
+  gatherDeadSurfaces,
+  type TieredDeadSurface,
+} from './analyzers/convergence/dead-surface-gather';
+import { convergeSeams } from './analyzers/convergence';
+import { gatherGraphifyGraph } from './analyzers/tools/graphify';
+import { duplicateFindingsFromJson } from './explore/duplication';
 import { loadAllowlist } from './allowlist/file';
 import { readVisNetworkBundle } from './dashboard/vendor';
 import { readDxkitVersion } from './issue-cli';
@@ -137,8 +144,34 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
   const model = await gatherModel(opts);
   const map = buildFlowMap(opts.cwd, model);
 
+  // The tiered dead-surface inventory + convergence — the honest confidence
+  // ladder over served-but-unconsumed routes. Zero-write; gathered once and
+  // shared by the console + JSON surfaces.
+  const dead = await gatherDeadInventory(opts.cwd);
+
   if (opts.json) {
-    emitJson(map);
+    emitJson({
+      ...map,
+      deadSurfaces: {
+        crossRepoConsumersVisible: dead.result.crossRepoConsumersVisible,
+        byTier: dead.result.byTier,
+        surfaces: dead.result.surfaces.map((s) => ({
+          method: s.route.method,
+          path: s.route.path,
+          file: s.route.file,
+          tier: s.tier,
+          reason: s.reason,
+          convergesWithDuplicate: s.convergesWithDuplicate,
+        })),
+        converged: dead.converged.map((c) => ({
+          method: c.route.method,
+          path: c.route.path,
+          file: c.file,
+          signals: c.signals,
+          duplicate: c.duplicate.anchors.map((a) => ({ file: a.file, symbol: a.symbol })),
+        })),
+      },
+    });
     return;
   }
 
@@ -154,18 +187,82 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
       logger.info(`  ${row.endpoint.label}  ← ${row.consumerCount} call(s): ${files}${more}`);
     }
   }
-  if (map.unconsumedEndpoints.length) {
-    logger.info('');
-    logger.info('Served but unconsumed (dead route or cross-repo consumer):');
-    for (const ep of map.unconsumedEndpoints.slice(0, 20)) {
-      logger.info(`  ${ep.label}`);
-    }
-    if (map.unconsumedEndpoints.length > 20) {
-      logger.info(`  … and ${map.unconsumedEndpoints.length - 20} more`);
-    }
-  }
+  // The tiered dead-surface inventory — the honest confidence ladder replacing
+  // the old flat "dead route or cross-repo consumer" list.
+  renderDeadSurfaceInventory(dead);
+
   logger.info('');
   logger.info('Trace one: vyuh-dxkit flow trace "<METHOD> <path>"');
+}
+
+/** One-line locator for a tiered dead surface. */
+function deadSurfaceLine(s: TieredDeadSurface): string {
+  const loc = s.route.file ? `  @ ${s.route.file}` : '';
+  return `  ${s.route.method} ${s.route.path}${loc}`;
+}
+
+/** Gather the tiered dead-surface inventory + convergence for a repo. Fail-open,
+ *  zero-write: reads diagnoseFlow + the graph in memory. The dup findings power
+ *  both the convergence callout and each surface's `convergesWithDuplicate`. */
+async function gatherDeadInventory(cwd: string): Promise<{
+  result: Awaited<ReturnType<typeof gatherDeadSurfaces>>;
+  converged: ReturnType<typeof convergeSeams>;
+}> {
+  const graph = await gatherGraphifyGraph(cwd, { writeToDisk: false });
+  const dupFindings =
+    graph.kind === 'success' ? duplicateFindingsFromJson(graph.graph, { minScore: 0.75 }) : [];
+  const result = await gatherDeadSurfaces(cwd, { dupFindings });
+  const converged = convergeSeams(result.surfaces, dupFindings);
+  return { result, converged };
+}
+
+/**
+ * Render the tiered dead-surface inventory + the seam-convergence callout to the
+ * console. Silent when there are no unconsumed routes.
+ */
+function renderDeadSurfaceInventory(dead: {
+  result: Awaited<ReturnType<typeof gatherDeadSurfaces>>;
+  converged: ReturnType<typeof convergeSeams>;
+}): void {
+  const res = dead.result;
+  if (res.surfaces.length === 0) return;
+  const converged = dead.converged;
+
+  const removable = res.surfaces.filter((s) => s.tier === 'removable');
+  const likely = res.surfaces.filter((s) => s.tier === 'likely');
+  const expected = res.surfaces.filter((s) => s.tier === 'expected');
+
+  logger.info('');
+  logger.info(
+    `Served but unconsumed — ${res.surfaces.length} route(s), by confidence` +
+      (res.crossRepoConsumersVisible
+        ? ''
+        : ' (cross-repo consumers unverified — declare workspace.json to confirm deadness)'),
+  );
+  if (removable.length) {
+    logger.info(`  removable (${removable.length}) — dead AND a structural duplicate:`);
+    for (const s of removable.slice(0, 20)) logger.info(deadSurfaceLine(s));
+  }
+  if (likely.length) {
+    logger.info(`  likely dead (${likely.length}) — no in-repo consumer:`);
+    for (const s of likely.slice(0, 12)) logger.info(deadSurfaceLine(s));
+    if (likely.length > 12) logger.info(`    … and ${likely.length - 12} more`);
+  }
+  if (expected.length) {
+    logger.info(
+      `  expected (${expected.length}) — webhook / cron / health / CLI / direct-call (no consumer is normal)`,
+    );
+  }
+  if (converged.length) {
+    logger.info('');
+    logger.info(
+      `⛔ ${converged.length} converged: a served route that is BOTH unconsumed AND a copy-paste — remove or consolidate:`,
+    );
+    for (const c of converged.slice(0, 10)) {
+      const twin = c.duplicate.anchors.map((a) => a.file).join(' ≈ ');
+      logger.info(`  ${c.route.method} ${c.route.path}  (duplicate: ${twin})`);
+    }
+  }
 }
 
 /**
