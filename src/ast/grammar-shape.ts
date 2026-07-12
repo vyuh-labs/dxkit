@@ -30,6 +30,8 @@
 
 import { walk, type Node } from './parse';
 import { KOTLIN } from './grammar-shape-kotlin';
+import { CSHARP } from './grammar-shape-csharp';
+import { RUST } from './grammar-shape-rust';
 
 // ResolvedCall + GrammarShape moved to @vyuhlabs/dxkit-sdk (the frozen
 // extension surface, CLAUDE.md Rule 18) — grammar-shape ACCESS types are
@@ -210,21 +212,40 @@ interface FusedCalleeGrammar {
   readonly stringNodes: readonly string[];
   readonly decoratorNodes: readonly string[];
   /** Keyword-argument analog inside annotation argument lists
-   *  (`element_value_pair {key, value}`). */
+   *  (`element_value_pair {key, value}`); Ruby's hash `pair` is the same
+   *  shape (`key: hash_key_symbol, value`). */
   readonly annotationPair: { node: string; keyField: string; valueField: string };
-  /** List-literal analog (`element_value_array_initializer`). */
+  /** List-literal analog (`element_value_array_initializer`, Ruby `array`). */
   readonly listNode: string;
   readonly functionNodes: readonly string[];
   /** Node types of enum/member references inside a list whose trailing
    *  segment is contributed by `listStrings` (Java `field_access`). */
   readonly listRefNodes?: readonly string[];
+  /** Grammar field holding a trailing block/lambda on the call node (Ruby
+   *  `block`: `do … end` / `{ … }`) — enables `hasTrailingLambda`. */
+  readonly trailingBlockField?: string;
+  /** Symbol-literal node types admitted by `stringText` with their leading
+   *  `:` stripped (Ruby `simple_symbol` — `namespace :api` group prefixes,
+   *  `via: [:get]` verb lists, `resources :articles` names). */
+  readonly symbolNodes?: readonly string[];
+  /** When a call has NO positional argument and its first pair's KEY is a
+   *  string, `firstArg` returns the key node — Ruby's hash-rocket route
+   *  idiom `get '/health' => 'status#health'` puts the path in the key. */
+  readonly pathFromFirstPairKey?: boolean;
 }
 
 function fusedCalleeShape(g: FusedCalleeGrammar): GrammarShape {
   const stringTypes = new Set(g.stringNodes);
   const decoratorTypes = new Set(g.decoratorNodes);
+  const symbolTypes = new Set(g.symbolNodes ?? []);
 
-  const stringText = (node: Node): string | null => (stringTypes.has(node.type) ? node.text : null);
+  const stringText = (node: Node): string | null => {
+    if (stringTypes.has(node.type)) return node.text;
+    // A symbol reads as its bare name (`:api` → `api`) — unquoted, so
+    // downstream quote-stripping is a no-op and normalization adds the `/`.
+    if (symbolTypes.has(node.type)) return node.text.replace(/^:/, '');
+    return null;
+  };
 
   /** The argument-list node of a call OR annotation, else null. */
   const argList = (node: Node): Node | null => {
@@ -268,6 +289,15 @@ function fusedCalleeShape(g: FusedCalleeGrammar): GrammarShape {
       for (const a of args(node)) {
         if (a.type === g.annotationPair.node) continue;
         return a;
+      }
+      // Hash-rocket idiom: no positional argument, the first pair's STRING
+      // key is the path (`get '/health' => 'status#health'`).
+      if (g.pathFromFirstPairKey) {
+        const first = args(node)[0];
+        if (first && first.type === g.annotationPair.node) {
+          const key = first.childForFieldName(g.annotationPair.keyField);
+          if (key && stringTypes.has(key.type)) return key;
+        }
       }
       return null;
     },
@@ -322,6 +352,16 @@ function fusedCalleeShape(g: FusedCalleeGrammar): GrammarShape {
       if (call.type !== g.callNode) return null;
       return call.childForFieldName(g.objectField);
     },
+
+    ...(g.trailingBlockField !== undefined
+      ? {
+          hasTrailingLambda(call: Node): boolean {
+            return (
+              call.type === g.callNode && call.childForFieldName(g.trailingBlockField!) !== null
+            );
+          },
+        }
+      : {}),
   };
 }
 
@@ -389,6 +429,29 @@ const JAVA: GrammarShape = fusedCalleeShape({
   listRefNodes: ['field_access'],
 });
 
+/** Ruby (verified vs the bundled tree-sitter-ruby wasm, ABI 14): a natural
+ *  fused-callee grammar — `call` carries `receiver`/`method`/`arguments`/
+ *  `block` fields directly, hash keyword arguments are `pair` nodes
+ *  (`key: hash_key_symbol, value`), and Ruby has no decorator syntax. The
+ *  three Ruby-specific factory knobs: symbols read as bare names
+ *  (`namespace :api`), the `block` field answers `hasTrailingLambda`
+ *  (Sinatra `get '/x' do`), and the hash-rocket route idiom surfaces the
+ *  pair KEY as the first argument (`get '/health' => 'status#health'`). */
+const RUBY: GrammarShape = fusedCalleeShape({
+  callNode: 'call',
+  nameField: 'method',
+  objectField: 'receiver',
+  argumentsField: 'arguments',
+  stringNodes: ['string'],
+  decoratorNodes: [],
+  annotationPair: { node: 'pair', keyField: 'key', valueField: 'value' },
+  listNode: 'array',
+  functionNodes: ['method', 'singleton_method'],
+  trailingBlockField: 'block',
+  symbolNodes: ['simple_symbol'],
+  pathFromFirstPairKey: true,
+});
+
 const GRAMMAR_SHAPES: Readonly<Record<string, GrammarShape>> = {
   typescript: JS_FAMILY,
   tsx: JS_FAMILY,
@@ -397,6 +460,9 @@ const GRAMMAR_SHAPES: Readonly<Record<string, GrammarShape>> = {
   go: GO,
   java: JAVA,
   kotlin: KOTLIN,
+  c_sharp: CSHARP,
+  ruby: RUBY,
+  rust: RUST,
 };
 
 /** The shape for a logical grammar name, or null when no row exists yet —
