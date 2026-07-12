@@ -88,6 +88,7 @@ interface BenchmarkLanguage {
       | 'eslint'
       | 'golangci-lint'
       | 'clippy'
+      | 'roslyn-analyzers'
       | 'dotnet-format'
       | 'detekt'
       | 'pmd'
