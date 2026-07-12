@@ -13,6 +13,8 @@ import { execFileSync } from 'child_process';
 import { CONTRACT_SOURCE_READERS } from '../analyzers/flow/contract-sources';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
+import { DUPLICATION_CONFIG_SCHEMA_VERSION } from '../analyzers/duplication/config';
+import { tryLoadGraph } from '../explore/load';
 import { isClaudeLoopInstalled } from '../loop/scaffold';
 import { LANGUAGES } from '../languages';
 import type {
@@ -172,6 +174,64 @@ export function recommendSchema(ctx: RecommendContext): Recommendation | null {
     reason:
       'detected a data-model framework but no schema gate — the gate blocks breaking model changes (field removed, type changed, required tightened) while a deliberate migration ships via an expiring allowlist entry',
     command: 'vyuh-dxkit schema',
+  };
+}
+
+/** Minimum call-graph density (calls-edges per function) at which the structural-
+ *  duplicate signal is reliable — the anti-slop proof's boundary: a dense
+ *  backend / CLI / library graph, not a thin framework-mediated frontend where
+ *  the detector honestly finds little. Below this the seam gate is not worth
+ *  proposing (it would surface nothing), so the probe stays silent. */
+const DUPLICATION_MIN_CALL_DENSITY = 0.8;
+
+/**
+ * One signal for the structural-duplicate (seam) gate, shared by the doctor
+ * probe (`recommendDuplication`) and the planner (`planDuplicationMode`) so the
+ * two never diverge (Rule 2). Fires only when (a) the repo has not configured
+ * `duplication` yet, AND (b) an existing code graph shows a call density high
+ * enough for the detector to work — evidence the gate would actually fire, not a
+ * blind proposal. A repo with no graph yet, or a thin frontend graph, is left
+ * alone (the seam gate needs a dense call graph to add value).
+ */
+function hasDuplicationSignal(cwd: string): boolean {
+  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  if (policy && 'duplication' in policy) return false;
+  const graph = tryLoadGraph(cwd);
+  if (!graph) return false;
+  const fns = graph.nodes.filter((n) => n.kind === 'function' || n.kind === 'method').length;
+  if (fns === 0) return false;
+  const calls = graph.edges.filter((e) => e.relation === 'calls').length;
+  return calls / fns >= DUPLICATION_MIN_CALL_DENSITY;
+}
+
+/**
+ * Structural-duplicate (seam) gate: on a repo with a dense-enough call graph and
+ * no duplication config, seed the safe default posture — `warn` (surface the
+ * copy-paste the call graph catches, never fail a build). Reuses
+ * `hasDuplicationSignal` (shared with the doctor probe, Rule 2).
+ */
+export function planDuplicationMode(ctx: ConfigContext): ConfigPlanItem | null {
+  if (!hasDuplicationSignal(ctx.cwd)) return null;
+  return {
+    capability: 'quality',
+    section: 'duplication.mode',
+    summary: 'warn',
+    patch: { duplication: { mode: 'warn', schemaVersion: DUPLICATION_CONFIG_SCHEMA_VERSION } },
+    reason:
+      'seed the structural-duplicate (seam) gate at the safe default (warn, never fails a build) — it flags a net-new function that copy-pastes another',
+    evidence:
+      'a dense call graph where the duplicate signal is reliable, no duplication config yet',
+  };
+}
+
+/** Recommend the seam gate on a repo whose call graph is dense enough for the
+ *  structural-duplicate signal to work, and no duplication config. */
+export function recommendDuplication(ctx: RecommendContext): Recommendation | null {
+  if (!hasDuplicationSignal(ctx.cwd)) return null;
+  return {
+    reason:
+      'a dense call graph but no structural-duplicate (seam) gate — it catches a net-new function that copy-pastes another (the call graph sees it through rename/reformat, unlike token duplication), and pairs with the dead-surface inventory in `flow`',
+    command: 'vyuh-dxkit quality',
   };
 }
 
