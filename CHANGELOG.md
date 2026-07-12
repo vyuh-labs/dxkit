@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Large repos no longer lose flow/schema extraction partway through.**
+  Parsed syntax trees live on the wasm heap, which garbage collection cannot
+  reclaim, and they were never freed — on a repo with roughly two thousand
+  parseable files the parser's memory ran out mid-gather and every later
+  file silently read as having no routes or models. Extraction now frees
+  each file's tree as soon as it has been read (verified on a 3,200-file
+  .NET monorepo that previously lost 40% of its files).
+
 ### Added
 
 - **C#, Ruby, and Rust join the flow + schema gates (language-parity
