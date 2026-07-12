@@ -150,6 +150,11 @@ export interface DepVulnFinding {
   aliases?: string[];
   summary?: string;
   references?: string[];
+  /** CWE ids the advisory carries (e.g. `['CWE-506']`). Drives the
+   *  malicious-code classification (`isMaliciousAdvisory`) — CWE-506
+   *  "Embedded Malicious Code" and family are the deterministic malware
+   *  signal npm audit attaches. Additive metadata, never identity. */
+  cwes?: string[];
 
   // Top-level (direct) manifest dep(s) this advisory rolls up to.
   // `['axios']` when the vulnerable package is itself a direct dep.

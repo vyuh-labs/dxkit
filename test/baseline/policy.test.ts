@@ -182,6 +182,31 @@ describe('classify — block-rule overrides', () => {
     expect(result2.reasons.some((r) => r.code === 'block-rule')).toBe(false);
   });
 
+  it('blocks a new malicious dependency at ANY severity (the supply-chain rule)', () => {
+    // The July 2025 eslint-config-prettier compromise shipped as severity
+    // HIGH — below the critical rule, unreachable by the reachability rule
+    // (never populated on the check path). The malicious rule fires on the
+    // advisory class alone.
+    for (const severity of ['high', 'medium', 'low'] as const) {
+      const ctx: ClassifyContext = { kind: 'dep-vuln', severity, malicious: true };
+      const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+      expect(result.blocks).toBe(true);
+      expect(result.reasons.some((r) => r.detail.includes('newMaliciousDependency'))).toBe(true);
+    }
+  });
+
+  it('the malicious rule never fires for non-malicious dep-vulns or persisted pairs', () => {
+    const nonMalicious: ClassifyContext = { kind: 'dep-vuln', severity: 'high' };
+    const r1 = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, nonMalicious);
+    expect(r1.reasons.some((r) => r.detail.includes('newMaliciousDependency'))).toBe(false);
+
+    // Baseline-relative: a grandfathered malicious advisory (already in the
+    // baseline) is debt to pay down, not a net-new block.
+    const persisted: ClassifyContext = { kind: 'dep-vuln', severity: 'high', malicious: true };
+    const r2 = classify(pair('persisted'), DEFAULT_BROWNFIELD_POLICY, persisted);
+    expect(r2.blocks).toBe(false);
+  });
+
   it('blocks a new untested file overlapping changed lines', () => {
     const ctx: ClassifyContext = {
       kind: 'test-gap',
