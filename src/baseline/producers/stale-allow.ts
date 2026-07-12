@@ -47,6 +47,7 @@
 import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
+import { coveredLineFor } from '../../allowlist/inline-synth';
 import { computeContentHashFromCommit } from '../content-hash';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
@@ -87,7 +88,11 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
   const covered = buildCoveredLocations(input.aggregate);
   const out: RichBaselineEntry[] = [];
   for (const occ of input.annotations) {
-    const key = locationKey(occ.file, occ.line);
+    // Check the line the annotation COVERS (above-line → the finding below it),
+    // not the annotation's own line — the same coverage rule the suppression synth
+    // uses, so an annotation that legitimately suppresses a finding is never also
+    // reported orphaned (Rule 2).
+    const key = locationKey(occ.file, coveredLineFor(occ));
     if (covered.has(key)) continue; // active suppression — not stale
     const identityInput: StaleAllowIdentityInput = {
       kind: 'stale-allow',

@@ -304,7 +304,15 @@ async function runAddInline(args: {
     process.exit(1);
   }
 
-  const result = insertAnnotation(absPath, target.line, { category, reason }, lang);
+  // Force SAME-LINE insertion (append to the finding's own line) so the write
+  // never shifts subsequent line numbers. An above-line insert pushes every later
+  // line down by one, so a second `allowlist add <file>:<line>` in the same file —
+  // using line numbers from the pre-insert scan — would land one line off and
+  // suppress nothing (the s24 batch line-shift bug). Same-line never shifts, so
+  // sequential/batched adds all land on their real finding regardless of order.
+  const result = insertAnnotation(absPath, target.line, { category, reason }, lang, {
+    sameLineThreshold: Number.MAX_SAFE_INTEGER,
+  });
   logger.info(
     `Inserted ${result.position} allowlist annotation at ${target.file}:${result.annotationLine} ` +
       `(category=${category})`,

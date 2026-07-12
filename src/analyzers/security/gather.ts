@@ -28,6 +28,7 @@ import { SecurityFinding, DepVulnSummary, Severity } from './types';
 import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
 import { discoverNestedDepRoots, mergeDepVulnOutcomes } from './nested-dep-roots';
 import { loadAllowlist } from '../../allowlist/file';
+import { gatherInlineAllowlistAnnotations } from '../../allowlist/gather';
 import { defaultDispatcher } from '../dispatcher';
 import { allTlsBypassPatterns, detectActiveLanguages } from '../../languages';
 import {
@@ -683,5 +684,9 @@ export async function buildSecurityAggregateForHealth(
     // the analysis cache — see the same allowlist-adjusted scoreable
     // buckets and the same per-finding allowlist annotations.
     allowlist: loadAllowlist(cwd),
+    // Inline `dxkit-allow:` annotations, walked here (I/O) and resolved to
+    // ephemeral fingerprint entries inside the pure aggregate — so an inline
+    // suppression waives a finding exactly like a file-level one.
+    inlineAnnotations: gatherInlineAllowlistAnnotations(cwd),
   });
 }
