@@ -222,3 +222,43 @@ end`;
     expect(set.models.find((m) => m.name === 'User')).toBeUndefined();
   });
 });
+
+describe('fluent-chain field constructors (Exposed — the kotlin backlog closure)', () => {
+  it('walks receiver links to the chain head and reads .nullable() optionality', async () => {
+    const src = `
+object Users : Table("users") {
+    val id = integer("id").autoIncrement()
+    val name = varchar("name", 50)
+    val bio = text("bio").nullable()
+}
+object Helper {
+    val entries = mutableMapOf<Int, String>()
+}`;
+    const tree = await parseSource(src, 'kotlin');
+    const { models } = extractModelsFromTree(
+      tree!.rootNode,
+      {
+        weakModelBaseClasses: ['Table'],
+        fieldCallees: [
+          {
+            names: ['integer', 'varchar', 'text'],
+            typeFrom: 'callee',
+            optionalityChainCallees: ['nullable'],
+          },
+        ],
+      },
+      modelShapeForGrammar('kotlin')!,
+      grammarShape('kotlin'),
+      'test-file',
+    );
+    // The weak Table marker is corroborated by the column constructors;
+    // Helper has none and stays invisible.
+    expect(models.map((m) => m.name)).toEqual(['Users']);
+    const byName = Object.fromEntries(models[0].fields.map((f) => [f.name, f]));
+    // Chain tails (.autoIncrement()) no longer defeat the constructor read.
+    expect(byName['id']).toEqual({ name: 'id', type: 'integer', required: true });
+    expect(byName['name']).toEqual({ name: 'name', type: 'varchar', required: true });
+    // The .nullable() link marks the field optional.
+    expect(byName['bio']).toEqual({ name: 'bio', type: 'text', required: false });
+  });
+});

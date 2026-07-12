@@ -634,6 +634,41 @@ export const kotlin: LanguageSupport = {
   // keywords).
   modelSchema: {
     modelDecorators: ['Entity', 'Table', 'Embeddable', 'MappedSuperclass', 'Serializable'],
+    // Exposed table objects (`object Users : Table()`): 'Table' is too
+    // generic to trust alone, so the weak marker needs a column-constructor
+    // hit to corroborate. Columns are fluent chains — the constructor is the
+    // chain head (`varchar("name", 50)`) and `.nullable()` is the
+    // optionality link; without it a column is non-null (the Exposed
+    // default). Inferred property types keep the constructor's type token.
+    weakModelBaseClasses: ['Table', 'IntIdTable', 'LongIdTable', 'UUIDTable'],
+    fieldCallees: [
+      {
+        names: [
+          'integer',
+          'long',
+          'short',
+          'float',
+          'double',
+          'decimal',
+          'varchar',
+          'char',
+          'text',
+          'bool',
+          'date',
+          'datetime',
+          'timestamp',
+          'uuid',
+          'blob',
+          'binary',
+          'enumeration',
+          'enumerationByName',
+          'reference',
+          'optReference',
+        ],
+        typeFrom: 'callee',
+        optionalityChainCallees: ['nullable'],
+      },
+    ],
     fieldDecoratorSpecs: [
       {
         names: ['Column', 'JoinColumn'],
