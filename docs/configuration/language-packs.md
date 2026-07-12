@@ -105,14 +105,16 @@ that break an integration — extracts from source **per pack**: each pack
 declares which constructs are HTTP (`httpFlow`), and one shared extractor
 reads them through a per-grammar syntax table. Current coverage:
 
-| Pack       | Consumed side (client calls)                                                                      | Served side (route declarations)                                                                             |
-| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| typescript | `fetch`, axios, app-specific wrappers                                                             | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes                                 |
-| python     | `requests`, `httpx`, wrapper clients                                                              | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic)                                 |
-| go         | `http.Get/Post`, `http.NewRequest`, `*http.Client` wrappers                                       | stdlib `HandleFunc`/`Handle` (incl. Go 1.22 `"GET /x"` patterns), chi/echo/gin/fiber verb methods            |
-| java       | RestTemplate verb methods, WebClient / java.net.http / OkHttp builder chains, Retrofit interfaces | Spring MVC/WebFlux annotations (incl. class-level `@RequestMapping` prefixes), JAX-RS `@GET` + `@Path` pairs |
-| kotlin     | Ktor client verbs, Retrofit interfaces, WebClient/OkHttp chains                                   | Ktor routing DSL (`get("/x") { }`, nested `route(...)` prefixes), Spring annotations                         |
-| others     | — (next waves)                                                                                    | via `flow.specs` (OpenAPI) today                                                                             |
+| Pack       | Consumed side (client calls)                                                                      | Served side (route declarations)                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| typescript | `fetch`, axios, app-specific wrappers                                                             | Express/LoopBack/NestJS routers + decorators, Next.js App Router file routes                                  |
+| python     | `requests`, `httpx`, wrapper clients                                                              | FastAPI decorators, Flask `route(...)`, Django `path(...)` (method-agnostic)                                  |
+| go         | `http.Get/Post`, `http.NewRequest`, `*http.Client` wrappers                                       | stdlib `HandleFunc`/`Handle` (incl. Go 1.22 `"GET /x"` patterns), chi/echo/gin/fiber verb methods             |
+| java       | RestTemplate verb methods, WebClient / java.net.http / OkHttp builder chains, Retrofit interfaces | Spring MVC/WebFlux annotations (incl. class-level `@RequestMapping` prefixes), JAX-RS `@GET` + `@Path` pairs  |
+| kotlin     | Ktor client verbs, Retrofit interfaces, WebClient/OkHttp chains                                   | Ktor routing DSL (`get("/x") { }`, nested `route(...)` prefixes), Spring annotations                          |
+| csharp     | HttpClient verb methods (`GetAsync`, `GetFromJsonAsync`, …; interpolated `$"…"` URLs)             | ASP.NET attribute routing (`[HttpGet]`/`[Route]` incl. the `[controller]` token), minimal APIs (`app.MapGet`) |
+| ruby       | Net::HTTP / HTTParty / Faraday verb calls (`#{…}` interpolation canonicalizes)                    | Rails routes.rb (explicit verbs, `resources`/`resource` expansion, `namespace`/`scope` prefixes), Sinatra     |
+| rust       | reqwest (`client.get(...)`, `reqwest::get(...)`)                                                  | actix-web / Rocket route attributes, axum `Router::new().route(...)` + `.nest(...)` prefixes                  |
 
 Notes that keep the model honest:
 
@@ -136,14 +138,38 @@ Notes that keep the model honest:
   deliberately **undeclared** — omitting it beats silently dropping it.
 - Spring's programmatic `RouterFunction` DSL (WebFlux functional endpoints)
   is out of scope; `flow.specs` covers such services.
+- ASP.NET's `[Route("api/[controller]")]` token substitutes the enclosing
+  class name (minus `Controller`, lowercased). When the class cannot be
+  resolved the path is **dropped** rather than guessed — a wrong prefix
+  would corrupt every route under it. Out of scope for C#: `MapGroup`
+  chains (the group lives on a variable — statically opaque; those routes
+  surface unprefixed), `new HttpRequestMessage(HttpMethod.Post, …)` (the
+  verb is an enum argument), and URLs inside C#-11 raw string literals
+  (`"""…"""` — the bundled grammar cannot read them).
+- Rails verb calls qualify only in a routing context — a handler block, a
+  `to:` binding, or `draw`/`namespace`/`scope` ancestry — so a request
+  spec's bare `get '/x'` never mints a route. `resources`/`resource`
+  expand to the canonical RESTful set honoring `only:`/`except:`; a
+  **nested** `resources` block is skipped (its paths would need the parent
+  resource's id segment — a wrong path is worse than a missing one) and
+  member/collection extras are not expanded. `match ... via:` reads its
+  verb list (`via: :all` serves every method); `Net::HTTP::Post.new` (the
+  verb lives in the receiver) and Grape's path-less `get do` blocks are
+  out of scope.
+- axum registrations are method-agnostic at the routing layer here —
+  `.route("/x", get(h).post(h2))` carries its verbs on the handler
+  argument, which is not read — so they surface as `ANY` routes (a client
+  call with any verb resolves against them). `.nest("/api", …)` prefixes
+  only the router passed **as its argument**; a variable-held router and
+  Rocket's `.mount("/api", routes![…])` prefixes are statically opaque
+  (Rocket attribute routes surface unprefixed — most apps mount at `/`).
 - **Any language can participate in the served side without pack coverage**
   by publishing an OpenAPI spec (`flow.specs`) or a `served.json` snapshot as
   a workspace participant — pack coverage adds native source extraction on
   top.
 
-Remaining packs (C#, Ruby, Rust) gain `httpFlow` in the language-parity
-waves; the recipe is declaration-only (see CONTRIBUTING.md "Adding a new
-language").
+All eight built-in packs now declare `httpFlow`; adding one for a new
+language is declaration-only (see CONTRIBUTING.md "Adding a new language").
 
 ## Model-schema coverage
 
@@ -159,7 +185,10 @@ through a per-grammar syntax table. Current coverage:
 | python     | `models.Model` / SQLAlchemy `Base` / pydantic `BaseModel` / `SQLModel` heritage, `@dataclass`     | annotations + Django field constructors (`null=`), SQLAlchemy `nullable=`                                                               |
 | go         | struct tags (`json:` / `gorm:` / `db:` / `bson:`)                                                 | field types (pointer = optional), tag wire names, `omitempty`                                                                           |
 | java       | JPA `@Entity` / `@Table` / `@Embeddable` / `@MappedSuperclass`                                    | `@Column(nullable = …, name = …)`; an unannotated column is an honest unknown (JPA defaults to nullable — never fabricated as required) |
-| kotlin     | JPA annotations + kotlinx `@Serializable` data classes                                            | `String?` nullability (real grammar optionality), `@Column` overrides                                                                   |
+| kotlin     | JPA annotations + kotlinx `@Serializable` data classes + Exposed `Table` objects                  | `String?` nullability, `@Column` overrides, `@SerialName("wire")`, Exposed column chains (`varchar("x").nullable()`)                    |
+| csharp     | `[Table]` / `[Keyless]` / `[Owned]` + EF Core `DbSet<T>` container references                     | `string?` nullability (NRT — declared intent), positional `[Column("x")]` / `[JsonPropertyName("x")]` wire names; partials merge        |
+| ruby       | `db/schema.rb` `create_table` blocks (ActiveRecord classes are discovery-only while it exists)    | column methods as types (`t.string`), `null: false` ⇒ required (absent ⇒ nullable, the Rails default)                                   |
+| rust       | `#[derive(Serialize)]` / `#[derive(Deserialize)]` structs                                         | `Option<T>` optionality (precise), `#[serde(rename = "x")]` wire names                                                                  |
 | any        | via `schema.specs` (OpenAPI `components.schemas`, JSON Schema)                                    | the spec's own types + `required` list                                                                                                  |
 
 What the gate deliberately does **not** see — each either disclosed at run
@@ -188,11 +217,26 @@ time or documented here, never implied covered:
 
 A rename reads honestly as remove + add (the name is part of the contract);
 a pure file move produces no findings (relocating an unchanged declaration
-is never drift). Remaining packs (C#, Ruby, Rust) gain `modelSchema` in the
-language-parity waves — the recipe is declaration-only. Known kotlin gaps,
-documented rather than half-covered: Exposed's chained column initializers
-(`integer("id").autoIncrement()`) and `@SerialName` wire naming (a
-positional argument) are not yet read.
+is never drift). Per-pack postures worth knowing:
+
+- **C# partial classes** are one logical type: same-name declarations that
+  are all `partial`-marked assemble into one entity, so a field moving
+  between partials (codegen splits) is never drift. Non-nullable-reference
+  types read as required — the declared-intent stance; a project without
+  NRT enabled overstates requiredness. Marker-less records/DTOs stay
+  invisible (use `schema.specs`).
+- **Rails models are their tables**: `db/schema.rb` is the field source and
+  the entity name is the table name (the wire contract). The ActiveRecord
+  class marker is discovery-only while a schema file exists — one logical
+  model never carries two identities. Table↔class name inflection joining
+  is out of scope. Without a schema file, `ApplicationRecord` classes
+  surface with `attr_accessor` fields (untyped, honest unknowns).
+- **serde containers**: `#[serde(rename_all = "camelCase")]` transforms and
+  `#[serde(default)]` / `skip_serializing_if` optionality nuances are not
+  read — fields keep their declared names and `Option`-derived optionality.
+
+All eight built-in packs now declare `modelSchema`; adding one for a new
+language is declaration-only.
 
 ## Forcing pack activation
 
