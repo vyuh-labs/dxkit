@@ -469,6 +469,7 @@ async function gatherTsDepVulnsViaNpmAudit(
           if (ghsa) finding.aliases = [ghsa];
           if (v.title) finding.summary = v.title;
           if (v.url) finding.references = [v.url];
+          if (v.cwe && v.cwe.length > 0) finding.cwes = v.cwe;
           const parents = topLevelIndex.get(advisoryPkg);
           if (parents && parents.length > 0) finding.topLevelDep = parents;
           findings.push(finding);

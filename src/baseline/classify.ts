@@ -47,6 +47,10 @@ export interface ClassifyContext {
   readonly overlapsChangedLines?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
+  /** True when an `added` dep-vuln's advisory reports the package itself
+   *  as malicious code (OSV `MAL-*`, CWE-506 family, malware-titled
+   *  advisory) — see `src/analyzers/security/malicious.ts`. */
+  readonly malicious?: boolean;
 }
 
 /** Verdict + reasoning for one classified pair. */
@@ -204,6 +208,13 @@ function evaluateBlockRules(
     context.reachable === true
   ) {
     return 'newHighReachableDependencyVulnerability';
+  }
+  // Malicious-code advisories block at ANY severity: install-time malware
+  // executes at install, so CVSS and reachability are the wrong lens. The
+  // `malicious` signal comes from the one canonical predicate
+  // (`src/analyzers/security/malicious.ts`) applied to the current scan.
+  if (rules.newMaliciousDependency && context.kind === 'dep-vuln' && context.malicious === true) {
+    return 'newMaliciousDependency';
   }
   if (
     rules.newUntestedChangedSource &&

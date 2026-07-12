@@ -140,9 +140,12 @@ allowed, and what was repaired after a block.
 Two presets decide what blocks a stop:
 
 ```text
-security-only  (default)  net-new secrets and critical or high vulnerabilities.
-                          Bounded, must-fix, cheap to gate.
-full-debt      (opt-in)   also gates net-new test gaps and maintainability
+security-only  (default)  blocks net-new secrets, critical and high code
+                          findings, critical dependency vulnerabilities, and
+                          known-malicious packages at any severity. Every
+                          other net-new finding warns; nothing net-new is
+                          ever silent. Bounded, must-fix, cheap to gate.
+full-debt      (opt-in)   also blocks net-new test gaps and maintainability
                           regressions. Repairs can be expensive.
 ```
 

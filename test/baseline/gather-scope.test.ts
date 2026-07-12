@@ -25,7 +25,7 @@ import { gatherCurrentScan } from '../../src/baseline/create';
  */
 
 /** A `security-only`-shaped policy: empty generic block list, security
- *  block-rules only. Mirrors `src/loop/policy.ts`'s preset. */
+ *  block-rules only. Mirrors `src/baseline/presets.ts`'s preset. */
 const SECURITY_ONLY: BrownfieldPolicy = {
   ...DEFAULT_BROWNFIELD_POLICY,
   block: [],
@@ -35,6 +35,7 @@ const SECURITY_ONLY: BrownfieldPolicy = {
     newHighSecurity: true,
     newCriticalDependencyVulnerability: true,
     newHighReachableDependencyVulnerability: true,
+    newMaliciousDependency: true,
     newUntestedChangedSource: false,
     newSevereQualityIssueInChangedFiles: false,
   },
@@ -109,6 +110,7 @@ describe('scopeForPolicy', () => {
       'newHighSecurity',
       'newCriticalDependencyVulnerability',
       'newHighReachableDependencyVulnerability',
+      'newMaliciousDependency',
       'newUntestedChangedSource',
       'newSevereQualityIssueInChangedFiles',
     ] as const;
@@ -122,6 +124,7 @@ describe('scopeForPolicy', () => {
           newHighSecurity: false,
           newCriticalDependencyVulnerability: false,
           newHighReachableDependencyVulnerability: false,
+          newMaliciousDependency: false,
           newUntestedChangedSource: false,
           newSevereQualityIssueInChangedFiles: false,
           [rule]: true,
