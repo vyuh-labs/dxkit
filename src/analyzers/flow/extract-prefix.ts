@@ -76,6 +76,70 @@ export function decoratorPathRaw(
   return decoratorPathsRaw(call, shape, hf)[0] ?? null;
 }
 
+/**
+ * Substitute declared `routeTokenFromEnclosingType` tokens in a raw
+ * decorator path — ASP.NET's `[Route("api/[controller]")]`, where the token
+ * is the enclosing class name minus its suffix, lowercased. Runs BEFORE
+ * `normalizePath` (whose `[…]` param rule would otherwise silently turn the
+ * token into an over-matching `{var}`). `anchor` is the decorator/call node
+ * whose enclosing type answers the token. When the type cannot be resolved
+ * the path is DROPPED (null) rather than emitted with a placeholder — a
+ * wrong prefix corrupts every route under it. A raw path without any
+ * declared token passes through untouched.
+ */
+export function resolveRouteTokens(
+  raw: string | null,
+  anchor: Node,
+  shape: GrammarShape,
+  hf: HttpFlowSupport,
+): string | null {
+  if (raw == null) return null;
+  const specs = hf.routeTokenFromEnclosingType;
+  if (!specs || specs.length === 0) return raw;
+  let s = raw;
+  for (const spec of specs) {
+    if (!s.includes(spec.token)) continue;
+    const typeName = shape.enclosingTypeName?.(anchor) ?? null;
+    if (typeName === null) return null;
+    let sub = typeName;
+    if (
+      spec.stripSuffix !== undefined &&
+      sub.endsWith(spec.stripSuffix) &&
+      sub.length > spec.stripSuffix.length
+    ) {
+      sub = sub.slice(0, -spec.stripSuffix.length);
+    }
+    if (spec.lowercase === true) sub = sub.toLowerCase();
+    s = s.split(spec.token).join(sub);
+  }
+  return s;
+}
+
+/**
+ * Is `node` (transitively) inside a call to one of `names`? The precision
+ * qualifier behind `routeVerbCallees.ancestorCallees` /
+ * `routeResourceCallees.ancestorCallees` — Rails' routes.rb always sits
+ * inside `routes.draw do … end`, while a request spec's bare `get '/x'`
+ * does not. Ancestors link the same way the group-prefix walk does
+ * (trailing-lambda outer nodes resolve through `calleeCall`).
+ */
+export function hasAncestorCallee(
+  node: Node,
+  names: readonly string[],
+  shape: GrammarShape,
+): boolean {
+  const nameSet = new Set(names);
+  let cur: Node | null = node.parent;
+  for (let hop = 0; cur && hop < MAX_ANCESTOR_HOPS; hop++, cur = cur.parent) {
+    if (!shape.callNodes.includes(cur.type)) continue;
+    const inner = shape.calleeCall?.(cur) ?? cur;
+    if (inner.id === node.id) continue;
+    const callee = shape.resolveCall(inner);
+    if (callee && nameSet.has(callee.name)) return true;
+  }
+  return false;
+}
+
 /** Decorator nodes attached to an ancestor DECLARATION node — its decorator-
  *  typed children plus those one container level down (Java/Kotlin wrap
  *  annotations in a `modifiers` child). Depth-limited to 2 so a sibling
@@ -123,7 +187,8 @@ export function collectDecoratorPrefix(
       const call = shape.decoratorCall(d);
       const callee = call ? shape.resolveCall(call) : null;
       if (!call || !callee || !names.has(callee.name)) continue;
-      const norm = normalizePath(decoratorPathRaw(call, shape, hf), config);
+      const raw = resolveRouteTokens(decoratorPathRaw(call, shape, hf), d, shape, hf);
+      const norm = normalizePath(raw, config);
       if (norm) parts.unshift(norm); // climbing inner→outer; outermost first
     }
   }
@@ -157,6 +222,15 @@ export function collectGroupPrefix(
     if (inner.id === routeCall.id) continue;
     const callee = shape.resolveCall(inner);
     if (!callee || !names.has(callee.name)) continue;
+    // A chain-link sibling is NOT nested: in axum's
+    // `Router::new().route("/items", …).nest("/api", …)` the earlier .route
+    // call sits inside .nest's RECEIVER subtree — group membership requires
+    // living on the group call's ARGUMENT/body side, so a route reached
+    // through the receiver is skipped.
+    const recv = shape.receiverNode?.(inner);
+    if (recv && recv.startIndex <= routeCall.startIndex && routeCall.endIndex <= recv.endIndex) {
+      continue;
+    }
     const first = shape.firstArg(inner);
     const norm = normalizePath(first ? shape.stringText(first) : null, config);
     if (norm) parts.unshift(norm);
