@@ -102,6 +102,61 @@ describe('buildSecurityAggregate — empty case', () => {
   });
 });
 
+describe('buildSecurityAggregate — inline dxkit-allow annotations suppress (wiring net)', () => {
+  // The bug this pins (feedback s24): inline annotations had a working matcher
+  // (`findAnnotationAt`) that NOTHING called, so a documented suppression path did
+  // nothing. This test fails if the aggregator ever stops threading inline
+  // annotations through the synth — catching that whole "helper exists but is never
+  // wired" class, not just today's fix.
+  it('an inline annotation covering a finding marks it allowlisted (aggregator calls the synth)', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [
+          makeFinding({ category: 'secret', severity: 'critical', file: 'a.ts', line: 5 }),
+        ],
+        toolUsed: 'gitleaks',
+      },
+      inlineAnnotations: [
+        { file: 'a.ts', line: 5, category: 'test-fixture', position: 'same-line' },
+      ],
+    });
+    const secret = agg.findingsByCategory.secret[0];
+    expect(secret.allowlisted).toBe(true);
+    expect(secret.allowlistCategory).toBe('test-fixture');
+  });
+
+  it('a finding with no covering annotation stays live (no over-suppression)', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [
+          makeFinding({ category: 'secret', severity: 'critical', file: 'a.ts', line: 5 }),
+        ],
+        toolUsed: 'gitleaks',
+      },
+      inlineAnnotations: [
+        { file: 'a.ts', line: 99, category: 'test-fixture', position: 'same-line' },
+      ],
+    });
+    expect(agg.findingsByCategory.secret[0].allowlisted).toBeFalsy();
+  });
+
+  it('an above-line annotation waives the finding beneath it, across the aggregate', () => {
+    const agg = buildSecurityAggregate({
+      ...emptyInput(),
+      secrets: {
+        findings: [
+          makeFinding({ category: 'secret', severity: 'critical', file: 'a.ts', line: 6 }),
+        ],
+        toolUsed: 'gitleaks',
+      },
+      inlineAnnotations: [{ file: 'a.ts', line: 5, category: 'false-positive', position: 'above' }],
+    });
+    expect(agg.findingsByCategory.secret[0].allowlisted).toBe(true);
+  });
+});
+
 describe('buildSecurityAggregate — content-anchor threading', () => {
   // The anchor material is carried from the gather boundary onto the
   // emitted CodeFinding so the identity layer and producers can
