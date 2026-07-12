@@ -28,6 +28,8 @@
 
 import type { Node } from './parse';
 import { KOTLIN_MODEL } from './grammar-shape-kotlin';
+import { CSHARP_MODEL } from './grammar-shape-csharp';
+import { RUST_MODEL } from './grammar-shape-rust';
 
 // GrammarModelShape moved to @vyuhlabs/dxkit-sdk (Rule 18, sibling of
 // GrammarShape). The per-grammar rows + dispatch below stay internal.
@@ -353,6 +355,77 @@ const JAVA: GrammarModelShape = {
   },
 };
 
+/** Attribute-style Ruby field reads: the body's `attr_accessor`/`attr_reader`
+ *  /`attr_writer` calls declare untyped fields as symbol arguments. The
+ *  PRIMARY Rails field source is `db/schema.rb` (the pack's
+ *  `schemaFileTables` descriptor) — these body reads only serve plain-Ruby
+ *  models a pack recognizes without a schema file. */
+const RUBY_ATTR_CALLEES = new Set(['attr_accessor', 'attr_reader', 'attr_writer']);
+
+const RUBY_MODEL: GrammarModelShape = {
+  classNodes: ['class'],
+
+  className(node) {
+    return node.childForFieldName('name')?.text ?? null;
+  },
+
+  heritage(node) {
+    // `class User < ApplicationRecord` — superclass wraps a constant or a
+    // scope_resolution (`ActiveRecord::Base`); the verbatim text matches the
+    // descriptor's full-text rule (Ruby paths use `::`, never `.`).
+    const sup = node.childForFieldName('superclass');
+    if (!sup) return [];
+    const out: string[] = [];
+    for (const c of sup.namedChildren) if (c) out.push(c.text);
+    return out;
+  },
+
+  classDecorators() {
+    return [];
+  },
+
+  fieldNodes(classNode) {
+    const body = classNode.childForFieldName('body');
+    if (!body) return [];
+    const out: Node[] = [];
+    for (const stmt of body.namedChildren) {
+      if (!stmt || stmt.type !== 'call') continue;
+      const method = stmt.childForFieldName('method');
+      if (!method || !RUBY_ATTR_CALLEES.has(method.text)) continue;
+      const args = stmt.childForFieldName('arguments');
+      if (!args) continue;
+      for (const a of args.namedChildren) {
+        if (a && a.type === 'simple_symbol') out.push(a);
+      }
+    }
+    return out;
+  },
+
+  fieldNames(field) {
+    return [field.text.replace(/^:/, '')];
+  },
+
+  fieldTypeText() {
+    return null; // untyped — the honest unknown
+  },
+
+  fieldOptionalMarker() {
+    return null;
+  },
+
+  fieldTag() {
+    return null;
+  },
+
+  fieldValueCall() {
+    return null;
+  },
+
+  fieldDecorators() {
+    return [];
+  },
+};
+
 const MODEL_SHAPES: Readonly<Record<string, GrammarModelShape>> = {
   typescript: JS_FAMILY,
   tsx: JS_FAMILY,
@@ -361,6 +434,9 @@ const MODEL_SHAPES: Readonly<Record<string, GrammarModelShape>> = {
   go: GO,
   java: JAVA,
   kotlin: KOTLIN_MODEL,
+  c_sharp: CSHARP_MODEL,
+  ruby: RUBY_MODEL,
+  rust: RUST_MODEL,
 };
 
 /** The model shape for a logical grammar name, or null when no row exists —
