@@ -32,6 +32,14 @@ describe('isMaliciousAdvisory', () => {
       }),
     ).toBe(true);
     expect(isMaliciousAdvisory({ id: 'GHSA-a', cwes: ['cwe-507'] })).toBe(true);
+    // The whole 506–512 family, complete by construction (the first draft
+    // of the predicate hand-picked members and missed 508/509).
+    for (const n of [506, 507, 508, 509, 510, 511, 512]) {
+      expect(isMaliciousAdvisory({ id: 'GHSA-x', cwes: [`CWE-${n}`] })).toBe(true);
+    }
+    // Range boundaries: neighbors are NOT malicious-code CWEs.
+    expect(isMaliciousAdvisory({ id: 'GHSA-y', cwes: ['CWE-505'] })).toBe(false);
+    expect(isMaliciousAdvisory({ id: 'GHSA-z', cwes: ['CWE-513'] })).toBe(false);
   });
 
   it('flags the malware title conventions without CWE or MAL id', () => {

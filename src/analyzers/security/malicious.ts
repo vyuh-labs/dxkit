@@ -31,15 +31,28 @@
  * dependency, which is the costlier error.
  */
 
-/** CWE ids for the malicious-code family (CWE-506 "Embedded Malicious
- *  Code" and its children). Matched case-insensitively on the exact id. */
-const MALICIOUS_CWES = new Set([
-  'CWE-506', // Embedded Malicious Code
-  'CWE-507', // Trojan Horse
-  'CWE-510', // Trapdoor
-  'CWE-511', // Logic/Time Bomb
-  'CWE-512', // Spyware
-]);
+/**
+ * The CWE malicious-code family: CWE-506 "Embedded Malicious Code" and its
+ * children, which occupy the contiguous id range 506–512 (507 Trojan
+ * Horse, 508 Non-Replicating, 509 Replicating, 510 Trapdoor, 511
+ * Logic/Time Bomb, 512 Spyware). Checked as a RANGE so the family is
+ * complete by construction — a hand-picked set is exactly where a member
+ * gets forgotten (the first draft of this file missed 508/509).
+ *
+ * Maintenance posture: this subtree has been unchanged since CWE 1.0
+ * (2008), so the range is effectively static — and it is deliberately the
+ * SECONDARY signal. The signal that actually evolves (which packages are
+ * malicious) is ecosystem-maintained for us: OSV's `MAL-*` namespace,
+ * fed by OpenSSF's malicious-packages database and matched above by id.
+ * The CWE and title branches exist for feeds that carry no MAL id
+ * (GitHub advisories via npm audit, ingested SARIF), as defense in depth.
+ */
+function isMaliciousCwe(cwe: string): boolean {
+  const m = /^CWE-(\d+)$/i.exec(cwe.trim());
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n >= 506 && n <= 512;
+}
 
 const MAL_NAMESPACE = /^MAL-\d{4}-\d+/i;
 
@@ -57,7 +70,7 @@ export interface MaliciousAdvisorySignals {
 export function isMaliciousAdvisory(f: MaliciousAdvisorySignals): boolean {
   if (MAL_NAMESPACE.test(f.id)) return true;
   if (f.aliases?.some((a) => MAL_NAMESPACE.test(a))) return true;
-  if (f.cwes?.some((c) => MALICIOUS_CWES.has(c.toUpperCase()))) return true;
+  if (f.cwes?.some(isMaliciousCwe)) return true;
   if (f.summary && MALICIOUS_TEXT.test(f.summary)) return true;
   return false;
 }
