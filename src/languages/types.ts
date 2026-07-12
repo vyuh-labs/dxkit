@@ -138,6 +138,27 @@ export interface ArchitecturalShape {
     high?: string[];
     medium?: string[];
   };
+
+  /**
+   * Path patterns for routes whose consumer is an EXTERNAL ACTOR, not
+   * in-repo code — a webhook (Stripe/Clerk/GitHub calls it), a cron
+   * trigger, a health/liveness probe, a public API for third parties, a
+   * CLI entry point. A served route matching one of these is EXPECTED to
+   * have no in-repo consumer, so the dead-surface analyzer drops it to
+   * the "expected" tier (never flags it as removable slop).
+   *
+   * This is the ONE place the cron/webhook/health false-positive class is
+   * killed — declaratively, per pack (Rule 6/8), never a hardcoded
+   * `cron|webhook|health` literal in an analyzer (the arch-check bans
+   * those). Consumed via `allNonConsumerRoutePaths(flags)`.
+   *
+   * Case-insensitive substrings of the route file's relative POSIX path
+   * OR the route's URL path (both are checked), same convention as
+   * `primaryComponentPaths`. Bias toward false-NEGATIVE: it is safer to
+   * dim a genuinely-dead webhook-shaped route than to loudly flag a real
+   * webhook, so keep these patterns generous.
+   */
+  nonConsumerRoutePaths?: string[];
 }
 
 /**

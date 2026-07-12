@@ -594,6 +594,31 @@ if [ -n "$ARCH_SHAPE_WORD_VIOLATIONS" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Rule 3: no hardcoded non-consumer-route convention literals
+#   (`'/webhook'`, `'/cron/'`, `'/healthz'`, ...) in `src/analyzers/`.
+#   These convention path-shapes (routes an external actor drives, so a
+#   "no in-repo consumer" reading is expected — not dead-surface slop)
+#   are pack-declared in `architecturalShape.nonConsumerRoutePaths` and
+#   consumed via `allNonConsumerRoutePaths(flags)`. The dead-surface
+#   analyzer must never hardcode a `cron|webhook|health` literal — that
+#   was the exact false-positive class the pack declaration exists to
+#   kill (a new framework's convention must be a pack edit, not an
+#   analyzer edit).
+arch_conv_re="['\"\`]\\/(web)?hooks?|['\"\`]\\/cron|['\"\`]\\/scheduled|['\"\`]\\/health|['\"\`]\\/healthz|['\"\`]\\/livez|['\"\`]\\/readyz|['\"\`]\\/liveness|['\"\`]\\/readiness|['\"\`]\\/callback"
+ARCH_CONV_VIOLATIONS=$(grep -rnEi "$arch_conv_re" src/analyzers/ 2>/dev/null \
+  | grep -v "// arch-shape-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ARCH_CONV_VIOLATIONS" ]; then
+  echo "❌ Architectural-shape violation: hardcoded non-consumer-route convention literal in analyzer code:"
+  echo "$ARCH_CONV_VIOLATIONS"
+  echo "   → Convention route shapes (webhook/cron/health/callback) belong in"
+  echo "     src/languages/<id>.ts under architecturalShape.nonConsumerRoutePaths,"
+  echo "     consumed via allNonConsumerRoutePaths(flags). A new framework's"
+  echo "     convention is a pack declaration, never an analyzer edit."
+  echo "   → Annotate '// arch-shape-ok' for a genuine non-route use (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ─── Rule 9 (fingerprint discipline): one home for finding-identity hashes ──
 #
 # What this prevents:
