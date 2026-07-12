@@ -39,6 +39,7 @@ import {
   decoratorPathRaw,
   decoratorPathsRaw,
   joinNormalizedPaths,
+  resolveRouteTokens,
 } from './extract-prefix';
 
 /** Both surfaces one decorator can declare (a route OR a Retrofit-style
@@ -98,7 +99,7 @@ function slashedDecoratorPaths(
     let s = raw.trim();
     if (s.length >= 2 && /^['"`]/.test(s) && s.endsWith(s[0])) s = s.slice(1, -1);
     if (!s.startsWith('/')) continue;
-    const norm = normalizePath(raw, config);
+    const norm = normalizePath(resolveRouteTokens(raw, call, shape, hf), config);
     if (norm) out.push(norm);
   }
   return out;
@@ -163,13 +164,30 @@ function isAttachedToFunction(decorator: Node, shape: GrammarShape): boolean {
 }
 
 /** Decorators co-attached to the same declaration (stacked siblings, or
- *  siblings inside a shared container like Java/Kotlin `modifiers`). */
+ *  siblings inside a shared container like Java/Kotlin `modifiers`). C#
+ *  wraps EACH attribute in its own `attribute_list` (`[HttpGet]` and
+ *  `[Route("x")]` on one method are separate lists), so when the parent
+ *  holds nothing but decorators, co-attachment extends to same-type sibling
+ *  containers. Grammars whose decorator parent IS the declaration (TS) or a
+ *  mixed wrapper (Python's `decorated_definition`) never take that branch,
+ *  so a sibling declaration's decorators cannot leak in. */
 function coAttachedDecorators(decorator: Node, shape: GrammarShape): Node[] {
   const parent = decorator.parent;
   if (!parent) return [];
   const out: Node[] = [];
   for (const c of parent.namedChildren) {
     if (c && c.id !== decorator.id && shape.decoratorNodes.includes(c.type)) out.push(c);
+  }
+  const isPureContainer = parent.namedChildren.every(
+    (c) => c === null || shape.decoratorNodes.includes(c.type),
+  );
+  if (isPureContainer) {
+    for (const sib of parent.parent?.namedChildren ?? []) {
+      if (!sib || sib.id === parent.id || sib.type !== parent.type) continue;
+      for (const c of sib.namedChildren) {
+        if (c && shape.decoratorNodes.includes(c.type)) out.push(c);
+      }
+    }
   }
   return out;
 }
@@ -187,10 +205,30 @@ function siblingPairPath(
     const call = shape.decoratorCall(sib);
     const callee = call ? shape.resolveCall(call) : null;
     if (!call || !callee || !pathNames.includes(callee.name)) continue;
-    const norm = normalizePath(decoratorPathRaw(call, shape, hf), config);
+    const raw = resolveRouteTokens(decoratorPathRaw(call, shape, hf), sib, shape, hf);
+    const norm = normalizePath(raw, config);
     if (norm) return norm;
   }
   return null;
+}
+
+/** Does this declaration also carry an argument-less verb MARKER from the
+ *  pair form? A path decorator on such a declaration belongs to the PAIR —
+ *  the marker mints the route (with this path as its sibling), so the path
+ *  decorator minting its own route would double-declare it (C#'s
+ *  `[Route("all")]` + `[HttpGet]`). */
+function hasCoAttachedMethodMarker(
+  decorator: Node,
+  shape: GrammarShape,
+  markers: readonly string[],
+): boolean {
+  for (const sib of coAttachedDecorators(decorator, shape)) {
+    const call = shape.decoratorCall(sib);
+    const callee = call ? shape.resolveCall(call) : null;
+    if (!call || !callee || callee.kind !== 'bare') continue;
+    if (markers.includes(callee.name) && shape.firstArg(call) === null) return true;
+  }
+  return false;
 }
 
 /**
@@ -278,7 +316,9 @@ export function extractDecoratorFlow(
   // @GetMapping(path = "/y") / @GetMapping({"/a", "/b"}) (one route per
   // entry) / marker @GetMapping (class prefix alone).
   if (callee.kind === 'bare' && (hf.routeDecorators ?? []).includes(callee.name)) {
-    const owns = decoratorPathsRaw(call, shape, hf).map((raw) => normalizePath(raw, config));
+    const owns = decoratorPathsRaw(call, shape, hf).map((raw) =>
+      normalizePath(resolveRouteTokens(raw, decorator, shape, hf), config),
+    );
     const paths = prefixedPaths(prefix(), owns);
     const method = normalizeMethod(callee.name, hf.methodAliases);
     return { routes: method ? paths.map((path) => ({ method, path, ...base })) : [], calls: [] };
@@ -305,10 +345,18 @@ export function extractDecoratorFlow(
   // slash-less path RELATIVE to its class prefix.
   const pathSpec = hf.routePathDecorators;
   if (pathSpec && pathSpec.names.includes(callee.name)) {
+    // A path decorator sharing its declaration with a verb MARKER belongs
+    // to the pair form — minting here too would double-declare the route.
+    const markers = hf.routeAnnotationPairs?.methodMarkers;
+    if (markers && hasCoAttachedMethodMarker(decorator, shape, markers)) {
+      return { routes: [], calls: [] };
+    }
     const owns =
       callee.kind === 'member'
         ? slashedDecoratorPaths(call, shape, hf, config)
-        : decoratorPathsRaw(call, shape, hf).map((raw) => normalizePath(raw, config));
+        : decoratorPathsRaw(call, shape, hf).map((raw) =>
+            normalizePath(resolveRouteTokens(raw, decorator, shape, hf), config),
+          );
     const paths = prefixedPaths(prefix(), owns);
     const methods = pathDecoratorMethods(call, shape, hf, pathSpec);
     return {
