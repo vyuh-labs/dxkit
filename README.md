@@ -55,9 +55,11 @@ agent, and the agent repaired it before stopping clean.
 The gate and the recorded fixtures replay offline without an API key;
 reproducing the original agent runs requires the documented model environment.
 
-dxkit also gates its own development. Its guardrail
-[blocked release PR #134](https://github.com/vyuh-labs/dxkit/pull/134) on real
-findings. We fixed the findings, not the gate.
+dxkit also gates its own development. Its CI guardrail
+[blocked PR #134](https://github.com/vyuh-labs/dxkit/pull/134) on real
+findings (three files past the repo's size budget and a test fixture that a
+broken benchmark run had leaked into the tree). The failed and passing runs
+are in that PR's checks history. We fixed the findings, not the gate.
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
