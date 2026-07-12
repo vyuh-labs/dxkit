@@ -133,11 +133,17 @@ describe('evaluate evidence schema freeze', () => {
       seams,
     });
     expect(doc.seams).toEqual(seams);
-    // The visibility lane renders the convergence story in the human output.
+    // The visibility lane renders the convergence story in the human output,
+    // with a content-aware header that leads on the loud (removable) signal.
     const text = renderEvaluateText(doc);
-    expect(text).toContain('What dxkit sees beyond the gate');
+    expect(text).toContain('What dxkit sees beyond the verdict');
+    expect(text).toContain('1 structural seam(s) worth removing');
     expect(text).toContain('converged');
     expect(text).toContain('/teams-legacy');
+    // Act order: the seam lane sits above the watched/costs plumbing.
+    expect(text.indexOf('What dxkit sees beyond the verdict')).toBeLessThan(
+      text.indexOf('What enabling dxkit costs'),
+    );
   });
 });
 
