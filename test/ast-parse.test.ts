@@ -79,9 +79,15 @@ describe('grammarForExtension (pack-driven resolution)', () => {
     expect(grammarForExtension('.py')).toEqual({ grammar: 'python', languageId: 'python' });
   });
 
-  it('returns null for an extension no pack parses yet', () => {
-    expect(grammarForExtension('.rb')).toBeNull(); // ruby pack: grammar lands in its M6 wave
+  it('returns null for an extension no pack parses', () => {
+    expect(grammarForExtension('.php')).toBeNull(); // no php pack
     expect(grammarForExtension('.zzz')).toBeNull();
+  });
+
+  it('every wave-3 extension resolves to its grammar', () => {
+    expect(grammarForExtension('.cs')).toEqual({ grammar: 'c_sharp', languageId: 'csharp' });
+    expect(grammarForExtension('.rb')).toEqual({ grammar: 'ruby', languageId: 'ruby' });
+    expect(grammarForExtension('.rs')).toEqual({ grammar: 'rust', languageId: 'rust' });
   });
 });
 
