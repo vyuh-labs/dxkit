@@ -452,12 +452,20 @@ export interface ModelSchemaSupport {
    * through `typeAliases`. `optionalityKeyword` names the keyword argument
    * that carries optionality and `optionalityPolarity` its meaning
    * (`'nullable'`: true ⇒ optional; `'required'`: true ⇒ required).
+   *
+   * Fluent ORMs put the constructor at the CHAIN HEAD and facts on the
+   * links — Exposed's `varchar("name", 50).nullable()`. The engine walks
+   * receiver links from the initializer's tail call to find the matching
+   * head, and `optionalityChainCallees` names the link(s) that mark the
+   * field OPTIONAL (`['nullable']`); when declared and no such link is
+   * present, the framework default is required. Additive (SDK minor).
    */
   fieldCallees?: Array<{
     names: string[];
     typeFrom?: 'callee' | 'firstArg';
     optionalityKeyword?: string;
     optionalityPolarity?: 'nullable' | 'required';
+    optionalityChainCallees?: string[];
   }>;
   /**
    * What a TYPED field with NO optionality signal at all means in this
