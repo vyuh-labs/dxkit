@@ -58,6 +58,7 @@ construction; commands with a linked page have a full reference under
 | [`vulnerabilities`](commands/vulnerabilities.md)                 | Run the deep security scan                                                       | 1-3 min                            |
 | [`test-gaps`](commands/test-gaps.md)                             | Analyze test coverage gaps                                                       | 30-90 sec                          |
 | `tests`                                                          | Select tests affected by a diff via the code graph                               | < 5 sec (queries the graph)        |
+| `evaluate`                                                       | Zero-write trial: replay your recent landings through the gate                   | 30 sec - 1 min per landing         |
 | [`quality`](commands/quality.md)                                 | Code quality + slop detection                                                    | 1-8 min (jscpd is the long-pole)   |
 | [`dev-report`](commands/dev-report.md)                           | Developer activity analysis                                                      | 5-30 sec                           |
 | [`licenses`](commands/licenses.md)                               | Dependency license inventory                                                     | 30-60 sec                          |

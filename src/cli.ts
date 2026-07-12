@@ -365,6 +365,13 @@ export async function run(argv: string[]): Promise<void> {
       'changed-only': { type: 'boolean', default: false },
       incremental: { type: 'boolean', default: false },
       untrusted: { type: 'boolean', default: false },
+      // evaluate: the zero-write trial (ref pair or last-N-landings replay).
+      // --base is shared with the reviewers flags below.
+      head: { type: 'string' },
+      'last-prs': { type: 'string' },
+      preset: { type: 'string' },
+      redact: { type: 'boolean', default: false },
+      'no-incremental': { type: 'boolean', default: false },
       baseline: { type: 'string' },
       policy: { type: 'string' },
       markdown: { type: 'boolean', default: false },
@@ -911,6 +918,23 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail(receiptFailureHint(err as Error));
         process.exit(1);
       }
+      break;
+    }
+
+    case 'evaluate': {
+      const { runEvaluateCli } = await import('./evaluate-cli');
+      await runEvaluateCli(resolveRepoPath(positionals[1]), {
+        base: values.base as string | undefined,
+        head: values.head as string | undefined,
+        lastPrs: values['last-prs'] as string | undefined,
+        preset: values.preset as string | undefined,
+        json: !!values.json,
+        redact: !!values.redact,
+        untrusted: !!values.untrusted,
+        noIncremental: !!values['no-incremental'],
+        verbose: !!values.verbose,
+        out: values.output as string | undefined,
+      });
       break;
     }
 
