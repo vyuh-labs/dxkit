@@ -423,6 +423,46 @@ export function computeModelSchemaDriftFingerprint(
   );
 }
 
+// ─── Code-reimplementation identity (the seam gate, Rule 9) ───────────────────
+
+/**
+ * Tool-independent canonical rule for a structural-duplicate finding. Every
+ * code-reimplementation pair shares this constant — the finding is intrinsic
+ * ("these two functions are the same routine written twice"), never a per-tool
+ * classification.
+ */
+export const CODE_REIMPLEMENTATION_CANONICAL_RULE = 'canonical:code-reimplementation';
+
+/** One duplicate anchor's dxkit-derived coordinates. */
+export interface DuplicateAnchorLike {
+  readonly file: string;
+  readonly symbol: string;
+  readonly line: number;
+}
+
+/**
+ * Symmetric-by-construction identity for a structural-duplicate PAIR. The two
+ * anchors are sorted into a canonical order (by file, then line-window, then
+ * symbol) before hashing, so a pair reported as `(A,B)` and one reported as
+ * `(B,A)` produce the same identity. Each anchor's line is bucketed into the
+ * shared 3-line window so a small reformat doesn't churn identity. All inputs
+ * are dxkit-derived — the graph node's file/symbol/line, never a tool's
+ * captured span (Rule 9), so a committed allowlist entry keeps matching when the
+ * scan moves to CI.
+ */
+export function computeCodeReimplementationFingerprint(
+  anchorA: DuplicateAnchorLike,
+  anchorB: DuplicateAnchorLike,
+): string {
+  const key = (a: DuplicateAnchorLike) => `${a.file}\0${lineWindowFor(a.line)}\0${a.symbol}`;
+  const [first, second] = [key(anchorA), key(anchorB)].sort();
+  return computeContentFingerprint(
+    CODE_REIMPLEMENTATION_CANONICAL_RULE,
+    '',
+    `${first}\0\0${second}`,
+  );
+}
+
 // ─── Secret HMAC primitive ───────────────────────────────────────────────────
 
 /**

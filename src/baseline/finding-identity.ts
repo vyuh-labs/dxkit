@@ -15,6 +15,7 @@ import { createHash } from 'crypto';
 import {
   canonicalRuleFor,
   computeCodeFingerprint,
+  computeCodeReimplementationFingerprint,
   computeContentFingerprint,
   computeFingerprint,
   computeFingerprintV1,
@@ -140,6 +141,11 @@ export function identityFor(
       // finding, so identity survives line AND file moves and a follow-up
       // tweak to the same field keeps one allowlist decision (Rule 9).
       return computeModelSchemaDriftFingerprint(input.model, input.field, input.changeClass);
+    case 'code-reimplementation':
+      // Version-independent. Symmetric over the two dxkit-derived function
+      // anchors (each line-window-bucketed) — a pair survives reformat/rename
+      // and `(A,B)` == `(B,A)`. Never a tool-captured span (Rule 9).
+      return computeCodeReimplementationFingerprint(input.anchors[0], input.anchors[1]);
     case 'custom-check':
       // Version-independent. Two shapes: a LOCATED finding (a linter's
       // per-line diagnostic) hashes (check, file, lineWindow, rule) — the

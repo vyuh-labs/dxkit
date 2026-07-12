@@ -28,6 +28,7 @@ import { type BrownfieldBlockRules, type BrownfieldPolicy } from './policy';
 import type { FindingStatus } from './types';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
+import type { DuplicationGateMode } from '../analyzers/duplication/config';
 
 /**
  * The two shipped postures.
@@ -72,6 +73,14 @@ interface PresetDef {
    * schema defaults to off, and a preset never activates it.
    */
   readonly schemaMode: SchemaGateMode;
+  /**
+   * Posture for the structural-duplicate (seam) gate — same opt-in reasoning
+   * as `schemaMode`: the gate defaults to off (it builds the code graph), and a
+   * preset only softens/hardens an already-enabled gate. `security-only` WARNS
+   * (a duplicate is a maintainability signal, never a security class, and must
+   * not wedge an unattended run); `full-debt` authorizes convergence to BLOCK.
+   */
+  readonly duplicationMode: DuplicationGateMode;
   /**
    * Statuses ADDED to the base policy's warn list (union, never a
    * replacement — the base's drift/uncertainty warns always survive).
@@ -118,6 +127,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
     warn: ['added'],
     flowMode: 'warn',
     schemaMode: 'warn',
+    duplicationMode: 'warn',
   },
   'full-debt': {
     // Any net-new finding blocks (generic `added`), plus every escalation.
@@ -130,6 +140,7 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
     warn: [],
     flowMode: 'block',
     schemaMode: 'block',
+    duplicationMode: 'block',
   },
 });
 
@@ -140,6 +151,7 @@ export interface PresetPolicy {
   readonly preset: LoopPreset;
   readonly flowMode: FlowGateMode;
   readonly schemaMode: SchemaGateMode;
+  readonly duplicationMode: DuplicationGateMode;
 }
 
 /**
@@ -155,6 +167,7 @@ export function policyForPreset(preset: LoopPreset, base: BrownfieldPolicy): Pre
     preset,
     flowMode: def.flowMode,
     schemaMode: def.schemaMode,
+    duplicationMode: def.duplicationMode,
     policy: {
       ...base,
       block: def.block,

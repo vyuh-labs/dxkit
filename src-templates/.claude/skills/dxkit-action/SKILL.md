@@ -45,7 +45,7 @@ partitions that dimension and work **only** that worklist — prioritization
 |---|---|---|---|
 | "dependency / BOM vulnerabilities" | `npx vyuh-dxkit bom` (or `vulnerabilities --detailed`) | `dep-vuln` | upgrade-first; see "Dependency vulnerability" below |
 | "security" | `npx vyuh-dxkit vulnerabilities --detailed --graph-context` | code-SAST, secrets, dep-vuln | reachable findings first (the report orders them); secrets always top |
-| "code quality" | `npx vyuh-dxkit quality --detailed --graph-context` | duplication, slop, lint, complexity | see "Slop / code-pattern finding" below |
+| "code quality" | `npx vyuh-dxkit quality --detailed --graph-context` | duplication, code-reimplementation, slop, lint, complexity | see "Slop / code-pattern finding" + "Structural duplicate" below |
 | "tests" / "coverage" | `npx vyuh-dxkit test-gaps --detailed --graph-context` | test-gap | hand off to **dxkit-test** for a real test-writing push |
 | "documentation" | `npx vyuh-dxkit health --detailed` (Documentation) | doc-gap | hand off to **dxkit-docs** |
 
@@ -178,6 +178,51 @@ For a dedicated push to close many gaps / raise the Tests score — reading the 
 ```
 
 If the finding is a false positive, add `// slop-ok: <reason>` on the offending line (or `# slop-ok` for non-JS).
+
+### Structural duplicate (code-reimplementation)
+
+A `code-reimplementation` finding means your change added a function that
+structurally re-implements another one — same helper set, same name shape, read
+from the call graph. It's the copy-paste-instead-of-parameterize pattern (a CLI
+handler pasted from the HTTP one, a `findByX` cloned into `findByIdX`). It is
+distinct from the token-level `duplication` (jscpd) finding — this one survives
+rename/reformat because it reads structure, not text.
+
+The finding is a PAIR of anchors, and the guardrail tells you **which side your
+change introduced** — the console reads `added: <new> ≈ existing: <twin>`, and
+the JSON marks the new anchor with `"changed": true`. That's your direction:
+**the new side is what you fix; the existing side is what you consolidate
+toward.**
+
+```bash
+# 1. Read BOTH anchors from the guardrail output (or the JSON `dupGate.findings`).
+#    The `added` / `changed:true` side is the code your change introduced.
+# 2. Open both functions and confirm they really are the same routine (the score
+#    is a strong signal, not proof — a high score on genuinely-distinct logic is
+#    the case to allowlist, not fix).
+# 3. Consolidate:
+#      - Extract the shared body into ONE routine and have both call it, OR
+#      - if the two differ only by a value/branch, parameterize the existing one
+#        and delete the new copy (the usual right fix for a pasted variant).
+# 4. Verify the pair is gone:
+npx vyuh-dxkit guardrail check      # the code-reimplementation finding drops out
+```
+
+Prefer parameterizing the existing function over keeping two near-copies — that's
+the fix the finding is asking for. If the parallel is **deliberate** (a
+sanctioned by-design twin — two adapters that must stay structurally identical, a
+generated-then-specialized pair), allowlist it instead:
+
+```bash
+npx vyuh-dxkit allowlist add --fingerprint=<id> \
+    --kind=code-reimplementation --category=false-positive \
+    --reason="<why the parallel is intentional>"
+```
+
+The guardrail's block/warn message prints this exact command with the fingerprint
+filled in. Since a duplicate is warn-tier on its own, it won't fail the build —
+but leaving it un-consolidated is exactly the maintainability debt the gate
+exists to surface, so fix it unless the parallel is genuinely intended.
 
 ## Allowlisting (when fix is not viable)
 

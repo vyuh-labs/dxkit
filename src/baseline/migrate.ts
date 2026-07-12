@@ -127,6 +127,9 @@ export function baselineEntryToIdentityInput(entry: BaselineEntry): IdentityInpu
         field: e.field,
         changeClass: e.changeClass,
       };
+    case 'code-reimplementation':
+      // `score` is display metadata; identity is the anchor pair.
+      return { kind: 'code-reimplementation', anchors: e.anchors };
     case 'custom-check':
       // `blocking` + `message` are display/verdict metadata on the entry, never
       // identity inputs (Rule 9). File/line/rule reconstruct the located variant;

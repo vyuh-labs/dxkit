@@ -232,6 +232,14 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'or — if the check fired spuriously — allowlist with category=false-positive ' +
         'or relax the check in policy.json.'
       );
+    case 'code-reimplementation':
+      return (
+        'This change added a function that structurally duplicates another (same ' +
+        'helpers, same name shape) — the copy-paste-instead-of-parameterize slop ' +
+        'pattern. Extract the shared logic into one routine both call, or — if the ' +
+        'parallel is deliberate (a sanctioned by-design twin) — allowlist with ' +
+        'category=false-positive.'
+      );
   }
 }
 
@@ -273,6 +281,9 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'secret-hmac':
     case 'dep-vuln':
     case 'duplication':
+    case 'code-reimplementation':
+      // A symmetric PAIR of anchors, no single canonical file:line → route to
+      // the `--fingerprint=<id>` CLI form, like duplication.
       return {};
   }
 }

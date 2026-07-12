@@ -33,6 +33,8 @@ import { describeBrokenIntegration } from '../analyzers/flow/gate';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
+import type { DupGateOutcome } from './dup-gate-check';
+import type { DuplicateFinding } from '../explore/duplication';
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
 
@@ -83,9 +85,13 @@ function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: 
     ...(result.flowGate?.findings ?? []),
     ...(result.schemaDriftGate?.findings ?? []),
   ];
+  // Seam-gate duplicates are always warn-tier (no per-finding verdict field);
+  // fold their count into the warn tally so the banner reconciles with the
+  // summary — the same "one report, one story" discipline as the gates above.
+  const dupWarns = result.dupGate?.findings.length ?? 0;
   return {
     block: findings.filter((f) => f.verdict === 'block').length,
-    warn: findings.filter((f) => f.verdict === 'warn').length,
+    warn: findings.filter((f) => f.verdict === 'warn').length + dupWarns,
   };
 }
 
@@ -194,6 +200,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
 
   lines.push(...formatFlowGate(result.flowGate));
   lines.push(...formatSchemaDriftGate(result.schemaDriftGate));
+  lines.push(...formatDupGate(result.dupGate));
 
   // Always show a summary footer — sets expectations for what
   // happens next (exit code, what to read on a fail).
@@ -228,6 +235,16 @@ export function renderConsole(result: GuardrailCheckResult): string {
     lines.push(
       `  Schema:      ${schemaFindings.length + schemaSuppressed.length} ` +
         `(blocking: ${sBlock}, warning: ${sWarn}, info: ${sInfo}, suppressed: ${schemaSuppressed.length})`,
+    );
+  }
+  // Same reconciliation line for the structural-duplicate (seam) gate. All
+  // warn-tier (a lone duplicate never blocks), so the count folds into warnings.
+  const dupFindings = result.dupGate?.findings ?? [];
+  const dupSuppressed = result.dupGate?.suppressed ?? [];
+  if (dupFindings.length > 0 || dupSuppressed.length > 0) {
+    lines.push(
+      `  Seam:        ${dupFindings.length + dupSuppressed.length} ` +
+        `(warning: ${dupFindings.length}, suppressed: ${dupSuppressed.length})`,
     );
   }
   lines.push(
@@ -376,6 +393,64 @@ function schemaFingerprintLine(id: string): string {
   return (
     `    · fingerprint: ${id}  (accept if intentional: allowlist add ` +
     `--fingerprint=${id} --kind=model-schema-drift --category=accepted-risk --reason="<why>")`
+  );
+}
+
+/**
+ * Console lines for the structural-duplicate (seam) gate. Silent unless the
+ * gate produced findings. All warn-tier (a lone duplicate never blocks), so the
+ * one section names the twin, the similarity score, and the accept command.
+ */
+function formatDupGate(gate: DupGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) return [];
+  const out: string[] = [];
+  if (gate.findings.length > 0) {
+    out.push(logger.bold(`Structural duplicate — warning (${gate.findings.length})`));
+    for (const f of gate.findings) {
+      out.push(`  ${describeDuplicate(f)}`);
+      out.push(dupFingerprintLine(f.id));
+    }
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push(logger.bold(`Structural duplicate — suppressed by allowlist (${suppressed.length})`));
+    for (const s of suppressed) {
+      const exp = s.expiresAt ? `, expires ${s.expiresAt}` : '';
+      out.push(`  ${describeDuplicate(s.finding)}`);
+      out.push(`    · allowlisted: ${s.category}${exp} (waived from the verdict)`);
+    }
+    out.push('');
+  }
+  return out;
+}
+
+/** One-line description of a structural-duplicate pair. When the gate marked
+ *  which side the change introduced, the new side is named FIRST and labelled —
+ *  so the fix is directional ("you added A, consolidate with existing B"). */
+function describeDuplicate(f: DuplicateFinding): string {
+  const [a, b] = f.anchors;
+  const loc = (x: DuplicateFinding['anchors'][number]) => `${x.symbol} @ ${x.file}:${x.line}`;
+  const sim = `(similarity ${f.score.toFixed(2)})`;
+  if (f.changed) {
+    const [aNew, bNew] = f.changed;
+    // One side new, one pre-existing → name the new (added) side first.
+    if (aNew && !bNew) return `added: ${loc(a)}  ≈  existing: ${loc(b)}  ${sim}`;
+    if (bNew && !aNew) return `added: ${loc(b)}  ≈  existing: ${loc(a)}  ${sim}`;
+    // Both sides in the change → the whole duplicate was introduced here.
+    if (aNew && bNew) return `both added: ${loc(a)}  ≈  ${loc(b)}  ${sim}`;
+  }
+  return `${loc(a)}  ≈  ${loc(b)}  ${sim}`;
+}
+
+/** The duplicate fingerprint line + the concrete accept command. A sanctioned
+ *  by-design parallel is accepted as false-positive (the same category flow
+ *  uses for a cross-repo consumer the scan can't see). */
+function dupFingerprintLine(id: string): string {
+  return (
+    `    · fingerprint: ${id}  (accept if by-design: allowlist add ` +
+    `--fingerprint=${id} --kind=code-reimplementation --category=false-positive --reason="<why>")`
   );
 }
 
@@ -649,6 +724,33 @@ export interface GuardrailJsonPayload {
       readonly expiresAt?: string;
     }>;
   };
+  /** The structural-duplicate (seam) gate — net-new code-reimplementation pairs
+   *  from the base↔HEAD diff. Absent when the gate is off (the default — it
+   *  builds the code graph) or no base commit was resolvable. All warn-tier. */
+  readonly dupGate?: {
+    readonly ran: boolean;
+    readonly skipped?: string;
+    readonly mode: string;
+    readonly blocks: boolean;
+    readonly warns: boolean;
+    readonly findings: ReadonlyArray<{
+      readonly id: string;
+      readonly score: number;
+      readonly anchors: ReadonlyArray<{
+        readonly file: string;
+        readonly symbol: string;
+        readonly line: number;
+        /** True when this anchor's file was touched by the change — the side the
+         *  diff introduced (the one to consolidate). Absent on an unscoped run. */
+        readonly changed?: boolean;
+      }>;
+    }>;
+    readonly suppressed: ReadonlyArray<{
+      readonly id: string;
+      readonly category: string;
+      readonly expiresAt?: string;
+    }>;
+  };
 }
 
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
@@ -797,6 +899,32 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
           },
         }
       : {}),
+    ...(result.dupGate !== undefined
+      ? {
+          dupGate: {
+            ran: result.dupGate.ran,
+            ...(result.dupGate.skipped !== undefined ? { skipped: result.dupGate.skipped } : {}),
+            mode: result.dupGate.mode,
+            blocks: result.dupGate.blocks,
+            warns: result.dupGate.warns,
+            findings: result.dupGate.findings.map((f) => ({
+              id: f.id,
+              score: f.score,
+              anchors: f.anchors.map((a, idx) => ({
+                file: a.file,
+                symbol: a.symbol,
+                line: a.line,
+                ...(f.changed ? { changed: f.changed[idx] } : {}),
+              })),
+            })),
+            suppressed: (result.dupGate.suppressed ?? []).map((s) => ({
+              id: s.finding.id,
+              category: s.category,
+              ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}),
+            })),
+          },
+        }
+      : {}),
   };
 }
 
@@ -865,6 +993,7 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
 
   lines.push(...markdownFlowGate(result.flowGate));
   lines.push(...markdownSchemaDriftGate(result.schemaDriftGate));
+  lines.push(...markdownDupGate(result.dupGate));
 
   if (suppressed.length > 0) {
     lines.push('<details>');
@@ -1071,6 +1200,66 @@ function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): stri
         `| ${escapeMd(subject(f))} | ${escapeMd(f.changeClass)} | ` +
           `${escapeMd(`${f.file}:${f.line}`)} | ${escapeMd(s.category)} | ` +
           `${escapeMd(s.expiresAt ?? '—')} |`,
+      );
+    }
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  return out;
+}
+
+/** Markdown for the structural-duplicate (seam) gate. All warn-tier, so a
+ *  single collapsed section names each twin, its similarity, and fingerprint. */
+function markdownDupGate(gate: DupGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) return [];
+  const out: string[] = [];
+  const loc = (x: DuplicateFinding['anchors'][number]) =>
+    `${escapeMd(x.symbol)} @ ${escapeMd(`${x.file}:${x.line}`)}`;
+  const pairCell = (f: DuplicateFinding): string => {
+    const [a, b] = f.anchors;
+    if (f.changed) {
+      const [aNew, bNew] = f.changed;
+      if (aNew && !bNew) return `**added** ${loc(a)} ≈ existing ${loc(b)}`;
+      if (bNew && !aNew) return `**added** ${loc(b)} ≈ existing ${loc(a)}`;
+    }
+    return `${loc(a)} ≈ ${loc(b)}`;
+  };
+  if (gate.findings.length > 0) {
+    out.push('<details>');
+    out.push(`<summary>Structural duplicates (${gate.findings.length})</summary>`);
+    out.push('');
+    out.push(
+      '_A net-new function that structurally duplicates another (same helpers, ' +
+        'same name shape). Extract the shared routine, or accept a by-design ' +
+        'parallel with `allowlist add --fingerprint=<id> --kind=code-reimplementation ' +
+        '--category=false-positive`._',
+    );
+    out.push('');
+    out.push('| Duplicate pair | Similarity | Fingerprint |');
+    out.push('|---|---|---|');
+    for (const f of gate.findings) {
+      out.push(`| ${pairCell(f)} | ${f.score.toFixed(2)} | \`${escapeMd(f.id)}\` |`);
+    }
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push('<details>');
+    out.push(
+      `<summary>Structural duplicates suppressed by allowlist (${suppressed.length})</summary>`,
+    );
+    out.push('');
+    out.push('These would warn, but an active allowlist entry accepted them.');
+    out.push('');
+    out.push('| Duplicate pair | Category | Expires |');
+    out.push('|---|---|---|');
+    for (const s of suppressed) {
+      out.push(
+        `| ${pairCell(s.finding)} | ${escapeMd(s.category)} | ${escapeMd(s.expiresAt ?? '—')} |`,
       );
     }
     out.push('');
