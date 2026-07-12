@@ -31,7 +31,7 @@ import { existsSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { LANGUAGES, allModelSchemaSourceExtensions } from '../../languages';
 import type { ModelSchemaSupport } from '../../languages/types';
-import { parseFile } from '../../ast/parse';
+import { withParsedFile } from '../../ast/parse';
 import { grammarShape } from '../../ast/grammar-shape';
 import { walkSourceFiles } from '../tools/walk-source-files';
 import { extractFileModels, extractSchemaFileTables } from './extract';
@@ -70,15 +70,15 @@ async function gatherSchemaFiles(
     for (const file of spec.files) {
       const abs = join(root, file);
       if (!existsSync(abs)) continue;
-      const parsed = await parseFile(abs);
-      if (!parsed) continue;
-      const callShape = grammarShape(parsed.grammar);
-      if (!callShape) continue;
+      const extracted = await withParsedFile(abs, (parsed) => {
+        const callShape = grammarShape(parsed.grammar);
+        if (!callShape) return null;
+        const label = relativeTo ? relative(relativeTo, abs) : abs;
+        return extractSchemaFileTables(parsed.tree.rootNode, spec, descriptor, callShape, label);
+      });
+      if (!extracted) continue;
       present = true;
-      const label = relativeTo ? relative(relativeTo, abs) : abs;
-      models.push(
-        ...extractSchemaFileTables(parsed.tree.rootNode, spec, descriptor, callShape, label),
-      );
+      models.push(...extracted);
     }
     if (present) {
       // The schema file is the field source — class markers would mint the

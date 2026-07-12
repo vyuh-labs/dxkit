@@ -31,7 +31,7 @@
 
 import { getLanguage } from '../../languages';
 import type { HttpFlowSupport, LanguageId } from '../../languages/types';
-import { parseFile, walk, type Node } from '../../ast/parse';
+import { walk, withParsedFile, type Node } from '../../ast/parse';
 import { grammarShape, type GrammarShape, type ResolvedCall } from '../../ast/grammar-shape';
 import {
   ANY_METHOD,
@@ -643,12 +643,15 @@ export async function extractFileFlow(
    */
   dialects?: ReadonlyMap<string, HttpFlowSupport[]>,
 ): Promise<FileFlow | null> {
-  const parsed = await parseFile(filePath);
-  if (!parsed) return null;
-  const hf = mergeHttpFlow(httpFlowFor(parsed.languageId), dialects?.get(parsed.languageId) ?? []);
-  const shape = grammarShape(parsed.grammar);
-  if (!hf || !shape) return { calls: [], routes: [] };
-  return extractFromTree(parsed.tree.rootNode, hf, shape, filePath, config, relPath);
+  return withParsedFile(filePath, (parsed) => {
+    const hf = mergeHttpFlow(
+      httpFlowFor(parsed.languageId),
+      dialects?.get(parsed.languageId) ?? [],
+    );
+    const shape = grammarShape(parsed.grammar);
+    if (!hf || !shape) return { calls: [], routes: [] };
+    return extractFromTree(parsed.tree.rootNode, hf, shape, filePath, config, relPath);
+  });
 }
 
 function httpFlowFor(languageId: LanguageId): HttpFlowSupport | undefined {
