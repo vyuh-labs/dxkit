@@ -1,47 +1,13 @@
 # dxkit
 
-**A deterministic stop condition and code-graph context layer for AI coding agents.**
+## A map before the edit. A real check before done.
 
-Autonomous coding loops face two control problems: orienting in the code while
-they make a change, and deciding whether that change made the repository worse
-before they stop.
+**dxkit is the change-safety layer for AI coding agents: structural context
+before the edit, and a deterministic stop-gate that blocks net-new regressions
+before the loop can finish.**
 
-dxkit addresses both. While the agent works, it provides a code graph of
-callers, callees, blast radius, and the files a change touches. Then, when the
-agent tries to stop, dxkit baselines existing findings, reruns trusted checks,
-and blocks only net-new detector-backed regressions with a concrete repair
-reason.
-
-In our loop benchmark, vanilla Claude Code-style loops stopped with net-new
-debt in **11 of 16 runs**. A prompt that told the agent to self-check still
-escaped **9 of 16**. With dxkit's Stop-gate, we observed **0 of 16** escapes:
-when the loop tried to stop dirty, dxkit blocked, handed back the exact net-new
-finding, and the agent repaired before stopping clean.
-
-<p align="center">
-  <img src=".github/assets/loop-stop-gate-demo.gif" width="820" alt="dxkit's Stop-gate blocks a coding-agent loop on a net-new critical dependency vulnerability, the agent bumps the version, and the gate goes clean." />
-</p>
-<p align="center"><sub>Recorded from a real run on a synthetic repo, shortened for readability. Blocked and repaired inside the same warm loop.</sub></p>
-
-dxkit does not reinvent detection. It runs trusted open source scanners
-(gitleaks, Semgrep, OSV, npm audit, and more), and it can ingest results from
-Snyk and CodeQL. What dxkit adds is the agent-loop layer around those tools: a
-per-stop, baseline-relative verdict of whether this change introduced a new
-finding, returned to the agent with the exact repair reason while the loop is
-still warm.
-
-```bash
-npm init @vyuhlabs/dxkit -- --claude-loop --yes   # install dxkit + register the Claude Code Stop hook
-npx vyuh-dxkit baseline create                    # grandfather today's findings
-npx vyuh-dxkit loop doctor                         # verify the gate is wired
-```
-
-The stop verdict has no model in the path: same input, same verdict.
-Existing debt stays grandfathered; only net-new regressions block.
-
-> The agent-facing pieces (the skills like `dxkit-onboard` and `dxkit-fix`, the Stop-gate, and "ask Claude to fix dxkit" guidance) activate when your agent session is **rooted in the repo**, meaning it started from the repo directory. Open your agent there, not in a parent folder.
-
-[Read the benchmark](docs/benchmarks.md) · [Try it on your repo](#try-it-on-your-repo) · [Run the fixture gate](#run-a-local-fixture-gate)
+_dx as in calculus: the differential. dxkit gates what a change does to your
+repo, not what your repo already was._
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
@@ -49,6 +15,60 @@ Existing debt stays grandfathered; only net-new regressions block.
   <img alt="deterministic gate" src="https://img.shields.io/badge/gate-deterministic-blue">
   <img alt="local-first" src="https://img.shields.io/badge/local--first-success">
 </p>
+
+An autonomous loop ends when the agent decides it is done. In our loop-safety
+benchmark, that decision was wrong most of the time:
+
+| Unattended agent loop, 16 runs on seeded regression tasks | Stopped dirty       |
+| --------------------------------------------------------- | ------------------- |
+| Vanilla loop                                              | 11 / 16             |
+| Prompt-only self-check                                    | 9 / 16              |
+| dxkit Stop-gate                                           | **0 / 16 observed** |
+
+When a loop tried to stop dirty, dxkit blocked, handed back the exact net-new
+finding, and the agent repaired it before stopping clean.
+[Methodology, caveats, and the repro harnesses](docs/benchmarks.md): the
+deterministic tier reproduces offline, no API key needed.
+
+dxkit gates its own development. Our CI guardrail
+[blocked our own release PR](https://github.com/vyuh-labs/dxkit/pull/134) on
+real findings, and we fixed the findings, not the gate.
+
+Watch the real gate run on a throwaway fixture repo, without touching yours
+(about 20 seconds, needs gitleaks):
+
+```bash
+npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
+```
+
+Install it for real (one command; registers the Claude Code Stop hook
+additively and keeps your existing `.claude` settings):
+
+```bash
+npm init @vyuhlabs/dxkit -- --claude-loop --yes
+npx vyuh-dxkit baseline create   # grandfather today's findings
+npx vyuh-dxkit loop doctor       # verify the gate is wired
+```
+
+<p align="center">
+  <img src=".github/assets/loop-stop-gate-demo.gif" width="820" alt="dxkit's Stop-gate blocks a coding-agent loop on a net-new critical dependency vulnerability, the agent bumps the version, and the gate goes clean." />
+</p>
+<p align="center"><sub>Recorded from a real run on a synthetic repo, shortened for readability. Blocked and repaired inside the same warm loop.</sub></p>
+
+Why the verdict is one you can trust:
+
+- **Deterministic.** No model in the verdict: same input, same verdict, and
+  the check does not grow as your baseline grows.
+- **Net-new only.** Existing debt is grandfathered and never blocks. Only
+  regressions introduced by this change do.
+- **Honest about blind spots.** Fails open on infrastructure (a missing tool
+  is reported as skipped, never faked into a verdict) and fails closed on
+  findings.
+- **Built on scanners you already trust.** gitleaks, Semgrep, OSV, each
+  ecosystem's native linter and audit tool, plus ingest for Snyk, CodeQL, or
+  any SARIF. dxkit makes their findings enforceable at stop time.
+- **Runs where agents run.** Claude Code Stop hook, pre-push, CI. Seconds per
+  stop, not minutes, even on large repos.
 
 ---
 
@@ -191,16 +211,18 @@ npx vyuh-dxkit loop ledger summarize  # afterwards: blocked vs allowed, repaired
 When the agent tries to stop, dxkit runs the net-new gate against the baseline.
 Existing findings are grandfathered; only findings this change introduced block.
 
+> The agent-facing pieces (the skills like `dxkit-onboard` and `dxkit-fix`, the Stop-gate, and "ask Claude to fix dxkit" guidance) activate when your agent session is **rooted in the repo**, meaning it started from the repo directory. Open your agent there, not in a parent folder.
+
 > **pnpm with a release-age policy?** If your `pnpm-workspace.yaml` sets
 > `minimumReleaseAge`, a just-published dxkit is blocked until it ages in. Add
-> the package to `minimumReleaseAgeExclude` first so the install resolves — this
+> the package to `minimumReleaseAgeExclude` first so the install resolves; this
 > is your supply-chain policy, so dxkit does not edit that file for you.
 >
 > **Upgrading** on such a repo: keep the exclusion in place across the bump. If
 > you swap a pinned old version for the new one _before_ installing, the stale
 > lockfile entry violates the policy mid-install and can leave `node_modules` on
 > the new version while your manifests still reference the old one (a broken
-> bin). Exclude the package (not a version), run the upgrade, and you're done —
+> bin). Exclude the package (not a version), run the upgrade, and you're done,
 > no version juggling.
 
 ## Run a local fixture gate
