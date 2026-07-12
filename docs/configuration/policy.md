@@ -355,6 +355,51 @@ suppressed section. Under an autonomous loop the `security-only` preset
 demotes schema blocks to warnings; the preset never activates a gate the
 repo did not configure.
 
+## `duplication` — the structural-duplicate (seam) gate (opt-in)
+
+Flag a net-new function that structurally re-implements another — same helper
+set, same name shape, read from the **call graph** (so it survives rename and
+reformat, where the token-level [duplicate signal](../commands/quality.md) does
+not). This catches the copy-paste-instead-of-parameterize pattern (a CLI variant
+pasted from a handler, a `findByX` cloned into a `findByIdX`).
+
+```jsonc
+{
+  "duplication": {
+    "mode": "warn", // off (default) | warn | block
+    "minScore": 0.5, // structural similarity to report (0..1, default 0.5)
+  },
+}
+```
+
+- `off` (default) — the gate does not run. It builds the code graph (the
+  heaviest thing dxkit does), so — unlike the cheap flow gate — it is strictly
+  opt-in; a repo that never configured it never pays a graph build.
+- `warn` — a net-new structural duplicate surfaces as a warning.
+- `block` — a lone duplicate still only warns (the precision floor); `block`
+  authorizes seam **convergence** to escalate a duplicate that is _also_ a
+  reliably-dead surface. (Convergence ships in a follow-up; today `block`
+  behaves like `warn`.)
+
+Like the flow and schema gates, it is a **two-ref relation**: a duplicate
+present at the base ref is grandfathered, and only a pair the change introduces
+is reported — so enabling it, or upgrading dxkit, never floods the gate with a
+repo's pre-existing duplication. It is additive and fail-open: it runs only when
+the diff touches a source file, scopes the scan to pairs touching a changed
+file, and any infrastructure failure (graphify absent, an unparseable tree)
+means "did not gate", never a failed build. A sanctioned by-design parallel is
+accepted with `allowlist add --fingerprint=<id> --kind=code-reimplementation
+--category=false-positive`, which stays visible in the PR comment's suppressed
+section.
+
+Highest signal on backend / CLI / library code (a dense internal call graph); on
+a framework-mediated frontend the graph is thin, so it finds little rather than
+false-flagging. It catches structural copy-paste, not semantic re-derivation
+(two functions that reach the same end through _different_ helpers share no
+callee overlap — out of scope by construction). Under an autonomous loop the
+`security-only` preset keeps duplicates at warn; the preset never activates a
+gate the repo did not configure.
+
 ## `loop.preset` — loop-scoped posture (not read by CI)
 
 A repo running the [loop pack](../commands/loop.md) carries a separate

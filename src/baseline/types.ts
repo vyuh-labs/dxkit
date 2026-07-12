@@ -125,6 +125,7 @@ export type IdentityInput =
   | StaleAllowIdentityInput
   | FlowBindingIdentityInput
   | ModelSchemaDriftIdentityInput
+  | CodeReimplementationIdentityInput
   | CustomCheckIdentityInput;
 
 /**
@@ -418,6 +419,38 @@ export interface FlowBindingIdentityInput {
 }
 
 /**
+ * One anchor of a structural-duplicate pair — a function/method dxkit's own
+ * graph pass identified. All three fields are dxkit-derived (Rule 9): the
+ * repo-relative `file`, the `symbol` label, and the `line` (bucketed into the
+ * shared 3-line window at hash time so a small reformat doesn't churn identity).
+ * No tool-captured text.
+ */
+export interface DuplicateAnchor {
+  readonly file: string;
+  readonly symbol: string;
+  readonly line: number;
+}
+
+/**
+ * A structural code-reimplementation — two functions the call graph shows to be
+ * the same routine written twice (same helper set, same name tokens). A SIBLING
+ * of the token-level `duplication` kind (jscpd), not a replacement: this signal
+ * is graph-derived and survives rename/reformat, where jscpd's line-block signal
+ * does not. Minted by the two-ref seam gate (a pair present at the base ref is
+ * grandfathered), never by a full-scan baseline producer — so an upgrade adds no
+ * backlog to flood the gate (`DEFERRED_KINDS`, the flow-binding precedent).
+ *
+ * Identity hashes the two anchors sorted into a canonical order (so the pair is
+ * symmetric — `(A,B)` and `(B,A)` share one identity) — all inputs dxkit-derived
+ * and tool-/environment-independent.
+ */
+export interface CodeReimplementationIdentityInput {
+  readonly kind: 'code-reimplementation';
+  /** The two duplicate function anchors. Sorted canonically before hashing. */
+  readonly anchors: readonly [DuplicateAnchor, DuplicateAnchor];
+}
+
+/**
  * A schema-drift finding — one detected change to a declared data model, the
  * unit the model-schema drift gate mints and the allowlist waives. Identity
  * is exactly the triple `(model, field, changeClass)` — LOCATION-FREE by
@@ -600,6 +633,17 @@ export type BaselineEntry =
     }
   | {
       id: FindingId;
+      kind: 'code-reimplementation';
+      /** The two duplicate function anchors — all identity inputs, stored so
+       * identity is recomputable from the entry alone (the migration contract).
+       * The blended similarity score is display metadata, never hashed. */
+      anchors: readonly [DuplicateAnchor, DuplicateAnchor];
+      /** Blended structural-similarity score in [0,1] at mint time — display
+       * metadata only (identity is the anchor pair). Lets renderers rank. */
+      score: number;
+    }
+  | {
+      id: FindingId;
       kind: 'custom-check';
       /** The check's stable label — the durable identity key (Rule 9). */
       check: string;
@@ -671,6 +715,7 @@ export interface SanitizedBaselineEntry {
     | 'stale-allow'
     | 'flow-binding'
     | 'model-schema-drift'
+    | 'code-reimplementation'
     | 'custom-check';
   readonly sanitized: true;
 }

@@ -70,6 +70,9 @@ import { evaluateFlowGateForGuardrail } from './flow-gate-check';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
+import { evaluateDupGateForGuardrail } from './dup-gate-check';
+import type { DupGateOutcome } from './dup-gate-check';
+import type { DuplicationGateMode } from '../analyzers/duplication/config';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import { isSanitized } from './sanitize';
@@ -183,6 +186,13 @@ export interface RunGuardrailCheckOptions {
    * repo did not configure.
    */
   readonly schemaMode?: SchemaGateMode;
+  /**
+   * Loop-seam override for the structural-duplicate (seam) gate's posture,
+   * mirroring `schemaMode`: the seam gate defaults to OFF (opt-in — it builds
+   * the code graph), so the override softens/hardens an enabled gate but never
+   * activates one the repo did not configure.
+   */
+  readonly duplicationMode?: DuplicationGateMode;
 }
 
 /**
@@ -313,6 +323,12 @@ export interface GuardrailCheckResult {
    *  Opt-in (`.dxkit/policy.json:schema.mode`, default off); `undefined`
    *  when off or when no base commit is resolvable. */
   readonly schemaDriftGate?: SchemaDriftGateOutcome;
+  /** The structural-duplicate (seam) gate pass — additive + fail-open like the
+   *  flow gate, diffing the duplicate-pair set across the same base↔HEAD pair.
+   *  Opt-in (`.dxkit/policy.json:duplication.mode`, default off — it builds the
+   *  code graph); `undefined` when off or when no base commit is resolvable. A
+   *  lone duplicate only ever warns; convergence (downstream) can escalate. */
+  readonly dupGate?: DupGateOutcome;
   /** Set when the CURRENT dependency-vulnerability scan could not run — the
    *  scanner was absent / timed out / failed — AND the scan was actually
    *  REQUESTED this run (not incrementally skipped because no manifest changed,
@@ -441,6 +457,12 @@ const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSever
     // additive/info classes never reach the guardrail as findings, so this
     // default speaks only for the breaking ones.
     'model-schema-drift': 'high',
+    // A structural code-reimplementation (two functions the graph shows to be
+    // the same routine written twice). Low severity — it is a maintainability /
+    // slop signal surfaced warn-tier, not a correctness or security defect; its
+    // block confidence comes only from seam CONVERGENCE (dup ∩ reliably-dead),
+    // never from this default alone.
+    'code-reimplementation': 'low',
     // A custom-check / lint failure. Severity is a neutral default — a custom
     // check's block intent is user/pack-declared (`entry.blocking`), NOT
     // severity-derived, so severity only feeds the confidence-threshold logic
@@ -825,6 +847,18 @@ export async function runGuardrailCheck(
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
   });
 
+  // The structural-duplicate (seam) gate — same additive, fail-open shape,
+  // sharing the base-commit resolution, allowlist, and clock. Opt-in: with no
+  // `duplication` policy block it skips as 'off' at zero cost (no graph build).
+  const dupGate = await evaluateDupGateForGuardrail({
+    cwd,
+    ...(flowBaseRef ? { baseRef: flowBaseRef } : {}),
+    allowlist,
+    now,
+    ...(options.duplicationMode !== undefined ? { modeOverride: options.duplicationMode } : {}),
+    ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+  });
+
   const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
   const baseWarns = options.changedOnly ? filteredWarns : warns;
 
@@ -837,8 +871,8 @@ export async function runGuardrailCheck(
     pairs: filteredPairs,
     envelopeDrift,
     policy,
-    blocks: baseBlocks || flowGate.blocks || schemaDriftGate.blocks,
-    warns: baseWarns || flowGate.warns || schemaDriftGate.warns,
+    blocks: baseBlocks || flowGate.blocks || schemaDriftGate.blocks || dupGate.blocks,
+    warns: baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns,
     allowlistDelta,
     refExcludedKinds,
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),
@@ -848,6 +882,12 @@ export async function runGuardrailCheck(
     ...(schemaDriftGate.ran ||
     (schemaDriftGate.skipped !== 'off' && schemaDriftGate.skipped !== 'no-base-ref')
       ? { schemaDriftGate }
+      : {}),
+    // Attach when the seam gate is configured on (ran, or skipped for a reason
+    // worth disclosing); an off/no-base-ref skip stays out so unconfigured
+    // repos see nothing new.
+    ...(dupGate.ran || (dupGate.skipped !== 'off' && dupGate.skipped !== 'no-base-ref')
+      ? { dupGate }
       : {}),
     // Fail-loud: a dep scan that was REQUESTED but could not run must not read as
     // a clean "no net-new dep vulns" — surface it. Incrementally-skipped scans

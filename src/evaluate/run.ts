@@ -162,6 +162,7 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
           policy: applied.policy,
           flowMode: applied.flowMode,
           schemaMode: applied.schemaMode,
+          duplicationMode: applied.duplicationMode,
           scope,
           incremental,
           untrusted,

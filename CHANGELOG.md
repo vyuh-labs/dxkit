@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structural-duplicate (seam) gate — catches the copy-paste-instead-of-parameterize
+  pattern.** A new opt-in guardrail layer flags a net-new function that
+  structurally re-implements another: same helper set, same name shape, read from
+  the call graph — so it survives rename and reformat, where the existing
+  token-level duplicate signal (jscpd) does not. It is a two-ref relation like the
+  flow and schema gates: a duplicate present at the base ref is grandfathered, and
+  only a pair the change introduces is reported, so an upgrade never floods the
+  gate with pre-existing debt. A lone duplicate is always warn-tier (never blocks
+  on its own). Enable with `.dxkit/policy.json:duplication.mode` (`warn` /
+  `block`); it defaults to `off` because it builds the code graph. Findings carry
+  a durable `code-reimplementation` fingerprint and an allowlist escape hatch
+  (`--kind=code-reimplementation --category=false-positive`) for a sanctioned
+  by-design parallel. The finding is **directional** — it names which side the
+  change introduced (`added: <new> ≈ existing: <twin>`, and `"changed": true` on
+  the new anchor in JSON), so an agent knows exactly which copy to consolidate;
+  the `dxkit-action` skill carries a fix recipe for it. Highest signal on
+  backend / CLI / library code; on a framework-mediated frontend the call graph
+  is thin, so it finds little rather than false-flagging.
+
 ### Fixed
+
+- **Indexing an in-memory producer graph no longer throws.** The graph indexer
+  now tolerates a raw producer graph that carries no flow-overlay `endpoints`
+  layer, so a zero-write consumer (the seam gate) can query the graph in memory
+  without a disk round-trip.
 
 - **Inline `dxkit-allow:` annotations now suppress the finding they sit on.**
   An inline annotation was inserted into the source but never waived anything —

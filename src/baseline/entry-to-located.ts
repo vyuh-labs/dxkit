@@ -157,6 +157,27 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // pure rename; the `${method} ${path}` join key is the rule discriminator
       // so two distinct bindings in one renamed file don't cross-pair.
       return { id: entry.id, file: entry.file, rule: `${entry.method} ${entry.path}` };
+    case 'code-reimplementation': {
+      // Line-window-bucketed identity over a symmetric anchor pair. The gate
+      // mints and matches these by fingerprint itself (two-ref relation), so
+      // this projection serves show/report tooling: locate at the canonical
+      // first anchor (by file, then line, then symbol — the same order the
+      // fingerprint sorts) with the symbol as the rule discriminator.
+      const [first] = [...entry.anchors].sort((x, y) =>
+        x.file !== y.file
+          ? x.file < y.file
+            ? -1
+            : 1
+          : x.line !== y.line
+            ? x.line - y.line
+            : x.symbol < y.symbol
+              ? -1
+              : x.symbol > y.symbol
+                ? 1
+                : 0,
+      );
+      return { id: entry.id, file: first.file, line: first.line, rule: `dup:${first.symbol}` };
+    }
     case 'model-schema-drift':
       // LOCATION-free identity ((model, field, changeClass)) → whole-file
       // display locator; the identity triple is the rule discriminator. The

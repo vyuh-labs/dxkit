@@ -919,6 +919,83 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     },
     expected: 'changed',
   },
+
+  // ─── code-reimplementation (4) ────────────────────────────────────────
+  {
+    name: 'code-reimplementation/clean — same anchor pair',
+    prior: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    current: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'code-reimplementation/symmetric — (A,B) equals (B,A)',
+    // The two anchors are order-independent: reporting the pair reversed must
+    // resolve to the same identity.
+    prior: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+      ],
+    },
+    current: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'code-reimplementation/small line drift absorbed by the window',
+    // A one-line reformat inside the shared 3-line window keeps identity stable.
+    prior: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    current: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 13 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 6 },
+      ],
+    },
+    expected: 'persisted',
+  },
+  {
+    name: 'code-reimplementation/different partner symbol → identity changes',
+    prior: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/divisions/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    current: {
+      kind: 'code-reimplementation',
+      anchors: [
+        { file: 'src/api/cli/divisions/route.ts', symbol: 'GET', line: 12 },
+        { file: 'src/api/leagues/route.ts', symbol: 'GET', line: 8 },
+      ],
+    },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -1138,6 +1215,7 @@ const EXPECTED_KINDS = [
   'stale-allow',
   'flow-binding',
   'model-schema-drift',
+  'code-reimplementation',
   'custom-check',
 ] as const;
 

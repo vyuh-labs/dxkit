@@ -59,6 +59,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'stale-allow',
   'flow-binding',
   'model-schema-drift',
+  'code-reimplementation',
   'custom-check',
 ];
 

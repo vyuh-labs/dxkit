@@ -148,6 +148,11 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // false-positive covers a misread declaration; deferred parks a decision
   'model-schema-drift': ['false-positive', 'accepted-risk', 'deferred'],
 
+  // Structural duplicate: false-positive (a sanctioned by-design parallel — two
+  // per-pack gathers that legitimately share a call shape); otherwise
+  // accepted-risk (we know it's a duplicate and accept it) or deferred
+  'code-reimplementation': ['false-positive', 'accepted-risk', 'deferred'],
+
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale
   // annotation" — allowlisting the warning that an annotation is

@@ -1667,3 +1667,179 @@ function suggestionsFor(graph: Graph, kw: string): Array<{ key: string; hits: nu
   suggestions.sort((a, b) => b.hits - a.hits || a.key.localeCompare(b.key));
   return suggestions.slice(0, 5);
 }
+
+// ─── Structural duplicate detection (tier-3 code-reimplementation) ────────────
+//
+// A GRAPH-level duplicate signal, distinct from jscpd's token-level
+// `duplication` (which is line-block copy-paste and churns on rename/reformat).
+// This reads the call graph: two functions that call the SAME set of helpers
+// and carry the same name tokens are almost certainly the same routine written
+// twice — the textbook agent copy-paste ("needed a variant, pasted the handler
+// instead of parameterizing"). It survives rename and reformat because its
+// signal is who-you-call, not how-your-lines-read.
+//
+// The scoring is the validated Exp-B formula (see the anti-slop proof): a
+// callee-set Jaccard (the reliable structural spine) blended with a name-token
+// Jaccard, with caller-set overlap as a tiebreak. `MIN_CALLEES` is a
+// structural-signal floor — a function that calls almost nothing has no
+// fingerprint and would match everything spuriously. Only pairs that share at
+// least one callee are ever scored (an inverted index over shared callees keeps
+// this near-linear, not O(n²)).
+//
+// Claim boundary (honest): this needs a dense internal call graph (backends /
+// CLIs / libraries, ≥~1 call/fn). On framework-mediated frontends the signal is
+// thin — low recall, NOT false positives. It catches structural copy-paste, not
+// semantic re-derivation (two functions that call DIFFERENT helpers to the same
+// end have near-zero callee overlap — out of scope by construction).
+
+/** Default blend weight on callee-set overlap (the reliable structural spine). */
+const DUP_W_CALLEE = 0.6;
+/** Default blend weight on name-token overlap. */
+const DUP_W_NAME = 0.4;
+/** A function calling fewer than this many distinct helpers has no structural
+ *  fingerprint — excluded so it can't spuriously match everything. */
+export const DUP_MIN_CALLEES = 3;
+/** Default report threshold: pairs scoring below this are not surfaced. */
+export const DUP_DEFAULT_MIN_SCORE = 0.5;
+
+/** One candidate duplicate pair: two function/method nodes that appear to be
+ *  re-implementations of each other, with the component similarity scores that
+ *  produced the verdict. `score = DUP_W_CALLEE·calleeJaccard + DUP_W_NAME·nameJaccard`. */
+export interface DuplicatePair {
+  readonly a: GraphNode;
+  readonly b: GraphNode;
+  readonly score: number;
+  readonly calleeJaccard: number;
+  readonly nameJaccard: number;
+  readonly callerJaccard: number;
+}
+
+export interface DuplicatePairsOpts {
+  /** Structural-signal floor (default `DUP_MIN_CALLEES`). */
+  readonly minCallees?: number;
+  /** Report threshold on the blended score (default `DUP_DEFAULT_MIN_SCORE`). */
+  readonly minScore?: number;
+  /** Exclude test/spec files from BOTH sides (default true). Test scaffolding is
+   *  legitimately repetitive; including it is the only false-positive class the
+   *  proof observed on human-reviewed code. Uses the pack-declared test-file
+   *  patterns (`isTestSourceFile`), never a hardcoded regex (Rule 6). */
+  readonly excludeTests?: boolean;
+  /** When present, a pair is only emitted if AT LEAST ONE side's source file is
+   *  in this set. This is the gate's diff-scoping ("what did THIS change
+   *  duplicate?") pushed into the query so large graphs never score the full
+   *  O(pairs) cross-product — only pairs touching a changed file. */
+  readonly focusFiles?: ReadonlySet<string>;
+}
+
+/** Split a symbol label into lowercased identifier tokens (camelCase / snake /
+ *  dotted), dropping single-char noise. `getDivisions()` → {get, divisions}. */
+function tokenizeLabel(label: string): Set<string> {
+  const base = label.replace(/\(.*$/, '');
+  return new Set(
+    base
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[_\-.]/g, ' ')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 1),
+  );
+}
+
+/** Jaccard overlap of two sets — |A∩B| / |A∪B|. Zero when both are empty. */
+function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  if (a.size === 0 && b.size === 0) return 0;
+  let inter = 0;
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  for (const x of small) if (big.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+interface DupFeature {
+  readonly node: GraphNode;
+  readonly callees: Set<string>;
+  readonly callers: Set<string>;
+  readonly tokens: Set<string>;
+}
+
+/** Build the per-function feature vectors (callee set, caller set, name tokens)
+ *  for every function/method with enough callees to carry a signal. */
+function buildDupFeatures(
+  graph: Graph,
+  minCallees: number,
+  excludeTests: boolean,
+): Map<string, DupFeature> {
+  const feats = new Map<string, DupFeature>();
+  for (const node of graph.nodes) {
+    if (node.kind !== 'function' && node.kind !== 'method') continue;
+    if (excludeTests && isTestSourceFile(node.sourceFile)) continue;
+    const callees = new Set<string>();
+    for (const e of graph.edgesFromNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') callees.add(e.to);
+    }
+    if (callees.size < minCallees) continue;
+    const callers = new Set<string>();
+    for (const e of graph.edgesToNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') callers.add(e.from);
+    }
+    feats.set(node.id, { node, callees, callers, tokens: tokenizeLabel(node.label) });
+  }
+  return feats;
+}
+
+/**
+ * Rank candidate structural-duplicate pairs across the call graph. Pure,
+ * deterministic, near-linear (inverted index over shared callees). Returns
+ * pairs sorted by descending score, then caller-overlap tiebreak.
+ *
+ * Traversal lives ONLY here (Rule 12); the duplication analyzer + the two-ref
+ * gate consume this and never re-walk edges.
+ */
+export function duplicatePairsQuery(graph: Graph, opts: DuplicatePairsOpts = {}): DuplicatePair[] {
+  const minCallees = opts.minCallees ?? DUP_MIN_CALLEES;
+  const minScore = opts.minScore ?? DUP_DEFAULT_MIN_SCORE;
+  const excludeTests = opts.excludeTests ?? true;
+  const focus = opts.focusFiles;
+  const feats = buildDupFeatures(graph, minCallees, excludeTests);
+
+  // Inverted index calleeId → [fnId,…] so we only ever score pairs that share
+  // at least one callee — the rest have Jaccard 0 and can't clear the floor.
+  const inv = new Map<string, string[]>();
+  for (const [id, f] of feats) {
+    for (const c of f.callees) {
+      const bucket = inv.get(c);
+      if (bucket) bucket.push(id);
+      else inv.set(c, [id]);
+    }
+  }
+
+  const seen = new Set<string>();
+  const pairs: DuplicatePair[] = [];
+  for (const ids of inv.values()) {
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [x, y] = ids[i] < ids[j] ? [ids[i], ids[j]] : [ids[j], ids[i]];
+        const key = `${x}\0${y}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const fa = feats.get(x)!;
+        const fb = feats.get(y)!;
+        // Diff-scope: at least one side must touch a changed file, when scoped.
+        if (focus && !focus.has(fa.node.sourceFile) && !focus.has(fb.node.sourceFile)) continue;
+        const calleeJaccard = jaccard(fa.callees, fb.callees);
+        const nameJaccard = jaccard(fa.tokens, fb.tokens);
+        const score = DUP_W_CALLEE * calleeJaccard + DUP_W_NAME * nameJaccard;
+        if (score < minScore) continue;
+        pairs.push({
+          a: fa.node,
+          b: fb.node,
+          score,
+          calleeJaccard,
+          nameJaccard,
+          callerJaccard: jaccard(fa.callers, fb.callers),
+        });
+      }
+    }
+  }
+  pairs.sort((p, q) => q.score - p.score || q.callerJaccard - p.callerJaccard);
+  return pairs;
+}
