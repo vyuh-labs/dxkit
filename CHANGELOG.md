@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **C# lint is severity-tiered.** The quality lint capability now reads
+  Roslyn analyzer diagnostics from `dotnet build` (the same canonical
+  warning stream the lint gate parses): security analyzer families
+  (CA21xx/CA3xxx/CA5xxx) rank high, other CA rules and CS compiler warnings
+  medium, IDE style low — parity with ruff, ESLint, golangci-lint, and
+  clippy. Multi-targeted projects deduplicate per-TFM re-emissions, and the
+  build runs non-incrementally so an unchanged tree cannot zero its own
+  counts. Repos the SDK cannot build (legacy .NET Framework) keep the
+  previous formatter-based path. C# Code Quality scores may shift with the
+  richer signal.
+
 ### Fixed
 
 - **Large repos no longer lose flow/schema extraction partway through.**

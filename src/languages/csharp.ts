@@ -41,7 +41,7 @@ import type {
   SeverityCounts,
   TestFrameworkResult,
 } from './capabilities/types';
-import type { LanguageSupport } from './types';
+import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
 
 function dirHasMatching(dir: string, regex: RegExp): boolean {
@@ -950,18 +950,76 @@ const csharpDepVulnsProvider: DepVulnsProvider = {
 };
 
 /**
+ * Severity tier for a Roslyn/MSBuild diagnostic code. The security-relevant
+ * analyzer families rank high — CA21xx (the security category: SQL-injection
+ * review and friends), CA3xxx (injection), CA5xxx (crypto). Other CA
+ * design/usage rules, CS compiler warnings, and SYSLIB obsoletions are
+ * medium; IDE style rules and formatter codes (WHITESPACE, FINALNEWLINE)
+ * are low. Non-string input short-circuits to 'low' (the mapLintSeverity
+ * contract — real tool output occasionally omits the code).
+ */
+export function mapRoslynSeverity(code: string | null | undefined): LintSeverity {
+  if (typeof code !== 'string') return 'low';
+  const c = code.toUpperCase();
+  if (/^CA(21|3|5)\d+/.test(c)) return 'high';
+  if (/^(CA|CS|SYSLIB)\d+/.test(c)) return 'medium';
+  return 'low';
+}
+
+/**
+ * Tiered counts from a `dotnet build` output stream — one diagnostic per
+ * canonical warning line (the same shape the lint gate parses), deduplicated
+ * by (file, line, rule) because a multi-targeted project re-emits every
+ * diagnostic once per TFM. Exported for the parse-contract tests.
+ */
+export function countRoslynWarnings(raw: string): LintResult['counts'] {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  const re = new RegExp(CSHARP_MSBUILD_WARNING_PARSE);
+  const seen = new Set<string>();
+  for (const lineText of raw.split('\n')) {
+    const m = re.exec(lineText.trim());
+    if (!m?.groups) continue;
+    const key = `${m.groups.file}(${m.groups.line}):${m.groups.rule}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts[mapRoslynSeverity(m.groups.rule)]++;
+  }
+  return counts;
+}
+
+/**
  * Single source of truth for the csharp pack's lint gathering.
  * Consumed by `csharpLintProvider` (capability dispatcher).
  *
- * dotnet-format is a formatter, not a tiered linter — it emits binary
- * pass/fail per file. Violations are formatting issues (indentation,
- * spacing), not correctness. This helper reports them at `low` tier so
- * they don't inflate the Quality/Slop score.
+ * The real C# linter is the compiler: Roslyn analyzers ride `dotnet build`,
+ * emitting `File.cs(l,c): warning CAxxxx: …` lines — the same canonical
+ * stream the lint gate parses — which tier through `mapRoslynSeverity`.
+ * `--no-incremental` is load-bearing: an incremental build skips up-to-date
+ * projects and RE-EMITS NOTHING, which would zero the counts on every
+ * second scan of an unchanged tree.
+ *
+ * A repo `dotnet build` cannot compile (legacy .NET Framework projects,
+ * broken trees — any `error` diagnostic means the warning stream is
+ * partial and untrustworthy) falls back to the formatter path: dotnet-format
+ * violations are formatting issues, not correctness, reported at `low` tier
+ * so they don't inflate the Quality/Slop score.
  */
 function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
   const dotnet = findTool(TOOL_DEFS['dotnet-format'], cwd);
   if (!dotnet.available) {
     return { kind: 'unavailable', reason: 'not installed' };
+  }
+
+  const buildRaw = run('dotnet build --no-incremental --nologo -clp:NoSummary 2>&1', cwd, 180000);
+  if (buildRaw !== '' && !/\): error \w+:|error (MSB|NETSDK)\d+/.test(buildRaw)) {
+    return {
+      kind: 'success',
+      envelope: {
+        schemaVersion: 1,
+        tool: 'roslyn-analyzers',
+        counts: countRoslynWarnings(buildRaw),
+      },
+    };
   }
 
   const exitCode = runExitCode('dotnet format --verify-no-changes', cwd, 120000);
@@ -1804,16 +1862,10 @@ export const csharp: LanguageSupport = {
     licenses: csharpLicensesProvider,
   },
 
-  // mapLintSeverity intentionally omitted: dotnet-format is a formatter,
-  // not a tiered linter. It emits binary pass/fail per file and doesn't
-  // expose per-rule codes that could be categorized into
-  // critical/high/medium/low. Matching the parity of ruff (Python),
-  // ESLint (TypeScript), golangci-lint (Go), and clippy (Rust) would
-  // require integrating a different tool — parsing `dotnet build
-  // --verbosity quiet` output for CS*/CA*/IDE* diagnostic codes and
-  // mapping each to a tier. That's deferred until a C# test project
-  // is available to validate the integration; see architecture-redesign
-  // plan for the capability-based approach this will live in.
+  // Roslyn diagnostic codes tier through the same map the lint capability
+  // uses — CS*/CA*/IDE* codes from `dotnet build`, security analyzer
+  // families ranked high. Parity with ruff/ESLint/golangci-lint/clippy.
+  mapLintSeverity: mapRoslynSeverity,
 
   permissions: [
     'Bash(dotnet test:*)',
