@@ -194,6 +194,9 @@ export function normalizePath(
   s = s.replace(/\{[A-Za-z0-9_]+:path\}/g, CATCHALL); // FastAPI/Starlette {file_path:path}
   s = s.replace(/<path:[A-Za-z0-9_]+>/g, CATCHALL); // Django/Flask <path:rest> (rest-of-path)
   s = s.replace(/\{[A-Za-z0-9_]+\.\.\.\}/g, CATCHALL); // Go 1.22 {rest...} (rest-of-path)
+  s = s.replace(/\{[A-Za-z0-9_]+:\.\*\}/g, CATCHALL); // actix {tail:.*} (regex rest-of-path)
+  s = s.replace(/\{[A-Za-z0-9_]+\}\*/g, CATCHALL); // actix {key}* (tail match)
+  s = s.replace(/<[A-Za-z0-9_]+\.\.>/g, CATCHALL); // Rocket <path..> (segments tail)
   s = s.replace(/\/\{\$\}$/, ''); // Go 1.22 {$} — "match exactly here", not a segment
   s = s.replace(/\[\[?\.\.\.[^\]]+\]\]?/g, CATCHALL); // Next.js [...slug] / [[...slug]]
   s = s.replace(/\*\*/g, CATCHALL); // Spring /**
