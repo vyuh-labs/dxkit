@@ -12,9 +12,11 @@ import {
   recommendFlow,
   recommendSchema,
   recommendChecks,
+  recommendDuplication,
   planBaselineMode,
   planFlowMode,
   planSchemaMode,
+  planDuplicationMode,
   planLintGate,
   planLoopPreset,
   recommendExtensions,
@@ -204,7 +206,13 @@ export const COMMANDS = [
     summary: 'Code quality + slop detection',
     typicalRuntime: '1-8 min (jscpd is the long-pole)',
     docsBlurb:
-      'Duplication, complexity, and AI-slop signals rolled into the Code Quality dimension.',
+      'Duplication, complexity, and AI-slop signals rolled into the Code Quality dimension. ' +
+      'The opt-in structural-duplicate (seam) gate (`duplication.mode`) additionally flags a ' +
+      'net-new function that copy-pastes another — read from the call graph, so it survives ' +
+      'rename/reformat where token duplication does not.',
+    skill: 'dxkit-action',
+    whenToRecommend: recommendDuplication,
+    planConfig: planDuplicationMode,
   },
   {
     id: 'dev-report',
@@ -396,9 +404,11 @@ export const COMMANDS = [
     typicalRuntime: '5-30 sec',
     docsBlurb:
       'Map client calls to served endpoints and gate changes that break a UI→API contract across ' +
-      'repos. `flow publish --land` refreshes + lands the committed contract snapshots (the ' +
-      'on-merge refresh workflow runs it; `pr` opens one standing reviewable PR, `push` commits ' +
-      'directly on unprotected trunks).',
+      'repos. `flow` also surfaces the tiered dead-surface inventory — served routes with no ' +
+      'consumer, classified removable / likely / expected, plus the seam-convergence callout (a ' +
+      'route that is BOTH unconsumed AND a structural duplicate). `flow publish --land` refreshes ' +
+      '+ lands the committed contract snapshots (the on-merge refresh workflow runs it; `pr` opens ' +
+      'one standing reviewable PR, `push` commits directly on unprotected trunks).',
     skill: 'dxkit-flow',
     whenToRecommend: recommendFlow,
     planConfig: planFlowMode,
