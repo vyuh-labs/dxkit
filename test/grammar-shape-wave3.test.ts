@@ -54,7 +54,12 @@ describe('c_sharp grammar shape (hand row: callee-field calls, fused attributes)
       name: 'GetFromJsonAsync',
       receiver: 'client',
     });
-    const bare = await firstNode(src, 'c_sharp', 'invocation_expression', (n) => n.text === 'doIt()');
+    const bare = await firstNode(
+      src,
+      'c_sharp',
+      'invocation_expression',
+      (n) => n.text === 'doIt()',
+    );
     expect(csharp.resolveCall(bare!)).toEqual({ kind: 'bare', name: 'doIt', receiver: '' });
   });
 
@@ -81,7 +86,9 @@ describe('c_sharp grammar shape (hand row: callee-field calls, fused attributes)
       [HttpPost] void Create() {}
       [Microsoft.AspNetCore.Mvc.Route("all")] void All() {}
     }`;
-    const called = await firstNode(src, 'c_sharp', 'attribute', (n) => n.text.startsWith('HttpGet'));
+    const called = await firstNode(src, 'c_sharp', 'attribute', (n) =>
+      n.text.startsWith('HttpGet'),
+    );
     expect(csharp.decoratorCall(called!)).toBe(called);
     expect(csharp.resolveCall(called!)).toEqual({ kind: 'bare', name: 'HttpGet', receiver: '' });
     expect(csharp.stringText(csharp.firstArg(called!)!)).toBe('"{id}"');
@@ -101,7 +108,9 @@ describe('c_sharp grammar shape (hand row: callee-field calls, fused attributes)
     const route = await firstNode(src, 'c_sharp', 'attribute', (n) => n.text.startsWith('Route'));
     expect(csharp.stringText(csharp.firstArg(route!)!)).toBe('"all"');
     expect(csharp.optionValue(route!, 'Order')?.text).toBe('2');
-    const httpGet = await firstNode(src, 'c_sharp', 'attribute', (n) => n.text.startsWith('HttpGet'));
+    const httpGet = await firstNode(src, 'c_sharp', 'attribute', (n) =>
+      n.text.startsWith('HttpGet'),
+    );
     expect(csharp.firstArg(httpGet!)).toBeNull(); // Name = "n" is named, not positional
     expect(csharp.optionValue(httpGet!, 'Name')?.text).toBe('"n"');
   });
@@ -120,7 +129,9 @@ describe('c_sharp grammar shape (hand row: callee-field calls, fused attributes)
 
   it('enclosingTypeName resolves from an attribute node (the [controller] anchor)', async () => {
     const src = `[Route("api/[controller]")] public class OrdersController : ControllerBase { [HttpGet] void All() {} }`;
-    const classAttr = await firstNode(src, 'c_sharp', 'attribute', (n) => n.text.startsWith('Route'));
+    const classAttr = await firstNode(src, 'c_sharp', 'attribute', (n) =>
+      n.text.startsWith('Route'),
+    );
     expect(csharp.enclosingTypeName!(classAttr!)).toBe('OrdersController');
     const methodAttr = await firstNode(src, 'c_sharp', 'attribute', (n) => n.text === 'HttpGet');
     expect(csharp.enclosingTypeName!(methodAttr!)).toBe('OrdersController');

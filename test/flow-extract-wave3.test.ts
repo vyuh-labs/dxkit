@@ -207,11 +207,7 @@ Rails.application.routes.draw do
   match '/everything', to: 'l#y', via: :all
 end`;
     const { routes } = await extract(src, 'ruby', RUBY_HF);
-    expect(routes.map(key).sort()).toEqual([
-      'ANY /everything',
-      'GET /legacy',
-      'POST /legacy',
-    ]);
+    expect(routes.map(key).sort()).toEqual(['ANY /everything', 'GET /legacy', 'POST /legacy']);
   });
 
   it('resources expands to the RESTful set, filtered by only:/except:', async () => {
