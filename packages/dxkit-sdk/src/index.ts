@@ -7,7 +7,8 @@
  * code path), so an extension and dxkit itself always agree on the shapes.
  */
 export { SDK_MAJOR } from './version';
-export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from './descriptors';
+export type { FileRouteSupport, HttpFlowSupport } from './descriptors';
+export type { ModelSchemaSupport } from './model-descriptors';
 export type { GrammarModelShape, GrammarShape, ResolvedCall } from './grammar';
 export {
   ANY_METHOD,
