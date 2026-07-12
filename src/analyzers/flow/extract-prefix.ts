@@ -132,6 +132,14 @@ export function resolveRouteTokens(
     if (spec.lowercase === true) sub = sub.toLowerCase();
     s = s.split(spec.token).join(sub);
   }
+  // A bracket segment REMAINING after substitution is an UNDECLARED template
+  // token — a pack that declares routeTemplateTokens has opted into a
+  // framework whose route brackets are always replacement tokens (ASP.NET's
+  // [area], future tokens), never route params. Dropping the path keeps the
+  // unknown token in the safe missing-coverage class; falling through would
+  // let the normalizer's bracket rule mint an over-matching {var} — the
+  // wrong-key class this mechanism exists to prevent.
+  if (/\[[^\]]+\]/.test(s)) return null;
   return s;
 }
 
