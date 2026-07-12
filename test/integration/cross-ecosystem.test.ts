@@ -136,7 +136,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     name: 'C# (single)',
     dir: 'csharp',
     secret: { file: 'Secrets.cs' },
-    lint: { file: 'BadLint.cs', expectedTool: 'dotnet-format', requires: 'dotnet' },
+    lint: { file: 'BadLint.cs', expectedTool: 'roslyn-analyzers', requires: 'dotnet' },
     dup: { file: 'Duplications.cs' },
     untested: { file: 'UntestedModule.cs' },
   },
@@ -146,7 +146,7 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     secret: { file: path.join('ProjectA', 'Secrets.cs') },
     lint: {
       file: path.join('ProjectA', 'BadLint.cs'),
-      expectedTool: 'dotnet-format',
+      expectedTool: 'roslyn-analyzers',
       requires: 'dotnet',
     },
     dup: { file: path.join('ProjectA', 'Duplications.cs') },
