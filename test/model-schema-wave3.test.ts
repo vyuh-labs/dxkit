@@ -43,9 +43,7 @@ public class Order {
 }`;
     const { models } = await extractModels(src, 'c_sharp', {
       modelDecorators: ['Table'],
-      fieldDecoratorSpecs: [
-        { names: ['Column', 'JsonPropertyName'], wireNameFrom: 'firstArg' },
-      ],
+      fieldDecoratorSpecs: [{ names: ['Column', 'JsonPropertyName'], wireNameFrom: 'firstArg' }],
     });
     expect(models).toHaveLength(1);
     expect(models[0].fields.map((f) => f.name)).toEqual(['user_name', 'created_at', 'Id']);

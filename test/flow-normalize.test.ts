@@ -45,9 +45,7 @@ describe('flow normalizePath', () => {
 
   it('canonicalizes Ruby string interpolation (#{…}) to {var}', () => {
     expect(normalizePath('"/items/#{id}"')).toBe('/items/{var}');
-    expect(normalizePath('"/users/#{user.id}/posts/#{post_id}"')).toBe(
-      '/users/{var}/posts/{var}',
-    );
+    expect(normalizePath('"/users/#{user.id}/posts/#{post_id}"')).toBe('/users/{var}/posts/{var}');
     // A fully dynamic base stays faithful (the join treats it as unresolved).
     expect(normalizePath('"#{base_url}/items"')).toBe('/{var}/items');
   });
