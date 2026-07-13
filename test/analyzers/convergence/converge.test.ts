@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { tierDeadSurfaces } from '../../../src/analyzers/convergence/dead-surface-gather';
 import { convergeSeams } from '../../../src/analyzers/convergence/index';
 import type { UnconsumedRoute } from '../../../src/analyzers/flow/diagnose';
-import type { DuplicateFinding } from '../../../src/explore/duplication';
+import type { DuplicateFinding } from '../../../src/analyzers/duplication/findings';
 
 /**
  * The pure join layer of phase 2 — `tierDeadSurfaces` (route + signals → tiers)

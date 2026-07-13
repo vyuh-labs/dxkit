@@ -2,12 +2,12 @@
  * Integration tests for src/baseline/dup-gate-check.ts — the additive,
  * fail-open structural-duplicate (seam) gate over a real ref-based comparison.
  *
- * The graph provider is INJECTED (the graphify gather is heavy + needs Python),
- * so these tests pin the two-ref gate LOGIC deterministically: opt-in gating,
- * trigger-skip, net-new grandfathering against the base ref, diff-scoping,
- * allowlist suppression, and fail-open — over a genuine `git` worktree, without
- * ever invoking graphify. The detector itself is pinned separately in
- * test/explore/duplicate-pairs-query.test.ts.
+ * The duplicate-findings provider is INJECTED (the real one reads the whole
+ * source tree via tree-sitter), so these tests pin the two-ref gate LOGIC
+ * deterministically: opt-in gating, trigger-skip, net-new grandfathering against
+ * the base ref, directional `changed` marking, allowlist suppression, and
+ * fail-open — over a genuine `git` worktree. The detector + extractor are pinned
+ * separately in test/analyzers/duplication/.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -16,8 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateDupGateForGuardrail } from '../../src/baseline/dup-gate-check';
-import type { GraphGatherOutcome } from '../../src/analyzers/tools/graphify';
-import type { GraphJson, GraphNode, GraphEdge } from '../../src/explore/types';
+import type { DuplicateFinding } from '../../src/analyzers/duplication/findings';
 import { computeCodeReimplementationFingerprint } from '../../src/analyzers/tools/fingerprint';
 import type { AllowlistFile } from '../../src/allowlist/file';
 
@@ -30,61 +29,27 @@ function git(dir: string, args: string[]): void {
   execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
 }
 
-let idc = 0;
-function fn(label: string, sourceFile: string, line = 1): GraphNode {
-  return { id: `${sourceFile}#${label}#${idc++}`, kind: 'function', label, sourceFile, line };
-}
-function helper(name: string): GraphNode {
-  return {
-    id: `lib#${name}#${idc++}`,
-    kind: 'function',
-    label: name,
-    sourceFile: 'src/lib.ts',
-    line: 1,
-  };
-}
-function graphOf(nodes: GraphNode[], edges: GraphEdge[]): GraphJson {
-  return {
-    schemaVersion: 2,
-    meta: {
-      tool: 'graphify',
-      graphifyVersion: '0',
-      dxkitVersion: '0',
-      generatedAt: '',
-      sourceFilesInGraph: 0,
-      excludedFileCount: 0,
-      packs: [],
-      truncated: false,
-      truncatedReason: '',
-    },
-    nodes,
-    edges,
-    communities: [],
-    symbolIndex: {},
-    endpoints: [],
-  };
+/** The copy-paste finding the gate would mint for the two divisions handlers —
+ *  identity is the canonical fingerprint over the sorted anchor pair. */
+function dupFinding(): DuplicateFinding {
+  const a = { file: 'src/api/divisions.ts', symbol: 'GET', line: 10 };
+  const b = { file: 'src/api/cli/divisions.ts', symbol: 'GET', line: 12 };
+  return { id: computeCodeReimplementationFingerprint(a, b), anchors: [a, b], score: 1 };
 }
 
-/** A copy-paste pair: `a` and `b` both call the same 3 helpers by the same
- *  name → callee-Jaccard 1.0, name-Jaccard 1.0, score 1.0. */
-function pairGraph(fileA: string, fileB: string): GraphJson {
-  const h = ['query', 'requireUser', 'respond'].map(helper);
-  const a = fn('GET', fileA, 10);
-  const b = fn('GET', fileB, 12);
-  const edges = h.flatMap((x) => [
-    { from: a.id, to: x.id, relation: 'calls' as const },
-    { from: b.id, to: x.id, relation: 'calls' as const },
-  ]);
-  return graphOf([...h, a, b], edges);
+type Provider = (
+  dir: string,
+  opts: { minScore: number; focusFiles?: ReadonlySet<string> },
+) => Promise<DuplicateFinding[]>;
+
+/** A provider returning `head` findings for the working tree (cwd) and `base`
+ *  findings for anything else (the ref worktree). */
+function provider(head: DuplicateFinding[], base: DuplicateFinding[], cwd: string): Provider {
+  return async (dir) => (dir === cwd ? head : base);
 }
 
-const EMPTY = graphOf([], []);
-function ok(g: GraphJson): GraphGatherOutcome {
-  return { kind: 'success', graph: g };
-}
-
-/** A repo with the seam gate enabled (mode warn), a source file touched by the
- *  HEAD change, committed on `main` as the base. */
+/** A repo with the seam gate enabled, a source file touched by the HEAD change,
+ *  committed on `main` as the base. */
 function makeRepo(mode: 'warn' | 'block' | 'off' = 'warn'): { dir: string; baseSha: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dxkit-dupgate-'));
   dirs.push(dir);
@@ -103,22 +68,16 @@ function makeRepo(mode: 'warn' | 'block' | 'off' = 'warn'): { dir: string; baseS
   return { dir, baseSha };
 }
 
-/** Inject a provider that returns `head` for the working tree (cwd) and `base`
- *  for anything else (the ref worktree). */
-function provider(head: GraphGatherOutcome, base: GraphGatherOutcome, cwd: string) {
-  return async (dir: string): Promise<GraphGatherOutcome> => (dir === cwd ? head : base);
-}
-
 describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
-  it('skips at zero cost when policy mode is off (no graph build)', async () => {
+  it('skips at zero cost when policy mode is off (no scan)', async () => {
     const { dir, baseSha } = makeRepo('off');
     let called = false;
     const out = await evaluateDupGateForGuardrail({
       cwd: dir,
       baseRef: baseSha,
-      gatherGraph: async () => {
+      gatherDuplicates: async () => {
         called = true;
-        return ok(EMPTY);
+        return [];
       },
     });
     expect(out.skipped).toBe('off');
@@ -127,12 +86,11 @@ describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
 
   it('flags a NET-NEW duplicate the diff introduced (absent at base)', async () => {
     const { dir, baseSha } = makeRepo('warn');
-    const head = pairGraph('src/api/divisions.ts', 'src/api/cli/divisions.ts');
     const out = await evaluateDupGateForGuardrail({
       cwd: dir,
       baseRef: baseSha,
-      // Base had only the original handler, no duplicate.
-      gatherGraph: provider(ok(head), ok(EMPTY), dir),
+      // HEAD has the duplicate; base had only the original handler, none.
+      gatherDuplicates: provider([dupFinding()], [], dir),
     });
     expect(out.ran).toBe(true);
     expect(out.warns).toBe(true);
@@ -152,11 +110,10 @@ describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
   it('GRANDFATHERS a duplicate present at BOTH refs (never blocks pre-existing debt)', async () => {
     const { dir, baseSha } = makeRepo('warn');
     // The SAME duplicate exists at head AND base → not net-new.
-    const g = pairGraph('src/api/divisions.ts', 'src/api/cli/divisions.ts');
     const out = await evaluateDupGateForGuardrail({
       cwd: dir,
       baseRef: baseSha,
-      gatherGraph: provider(ok(g), ok(g), dir),
+      gatherDuplicates: provider([dupFinding()], [dupFinding()], dir),
     });
     expect(out.warns).toBe(false);
     expect(out.findings).toHaveLength(0);
@@ -166,40 +123,37 @@ describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
     expect(out.skipped).toBeUndefined();
   });
 
-  it('never builds the base graph when HEAD has no candidate (the cost guard)', async () => {
+  it('never scans the base ref when HEAD has no candidate (the cost guard)', async () => {
     const { dir, baseSha } = makeRepo('warn');
-    let baseBuilt = false;
+    let baseScanned = false;
     const out = await evaluateDupGateForGuardrail({
       cwd: dir,
       baseRef: baseSha,
-      gatherGraph: async (d: string) => {
-        if (d !== dir) baseBuilt = true;
-        return ok(EMPTY); // HEAD has no duplicate
+      gatherDuplicates: async (d: string) => {
+        if (d !== dir) baseScanned = true;
+        return []; // HEAD has no duplicate
       },
     });
     expect(out.skipped).toBe('no-candidates');
-    expect(baseBuilt).toBe(false);
+    expect(baseScanned).toBe(false);
   });
 
-  it('fail-opens (skips, never throws) when graphify is unavailable on HEAD', async () => {
+  it('fail-opens (skips, never throws) when the scan throws', async () => {
     const { dir, baseSha } = makeRepo('warn');
     const out = await evaluateDupGateForGuardrail({
       cwd: dir,
       baseRef: baseSha,
-      gatherGraph: async () => ({ kind: 'unavailable', reason: 'not installed' }),
+      gatherDuplicates: async () => {
+        throw new Error('unparseable tree');
+      },
     });
-    expect(out.skipped).toBe('no-graph');
+    expect(out.skipped).toBe('error');
     expect(out.blocks).toBe(false);
   });
 
   it('an active code-reimplementation allowlist entry waives the finding', async () => {
     const { dir, baseSha } = makeRepo('warn');
-    const head = pairGraph('src/api/divisions.ts', 'src/api/cli/divisions.ts');
-    // Recompute the finding id the gate will mint (canonical sorted anchors).
-    const id = computeCodeReimplementationFingerprint(
-      { file: 'src/api/divisions.ts', symbol: 'GET', line: 10 },
-      { file: 'src/api/cli/divisions.ts', symbol: 'GET', line: 12 },
-    );
+    const id = dupFinding().id;
     const allowlist: AllowlistFile = {
       version: 1,
       entries: [
@@ -216,7 +170,7 @@ describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
       cwd: dir,
       baseRef: baseSha,
       allowlist,
-      gatherGraph: provider(ok(head), ok(EMPTY), dir),
+      gatherDuplicates: provider([dupFinding()], [], dir),
     });
     expect(out.warns).toBe(false);
     expect(out.findings).toHaveLength(0);

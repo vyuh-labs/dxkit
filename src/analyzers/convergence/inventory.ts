@@ -14,7 +14,7 @@
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { gatherGraphifyGraph } from '../tools/graphify';
-import { duplicateFindingsFromGraph, type DuplicateFinding } from '../../explore/duplication';
+import { gatherDuplicateFindings, type DuplicateFinding } from '../duplication/findings';
 import { indexGraph, tryLoadGraph } from '../../explore/load';
 import type { Graph } from '../../explore/types';
 import { gatherDeadSurfaces, type DeadSurfaceResult } from './dead-surface-gather';
@@ -63,13 +63,17 @@ export async function gatherSeamInventory(cwd: string): Promise<SeamInventory> {
     // callers pass absolute paths, but normalizing here makes the inventory
     // robust regardless of caller.
     const root = path.resolve(cwd);
+    // Duplicates come from dxkit's OWN AST (`gatherDuplicateFindings`), so this
+    // signal no longer depends on graphify — it works even where the Python
+    // graph tool is absent, and captures framework calls graphify drops (the
+    // precision fix). The graph is still obtained for the dead-surface
+    // DIRECT-CALL seam (a separate, resolution-dependent consumer).
+    const duplicates = await gatherDuplicateFindings(root, { minScore: SEAM_DUP_MIN_SCORE });
     const graph = await obtainGraph(root);
-    if (!graph) {
-      const dead = await gatherDeadSurfaces(root, {});
-      return { duplicates: [], dead, converged: [] };
-    }
-    const duplicates = duplicateFindingsFromGraph(graph, { minScore: SEAM_DUP_MIN_SCORE });
-    const dead = await gatherDeadSurfaces(root, { dupFindings: duplicates, graph });
+    const dead = await gatherDeadSurfaces(root, {
+      dupFindings: duplicates,
+      ...(graph ? { graph } : {}),
+    });
     const converged = convergeSeams(dead.surfaces, duplicates);
     return { duplicates, dead, converged };
   } catch {

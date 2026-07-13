@@ -14,6 +14,8 @@
  * embedded verbatim — evaluate lifts summary fields out of it but never
  * re-derives a verdict (one concept, one code path).
  */
+import { VERIFIED_DUP_MIN_SCORE } from '../analyzers/duplication/detect';
+import { clusterStats } from '../analyzers/duplication/findings';
 import type { GuardrailCheckResult } from '../baseline/check';
 import { type GuardrailJsonPayload, renderJson } from '../baseline/check-renderers';
 import type { ScanCoverage } from '../baseline/coverage';
@@ -111,8 +113,21 @@ export interface EvaluateEvidenceDoc extends EvidenceEnvelope {
 /** The seam-visibility summary attached to an evaluate doc. Counts + the ranked
  *  convergence, kept compact (the full per-route inventory lives in `flow`). */
 export interface SeamVisibility {
-  /** Structural duplicates the graph surfaced at the trial head. */
+  /** Structural duplicates dxkit's AST surfaced at the trial head (total). */
   readonly duplicates: number;
+  /** Of those, the high-confidence VERIFIED copies (near-identical structure,
+   *  score ≥ `VERIFIED_DUP_MIN_SCORE`) — the tier a surface leads on. The
+   *  remainder (`duplicates − verifiedDuplicates`) is the softer
+   *  "similar-structure" band. */
+  readonly verifiedDuplicates: number;
+  /** The verified duplicates CLUSTERED into distinct patterns (connected
+   *  components of the duplicate graph) — the honest unit at scale, where one
+   *  framework CRUD verb recurring across dozens of controllers is ONE pattern,
+   *  not O(k²) pairs. This is what the lane leads on. */
+  readonly verifiedClusters: number;
+  /** Functions in the largest verified pattern — how far the biggest duplication
+   *  spreads (e.g. a CRUD method copied across N controllers). */
+  readonly largestCluster: number;
   /** Dead-surface counts by tier. */
   readonly dead: { readonly removable: number; readonly likely: number; readonly expected: number };
   /** Whether every route consumer was visible (an explicit mesh or co-located
@@ -371,8 +386,12 @@ export function seamVisibilityFrom(inv: {
   }>;
 }): SeamVisibility {
   const anchorLabel = (a: { file: string; symbol: string }) => `${a.symbol} @ ${a.file}`;
+  const verifiedStats = clusterStats(inv.duplicates, VERIFIED_DUP_MIN_SCORE);
   return {
     duplicates: inv.duplicates.length,
+    verifiedDuplicates: inv.duplicates.filter((d) => d.score >= VERIFIED_DUP_MIN_SCORE).length,
+    verifiedClusters: verifiedStats.clusters,
+    largestCluster: verifiedStats.largestCluster,
     dead: inv.dead.byTier,
     crossRepoConsumersVisible: inv.dead.crossRepoConsumersVisible,
     converged: inv.converged.map((c) => ({

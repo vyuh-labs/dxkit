@@ -18,7 +18,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { gatherDeadSurfaces } from '../../../src/analyzers/convergence/dead-surface-gather';
 import { convergeSeams } from '../../../src/analyzers/convergence';
-import type { DuplicateFinding } from '../../../src/explore/duplication';
+import type { DuplicateFinding } from '../../../src/analyzers/duplication/findings';
 
 const dirs: string[] = [];
 afterEach(() => {
