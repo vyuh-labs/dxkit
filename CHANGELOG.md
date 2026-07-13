@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vyuh-dxkit pr` — a computed, reviewable PR body.** The deterministic core of
+  the `dxkit-pr` skill: it reads the branch's real commits + diff for
+  `base..HEAD` and computes the parts that used to drift when hand-assembled — the
+  title (dominant conventional-commit type + scope), the Changes section bucketed
+  by commit type, the dxkit signals block (the receipt: verdict + allowlist
+  delta), suggested reviewers (the active-owner model), a **diff-derived reviewer
+  checklist** (a registry of pure fact → row rules: a supply-chain row only when a
+  dependency manifest moved, a migration row only when a migration moved, a tests
+  row when source changed without a test, a CI-scrutiny row when a workflow/hook
+  moved), and a **Structural review** section that surfaces functions the change
+  adds which structurally match existing code — the seam signal as a warn-tier
+  reviewer prompt ("added X matches existing Y — confirm intentional or
+  consolidate"), never a block. The author writes only "What & why". Prints
+  markdown or `--json`; reads git + the cache-backed guardrail and writes nothing
+  — it never opens the PR. This lands the structural-duplicate lane's value into
+  the review loop: `receipt` and `reviewers` gained reusable non-printing cores
+  (`buildReceipt` / `computeReviewers`) that `pr` composes (Rule 2).
+
 ### Changed
 
 - **Structural-duplicate (seam) signal re-sourced from dxkit's own AST, with

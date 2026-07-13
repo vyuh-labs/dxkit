@@ -178,6 +178,12 @@ ${renderCommandIndex().join('\n')}
                                  (recency-weighted git history, bots + departed devs
                                  filtered, excludes the author) blended with CODEOWNERS,
                                  with a bus-factor signal. Names + @handles, never emails.
+    vyuh-dxkit pr [path] [--base <ref>] [--since <ref>] [--no-seams] [--json]
+                                 Compute a reviewable PR body from the branch's real commits +
+                                 diff: title, bucketed Changes, the dxkit signals block (receipt),
+                                 suggested reviewers, a diff-derived reviewer checklist, and the
+                                 structural-duplicate seam prompts. Leaves only "What & why" for
+                                 the author. Prints markdown (or --json); never opens a PR.
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
@@ -447,6 +453,8 @@ export async function run(argv: string[]): Promise<void> {
       // report snapshot flag: retain the most recent N history entries
       retain: { type: 'string' },
       substring: { type: 'boolean', default: false },
+      // pr: skip the structural-duplicate seam pass
+      'no-seams': { type: 'boolean', default: false },
       // reviewers flags
       staged: { type: 'boolean', default: false },
       base: { type: 'string' },
@@ -935,6 +943,18 @@ export async function run(argv: string[]): Promise<void> {
         verbose: !!values.verbose,
         out: values.output as string | undefined,
       });
+      break;
+    }
+
+    case 'pr': {
+      const { runPr } = await import('./pr/run');
+      const body = await runPr(resolveRepoPath(positionals[1]), {
+        base: values.base as string | undefined,
+        since: values.since as string | undefined,
+        json: !!values.json,
+        noSeams: !!values['no-seams'],
+      });
+      process.stdout.write(body + '\n'); // slop-ok
       break;
     }
 
