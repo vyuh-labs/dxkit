@@ -227,12 +227,16 @@ function readCodeowners(cwd: string): CodeownersRule[] {
   return [];
 }
 
-export function runReviewers(cwd: string, opts: ReviewersOptions): void {
+/**
+ * Compute the reviewer suggestions without printing — the IO gather (touched
+ * files, ownership, CODEOWNERS) plus the pure `buildSuggestions` ranking. Both
+ * `runReviewers` (prints) and `vyuh-dxkit pr` (embeds the list) call this, so the
+ * active-owner model has one entry point (Rule 2). Returns null when no changed
+ * files are detected.
+ */
+export function computeReviewers(cwd: string, opts: ReviewersOptions): ReviewersResult | null {
   const files = touchedFiles(cwd, opts);
-  if (files.length === 0) {
-    logger.info('No changed files detected (pass --base <ref> or --staged). Nothing to suggest.');
-    return;
-  }
+  if (files.length === 0) return null;
 
   // Exclude the change author from suggestions (never review your own PR).
   const authorEmail = gitOut('git config --get user.email', cwd);
@@ -245,13 +249,22 @@ export function runReviewers(cwd: string, opts: ReviewersOptions): void {
   const coOwners: string[] = [];
   for (const f of files) coOwners.push(...matchCodeowners(rules, f));
 
-  const result: ReviewersResult = {
+  return {
     ...buildSuggestions(ownership, {
       ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
       codeowners: coOwners,
     }),
     touchedFiles: files,
   };
+}
+
+export function runReviewers(cwd: string, opts: ReviewersOptions): void {
+  const result = computeReviewers(cwd, opts);
+  if (!result) {
+    logger.info('No changed files detected (pass --base <ref> or --staged). Nothing to suggest.');
+    return;
+  }
+  const files = result.touchedFiles;
 
   if (opts.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
