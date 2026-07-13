@@ -19,7 +19,13 @@
  * advisories) can land in 2.4.8.
  */
 
+import * as logger from '../../logger';
+
 function startLine(name: string): void {
+  // Honor a surface that has muted ordinary output (e.g. the init finishing
+  // arc, which reuses the scan pipeline but drives its own step UI) — otherwise
+  // these per-phase lines bleed through it.
+  if (logger.isQuiet()) return;
   // Indent to match the rest of the CLI's stderr framing (logger.info
   // uses the same "  → " prefix). Stays on stderr in all modes so it
   // never pollutes `--json` stdout.

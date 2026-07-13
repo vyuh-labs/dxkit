@@ -18,53 +18,42 @@
  * - `vyuh-dxkit tools install --yes` → install all missing, no prompts
  */
 import * as readline from 'readline/promises';
-import * as fs from 'fs';
-import * as path from 'path';
 import { dxkitCli } from './self-invocation';
 import { stdin, stdout } from 'process';
-import { execSync } from 'child_process';
 import { detect } from './detect';
-import { DetectedStack, type Manifest } from './types';
-import { serializePreservingJson } from './files';
-import { detectPackageManager, provisionCommand, pmAwareDevInstall } from './package-manager';
+import { detectPackageManager, provisionCommand } from './package-manager';
 import * as logger from './logger';
 import {
   TOOL_DEFS,
   findTool,
-  getInstallCommand,
-  getInstallEnv,
   checkAllTools,
-  buildRequiredTools,
   exportToolPathsToGithubEnv,
   ToolStatus,
 } from './analyzers/tools/tool-registry';
+import {
+  selectToolNames,
+  resolveInstallCommand,
+  execInstall,
+  type ToolsInstallOptions,
+} from './analyzers/tools/install-exec';
 
-export interface ToolsInstallOptions {
-  toolName?: string;
-  all?: boolean;
-}
-
-/**
- * Decide which tool names to consider for install given the options.
- * Pure function — does not touch the filesystem; testable in isolation.
- *
- * - toolName set: just that one (returns [] if name is unknown — caller
- *   surfaces an error)
- * - all: every key in TOOL_DEFS, sorted for stable output
- * - default: tools required for the current-project stack
- */
-export function selectToolNames(
-  languages: DetectedStack['languages'],
-  options: ToolsInstallOptions = {},
-): string[] {
-  if (options.toolName) {
-    return TOOL_DEFS[options.toolName] ? [options.toolName] : [];
-  }
-  if (options.all) {
-    return Object.keys(TOOL_DEFS).sort();
-  }
-  return buildRequiredTools(languages).map((r) => r.name);
-}
+// The install-EXECUTION surface lives in `install-exec.ts` (split out to keep
+// this file under the large-file budget); re-export it so existing importers
+// (init-arc, tests) keep one entry point (Rule 2 — one install code path).
+export {
+  selectToolNames,
+  recordToolDep,
+  resolveInstallCommand,
+  execInstall,
+  installMissingTools,
+} from './analyzers/tools/install-exec';
+export type {
+  ToolsInstallOptions,
+  ResolvedInstall,
+  OneToolResult,
+  ToolInstallEvent,
+  ToolInstallOutcome,
+} from './analyzers/tools/install-exec';
 
 const LAYER_ORDER: Record<string, number> = {
   universal: 1,
@@ -187,64 +176,10 @@ function showStatus(targetPath: string): ToolStatus[] {
   return statuses;
 }
 
-/**
- * Append a dxkit-installed node devDependency to the install manifest so
- * `vyuh-dxkit uninstall` can remove it. No-op when the repo has no manifest
- * (dxkit wasn't init'd there) or the entry is already recorded. Best-effort:
- * a manifest write failure never fails the install.
- */
-export function recordToolDep(cwd: string, pkg: string): void {
-  const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
-  try {
-    const raw = fs.readFileSync(manifestPath, 'utf-8');
-    const manifest = JSON.parse(raw) as Manifest;
-    // Normalize to the {package, ecosystem} shape, dropping any legacy `install`
-    // string an older dxkit persisted here. Every executed/rendered install is
-    // already PM-aware; the stored npm-flavored text (`npm install --save-dev …`)
-    // was misleading canonical JSON on a non-npm repo and is derivable from
-    // {package, ecosystem} anyway. Re-run of `tools install` cleans a legacy file.
-    const normalized = (manifest.toolDeps ?? []).map((d) => ({
-      package: d.package,
-      ecosystem: 'node' as const,
-    }));
-    if (!normalized.some((d) => d.package === pkg)) {
-      normalized.push({ package: pkg, ecosystem: 'node' });
-    }
-    manifest.toolDeps = normalized;
-    fs.writeFileSync(manifestPath, serializePreservingJson(raw, manifest), 'utf-8');
-  } catch {
-    // no manifest / unreadable / unwritable → nothing to record, never fatal
-  }
-}
-
 async function confirm(rl: readline.Interface, question: string): Promise<boolean> {
   const answer = await rl.question(`  ${question} [Y/n]: `);
   if (!answer.trim()) return true;
   return answer.trim().toLowerCase().startsWith('y');
-}
-
-function runInstallCmd(
-  cmd: string,
-  envOverlay?: Record<string, string>,
-): { success: boolean; message: string } {
-  try {
-    // Pick a shell that exists on the platform. On POSIX use bash so
-    // multi-command scripts (`&&`, `||`, `;`) work; on Windows omit the
-    // option so Node uses the default cmd.exe (the hardcoded `/bin/bash`
-    // path doesn't exist there, which made every `tools install` fail
-    // outright).
-    const shell = process.platform === 'win32' ? undefined : '/bin/bash';
-    execSync(cmd, {
-      shell,
-      stdio: ['inherit', 'inherit', 'inherit'],
-      timeout: 600000, // 10 min for downloads
-      env: envOverlay ? { ...process.env, ...envOverlay } : process.env,
-    });
-    return { success: true, message: 'installed' };
-  } catch (err: unknown) {
-    const e = err as { message?: string };
-    return { success: false, message: e.message || 'unknown error' };
-  }
 }
 
 /** Interactive install of missing tools. */
@@ -323,27 +258,19 @@ async function runInstall(
 
   try {
     for (const s of missing) {
-      const def = TOOL_DEFS[s.name];
-      if (!def) {
+      const resolved = resolveInstallCommand(targetPath, s.name);
+      if (resolved.kind === 'none') {
         results.push({ name: s.name, status: 'skipped', msg: 'no install command' });
         continue;
       }
-      const rawCmd = getInstallCommand(def);
-      if (rawCmd === 'builtin' || rawCmd === 'builtin (npm)' || rawCmd === 'builtin (dotnet SDK)') {
+      if (resolved.kind === 'builtin') {
         results.push({ name: s.name, status: 'skipped', msg: 'builtin' });
         continue;
       }
-      // A node devDep tool (e.g. @vitest/coverage-v8) installs INTO the user's
-      // repo, so its `npm install --save-dev …` must match the repo's PM — else
-      // it fails the way create-dxkit did on a pnpm project. Tools installed
-      // into an isolated dxkit dir (no nodePackage) keep their npm command.
-      const cmd = def.nodePackage
-        ? pmAwareDevInstall(rawCmd, detectPackageManager(targetPath))
-        : rawCmd;
 
-      console.log('');
-      console.log(`  ${logger.bold(s.name)} — ${def.description}`);
-      logger.dim(`    ${cmd}`);
+      console.log(''); // slop-ok: interactive installer's own stdout framing
+      console.log(`  ${logger.bold(s.name)} — ${resolved.description}`); // slop-ok: interactive installer tool header
+      logger.dim(`    ${resolved.command}`);
 
       let shouldInstall = autoYes;
       if (!autoYes && rl) {
@@ -357,36 +284,19 @@ async function runInstall(
       }
 
       console.log('');
-      logger.info(`Running: ${cmd}`);
-      const result = runInstallCmd(cmd, getInstallEnv(targetPath));
-      if (result.success) {
-        // Verify install worked. An install command can legitimately
-        // exit 0 without producing the binary — e.g. the vitest-coverage
-        // guard no-ops when vitest isn't a target-repo dep. Treat
-        // "exit 0 + tool still missing" as a skip, not a failure: the
-        // script ran cleanly, we just didn't get the binary we wanted.
-        // Real install failures surface through the `result.success ===
-        // false` branch below (non-zero exit).
-        const recheck = findTool(def, targetPath);
-        if (recheck.available) {
-          results.push({ name: s.name, status: 'installed' });
-          // A project-local node devDep landed in the user's package.json on
-          // dxkit's behalf — record it so uninstall OWNS it (a dxkit-driven
-          // install dxkit then disowns breaks the "exact pre-dxkit state"
-          // promise). Global/isolated tools (no nodePackage) aren't recorded.
-          if (def.nodePackage) recordToolDep(targetPath, def.nodePackage);
-          logger.success(`${s.name} installed (${recheck.source})`);
-        } else {
-          results.push({
-            name: s.name,
-            status: 'skipped',
-            msg: 'install command exited 0 without producing the binary (likely a guarded no-op)',
-          });
-          logger.dim(`${s.name} skipped — install command exited cleanly without installing`);
-        }
+      logger.info(`Running: ${resolved.command}`);
+      // The command construction + exec + verify + dep-recording all live in
+      // execInstall (Rule 2) — the interactive path just renders its outcome.
+      const r = execInstall(targetPath, resolved);
+      if (r.status === 'installed') {
+        results.push({ name: s.name, status: 'installed' });
+        logger.success(`${s.name} installed (${r.detail})`);
+      } else if (r.status === 'failed') {
+        results.push({ name: s.name, status: 'failed', msg: r.detail });
+        logger.fail(`${s.name}: ${r.detail}`);
       } else {
-        results.push({ name: s.name, status: 'failed', msg: result.message });
-        logger.fail(`${s.name}: ${result.message}`);
+        results.push({ name: s.name, status: 'skipped', msg: r.detail });
+        logger.dim(`${s.name} skipped — ${r.detail}`);
       }
     }
   } finally {
