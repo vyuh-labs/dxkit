@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Structural-duplicate (seam) signal re-sourced from dxkit's own AST, with
+  IDF-weighted scoring.** A rigor pass on real agent-authored repos found the
+  graph-based detector produced confident false positives on framework-heavy code:
+  graphify's call graph is intra-repo, so it drops framework calls (`auth`,
+  `NextResponse.json`), leaving ~3-callee sets where unrelated handlers score a
+  coincidental 1.00. The signal now reads the FULL callee set per function from
+  dxkit's own tree-sitter AST (framework calls included), scored with an
+  IDF-weighted callee Jaccard so a call every function makes carries no weight and
+  a rare data call dominates. On the validation repo this eliminates the 1.00 false
+  positive while keeping every genuine copy, and the score is now discriminative
+  (real copies at 1.0, similar-structure below). It also removes the graphify
+  dependency for this signal (it runs even where the Python tool is absent) and is
+  pack-driven across all languages via `grammar-shape`. The `evaluate` seam lane
+  now leads on the high-confidence **verified copies** (near-identical) with the
+  softer "similar-structure" band as a secondary count, so it reads as signal, not
+  a firehose. The whole-repo inventory reports duplicate **patterns** (union-find
+  clusters), not O(k²) pairs, so a framework method recurring across dozens of
+  files is one pattern; and the gate **groups net-new findings by the function a
+  change introduced**, so an added function that copies N existing ones reads as
+  one finding ("added X duplicates N existing"), not N separate warnings —
+  per-pair identity is retained underneath so grandfathering and granular
+  allowlisting are unchanged. The similarity score is purely STRUCTURAL (callee
+  overlap); a function's name is only a ranking tiebreak, never part of the score
+  — so a RENAMED copy (identical structure, different name) reads as the
+  near-identical copy it is (the case token duplication tools miss once the copy
+  is renamed), and copy-pasted variants like `CreateDivisionButton` ≈
+  `CreateLeagueButton` are caught rather than hidden by their differing names.
+
 ### Added
 
 - **Config-knob discovery coverage (the Rule 16 gap the seam gate exposed).** Rule

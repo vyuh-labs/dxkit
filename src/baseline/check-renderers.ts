@@ -34,7 +34,11 @@ import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 import type { DupGateOutcome } from './dup-gate-check';
-import type { DuplicateFinding } from '../explore/duplication';
+import {
+  groupDuplicatesByAdded,
+  type DuplicateFinding,
+  type DuplicateGroup,
+} from '../analyzers/duplication/findings';
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
 
@@ -87,8 +91,10 @@ function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: 
   ];
   // Seam-gate duplicates are always warn-tier (no per-finding verdict field);
   // fold their count into the warn tally so the banner reconciles with the
-  // summary — the same "one report, one story" discipline as the gates above.
-  const dupWarns = result.dupGate?.findings.length ?? 0;
+  // summary. Count GROUPS (one added function = one warning), not raw pairs, so
+  // an added function that copies N existing reads as one warning everywhere.
+  const dupFindings = result.dupGate?.findings ?? [];
+  const dupWarns = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
   return {
     block: findings.filter((f) => f.verdict === 'block').length,
     warn: findings.filter((f) => f.verdict === 'warn').length + dupWarns,
@@ -242,9 +248,12 @@ export function renderConsole(result: GuardrailCheckResult): string {
   const dupFindings = result.dupGate?.findings ?? [];
   const dupSuppressed = result.dupGate?.suppressed ?? [];
   if (dupFindings.length > 0 || dupSuppressed.length > 0) {
+    // Warning count is GROUPED (one added function = one warning), matching the
+    // seam section; suppressed stay per-pair (each is individually waived).
+    const dupGroups = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
     lines.push(
-      `  Seam:        ${dupFindings.length + dupSuppressed.length} ` +
-        `(warning: ${dupFindings.length}, suppressed: ${dupSuppressed.length})`,
+      `  Seam:        ${dupGroups + dupSuppressed.length} ` +
+        `(warning: ${dupGroups}, suppressed: ${dupSuppressed.length})`,
     );
   }
   lines.push(
@@ -407,11 +416,11 @@ function formatDupGate(gate: DupGateOutcome | undefined): string[] {
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
   if (gate.findings.length > 0) {
-    out.push(logger.bold(`Structural duplicate — warning (${gate.findings.length})`));
-    for (const f of gate.findings) {
-      out.push(`  ${describeDuplicate(f)}`);
-      out.push(dupFingerprintLine(f.id));
-    }
+    // Group net-new pairs by the function the change INTRODUCED, so an added
+    // function that duplicates N existing reads as one finding, not N warns.
+    const groups = groupDuplicatesByAdded(gate.findings);
+    out.push(logger.bold(`Structural duplicate — warning (${groups.length})`));
+    for (const g of groups) out.push(...describeGroup(g));
     out.push('');
   }
   if (suppressed.length > 0) {
@@ -423,6 +432,41 @@ function formatDupGate(gate: DupGateOutcome | undefined): string[] {
     }
     out.push('');
   }
+  return out;
+}
+
+/** Anchor coordinates as `symbol @ file:line`. */
+function anchorLoc(x: { symbol: string; file: string; line: number }): string {
+  return `${x.symbol} @ ${x.file}:${x.line}`;
+}
+
+/**
+ * Render one grouped duplicate — the function a change introduced plus every
+ * existing function it duplicates. A single twin reads as the familiar directional
+ * one-liner; many twins read as "added X duplicates N existing" with the twins
+ * listed, so one added function is one finding, not N warns. Per-twin fingerprints
+ * are kept (granular allowlisting is unchanged).
+ */
+function describeGroup(g: DuplicateGroup): string[] {
+  if (g.twins.length === 1) {
+    const t = g.twins[0];
+    const sim = `(similarity ${t.score.toFixed(2)})`;
+    const head = t.bothAdded
+      ? `  both added: ${anchorLoc(g.added)}  ≈  ${anchorLoc(t.anchor)}  ${sim}`
+      : `  added: ${anchorLoc(g.added)}  ≈  existing: ${anchorLoc(t.anchor)}  ${sim}`;
+    return [head, dupFingerprintLine(t.id)];
+  }
+  const out = [
+    `  added: ${anchorLoc(g.added)}  duplicates ${g.twins.length} existing function(s):`,
+  ];
+  for (const t of g.twins) {
+    out.push(`    ≈ ${anchorLoc(t.anchor)}  (similarity ${t.score.toFixed(2)})`);
+  }
+  out.push(
+    `    · accept any by-design twin: allowlist add --fingerprint=<id> ` +
+      `--kind=code-reimplementation --category=false-positive --reason="<why>" ` +
+      `(fingerprints: ${g.twins.map((t) => t.id).join(', ')})`,
+  );
   return out;
 }
 

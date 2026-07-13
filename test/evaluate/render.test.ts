@@ -83,6 +83,9 @@ describe('renderEvaluateText — the clean replay is a first-class result', () =
 describe('renderEvaluateText — the seam-visibility lane (the value lens)', () => {
   const cleanSeams = {
     duplicates: 0,
+    verifiedDuplicates: 0,
+    verifiedClusters: 0,
+    largestCluster: 0,
     dead: { removable: 0, likely: 0, expected: 0 },
     crossRepoConsumersVisible: true,
     converged: [],
@@ -122,7 +125,10 @@ describe('renderEvaluateText — the seam-visibility lane (the value lens)', () 
   it('leads on the loud signal when routes are both dead and duplicated', () => {
     const text = renderEvaluateText(
       docWithSeams({
-        duplicates: 2,
+        duplicates: 3,
+        verifiedDuplicates: 2,
+        verifiedClusters: 1, // the two verified copies form one pattern
+        largestCluster: 3,
         dead: { removable: 1, likely: 0, expected: 0 },
         crossRepoConsumersVisible: true,
         converged: [{ method: 'GET', path: '/legacy', file: 'a.ts', twin: ['f', 'g'] }],
@@ -131,6 +137,9 @@ describe('renderEvaluateText — the seam-visibility lane (the value lens)', () 
     );
     expect(text).toContain('1 structural seam(s) worth removing');
     expect(text).toContain('GET /legacy');
+    // The duplicate line leads on the CLUSTERED verified patterns, not raw pairs.
+    expect(text).toContain('1 verified duplicated pattern(s) — near-identical copies');
+    expect(text).toContain('the largest across 3 functions');
   });
 });
 

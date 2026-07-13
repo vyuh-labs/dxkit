@@ -34,8 +34,7 @@
 
 import { computeChangedFiles } from './changed-files';
 import { withRefWorktree } from './ref-baseline';
-import { gatherGraphifyGraph, type GraphGatherOutcome } from '../analyzers/tools/graphify';
-import { duplicateFindingsFromJson, type DuplicateFinding } from '../explore/duplication';
+import { gatherDuplicateFindings, type DuplicateFinding } from '../analyzers/duplication/findings';
 import { readDuplicationConfig, type DuplicationGateMode } from '../analyzers/duplication/config';
 import { allSourceExtensions } from '../languages';
 import { findEntry, isEntryActive } from '../allowlist/file';
@@ -46,9 +45,8 @@ export type DupGateSkip =
   | 'off' // policy `duplication.mode: off` (the default — the gate is opt-in)
   | 'no-base-ref' // no base commit resolvable (no ref, no baseline anchor SHA)
   | 'no-source-change' // the diff touched no source file — no duplicate possible
-  | 'no-graph' // graphify unavailable / failed on the HEAD tree (fail-open)
   | 'no-candidates' // HEAD produced no diff-scoped duplicate — nothing to gate
-  | 'error'; // any failure — fail-open
+  | 'error'; // any failure (unparseable tree, un-checkoutable ref) — fail-open
 
 /** A net-new duplicate an active allowlist entry waived from the verdict.
  *  Mirrors the flow gate's `FlowGateSuppression`: still surfaced for audit,
@@ -147,16 +145,17 @@ export async function evaluateDupGateForGuardrail(opts: {
   readonly verbose?: boolean;
   readonly allowlist?: AllowlistFile | null;
   readonly now?: Date;
-  /** Graph provider, injected for tests. Defaults to the real graphify gather
-   *  (in-memory, no disk write). Called once for HEAD (`dir === cwd`) and once
-   *  for the base ref (`dir === the worktree`). */
-  readonly gatherGraph?: (
+  /** Duplicate-findings provider, injected for tests. Defaults to the AST-native
+   *  `gatherDuplicateFindings` (reads dxkit's own tree-sitter AST — no graphify,
+   *  no graph.json write). Called once for HEAD (`dir === cwd`) and once for the
+   *  base ref (`dir === the worktree`). */
+  readonly gatherDuplicates?: (
     dir: string,
-    opts: { writeToDisk?: boolean },
-  ) => Promise<GraphGatherOutcome>;
+    opts: { minScore: number; focusFiles?: ReadonlySet<string> },
+  ) => Promise<DuplicateFinding[]>;
 }): Promise<DupGateOutcome> {
   const cwd = opts.cwd;
-  const gatherGraph = opts.gatherGraph ?? gatherGraphifyGraph;
+  const gatherDuplicates = opts.gatherDuplicates ?? ((dir, o) => gatherDuplicateFindings(dir, o));
   const config = readDuplicationConfig(cwd);
   // The override softens/hardens an ENABLED gate; it never activates one (like
   // schema, unlike flow's default-block) — the graph build is too heavy to
@@ -183,24 +182,20 @@ export async function evaluateDupGateForGuardrail(opts: {
       return skip(gateMode, 'no-source-change');
     }
 
-    // HEAD side — the working tree's graph, taken IN MEMORY from the producer
-    // (no graph.json write; the zero-write guarantee).
-    const headOut = await gatherGraph(cwd, { writeToDisk: false });
-    if (headOut.kind !== 'success') return skip(gateMode, 'no-graph');
-    const headFindings = duplicateFindingsFromJson(headOut.graph, {
+    // HEAD side — duplicate findings from dxkit's own AST (no graph.json write;
+    // the zero-write guarantee). Diff-scoped to pairs touching a changed file.
+    const headFindings = await gatherDuplicates(cwd, {
       minScore: config.minScore,
       ...(focusFiles ? { focusFiles } : {}),
     });
     // No diff-scoped duplicate on the HEAD side → nothing to gate. Skip WITHOUT
-    // building the base graph — the primary cost guard (one build, not two).
+    // scanning the base ref — the primary cost guard (one scan, not two).
     if (headFindings.length === 0) return skip(gateMode, 'no-candidates');
 
     // Base side — the duplicate-pair ID set at the base ref, gathered from a
     // detached worktree (Rule 11). A pair present here is grandfathered.
     const baseIds = await withRefWorktree({ cwd, ref }, async (wt) => {
-      const baseOut = await gatherGraph(wt, { writeToDisk: false });
-      if (baseOut.kind !== 'success') return new Set<string>();
-      const baseFindings = duplicateFindingsFromJson(baseOut.graph, {
+      const baseFindings = await gatherDuplicates(wt, {
         minScore: config.minScore,
         ...(focusFiles ? { focusFiles } : {}),
       });
