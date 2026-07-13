@@ -18,7 +18,7 @@
  * validated cross-repo consumed-union.
  */
 
-import type { DuplicateFinding } from '../../explore/duplication';
+import type { DuplicateFinding } from '../duplication/findings';
 import type { TieredDeadSurface } from './dead-surface-gather';
 
 /** One converged finding — a code location where ≥2 independent seam signals

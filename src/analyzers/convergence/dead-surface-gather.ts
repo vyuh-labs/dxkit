@@ -26,7 +26,7 @@ import { detect } from '../../detect';
 import { readWorkspace } from '../../workspace';
 import { readServedContract } from '../flow/contract';
 import * as path from 'path';
-import type { DuplicateFinding } from '../../explore/duplication';
+import type { DuplicateFinding } from '../duplication/findings';
 import {
   deadSurfaceTier,
   isSpecificHandlerName,

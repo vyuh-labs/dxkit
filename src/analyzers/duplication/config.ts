@@ -15,7 +15,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { DUP_DEFAULT_MIN_SCORE } from '../../explore/queries';
+import { DUP_DEFAULT_MIN_SCORE } from './detect';
 
 /** How the guardrail treats a net-new structural duplicate.
  *   - `block`: enables seam CONVERGENCE to escalate a duplicate that is ALSO a

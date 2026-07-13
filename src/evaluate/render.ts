@@ -171,7 +171,18 @@ function seamsSection(doc: EvaluateEvidenceDoc): string[] {
       : 'What dxkit sees beyond the verdict (structural seams):';
   const lines: string[] = [header];
   if (s.duplicates > 0) {
-    lines.push(`  ${s.duplicates} structural duplicate(s) — copy-paste the call graph caught:`);
+    // Lead on the high-confidence VERIFIED copies, CLUSTERED into distinct
+    // patterns — so one framework CRUD verb recurring across 50 controllers reads
+    // as one pattern, not 1000 pairs. The lane stays signal, not a firehose.
+    if (s.verifiedClusters > 0) {
+      lines.push(
+        `  ${s.verifiedClusters} verified duplicated pattern(s) — near-identical copies` +
+          (s.largestCluster > 2 ? `, the largest across ${s.largestCluster} functions` : '') +
+          ':',
+      );
+    } else {
+      lines.push(`  ${s.duplicates} function(s) with similar structure (no exact copy):`);
+    }
     for (const d of s.topDuplicates.slice(0, 3)) {
       lines.push(`    ${d.a}  ≈  ${d.b}  (similarity ${d.score.toFixed(2)})`);
     }
