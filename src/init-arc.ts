@@ -246,6 +246,11 @@ async function runFinishingArc(
   const incompleteScanners = missingScanners(gatherScanCoverage(cwd)).map((m) => m.tool);
 
   const bl = logger.startSpinner('Capturing baseline');
+  // The first baseline scans the whole tree (SAST + deps + coverage), which is
+  // minutes on a large repo — say so, so a long-running spinner never reads as
+  // a hang. (No-op'd visually for the fast already-gated path, which resolves
+  // before anyone reads it.)
+  bl.note('scanning your code for the grandfathered floor — the first run can take a few minutes');
   let baselineFindings: number | null = null;
   let baselineMode: BaselineMode | null = null;
   try {
@@ -270,9 +275,28 @@ async function runFinishingArc(
       bl.succeed('captured');
     }
   } catch (err) {
-    // Fail-soft: the gates are still armed; the user can capture a baseline
-    // themselves. Never abort init at the finish line.
-    bl.warn(`skipped — ${(err as Error).message}`);
+    const msg = (err as Error).message;
+    // Re-init on an already-adopted repo: a committed baseline exists, so
+    // createBaseline refuses. That's not a failure — the repo is already
+    // gated. Read the existing baseline and report its grandfathered floor.
+    const existing = msg.match(/already exists at (.+?\.json)/);
+    if (existing) {
+      try {
+        const { readBaselineFile } = await import('./baseline/baseline-file');
+        const b = buildFindingBreakdown(readBaselineFile(existing[1]).findings);
+        baselineFindings = b.total;
+        baselineMode = 'committed-full';
+        if (b.total > 0) bl.note(formatBreakdown(b));
+        bl.note('baseline already present — your repo is already gated');
+        bl.succeed(`${b.total} finding${b.total === 1 ? '' : 's'} already grandfathered`);
+      } catch {
+        bl.succeed('baseline already present');
+      }
+    } else {
+      // Fail-soft: the gates are still armed; the user can capture a baseline
+      // themselves. Never abort init at the finish line.
+      bl.warn(`skipped — ${msg}`);
+    }
   }
 
   return {
