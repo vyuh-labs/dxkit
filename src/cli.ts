@@ -440,6 +440,8 @@ export async function run(argv: string[]): Promise<void> {
       'baseline-name': { type: 'string' },
       snyk: { type: 'boolean', default: false },
       out: { type: 'string' },
+      // describe: emit the contract-map HTML (to stdout, or to --out <file>)
+      html: { type: 'boolean', default: false },
       // flow console flags: scope to a diff base + optionally skip the gate pass
       diff: { type: 'string' },
       'no-gate': { type: 'boolean', default: false },
@@ -955,6 +957,16 @@ export async function run(argv: string[]): Promise<void> {
         noSeams: !!values['no-seams'],
       });
       process.stdout.write(body + '\n'); // slop-ok
+      break;
+    }
+
+    case 'describe': {
+      const { describeCli } = await import('./describe/run');
+      await describeCli(resolveRepoPath(positionals[1]), {
+        json: !!values.json,
+        html: !!values.html,
+        out: values.out as string | undefined,
+      });
       break;
     }
 

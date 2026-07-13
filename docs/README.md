@@ -81,6 +81,7 @@ construction; commands with a linked page have a full reference under
 | [`explore`](commands/explore.md)                                 | Repo exploration via the code graph                                               | < 5 sec (queries the graph)        |
 | [`context`](commands/context.md)                                 | Slim structural code slice for a query (token-efficient)                          | < 5 sec (queries the graph)        |
 | [`reviewers`](commands/reviewers.md)                             | Suggest reviewers via the active-owner model                                      | < 5 sec                            |
+| `describe`                                                       | Zero-write repo card + a self-contained contract-map HTML                         | < 10 sec                           |
 | `demo`                                                           | Offline, no-API demonstration walkthroughs                                        | 1-2 min (interactive walkthrough)  |
 | [`init`](commands/init.md)                                       | Install dxkit agent DX in this repo                                               | 5-30 sec                           |
 | [`update`](commands/update.md)                                   | Re-generate managed files (preserves your edits)                                  | 5-30 sec                           |

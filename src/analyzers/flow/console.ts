@@ -67,7 +67,7 @@ export interface FlowConsoleInput {
 }
 
 /** HTML-escape text destined for element content / attributes. */
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -92,7 +92,7 @@ export function serializeDataIsland(model: unknown): string {
 
 /** Guard the inlined vis-network bundle against a stray `</script>` closing the
  *  surrounding element (mirror of the dashboard's defensive escape). */
-function safeScriptBody(js: string): string {
+export function safeScriptBody(js: string): string {
   return js.replace(/<\/script>/gi, '<\\/script>');
 }
 
