@@ -539,6 +539,34 @@ export async function run(argv: string[]): Promise<void> {
         }
       }
 
+      // If dxkit is already installed here at an OLDER version, the user almost
+      // certainly wants `update` (refresh the managed files to this CLI's
+      // templates), not a fresh re-init. Surface that prominently — but still
+      // continue, since `init --claude-loop` on an adopted repo is a legit
+      // "add a surface" flow. A same-version re-run just says so.
+      try {
+        const manifestFile = path.join(cwd, '.vyuh-dxkit.json');
+        if (fs.existsSync(manifestFile)) {
+          const installed = (JSON.parse(fs.readFileSync(manifestFile, 'utf-8'))?.version ??
+            null) as string | null;
+          const { classifyDelta } = await import('./upgrade');
+          const delta = classifyDelta(installed, VERSION);
+          if (delta === 'major' || delta === 'minor' || delta === 'patch') {
+            logger.warn(
+              `dxkit ${installed} is already installed here — you're running ${VERSION}.`,
+            );
+            logger.dim(
+              `  To refresh it to ${VERSION}, run \`${dxkitCli('update')}\` (no re-setup needed).`,
+            );
+            logger.dim('  Continuing will re-apply the current templates additively.');
+          } else if (delta === 'none' && installed) {
+            logger.dim(`dxkit ${installed} is already set up here — re-applying additively.`);
+          }
+        }
+      } catch {
+        /* unreadable manifest → treat as a fresh install */
+      }
+
       const promptOpts = {
         yes: !!(values.yes || values.detect),
         detect: !!values.detect,
@@ -566,14 +594,24 @@ export async function run(argv: string[]): Promise<void> {
       const wantDxkitAgents =
         !!values.full || !!values['with-dxkit-agents'] || wantClaudeLoop || !!values.flow;
       const genStep = logger.startSpinner('Wiring agent context');
-      const result = await generate(
-        cwd,
-        config,
-        finalMode,
-        !!values.force,
-        !!values['no-scan'],
-        wantDxkitAgents,
-      );
+      // Mute generate()'s own header + per-file lines (they'd otherwise leak
+      // through the step UI on a repo with files to merge, e.g. an existing
+      // CLAUDE.md/AGENTS.md); the step's summary conveys the counts. --verbose
+      // keeps the full file list for debugging.
+      const priorGenQuiet = values.verbose ? false : logger.setQuiet(true);
+      let result;
+      try {
+        result = await generate(
+          cwd,
+          config,
+          finalMode,
+          !!values.force,
+          !!values['no-scan'],
+          wantDxkitAgents,
+        );
+      } finally {
+        if (!values.verbose) logger.setQuiet(priorGenQuiet);
+      }
       {
         const skills = result.created.filter((f) => f.includes('.claude/skills/')).length;
         const facts = [

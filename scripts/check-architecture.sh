@@ -1547,6 +1547,25 @@ if [ -n "$FROZEN_REDECL$FROZEN_REIMPL" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ── init finishing-arc guard ──────────────────────────────────────────────
+# `init --full` / `--claude-loop` / `--with-hooks` / `--with-ci` now runs the
+# finishing arc: REAL scanner installs + a baseline scan. Inside a test or CI
+# workflow that isn't specifically exercising the arc, that pollutes the runner
+# (installed tools flip skipIf-gated integration tests from skip→run) and burns
+# minutes. Such invocations MUST pass --no-finish. Annotate '# init-arc-ok' /
+# '// init-arc-ok' on the line for a test that genuinely drives the arc.
+INIT_ARC=$(grep -rnE "('init',[^)]*'(--full|--claude-loop|--with-hooks|--with-ci|--with-precommit-hook)'|(vyuh-dxkit|index\.js.?) init [^\`]*(--full|--claude-loop|--with-hooks|--with-ci))" test/ .github/ 2>/dev/null \
+  | grep -v -- "--no-finish" \
+  | grep -vE "expect\(|toContain|toEqual|not\.to|name: |init-arc-ok" || true)
+if [ -n "$INIT_ARC" ]; then
+  echo "❌ init finishing-arc guard: a test/workflow runs init with a baseline-consuming"
+  echo "   flag but no --no-finish (the arc installs real scanners + scans a baseline,"
+  echo "   polluting the runner + flipping skipIf-gated integration tests):"
+  echo "$INIT_ARC"
+  echo "   → Add --no-finish, or annotate '# init-arc-ok' if the test drives the arc."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

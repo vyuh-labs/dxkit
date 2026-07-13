@@ -203,7 +203,7 @@ describe('vyuh-dxkit update: end-to-end refresh', () => {
 
     // Simulate a 2.5.1-era full install — let dxkit's own init drop the
     // full scaffold here so we observe a realistic baseline.
-    runCli(tmp, ['init', '--full', '--yes']);
+    runCli(tmp, ['init', '--full', '--yes', '--no-finish']);
   });
 
   afterAll(() => {
