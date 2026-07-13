@@ -409,6 +409,10 @@ export async function run(argv: string[]): Promise<void> {
       // --flow forces it on (warn posture); --no-flow suppresses it.
       flow: { type: 'boolean', default: false },
       'no-flow': { type: 'boolean', default: false },
+      // The init finishing arc (tools install + baseline create) runs by
+      // default when a gate surface was armed or --yes was given; --no-finish
+      // opts out (arm the surfaces, let the user capture the baseline later).
+      'no-finish': { type: 'boolean', default: false },
       // setup-branch-protection flags
       branch: { type: 'string' },
       'require-reviews': { type: 'string' },
@@ -512,23 +516,28 @@ export async function run(argv: string[]): Promise<void> {
 
   switch (command) {
     case 'init': {
-      logger.header('vyuh-dxkit init');
+      const initStarted = Date.now();
+      logger.header('Setting up dxkit');
 
-      logger.info('Detecting stack...');
+      const detectStep = logger.startSpinner('Reading your stack');
       const detected = detect(cwd);
       const langs = Object.entries(detected.languages)
         .filter(([, v]) => v)
         .map(([k]) => k);
-
-      if (langs.length === 0) {
-        logger.warn('No languages detected. Generating with minimal config.');
-      } else {
-        logger.success(`Languages: ${langs.join(', ')}`);
+      {
+        // Surface the interesting facts as one aligned recap line: languages,
+        // framework, test runner — the "dxkit understands my repo" moment.
+        const facts = [
+          langs.length ? langs.join(', ') : null,
+          detected.framework,
+          detected.testRunner ? detected.testRunner.framework : null,
+        ].filter(Boolean);
+        if (langs.length === 0) {
+          detectStep.warn('no languages detected — minimal config');
+        } else {
+          detectStep.succeed(facts.join(' · '));
+        }
       }
-      if (detected.framework) logger.success(`Framework: ${detected.framework}`);
-      if (detected.testRunner)
-        logger.success(`Tests: ${detected.testRunner.framework} (${detected.testRunner.command})`);
-      console.log(''); // slop-ok
 
       const promptOpts = {
         yes: !!(values.yes || values.detect),
@@ -556,6 +565,7 @@ export async function run(argv: string[]): Promise<void> {
       const wantClaudeLoop = !!values['claude-loop'];
       const wantDxkitAgents =
         !!values.full || !!values['with-dxkit-agents'] || wantClaudeLoop || !!values.flow;
+      const genStep = logger.startSpinner('Wiring agent context');
       const result = await generate(
         cwd,
         config,
@@ -564,6 +574,17 @@ export async function run(argv: string[]): Promise<void> {
         !!values['no-scan'],
         wantDxkitAgents,
       );
+      {
+        const skills = result.created.filter((f) => f.includes('.claude/skills/')).length;
+        const facts = [
+          skills ? `${skills} skill${skills === 1 ? '' : 's'}` : null,
+          result.created.length ? `${result.created.length} files` : null,
+          result.skipped.length ? `${result.skipped.length} kept` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        genStep.succeed(facts || 'context ready');
+      }
 
       // Phase Ship installers (additive). `--full` implies every flag
       // so a one-command setup gets the full 2.5.0 ship surface.
@@ -758,30 +779,37 @@ export async function run(argv: string[]): Promise<void> {
         result: installIgnoreFiles(cwd, { force: !!values.force }),
       });
 
-      // Summary
-      console.log('');
-      logger.header('Summary');
-      if (result.created.length) logger.success(`Created: ${result.created.length} files`);
-      if (result.skipped.length)
-        logger.warn(`Skipped: ${result.skipped.length} files (already exist)`);
-      if (result.overwritten.length) logger.info(`Overwritten: ${result.overwritten.length} files`);
+      // The armed enforcement surfaces, as human labels — drives both the
+      // recap step and the closing's `gated` state. Derived from the same
+      // want* flags the installers keyed on (not re-parsed from labels).
+      const gateSurfaces: string[] = [];
+      if (wantHooks) gateSurfaces.push('pre-push hook');
+      if (wantPrecommitHook) gateSurfaces.push('pre-commit hook');
+      if (wantCi) gateSurfaces.push('CI guardrail');
+      if (wantClaudeLoop) gateSurfaces.push('Stop-gate');
+      const flowInstalled = shipResults.some(
+        (s) => s.label === 'Flow integration gate' && s.result.installed.length > 0,
+      );
+      if (flowInstalled) gateSurfaces.push('flow gate');
 
-      for (const { label, result: r } of shipResults) {
-        if (r.installed.length) {
-          logger.success(`${label}: installed ${r.installed.length} file(s)`);
-          for (const f of r.installed) logger.dim(`    ${f}`);
-        }
-        if (r.sidecars.length) {
-          logger.warn(
-            `${label}: ${r.sidecars.length} sidecar(s) written (existing files preserved)`,
-          );
-          for (const f of r.sidecars) logger.dim(`    ${f}`);
-        }
-        if (r.skipped.length) {
-          logger.dim(`${label}: ${r.skipped.length} file(s) skipped (already present)`);
-        }
-        for (const note of r.notes) logger.info(note);
+      // Recap the armed surfaces as ONE step (the verbose per-file list is
+      // gated behind --verbose for the rare debugging case). Notes surface the
+      // facts that matter: sidecars written, and the flow-gate posture.
+      const armStep = logger.startSpinner('Arming the gates');
+      const installedFiles = shipResults.reduce((n, s) => n + s.result.installed.length, 0);
+      const sidecars = shipResults.reduce((n, s) => n + s.result.sidecars.length, 0);
+      if (values.verbose) {
+        for (const { label, result: r } of shipResults)
+          for (const f of r.installed) armStep.note(`${label}: ${f}`);
       }
+      if (sidecars > 0)
+        armStep.note(`${sidecars} sidecar(s) written — your existing files were preserved`);
+      const flowNote = shipResults.find((s) => s.label === 'Flow integration gate')?.result
+        .notes[0];
+      if (flowNote) armStep.note(flowNote);
+      if (gateSurfaces.length > 0) armStep.succeed(gateSurfaces.join(' · '));
+      else if (installedFiles > 0) armStep.succeed(`${installedFiles} files`);
+      else armStep.succeed('nothing to arm');
 
       // Stamp the install-flag set into the manifest so `vyuh-dxkit
       // update` knows exactly which surfaces to refresh later instead
@@ -815,39 +843,42 @@ export async function run(argv: string[]): Promise<void> {
         withExtensionsRefresh: !!values['with-extensions-refresh'] || extensionsRefreshEnabled(cwd),
       });
 
-      console.log('');
-      logger.info('Manifest written to .vyuh-dxkit.json');
+      logger.dim('Manifest written to .vyuh-dxkit.json');
 
       // Stealth mode: gitignore only files we just created
       if (values.stealth) {
         enableStealthMode(cwd, result.created);
       }
 
-      console.log('');
-      logger.success('Done! Claude Code now has full project context.');
-
-      // D150 fix: baseline-create is the most actionable next step
-      // when ship surfaces (hooks / CI / etc.) landed — surface it
-      // prominently rather than buried under a wall of dim hints.
-      // Without a baseline, the hooks + CI workflows fail-fast on
-      // every push ("no baseline found"), making the customer think
-      // dxkit is broken right after they installed it.
-      if (shipResults.length > 0) {
-        console.log(''); // slop-ok
-        // Sequence matters: `baseline create` refuses to write an incomplete
-        // baseline when a scanner is missing (e.g. the coverage tool), so point
-        // at `tools install` FIRST — otherwise the very next step init suggests
-        // fails, right after install.
-        logger.info(
-          `Next: run \`${dxkitCli('tools install')}\`, then \`${dxkitCli('baseline create')}\` to capture today's state.`,
-        );
-        logger.dim('   (tools install provisions the scanners baseline needs; without a baseline,');
-        logger.dim('    your pre-push hook + CI guardrail have nothing to diff against)');
-      }
-
-      console.log(''); // slop-ok
-      logger.dim('  Other commands: `vyuh-dxkit doctor` (verify), `vyuh-dxkit update` (refresh),');
-      logger.dim('    `vyuh-dxkit upgrade` (move to a newer dxkit version)');
+      // The FINISHING arc — the step that makes `init` actually FINISH. It
+      // provisions the scanners a baseline needs, then captures today's
+      // baseline (visibility-resolved per Rule 11, non-interactive, fail-soft),
+      // so the surfaces we just armed have something to diff against on the
+      // very next push. Runs when a gate surface was armed (those surfaces are
+      // inert without a baseline) or the user asked for a hands-off setup
+      // (--yes); `--no-finish` opts out; a context-only install skips it.
+      const { finishSetup, buildInitClosing, renderInitClosing } = await import('./init-arc');
+      // Finish only when a BASELINE-CONSUMING gate was armed — the pre-push
+      // hook, CI guardrail, or Stop-gate are the surfaces that are inert (and
+      // fail-fast with "no baseline") without one. A context-only install
+      // (--dx-only) or a flow-warn-only bare `init` needs no baseline, so the
+      // arc doesn't waste a scan there; `--no-finish` opts out explicitly.
+      const baselineGates = wantHooks || wantCi || wantClaudeLoop;
+      const wantFinish = !values['no-finish'] && baselineGates;
+      let closingState = wantFinish
+        ? await finishSetup({ cwd, surfaces: gateSurfaces, force: !!values.force })
+        : {
+            gated: baselineGates,
+            baselineFindings: null,
+            baselineMode: null,
+            surfaces: gateSurfaces,
+            incompleteScanners: [],
+            elapsedMs: 0,
+          };
+      // "ready in Ns" reflects the WHOLE init (detect + generate + arm + arc),
+      // not just the tail.
+      closingState = { ...closingState, elapsedMs: Date.now() - initStarted };
+      renderInitClosing(buildInitClosing(closingState));
       break;
     }
 
