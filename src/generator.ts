@@ -162,6 +162,10 @@ export const DXKIT_SKILLS = [
   // deltas) and a tailored reviewer checklist. The close of the
   // dxkit-feature / dxkit-action loop.
   'dxkit-pr',
+  // dxkit-describe: produce a zero-write repo card + a self-contained
+  // contract-map HTML (stack, HTTP flow spine, seams, models — every fact
+  // epistemic-labeled). The shareable/onboarding visibility surface.
+  'dxkit-describe',
   // dxkit-loop: operate the autonomous-loop Stop-gate. Sets it up
   // (init --claude-loop / loop doctor), explains a block, reads the
   // ledger, and switches the security-only / full-debt posture. The

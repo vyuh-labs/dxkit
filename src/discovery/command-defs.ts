@@ -1,9 +1,5 @@
-/**
- * THE command registry data (CLAUDE.md Rule 16) — one descriptor per top-level
- * CLI command. Split out of `commands.ts` as pure data; the facade in
- * `commands.ts` re-exports `COMMANDS` + `CommandId` and adds the registry
- * helpers, so every existing importer of `./commands` is unchanged.
- */
+/** THE command registry data (CLAUDE.md Rule 16) — one descriptor per top-level
+ *  CLI command; `commands.ts` re-exports `COMMANDS` + `CommandId` + helpers. */
 import type { CapabilityDescriptor } from './command-types';
 import {
   recommendConfigure,
@@ -25,10 +21,7 @@ import {
   planFlowSources,
 } from './advisor';
 
-/**
- * THE registry. One entry per top-level command. Keep in rough help-index
- * order within each group; `renderCommandIndex` regroups by `group`.
- */
+/** THE registry. One entry per command, in rough help-index order within each group. */
 export const COMMANDS = [
   // ── Setup ──────────────────────────────────────────────────────────────
   {
@@ -147,7 +140,6 @@ export const COMMANDS = [
     docsBlurb:
       'Compose a typed feedback issue (false-positive / bug / feature-request / …); nothing submits until you confirm in the browser.',
   },
-
   // ── Assess ─────────────────────────────────────────────────────────────
   {
     id: 'health',
@@ -283,7 +275,6 @@ export const COMMANDS = [
       'The champion ROI report, computed not narrated: net-new findings the guardrail intercepted before they reached the base branch, per week and by category, from the append-only loop ledger. Interceptions are the ungameable number; --since <ref|date> scopes the window. Also surfaces the score-over-time trend (how each dimension moved) from the dxkit-reports snapshots when on-merge reports are enabled.',
     skill: 'dxkit-reports',
   },
-
   // ── Gate ───────────────────────────────────────────────────────────────
   {
     id: 'baseline',
@@ -391,7 +382,6 @@ export const COMMANDS = [
     whenToRecommend: recommendExtensions,
     planConfig: planFlowSources,
   },
-
   // ── Integrate ──────────────────────────────────────────────────────────
   {
     id: 'schema',
@@ -454,6 +444,16 @@ export const COMMANDS = [
     typicalRuntime: '< 5 sec',
     docsBlurb:
       'Rank reviewers by recency-weighted ownership of the touched files, blended with CODEOWNERS, with a bus-factor signal.',
+  },
+  {
+    id: 'describe',
+    audience: 'user',
+    group: 'explore',
+    summary: 'Zero-write repo card + a self-contained contract-map HTML',
+    typicalRuntime: '< 10 sec',
+    docsBlurb:
+      'A shareable snapshot of what dxkit sees: the stack, the HTTP flow spine (routes served, calls made, how they bind), and the data models — every count labeled observed / derived / inferred / unknown so the picture is honest. Prints a terminal summary, --json for the versioned repo card, or --html for a screenshot-worthy contract map (--out <file> to save it). Writes nothing to your repo unless you pass --out.',
+    skill: 'dxkit-describe',
   },
 
   // ── Export ─────────────────────────────────────────────────────────────

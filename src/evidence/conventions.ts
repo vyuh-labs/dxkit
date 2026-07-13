@@ -18,7 +18,7 @@ import { VERSION as DXKIT_VERSION } from '../constants';
  * entry breaks every consumer that version-gates on `doc.schema` — add a
  * `…v2` alongside instead and keep the v1 reader.
  */
-export const EVIDENCE_SCHEMA_IDS = ['dxkit.evaluate-evidence.v1'] as const;
+export const EVIDENCE_SCHEMA_IDS = ['dxkit.evaluate-evidence.v1', 'dxkit.repo-card.v1'] as const;
 
 export type EvidenceSchemaId = (typeof EVIDENCE_SCHEMA_IDS)[number];
 
