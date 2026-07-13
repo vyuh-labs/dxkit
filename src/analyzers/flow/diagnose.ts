@@ -185,6 +185,18 @@ function isUiComponentFile(file: string): boolean {
   return UI_COMPONENT_EXTENSIONS.some((ext) => f.endsWith(ext));
 }
 
+/**
+ * The canonical "consumers are visible" signal (Rule 2): how many resolved
+ * bindings originate from a co-located UI component. `> 0` means this repo's
+ * own frontend consumes its API, so an unconsumed route is meaningfully dead;
+ * `0` on a standalone backend means the consumer lives elsewhere and dead-route
+ * detection must NOT fire. Both `diagnoseFlow` and `describe`'s holistic map
+ * read this ONE computation instead of re-deriving it.
+ */
+export function frontendConsumerCount(model: FlowModel): number {
+  return model.bindings.filter((b) => b.route !== null && isUiComponentFile(b.call.file)).length;
+}
+
 function resolveConnection(cwd: string, model: FlowModel): { rung: ConnectionRung; note: string } {
   if (model.routes.length > 0) {
     return { rung: 'monorepo', note: 'This repo serves the routes its calls target.' };
@@ -261,9 +273,7 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
   // files, count zero). Keyed on the UI-rendering extension rather than a role
   // PATH because `primaryComponentPaths` mixes frontend (`/components/`) with
   // backend (`/services/`), so a server call would falsely read as a UI consumer.
-  const frontendConsumers = model.bindings.filter(
-    (b) => b.route !== null && isUiComponentFile(b.call.file),
-  ).length;
+  const frontendConsumers = frontendConsumerCount(model);
 
   // Freshness disclosure for a committed contract — stale-but-declared beats
   // stale-and-silent. May probe participant tips (local rev-parse / bounded

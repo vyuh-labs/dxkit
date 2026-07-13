@@ -9,9 +9,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readVisNetworkBundle } from '../dashboard/vendor';
-import { gatherDescribeInput } from './gather';
+import { gatherDescribeInput, gatherHolisticGraph } from './gather';
 import { buildRepoCard } from './repo-card';
-import { projectContractMap, buildContractMap } from './contract-map';
+import { buildContractMap } from './contract-map';
 import type { RepoCardDoc, LabeledCounts } from './repo-card-schema';
 
 export interface DescribeOptions {
@@ -82,8 +82,8 @@ export async function runDescribe(
   }
 
   if (opts.html || opts.out) {
-    const graph = projectContractMap(input);
-    const html = buildContractMap({ card, input, graph, visNetworkBundle: readBundle() ?? '' });
+    const holistic = await gatherHolisticGraph(cwd);
+    const html = buildContractMap({ card, holistic, visNetworkBundle: readBundle() ?? '' });
     if (opts.out) {
       const outPath = path.resolve(cwd, opts.out);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });

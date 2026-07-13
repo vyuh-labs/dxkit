@@ -1271,6 +1271,54 @@ export function enclosingNodeIdFor(
   return (best ?? moduleFallback)?.id;
 }
 
+/** The structural node enclosing a source location — the full-node sibling of
+ *  {@link enclosingNodeIdFor}. The call→caller half of the holistic graph↔flow
+ *  join: a `ClientCall` (file, line) resolves to the function that makes it. */
+export function enclosingNodeFor(
+  graph: Graph,
+  sourceFile: string,
+  line: number,
+): GraphNode | undefined {
+  const id = enclosingNodeIdFor(graph, sourceFile, line);
+  return id ? graph.nodeById.get(id) : undefined;
+}
+
+/** Resolve a symbol by NAME within a specific file — the file-scoped resolver
+ *  the global `symbolIndex` lacks. Avoids the cross-file collision a bare name
+ *  lookup hits (two repos each with a `GET` handler). Parens-insensitive so a
+ *  route's `handler` ("getUser") matches a node label ("getUser()"). */
+export function symbolInFile(
+  graph: Graph,
+  sourceFile: string,
+  name: string,
+): GraphNode | undefined {
+  const nodes = graph.nodesByFile.get(sourceFile);
+  if (!nodes) return undefined;
+  const want = stripParens(name);
+  for (const n of nodes) {
+    if (n.kind === 'module') continue;
+    if (stripParens(n.label) === want) return n;
+  }
+  return undefined;
+}
+
+/** The graph node implementing a served route — the route→handler half of the
+ *  join. Prefers resolving the `handler` NAME within the route's file (robust
+ *  when `line` points at a decorator, not the function body); falls back to the
+ *  enclosing declaration at the route's line. `undefined` when neither resolves
+ *  (no graph node for that surface, or graphify absent). Pure; composes the two
+ *  helpers above so the whole join stays in this module (Rule 12). */
+export function endpointHandlerNode(
+  graph: Graph,
+  ep: { readonly sourceFile: string; readonly line?: number; readonly handler: string | null },
+): GraphNode | undefined {
+  if (ep.handler) {
+    const byName = symbolInFile(graph, ep.sourceFile, ep.handler);
+    if (byName) return byName;
+  }
+  return typeof ep.line === 'number' ? enclosingNodeFor(graph, ep.sourceFile, ep.line) : undefined;
+}
+
 // ─── File-line context query (the `context <file:line>` structural half) ─────
 
 /**
