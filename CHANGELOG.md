@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`vyuh-dxkit describe` — a zero-write repo card + a shareable contract map.**
+  A snapshot of what dxkit can see about a repo: its stack, its HTTP flow spine
+  (routes served, calls made, how they bind), and its data models — with every
+  count split by an epistemic label (`observed` / `derived` / `inferred` /
+  `unknown`) so the picture is honest about what was parsed versus inferred or
+  unresolvable. It surfaces the **seams** a linter cannot see: client calls that
+  reach no served route (integration gaps) and served routes nothing calls
+  (dead-surface candidates). Prints a terminal summary by default, `--json` for
+  the versioned `dxkit.repo-card.v1` card, or `--html` for a self-contained,
+  offline, light/dark **contract-map** page (calls → routes, verdict-colored by
+  binding confidence, seams highlighted, the honesty legend + disclosures printed
+  on the picture). Zero-write by default — nothing touches the repo unless you
+  pass `--out <file>` to save the HTML. Built entirely on the canonical flow /
+  schema analyzers (no new heuristics); driven by the new `dxkit-describe` skill.
 - **`vyuh-dxkit pr` — a computed, reviewable PR body.** The deterministic core of
   the `dxkit-pr` skill: it reads the branch's real commits + diff for
   `base..HEAD` and computes the parts that used to drift when hand-assembled — the
