@@ -72,7 +72,16 @@ describe('cli init --full --yes (integration, full agent scaffold)', () => {
       JSON.stringify({ name: 'cli-init-test-full', version: '0.0.1' }, null, 2),
     );
     execFileSync('git', ['init', '-q'], { cwd: tmpDir });
-    execFileSync('node', [CLI, 'init', '--full', '--yes'], { cwd: tmpDir, stdio: 'pipe' });
+    // --no-finish: this suite asserts the generated template surface (AGENTS.md,
+    // CLAUDE.md, skills, settings.json), which `generate()` writes BEFORE the
+    // finishing arc. Without it, `init --full` would run the real arc —
+    // installing scanners into the runner (polluting later skipIf-gated
+    // integration tests) and scanning a baseline — neither of which this test
+    // exercises. Mirrors the smoke workflow's --no-finish.
+    execFileSync('node', [CLI, 'init', '--full', '--yes', '--no-finish'], {
+      cwd: tmpDir,
+      stdio: 'pipe',
+    });
   });
 
   afterAll(() => {

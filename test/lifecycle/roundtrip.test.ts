@@ -197,7 +197,7 @@ describe('load-bearing activation does not depend on a package-manager hook', ()
 
     // No package manager runs here — init must not defer the load-bearing
     // git-config write to a postinstall script that a given PM may skip.
-    cli(repo, 'init', '--with-hooks', '--yes');
+    cli(repo, 'init', '--with-hooks', '--yes', '--no-finish');
     const hooksPath = git(repo, 'config', '--local', '--get', 'core.hooksPath').trim();
     expect(hooksPath).toBe('.githooks');
   });
@@ -220,7 +220,7 @@ describe('update refreshes dxkit-owned files but never clobbers user files', () 
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'pre-dxkit');
 
-    cli(repo, 'init', '--full', '--yes');
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
 
     // Simulate an OLDER install: a dxkit skill sits at a stale version the user
     // never touched — on-disk content matches the manifest hash (dxkit owns it,
@@ -249,7 +249,7 @@ describe('update refreshes dxkit-owned files but never clobbers user files', () 
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'pre-dxkit');
 
-    cli(repo, 'init', '--full', '--yes');
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
 
     const wfAbs = join(repo, '.github/workflows/dxkit-guardrails.yml');
     expect(existsSync(wfAbs)).toBe(true);
@@ -273,7 +273,7 @@ describe('update refreshes dxkit-owned files but never clobbers user files', () 
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'pre-dxkit brownfield');
 
-    cli(repo, 'init', '--full', '--yes'); // dxkit skips AGENTS.md → provenance 'skipped'
+    cli(repo, 'init', '--full', '--yes', '--no-finish'); // dxkit skips AGENTS.md → provenance 'skipped'
     cli(repo, 'update', '--force'); // the reported data-loss trigger
 
     expect(readFileSync(join(repo, 'AGENTS.md'), 'utf8')).toBe(agents);
