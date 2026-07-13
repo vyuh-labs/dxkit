@@ -12,6 +12,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
+import { gatherGraphifyGraph } from '../analyzers/tools/graphify';
 import {
   GRAPH_REPORT_PATH,
   GRAPH_SCHEMA_VERSION,
@@ -206,4 +208,39 @@ export function indexGraph(json: GraphJson): Graph {
     endpointById,
     endpointByKey,
   };
+}
+
+/**
+ * Obtain an indexed graph for `root` — reusing a FRESH on-disk `graph.json`
+ * (its `meta.commitSha` matches HEAD) to skip a rebuild, else building it in
+ * memory with `writeToDisk: false` (zero-write). Returns `undefined` when
+ * graphify is unavailable or found no files. The one canonical "get me a graph
+ * without writing to the repo" entry point (Rule 2 + Rule 12) — every consumer
+ * that wants a query-ready graph for a possibly-unbuilt repo routes through it
+ * (the seam inventory, the holistic contract map, …) rather than re-deriving
+ * the reuse-vs-build dance.
+ */
+export async function obtainGraph(root: string): Promise<Graph | undefined> {
+  const disk = tryLoadGraph(root);
+  if (disk && isFreshGraph(disk, root)) return disk;
+  const built = await gatherGraphifyGraph(root, { writeToDisk: false });
+  return built.kind === 'success' ? indexGraph(built.graph) : undefined;
+}
+
+/** Whether an on-disk graph was built at the current HEAD (so it reflects the
+ *  committed tree). Fail-safe: an unresolvable HEAD or an absent `commitSha`
+ *  reads as NOT fresh, so callers rebuild rather than trust a stale artifact. */
+function isFreshGraph(graph: Graph, root: string): boolean {
+  const stamped = graph.meta.commitSha;
+  if (!stamped) return false;
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return head.length > 0 && head === stamped;
+  } catch {
+    return false;
+  }
 }

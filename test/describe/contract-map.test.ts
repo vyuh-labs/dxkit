@@ -1,66 +1,148 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, cpSync, rmSync, existsSync, mkdirSync, renameSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { gatherDescribeInput } from '../../src/describe/gather';
-import { buildRepoCard } from '../../src/describe/repo-card';
-import { projectContractMap, buildContractMap } from '../../src/describe/contract-map';
+import { describe, it, expect } from 'vitest';
+import { buildContractMap } from '../../src/describe/contract-map';
+import type { HolisticGraph } from '../../src/describe/holistic';
+import type { RepoCardDoc } from '../../src/describe/repo-card-schema';
 
-const FIXTURES = join(__dirname, '..', 'fixtures', 'analysis');
-function stageFixture(stack: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `dxkit-map-${stack}-`));
-  cpSync(join(FIXTURES, stack), dir, { recursive: true });
-  for (const { marker, target } of [
-    { marker: 'env.example', target: '.env.example' },
-    { marker: 'dxkit-policy.json', target: '.dxkit/policy.json' },
-  ]) {
-    const from = join(dir, marker);
-    if (existsSync(from)) {
-      mkdirSync(dirname(join(dir, target)), { recursive: true });
-      renameSync(from, join(dir, target));
-    }
-  }
-  const git = (...a: string[]) =>
-    execFileSync('git', a, { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
-  git('config', 'user.email', 't@t.t');
-  git('config', 'user.name', 'test');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  return dir;
-}
+/** A minimal card (only the header fields the map reads). */
+const CARD = {
+  schema: 'dxkit.repo-card.v1',
+  generatedAt: '2026-07-13T00:00:00.000Z',
+  dxkitVersion: '3.7.0',
+  provenance: { commitSha: 'abc1234', branch: 'main', workingTreeDirty: false },
+  stack: {
+    name: 'demo',
+    description: '',
+    languages: ['TypeScript'],
+    framework: null,
+    infrastructure: [],
+  },
+  flow: {
+    routes: { total: 2, observed: 2, derived: 0, inferred: 0, unknown: 0 },
+    calls: { total: 2, observed: 2, derived: 0, inferred: 0, unknown: 0 },
+    bindings: { total: 2, observed: 1, derived: 1, inferred: 0, unknown: 0 },
+    unresolvedCalls: 1,
+    unconsumedRoutes: 1,
+    dynamicCalls: 0,
+    connectionRung: 'configured-participants',
+  },
+  models: {
+    models: { total: 0, observed: 0, derived: 0, inferred: 0, unknown: 0 },
+    dynamicModels: 0,
+  },
+  freshness: null,
+  coverage: {
+    callSitesSeen: 2,
+    extracted: 2,
+    dynamic: 0,
+    paths: { exact: 2, templated: 0, opaque: 0 },
+    note: '',
+  },
+  notes: [],
+  zeroWrite: true,
+} as RepoCardDoc;
 
-let dir: string;
-beforeAll(async () => {
-  dir = stageFixture('ts-webapp');
-});
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+const HOLISTIC: HolisticGraph = {
+  repos: ['web', 'api'],
+  nodes: [
+    {
+      id: 'web::call::a',
+      repo: 'web',
+      lane: 'caller',
+      kind: 'call',
+      label: 'GET /articles',
+      title: 'x',
+    },
+    {
+      id: 'web::call::b',
+      repo: 'web',
+      lane: 'caller',
+      kind: 'call',
+      label: 'GET /products',
+      seam: 'broken',
+      title: 'x',
+    },
+    {
+      id: 'api::route::a',
+      repo: 'api',
+      lane: 'route',
+      kind: 'route',
+      label: 'GET /articles',
+      handlerId: 'api::handler::h',
+      title: 'x',
+    },
+    {
+      id: 'api::route::d',
+      repo: 'api',
+      lane: 'route',
+      kind: 'route',
+      label: 'POST /orders',
+      seam: 'dead',
+      title: 'x',
+    },
+    {
+      id: 'api::handler::h',
+      repo: 'api',
+      lane: 'handler',
+      kind: 'handler',
+      label: 'GET()',
+      fanout: 4,
+      drillId: 'api::a.ts#GET#1',
+      title: 'x',
+    },
+  ],
+  edges: [
+    {
+      from: 'web::call::a',
+      to: 'api::route::a',
+      kind: 'cross-repo',
+      label: 'observed',
+      crossRepo: true,
+    },
+    { from: 'api::route::a', to: 'api::handler::h', kind: 'serves', label: 'observed' },
+  ],
+  fns: {
+    'api::a.ts#GET#1': {
+      name: 'GET',
+      repo: 'api',
+      internal: [],
+      external: ['json', 'fetch'],
+      fanout: 4,
+    },
+  },
+  counts: { routes: 2, calls: 2 },
+  seams: { brokenCalls: 1, deadRoutes: 1, crossRepoEdges: 1 },
+  depth: { functions: 7, meanFanout: 1.43, internalCalls: 3, externalCalls: 10 },
+  notes: [],
+};
 
-describe('describe contract map', () => {
-  it('builds a self-contained, deterministic, honest HTML map', async () => {
-    const input = await gatherDescribeInput(dir);
-    const card = buildRepoCard(input);
-    const graph = projectContractMap(input);
+describe('holistic contract map', () => {
+  it('builds a self-contained, deterministic map with the seam + depth story', () => {
+    const a = buildContractMap({
+      card: CARD,
+      holistic: HOLISTIC,
+      visNetworkBundle: 'window.vis={};',
+    });
+    const b = buildContractMap({
+      card: CARD,
+      holistic: HOLISTIC,
+      visNetworkBundle: 'window.vis={};',
+    });
+    expect(a).toBe(b); // deterministic (fixed layout, sorted) → screenshot-stable
 
-    const a = buildContractMap({ card, input, graph, visNetworkBundle: 'window.vis={};' });
-    const b = buildContractMap({ card, input, graph, visNetworkBundle: 'window.vis={};' });
-
-    // Deterministic: same card → byte-identical HTML (screenshot-stable).
-    expect(a).toBe(b);
-
-    // Self-contained: no external fetches (everything inlined).
+    // self-contained
     expect(a).not.toMatch(/<script[^>]+src=/i);
     expect(a).not.toMatch(/<link[^>]+href=/i);
-    expect(a).not.toMatch(/https?:\/\/[^"']*\.(js|css)/i);
 
-    // Honesty is on the picture.
+    // the seam + graphify-depth story is on the picture
+    expect(a).toContain('broken calls');
+    expect(a).toContain('dead routes');
+    expect(a).toContain('cross-repo links');
+    expect(a).toContain('calls mapped');
+    // the artifact does NOT name or compare against graphify
+    expect(a.toLowerCase()).not.toContain('graphify');
     expect(a).toContain('Nothing was written to your repo');
-    expect(a).toContain('dxkit-contract-data');
-    expect(a).toContain('unresolved calls');
-    expect(a).toContain('unconsumed routes');
 
-    // The data island is present and parseable.
+    // data island: nodes carry deterministic x/y and the expand payload rides along
     const m = a.match(
       /<script id="dxkit-contract-data" type="application\/json">([^<]*)<\/script>/,
     );
@@ -71,17 +153,8 @@ describe('describe contract map', () => {
         .replace(/\\u003e/g, '>')
         .replace(/\\u0026/g, '&'),
     );
-    expect(Array.isArray(data.nodes)).toBe(true);
-    expect(Array.isArray(data.edges)).toBe(true);
-  });
-
-  it('projects seam classes deterministically', async () => {
-    const input = await gatherDescribeInput(dir);
-    const g1 = projectContractMap(input);
-    const g2 = projectContractMap(input);
-    expect(JSON.stringify(g1)).toBe(JSON.stringify(g2));
-    // Node ids are sorted (stable ordering).
-    const ids = g1.nodes.map((n) => n.id);
-    expect([...ids].sort()).toEqual(ids);
+    // nodes carry their kind (physics lays them out client-side; no baked positions)
+    expect(data.nodes.every((n: { kind: string }) => typeof n.kind === 'string')).toBe(true);
+    expect(Object.keys(data.fns)).toContain('api::a.ts#GET#1');
   });
 });

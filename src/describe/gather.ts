@@ -13,9 +13,14 @@
  * `contractFreshness(cwd, () => null)` and ignores the diagnosis' own
  * `contract` field. Nothing here writes to disk.
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { detect } from '../detect';
 import type { DetectedStack } from '../types';
 import { gatherRepoFlowModel } from '../analyzers/flow/gather';
+import { gatherFunctionSignatures } from '../analyzers/duplication/signatures';
+import { readWorkspace } from '../workspace';
+import { buildIntraRepoModel, buildHolisticGraph, type HolisticGraph } from './holistic';
 import { diagnoseFlow, flowCoverage } from '../analyzers/flow/diagnose';
 import type { FlowModel } from '../analyzers/flow/model';
 import type { FlowDiagnosis, FlowCoverage } from '../analyzers/flow/diagnose';
@@ -60,4 +65,34 @@ export async function gatherDescribeInput(cwd: string): Promise<DescribeInput> {
   const coverage = diagnosis?.coverage ?? flowCoverage(flow);
 
   return { stack, provenance, flow, diagnosis, coverage, models, freshness };
+}
+
+/**
+ * Gather the holistic (intra + inter-repo) contract graph for the map. Roots =
+ * this repo ∪ every LOCAL-path workspace participant (offline — a `repo:`-only
+ * participant with no checkout is skipped, never fetched, per Rule 11). Each
+ * root contributes its own tree-sitter call graph (deeper than graphify) joined
+ * to its flow model; the mesh resolves calls across the boundary. Zero-write.
+ */
+export async function gatherHolisticGraph(cwd: string): Promise<HolisticGraph> {
+  const roots: Array<{ name: string; root: string }> = [
+    { name: path.basename(path.resolve(cwd)), root: path.resolve(cwd) },
+  ];
+  const ws = readWorkspace(cwd);
+  if (ws) {
+    for (const p of ws.participants) {
+      if (!p.path) continue; // repo:-only → offline, skip (never fetch)
+      const abs = path.resolve(cwd, p.path);
+      if (fs.existsSync(abs) && !roots.some((r) => r.root === abs)) {
+        roots.push({ name: p.name, root: abs });
+      }
+    }
+  }
+  const models = [];
+  for (const { name, root } of roots) {
+    const sigs = await gatherFunctionSignatures(root);
+    const flow = await gatherRepoFlowModel(root);
+    models.push(buildIntraRepoModel(name, root, sigs, flow));
+  }
+  return buildHolisticGraph(models);
 }

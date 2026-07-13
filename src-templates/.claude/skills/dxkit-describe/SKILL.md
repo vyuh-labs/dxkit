@@ -39,10 +39,14 @@ scale.
     gaps),
   - **unconsumed routes** — served routes nothing calls (dead-surface
     candidates).
-- A **contract-map HTML**: a self-contained, offline, light/dark page drawing
-  calls → routes, verdict-colored by binding confidence, with the seams drawn to
-  stand out. The honesty (label legend + disclosure notes) is printed on the
-  picture, so a screenshot is self-explanatory.
+- A **holistic contract-map HTML**: a self-contained, offline, light/dark page
+  that joins dxkit's OWN call graph (deeper than graphify — it keeps the
+  framework/stdlib calls graphify drops) to the HTTP contract layer, ACROSS
+  repos. Swimlanes per repo, left→right callers → routes → handlers; seams
+  (broken call / dead route) glow; cross-repo edges are distinct; each handler
+  expands on click to its internal + framework calls (the depth graphify can't
+  see). The honesty rides on the picture. When a `.dxkit/workspace.json` declares
+  local-path participants, the map spans them (offline — it never fetches).
 
 ## How to use it
 

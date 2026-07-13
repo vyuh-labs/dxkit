@@ -12,11 +12,8 @@
  */
 
 import * as path from 'path';
-import { execFileSync } from 'child_process';
-import { gatherGraphifyGraph } from '../tools/graphify';
 import { gatherDuplicateFindings, type DuplicateFinding } from '../duplication/findings';
-import { indexGraph, tryLoadGraph } from '../../explore/load';
-import type { Graph } from '../../explore/types';
+import { obtainGraph } from '../../explore/load';
 import { gatherDeadSurfaces, type DeadSurfaceResult } from './dead-surface-gather';
 import { convergeSeams, type SeamConvergence } from './index';
 
@@ -78,35 +75,5 @@ export async function gatherSeamInventory(cwd: string): Promise<SeamInventory> {
     return { duplicates, dead, converged };
   } catch {
     return EMPTY;
-  }
-}
-
-/**
- * Obtain an indexed graph for `root` — reusing a FRESH on-disk `graph.json`
- * (commitSha matches HEAD) to skip a rebuild, else building it in memory
- * (zero-write). Returns undefined when graphify is unavailable / found no files.
- */
-async function obtainGraph(root: string): Promise<Graph | undefined> {
-  const disk = tryLoadGraph(root);
-  if (disk && isFreshGraph(disk, root)) return disk;
-  const built = await gatherGraphifyGraph(root, { writeToDisk: false });
-  return built.kind === 'success' ? indexGraph(built.graph) : undefined;
-}
-
-/** Whether an on-disk graph was built at the current HEAD (so it reflects the
- *  committed tree). Fail-safe: an unresolvable HEAD or an absent `commitSha`
- *  reads as NOT fresh, so we rebuild rather than trust a stale artifact. */
-function isFreshGraph(graph: Graph, root: string): boolean {
-  const stamped = graph.meta.commitSha;
-  if (!stamped) return false;
-  try {
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return head.length > 0 && head === stamped;
-  } catch {
-    return false;
   }
 }
