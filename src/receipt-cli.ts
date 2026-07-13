@@ -29,7 +29,7 @@ export interface ReceiptOptions {
   readonly refresh?: boolean;
 }
 
-interface VerdictView {
+export interface VerdictView {
   readonly markdown: string;
   readonly blocks: boolean;
   readonly warns: boolean;
@@ -46,7 +46,7 @@ interface DimDelta {
   readonly head: number;
   readonly delta: number;
 }
-interface ScoreMovement {
+export interface ScoreMovement {
   readonly ref: string;
   readonly overall: DimDelta;
   readonly dimensions: readonly DimDelta[];
@@ -70,10 +70,31 @@ type HealthDims = {
   developerExperience: DimensionScore;
 };
 
-export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promise<void> {
+/** The computed receipt — the verdict view, optional score movement, and the
+ *  ready-to-paste markdown block. Shared by `runReceipt` (prints it) and
+ *  `vyuh-dxkit pr` (embeds the markdown in the PR body) — Rule 2, one source
+ *  for the "dxkit signals" block. */
+export interface Receipt {
+  readonly verdict: VerdictView;
+  readonly movement: ScoreMovement | null;
+  readonly markdown: string;
+}
+
+/**
+ * Compute the receipt without printing: the guardrail verdict (from the session
+ * verdict cache when fresh, else a fresh gather), the optional health-score
+ * movement vs `since`, and the assembled markdown block. The one place the block
+ * is produced — callers render or embed it.
+ */
+export async function buildReceipt(cwd: string, opts: ReceiptOptions = {}): Promise<Receipt> {
   const policy = loadPolicyFromCwd(cwd);
   const verdict = await resolveVerdict(cwd, policy, !!opts.refresh);
   const movement = opts.since ? await computeScoreMovement(cwd, opts.since) : null;
+  return { verdict, movement, markdown: assembleMarkdown(verdict, movement, opts.since) };
+}
+
+export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promise<void> {
+  const { verdict, movement, markdown } = await buildReceipt(cwd, opts);
 
   if (opts.json) {
     process.stdout.write(
@@ -88,7 +109,7 @@ export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promis
           cached: verdict.cached,
           ranAt: verdict.ranAt,
           scoreMovement: movement,
-          markdown: assembleMarkdown(verdict, movement, opts.since),
+          markdown,
         },
         null,
         2,
@@ -99,7 +120,7 @@ export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promis
 
   // Default output is pure, ready-to-paste markdown on stdout (no console
   // chrome), mirroring `guardrail check --markdown`.
-  process.stdout.write(assembleMarkdown(verdict, movement, opts.since) + '\n'); // slop-ok
+  process.stdout.write(markdown + '\n'); // slop-ok
 }
 
 /** Reuse a fresh cached verdict, else run the guardrail and cache the result. */

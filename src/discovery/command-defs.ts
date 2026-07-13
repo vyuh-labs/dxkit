@@ -319,6 +319,16 @@ export const COMMANDS = [
     skill: 'dxkit-pr',
   },
   {
+    id: 'pr',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Compute a reviewable PR body from the branch (title, changes, signals, checklist)',
+    typicalRuntime: '< 30 sec (longer with --since)',
+    docsBlurb:
+      'The deterministic core of the dxkit-pr skill: reads the branch commits + diff and computes the title, bucketed Changes, the receipt signals block, suggested reviewers, a diff-derived reviewer checklist, and the structural-duplicate seam prompts — leaving only "What & why" for the author. Prints markdown or --json; never opens the PR.',
+    skill: 'dxkit-pr',
+  },
+  {
     id: 'allowlist',
     audience: 'user',
     group: 'gate',
@@ -362,7 +372,6 @@ export const COMMANDS = [
     whenToRecommend: recommendChecks,
     planConfig: planLintGate,
   },
-
   {
     id: 'extensions',
     audience: 'user',
