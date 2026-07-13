@@ -99,7 +99,13 @@ jobs:
           # for the pre-commit hook (default-off), --with-pr-review
           # for the AI PR-review workflow (default-off). The smoke
           # asserts they install correctly when opted in.
-          ./node_modules/.bin/vyuh-dxkit init --full --yes \
+          #
+          # --no-finish: this job tests baseline + guardrail MECHANICS as
+          # discrete steps below, so init must NOT run its finishing arc
+          # (which would provision scanners + pre-create the baseline in a
+          # bare toolchain-free runner). It keeps the "Capture baseline"
+          # step the unit under test.
+          ./node_modules/.bin/vyuh-dxkit init --full --yes --no-finish \
             --with-precommit-hook \
             --with-pr-review
 
@@ -171,7 +177,9 @@ jobs:
           git init -q
           npm init -y >/dev/null
           npm install --save-dev "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}" --silent
-          ./node_modules/.bin/vyuh-dxkit init --full --yes
+          # --no-finish: this dir only asserts default-off ship surfaces, no
+          # baseline/guardrail — skip the arc so it stays fast + toolchain-free.
+          ./node_modules/.bin/vyuh-dxkit init --full --yes --no-finish
           if [ -f .githooks/pre-commit ]; then
             echo "::error::pre-commit hook should NOT install without --with-precommit-hook"
             exit 1
