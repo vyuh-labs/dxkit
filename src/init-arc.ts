@@ -237,7 +237,31 @@ async function runFinishingArc(
     for (const f of tools.failed) scan.note(`could not install ${f.name}: ${f.reason}`);
   }
 
-  // 2) Capture today's baseline — visibility-resolved mode, non-interactive.
+  // 2) Optimize the config for THIS repo. `gatherConfigPlan` computes the
+  //    deterministic per-capability plan from observable repo facts (same repo →
+  //    same plan) and `applyConfigPlan` merge-writes it into policy.json without
+  //    clobbering user edits. This turns a minimal-default install into a
+  //    repo-optimized one — it enables the lint / schema / duplication gates that
+  //    fit the repo (mostly warn-tier, so it adds visibility, not new blocks) and
+  //    PINS postures like baseline.mode. Runs BEFORE the baseline so baseline.mode
+  //    is pinned before capture. Fail-soft.
+  const cfg = logger.startSpinner('Optimizing config for this repo');
+  try {
+    const { gatherConfigPlan } = await import('./discovery/commands');
+    const { applyConfigPlan } = await import('./configure-cli');
+    const plan = gatherConfigPlan(cwd);
+    if (plan.length > 0) {
+      for (const item of plan) cfg.note(`${item.section} → ${item.summary}`);
+      applyConfigPlan(cwd, plan);
+      cfg.succeed(`${plan.length} setting${plan.length === 1 ? '' : 's'} tuned to this repo`);
+    } else {
+      cfg.succeed('already optimal');
+    }
+  } catch (err) {
+    cfg.warn(`skipped — ${(err as Error).message}`);
+  }
+
+  // 3) Capture today's baseline — visibility-resolved mode, non-interactive.
   //    Calling createBaseline directly bypasses the CLI's incomplete-capture
   //    prompt by construction (it captures whatever scanners are present), so
   //    the arc never hangs; we surface the coverage gap as a note instead.
