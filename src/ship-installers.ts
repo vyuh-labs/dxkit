@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import { makeExecutable, serializePreservingJson } from './files';
 import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
+import { defaultBranchViaGh } from './setup-gh';
 import {
   buildDevcontainerExtensions,
   buildDevcontainerFeatures,
@@ -43,16 +44,22 @@ import { detectEnforcement, type EnforcementState } from './enforcement';
  * substitute *some* sensible branch and let the consumer edit the
  * workflow than refuse to install when git state is incomplete.
  *
- *   1. `git symbolic-ref refs/remotes/origin/HEAD` (set whenever the
+ *   1. `gh repo view --json defaultBranchRef` — the TRUE GitHub default,
+ *      above any local heuristic. A clone's `origin/HEAD` can point at a
+ *      feature branch (a repo inited on `feature/x` would otherwise record
+ *      `feature/x` as the workflow's default); gh is authoritative.
+ *   2. `git symbolic-ref refs/remotes/origin/HEAD` (set whenever the
  *      repo was cloned from a remote with a default-branch HEAD)
- *   2. `git rev-parse --verify <name>` against `main` / `master` /
+ *   3. `git rev-parse --verify <name>` against `main` / `master` /
  *      `trunk` / `develop` — the four conventions that cover ~all
  *      real repos
- *   3. The current branch (`git branch --show-current`) — the best
+ *   4. The current branch (`git branch --show-current`) — the best
  *      guess in a freshly-`git init`'d repo that hasn't been pushed
- *   4. Fallback to `'main'` — the GitHub default-branch default
+ *   5. Fallback to `'main'` — the GitHub default-branch default
  */
 export function detectDefaultBranch(cwd: string): string {
+  const viaGh = defaultBranchViaGh(cwd);
+  if (viaGh) return viaGh;
   try {
     const ref = execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
       cwd,

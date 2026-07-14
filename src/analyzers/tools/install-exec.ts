@@ -137,10 +137,30 @@ export function resolveInstallCommand(targetPath: string, toolName: string): Res
   // A node devDep tool (e.g. @vitest/coverage-v8) installs INTO the user's repo,
   // so its `npm install --save-dev …` must match the repo's PM — else it fails
   // the way create-dxkit did on a pnpm project. Isolated tools keep their npm cmd.
-  const command = def.nodePackage
+  let command = def.nodePackage
     ? pmAwareDevInstall(rawCmd, detectPackageManager(targetPath))
     : rawCmd;
+  // Version-aware SDK bootstrap: a tool whose install command carries a
+  // `__DOTNET_CHANNEL__` / `__DOTNET_MAJOR__` placeholder is filled from the
+  // repo's DETECTED runtime version (Rule 6 — the version is a language fact),
+  // so the installed SDK major matches the repo instead of a hardcoded one.
+  // Generic by placeholder, not a per-language branch: any future runtime
+  // bootstrap can reuse the same substitution.
+  command = substituteRuntimeVersion(command, targetPath);
   return { name: toolName, description: def.description, kind: 'run', command };
+}
+
+/**
+ * Fill `__DOTNET_CHANNEL__` (e.g. `9.0`) / `__DOTNET_MAJOR__` (e.g. `9`) in an
+ * install command from the repo's detected .NET version, falling back to `8.0`
+ * when the repo declares none. Only runs `detect` when a placeholder is present
+ * (the common non-.NET install pays nothing). Exported for unit coverage.
+ */
+export function substituteRuntimeVersion(command: string, targetPath: string): string {
+  if (!command.includes('__DOTNET_')) return command;
+  const version = detect(targetPath).versions.csharp ?? '8.0'; // e.g. '9.0'
+  const major = version.split('.')[0]; // e.g. '9'
+  return command.replace(/__DOTNET_CHANNEL__/g, version).replace(/__DOTNET_MAJOR__/g, major);
 }
 
 /** The outcome of running (or trying to run) one tool's install command. */

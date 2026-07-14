@@ -44,6 +44,23 @@ import type {
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
 
+/**
+ * Run dxkit's OWN `dotnet` subprocesses (build / format / test for ANALYSIS,
+ * the correctness floor, and the Roslyn lint gate) in invariant globalization
+ * mode. A minimal WSL / container / CI image often lacks libicu, where every
+ * `dotnet` invocation FailFast-crashes with a cryptic "Couldn't find a valid
+ * ICU package installed" — and dxkit's analysis needs no culture-specific
+ * globalization, so invariant mode is the correct, sudo-free unblock. Set once
+ * in this process's env (inherited by every dotnet child dxkit spawns — the
+ * `run()` calls here AND the `{bin:'dotnet'}` commands the floor/lint runner
+ * executes), and NEVER overrides a value the user set themselves.
+ */
+function ensureDotnetInvariant(): void {
+  if (process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT === undefined) {
+    process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = '1';
+  }
+}
+
 function dirHasMatching(dir: string, regex: RegExp): boolean {
   try {
     return fs.readdirSync(dir).some((name) => regex.test(name));
@@ -723,6 +740,7 @@ async function runDotnetVulnerablePath(cwd: string): Promise<DepVulnGatherOutcom
       reason: 'dotnet SDK not installed (osv-scanner path covers this case)',
     };
   }
+  ensureDotnetInvariant();
 
   const vulnRaw = run(
     `${dotnet.path} list package --vulnerable --include-transitive --format json`,
@@ -1009,6 +1027,7 @@ function gatherCsharpLintResult(cwd: string): LintGatherOutcome {
   if (!dotnet.available) {
     return { kind: 'unavailable', reason: 'not installed' };
   }
+  ensureDotnetInvariant();
 
   const buildRaw = run('dotnet build --no-incremental --nologo -clp:NoSummary 2>&1', cwd, 180000);
   if (buildRaw !== '' && !/\): error \w+:|error (MSB|NETSDK)\d+/.test(buildRaw)) {
@@ -1503,11 +1522,13 @@ function csharpIsTestProject(cwd: string, relProj: string): boolean {
 const csharpCorrectnessProvider: CorrectnessProvider = {
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     if (!csharpHasBuildTarget(ctx.cwd)) return null;
+    ensureDotnetInvariant();
     return { label: 'build', bin: 'dotnet', args: ['build', '--nologo'] };
   },
 
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
     if (!csharpHasBuildTarget(ctx.cwd)) return null;
+    ensureDotnetInvariant();
     const undeterminable = ctx.changedFiles.length === 0;
     const changedCs = ctx.changedFiles.filter((f) => f.endsWith('.cs'));
     if (ctx.scope === 'affected' && !undeterminable) {
@@ -1544,6 +1565,7 @@ export const CSHARP_MSBUILD_WARNING_PARSE =
  */
 const csharpLintGateProvider: LintGateProvider = {
   lintCommand() {
+    ensureDotnetInvariant();
     return {
       bin: 'dotnet',
       args: ['build', '--nologo', '-clp:NoSummary'],
