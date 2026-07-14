@@ -7,8 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-07-13
+
 ### Added
 
+- **Zero-question `init` that finishes the setup in one command.** `vyuh-dxkit
+  init` (and `create-dxkit`) now completes the whole arc with no prompts: it
+  detects the stack, wires the agent context, arms the gates, installs the
+  scanner toolchain, optimizes the config to the repo, and captures today's
+  baseline — so the repository is gated on the very next change. It renders as a
+  live progress sequence and ends on a single mental-model closing (N findings
+  grandfathered; anything a change adds is caught) instead of a wall of homework
+  commands. `--no-finish` arms the gates but defers the tools-install + baseline;
+  re-running on an already-adopted repo detects an older installed version and
+  points at `vyuh-dxkit update`.
+- **`init` optimizes the config to the repo.** As part of the finish arc, `init`
+  runs the deterministic `configure` plan: it computes the config each capability
+  should take from observable repo facts (same repo yields the same plan) and
+  merge-writes it into `policy.json` without clobbering your edits — pinning
+  postures like `baseline.mode` and enabling the lint / schema / duplication
+  gates that fit the repo (mostly warn-tier, so it adds visibility, not new
+  blocks). Agents can drive the same assess-and-configure flow through the
+  `dxkit-onboard` skill (`capabilities` → `doctor` → `configure --apply`).
+- **`vyuh-dxkit evaluate` — a zero-write trial.** Replays your recent landings
+  through the guardrail gate so you can see what it would have blocked before you
+  commit to adopting it. Writes nothing to the repo; `--json` for the evidence
+  document. Driven by the `dxkit-evaluate` skill.
 - **`vyuh-dxkit describe` — a zero-write repo card + a shareable contract map.**
   A snapshot of what dxkit can see about a repo: its stack, its HTTP flow spine
   (routes served, calls made, how they bind), and its data models — with every
@@ -49,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Two-tier enforcement: quick at pre-push, comprehensive in CI.** The pre-push
+  hook now runs the correctness floor scoped to the change (does it compile, do
+  the affected tests pass?) plus the findings guardrail scanned `--incremental`
+  (scoped to the change, so the check scales with the PR's size, not the whole
+  repo's). CI stays comprehensive: the full-scope findings guardrail plus the
+  full-suite correctness floor. The floor is fail-open on a missing toolchain, so
+  the push boundary never hard-fails on un-installed tools — CI is the backstop.
 - **Structural-duplicate (seam) signal re-sourced from dxkit's own AST, with
   IDF-weighted scoring.** A rigor pass on real agent-authored repos found the
   graph-based detector produced confident false positives on framework-heavy code:
