@@ -180,7 +180,7 @@ __DXKIT_CI_RUNTIME_SETUP__
       # floor is most meaningful on JS/TS repos and on repos with no test-CI;
       # your own test job is the place for full-language coverage. Tune via
       # .dxkit/policy.json correctness.surfaces.ci or DXKIT_FLOOR_CI.
-      - name: Run correctness floor
+      - name: Correctness floor (compile + tests)
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
