@@ -14,8 +14,10 @@
  * embedded verbatim — evaluate lifts summary fields out of it but never
  * re-derives a verdict (one concept, one code path).
  */
+import { consumerVisibilityNudge } from '../analyzers/convergence/dead-surface-gather';
 import { VERIFIED_DUP_MIN_SCORE } from '../analyzers/duplication/detect';
 import { clusterStats } from '../analyzers/duplication/findings';
+import type { ParticipantConsumers } from '../analyzers/flow/model';
 import type { GuardrailCheckResult } from '../baseline/check';
 import { type GuardrailJsonPayload, renderJson } from '../baseline/check-renderers';
 import type { ScanCoverage } from '../baseline/coverage';
@@ -134,6 +136,11 @@ export interface SeamVisibility {
    *  UI) — when false, the `removable` tier is suppressed and deadness is
    *  unconfirmed cross-repo. */
   readonly crossRepoConsumersVisible: boolean;
+  /** WHY consumers could not all be read, when they could not — resolved through
+   *  the ONE canonical explanation (`consumerVisibilityNudge`) so this lane and
+   *  the flow map cannot drift, and so the reason is TRUE rather than an assumed
+   *  "declare workspace.json". Absent when consumers were visible. */
+  readonly consumerVisibilityNote?: string;
   /** The ranked "removable slop": routes that are BOTH dead AND a copy-paste,
    *  each with the duplicate twin's symbols. The highest-confidence seam signal. */
   readonly converged: ReadonlyArray<{
@@ -378,6 +385,7 @@ export function seamVisibilityFrom(inv: {
   }>;
   dead: {
     crossRepoConsumersVisible: boolean;
+    participantConsumers?: readonly ParticipantConsumers[];
     byTier: { removable: number; likely: number; expected: number };
   };
   converged: ReadonlyArray<{
@@ -394,6 +402,9 @@ export function seamVisibilityFrom(inv: {
     largestCluster: verifiedStats.largestCluster,
     dead: inv.dead.byTier,
     crossRepoConsumersVisible: inv.dead.crossRepoConsumersVisible,
+    ...(consumerVisibilityNudge(inv.dead) !== null
+      ? { consumerVisibilityNote: consumerVisibilityNudge(inv.dead)! }
+      : {}),
     converged: inv.converged.map((c) => ({
       method: c.route.method,
       path: c.route.path,

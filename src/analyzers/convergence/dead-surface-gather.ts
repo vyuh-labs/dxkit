@@ -23,8 +23,7 @@ import type { Graph } from '../../explore/types';
 import { calledSymbolNames } from '../../explore/queries';
 import { allNonConsumerRoutePaths } from '../../languages';
 import { detect } from '../../detect';
-import { readWorkspace } from '../../workspace';
-import { readServedContract } from '../flow/contract';
+import { sawParticipantConsumers, type ParticipantConsumers } from '../flow/model';
 import * as path from 'path';
 import type { DuplicateFinding } from '../duplication/findings';
 import {
@@ -56,48 +55,120 @@ export type DeadSurfaceReason =
 
 export interface DeadSurfaceResult {
   readonly surfaces: readonly TieredDeadSurface[];
-  /** Whether every consumer was VISIBLE (cross-repo ruled out) — derived from
-   *  topology + connection rung. When false, the whole set is capped at `likely`
-   *  and the renderer nudges "configure workspace.json". */
+  /** Whether every consumer was actually READ (cross-repo ruled out). When false,
+   *  the whole set is capped at `likely` and the renderer explains WHY via
+   *  `consumerVisibilityNudge` — which needs `participantConsumers` to say
+   *  something true, since "declare workspace.json" is wrong advice for a repo
+   *  that already has one. */
   readonly crossRepoConsumersVisible: boolean;
+  /** Per-participant consumed-side provenance from the gathered model, carried so
+   *  a renderer can name the ACTUAL blocker rather than assume the workspace is
+   *  undeclared. Absent when the repo declares no participants. */
+  readonly participantConsumers?: readonly ParticipantConsumers[];
   /** Counts by tier, for a one-line summary. */
   readonly byTier: Readonly<Record<DeadSurfaceTier, number>>;
 }
 
 /**
- * Whether cross-repo consumers could ALL be seen — the precondition for the loud
- * `removable` tier. Only an EXPLICIT mesh qualifies: a `workspace.json` that
- * declares the system's participants, or a committed counterpart contract. When
- * the user has DECLARED the system boundary, a route unconsumed across it is
- * confidently dead.
+ * The ONE explanation of why deadness could not be confirmed — `null` when it
+ * could (consumers were read, so the tiers stand on their own).
  *
- * Read DIRECTLY from the workspace / committed contract, NOT from
- * `diagnoseFlow.connection.rung`: the rung reports `monorepo` for ANY repo that
- * serves routes (it resolves the CONSUMER side, and a route-serving repo short-
- * circuits to `monorepo` before the participant check), so it can never report
- * `configured-participants` for a provider — the signal we actually need is
- * "has this provider declared who consumes it," which only the workspace answers.
- *
- * A bare `monorepo` with no declaration does NOT qualify, even though it looks
- * full-stack: a backend with internal service-to-service HTTP calls also reads
- * as `monorepo`, yet its real UI consumers live in a separate repo dxkit never
- * scanned. dxkit cannot tell those two apart from topology alone, so claiming
- * "consumers visible" there would false-flag a cross-repo-consumed route as
- * removable slop — the exact precision break the ladder avoids (measured on a
- * real split-repo backend: 1214 dead controllers, 0 false removable). The
- * `likely` tier's nudge ("declare your system in workspace.json") graduates a
- * repo to the loud signal — an adoption loop, not a false positive.
+ * Both the flow map and `evaluate` render this; it lives here so they cannot
+ * drift (Rule 2.30 — the same nudge string was previously duplicated in two
+ * renderers). More importantly, it must be TRUE: `crossRepoConsumersVisible`
+ * is false for three different reasons, and the old single string
+ * ("declare workspace.json") is correct for only one of them. Telling a user
+ * who ALREADY declared a workspace to declare a workspace sends them to fix a
+ * thing that is not broken — the same confidently-wrong failure this module's
+ * false-`removable` bug was.
  */
-function consumersVisible(cwd: string, diag: Pick<FlowDiagnosis, 'frontendConsumers'>): boolean {
-  // 1. An explicit mesh: the user DECLARED the system boundary.
-  const ws = readWorkspace(cwd);
-  if (ws && ws.participants.length > 0) return true;
-  if (readServedContract(cwd) !== undefined) return true;
-  // 2. A co-located full-stack monorepo: a frontend component/page in THIS repo
-  //    consumes its own routes, so every consumer is in-repo and visible. A
-  //    backend that only makes internal service calls has zero frontend
-  //    consumers and does NOT qualify (the platform false-positive stays out).
-  return diag.frontendConsumers > 0;
+export function consumerVisibilityNudge(
+  res: Pick<DeadSurfaceResult, 'crossRepoConsumersVisible' | 'participantConsumers'>,
+): string | null {
+  if (res.crossRepoConsumersVisible) return null;
+  const participants = res.participantConsumers ?? [];
+  if (participants.length === 0) {
+    // Nothing declared — the original nudge, now only where it is accurate.
+    return 'cross-repo consumers unverified — declare workspace.json to confirm deadness';
+  }
+  const absent = participants.filter((p) => p.source === 'not-checked-out');
+  const readButUnbound = participants.filter((p) => p.source === 'local' && p.bound === 0);
+  if (absent.length > 0) {
+    const names = absent.map((p) => p.name).join(', ');
+    return (
+      `cross-repo consumers unverified — participant(s) ${names} are declared but not checked out ` +
+      'locally; dxkit reads a participant from its `path`'
+    );
+  }
+  if (readButUnbound.length > 0) {
+    const worst = readButUnbound[0];
+    return (
+      `cross-repo consumers unverified — read ${worst.calls} call(s) from ${worst.name} but bound 0 ` +
+      "to this repo's routes; check that participant's flow.stripUrlPrefixes"
+    );
+  }
+  // Declared, read, and bound — yet still not visible. Reachable only if a future
+  // arm of `consumersVisible` fails; say so rather than invent a cause.
+  return 'cross-repo consumers unverified';
+}
+
+/**
+ * What dxkit actually READ that could call this repo's routes — the ONE
+ * definition of consumer evidence, and the sole input to `consumersVisible`.
+ *
+ * This shape exists because centralizing the LOCATION of the check was not
+ * enough. `consumersVisible` was already the single source of truth — one
+ * function, every consumer routed through it, no duplication, Rule 2.30
+ * satisfied — and it was still wrong TWICE, because it was a DISJUNCTION OF
+ * PROXIES: three independent guesses at one concept, OR'd together, so the
+ * loosest arm always won. Two were invalid:
+ *
+ *   - `workspace.json` participants declared → read as "consumers visible".
+ *     Declaring is not reading. It presented 593 live, actively-called endpoints
+ *     as `removable` on a real split-repo pair.
+ *   - this repo's own `served.json` exists → read as "consumers visible".
+ *     Publishing what I SERVE says nothing about who CONSUMES me; it is my own
+ *     output. Reachable only on repos that serve routes — exactly where the
+ *     question matters — so it was never right. And the documented cross-repo
+ *     setup tells a backend to commit `served.json` so a frontend can gate
+ *     against it, meaning following our own instructions re-armed the bug.
+ *     Verified on the same pair: `flow refresh` alone resurrected all 593.
+ *
+ * Nobody had written down what the predicate MEANS, so heuristics accreted
+ * beside it and read as peers — which is why fixing one left the other in place.
+ * The fix is to make the concept a QUANTITY OF THINGS READ rather than a flag:
+ * every field below counts consumer code dxkit actually parsed. An invalid proxy
+ * then has nowhere to live — there is no field for "an artifact exists", because
+ * a file's existence is not a consumer. Adding an evidence source means adding a
+ * count and saying what it counts, a question that makes an unsound proxy
+ * obvious at the moment someone tries to add it.
+ */
+interface ConsumerEvidence {
+  /** Resolved calls originating from a FRONTEND component/page in THIS repo — a
+   *  co-located UI consuming its own routes. Real: dxkit parsed those files. A
+   *  backend making only internal service-to-service calls scores 0 and does not
+   *  qualify; dxkit cannot tell those apart from topology alone, so the ladder
+   *  biases to false-negative on deadness (measured on a real split-repo backend:
+   *  1214 dead controllers, 0 false removable). */
+  readonly inRepoFrontendCalls: number;
+  /** Declared workspace participants whose consumed side was GATHERED, with what
+   *  each contributed. Real: dxkit walked those trees. `bound` (not `calls`) is
+   *  what counts — see `sawParticipantConsumers`. */
+  readonly participants: readonly ParticipantConsumers[];
+}
+
+/**
+ * Whether every consumer was actually READ — the precondition for the loud
+ * `removable` tier, computed from evidence and nothing else.
+ *
+ * A route is confidently dead only if dxkit has SEEN the code that would have
+ * called it. There is no third arm: a declaration is not a read, and an artifact
+ * this repo published is not a consumer.
+ */
+function consumersVisible(ev: ConsumerEvidence): boolean {
+  return (
+    ev.inRepoFrontendCalls > 0 || sawParticipantConsumers({ participantConsumers: ev.participants })
+  );
 }
 
 /**
@@ -208,7 +279,11 @@ export async function gatherDeadSurfaces(
   // renderers show a clean relative locator).
   const relRoutes = diag.servedUnconsumed.map((r) => ({ ...r, file: toRel(r.file) }));
 
-  const crossRepoConsumersVisible = consumersVisible(cwd, diag);
+  // Assemble the evidence ONCE, from what the diagnosis actually read, then ask.
+  const crossRepoConsumersVisible = consumersVisible({
+    inRepoFrontendCalls: diag.frontendConsumers,
+    participants: diag.participantConsumers ?? [],
+  });
   const surfaces = tierDeadSurfaces(relRoutes, {
     crossRepoConsumersVisible,
     calledSymbols,
@@ -218,5 +293,10 @@ export async function gatherDeadSurfaces(
 
   const byTier = { removable: 0, likely: 0, expected: 0 } as Record<DeadSurfaceTier, number>;
   for (const s of surfaces) byTier[s.tier]++;
-  return { surfaces, crossRepoConsumersVisible, byTier };
+  return {
+    surfaces,
+    crossRepoConsumersVisible,
+    ...(diag.participantConsumers ? { participantConsumers: diag.participantConsumers } : {}),
+    byTier,
+  };
 }

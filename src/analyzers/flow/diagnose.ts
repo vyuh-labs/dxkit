@@ -13,8 +13,14 @@
  */
 
 import { detectActiveLanguages, allFlowSourceExtensions } from '../../languages';
-import { gatherRepoFlowModel } from './gather';
-import { hasOpaqueLeadingSegment, isPlaceholderOnlyPath, type FlowModel } from './model';
+import { gatherSystemFlowModel } from './gather';
+import {
+  hasOpaqueLeadingSegment,
+  isPlaceholderOnlyPath,
+  sawParticipantConsumers,
+  type FlowModel,
+  type ParticipantConsumers,
+} from './model';
 import { readServedContract } from './contract';
 import { contractFreshness, type ContractFreshness } from './staleness';
 import { readWorkspace } from '../../workspace';
@@ -80,6 +86,17 @@ export interface FlowDiagnosis {
    *  whether an unconsumed route's deadness can be trusted without a workspace
    *  declaration. Pack-driven (component paths are `architecturalShape` data). */
   readonly frontendConsumers: number;
+  /** Whether a declared workspace participant's CONSUMED side was actually read
+   *  into this model. The cross-repo counterpart of `frontendConsumers`: it
+   *  answers "were this provider's consumers scanned", which a declaration alone
+   *  does NOT establish. Sourced from the model's participant provenance, never
+   *  from the presence of `workspace.json`. */
+  readonly participantConsumersRead: boolean;
+  /** Per-participant consumed-side provenance — the DETAIL behind
+   *  `participantConsumersRead`, carried so a renderer can name the actual
+   *  blocker (not checked out? read but unbindable?) instead of guessing.
+   *  Absent when the repo declares no participants. */
+  readonly participantConsumers?: readonly ParticipantConsumers[];
   /** Freshness of the committed served contract, when one exists: when it was
    *  published, per-participant provenance, and whether a provider's tip has
    *  moved since (doctor may probe the network for this; the per-commit gate
@@ -230,7 +247,7 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
 
   let model: FlowModel;
   try {
-    model = await gatherRepoFlowModel(cwd);
+    model = await gatherSystemFlowModel(cwd);
   } catch {
     return null;
   }
@@ -289,6 +306,8 @@ export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
     servedUnconsumed,
     connection: resolveConnection(cwd, model),
     frontendConsumers,
+    participantConsumersRead: sawParticipantConsumers(model),
+    ...(model.participantConsumers ? { participantConsumers: model.participantConsumers } : {}),
     ...(contract ? { contract } : {}),
     coverage: flowCoverage(model),
   };

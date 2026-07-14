@@ -11,11 +11,19 @@
  * pack auto-extends the scan (Rule 6).
  */
 
+import { existsSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { LANGUAGES, allFlowSourceExtensions } from '../../languages';
+import { readWorkspace } from '../../workspace';
 import { walkSourceFiles } from '../tools/walk-source-files';
-import { extractFileFlow, type FileFlow } from './extract';
-import { buildFlowModel, type FlowModel } from './model';
+import { extractFileFlow, type ClientCall, type FileFlow } from './extract';
+import {
+  buildFlowModel,
+  joinFlow,
+  type FlowModel,
+  type ParticipantConsumers,
+  type RepoFlowModel,
+} from './model';
 import { loadOpenApiRoutes } from './spec-source';
 import { readFlowConfig } from './config';
 import {
@@ -85,7 +93,7 @@ function relabelFileFlow(flow: FileFlow, base: string): FileFlow {
 }
 
 /** Walk + extract + assemble. Files that don't parse are skipped, never fatal. */
-export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowModel> {
+export async function gatherFlowModel(opts: GatherFlowOptions): Promise<RepoFlowModel> {
   const config: NormalizeConfig = {
     stripUrlPrefixes: opts.stripUrlPrefixes,
     ...(opts.rewriteUrl ? { rewriteUrl: opts.rewriteUrl } : {}),
@@ -135,20 +143,39 @@ export async function gatherFlowModel(opts: GatherFlowOptions): Promise<FlowMode
 
 /**
  * Gather a repo's flow model with its POLICY CONFIG applied — the canonical
- * entry point for every single-repo flow surface (map, diagnose, topology
- * detection). It reads `.dxkit/policy.json:flow` itself, so a caller cannot
- * forget to thread `stripUrlPrefixes` / `specs` (the class of bug that left the
- * configured base-URL-helper strip unapplied on the diagnose + detect paths,
- * while the map + gate paths threaded it). The raw `gatherFlowModel` is reserved
- * for callers that supply config explicitly — the two-ref gate, and cross-repo
- * publish — where the config comes from somewhere other than this repo's policy.
+ * entry point for THIS REPO's own flow surface.
+ *
+ * It reads `.dxkit/policy.json:flow` itself, so a caller cannot forget to thread
+ * `stripUrlPrefixes` / `specs` (the class of bug that left the configured
+ * base-URL-helper strip unapplied on the diagnose + detect paths, while the map
+ * + gate paths threaded it). The raw `gatherFlowModel` is reserved for callers
+ * that supply config explicitly — the two-ref gate, and cross-repo publish —
+ * where the config comes from somewhere other than this repo's policy.
+ *
+ * SCOPE, and why it matters: this model contains ONLY what this repo declares.
+ * It never reaches across a workspace boundary. That makes it the right (and
+ * only correct) input for anything that AUTHORS an artifact describing this repo
+ * — `flow refresh`'s committed `served.json` / `consumed.json`, whose `file`
+ * locators must be repo-relative and environment-independent (Rule 9) — and for
+ * anything that composes repos itself, like `describe --holistic`, which gathers
+ * each root separately and joins them above (merging participants here would
+ * double-count). For the SYSTEM view — this repo plus the consumers declared in
+ * `workspace.json` — use `gatherSystemFlowModel`.
  *
  * `roots` defaults to `[cwd]`; pass an override for a multi-root scan.
  */
 export async function gatherRepoFlowModel(
   cwd: string,
-  opts: { roots?: readonly string[]; relativeTo?: string; untrusted?: boolean } = {},
-): Promise<FlowModel> {
+  opts: {
+    roots?: readonly string[];
+    relativeTo?: string;
+    untrusted?: boolean;
+    /** Extra OpenAPI specs to union with `flow.specs` — the flow CLI's
+     *  `--specs` flag. Additive to policy, never a replacement, so a CLI
+     *  invocation cannot silently drop the repo's configured specs. */
+    extraSpecs?: readonly string[];
+  } = {},
+): Promise<RepoFlowModel> {
   const config = readFlowConfig(cwd);
   // The rung-4 overlay loads here — the canonical repo entry — so every
   // single-repo surface (map, diagnose, detect) sees plugin dialects,
@@ -157,7 +184,7 @@ export async function gatherRepoFlowModel(
   const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
   const model = await gatherFlowModel({
     roots: opts.roots ?? [cwd],
-    specs: config.specs.map((s) => resolve(cwd, s)),
+    specs: [...(opts.extraSpecs ?? []), ...config.specs.map((s) => resolve(cwd, s))],
     stripUrlPrefixes: config.stripUrlPrefixes,
     sources: config.sources,
     sourcesBase: cwd,
@@ -170,5 +197,94 @@ export async function gatherRepoFlowModel(
   return {
     ...model,
     sourceDisclosures: [...(model.sourceDisclosures ?? []), ...overlay.disclosures],
+  };
+}
+
+/**
+ * Gather the SYSTEM's flow model — this repo PLUS the consumed side of every
+ * participant declared in `.dxkit/workspace.json`. The canonical entry point for
+ * every ANALYSIS surface that asks "who consumes my routes": the map, trace,
+ * `diagnoseFlow` (and through it the dead-surface ladder), and `describe`'s repo
+ * card.
+ *
+ * The distinction from `gatherRepoFlowModel` is not cosmetic; collapsing the two
+ * produces bugs in BOTH directions. Analysis that reads only this repo declares
+ * a split-repo system's entire API dead, because the UI that calls it lives
+ * elsewhere. Authoring that reads participants writes another repo's calls into
+ * this repo's committed contract, under `../sibling/...` paths that mean nothing
+ * on another machine. Two concepts, two entry points, each with ONE definition
+ * (Rule 2.30).
+ *
+ * Each participant is gathered through `gatherRepoFlowModel`, which is the whole
+ * point: a participant's calls MUST normalize with the PARTICIPANT's own
+ * `flow.stripUrlPrefixes`, not this repo's. A React client addressing
+ * `${Config.apiBase()}/things` only strips to `/things` under its own policy;
+ * normalizing it with the provider's config leaves an opaque `{var}` leading
+ * segment and the call silently never binds. Each side owns its normalization.
+ * Because participants are gathered with the REPO entry, the mesh is exactly one
+ * hop by construction — no recursion, no cycle guard, even though participants
+ * routinely declare each other.
+ *
+ * Only participants' CALLS merge. Their routes are their own served side — the
+ * provider mesh `flow publish` assembles into a served contract — and merging
+ * them would relabel another repo's surface as this one's.
+ *
+ * Fail-open: a participant with no local checkout is reported `not-checked-out`
+ * and contributes nothing. That is not an error, but it is also not evidence
+ * (see `sawParticipantConsumers`). Remote (`repo:`) fetching is deliberately NOT
+ * done here — analysis surfaces are offline and per-invocation, and must never
+ * clone; `flow publish` owns the network (Rule 11).
+ *
+ * A repo with no participants pays one `workspace.json` stat and is returned
+ * untouched, so the single-repo path is unchanged in both cost and shape.
+ */
+export async function gatherSystemFlowModel(
+  cwd: string,
+  opts: {
+    roots?: readonly string[];
+    relativeTo?: string;
+    untrusted?: boolean;
+    extraSpecs?: readonly string[];
+  } = {},
+): Promise<FlowModel> {
+  const model = await gatherRepoFlowModel(cwd, opts);
+  const participants = readWorkspace(cwd)?.participants ?? [];
+  if (participants.length === 0) return model;
+
+  const calls: ClientCall[] = [];
+  const provenance: ParticipantConsumers[] = [];
+  for (const p of participants) {
+    const root = p.path ? resolve(cwd, p.path) : undefined;
+    if (!root || !existsSync(root)) {
+      provenance.push({ name: p.name, source: 'not-checked-out', calls: 0, bound: 0 });
+      continue;
+    }
+    let pModel: RepoFlowModel;
+    try {
+      pModel = await gatherRepoFlowModel(root, {
+        ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+      });
+    } catch {
+      // An unreadable participant tree is a no-opinion, never fatal.
+      provenance.push({ name: p.name, source: 'not-checked-out', calls: 0, bound: 0 });
+      continue;
+    }
+    // Per-participant bound count: join THIS participant's calls alone against
+    // our routes, so the evidence predicate can tell "read and connected" from
+    // "read but nothing resolves" (a misconfigured client). Same catch-all-aware
+    // join every other consumer uses (Rule 2.30).
+    const bound = joinFlow(pModel.calls, model.routes).filter((b) => b.route !== null).length;
+    calls.push(...pModel.calls);
+    provenance.push({ name: p.name, source: 'local', calls: pModel.calls.length, bound });
+  }
+
+  // Re-join: a cross-repo call binds exactly as an in-repo one does, through the
+  // same catch-all-aware `joinFlow` (Rule 2.30 — one resolution, every consumer).
+  const allCalls = [...model.calls, ...calls];
+  return {
+    ...model,
+    calls: allCalls,
+    bindings: joinFlow(allCalls, model.routes),
+    participantConsumers: provenance,
   };
 }

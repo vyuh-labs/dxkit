@@ -59,6 +59,32 @@ export interface FlowBinding {
 }
 
 /** The assembled flow: both surfaces plus the bindings between them. */
+/**
+ * Whether a declared `workspace.json` participant's CONSUMED side was actually
+ * READ, and what it contributed. The distinction is load-bearing: a declaration
+ * is an intent, not evidence. `source: 'local'` means dxkit gathered that
+ * participant's tree and its calls are in this model; `'not-checked-out'` means
+ * the participant was named but has no resolvable local path, so nothing was
+ * read.
+ *
+ * This exists because a consumer once inferred "the consumers are visible" from
+ * `participants.length > 0` — the declaration — and graduated live, actively
+ * called routes to the loudest dead-code tier on zero evidence. Any surface
+ * asking "can I trust that an unconsumed route is really unconsumed?" reads THIS,
+ * never the workspace file (Rule 2.30: the concept is "were the consumers read",
+ * and only this answers it).
+ */
+export interface ParticipantConsumers {
+  readonly name: string;
+  readonly source: 'local' | 'not-checked-out';
+  /** Calls this participant contributed to the model. */
+  readonly calls: number;
+  /** Of those, how many RESOLVED to a route this repo serves. Zero while
+   *  `calls` is large means the join is misconfigured, not that the routes are
+   *  dead — see `sawParticipantConsumers`. */
+  readonly bound: number;
+}
+
 export interface FlowModel {
   readonly calls: readonly ClientCall[];
   readonly routes: readonly RouteEndpoint[];
@@ -71,6 +97,53 @@ export interface FlowModel {
    *  no sources are declared or every declaration loaded cleanly — the
    *  fail-open channel, surfaced by the map and doctor, never fatal. */
   readonly sourceDisclosures?: readonly string[];
+  /** Per-participant consumed-side provenance. Absent when the repo declares no
+   *  workspace participants (the single-repo path is untouched). Its PRESENCE is
+   *  what distinguishes a system model from a repo model — see `RepoFlowModel`. */
+  readonly participantConsumers?: readonly ParticipantConsumers[];
+}
+
+/**
+ * A flow model containing ONLY this repo — nothing from across a workspace
+ * boundary. The return type of `gatherRepoFlowModel`.
+ *
+ * This is a COMPILE-TIME guard, not documentation. Anything that AUTHORS a
+ * committed artifact describing this repo must accept `RepoFlowModel`, so
+ * handing it a system model is a type error rather than a silent corruption.
+ * The bug this prevents: `flow refresh` builds `consumed.json` — how this repo
+ * tells a provider who binds its routes — by walking `model.calls`. Fed a system
+ * model, it publishes a PARTICIPANT's calls as our own, under `../sibling/...`
+ * locators that mean nothing on another machine, breaking the
+ * environment-independence the artifact's identity contract rests on (Rule 9).
+ * That is invisible in review and in a passing test suite; only the type system
+ * catches it at the moment someone writes the next writer.
+ *
+ * `participantConsumers?: never` is the discriminator: a system model's
+ * `readonly ParticipantConsumers[] | undefined` is not assignable to
+ * `never | undefined`, so the narrowing only flows one way — exactly the
+ * intent. Mirrors the `skip(mode, 'error', failure)` overload that makes a
+ * silent gate error a compile error.
+ */
+export type RepoFlowModel = FlowModel & { readonly participantConsumers?: never };
+
+/**
+ * True when at least one declared participant's consumed side was actually read
+ * AND demonstrably connects to this repo. The evidence predicate — one source of
+ * truth (Rule 2.30) for every surface that would otherwise be tempted to read
+ * `participants.length > 0`.
+ *
+ * `bound > 0` rather than `calls > 0` is the load-bearing part. A participant
+ * whose calls all normalize to an opaque leading `{var}` — the shape a client
+ * produces when its OWN `flow.stripUrlPrefixes` is unconfigured, e.g. every call
+ * written `${Config.apiBase()}/thing` — contributes plenty of calls and binds
+ * nothing. Reading `calls > 0` as evidence would then conclude a provider's
+ * entire surface is dead precisely BECAUSE its consumer is misconfigured: the
+ * worst available inversion, landing in the loudest tier. A consumer that binds
+ * zero routes tells us the join is broken, not that the routes are unused. It
+ * self-heals — configure the client's strips and the bindings appear.
+ */
+export function sawParticipantConsumers(model: Pick<FlowModel, 'participantConsumers'>): boolean {
+  return (model.participantConsumers ?? []).some((p) => p.source === 'local' && p.bound > 0);
 }
 
 /** A path made up entirely of `{var}` segments carries no static signal. One
@@ -318,7 +391,7 @@ export function dedupeServedRoutes(routes: readonly RouteEndpoint[]): RouteEndpo
 }
 
 /** Flatten per-file surfaces into one model + its bindings. */
-export function buildFlowModel(fileFlows: readonly FileFlow[]): FlowModel {
+export function buildFlowModel(fileFlows: readonly FileFlow[]): RepoFlowModel {
   const calls = fileFlows.flatMap((f) => f.calls);
   const routes = fileFlows.flatMap((f) => f.routes);
   const dynamicCalls = fileFlows.flatMap((f) => f.dynamicCalls ?? []);
@@ -332,7 +405,7 @@ export function buildFlowModel(fileFlows: readonly FileFlow[]): FlowModel {
 export async function extractFlowModel(
   filePaths: readonly string[],
   config?: NormalizeConfig,
-): Promise<FlowModel> {
+): Promise<RepoFlowModel> {
   const flows: FileFlow[] = [];
   for (const path of filePaths) {
     const flow = await extractFileFlow(path, config);

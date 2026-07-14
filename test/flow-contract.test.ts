@@ -20,7 +20,7 @@ import {
   SERVED_SNAPSHOT,
 } from '../src/analyzers/flow/contract';
 import type { ClientCall, RouteEndpoint } from '../src/analyzers/flow/extract';
-import type { FlowModel } from '../src/analyzers/flow/model';
+import type { RepoFlowModel } from '../src/analyzers/flow/model';
 
 const META = { schemaVersion: 1 as const, generatedAt: '2026-07-01T00:00:00Z' };
 
@@ -46,7 +46,9 @@ function route(over: Partial<RouteEndpoint>): RouteEndpoint {
     ...over,
   };
 }
-function model(calls: ClientCall[], routes: RouteEndpoint[]): FlowModel {
+// RepoFlowModel: the contract builders author THIS repo's committed snapshot,
+// so their input must carry no participant calls (the type brand enforces it).
+function model(calls: ClientCall[], routes: RouteEndpoint[]): RepoFlowModel {
   return { calls, routes, bindings: [], dynamicCalls: [] };
 }
 
