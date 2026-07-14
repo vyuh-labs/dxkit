@@ -107,10 +107,10 @@ INCLUDE_EXTS = ${includeExtsSet}
 # Bytes-per-line floor above which a file is almost certainly minified
 # / bundled output. Mirrors the heuristic in
 # src/analyzers/tools/minified-detection.ts so graphify's enumeration
-# applies the same filter dxkit's source-file walker does. Web-client's
-# webpack-hash bundle index-j54KQSsm.js carried ~4,606 detected
-# "functions" before this guard — pre-fix the densest-file metric
-# pointed at minified output instead of human-authored code.
+# applies the same filter dxkit's source-file walker does. A real repo's
+# webpack-hash bundle carried ~4,606 detected "functions" before this
+# guard — pre-fix the densest-file metric pointed at minified output
+# instead of human-authored code.
 _MINIFIED_BYTES_PER_LINE = 500
 _MINIFIED_SAMPLE_BYTES = 4096
 _MINIFIABLE_EXTS = {'.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.sass', '.less'}

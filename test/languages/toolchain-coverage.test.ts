@@ -9,7 +9,7 @@ import type { LanguageSupport } from '../../src/languages/types';
  * The pack-driven "is the primary language toolchain present" signal — the ONE
  * source doctor's per-language check and the init finish-arc honesty both read,
  * so a partial baseline can't be presented as full coverage on one surface
- * while the other tells the truth (the dpl-studio onboarding class).
+ * while the other tells the truth (the unprovisioned-toolchain class).
  */
 
 function pack(id: string, displayName: string, cliBinaries?: string[]): LanguageSupport {

@@ -5,7 +5,7 @@
  * A language pack's deep analysis (its lint gate, license inventory, and the
  * `dotnet build` / `go build` correctness floor) needs the pack's toolchain
  * binary on PATH. When it is absent, those classes are UNMEASURED — captured as
- * a silent gap, not a clean scan. The dpl-studio onboarding surfaced the cost:
+ * a silent gap, not a clean scan. A real onboarding surfaced the cost:
  * a pure-C# repo baselined with NO `dotnet` on PATH, yet the finish arc printed
  * an unqualified "You're gated ✓" and pointed remediation at `tools install`
  * (which can't install the SDK either — a loop). doctor already reported the

@@ -86,7 +86,8 @@ export interface InitClosingState {
   /** Active language packs whose OWN toolchain is absent from PATH, so their
    *  deep classes (lint / license / correctness floor) were UNMEASURED. When
    *  non-empty the "gated" claim is QUALIFIED — never presented as full coverage
-   *  (the dpl-studio class). Empty on the common fully-provisioned path. */
+   *  (the unprovisioned-toolchain class). Empty on the common fully-provisioned
+   *  path. */
   readonly languageToolchainGaps: readonly LanguageToolchainGap[];
   readonly elapsedMs: number;
 }
@@ -177,8 +178,8 @@ export function buildInitClosing(state: InitClosingState): InitClosing {
   // NOT measured — so we must NOT present this as full coverage, and the
   // remediation must name the ROOT prerequisite (install the toolchain), never
   // loop the user back to `tools install` (whose own prerequisite is the very
-  // thing that's missing). This is the dpl-studio class: a pure-C# repo
-  // baselined with no `dotnet` on PATH, headlined "You're gated ✓".
+  // thing that's missing). This is the unprovisioned-toolchain class: a
+  // pure-C# repo baselined with no `dotnet` on PATH, headlined "You're gated ✓".
   const gaps = state.languageToolchainGaps;
   if (gaps.length > 0) {
     const langWord = gaps.length === 1 ? gaps[0].displayName : `${gaps.length} languages`;
