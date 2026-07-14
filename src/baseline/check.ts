@@ -84,11 +84,12 @@ import {
   resolveAllowlistDeltaBase,
   type AllowlistDelta,
 } from '../allowlist/diff';
-import { findEntry, isEntryActive, loadAllowlist } from '../allowlist/file';
-import { gatherInlineAllowlistAnnotations } from '../allowlist/gather';
-import { synthesizeInlineEntries, augmentAllowlistWithInline } from '../allowlist/inline-synth';
-import type { AllowlistFile } from '../allowlist/file';
-import type { AllowlistCategory } from '../allowlist/categories';
+import { resolveEffectiveAllowlist } from '../allowlist/effective';
+import {
+  allowlistSuppressionFor,
+  entryToAllowlistable,
+  type AllowlistSuppression,
+} from './allowlist-match';
 
 export interface RunGuardrailCheckOptions {
   /** Repo root being checked. Caller should pass an absolute path. */
@@ -234,20 +235,6 @@ export interface ClassifiedPair {
    *  dropping the finding. Expired entries never populate this — the
    *  finding re-blocks and the stale entry is surfaced for pruning. */
   readonly suppressedByAllowlist?: AllowlistSuppression;
-}
-
-/**
- * Why a would-block finding didn't block: an active allowlist entry
- * accepted it. Carries the audit fields a reviewer needs to judge the
- * suppression at a glance (category + expiry), keyed by the matched
- * fingerprint.
- */
-export interface AllowlistSuppression {
-  readonly fingerprint: string;
-  readonly category: AllowlistCategory;
-  /** ISO `YYYY-MM-DD` expiry when the entry carries one; absent for
-   *  non-expiring categories. */
-  readonly expiresAt?: string;
 }
 
 export interface EnvelopeDrift {
@@ -649,6 +636,11 @@ export async function runGuardrailCheck(
   });
 
   const priorById = indexById(baseline.findings);
+  // The set of finding KINDS the baseline captured. A current finding whose kind
+  // is absent here means the dimension was newly measured (a gate just enabled),
+  // which the classifier names as a truer cause than generic `config_drift`
+  // (gh #157). Reason-only — does not change the verdict.
+  const baselineKinds = new Set(baseline.findings.map((e) => e.kind));
   const currentById = indexById(current.findings);
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
@@ -678,25 +670,15 @@ export async function runGuardrailCheck(
   // this is what makes "I reviewed and accepted this finding" actually
   // suppress a net-new regression, not just annotate it. Null when no
   // allowlist file is present (the common case).
-  // Load the file-level allowlist, then augment it with entries synthesized from
-  // inline `dxkit-allow:` annotations in the current tree — so an inline
-  // suppression on a NET-NEW finding waives its block exactly like a file-level
-  // entry (one suppression core, two sources — Rule 2). Only current-side findings
-  // with a resolvable file+line can be inline-covered; the synth mints an entry
-  // only when an annotation sits on/above that finding, keyed on its fingerprint.
-  const inlineSynthFindings = current.findings
-    .map((e) => {
-      const file = locatorFile(e);
-      const line = locatorLine(e);
-      return file !== undefined && line !== undefined
-        ? { file, line, fingerprint: e.id, kind: e.kind }
-        : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
-  const allowlist = augmentAllowlistWithInline(
-    loadAllowlist(cwd),
-    synthesizeInlineEntries(gatherInlineAllowlistAnnotations(cwd), inlineSynthFindings),
-  );
+  // The effective allowlist (file-level ∪ inline `dxkit-allow:` annotations),
+  // resolved through the ONE canonical constructor so the guardrail, the
+  // security score, and `baseline create` all see the identical suppression set
+  // (Rule 2). An inline suppression on a NET-NEW finding waives its block
+  // exactly like a file-level entry.
+  const allowlist = resolveEffectiveAllowlist({
+    cwd,
+    findings: current.findings.map(entryToAllowlistable),
+  });
   const now = new Date();
 
   const classifiedPairs: ClassifiedPair[] = [];
@@ -732,6 +714,10 @@ export async function runGuardrailCheck(
     // re-label a net-new finding on a new file). Non-empty changed-line set = the
     // file is in the diff (a brand-new file has all its lines added).
     const fileChangedInDiff = file !== undefined && (linesChangedFor(file)?.size ?? 0) > 0;
+    // Dimension newly measured: the baseline held no findings of this kind, so
+    // this one is unmatched because the gate/dimension was just enabled — a
+    // truer reason than generic config_drift (gh #157). Reason-only.
+    const kindAbsentFromBaseline = pair.status === 'added' && !baselineKinds.has(anchorEntry.kind);
 
     const malicious =
       pair.currentId !== undefined && maliciousByCurrentId.has(pair.currentId) ? true : undefined;
@@ -742,6 +728,7 @@ export async function runGuardrailCheck(
       ...(scannerVersionDiffers ? { scannerVersionDiffers: true } : {}),
       ...(configDiffers ? { configDiffers: true } : {}),
       ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
+      ...(kindAbsentFromBaseline ? { kindAbsentFromBaseline: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(malicious ? { malicious } : {}),
     };
@@ -1186,42 +1173,6 @@ function pairBlocks(p: ClassifiedPair): boolean {
  * fingerprint branches are exercised directly here so the (expensive)
  * integration test only has to prove the verdict wiring flips.
  */
-export function allowlistSuppressionFor(
-  allowlist: AllowlistFile,
-  anchorEntry: BaselineEntry,
-  now: Date,
-): AllowlistSuppression | undefined {
-  for (const fp of candidateFingerprints(anchorEntry)) {
-    const entry = findEntry(allowlist, fp);
-    if (!entry || entry.kind !== anchorEntry.kind) continue;
-    if (!isEntryActive(entry, now)) continue;
-    return {
-      fingerprint: entry.fingerprint,
-      category: entry.category,
-      ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
-    };
-  }
-  return undefined;
-}
-
-/**
- * Fingerprints an allowlist entry may match against for one finding:
- * the representative `id` first (most direct), then any absorbed
- * contributing fingerprints. Absorbed fingerprints live only on the
- * rich secret/code/config variant — a sanitized entry carries id only.
- */
-function candidateFingerprints(entry: BaselineEntry): string[] {
-  if (isSanitized(entry)) return [entry.id];
-  if (
-    (entry.kind === 'secret' || entry.kind === 'code' || entry.kind === 'config') &&
-    entry.absorbedFingerprints &&
-    entry.absorbedFingerprints.length > 0
-  ) {
-    return [entry.id, ...entry.absorbedFingerprints];
-  }
-  return [entry.id];
-}
-
 function keepUnderChangedOnly(p: ClassifiedPair): boolean {
   if (p.file === undefined || p.line === undefined) return true;
   const isNewSide =

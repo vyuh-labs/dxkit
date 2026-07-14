@@ -90,6 +90,18 @@ export function resolveOwnerRepo(cwd: string): OwnerRepo {
  * repos may still default to `master` etc.
  */
 export function resolveDefaultBranch(cwd: string): string {
+  return defaultBranchViaGh(cwd) ?? 'main';
+}
+
+/**
+ * The repo's TRUE default branch per GitHub (`gh repo view --json
+ * defaultBranchRef`), or `null` when gh is unavailable / not authenticated /
+ * the repo isn't on GitHub. The ONE gh default-branch probe (Rule 2) — the
+ * authoritative source, above any local git heuristic: a clone's
+ * `origin/HEAD` can point at a feature branch (the dpl-studio case), so a
+ * workflow inited there would otherwise record the wrong default.
+ */
+export function defaultBranchViaGh(cwd: string): string | null {
   try {
     const out = execSync('gh repo view --json defaultBranchRef', {
       cwd,
@@ -99,9 +111,9 @@ export function resolveDefaultBranch(cwd: string): string {
     const parsed = JSON.parse(out) as { defaultBranchRef?: { name?: string } };
     if (parsed.defaultBranchRef?.name) return parsed.defaultBranchRef.name;
   } catch {
-    /* fall through to fallback */
+    /* gh absent / unauthenticated / not a GitHub repo */
   }
-  return 'main';
+  return null;
 }
 
 /**

@@ -89,6 +89,42 @@ describe('classify — drift context reclassifies added', () => {
     expect(result.status).toBe('config_drift');
   });
 
+  it('names the gate-just-enabled cause over generic config_drift (gh #157)', () => {
+    // The kind had no baseline entries → a gate/dimension was newly enabled, so
+    // its whole pre-existing backlog reads as net-new. That is a truer reason
+    // than "policy config changed" — but the VERDICT must be unchanged.
+    const ctx: ClassifyContext = { configDiffers: true, kindAbsentFromBaseline: true };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('config_drift'); // verdict-bearing status unchanged
+    expect(result.warns).toBe(true);
+    expect(result.reasons.some((r) => r.code === 'dimension-newly-measured')).toBe(true);
+    // The misleading generic reason is NOT emitted for this case.
+    expect(result.reasons.some((r) => r.code === 'config-drift')).toBe(false);
+  });
+
+  it('generic config_drift reason no longer over-claims a specific cause (gh #157)', () => {
+    const ctx: ClassifyContext = { configDiffers: true, kindAbsentFromBaseline: false };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.reasons.some((r) => r.code === 'config-drift')).toBe(true);
+    const drift = result.reasons.find((r) => r.code === 'config-drift');
+    // No longer asserts "suppression or policy config changed" as THE cause.
+    expect(drift?.detail).not.toContain('suppression or policy config changed');
+    expect(drift?.detail).toContain('envelope change');
+  });
+
+  it('gate-just-enabled does NOT weaken a net-new secret block (verdict preserved, gh #157)', () => {
+    // A secret whose kind was absent from the baseline + config drift: the reason
+    // is refined, but the block-rule must still fire (config_drift is block-rule
+    // eligible), so the net-new secret still blocks.
+    const ctx: ClassifyContext = {
+      configDiffers: true,
+      kindAbsentFromBaseline: true,
+      kind: 'secret',
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.blocks).toBe(true);
+  });
+
   it('does not reclassify persisted on drift signals', () => {
     const ctx: ClassifyContext = { scannerVersionDiffers: true };
     const result = classify(pair('persisted'), DEFAULT_BROWNFIELD_POLICY, ctx);

@@ -223,4 +223,127 @@ describe('createBaseline (integration)', () => {
       expect(result.file).toBeUndefined();
     });
   });
+
+  // ─── gh #155: baseline create is allowlist-aware ──────────────────────────
+  //
+  // An actively-allowlisted finding must be held OUT of the captured baseline
+  // (not grandfathered as `persisted`), and that exclusion must honor the
+  // allowlist's expiry — an expired entry suppresses nothing, so its finding
+  // baselines normally and resurfaces as net-new the moment the window lapses.
+  describe('allowlist-aware capture (gh #155)', () => {
+    /** Write a `.dxkit/allowlist.json` directly (bypasses the write-path
+     *  validation so a deliberately-expired fixture entry is allowed). */
+    function writeAllowlist(cwd: string, entries: Array<Record<string, unknown>>): void {
+      mkdirSync(join(cwd, '.dxkit'), { recursive: true });
+      writeFileSync(
+        join(cwd, '.dxkit', 'allowlist.json'),
+        JSON.stringify({ schemaVersion: 'dxkit-allowlist/v1', mode: 'full', entries }, null, 2) +
+          '\n',
+      );
+    }
+
+    /** Commit the stale + large-file fixture and return the two findings' ids. */
+    async function captureFixtureIds(cwd: string): Promise<{ large: string; stale: string }> {
+      writeFileSync(join(cwd, 'leftover.bak'), 'old\n');
+      const bigLines: string[] = [];
+      for (let i = 0; i < 600; i++) bigLines.push(`const v${i} = ${i};`);
+      writeFileSync(join(cwd, 'huge.ts'), bigLines.join('\n') + '\n');
+      execFileSync('git', ['add', '.'], { cwd });
+      execFileSync('git', ['commit', '-q', '-m', 'fixture content'], { cwd });
+
+      const file = expectFile(await createBaseline({ cwd }));
+      const large = file.findings.find((f) => f.kind === 'large-file');
+      const stale = file.findings.find((f) => f.kind === 'stale-file');
+      if (!large || !stale) throw new Error('fixture did not produce both findings');
+      return { large: large.id, stale: stale.id };
+    }
+
+    it('holds an actively-allowlisted finding out of the baseline + reports the split', async () => {
+      const ids = await captureFixtureIds(dir);
+      // Baseline WITHOUT an allowlist: both findings captured, nothing held out.
+      const before = await createBaseline({ cwd: dir, force: true });
+      expect(before.allowlistSplit?.allowlisted).toBe(0);
+      expect(expectFile(before).findings.some((f) => f.id === ids.large)).toBe(true);
+
+      // Allowlist the large-file finding (false-positive → non-expiring).
+      writeAllowlist(dir, [
+        {
+          fingerprint: ids.large,
+          kind: 'large-file',
+          category: 'false-positive',
+          reason: 'reviewed: generated file',
+          addedBy: 'test',
+          addedAt: '2020-01-01',
+        },
+      ]);
+
+      const after = await createBaseline({ cwd: dir, force: true });
+      const file = expectFile(after);
+      // The allowlisted finding is NOT in the baseline; the stale one still is.
+      expect(file.findings.some((f) => f.id === ids.large)).toBe(false);
+      expect(file.findings.some((f) => f.id === ids.stale)).toBe(true);
+      // The split is reported honestly for the CLI headline.
+      expect(after.allowlistSplit?.allowlisted).toBe(1);
+      expect(after.allowlistSplit?.byCategory).toEqual({ 'false-positive': 1 });
+      expect(after.allowlistSplit?.live).toBe(file.findings.length);
+    });
+
+    it('an EXPIRED allowlist entry suppresses nothing — the finding baselines normally', async () => {
+      const ids = await captureFixtureIds(dir);
+      // accepted-risk with a PAST expiry → inactive → must NOT hold the finding out.
+      writeAllowlist(dir, [
+        {
+          fingerprint: ids.large,
+          kind: 'large-file',
+          category: 'accepted-risk',
+          reason: 'was deferred, window lapsed',
+          addedBy: 'test',
+          addedAt: '2020-01-01',
+          expiresAt: '2020-06-01',
+        },
+      ]);
+
+      const after = await createBaseline({ cwd: dir, force: true });
+      const file = expectFile(after);
+      expect(file.findings.some((f) => f.id === ids.large)).toBe(true);
+      expect(after.allowlistSplit?.allowlisted).toBe(0);
+    });
+
+    it('a FUTURE-dated accepted-risk entry is active and held out', async () => {
+      const ids = await captureFixtureIds(dir);
+      writeAllowlist(dir, [
+        {
+          fingerprint: ids.large,
+          kind: 'large-file',
+          category: 'accepted-risk',
+          reason: 'accepted for this quarter',
+          addedBy: 'test',
+          addedAt: '2020-01-01',
+          expiresAt: '2999-01-01',
+        },
+      ]);
+
+      const after = await createBaseline({ cwd: dir, force: true });
+      expect(expectFile(after).findings.some((f) => f.id === ids.large)).toBe(false);
+      expect(after.allowlistSplit?.allowlisted).toBe(1);
+    });
+
+    it('a wrong-kind allowlist entry does NOT suppress (fingerprint alone is insufficient)', async () => {
+      const ids = await captureFixtureIds(dir);
+      // Same fingerprint but kind `secret` — must not match the large-file finding.
+      writeAllowlist(dir, [
+        {
+          fingerprint: ids.large,
+          kind: 'secret',
+          category: 'false-positive',
+          reason: 'wrong kind',
+          addedBy: 'test',
+          addedAt: '2020-01-01',
+        },
+      ]);
+      const after = await createBaseline({ cwd: dir, force: true });
+      expect(expectFile(after).findings.some((f) => f.id === ids.large)).toBe(true);
+      expect(after.allowlistSplit?.allowlisted).toBe(0);
+    });
+  });
 });

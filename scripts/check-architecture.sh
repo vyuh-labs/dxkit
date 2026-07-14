@@ -759,6 +759,34 @@ if [ -n "$ROGUE_WORKTREE" ]; then
 fi
 
 # =============================================================================
+# Effective-allowlist discipline (3.7.2 / Rule 2): one construction, one predicate.
+# =============================================================================
+#
+# "What this repo currently suppresses" (file-level allowlist ∪ inline
+# `dxkit-allow:` annotations) is built in exactly ONE place —
+# `resolveEffectiveAllowlist` in `src/allowlist/effective.ts` — so every
+# finding-consumer (guardrail check, security score, `baseline create`) sees the
+# identical suppression set. gh #155 shipped because `baseline create` forgot the
+# allowlist entirely while the check + aggregator each re-inlined the same
+# `augmentAllowlistWithInline(loadAllowlist(...), synthesizeInlineEntries(...))`
+# recipe. Banning the raw augment call outside the constructor keeps the recipe
+# from being re-inlined into a new surface that then diverges (or forgets it).
+ROGUE_AUGMENT=$(grep -rnE "augmentAllowlistWithInline[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// effective-allowlist-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/allowlist/effective.ts:" \
+  | grep -v "^src/allowlist/inline-synth.ts:")
+if [ -n "$ROGUE_AUGMENT" ]; then
+  echo "❌ Effective-allowlist rule violation: augmentAllowlistWithInline() called outside"
+  echo "   src/allowlist/effective.ts:"
+  echo "$ROGUE_AUGMENT"
+  echo "   → Build the effective allowlist via resolveEffectiveAllowlist() so every"
+  echo "     finding-consumer (check, score, baseline create) shares one suppression set."
+  echo "   → Annotate '// effective-allowlist-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Correctness floor (2.23): the liveness gate stays pack-driven.
 # =============================================================================
 #

@@ -547,9 +547,18 @@ export function getInstallCommand(def: ToolDefinition): string {
  * `installDir/bin` to the probe set, so the result is discoverable.
  */
 export function getInstallEnv(cwd: string): Record<string, string> {
+  // Run any `dotnet` an install shells out to (e.g. `dotnet tool install
+  // --global nuget-license`) in invariant globalization mode, so it doesn't
+  // FailFast-crash on a minimal image with no libicu. Harmless for non-.NET
+  // installs; never overrides a value the user set in their own env.
+  const base: Record<string, string> =
+    process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT === undefined
+      ? { DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' }
+      : {};
   const { installDir } = loadToolsConfig(cwd);
-  if (!installDir) return {};
+  if (!installDir) return base;
   return {
+    ...base,
     PIPX_BIN_DIR: installDir,
     npm_config_prefix: installDir,
     CARGO_INSTALL_ROOT: installDir,
@@ -920,10 +929,20 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     layer: 'language',
     binaries: ['dotnet'],
     versionCheck: 'dotnet --version',
+    // SDK bootstrap. Prefer Microsoft's NON-SUDO per-user installer
+    // (`dotnet-install.sh --install-dir $HOME/.dotnet` — the very location
+    // `getSystemPaths()` probes) over `apt install`, which needs root and dies
+    // with a raw dpkg-lock error on WSL / most dev machines / sudo-less CI. The
+    // `__DOTNET_CHANNEL__` / `__DOTNET_MAJOR__` placeholders are substituted from
+    // the repo's DETECTED .NET version at resolve time, so a .NET 9 repo gets a
+    // .NET 9 SDK — not a hardcoded 8.0. (Onboarding cluster: sudo-apt + wrong
+    // major shipped an auto-bootstrap that was broken on the common non-root box.)
     installCommands: {
-      macos: 'brew install dotnet-sdk',
-      linux: 'apt install dotnet-sdk-8.0',
-      windows: 'winget install Microsoft.DotNet.SDK.8',
+      macos:
+        'curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"',
+      linux:
+        'curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"',
+      windows: 'winget install Microsoft.DotNet.SDK.__DOTNET_MAJOR__',
     },
   },
   'nuget-license': {

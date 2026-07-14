@@ -50,6 +50,8 @@ import type { ProducerContext } from './producers';
 import { resolveSalt } from '../analyzers/tools/salt';
 import type { SaltMode } from '../analyzers/tools/salt';
 import { sanitizeFile } from './sanitize';
+import { resolveEffectiveAllowlist } from '../allowlist/effective';
+import { entryToAllowlistable, partitionByActiveAllowlist } from './allowlist-match';
 import type { RichBaselineEntry } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
@@ -89,6 +91,16 @@ export interface CreateBaselineResult {
   readonly mode: ResolvedMode;
   readonly path?: string;
   readonly file?: BaselineFile;
+  /** How the captured findings split between what was baselined (`live`) and
+   *  what an active allowlist entry suppressed and held OUT of the baseline
+   *  (`allowlisted`, gh #155). Absent for `ref-based` mode (no file written).
+   *  `byCategory` breaks the held-out count down by suppression category so the
+   *  CLI can report an honest `N findings baselined (M allowlisted)` line. */
+  readonly allowlistSplit?: {
+    readonly live: number;
+    readonly allowlisted: number;
+    readonly byCategory: Readonly<Record<string, number>>;
+  };
 }
 
 /** Hash used for baseline-envelope metadata fields (policy, ignore,
@@ -381,6 +393,30 @@ export async function createBaseline(
 
   const scan = await gatherCurrentScan({ cwd, verbose: options.verbose });
 
+  // Exclude actively-allowlisted findings from the captured set so a
+  // reviewed-and-accepted finding never grandfathers into the baseline as
+  // `persisted` (gh #155). Grandfathering an allowlisted finding double-
+  // suppresses it AND defeats its expiry — a `persisted` finding never blocks,
+  // so an accepted-risk entry that later lapsed would silently stay suppressed.
+  // Held OUT of the baseline, the allowlist (with its expiry) is the single
+  // source of suppression: an active entry keeps the finding suppressed today,
+  // and when it lapses the finding resurfaces as net-new on the next check.
+  // Resolved through the ONE effective-allowlist constructor + the ONE active-
+  // suppression predicate, so create sees the identical suppression set the
+  // guardrail check and the security score do (Rule 2).
+  const effectiveAllowlist = resolveEffectiveAllowlist({
+    cwd,
+    findings: scan.findings.map(entryToAllowlistable),
+    inlineAnnotations: scan.producerCtx.inlineAllowlistAnnotations,
+  });
+  const { live, suppressions } = partitionByActiveAllowlist(
+    scan.findings,
+    effectiveAllowlist,
+    new Date(),
+  );
+  const byCategory: Record<string, number> = {};
+  for (const s of suppressions) byCategory[s.category] = (byCategory[s.category] ?? 0) + 1;
+
   const richFile: BaselineFile = {
     schemaVersion: BASELINE_SCHEMA_VERSION,
     name,
@@ -391,10 +427,15 @@ export async function createBaseline(
     saltMode: scan.saltMode,
     identityScheme: CURRENT_IDENTITY_SCHEME,
     coverage: scan.coverage,
-    findings: scan.findings,
+    findings: live,
   };
 
   const file = mode.mode === 'committed-sanitized' ? sanitizeFile(richFile) : richFile;
   writeBaselineFile(filePath, file);
-  return { mode, path: filePath, file };
+  return {
+    mode,
+    path: filePath,
+    file,
+    allowlistSplit: { live: live.length, allowlisted: suppressions.length, byCategory },
+  };
 }

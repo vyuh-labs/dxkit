@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { allowlistSuppressionFor } from '../../src/baseline/check';
+import { allowlistSuppressionFor } from '../../src/baseline/allowlist-match';
 import type { AllowlistFile, AllowlistEntry } from '../../src/allowlist/file';
 import type { BaselineEntry } from '../../src/baseline/types';
 import type { IdentityKind } from '../../src/baseline/producers';

@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import { commandExists } from './analyzers/tools/runner';
 import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
+import { assessLanguageToolchains } from './languages/toolchain-coverage';
 import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
@@ -473,9 +474,15 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
   }
 
   if (manifest?.config?.languages) {
-    for (const lang of activeLanguagesFromStack(manifest.config)) {
+    // Route through the ONE pack-driven toolchain signal the init finish arc
+    // also reads (Rule 2), so doctor and the finish summary can never disagree
+    // on whether the primary language's depth is measured.
+    const active = activeLanguagesFromStack(manifest.config);
+    const gaps = new Map(assessLanguageToolchains(active).map((g) => [g.language, g]));
+    for (const lang of active) {
+      const missing = new Set(gaps.get(lang.id)?.missingBinaries ?? []);
       for (const bin of lang.cliBinaries ?? []) {
-        const ok = commandAvailable(bin);
+        const ok = !missing.has(bin);
         checks.push({
           label: bin,
           ok,

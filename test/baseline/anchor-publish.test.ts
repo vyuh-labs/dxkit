@@ -3,7 +3,11 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { publishFilesToAnchorRef, readFromAnchorRef } from '../../src/baseline/anchor-publish';
+import {
+  describePushFailure,
+  publishFilesToAnchorRef,
+  readFromAnchorRef,
+} from '../../src/baseline/anchor-publish';
 
 /**
  * Real-git tests for the shared anchor writer/reader. A local bare repo stands
@@ -212,5 +216,52 @@ describe('publishFilesToAnchorRef', () => {
 
   it('readFromAnchorRef returns null for an unreachable ref', () => {
     expect(readFromAnchorRef(repo, 'never-created', 'x')).toBeNull();
+  });
+
+  it('fails FAST with a surfaced reason when origin is unreachable — never hangs (gh #156)', () => {
+    // Point origin at a path that is not a git repo. With the terminal-prompt +
+    // SSH BatchMode guards, the push errors immediately instead of blocking on a
+    // credential prompt, and the reason is surfaced (not a silent 60s stall).
+    git(repo, 'remote', 'set-url', 'origin', join(tmpdir(), 'dxkit-nonexistent-remote-xyz'));
+    const start = Date.now();
+    const res = publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: ANCHOR,
+      files: [{ path: 'x', content: 'y' }],
+      baseParent: false,
+      message: 'm',
+      timeoutMs: 10_000,
+    });
+    expect(res.pushed).toBe(false);
+    expect(res.reason).toBeTruthy();
+    expect(res.reason).not.toBe('no change');
+    // Fast-fail: nowhere near the timeout.
+    expect(Date.now() - start).toBeLessThan(9_000);
+  });
+});
+
+describe('describePushFailure (gh #156 categorization)', () => {
+  it('categorizes a timeout as a stuck auth handshake with an actionable hint', () => {
+    const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    const reason = describePushFailure(err, 30_000);
+    expect(reason).toMatch(/timed out after 30s/);
+    expect(reason).toMatch(/contents: write/);
+    expect(reason).toMatch(/persist-credentials/);
+  });
+
+  it('categorizes a SIGTERM-killed push (timeout kill) as a timeout too', () => {
+    const err = Object.assign(new Error('Command failed'), { signal: 'SIGTERM', killed: true });
+    expect(describePushFailure(err, 15_000)).toMatch(/timed out after 15s/);
+  });
+
+  it('categorizes a permission denial distinctly', () => {
+    const err = new Error('remote: Permission to org/repo denied to token. fatal: 403');
+    expect(describePushFailure(err, 30_000)).toMatch(/push denied by the remote/);
+  });
+
+  it('falls through to a plain rejection for a non-fast-forward (so the retry still bites)', () => {
+    const err = new Error('Updates were rejected because the remote contains work you do not have');
+    const reason = describePushFailure(err, 30_000);
+    expect(reason.startsWith('push rejected')).toBe(true);
   });
 });
