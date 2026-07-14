@@ -19,7 +19,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { consumedPathConfidence, dedupeServedRoutes, type FlowModel } from './model';
+import {
+  consumedPathConfidence,
+  dedupeServedRoutes,
+  type FlowModel,
+  type RepoFlowModel,
+} from './model';
 
 /** Directory (relative to repo root) where flow contract snapshots live. */
 export const FLOW_DIR = path.join('.dxkit', 'flow');
@@ -152,7 +157,7 @@ export function buildServedContract(model: FlowModel, meta: SnapshotMeta): Serve
  * for one dependency collapse to one entry (the earliest line kept for
  * display). Sorted for byte-stability.
  */
-export function buildConsumedContract(model: FlowModel, meta: SnapshotMeta): ConsumedContract {
+export function buildConsumedContract(model: RepoFlowModel, meta: SnapshotMeta): ConsumedContract {
   const byKey = new Map<string, ConsumedBinding>();
   for (const call of model.calls) {
     if (call.path == null) continue;

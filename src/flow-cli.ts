@@ -7,12 +7,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from './logger';
-import { gatherFlowModel } from './analyzers/flow/gather';
-import { loadFlowPluginOverlay } from './extensions/plugin-host';
+import { gatherRepoFlowModel, gatherSystemFlowModel } from './analyzers/flow/gather';
 import { flowCsvFiles } from './analyzers/flow/csv';
-import { summarize, type FlowModel } from './analyzers/flow/model';
+import { summarize, type FlowModel, type RepoFlowModel } from './analyzers/flow/model';
 import { buildFlowMap, buildFlowTrace } from './explore/flow-view';
-import { readFlowConfig } from './analyzers/flow/config';
 import {
   buildFlowConsole,
   type ConsoleEndpoint,
@@ -20,7 +18,10 @@ import {
 } from './analyzers/flow/console';
 import { computeChangedFiles } from './baseline/changed-files';
 import { evaluateFlowGateForGuardrail } from './baseline/flow-gate-check';
-import { type TieredDeadSurface } from './analyzers/convergence/dead-surface-gather';
+import {
+  consumerVisibilityNudge,
+  type TieredDeadSurface,
+} from './analyzers/convergence/dead-surface-gather';
 import { gatherSeamInventory, type SeamInventory } from './analyzers/convergence/inventory';
 import { loadAllowlist } from './allowlist/file';
 import { readVisNetworkBundle } from './dashboard/vendor';
@@ -72,37 +73,61 @@ function resolveRoots(opts: { cwd: string; frontend?: string; backend?: string }
   return roots;
 }
 
-/** Gather one flow model — shared by extract / map / trace / refresh. Specs
- *  come from BOTH the `--specs` flag and `.dxkit/policy.json:flow.specs`; strip
- *  prefixes and other flow config come from that same policy section. */
+/** Translate CLI shape (`--frontend` / `--backend` roots, `--specs`) into the
+ *  canonical gather entries' options. Both adapters below add NOTHING of their
+ *  own — see `gatherModel`. */
+function gatherOptions(
+  opts: FlowViewOptions,
+  extra?: { relativeTo?: string },
+): { roots: string[]; extraSpecs: string[]; relativeTo?: string } {
+  return {
+    roots: resolveRoots(opts),
+    extraSpecs: splitPaths(opts.specs, opts.cwd),
+    ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
+  };
+}
+
+/**
+ * The SYSTEM model for the read-only analysis surfaces — extract / map / trace /
+ * console. These answer "who consumes my routes", so they must see the consumers
+ * declared in `workspace.json`; on a split-repo system a repo-only model reads
+ * every route as unconsumed.
+ *
+ * A thin adapter over `gatherSystemFlowModel`. It used to be a hand-rolled
+ * sibling that re-assembled the gather call with its own config plumbing, and
+ * that duplication is a bug generator — Rule 2.30's "one concept, two code
+ * paths". It produced the class TWICE: first the rung-4 plugin overlay (map and
+ * extract silently ignored the repo's plugins until the Tier-1 validation caught
+ * it), then workspace participants. Each time the fix landed in the canonical
+ * entry and this copy kept its own behavior. Keep it an adapter: anything a flow
+ * surface needs belongs in the canonical entry, where every surface inherits it.
+ *
+ * NOT for writers. `flow refresh` authors this repo's committed contract and
+ * must use `gatherRepoModel` — see there.
+ */
 export async function gatherModel(
   opts: FlowViewOptions,
   extra?: { relativeTo?: string },
 ): Promise<FlowModel> {
-  const config = readFlowConfig(opts.cwd);
-  const policySpecs = config.specs.map((s) => path.resolve(opts.cwd, s));
-  // The rung-4 overlay loads here exactly as it does in gatherRepoFlowModel
-  // (this is the explicit-config sibling — custom roots + --specs merging —
-  // but it is still THIS repo's surface, so the repo's plugins apply; the
-  // Tier-1 validation caught the half-landed variant where map/extract
-  // silently ignored them). Flow CLI surfaces are trusted developer context.
-  const overlay = loadFlowPluginOverlay(opts.cwd);
-  const model = await gatherFlowModel({
-    roots: resolveRoots(opts),
-    specs: [...splitPaths(opts.specs, opts.cwd), ...policySpecs],
-    stripUrlPrefixes: config.stripUrlPrefixes,
-    sources: config.sources,
-    sourcesBase: opts.cwd,
-    dialects: overlay.dialects,
-    extraReaders: overlay.readers,
-    ...(overlay.rewriteUrl ? { rewriteUrl: overlay.rewriteUrl } : {}),
-    ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
-  });
-  if (overlay.disclosures.length === 0) return model;
-  return {
-    ...model,
-    sourceDisclosures: [...(model.sourceDisclosures ?? []), ...overlay.disclosures],
-  };
+  return gatherSystemFlowModel(opts.cwd, gatherOptions(opts, extra));
+}
+
+/**
+ * The REPO-ONLY model, for surfaces that AUTHOR an artifact describing this repo
+ * — today `flow refresh`'s committed `served.json` / `consumed.json`.
+ *
+ * The split is load-bearing, not stylistic. A committed contract must describe
+ * ONLY this repo: `consumed.json` is how this repo tells a provider who binds its
+ * routes, so folding a participant's calls into it would publish another repo's
+ * consumed side as our own, under `../sibling/...` locators that mean nothing on
+ * another machine — breaking the environment-independence the artifact's whole
+ * identity contract rests on (Rule 9).
+ */
+export async function gatherRepoModel(
+  opts: FlowViewOptions,
+  extra?: { relativeTo?: string },
+): Promise<RepoFlowModel> {
+  return gatherRepoFlowModel(opts.cwd, gatherOptions(opts, extra));
 }
 
 export async function runFlowExtract(opts: FlowExtractOptions): Promise<void> {
@@ -211,11 +236,10 @@ function renderDeadSurfaceInventory(inv: SeamInventory): void {
   const expected = res.surfaces.filter((s) => s.tier === 'expected');
 
   logger.info('');
+  const nudge = consumerVisibilityNudge(res);
   logger.info(
     `Served but unconsumed — ${res.surfaces.length} route(s), by confidence` +
-      (res.crossRepoConsumersVisible
-        ? ''
-        : ' (cross-repo consumers unverified — declare workspace.json to confirm deadness)'),
+      (nudge ? ` (${nudge})` : ''),
   );
   if (removable.length) {
     logger.info(`  removable (${removable.length}) — dead AND a structural duplicate:`);

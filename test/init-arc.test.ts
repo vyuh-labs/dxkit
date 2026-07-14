@@ -142,7 +142,8 @@ describe('buildInitClosing', () => {
     const c = buildInitClosing({
       ...base,
       baselineFindings: 3747,
-      // The dpl-studio shape: a pure-C# repo baselined with no `dotnet` on PATH.
+      // The unprovisioned-toolchain shape: a pure-C# repo baselined with no
+      // `dotnet` on PATH.
       incompleteScanners: ['dotnet-format', 'nuget-license'],
       languageToolchainGaps: [
         { language: 'csharp', displayName: 'C#', missingBinaries: ['dotnet'] },

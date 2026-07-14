@@ -21,7 +21,7 @@ import {
 import { publishFlow } from './analyzers/flow/publish';
 import { landFlowRefresh, type FlowLandMode } from './analyzers/flow/land';
 import { detectDefaultBranch } from './ship-installers';
-import { emitJson, gatherModel, splitPaths, type FlowViewOptions } from './flow-cli';
+import { emitJson, gatherRepoModel, splitPaths, type FlowViewOptions } from './flow-cli';
 
 /** Current HEAD commit SHA, or undefined outside a git repo (best-effort). */
 function headCommitSha(cwd: string): string | undefined {
@@ -49,7 +49,7 @@ export async function runFlowRefresh(opts: FlowViewOptions): Promise<void> {
   if (!opts.json) logger.header('vyuh-dxkit flow refresh');
   // Repo-relative locators — the snapshots are committed + cross-repo, so a
   // binding's `file` must mean the same thing on every machine (Rule 9).
-  const model = await gatherModel(opts, { relativeTo: opts.cwd });
+  const model = await gatherRepoModel(opts, { relativeTo: opts.cwd });
   const meta = {
     schemaVersion: 1 as const,
     generatedAt: new Date().toISOString(),

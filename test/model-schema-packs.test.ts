@@ -62,6 +62,52 @@ export interface PlainDto { id: number }
     expect(models.map((m) => m.name)).toEqual(['Post']);
     expect(models[0].via).toBe('base-class');
   });
+
+  it('extracts a LoopBack @model; @property({required}) beats the TS annotation', async () => {
+    const { models } = await extractWithPack(
+      `
+import { Entity, model, property } from '@loopback/repository';
+
+@model()
+export class AccessToken extends Entity {
+  @property({ type: 'string', id: true, defaultFn: 'uuidv4', length: 36 })
+  id: string;
+
+  @property({ type: 'string', required: true, mssql: { dataType: 'nvarchar(max)' } })
+  token: string;
+
+  @property({ type: 'string' })
+  created_at?: string;
+}
+`,
+      'typescript',
+      'typescript',
+    );
+    expect(models.map((m) => m.name)).toEqual(['AccessToken']);
+    expect(models[0].via).toBe('decorator');
+    // `required: true` is explicit → required. `id`/`created_at` carry no
+    // optionality keyword, so each keeps the TS grammar's answer rather than
+    // being fabricated required: `id: string` → required, `created_at?` → not.
+    expect(models[0].fields).toEqual([
+      expect.objectContaining({ name: 'id', type: 'string', required: true }),
+      expect.objectContaining({ name: 'token', type: 'string', required: true }),
+      expect.objectContaining({ name: 'created_at', type: 'string', required: false }),
+    ]);
+  });
+
+  // `Entity` is deliberately absent from `modelBaseClasses`: heritage markers
+  // match every TS repo (schemaSignals gate only the advisor), and a bare
+  // `extends Entity` is common in unrelated code. Without `@model()` it must
+  // stay invisible — this is the false-positive class the LoopBack support
+  // must not open.
+  it('a bare `extends Entity` with no @model() is NOT a model', async () => {
+    const { models } = await extractWithPack(
+      `export class Particle extends Entity { velocity: number; }`,
+      'typescript',
+      'typescript',
+    );
+    expect(models).toEqual([]);
+  });
 });
 
 describe('python pack modelSchema', () => {

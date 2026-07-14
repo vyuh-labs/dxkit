@@ -1200,6 +1200,40 @@ if [ -n "$RULE13_FLOW" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# 13e (Rule 2.30): the RAW `gatherFlowModel` is for EXPLICIT-CONFIG callers only
+# — the two-ref gate and cross-repo publish, where config comes from somewhere
+# other than this repo's policy. Every other surface goes through a canonical
+# entry: `gatherRepoFlowModel` (THIS repo — the only correct input for anything
+# authoring a committed artifact) or `gatherSystemFlowModel` (this repo + the
+# consumers declared in workspace.json — what every analysis surface wants).
+#
+# This rule exists because a hand-rolled sibling of the canonical entry is a bug
+# GENERATOR, and it produced the class twice from one site (`flow-cli.gatherModel`):
+# first the rung-4 plugin overlay silently ignored by map/extract, then workspace
+# participants silently ignored by the map — which reported every
+# cross-repo-consumed route as unconsumed and graduated live endpoints to the
+# `removable` tier. Both times the fix landed in the canonical entry and the copy
+# kept its own behavior, invisibly. A type brand (`RepoFlowModel`) guards the
+# WRITER half of this; this rule guards the GATHER half.
+RULE_FLOW_GATHER=$(grep -rn "gatherFlowModel(" src/ --include=*.ts 2>/dev/null \
+  | grep -v "^src/analyzers/flow/gather.ts:" \
+  | grep -v "^src/analyzers/flow/publish.ts:" \
+  | grep -v "^src/baseline/flow-gate-check.ts:" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "gatherRepoFlowModel(" \
+  | grep -v "gatherSystemFlowModel(" \
+  | grep -v "// flow-gather-ok")
+if [ -n "$RULE_FLOW_GATHER" ]; then
+  echo "❌ Rule 2.30 violation: raw gatherFlowModel() outside its explicit-config callers:"
+  echo "$RULE_FLOW_GATHER"
+  echo "   → Analysis surface? Use gatherSystemFlowModel() — it resolves workspace"
+  echo "     participants, so a split-repo system's routes are not all read as dead."
+  echo "   → Authoring a committed artifact? Use gatherRepoFlowModel() — its"
+  echo "     RepoFlowModel brand keeps another repo's calls out of your contract."
+  echo "   → Annotate '// flow-gather-ok' for a justified explicit-config caller."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # 13d (Flow 2.28 file-routes): file-convention routing (Next.js App Router,
 # SvelteKit, Pages Router) is pack-DECLARED, framework-general in the engine.
 # The handler filename (`route`, `+server`) and routing base dirs (`app`,

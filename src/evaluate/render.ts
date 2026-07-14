@@ -191,9 +191,7 @@ function seamsSection(doc: EvaluateEvidenceDoc): string[] {
     lines.push(
       `  ${deadTotal} served-but-unconsumed route(s) — ` +
         `${s.dead.removable} removable, ${s.dead.likely} likely, ${s.dead.expected} expected` +
-        (s.crossRepoConsumersVisible
-          ? ''
-          : ' (cross-repo consumers unverified — declare workspace.json to confirm deadness)'),
+        (s.consumerVisibilityNote ? ` (${s.consumerVisibilityNote})` : ''),
     );
   }
   if (s.converged.length > 0) {

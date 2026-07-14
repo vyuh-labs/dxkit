@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.5] - 2026-07-14
+
+### Fixed
+
+- **A declared `workspace.json` participant made dxkit call live routes
+  `removable` — the tier that says "safe to delete".** Reproduced by A/B on a
+  real split-repo pair: same tree, same build, adding only `workspace.json`
+  moved **593 routes** from `likely dead` to `removable`, while the binding count
+  stayed at **5**. Declaring the participant taught dxkit nothing and it got
+  louder anyway. Confirmed false positives had live call sites in the sibling
+  repo. `consumersVisible` read `participants.length > 0` — the DECLARATION — as
+  proof consumers were VISIBLE, but nothing gathered a participant's consumed
+  side: participants feed `flow publish`, which collects participants' *served*
+  routes, and a pure client (a SPA serving nothing) contributes none. The
+  dead-surface ladder's own docstring promised "0 false removable" on exactly
+  this repo shape — a measurement taken *without* a `workspace.json`. Following
+  dxkit's own printed nudge ("declare workspace.json to confirm deadness") was
+  the trigger for the bug it claimed to prevent. **If you have a
+  `.dxkit/workspace.json`, upgrade before acting on any `removable` verdict.**
+
+- **`workspace.json` is now a real consumer mesh.** `gatherSystemFlowModel`
+  resolves each participant's consumed side, recursively through
+  `gatherRepoFlowModel` so a participant's calls normalize under **its own**
+  `flow.stripUrlPrefixes` — load-bearing, since a client's
+  `${Config.api()}/thing` only strips to `/thing` under the client's policy.
+  On the real pair this took cross-repo bindings from **5 to 1,411**, and the
+  `removable` tier is now evidence-backed. Calls only (routes remain the
+  provider mesh `flow publish` owns); offline — analysis never clones.
+  Evidence is `bound > 0`, not `calls > 0`: a participant whose calls all
+  normalize opaque (an unconfigured client) contributes many calls and binds
+  nothing, and reading that as evidence would declare a provider's whole surface
+  dead precisely *because* its consumer is misconfigured.
+
+- **`evaluate` carried the same bug in a worse form.** It gathers the seam
+  inventory inside a disposable worktree, where the committed `workspace.json`
+  satisfied the old check but the participant categorically cannot exist. It now
+  degrades honestly to `likely`.
+
+- **The "declare workspace.json" nudge no longer lies.** That flag is false for
+  three different reasons and the old string — duplicated across the flow map and
+  `evaluate` — was right for one, so a user who had already declared a workspace
+  was sent to re-declare it. One `consumerVisibilityNudge` reads the participant
+  provenance and names the actual blocker ("read 1636 call(s) from web but bound
+  0 … check that participant's flow.stripUrlPrefixes"), or says nothing rather
+  than invent a cause.
+
+### Added
+
+- **LoopBack data models are visible to `schema` and its drift gate.** The
+  TypeScript pack's `modelSchema` targeted TypeORM / MikroORM /
+  sequelize-typescript / NestJS-mongoose / type-graphql, so `@model()` classes
+  were invisible — on a real repo, 91 models and 1,811 `@property()` decorators,
+  none detected, with `doctor` never recommending the capability. Pack-declarative
+  only (Rule 6); the engine, SDK, and AST layer are untouched.
+  `@property({required: true})` rides the existing `fieldDecoratorSpecs`, read
+  only when explicitly present so `id?: string` keeps the TS grammar's answer.
+  `Entity` is deliberately *not* a `modelBaseClasses` marker: heritage matches
+  every TS repo and a bare `extends Entity` is common in unrelated code.
+  Verified: 102 models on a real LoopBack repo.
+
+### Changed
+
+- **Two structural guards against the class recurring**, each verified to bite:
+  `RepoFlowModel` makes an authoring surface fed a system model a **compile
+  error** (a writer can no longer leak another repo's calls into a committed
+  `consumed.json`), and `check-architecture.sh` 13e fails CI on a raw
+  `gatherFlowModel` outside its explicit-config callers — closing the hand-rolled
+  gather sibling that generated this class twice.
+- Customer identifiers removed from comments and fixtures (this repo is public).
+
 ## [3.7.4] - 2026-07-14
 
 ### Fixed

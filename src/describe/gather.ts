@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detect } from '../detect';
 import type { DetectedStack } from '../types';
-import { gatherRepoFlowModel } from '../analyzers/flow/gather';
+import { gatherRepoFlowModel, gatherSystemFlowModel } from '../analyzers/flow/gather';
 import { gatherFunctionSignatures } from '../analyzers/duplication/signatures';
 import { readWorkspace } from '../workspace';
 import { buildIntraRepoModel, buildHolisticGraph, type HolisticGraph } from './holistic';
@@ -53,7 +53,7 @@ export async function gatherDescribeInput(cwd: string): Promise<DescribeInput> {
   const stack = detect(cwd);
   const provenance = resolveProvenance(cwd);
 
-  const flow = await gatherRepoFlowModel(cwd);
+  const flow = await gatherSystemFlowModel(cwd);
   const diagnosis = await diagnoseFlow(cwd);
   const models = await gatherRepoModelSet(cwd);
 

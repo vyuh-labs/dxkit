@@ -47,9 +47,9 @@ describe('buildGraphifyEnvelope', () => {
     // showed `Densest file: /home/<auditor>/projects/.../foo.ts`.
     // The envelope is the single chokepoint that prevents the leak.
     const cwd = '/home/auditor/projects/repos/frontend';
-    const abs = '/home/auditor/projects/repos/frontend/public/3DFileViewer/assets/index.js';
+    const abs = '/home/auditor/projects/repos/frontend/public/viewer/assets/index.js';
     const env = buildGraphifyEnvelope(syntheticResult(abs), cwd);
-    expect(env.maxFunctionsFilePath).toBe('public/3DFileViewer/assets/index.js');
+    expect(env.maxFunctionsFilePath).toBe('public/viewer/assets/index.js');
     expect(env.maxFunctionsFilePath.includes('/home/')).toBe(false);
   });
 

@@ -98,8 +98,8 @@ export function resolveDefaultBranch(cwd: string): string {
  * defaultBranchRef`), or `null` when gh is unavailable / not authenticated /
  * the repo isn't on GitHub. The ONE gh default-branch probe (Rule 2) — the
  * authoritative source, above any local git heuristic: a clone's
- * `origin/HEAD` can point at a feature branch (the dpl-studio case), so a
- * workflow inited there would otherwise record the wrong default.
+ * `origin/HEAD` can point at a feature branch (seen on a real onboarding), so
+ * a workflow inited there would otherwise record the wrong default.
  */
 export function defaultBranchViaGh(cwd: string): string | null {
   try {
