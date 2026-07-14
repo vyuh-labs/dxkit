@@ -154,16 +154,29 @@ describe('loadToolsConfig (.dxkit/tools.json)', () => {
 
 describe('getInstallEnv', () => {
   let cwd: string;
+  let savedIcu: string | undefined;
   beforeEach(() => {
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-installenv-'));
     clearToolsConfigCache();
+    // getInstallEnv adds the .NET ICU-invariant flag only when the user hasn't
+    // set it — control it explicitly so the assertions are deterministic
+    // regardless of test ordering / the ambient CI env.
+    savedIcu = process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT;
+    delete process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT;
   });
   afterEach(() => {
+    if (savedIcu === undefined) delete process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT;
+    else process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = savedIcu;
     fs.rmSync(cwd, { recursive: true, force: true });
     clearToolsConfigCache();
   });
 
-  it('is empty when no installDir is configured', () => {
+  it('carries only the .NET ICU-invariant flag when no installDir is configured', () => {
+    expect(getInstallEnv(cwd)).toEqual({ DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' });
+  });
+
+  it('does not add the ICU flag when the user already set it', () => {
+    process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT = '0';
     expect(getInstallEnv(cwd)).toEqual({});
   });
 
@@ -173,6 +186,7 @@ describe('getInstallEnv', () => {
     fs.writeFileSync(p, JSON.stringify({ installDir: '/custom/tools' }));
     clearToolsConfigCache();
     expect(getInstallEnv(cwd)).toEqual({
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1',
       PIPX_BIN_DIR: '/custom/tools',
       npm_config_prefix: '/custom/tools',
       CARGO_INSTALL_ROOT: '/custom/tools',
