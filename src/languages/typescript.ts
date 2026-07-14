@@ -1854,16 +1854,36 @@ export const typescript: LanguageSupport = {
   // Data-model declarations for the model-schema drift gate. Marker-based
   // (precision-first): decorator-marked entity classes (TypeORM / MikroORM
   // @Entity, sequelize-typescript @Table, NestJS-mongoose @Schema,
-  // type-graphql @ObjectType/@InputType) plus TypeORM's active-record
-  // BaseEntity heritage. Field facts come from the TS annotations (`?`,
-  // `| null`); JS-only entity classes surface fields with honest unknown
-  // types. Plain unmarked interfaces/DTOs are deliberately invisible — the
-  // documented answer is a spec (`schema.specs`), and builder-style schemas
-  // (zod, Prisma's DSL) are out of code-extraction scope for the same
-  // precision reason.
+  // type-graphql @ObjectType/@InputType, LoopBack @model) plus TypeORM's
+  // active-record BaseEntity heritage. Field facts come from the TS
+  // annotations (`?`, `| null`); JS-only entity classes surface fields with
+  // honest unknown types. Plain unmarked interfaces/DTOs are deliberately
+  // invisible — the documented answer is a spec (`schema.specs`), and
+  // builder-style schemas (zod, Prisma's DSL) are out of code-extraction
+  // scope for the same precision reason.
+  //
+  // LoopBack (`@model()` + `@property()`, `@loopback/repository`) rides the
+  // decorator path only. Its base class is `Entity` — deliberately NOT in
+  // `modelBaseClasses`: heritage markers are matched on the trailing
+  // identifier segment against EVERY TS repo (`schemaSignals` gates the
+  // advisor, not extraction), and a bare `extends Entity` is common in
+  // unrelated code (ECS/game loops, domain scaffolding). `@model()` is
+  // distinctive and every LoopBack model carries it, so the decorator alone
+  // buys the entity set without the false-positive class.
   modelSchema: {
     modelBaseClasses: ['BaseEntity'],
-    modelDecorators: ['Entity', 'Table', 'Schema', 'ObjectType', 'InputType'],
+    modelDecorators: ['Entity', 'Table', 'Schema', 'ObjectType', 'InputType', 'model'],
+    // `@property({required: true})` is LoopBack's optionality fact. Read only
+    // when explicitly present, so `@property({type: 'string'}) id?: string`
+    // keeps the TS grammar's answer (optional) rather than being fabricated
+    // required.
+    fieldDecoratorSpecs: [
+      {
+        names: ['property'],
+        optionalityKeyword: 'required',
+        optionalityPolarity: 'required',
+      },
+    ],
     schemaSignals: [
       {
         manifest: 'package.json',
@@ -1873,6 +1893,7 @@ export const typescript: LanguageSupport = {
           '@mikro-orm/core',
           '@nestjs/mongoose',
           'type-graphql',
+          '@loopback/repository',
         ],
       },
     ],
