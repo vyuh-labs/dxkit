@@ -16,7 +16,7 @@ vyuh-dxkit update [options]
 ## What it does
 
 - Reads the manifest of files dxkit originally generated (from
-  `.dxkit/config.yml`)
+  `.vyuh-dxkit.json`)
 - For each, compares the current content's hash to the at-generation
   hash
 - Files with unchanged hash → safe to re-generate

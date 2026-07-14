@@ -19,9 +19,12 @@ allowed to remain. Wire it into pre-push and a GitHub Actions PR-gate
 in one command (pre-commit is opt-in via `--with-precommit-hook`).
 
 ```bash
-npm init @vyuhlabs/dxkit        # canonical first install (since 2.5.1)
-vyuh-dxkit baseline create      # capture today's state
+npm init @vyuhlabs/dxkit -- --claude-loop --yes   # canonical first install
 ```
+
+This one command finishes setup: it detects the stack, wires agent
+context, arms the gates, installs the scanner toolchain, and captures
+today's findings as the baseline.
 
 Hook activation is automatic via the postinstall chain (no manual
 `git config core.hooksPath .githooks` step needed). If you ever need
@@ -58,7 +61,7 @@ construction; commands with a linked page have a full reference under
 | [`vulnerabilities`](commands/vulnerabilities.md)                 | Run the deep security scan                                                        | 1-3 min                            |
 | [`test-gaps`](commands/test-gaps.md)                             | Analyze test coverage gaps                                                        | 30-90 sec                          |
 | `tests`                                                          | Select tests affected by a diff via the code graph                                | < 5 sec (queries the graph)        |
-| `evaluate`                                                       | Zero-write trial: replay your recent landings through the gate                    | 30 sec - 1 min per landing         |
+| [`evaluate`](commands/evaluate.md)                               | Zero-write trial: replay your recent landings through the gate                    | 30 sec - 1 min per landing         |
 | [`quality`](commands/quality.md)                                 | Code quality + slop detection                                                     | 1-8 min (jscpd is the long-pole)   |
 | [`dev-report`](commands/dev-report.md)                           | Developer activity analysis                                                       | 5-30 sec                           |
 | [`licenses`](commands/licenses.md)                               | Dependency license inventory                                                      | 30-60 sec                          |
@@ -81,7 +84,7 @@ construction; commands with a linked page have a full reference under
 | [`explore`](commands/explore.md)                                 | Repo exploration via the code graph                                               | < 5 sec (queries the graph)        |
 | [`context`](commands/context.md)                                 | Slim structural code slice for a query (token-efficient)                          | < 5 sec (queries the graph)        |
 | [`reviewers`](commands/reviewers.md)                             | Suggest reviewers via the active-owner model                                      | < 5 sec                            |
-| `describe`                                                       | Zero-write repo card + a self-contained contract-map HTML                         | < 10 sec                           |
+| [`describe`](commands/describe.md)                               | Zero-write repo card + a self-contained contract-map HTML                         | < 10 sec                           |
 | `demo`                                                           | Offline, no-API demonstration walkthroughs                                        | 1-2 min (interactive walkthrough)  |
 | [`init`](commands/init.md)                                       | Install dxkit agent DX in this repo                                               | 5-30 sec                           |
 | [`update`](commands/update.md)                                   | Re-generate managed files (preserves your edits)                                  | 5-30 sec                           |

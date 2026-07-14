@@ -86,6 +86,45 @@ What you can rely on:
 
 ---
 
+## Start in one command
+
+```bash
+npm init @vyuhlabs/dxkit -- --claude-loop --yes
+```
+
+That is the whole setup. dxkit reads your stack, wires the agent context, arms
+the gates, installs the scanners a baseline needs, and captures today's
+baseline, so the repository is gated on the very next change. No questions, no
+homework. Undo anytime with `npx vyuh-dxkit uninstall`.
+
+<p align="center">
+  <img src=".github/assets/init-quickstart.gif" width="760" alt="vyuh-dxkit init reads the stack, wires the agent context, arms the gates, installs scanners, captures the baseline, and reports the repository is gated in about ten seconds." />
+</p>
+
+Existing findings are grandfathered, not approved. Only what a change _adds_
+from here can block. Already have dxkit installed? `init` detects the version
+and points you at `npx vyuh-dxkit update` instead of re-running setup.
+
+## See your code the way an agent should
+
+`vyuh-dxkit describe` writes one self-contained HTML file: your whole code
+graph (every function, what it calls, and what calls it) as a live,
+draggable map. It runs read-only (nothing is written to your repository) and
+needs no server or key.
+
+<p align="center">
+  <img src=".github/assets/describe-map.png" width="860" alt="dxkit's own code graph rendered by describe: a force-directed map of 2,253 functions and 9,151 calls, with high-fanout hub functions radiating edges." />
+</p>
+<p align="center"><sub>dxkit's own code graph, rendered by <code>describe</code>: 2,253 functions, 9,151 calls mapped. Drag, zoom, and double-click a function to drill into what it calls.</sub></p>
+
+When a repository has an HTTP surface, `describe` **joins the code graph to the
+contract** (every route, the calls that reach it, and the handler behind it)
+and lights up the **seams**: dead routes nothing calls, client calls that reach
+no route, and cross-repo contracts served by another repository in your
+workspace. It is the map a coding agent (or a new teammate) reads to understand
+a codebase and its integrations before touching it, and the same signals feed
+the gate.
+
 ## How the change-safety layer works
 
 An autonomous loop runs until the agent decides it is done. The checks it runs
@@ -120,20 +159,24 @@ Use dxkit if you let coding agents run unattended or semi-attended, fix CI or
 review comments in loops, or touch brownfield repos where new debt matters
 more than all debt.
 
-## Install for Claude Code
+## Install options
 
-Install dxkit, create the initial baseline, and verify the hook:
+The one-liner above is the default: it adds dxkit as a devDependency, installs
+the Claude Code Stop hook, provisions scanners, and captures the baseline.
+Everything is additive, preserving your existing `.claude` settings. Then run Claude Code
+as you normally would; the Stop-gate fires on every stop.
 
 ```bash
-npm init @vyuhlabs/dxkit -- --claude-loop --yes   # devDependency + Stop hook, added additively
-npx vyuh-dxkit baseline create
-npx vyuh-dxkit loop doctor
+npx vyuh-dxkit loop doctor            # verify the wiring
+npx vyuh-dxkit loop ledger summarize  # what was blocked, allowed, and repaired
 ```
 
-Your existing `.claude` settings are preserved. Then run Claude Code as you
-normally would; the Stop-gate fires on every stop. Afterwards,
-`npx vyuh-dxkit loop ledger summarize` shows what was blocked, what was
-allowed, and what was repaired after a block.
+Variants:
+
+- **Defer the baseline** (arm the gates now, scan later): add `--no-finish`,
+  then run `npx vyuh-dxkit baseline create` when you are ready.
+- **Pre-push + CI instead of the loop:** `npm init @vyuhlabs/dxkit -- --full --yes`.
+- **Agent context only, no gate:** `npm init @vyuhlabs/dxkit -- --dx-only --yes`.
 
 ## What the gate checks
 

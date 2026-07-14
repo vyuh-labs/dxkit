@@ -49,6 +49,7 @@ vyuh-dxkit init [options]
 | `--force`                 | Overwrite existing files in place (otherwise sidecars are emitted — see "Additive install" below)                                                                                                                                                             |
 | `--stealth`               | Generated files are gitignored — local-only, not committed                                                                                                                                                                                                    |
 | `--name <n>`              | Override the project name                                                                                                                                                                                                                                     |
+| `--no-finish`             | Opt out of the auto tools-install + baseline capture — arm the gates now, run `vyuh-dxkit tools install` / `vyuh-dxkit baseline create` later                                                                                                                 |
 | `--no-scan`               | Skip the codebase analysis step                                                                                                                                                                                                                               |
 
 `--full` implies `--with-dxkit-agents` + `--with-hooks` + `--with-devcontainer` + `--with-ci` + `--with-baseline-refresh`. It does NOT imply `--with-precommit-hook` (slow on large repos) or `--with-pr-review` (needs API-cost opt-in). Combine when you want both: `--full --with-precommit-hook --with-pr-review`.
@@ -61,9 +62,8 @@ AGENTS.md              # open-standard project-context file (Claude Code,
 CLAUDE.md              # Claude Code shim that points at AGENTS.md
 .claude/
   settings.json        # tool permissions
-  skills/dxkit-*/      # lifecycle skills: learn / init / config / hooks /
-                       # reports / action / fix / update / onboard / feature /
-                       # docs / ingest / allowlist / test / pr
+  skills/dxkit-*/      # the dxkit lifecycle skills (run `vyuh-dxkit
+                       # capabilities` to see the installed set)
   rules/               # per-language coding conventions
 .vyuh-dxkit.json       # install manifest (config, install flags, evolving file hashes)
 ```
@@ -80,7 +80,12 @@ CLAUDE.md              # Claude Code shim that points at AGENTS.md
   auto-regen of `.dxkit/baselines/main.json` (gated on PR-gate success)
 
 After `--full` (or any `--with-hooks`), the postinstall chain auto-
-activates `core.hooksPath`. Capture your first baseline:
+activates `core.hooksPath`. Setup then FINISHES in the same run: when a
+baseline-consuming gate is armed (hooks / CI / the Stop-gate), the finish
+arc installs the scanner toolchain and captures today's state as the
+brownfield anchor automatically — no separate `tools install` /
+`baseline create` step. Pass `--no-finish` to defer both and capture the
+baseline later:
 
 ```bash
 vyuh-dxkit baseline create            # capture today's state as the brownfield anchor
@@ -113,6 +118,11 @@ vyuh-dxkit hooks activate
 `--force` overwrites except files marked as "evolved" (touched by
 the user since generation). Use `vyuh-dxkit update` to re-generate
 preserving evolved files explicitly.
+
+Re-running `init` on an already-adopted repo detects the existing (or
+an older) dxkit version and recommends `vyuh-dxkit update` rather than
+re-running setup — so an upgrade migrates the baseline + allowlist
+instead of re-scaffolding from scratch.
 
 ## See also
 

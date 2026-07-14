@@ -127,13 +127,15 @@ vyuh-dxkit guardrail check  # auto-discovers .dxkit/policy.json
 
 The pre-commit hook is **opt-in** because re-running every analyzer on every commit is slow on large codebases. Pre-push amortises the same cost across the batch of commits in a push; CI runs the same check server-side as an unbypassable backstop. Customers on small/fast repos who want commit-time gating can opt in.
 
-### Activate (one-time per clone)
+### Activation is automatic
+
+Hook activation (`core.hooksPath = .githooks`) is auto-chained via the package.json postinstall, so teammates who clone + `npm install` get hooks wired automatically. If activation didn't fire (e.g. you cloned without running `npm install`), do it manually as a fallback:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-This is a per-clone setting — each developer who clones the repo runs it once. The hook files themselves are committed (under `.githooks/`), so the team-wide enforcement story is "files in repo + each dev activates locally + CI as the safety net."
+This is a per-clone setting. The hook files themselves are committed (under `.githooks/`), so the team-wide enforcement story is "files in repo + postinstall activates locally + CI as the safety net."
 
 ### Switch pre-commit on or off later
 
