@@ -196,7 +196,15 @@ export function renderConsole(result: GuardrailCheckResult): string {
   }
   if (warning.length > 0) {
     lines.push(logger.bold(`Warnings (${warning.length})`));
-    for (const p of warning) lines.push(...formatPairLines(p, '  '));
+    // Collapse the envelope-drift wall (gh #157): after a dxkit upgrade or a
+    // policy.json edit, dozens of unrelated findings all fall out as
+    // `config_drift` warnings. Rendering each as its own line buries the
+    // specific, actionable warnings under the wall — so print the drift group as
+    // ONE summary line and enumerate only the specific warnings.
+    const drift = warning.filter((p) => p.classification.status === 'config_drift');
+    const specific = warning.filter((p) => p.classification.status !== 'config_drift');
+    for (const p of specific) lines.push(...formatPairLines(p, '  '));
+    if (drift.length > 0) lines.push(...formatDriftWarningSummary(drift, '  '));
     lines.push('');
   }
   if (removed.length > 0) {
@@ -573,6 +581,33 @@ function formatPairLines(p: ClassifiedPair, indent: string): string[] {
     );
   }
   return out;
+}
+
+/**
+ * Collapse a group of `config_drift` warning pairs into ONE summary line (gh
+ * #157). The count is the headline; when some are the dimension-newly-measured
+ * case (a gate was just enabled), that truer cause is named so a reviewer looks
+ * in the right place instead of chasing "policy changed". Points at `--json` for
+ * the un-collapsed per-finding payload.
+ */
+export function formatDriftWarningSummary(
+  drift: ReadonlyArray<ClassifiedPair>,
+  indent: string,
+): string[] {
+  const gateEnabled = drift.filter((p) =>
+    p.classification.reasons.some((r) => r.code === 'dimension-newly-measured'),
+  ).length;
+  const n = drift.length;
+  const breakdown =
+    gateEnabled > 0
+      ? gateEnabled === n
+        ? ` (a gate/dimension was newly enabled — its pre-existing findings read as net-new)`
+        : ` (${gateEnabled} from a newly-enabled gate/dimension)`
+      : ` (a dxkit upgrade or policy/config change shifted the envelope)`;
+  return [
+    `${indent}${n} finding${n === 1 ? '' : 's'} unmatched after an envelope change${breakdown}.`,
+    `${indent}  · Not necessarily net-new — re-run with --json to inspect each, or re-capture the baseline if it is stale.`,
+  ];
 }
 
 function statusLabel(status: FindingStatus): string {
@@ -1104,13 +1139,43 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   }
 
   if (warning.length > 0) {
+    // Collapse the envelope-drift wall (gh #157): the drift group becomes one
+    // summary line above the table, and only the specific warnings are tabled.
+    const driftWarn = warning.filter((p) => p.classification.status === 'config_drift');
+    const specificWarn = warning.filter((p) => p.classification.status !== 'config_drift');
+    if (driftWarn.length > 0) {
+      const gateEnabled = driftWarn.filter((p) =>
+        p.classification.reasons.some((r) => r.code === 'dimension-newly-measured'),
+      ).length;
+      const cause =
+        gateEnabled > 0
+          ? gateEnabled === driftWarn.length
+            ? 'a gate/dimension was newly enabled, so its pre-existing findings read as net-new'
+            : `${gateEnabled} are from a newly-enabled gate/dimension`
+          : 'a dxkit upgrade or policy/config change shifted the envelope';
+      lines.push(
+        `> **${driftWarn.length} finding${driftWarn.length === 1 ? '' : 's'} unmatched after an ` +
+          `envelope change** — ${cause}. Not necessarily net-new; inspect each with \`--json\` ` +
+          `or re-capture the baseline if it is stale.`,
+      );
+      lines.push('');
+    }
     lines.push('<details>');
     lines.push(`<summary>Warnings (${warning.length})</summary>`);
     lines.push('');
-    lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
-    lines.push('|---|---|---|---|---|---|');
-    for (const p of warning) lines.push(markdownPairRow(p));
-    lines.push('');
+    if (specificWarn.length > 0) {
+      lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
+      lines.push('|---|---|---|---|---|---|');
+      for (const p of specificWarn) lines.push(markdownPairRow(p));
+      lines.push('');
+    }
+    if (driftWarn.length > 0) {
+      lines.push(
+        `_${driftWarn.length} envelope-drift warning${driftWarn.length === 1 ? '' : 's'} collapsed ` +
+          `above; see \`--json\` for each._`,
+      );
+      lines.push('');
+    }
     lines.push('</details>');
     lines.push('');
   }

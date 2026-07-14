@@ -636,6 +636,11 @@ export async function runGuardrailCheck(
   });
 
   const priorById = indexById(baseline.findings);
+  // The set of finding KINDS the baseline captured. A current finding whose kind
+  // is absent here means the dimension was newly measured (a gate just enabled),
+  // which the classifier names as a truer cause than generic `config_drift`
+  // (gh #157). Reason-only — does not change the verdict.
+  const baselineKinds = new Set(baseline.findings.map((e) => e.kind));
   const currentById = indexById(current.findings);
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
@@ -709,6 +714,10 @@ export async function runGuardrailCheck(
     // re-label a net-new finding on a new file). Non-empty changed-line set = the
     // file is in the diff (a brand-new file has all its lines added).
     const fileChangedInDiff = file !== undefined && (linesChangedFor(file)?.size ?? 0) > 0;
+    // Dimension newly measured: the baseline held no findings of this kind, so
+    // this one is unmatched because the gate/dimension was just enabled — a
+    // truer reason than generic config_drift (gh #157). Reason-only.
+    const kindAbsentFromBaseline = pair.status === 'added' && !baselineKinds.has(anchorEntry.kind);
 
     const malicious =
       pair.currentId !== undefined && maliciousByCurrentId.has(pair.currentId) ? true : undefined;
@@ -719,6 +728,7 @@ export async function runGuardrailCheck(
       ...(scannerVersionDiffers ? { scannerVersionDiffers: true } : {}),
       ...(configDiffers ? { configDiffers: true } : {}),
       ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
+      ...(kindAbsentFromBaseline ? { kindAbsentFromBaseline: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(malicious ? { malicious } : {}),
     };

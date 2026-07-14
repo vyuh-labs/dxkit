@@ -40,6 +40,13 @@ export interface ClassifyContext {
    *  re-label a net-new finding on a brand-new file as "config changed between
    *  runs". */
   readonly fileChangedInDiff?: boolean;
+  /** True when the finding's KIND had ZERO entries in the baseline — the
+   *  dimension was newly measured (e.g. `lint.enabled` was just turned on, so the
+   *  repo's whole pre-existing lint backlog appears net-new against a baseline
+   *  that had no lint dimension). Under envelope drift this is a MORE specific,
+   *  truer explanation than the generic `config_drift` label, so the reason names
+   *  it. Does NOT change the verdict — the status stays `config_drift`. */
+  readonly kindAbsentFromBaseline?: boolean;
   /** True when the underlying source file's lines overlap lines
    *  changed by the current diff. Used by `newSevereQualityIssueIn
    *  ChangedFiles` and similar rules; absent context is treated as
@@ -109,10 +116,29 @@ export function classify(
       // #19 reported: a net-new finding on a brand-new file labelled config_drift
       // because policy.json was edited alongside it).
       status = 'config_drift';
-      reasons.push({
-        code: 'config-drift',
-        detail: 'suppression or policy config changed between runs',
-      });
+      // `configDiffers` is a REPO-WIDE envelope signal (a dxkit-version /
+      // toolchain / policy / config hash change) — true for every finding in the
+      // run, so a bare "config changed" reason over-claims a specific cause it
+      // can't actually attribute. Name the truer per-finding cause when we have
+      // one: a kind with no baseline entries is a newly-enabled gate/dimension
+      // (its whole pre-existing backlog reads as net-new), not a policy edit.
+      // Verdict is unchanged either way — only the reason string differs.
+      reasons.push(
+        context.kindAbsentFromBaseline
+          ? {
+              code: 'dimension-newly-measured',
+              detail:
+                "this finding's kind had no baseline entries — a gate or dimension was " +
+                'newly enabled, so pre-existing findings appear net-new (not a policy change)',
+            }
+          : {
+              code: 'config-drift',
+              detail:
+                'unmatched after an envelope change (dxkit version / toolchain / policy / ' +
+                'config hash differs) — inspect per-finding with --json, or re-capture if the ' +
+                'baseline is stale',
+            },
+      );
     } else if (
       context.kind &&
       policy.addedRequiresChangedLines.includes(context.kind) &&
