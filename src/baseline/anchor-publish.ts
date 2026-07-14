@@ -65,6 +65,35 @@ export interface PublishResult {
 const DEFAULT_IDENTITY = { name: 'dxkit-bot', email: 'dxkit-bot@users.noreply.github.com' };
 
 /**
+ * Turn a failed `git push` into an ACTIONABLE reason (gh #156). A bare
+ * `push rejected: Command failed … ETIMEDOUT` reads as a mystery hang; the
+ * caller (and CI logs) need to know it was a stuck/denied AUTH handshake and
+ * what to check. A timeout after the prompt guards above almost always means
+ * the remote never authenticated (the CI token lacks `contents: write`, or the
+ * checkout didn't persist push credentials) rather than a slow network.
+ */
+export function describePushFailure(err: Error, timeoutMs: number): string {
+  const e = err as Error & { code?: string; signal?: string; killed?: boolean };
+  const timedOut =
+    e.code === 'ETIMEDOUT' ||
+    e.signal === 'SIGTERM' ||
+    e.killed === true ||
+    /ETIMEDOUT|timed out/i.test(err.message);
+  if (timedOut) {
+    return (
+      `push timed out after ${Math.round(timeoutMs / 1000)}s with no response — the remote did ` +
+      `not authenticate. In GitHub Actions ensure the job grants \`contents: write\` and the ` +
+      `checkout persists push credentials (actions/checkout with \`persist-credentials: true\`); ` +
+      `locally ensure your git credential helper / SSH key can push to origin.`
+    );
+  }
+  if (/denied|forbidden|403|not authorized|authentication failed/i.test(err.message)) {
+    return `push denied by the remote (authentication/permission): ${err.message}`;
+  }
+  return `push rejected: ${err.message}`;
+}
+
+/**
  * Read a single file's content from an arbitrary side ref (`origin/<ref>` then
  * `<ref>`), best-effort. Returns `null` when the ref/file is unreachable (not
  * created yet, offline, wrong ref). Never throws. This is the generalized read
@@ -129,10 +158,20 @@ function resolveTip(
 export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishResult {
   const { cwd, anchorRef } = opts;
   const identity = opts.identity ?? DEFAULT_IDENTITY;
-  const timeout = opts.timeoutMs ?? 60_000;
+  // A short, SURFACED bound: a small baseline push completes in seconds, so a
+  // stall is a stuck auth handshake, not slow transport. Kept low so a hang
+  // fails FAST with a clear reason instead of 60s of CI silence (gh #156).
+  const timeout = opts.timeoutMs ?? 30_000;
   const env = {
     ...process.env,
+    // BOTH prompt paths off so a push that would otherwise BLOCK on input fails
+    // fast instead of hanging until the timeout: HTTPS credential prompts
+    // (`GIT_TERMINAL_PROMPT=0`) AND SSH passphrase / host-key prompts
+    // (`BatchMode=yes`, mirroring remote-ref.ts). Without the SSH guard an
+    // unauthenticated push over an `ssh://` remote hangs — the "mystery hang"
+    // gh #156 reported in Actions.
     GIT_TERMINAL_PROMPT: '0',
+    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,
     GIT_COMMITTER_NAME: identity.name,
@@ -222,7 +261,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
         git(pushArgs);
         return { pushed: true, commit };
       } catch (err) {
-        return { pushed: false, commit, reason: `push rejected: ${(err as Error).message}` };
+        return { pushed: false, commit, reason: describePushFailure(err as Error, timeout) };
       }
     };
 
