@@ -53,6 +53,11 @@ export interface PublishToAnchorOptions {
   /** Author/committer identity for the plumbing commit. */
   readonly identity?: { readonly name: string; readonly email: string };
   readonly timeoutMs?: number;
+  /** Test seam: override the git executor. Production leaves this undefined and
+   *  runs `git` via `execFileSync`; a test injects a spy to assert the exact
+   *  argv (e.g. the CI-auth extraheader reaches the push) without a real remote.
+   *  Receives the FULL argv including any prepended auth `-c …` config. */
+  readonly _exec?: (args: string[], input?: string) => string;
 }
 
 export interface PublishResult {
@@ -63,6 +68,35 @@ export interface PublishResult {
 }
 
 const DEFAULT_IDENTITY = { name: 'dxkit-bot', email: 'dxkit-bot@users.noreply.github.com' };
+
+/**
+ * A credentialed HTTPS push URL for `originUrl` using the CI token, or `null`
+ * when none applies. The load-bearing fix for the after-merge refresh regression
+ * (gh #156): the 2.x refresh ran an inline `git push` inside the checkout, so it
+ * reused the credential `actions/checkout` persists; when 3.1.0 moved the
+ * refresh to this shared side-ref writer, the plumbing push stopped reusing that
+ * ambient credential and hung → ETIMEDOUT with no auth. So when the workflow
+ * exposes the CI token in the env (`GITHUB_TOKEN` / `GH_TOKEN` — GitHub Actions
+ * only puts it there when the step maps `${{ github.token }}`), the writer
+ * points `origin` at a token-credentialed URL for the operation (the mechanism
+ * proven to authenticate in real Actions; an `http.extraheader` override did
+ * NOT take — the real-CI smoke caught that).
+ *
+ * HTTPS only — an SSH origin authenticates by key (BatchMode handles the no-key
+ * case). Any credentials already in the URL are stripped first. No token →
+ * `null`, and the push falls back to the ambient credential (local dev: the
+ * user's credential helper / SSH agent), so nothing changes off-CI.
+ */
+export function ciCredentialedUrl(
+  originUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const token = env.GITHUB_TOKEN || env.GH_TOKEN;
+  if (!token) return null;
+  const m = /^https:\/\/(?:[^@/]*@)?(.+)$/.exec(originUrl); // strip any existing creds
+  if (!m) return null; // ssh:// or git@host:… — token URL does not apply
+  return `https://x-access-token:${token}@${m[1]}`;
+}
 
 /**
  * Turn a failed `git push` into an ACTIONABLE reason (gh #156). A bare
@@ -124,9 +158,13 @@ export function readFromAnchorRef(cwd: string, anchorRef: string, relPath: strin
 
 /** Does the ref exist on the REMOTE right now? `null` when unknown (offline /
  *  no ls-remote) — used only to veto the no-change skip, never to fail. */
-function remoteRefExists(git: (args: string[]) => string, anchorRef: string): boolean | null {
+function remoteRefExists(
+  git: (args: string[]) => string,
+  remote: string,
+  anchorRef: string,
+): boolean | null {
   try {
-    return git(['ls-remote', '--heads', 'origin', anchorRef]).trim().length > 0;
+    return git(['ls-remote', '--heads', remote, anchorRef]).trim().length > 0;
   } catch {
     return null;
   }
@@ -179,7 +217,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
   };
 
   const tmpIndex = path.join(mkdtempSync(path.join(tmpdir(), 'dxkit-anchor-idx-')), 'index');
-  const git = (args: string[], input?: string): string =>
+  const realExec = (args: string[], input?: string): string =>
     execFileSync('git', args, {
       cwd,
       env: { ...env, GIT_INDEX_FILE: tmpIndex },
@@ -188,14 +226,32 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       ...(input !== undefined ? { input } : {}),
       stdio: input !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
     }).toString();
+  // CI auth (gh #156): the plumbing writer does not reliably reuse the
+  // credential actions/checkout persists. When the env carries a CI token we
+  // point the NETWORK commands (fetch / ls-remote / push) DIRECTLY at a
+  // token-credentialed URL — the exact form a raw `git ls-remote` proves
+  // authenticates in Actions (a `set-url origin` rewrite or an
+  // `http.extraheader` override did NOT take — the real-CI smoke caught both).
+  // `credential.helper=` is disabled alongside so no ambient helper can hang the
+  // handshake. Off-CI (no token) `netRemote` stays `origin` and nothing changes.
+  const authPrefix: string[] = [];
+  const exec = opts._exec ?? realExec;
+  const git = (args: string[], input?: string): string => exec([...authPrefix, ...args], input);
 
   try {
     // Confirm a remote exists — no origin ⇒ nothing to publish to.
+    let originUrl: string;
     try {
-      git(['remote', 'get-url', 'origin']);
+      originUrl = git(['remote', 'get-url', 'origin']).trim();
     } catch {
       return { pushed: false, commit: null, reason: 'no origin remote' };
     }
+    const credUrl = ciCredentialedUrl(originUrl, env);
+    // The remote for every NETWORK op below: the credentialed URL in CI, else
+    // `origin`. Fetching by URL does not update `origin/<ref>` on its own, so the
+    // fetch below carries an explicit refspec that does (resolveTip reads it).
+    const netRemote = credUrl ?? 'origin';
+    if (credUrl) authPrefix.push('-c', 'credential.helper=');
 
     const buildAndPush = (): PublishResult => {
       const baseParent = opts.baseParent !== false;
@@ -204,9 +260,15 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       // `origin/<ref>` on every git version, and this also picks up a
       // concurrent merge's advance before we build. Both modes need it:
       // accumulate bases the commit on it, replace-all compares against it for
-      // the no-change skip below.
+      // the no-change skip below. Explicit refspec so a URL fetch updates
+      // `origin/<ref>` too.
       try {
-        git(['fetch', '--depth=1', 'origin', anchorRef]);
+        git([
+          'fetch',
+          '--depth=1',
+          netRemote,
+          `+refs/heads/${anchorRef}:refs/remotes/origin/${anchorRef}`,
+        ]);
       } catch {
         /* first publish (ref absent) / offline — resolveTip returns null */
       }
@@ -241,7 +303,11 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       // offline AND when the remote branch was deleted — in the deleted case a
       // byte-identical republish must still push (the self-heal path), or the
       // anchor stays gone until the content next changes.
-      if (remoteTip && tree === remoteTip.tree && remoteRefExists(git, anchorRef) !== false) {
+      if (
+        remoteTip &&
+        tree === remoteTip.tree &&
+        remoteRefExists(git, netRemote, anchorRef) !== false
+      ) {
         return { pushed: false, commit: null, reason: 'no change' };
       }
       const commitArgs = ['commit-tree', tree, '-m', opts.message];
@@ -255,8 +321,8 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       const pushRefspec = `${commit}:refs/heads/${anchorRef}`;
       const pushArgs =
         baseParent === false
-          ? ['push', '--force', 'origin', pushRefspec]
-          : ['push', 'origin', pushRefspec];
+          ? ['push', '--force', netRemote, pushRefspec]
+          : ['push', netRemote, pushRefspec];
       try {
         git(pushArgs);
         return { pushed: true, commit };
@@ -270,7 +336,12 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
     // the commit onto the new tip once.
     if (!result.pushed && result.reason?.startsWith('push rejected') && opts.baseParent !== false) {
       try {
-        git(['fetch', '--depth=1', 'origin', anchorRef]);
+        git([
+          'fetch',
+          '--depth=1',
+          netRemote,
+          `+refs/heads/${anchorRef}:refs/remotes/origin/${anchorRef}`,
+        ]);
       } catch {
         /* offline — the retry will just fail again, returning the rejection */
       }

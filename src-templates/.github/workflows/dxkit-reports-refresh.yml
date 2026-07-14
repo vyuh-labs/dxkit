@@ -68,6 +68,13 @@ __DXKIT_CI_RUNTIME_SETUP__
           fi
 
       - name: Generate reports + publish the snapshot
+        env:
+          # Expose the workflow token so `report snapshot` can authenticate the
+          # side-ref push. It uses dxkit's plumbing side-ref writer (no checkout),
+          # which reads GITHUB_TOKEN and authenticates the push itself (a scoped
+          # http.extraheader) rather than relying on the persisted checkout cred
+          # (dxkit #156 — the same regression the baseline refresh hit since 3.1.0).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
