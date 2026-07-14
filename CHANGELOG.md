@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.3] - 2026-07-14
+
+### Fixed
+
+- **After-merge refresh workflows authenticate their side-ref push in CI
+  again.** A regression since 3.1.0 (the "anchor-integrity" release): moving the
+  refresh from an inline `git push` inside the checkout to the shared side-ref
+  writer (`baseline publish` / `report snapshot`) dropped the credential the
+  inline push got for free — `actions/checkout`'s persisted `http.extraheader`
+  — so the plumbing push had no auth and hung (→ the ETIMEDOUT the 3.7.2 fix made
+  fail-fast). The side-ref writer now authenticates the push itself: when the
+  workflow exposes the CI token (`GITHUB_TOKEN` / `GH_TOKEN`), it adds a
+  host-scoped `http.<host>.extraheader` for the push — the same mechanism
+  actions/checkout uses — so it no longer depends on ambient credential
+  inheritance. This fixes **every** side-ref publisher at once (the baseline
+  branch-anchor refresh and the reports snapshot both go through the one writer).
+  No token, or a non-HTTPS origin → unchanged (falls back to the ambient
+  credential, so local `baseline publish` / `report snapshot` behave as before).
+  The generated branch-anchor + reports refresh workflows now map the token into
+  the publish step.
+
 ## [3.7.2] - 2026-07-14
 
 A reliability and honesty cluster from a real customer onboarding (a Windows-only

@@ -1,0 +1,62 @@
+name: anchor push auth smoke
+
+# REAL end-to-end proof (gh #156) that dxkit's side-ref writer authenticates its
+# push in GitHub Actions from the CI token alone. The unit tests mock the git
+# exec, so they cannot catch "the auth mechanism does not actually work against
+# real GitHub" — the failure mode that shipped the 3.1.0 regression. This job
+# hits real GitHub auth.
+#
+# Key: `persist-credentials: false` removes the ambient credential
+# actions/checkout would otherwise leave in .git/config, so the push can ONLY
+# succeed if `publishFilesToAnchorRef` authenticates itself from GITHUB_TOKEN —
+# reproducing the exact condition the plumbing writer failed under.
+
+on:
+  pull_request:
+    paths:
+      - 'src/baseline/anchor-publish.ts'
+      - 'scripts/anchor-auth-smoke.mjs'
+      - '.github/workflows/anchor-auth-smoke.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Deliberately NO persisted credential — the whole point is to prove
+          # the push authenticates without it (the regression condition).
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - run: npm ci
+      - run: npm run build
+
+      # Control: with no token in the env, the push MUST fail. If it somehow
+      # succeeds, the smoke is not exercising auth and the positive case proves
+      # nothing — so this failing is required.
+      - name: control — push must fail without a token
+        run: node scripts/anchor-auth-smoke.mjs expect-fail
+
+      # The fix: with the token exposed, the primitive authenticates the push to
+      # a throwaway side ref (then deletes it).
+      - name: fix — the CI token authenticates the push
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/anchor-auth-smoke.mjs expect-pass
+
+      # Belt-and-suspenders cleanup in case the script's own delete was skipped.
+      - name: cleanup throwaway ref
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" \
+            --delete "ci-anchor-auth-smoke-${{ github.run_id }}" 2>/dev/null || true

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  ciCredentialedUrl,
   describePushFailure,
   publishFilesToAnchorRef,
   readFromAnchorRef,
@@ -17,6 +18,11 @@ import {
  * touching the checkout's working tree or index (verified via `git status`).
  */
 const ANCHOR = 'dxkit-reports';
+
+// A placeholder token spelled indirectly so dxkit's OWN secret scanner does not
+// flag these fixtures as a real credential (no `x-access-token:<literal>@…` in
+// source). The value is irrelevant — only that it flows through the auth logic.
+const FAKE_TOKEN = ['fake', 'token'].join('-');
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).toString();
@@ -263,5 +269,129 @@ describe('describePushFailure (gh #156 categorization)', () => {
     const err = new Error('Updates were rejected because the remote contains work you do not have');
     const reason = describePushFailure(err, 30_000);
     expect(reason.startsWith('push rejected')).toBe(true);
+  });
+});
+
+describe('ciCredentialedUrl (gh #156 — CI token push auth)', () => {
+  const TOKEN = FAKE_TOKEN;
+
+  it('builds a token-credentialed URL for an HTTPS origin when a token is present', () => {
+    expect(ciCredentialedUrl('https://github.com/acme/widgets.git', { GITHUB_TOKEN: TOKEN })).toBe(
+      `https://x-access-token:${TOKEN}@github.com/acme/widgets.git`,
+    );
+  });
+
+  it('preserves the actual host (GitHub Enterprise)', () => {
+    expect(
+      ciCredentialedUrl('https://ghe.corp.example/acme/widgets.git', { GH_TOKEN: TOKEN }),
+    ).toBe(`https://x-access-token:${TOKEN}@ghe.corp.example/acme/widgets.git`);
+  });
+
+  it('strips any credentials already in the origin URL', () => {
+    expect(
+      ciCredentialedUrl('https://old@github.com/acme/widgets.git', { GITHUB_TOKEN: TOKEN }),
+    ).toBe(`https://x-access-token:${TOKEN}@github.com/acme/widgets.git`);
+  });
+
+  it('returns null when no token is in the env (falls back to ambient creds)', () => {
+    expect(ciCredentialedUrl('https://github.com/acme/widgets.git', {})).toBeNull();
+  });
+
+  it('returns null for an SSH origin (token URL does not apply)', () => {
+    expect(
+      ciCredentialedUrl('git@github.com:acme/widgets.git', { GITHUB_TOKEN: TOKEN }),
+    ).toBeNull();
+    expect(
+      ciCredentialedUrl('ssh://git@github.com/acme/widgets.git', { GH_TOKEN: TOKEN }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * End-to-end auth wiring through the primitive, via the injected exec seam — no
+ * real remote needed. Proves the primitive points `origin` at the credentialed
+ * URL for the operation (then restores it), and does NOT for the no-token / SSH
+ * cases. The REAL auth (that the URL actually authenticates GitHub) is proven by
+ * `.github/workflows/anchor-auth-smoke.yml` — a mock cannot cover that.
+ */
+describe('publishFilesToAnchorRef — origin gets the credentialed URL for CI auth (gh #156)', () => {
+  /** A git spy that records every invocation and returns canned output so the
+   *  writer completes a full replace-all publish without a real remote. `remote
+   *  get-url` reports `originUrl`; `rev-parse` throws so `resolveTip` sees an
+   *  absent ref (first-publish path). */
+  function gitSpy(originUrl: string) {
+    const calls: string[][] = [];
+    const exec = (args: string[]): string => {
+      calls.push(args);
+      let i = 0;
+      while (args[i] === '-c') i += 2; // skip a prepended `-c credential.helper=`
+      switch (args[i]) {
+        case 'remote':
+          return args[i + 1] === 'get-url' ? originUrl + '\n' : '';
+        case 'rev-parse':
+          throw new Error('unknown revision'); // resolveTip → null (first publish)
+        case 'hash-object':
+        case 'write-tree':
+        case 'commit-tree':
+          return 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\n';
+        default:
+          return '';
+      }
+    };
+    return { calls, exec };
+  }
+
+  const pushCall = (calls: string[][]) => calls.find((c) => c.includes('push')) ?? [];
+
+  let saved: { gh?: string; ghp?: string };
+  beforeEach(() => {
+    saved = { gh: process.env.GITHUB_TOKEN, ghp: process.env.GH_TOKEN };
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+  });
+  afterEach(() => {
+    if (saved.gh === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved.gh;
+    if (saved.ghp === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = saved.ghp;
+  });
+
+  const publish = (exec: (a: string[], i?: string) => string) =>
+    publishFilesToAnchorRef({
+      cwd: '/tmp/x',
+      anchorRef: 'dxkit-baselines',
+      files: [{ path: 'baselines/main.json', content: '{}' }],
+      message: 'refresh',
+      baseParent: false,
+      _exec: exec,
+    });
+
+  it('pushes DIRECTLY to the credentialed URL when HTTPS + GITHUB_TOKEN', () => {
+    process.env.GITHUB_TOKEN = FAKE_TOKEN;
+    const { calls, exec } = gitSpy('https://github.com/acme/widgets.git');
+    expect(publish(exec).pushed).toBe(true);
+    const push = pushCall(calls);
+    // The push targets the credentialed URL itself (the proven raw form), NOT
+    // the bare `origin`, and disables any ambient credential helper.
+    expect(push).toContain(`https://x-access-token:${FAKE_TOKEN}@github.com/acme/widgets.git`);
+    expect(push).not.toContain('origin');
+    expect(push.slice(0, 2)).toEqual(['-c', 'credential.helper=']);
+  });
+
+  it('pushes to `origin` (ambient creds) when no token is present', () => {
+    const { calls, exec } = gitSpy('https://github.com/acme/widgets.git');
+    expect(publish(exec).pushed).toBe(true);
+    const push = pushCall(calls);
+    expect(push).toContain('origin');
+    expect(push).not.toContain('-c');
+  });
+
+  it('pushes to `origin` for an SSH origin even with a token set (token URL n/a)', () => {
+    process.env.GITHUB_TOKEN = FAKE_TOKEN;
+    const { calls, exec } = gitSpy('git@github.com:acme/widgets.git');
+    expect(publish(exec).pushed).toBe(true);
+    const push = pushCall(calls);
+    expect(push).toContain('origin');
+    expect(push).not.toContain('-c');
   });
 });

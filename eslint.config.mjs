@@ -45,6 +45,14 @@ export default [
     },
   },
   {
+    // Node ESM scripts (e.g. the anchor auth CI smoke) — Node globals, ESM.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+      sourceType: 'module',
+    },
+  },
+  {
     // TS source files run on Node — give them Node globals (process, console, etc.)
     files: ['src/**/*.ts', 'test/**/*.ts'],
     languageOptions: {
