@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -118,6 +118,38 @@ describe('landFlowRefresh (real git)', () => {
     const log = git(bare, 'log', '-1', '--format=%s', 'main');
     expect(log).toContain('[skip ci]');
     expect(git(bare, 'show', 'main:.dxkit/flow/served.json')).toContain('"/new"');
+  });
+
+  it('push mode runs --no-verify — a blocking pre-push hook does not stop the land (gh #156)', () => {
+    // The SECOND internal-push consumer (land-refresh). Same class as the anchor
+    // writer: a machine push must not fire the repo's pre-push guardrail hook.
+    // Wire a hook that BLOCKS any ordinary push, then assert the land still pushes.
+    const hooks = mkdtempSync(join(tmpdir(), 'dxkit-land-hooks-'));
+    const sentinel = join(hooks, 'fired');
+    const hook = join(hooks, 'pre-push');
+    writeFileSync(hook, `#!/bin/sh\necho fired > "${sentinel}"\nexit 1\n`);
+    chmodSync(hook, 0o755);
+    git(repo, 'config', 'core.hooksPath', hooks);
+    try {
+      let blocked = false;
+      try {
+        git(repo, 'push', 'origin', 'HEAD:refs/heads/ordinary-probe');
+      } catch {
+        blocked = true;
+      }
+      expect(blocked).toBe(true); // the hook really blocks a normal push
+      if (existsSync(sentinel)) rmSync(sentinel);
+
+      const before = contract(['GET /a']);
+      writeSnapshot(['GET /a', 'POST /new']);
+      const out = landFlowRefresh({ cwd: repo, mode: 'push', before, defaultBranch: 'main' });
+      expect(out.outcome).toBe('pushed'); // landed despite the blocking hook
+      expect(existsSync(sentinel)).toBe(false); // the hook never fired (--no-verify)
+      expect(git(bare, 'show', 'main:.dxkit/flow/served.json')).toContain('"/new"');
+    } finally {
+      git(repo, 'config', '--unset', 'core.hooksPath');
+      rmSync(hooks, { recursive: true, force: true });
+    }
   });
 
   it('pr mode pushes the standing branch and degrades gracefully without gh', () => {

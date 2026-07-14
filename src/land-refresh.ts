@@ -20,6 +20,7 @@
  * lander so the two consumers cannot drift (Rule 2).
  */
 import { execFileSync } from 'child_process';
+import { internalGitPushArgs } from './git-internal-push';
 
 export type LandMode = 'pr' | 'push';
 
@@ -104,7 +105,9 @@ export function landRefreshPaths(opts: LandRefreshOptions): LandRefreshResult {
 
   if (opts.mode === 'push') {
     commit(`${opts.commitTitle} [skip ci]`);
-    exec('git', ['push', 'origin', `HEAD:${opts.defaultBranch}`]);
+    // Internal machine push → `--no-verify` (gh #156): must not fire the repo's
+    // own pre-push guardrail hook against a bot refresh commit.
+    exec('git', internalGitPushArgs(`HEAD:${opts.defaultBranch}`));
     return { outcome: 'pushed', mode: 'push' };
   }
 
@@ -115,7 +118,8 @@ export function landRefreshPaths(opts: LandRefreshOptions): LandRefreshResult {
   const priorRef = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true }).trim();
   exec('git', ['checkout', '-B', opts.branchName]);
   commit(`${opts.prTitle}\n\n[skip ci]`);
-  exec('git', ['push', '--force', 'origin', opts.branchName]);
+  // Internal machine push → `--no-verify` (gh #156), same reason as the push mode.
+  exec('git', internalGitPushArgs(opts.branchName, { force: true }));
   if (priorRef && priorRef !== 'HEAD' && priorRef !== opts.branchName) {
     exec('git', ['checkout', priorRef], { allowFail: true });
   }

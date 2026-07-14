@@ -1,110 +1,97 @@
 /**
- * REAL end-to-end proof that `publishFilesToAnchorRef` authenticates a side-ref
- * push in GitHub Actions using ONLY the CI token.
+ * REAL end-to-end proof that `publishFilesToAnchorRef`'s side-ref push does NOT
+ * fire the repo's `pre-push` hook (gh #156 — the actual root cause).
  *
- * The unit/seam tests mock the git exec, so they prove the push CARRIES the auth
- * header but not that the header actually AUTHENTICATES — the exact gap that let
- * the 3.1.0 regression (gh #156) ship green. This script closes it: the workflow
- * checks out with `persist-credentials: false`, so there is NO ambient
- * credential to fall back on, and the push can only succeed if the primitive
- * authenticates itself from the token.
+ * The regression: dxkit's internal machine push ran a plain `git push` in a
+ * checkout where `core.hooksPath=.githooks` is active, so it fired dxkit's OWN
+ * guardrail check as a pre-push hook; under the `execFileSync` timeout that hook
+ * was SIGTERM'd mid-run → ETIMEDOUT, which four debug builds misread as an auth
+ * failure. The fix is `--no-verify` on the internal push.
  *
- *   node scripts/anchor-auth-smoke.mjs expect-pass   # GITHUB_TOKEN set → must push
- *   node scripts/anchor-auth-smoke.mjs expect-fail   # no token → must NOT push (control)
+ * This smoke is self-contained (a throwaway local repo — no token, no remote):
+ * it wires a `pre-push` hook that BLOCKS any ordinary push (writes a sentinel +
+ * exits 1), proves the hook really blocks a normal push, then asserts the
+ * primitive still publishes (hook skipped) and the sentinel was never written.
+ *
+ *   node scripts/anchor-auth-smoke.mjs
  */
 import { execFileSync } from 'child_process';
-import { publishFilesToAnchorRef, ciCredentialedUrl } from '../dist/baseline/anchor-publish.js';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, chmodSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { publishFilesToAnchorRef } from '../dist/baseline/anchor-publish.js';
 
-const mode = process.argv[2];
-if (mode !== 'expect-pass' && mode !== 'expect-fail') {
-  console.error('usage: anchor-auth-smoke.mjs expect-pass|expect-fail');
-  process.exit(2);
-}
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
 
-const cwd = process.cwd();
-const runId = process.env.GITHUB_RUN_ID ?? `local-${process.pid}`;
-// A NON-`dxkit-*` ref name so dxkit's own anchor-branch ruleset (scoped to
-// `dxkit-*`) does not reject/delay the throwaway push — that policy rejection is
-// a property of THIS repo, not the fix, and it muddied the auth signal.
-const ref = `ci-anchor-auth-smoke-${runId}`;
+const base = mkdtempSync(join(tmpdir(), 'dxkit-hook-smoke-'));
+const bare = join(base, 'origin.git');
+const repo = join(base, 'checkout');
+const hooks = join(base, 'hooks');
+const sentinel = join(base, 'hook-fired');
+let failed = false;
+try {
+  git(base, 'init', '-q', '--bare', '-b', 'main', bare);
+  mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 'smoke@dxkit');
+  git(repo, 'config', 'user.name', 'smoke');
+  writeFileSync(join(repo, 'README.md'), '# smoke\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'init');
+  git(repo, 'remote', 'add', 'origin', bare);
+  git(repo, 'push', '-q', 'origin', 'main');
 
-const res = publishFilesToAnchorRef({
-  cwd,
-  anchorRef: ref,
-  files: [{ path: 'auth-smoke.txt', content: `run ${runId}\n` }],
-  message: 'ci: anchor auth smoke',
-  // Accumulate mode → a NON-force push to create the ref (this repo's ruleset
-  // blocks force-pushes; a plain branch-create is allowed, giving a clean
-  // pushed:true). The auth mechanism is identical for both modes.
-  baseParent: true,
-  timeoutMs: 25_000,
-});
-console.log('publish result:', JSON.stringify(res));
+  // A pre-push hook that BLOCKS any ordinary push — the stand-in for dxkit's own
+  // guardrail pre-push hook that caused the #156 timeout.
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-push');
+  writeFileSync(hook, `#!/bin/sh\necho blocked > "${sentinel}"\nexit 1\n`);
+  chmodSync(hook, 0o755);
+  git(repo, 'config', 'core.hooksPath', hooks);
 
-/** Delete the throwaway ref, authenticating the same way the primitive does. */
-function cleanup() {
+  // Sanity: an ORDINARY push MUST be blocked by the hook, or the test is meaningless.
+  let ordinaryBlocked = false;
   try {
-    const originUrl = execFileSync('git', ['remote', 'get-url', 'origin'], {
-      cwd,
-      encoding: 'utf8',
-    }).trim();
-    const target = ciCredentialedUrl(originUrl, process.env) ?? 'origin';
-    execFileSync('git', ['push', target, '--delete', ref], { cwd, stdio: 'ignore' });
-    console.log(`cleaned up ${ref}`);
+    execFileSync('git', ['push', 'origin', 'HEAD:refs/heads/ordinary-probe'], {
+      cwd: repo,
+      stdio: 'ignore',
+    });
   } catch {
-    console.log(`could not delete ${ref} (best-effort)`);
+    ordinaryBlocked = true;
+  }
+  if (!ordinaryBlocked) {
+    console.error('SMOKE SETUP FAIL: the pre-push hook did not block an ordinary push.');
+    process.exit(1);
+  }
+  if (existsSync(sentinel)) rmSync(sentinel); // reset before the real assertion
+
+  // The primitive publish must SUCCEED (hook skipped via --no-verify) ...
+  const res = publishFilesToAnchorRef({
+    cwd: repo,
+    anchorRef: 'dxkit-baselines',
+    files: [{ path: 'baselines/main.json', content: '{}\n' }],
+    message: 'smoke: hook-skip',
+    baseParent: false,
+  });
+  if (!res.pushed) {
+    console.error(`FAIL: the primitive push did not succeed (hook not skipped?): ${res.reason}`);
+    failed = true;
+  }
+  // ... and the pre-push hook must NOT have fired.
+  if (existsSync(sentinel)) {
+    console.error('FAIL: the pre-push hook FIRED during the internal push (missing --no-verify).');
+    failed = true;
+  }
+  if (!failed) {
+    console.log(
+      'PASS: the internal side-ref push skipped the pre-push hook and published (gh #156).',
+    );
+  }
+} finally {
+  try {
+    rmSync(base, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
   }
 }
-
-/**
- * The fix is about AUTHENTICATION, so that is what we assert — independent of
- * the repo's write policy. With no ambient credential, a push that fails to
- * AUTHENTICATE looks like "could not read Username" / "terminal prompts
- * disabled" / a timeout; a push that AUTHENTICATED and was then rejected by repo
- * policy (e.g. this repo restricts creating an arbitrary branch) looks like
- * "failed to push some refs" — the token clearly got past auth. The control
- * (no token) must land in the FIRST bucket; the fix (token) must NOT.
- */
-// A genuine auth failure is ALWAYS fast here — with terminal prompts disabled,
-// a missing/bad credential fails immediately with "could not read Username" /
-// "Authentication failed" / a 401-403, never a hang. A TIMEOUT therefore is NOT
-// an auth failure: it only happens after auth succeeds and the server holds a
-// policy-blocked push. So `timed out` is deliberately NOT in this set.
-const AUTH_FAILED =
-  /could not read Username|terminal prompts disabled|Authentication failed|fatal: could not read|40[13]|Invalid username or (password|token)/i;
-
-if (mode === 'expect-pass') {
-  if (res.pushed) {
-    cleanup();
-    console.log(
-      'PASS: the CI token authenticated + the side-ref push succeeded (no ambient credential).',
-    );
-  } else if (AUTH_FAILED.test(res.reason ?? '')) {
-    console.error(`FAIL: the token did NOT authenticate the push: ${res.reason}`);
-    process.exit(1);
-  } else {
-    // Authenticated, then rejected by repo policy (this repo blocks the throwaway
-    // branch) — the auth mechanism (the whole point of #156) is proven.
-    console.log(
-      `PASS: the CI token AUTHENTICATED the push (rejected only by repo policy): ${res.reason}`,
-    );
-  }
-} else {
-  if (res.pushed) {
-    cleanup();
-    console.error(
-      'FAIL: the push succeeded WITHOUT a token — the smoke is not exercising auth ' +
-        '(persist-credentials leaked a credential?). This control must fail to be meaningful.',
-    );
-    process.exit(1);
-  }
-  if (!AUTH_FAILED.test(res.reason ?? '')) {
-    console.error(
-      `FAIL (control): expected an AUTH failure without a token, got a non-auth reason: ${res.reason}`,
-    );
-    process.exit(1);
-  }
-  console.log(
-    `PASS (control): the push correctly failed to AUTHENTICATE without a token: ${res.reason}`,
-  );
-}
+process.exit(failed ? 1 : 0);

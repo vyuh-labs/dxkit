@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.4] - 2026-07-14
+
+### Fixed
+
+- **After-merge refresh workflows publish their side-ref push in CI — the real
+  root cause of #156 (3.7.1–3.7.3 fixed a phantom).** The 30s `ETIMEDOUT` on the
+  anchor push was **never** an auth problem. The internal side-ref push runs
+  `git push` in the checkout, where `core.hooksPath=.githooks` is active whenever
+  dxkit is installed with git hooks — so the push fired the repo's **own
+  `pre-push` guardrail hook** (`vyuh-dxkit guardrail check`) as a side effect of a
+  machine refresh. Under the bounded exec timeout that hook was SIGTERM'd mid-run
+  → `ETIMEDOUT`, which `describePushFailure` mislabeled as "the remote did not
+  authenticate" — the one mislabel that sent three prior releases chasing a
+  non-existent credential bug (fetch always worked because fetch fires no hook; a
+  developer's bash `git push` worked because it has no exec timeout to kill the
+  hook). The fix is one flag: dxkit's internal machine pushes now run
+  `git push --no-verify`, so they never run the repo's pre-push gate against a bot
+  commit. This fixes **both** side-ref publishers (baseline branch-anchor refresh
+  and reports snapshot — one shared writer) and is verified end-to-end on a real
+  hook-active repo.
+- **Reverted the 3.7.3 credential machinery.** It was built on the misdiagnosis:
+  the ambient checkout credential always authenticated fine, so the injected
+  `http.<host>.extraheader` / token handling and the `GITHUB_TOKEN` env in the
+  generated refresh workflows are removed. `describePushFailure` no longer asserts
+  auth from a bare timeout.
+
+### Changed
+
+- **Every dxkit-internal `git push` is guarded at the class level.** A second
+  latent site (the flow/reports `--land push` mode in `src/land-refresh.ts`)
+  carried the identical bug. All internal machine pushes now build their argv
+  through one constructor, `internalGitPushArgs` (`src/git-internal-push.ts`),
+  which always emits `--no-verify`; `scripts/check-architecture.sh` bans a raw
+  `['push', …]` git argv anywhere in `src/` outside that helper, so a future
+  internal push cannot silently reintroduce the class. Real-git regression tests
+  (a genuinely blocking `pre-push` hook that the push must skip) cover both
+  consumers.
+
 ## [3.7.3] - 2026-07-14
 
 ### Fixed
