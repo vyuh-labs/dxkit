@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.2] - 2026-07-14
+
+A reliability and honesty cluster from a real customer onboarding (a Windows-only
+.NET desktop repo, run from a Linux box with no .NET toolchain). Every fix lands
+at the platform level so its class cannot recur.
+
+### Fixed
+
+- **`baseline create` is now allowlist-aware (#155).** An allowlisted finding
+  that was also captured into the baseline used to sit there as `persisted`
+  forever: it never lifted from the score, and its allowlist expiry could never
+  re-expose it (a `persisted` finding never blocks). Baseline capture now holds
+  actively-allowlisted findings OUT of the baseline, so the allowlist (with its
+  expiry) is the single source of suppression: an active entry keeps a finding
+  suppressed today, and when it lapses the finding resurfaces as net-new on the
+  next check. `baseline create` reports the split (`N findings baselined, M
+  allowlisted, held out`).
+- **`baseline publish` no longer hangs mysteriously in GitHub Actions (#156).**
+  An anchor push that could not authenticate would block on a credential or SSH
+  prompt until a 60s timeout, then surface a raw `Command failed ... ETIMEDOUT`.
+  The push now disables both prompt paths (`GIT_TERMINAL_PROMPT=0` and SSH
+  `BatchMode=yes`) so it fails FAST, on a shorter surfaced timeout, with an
+  actionable reason that names the auth cause (grant `contents: write`; keep the
+  checkout's push credentials).
+- **The finish summary never over-claims coverage (#2 from onboarding).** When
+  the repo's own language toolchain is missing (so its lint, license, and
+  compile/test classes were not measured), `init` no longer prints an
+  unqualified "You're gated." It now reads "You're gated for what's measurable."
+  and names the missing toolchain, drawn from the same pack-driven signal
+  `doctor` reports.
+- **Remediation names the root prerequisite, not a loop (#1 from onboarding).**
+  When a scanner is unavailable because its toolchain (e.g. the .NET SDK) is
+  absent, the guidance points at installing the toolchain rather than looping on
+  `tools install`, whose own prerequisite is the missing thing.
+- **The .NET SDK bootstrap is non-sudo and version-aware (#4/#7 from
+  onboarding).** `tools install` used to run `apt install dotnet-sdk-8.0`, which
+  needs root (it dies with a raw dpkg-lock error on WSL and most dev machines)
+  and pins the wrong major. It now prefers Microsoft's per-user
+  `dotnet-install.sh --install-dir $HOME/.dotnet` and derives the SDK version
+  from the repo's detected target framework.
+- **dxkit's own `dotnet` calls run in invariant globalization mode (#8 from
+  onboarding).** On a minimal image without libicu, every `dotnet` invocation
+  FailFast-crashes with a cryptic ICU error. dxkit now sets
+  `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` for its analysis, floor, lint, and
+  install subprocesses (never overriding a value you set), so C# analysis works
+  without libicu or sudo.
+- **The default-branch fallback comes from GitHub, not the checked-out branch
+  (#3 from onboarding).** A repo inited on a feature branch whose local
+  `origin/HEAD` points at that branch could record it as the workflow's default.
+  The generated workflows now resolve the true default via `gh repo view` first.
+- **Config-drift no longer mislabels every unmatched finding, and the warning
+  wall collapses (#157).** After a dxkit upgrade or a `policy.json` edit, every
+  finding that did not match the baseline was stamped `CONFIG-DRIFT` even when a
+  truer cause applied, and each rendered as its own warning line. The classifier
+  now names the gate-just-enabled cause (a kind with no baseline entries is a
+  newly measured dimension, so its backlog reads as net-new) and the generic
+  drift reason no longer asserts "policy config changed" as the specific cause.
+  The console and PR-comment renderers collapse the drift group into one summary
+  line. The verdict is unchanged: net-new blocking-class findings still block.
+
+### Internal
+
+- New canonical seams keep each class fixed once: the effective allowlist has one
+  constructor (`resolveEffectiveAllowlist`) and one active-suppression predicate
+  (`allowlistSuppressionFor` / `partitionByActiveAllowlist`), shared by the
+  guardrail check, the security score, and baseline capture, with an
+  architecture-check banning the recipe from being re-inlined; the "is the
+  primary language's toolchain present" signal is one pack-driven function
+  (`assessLanguageToolchains`) read by both `doctor` and the finish arc; the
+  version-aware SDK bootstrap substitutes a detected-version placeholder in the
+  one install-command path. New tests: allowlist-aware capture (expiry,
+  non-expiring test-fixtures, wrong-kind guard), the anchor push failure
+  categorizer, the toolchain-coverage signal, the SDK-bootstrap substitution +
+  ICU env, and the config-drift precedence + wall collapse.
+
 ## [3.7.1] - 2026-07-13
 
 ### Fixed
