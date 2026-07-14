@@ -23,7 +23,7 @@ It also matters for compliance. Every deduction in the score is traceable to a s
 Most static analysis tools find issues and stop there. dxkit also writes the project-context layer that lets an AI agent operate intelligently on the codebase:
 
 - `AGENTS.md` (open standard, read by Claude Code, Codex, Cursor, Aider)
-- Twelve `dxkit-*` conversational skills for Claude Code that wrap the CLI into read, act, verify loops
+- The `dxkit-*` conversational skills for Claude Code that wrap the CLI into read, act, verify loops
 - Per-stack devcontainer with the toolchain pre-installed
 - A guardrail check that emits structured JSON the agent can self-verify against
 
