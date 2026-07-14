@@ -2447,8 +2447,21 @@ export async function run(argv: string[]): Promise<void> {
           } else if (result.path && result.file) {
             const rel = path.relative(targetPath, result.path);
             const tag = result.mode.mode === 'committed-sanitized' ? ' (sanitized)' : '';
+            // Honest split: allowlisted findings are held OUT of the baseline
+            // (gh #155), so name how many were suppressed and why rather than
+            // letting the headline count silently absorb them.
+            const split = result.allowlistSplit;
+            let allowlistNote = '';
+            if (split && split.allowlisted > 0) {
+              const byCat = Object.entries(split.byCategory)
+                .map(([cat, n]) => `${n} ${cat}`)
+                .join(', ');
+              allowlistNote = ` — ${split.allowlisted} allowlisted, held out of the baseline${
+                byCat ? ` (${byCat})` : ''
+              }`;
+            }
             logger.success(
-              `Wrote ${rel}${tag} — ${result.file.findings.length} findings, salt: ${result.file.saltMode} (${elapsed}s)`,
+              `Wrote ${rel}${tag} — ${result.file.findings.length} findings baselined${allowlistNote}, salt: ${result.file.saltMode} (${elapsed}s)`,
             );
           }
         } catch (err) {

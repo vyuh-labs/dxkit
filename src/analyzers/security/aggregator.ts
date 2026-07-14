@@ -73,7 +73,7 @@ import {
   kindForCategory,
 } from '../../allowlist/annotate';
 import type { AllowlistFile } from '../../allowlist/file';
-import { synthesizeInlineEntries, augmentAllowlistWithInline } from '../../allowlist/inline-synth';
+import { resolveEffectiveAllowlist } from '../../allowlist/effective';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 
 // ─── Re-exports for consumer convenience ──────────────────────────────────
@@ -670,18 +670,16 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
   // so inline and file-level suppressions flow through the ONE fingerprint-based
   // annotator below (Rule 2). Fingerprints are already stamped on the findings by
   // this point (the annotator matches on them too).
-  const effectiveAllowlist = augmentAllowlistWithInline(
-    input.allowlist ?? null,
-    synthesizeInlineEntries(
-      input.inlineAnnotations ?? [],
-      allCodeSideFindings.map((f) => ({
-        file: f.file,
-        line: f.line,
-        fingerprint: f.fingerprint,
-        kind: kindForCategory(f.category),
-      })),
-    ),
-  );
+  const effectiveAllowlist = resolveEffectiveAllowlist({
+    base: input.allowlist ?? null,
+    inlineAnnotations: input.inlineAnnotations ?? [],
+    findings: allCodeSideFindings.map((f) => ({
+      file: f.file,
+      line: f.line,
+      fingerprint: f.fingerprint,
+      kind: kindForCategory(f.category),
+    })),
+  });
   annotateFindingsWithAllowlist(allCodeSideFindings, effectiveAllowlist);
 
   const scoreableCodeBySeverity = emptyCounts();
