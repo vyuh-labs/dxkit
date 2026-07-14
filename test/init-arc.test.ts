@@ -16,6 +16,7 @@ const base: InitClosingState = {
   baselineMode: 'committed-full',
   surfaces: ['pre-push hook', 'CI guardrail'],
   incompleteScanners: [],
+  languageToolchainGaps: [],
   elapsedMs: 48_000,
 };
 
@@ -135,6 +136,50 @@ describe('buildInitClosing', () => {
     expect(c.caution).toContain('tools install');
     // No coverage gap → no caution.
     expect(buildInitClosing({ ...base, baselineFindings: 12 }).caution).toBeNull();
+  });
+
+  it('QUALIFIES the headline when an active language toolchain is unmeasured (honesty class)', () => {
+    const c = buildInitClosing({
+      ...base,
+      baselineFindings: 3747,
+      // The dpl-studio shape: a pure-C# repo baselined with no `dotnet` on PATH.
+      incompleteScanners: ['dotnet-format', 'nuget-license'],
+      languageToolchainGaps: [
+        { language: 'csharp', displayName: 'C#', missingBinaries: ['dotnet'] },
+      ],
+    });
+    // NOT an unqualified "You're gated ✓".
+    expect(c.headline).toBe("You're gated for what's measurable.");
+    expect(c.caution).not.toBeNull();
+    // Names the toolchain + the root prerequisite, and is explicit that the deep
+    // classes were NOT measured (never presented as full coverage).
+    expect(c.caution).toContain('C#');
+    expect(c.caution).toContain('dotnet');
+    expect(c.caution).toMatch(/not.*measured|weren't measured|NOT measured/i);
+    // Actionable + root-pointed: re-run baseline after installing the toolchain,
+    // not a bare loop back to `tools install`.
+    expect(c.caution).toContain('baseline create');
+  });
+
+  it('a missing language toolchain takes precedence over the generic scanner caution', () => {
+    const withGap = buildInitClosing({
+      ...base,
+      baselineFindings: 10,
+      incompleteScanners: ['dotnet-format'],
+      languageToolchainGaps: [
+        { language: 'csharp', displayName: 'C#', missingBinaries: ['dotnet'] },
+      ],
+    });
+    // Full coverage NOT claimed.
+    expect(withGap.headline).not.toBe("You're gated.");
+    // A generic optional-scanner gap (no language toolchain missing) still reads
+    // as fully gated with the lighter caution.
+    const optionalOnly = buildInitClosing({
+      ...base,
+      baselineFindings: 10,
+      incompleteScanners: ['gitleaks'],
+    });
+    expect(optionalOnly.headline).toBe("You're gated.");
   });
 
   it('time-to-verdict is humanized across ranges', () => {

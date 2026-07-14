@@ -20,6 +20,7 @@ import * as logger from './logger';
 import { dxkitCli } from './self-invocation';
 import type { BaselineMode } from './baseline/modes';
 import type { BaselineEntry } from './baseline/types';
+import type { LanguageToolchainGap } from './languages/toolchain-coverage';
 
 /** A coarse grouping of grandfathered findings — the emotional payoff line
  *  ("3 secrets · 12 dependency CVEs · 32 code patterns") the user sees as their
@@ -82,6 +83,11 @@ export interface InitClosingState {
   readonly surfaces: readonly string[];
   /** Scanner classes still missing at baseline time (coverage gap to teach). */
   readonly incompleteScanners: readonly string[];
+  /** Active language packs whose OWN toolchain is absent from PATH, so their
+   *  deep classes (lint / license / correctness floor) were UNMEASURED. When
+   *  non-empty the "gated" claim is QUALIFIED — never presented as full coverage
+   *  (the dpl-studio class). Empty on the common fully-provisioned path. */
+  readonly languageToolchainGaps: readonly LanguageToolchainGap[];
   readonly elapsedMs: number;
 }
 
@@ -164,6 +170,29 @@ export function buildInitClosing(state: InitClosingState): InitClosing {
     // Gated (surfaces armed) but no baseline count — a fail-soft skip.
     body.push('Your gates are armed. Capture a baseline to set the grandfathered floor:');
     body.push(`  ${dxkitCli('baseline create')}`);
+  }
+
+  // Honesty gate: when an ACTIVE language pack's OWN toolchain is missing, its
+  // deep classes (lint / license / the compile-and-test correctness floor) were
+  // NOT measured — so we must NOT present this as full coverage, and the
+  // remediation must name the ROOT prerequisite (install the toolchain), never
+  // loop the user back to `tools install` (whose own prerequisite is the very
+  // thing that's missing). This is the dpl-studio class: a pure-C# repo
+  // baselined with no `dotnet` on PATH, headlined "You're gated ✓".
+  const gaps = state.languageToolchainGaps;
+  if (gaps.length > 0) {
+    const langWord = gaps.length === 1 ? gaps[0].displayName : `${gaps.length} languages`;
+    const toolchains = gaps
+      .map((g) => `${g.displayName} (\`${g.missingBinaries.join('`, `')}\`)`)
+      .join('; ');
+    const caution =
+      `${langWord}'s toolchain isn't on PATH (${toolchains}), so its deeper checks ` +
+      `— lint, license, and the compile/test floor — were NOT measured. The ` +
+      `language-agnostic classes (secrets, dependency CVEs, SAST, duplication) ARE ` +
+      `gated. Install the toolchain (or use the generated devcontainer), then re-run ` +
+      `\`${dxkitCli('tools install')}\` and \`${dxkitCli('baseline create --force')}\` for full coverage.`;
+    // Qualified headline — measured what it could, honest about the rest.
+    return { headline: "You're gated for what's measurable.", ready, body, caution, actions };
   }
 
   const caution =
@@ -269,6 +298,13 @@ async function runFinishingArc(
   const { missingScanners } = await import('./baseline/coverage');
   const incompleteScanners = missingScanners(gatherScanCoverage(cwd)).map((m) => m.tool);
 
+  // The pack-driven "is the primary language's toolchain present" signal — the
+  // SAME one doctor reports — so the finish arc can't over-claim coverage when
+  // the repo's own language depth is unmeasured (gh onboarding honesty class).
+  const { detectActiveLanguages } = await import('./languages');
+  const { assessLanguageToolchains } = await import('./languages/toolchain-coverage');
+  const languageToolchainGaps = assessLanguageToolchains(detectActiveLanguages(cwd));
+
   const bl = logger.startSpinner('Capturing baseline');
   // The first baseline scans the whole tree (SAST + deps + coverage), which is
   // minutes on a large repo — say so, so a long-running spinner never reads as
@@ -329,6 +365,7 @@ async function runFinishingArc(
     baselineMode,
     surfaces: opts.surfaces,
     incompleteScanners,
+    languageToolchainGaps,
     elapsedMs: Date.now() - started,
   };
 }

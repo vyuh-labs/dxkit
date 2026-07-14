@@ -911,6 +911,7 @@ export async function run(argv: string[]): Promise<void> {
             baselineMode: null,
             surfaces: gateSurfaces,
             incompleteScanners: [],
+            languageToolchainGaps: [],
             elapsedMs: 0,
           };
       // "ready in Ns" reflects the WHOLE init (detect + generate + arm + arc),
