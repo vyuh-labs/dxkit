@@ -118,6 +118,23 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   MERGES into (`.gitignore`, `package.json`, `.claude/settings.json`,
   `CLAUDE.md`) are reverted by `src/uninstall/reversals.ts`, a separate
   centralized mechanism — a merge-only surface carries an empty `artifacts` list.
+- how a fail-open guardrail gate reports its OWN failure → `captureGateFailure`
+  in `src/baseline/gate-failopen.ts`. The three additive gates (flow, schema-
+  drift, seam-dup) are deliberately fail-OPEN: a bad ref, an unparseable tree, a
+  plugin throw must NOT wedge the build, so each degrades to "did not gate". The
+  recurring shape (the shipped bug): each gate ended in a bare `} catch { return
+skip(mode, 'error'); }` that DISCARDED the error, and the renderers printed
+  nothing for a finding-less gate — so the flow gate erroring inside `guardrail
+check` was a diagnosability black hole (nothing in the human output, the
+  `--json`, or stderr), and it was invisible in dogfood because dxkit's own repo
+  runs `flow` off so the gate path was never exercised. Every gate now tracks the
+  `step` it is in, its catch routes through `captureGateFailure(step, err)`, and
+  the outcome carries a `GateFailure { step, message }` that ALL three renderers
+  surface (console / JSON `error` / markdown). The `skip(mode, 'error', failure)`
+  overload makes a silent `skip(mode, 'error')` a COMPILE error; the arch-check
+  bans a bare `} catch {` in `*-gate-check.ts`; `test/baseline/gate-failopen.test.ts`
+  drives each gate into its catch and asserts a populated `GateFailure` + that the
+  renderers show it. A fail-open gate stays fail-open — it just always says WHY.
 
 `scripts/check-architecture.sh` gates the first two (a second `git ls-files
 .env` or a config-less `gatherFlowModel` on a single-repo surface fails CI) and

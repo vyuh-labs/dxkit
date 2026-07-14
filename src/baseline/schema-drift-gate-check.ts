@@ -33,6 +33,7 @@ import { evaluateSchemaDriftGate, type SchemaDriftFinding } from '../analyzers/m
 import { readSchemaConfig, type SchemaGateMode } from '../analyzers/model-schema/config';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
+import { captureGateFailure, type GateFailure } from './gate-failopen';
 
 /** Why the gate produced no verdict, when it didn't run. */
 export type SchemaDriftGateSkip =
@@ -58,6 +59,9 @@ export interface SchemaDriftGateOutcome {
   readonly ran: boolean;
   /** Populated when `ran` is false — why no verdict was produced. */
   readonly skipped?: SchemaDriftGateSkip;
+  /** Populated when `skipped === 'error'` — the step that threw + a clean
+   *  message, so a fail-open error is never a silent black hole. */
+  readonly error?: GateFailure;
   /** The effective mode after the loop-seam override. */
   readonly mode: SchemaGateMode;
   /** Active findings (not allowlist-waived). `info` findings are disclosure
@@ -71,7 +75,18 @@ export interface SchemaDriftGateOutcome {
   readonly warns: boolean;
 }
 
-function skip(mode: SchemaGateMode, reason: SchemaDriftGateSkip): SchemaDriftGateOutcome {
+// A fail-open 'error' skip MUST carry the captured failure — the overload makes
+// a silent `skip(mode, 'error')` a compile error (the swallow class).
+function skip(mode: SchemaGateMode, reason: 'error', failure: GateFailure): SchemaDriftGateOutcome;
+function skip(
+  mode: SchemaGateMode,
+  reason: Exclude<SchemaDriftGateSkip, 'error'>,
+): SchemaDriftGateOutcome;
+function skip(
+  mode: SchemaGateMode,
+  reason: SchemaDriftGateSkip,
+  failure?: GateFailure,
+): SchemaDriftGateOutcome {
   return {
     ran: false,
     skipped: reason,
@@ -80,6 +95,7 @@ function skip(mode: SchemaGateMode, reason: SchemaDriftGateSkip): SchemaDriftGat
     suppressed: [],
     blocks: false,
     warns: false,
+    ...(failure ? { error: failure } : {}),
   };
 }
 
@@ -146,6 +162,8 @@ export async function evaluateSchemaDriftGateForGuardrail(opts: {
   if (!opts.baseRef) return skip(gateMode, 'no-base-ref');
   const ref = opts.baseRef;
 
+  // The step the try body is in — carried into a fail-open error.
+  let step = 'changed-files';
   try {
     // Trigger-skip: net-new drift requires a change to a model-capable
     // source file or a configured spec. Null changed-set = can't prove the
@@ -160,6 +178,7 @@ export async function evaluateSchemaDriftGateForGuardrail(opts: {
 
     // HEAD side (the working tree), repo-relative locators so display
     // metadata is environment-independent and the base side lines up.
+    step = 'head-gather';
     const headModels = await gatherModelSet({
       roots: [cwd],
       specs: config.specs.map((s) => path.resolve(cwd, s)),
@@ -169,6 +188,7 @@ export async function evaluateSchemaDriftGateForGuardrail(opts: {
     // Base side from a detached worktree at the ref (Rule 11), with the SAME
     // config — the HEAD checkout's policy governs both sides so a policy
     // edit in the PR cannot split the comparison.
+    step = 'base-worktree';
     const baseModels = await withRefWorktree({ cwd, ref }, async (wt) =>
       gatherModelSet({
         roots: [wt],
@@ -183,6 +203,7 @@ export async function evaluateSchemaDriftGateForGuardrail(opts: {
       return skip(gateMode, 'no-models');
     }
 
+    step = 'evaluate';
     const found = evaluateSchemaDriftGate({
       baseModels,
       headModels,
@@ -209,9 +230,9 @@ export async function evaluateSchemaDriftGateForGuardrail(opts: {
       );
     }
     return { ran: true, mode: gateMode, findings: active, suppressed, blocks, warns };
-  } catch {
-    // Fail-open: a ref that can't be checked out, a git error — the gate
-    // simply did not run.
-    return skip(gateMode, 'error');
+  } catch (err) {
+    // Fail-open: a ref that can't be checked out, a git error — the gate did
+    // not run, but it says WHY (step + clean message) rather than swallowing.
+    return skip(gateMode, 'error', captureGateFailure(step, err));
   }
 }

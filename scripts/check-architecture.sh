@@ -1260,6 +1260,27 @@ if [ -n "$RULE_MODELGATHER" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Fail-open gate diagnostics (the swallow class-fix): every additive guardrail
+# gate (flow / schema-drift / seam-dup) is fail-OPEN, but a bare `} catch {` that
+# discards the error and returns `skipped: 'error'` with no reason is a
+# diagnosability black hole (it shipped once — the flow gate erroring silently
+# inside `guardrail check`). A gate's catch MUST bind the error and route it
+# through captureGateFailure() in src/baseline/gate-failopen.ts so the outcome
+# carries the step + message. The `skip(mode, 'error')` overload enforces this at
+# compile time; this bans the silent shape at commit time as a second net.
+RULE_GATE_SWALLOW=$(grep -rnE "\}[[:space:]]*catch[[:space:]]*\{" src/baseline/ 2>/dev/null \
+  | grep -E 'gate-check\.ts:' \
+  | grep -v "// failopen-ok")
+if [ -n "$RULE_GATE_SWALLOW" ]; then
+  echo "❌ Fail-open swallow: a bare '} catch {' in a guardrail gate discards the error:"
+  echo "$RULE_GATE_SWALLOW"
+  echo "   → Bind the error ('} catch (err) {') and return"
+  echo "     skip(mode, 'error', captureGateFailure(step, err)) so the outcome says WHY."
+  echo "   → See src/baseline/gate-failopen.ts + test/baseline/gate-failopen.test.ts."
+  echo "   → Annotate '// failopen-ok' for a justified non-gate exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 #   (b) the `schema` policy section has ONE reader/writer —
 #       src/analyzers/model-schema/config.ts. A second ad-hoc read of
 #       policy.json's schema block re-opens the split-config bug class the
