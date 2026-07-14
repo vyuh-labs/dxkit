@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-07-13
+
+### Fixed
+
+- **Fail-open guardrail gates now say WHY they didn't run, instead of erroring
+  silently.** A gate that could not evaluate (an unreachable base ref, an
+  unparseable tree, a plugin throw) returned `skipped: "error"` with no reason in
+  the human output, the `--json`, or stderr — a diagnosability black hole. The
+  flow gate, the model-schema drift gate, and the seam/duplicate gate now each
+  capture the failing step and a clean message and surface it in all three
+  renderers (console, JSON `error`, and the PR markdown), while staying fail-open
+  (the gate still does not block the build). Set `DXKIT_DEBUG=1` for the full
+  stack. This unblocks confirming the flow gate agrees with `doctor` before
+  moving `flow.mode` from `warn` to `block`.
+
+### Internal
+
+- Fixed at the platform level so the class cannot recur: the three additive gates
+  share one fail-open diagnostic contract (`src/baseline/gate-failopen.ts`); the
+  `skip(mode, 'error', failure)` overload makes a silent error a compile error; an
+  architecture-check rule bans a bare `} catch {` in `*-gate-check.ts`; and
+  `test/baseline/gate-failopen.test.ts` drives each gate into its catch and
+  asserts a populated failure plus that the renderers surface it.
+
 ## [3.7.0] - 2026-07-13
 
 ### Added

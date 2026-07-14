@@ -34,6 +34,7 @@ import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 import type { DupGateOutcome } from './dup-gate-check';
+import type { GateFailure } from './gate-failopen';
 import {
   groupDuplicatesByAdded,
   type DuplicateFinding,
@@ -291,8 +292,33 @@ export function renderConsole(result: GuardrailCheckResult): string {
  * findings — a skipped or clean gate adds no noise. Blocking breakages are
  * grouped separately from warnings so the actionable set surfaces first.
  */
+/**
+ * A visible line for a fail-open gate that ERRORED — never silent. The gate
+ * degraded to "did not gate" (correct: a broken toolchain is not broken code),
+ * but it says WHERE (`error.step`) and WHY (`error.message`) instead of
+ * swallowing the throw. Closes the class where a gate erroring inside
+ * `guardrail check` produced a bare `skipped:"error"` with nothing in the human
+ * output, the JSON, or stderr. Accepts the minimal shared shape so all three
+ * gates render a failure identically (Rule 2). Empty for any non-error state.
+ */
+function formatGateFailure(
+  label: string,
+  gate: { skipped?: string; error?: GateFailure } | undefined,
+): string[] {
+  if (!gate || gate.skipped !== 'error') return [];
+  const at = gate.error?.step ? ` at ${gate.error.step}` : '';
+  const why = gate.error?.message ? `: ${gate.error.message}` : '';
+  return [
+    logger.bold(`⚠ ${label} gate did not run — error${at}${why}`),
+    '  (fail-open: this did not block the check; set DXKIT_DEBUG=1 for the stack)',
+    '',
+  ];
+}
+
 function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   if (!flow) return [];
+  const failure = formatGateFailure('Flow', flow);
+  if (failure.length > 0) return failure;
   const suppressed = flow.suppressed ?? [];
   if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -355,6 +381,8 @@ function flowFingerprintLine(id: string): string {
  */
 function formatSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): string[] {
   if (!gate) return [];
+  const failure = formatGateFailure('Schema drift', gate);
+  if (failure.length > 0) return failure;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -412,6 +440,8 @@ function schemaFingerprintLine(id: string): string {
  */
 function formatDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
+  const failure = formatGateFailure('Structural duplicate', gate);
+  if (failure.length > 0) return failure;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -710,6 +740,9 @@ export interface GuardrailJsonPayload {
   readonly flowGate?: {
     readonly ran: boolean;
     readonly skipped?: string;
+    /** Present when `skipped === 'error'` — the step that threw + a clean
+     *  message. A fail-open error is disclosed, never a silent `skipped:"error"`. */
+    readonly error?: { readonly step: string; readonly message: string };
     readonly mode: string;
     readonly blocks: boolean;
     readonly warns: boolean;
@@ -742,6 +775,7 @@ export interface GuardrailJsonPayload {
   readonly schemaDriftGate?: {
     readonly ran: boolean;
     readonly skipped?: string;
+    readonly error?: { readonly step: string; readonly message: string };
     readonly mode: string;
     readonly blocks: boolean;
     readonly warns: boolean;
@@ -774,6 +808,7 @@ export interface GuardrailJsonPayload {
   readonly dupGate?: {
     readonly ran: boolean;
     readonly skipped?: string;
+    readonly error?: { readonly step: string; readonly message: string };
     readonly mode: string;
     readonly blocks: boolean;
     readonly warns: boolean;
@@ -882,6 +917,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
           flowGate: {
             ran: result.flowGate.ran,
             ...(result.flowGate.skipped !== undefined ? { skipped: result.flowGate.skipped } : {}),
+            ...(result.flowGate.error !== undefined ? { error: result.flowGate.error } : {}),
             mode: result.flowGate.mode,
             blocks: result.flowGate.blocks,
             warns: result.flowGate.warns,
@@ -914,6 +950,9 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
             ran: result.schemaDriftGate.ran,
             ...(result.schemaDriftGate.skipped !== undefined
               ? { skipped: result.schemaDriftGate.skipped }
+              : {}),
+            ...(result.schemaDriftGate.error !== undefined
+              ? { error: result.schemaDriftGate.error }
               : {}),
             mode: result.schemaDriftGate.mode,
             blocks: result.schemaDriftGate.blocks,
@@ -948,6 +987,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
           dupGate: {
             ran: result.dupGate.ran,
             ...(result.dupGate.skipped !== undefined ? { skipped: result.dupGate.skipped } : {}),
+            ...(result.dupGate.error !== undefined ? { error: result.dupGate.error } : {}),
             mode: result.dupGate.mode,
             blocks: result.dupGate.blocks,
             warns: result.dupGate.warns,
@@ -1118,8 +1158,22 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
  * top-level table (they fail the PR); warnings collapse into a `<details>`.
  * Silent when the gate produced no findings.
  */
+/** A markdown line for a fail-open gate that errored — the PR-comment mirror of
+ *  `formatGateFailure`. Never silent on an error; empty otherwise. */
+function markdownGateFailure(
+  label: string,
+  gate: { skipped?: string; error?: GateFailure } | undefined,
+): string[] {
+  if (!gate || gate.skipped !== 'error') return [];
+  const at = gate.error?.step ? ` at \`${gate.error.step}\`` : '';
+  const why = gate.error?.message ? `: ${escapeMd(gate.error.message)}` : '';
+  return [`> ⚠️ **${label} gate did not run** — error${at}${why} (fail-open; did not block).`, ''];
+}
+
 function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
   if (!flow) return [];
+  const failure = markdownGateFailure('Flow', flow);
+  if (failure.length > 0) return failure;
   const suppressed = flow.suppressed ?? [];
   if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -1181,6 +1235,8 @@ function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
  */
 function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): string[] {
   if (!gate) return [];
+  const failure = markdownGateFailure('Schema drift', gate);
+  if (failure.length > 0) return failure;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -1257,6 +1313,8 @@ function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): stri
  *  single collapsed section names each twin, its similarity, and fingerprint. */
 function markdownDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
+  const failure = markdownGateFailure('Structural duplicate', gate);
+  if (failure.length > 0) return failure;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];

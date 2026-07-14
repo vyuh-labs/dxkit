@@ -39,6 +39,7 @@ import { readDuplicationConfig, type DuplicationGateMode } from '../analyzers/du
 import { allSourceExtensions } from '../languages';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
+import { captureGateFailure, type GateFailure } from './gate-failopen';
 
 /** Why the gate produced no verdict, when it didn't run. */
 export type DupGateSkip =
@@ -64,6 +65,9 @@ export interface DupGateOutcome {
   readonly ran: boolean;
   /** Populated when `ran` is false — the reason no verdict was produced. */
   readonly skipped?: DupGateSkip;
+  /** Populated when `skipped === 'error'` — the step that threw + a clean
+   *  message, so a fail-open error is never a silent black hole. */
+  readonly error?: GateFailure;
   /** The effective mode after the preset override (`block` / `warn` / `off`).
    *  `block` does NOT make a lone duplicate block — it authorizes seam
    *  convergence (downstream) to escalate a duplicate that is also reliably
@@ -81,7 +85,15 @@ export interface DupGateOutcome {
   readonly warns: boolean;
 }
 
-function skip(mode: DuplicationGateMode, reason: DupGateSkip): DupGateOutcome {
+// A fail-open 'error' skip MUST carry the captured failure — the overload makes
+// a silent `skip(mode, 'error')` a compile error (the swallow class).
+function skip(mode: DuplicationGateMode, reason: 'error', failure: GateFailure): DupGateOutcome;
+function skip(mode: DuplicationGateMode, reason: Exclude<DupGateSkip, 'error'>): DupGateOutcome;
+function skip(
+  mode: DuplicationGateMode,
+  reason: DupGateSkip,
+  failure?: GateFailure,
+): DupGateOutcome {
   return {
     ran: false,
     skipped: reason,
@@ -90,6 +102,7 @@ function skip(mode: DuplicationGateMode, reason: DupGateSkip): DupGateOutcome {
     suppressed: [],
     blocks: false,
     warns: false,
+    ...(failure ? { error: failure } : {}),
   };
 }
 
@@ -167,6 +180,8 @@ export async function evaluateDupGateForGuardrail(opts: {
   if (!opts.baseRef) return skip(gateMode, 'no-base-ref');
   const ref = opts.baseRef;
 
+  // The step the try body is in — carried into a fail-open error.
+  let step = 'changed-files';
   try {
     // Trigger-skip: a net-new duplicate requires a change to a source file.
     // A null changed-set = can't prove the diff is source-free → fall through
@@ -184,6 +199,7 @@ export async function evaluateDupGateForGuardrail(opts: {
 
     // HEAD side — duplicate findings from dxkit's own AST (no graph.json write;
     // the zero-write guarantee). Diff-scoped to pairs touching a changed file.
+    step = 'head-gather';
     const headFindings = await gatherDuplicates(cwd, {
       minScore: config.minScore,
       ...(focusFiles ? { focusFiles } : {}),
@@ -194,6 +210,7 @@ export async function evaluateDupGateForGuardrail(opts: {
 
     // Base side — the duplicate-pair ID set at the base ref, gathered from a
     // detached worktree (Rule 11). A pair present here is grandfathered.
+    step = 'base-worktree';
     const baseIds = await withRefWorktree({ cwd, ref }, async (wt) => {
       const baseFindings = await gatherDuplicates(wt, {
         minScore: config.minScore,
@@ -235,9 +252,10 @@ export async function evaluateDupGateForGuardrail(opts: {
       );
     }
     return { ran: true, mode: gateMode, findings: active, suppressed, blocks: false, warns };
-  } catch {
+  } catch (err) {
     // Fail-open: a ref that can't be checked out, an unparseable tree, a
-    // graphify error — none of these should fail the guardrail.
-    return skip(gateMode, 'error');
+    // graphify error — none of these should fail the guardrail. The gate did
+    // not run, but it says WHY rather than swallowing the throw.
+    return skip(gateMode, 'error', captureGateFailure(step, err));
   }
 }

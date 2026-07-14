@@ -44,6 +44,7 @@ import { evaluateFlowGate, type BrokenIntegration } from '../analyzers/flow/gate
 import { readFlowConfig, type FlowGateMode } from '../analyzers/flow/config';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
+import { captureGateFailure, type GateFailure } from './gate-failopen';
 
 /** Why the gate produced no verdict, when it didn't run. */
 export type FlowGateSkip =
@@ -69,6 +70,9 @@ export interface FlowGateOutcome {
   readonly ran: boolean;
   /** Populated when `ran` is false — the reason no verdict was produced. */
   readonly skipped?: FlowGateSkip;
+  /** Populated when `skipped === 'error'` — the step that threw + a clean
+   *  message, so a fail-open error is never a silent black hole. */
+  readonly error?: GateFailure;
   /** The effective mode after the loop-seam override (block / warn / off). */
   readonly mode: FlowGateMode;
   /** Net-new broken integrations that count toward the verdict (active — NOT
@@ -93,7 +97,12 @@ export interface FlowGateOutcome {
  *  the snapshot metadata, so a clock-free placeholder keeps this pure. */
 const GATE_META = { schemaVersion: 1 as const, generatedAt: '' };
 
-function skip(mode: FlowGateMode, reason: FlowGateSkip): FlowGateOutcome {
+// A fail-open 'error' skip MUST carry the captured failure — the overload makes
+// a silent `skip(mode, 'error')` a compile error, so the swallow class cannot
+// return through this door again.
+function skip(mode: FlowGateMode, reason: 'error', failure: GateFailure): FlowGateOutcome;
+function skip(mode: FlowGateMode, reason: Exclude<FlowGateSkip, 'error'>): FlowGateOutcome;
+function skip(mode: FlowGateMode, reason: FlowGateSkip, failure?: GateFailure): FlowGateOutcome {
   return {
     ran: false,
     skipped: reason,
@@ -102,6 +111,7 @@ function skip(mode: FlowGateMode, reason: FlowGateSkip): FlowGateOutcome {
     suppressed: [],
     blocks: false,
     warns: false,
+    ...(failure ? { error: failure } : {}),
   };
 }
 
@@ -174,6 +184,9 @@ export async function evaluateFlowGateForGuardrail(opts: {
   if (!opts.baseRef) return skip(gateMode, 'no-base-ref');
   const ref = opts.baseRef;
 
+  // The step the try body is in — carried into a fail-open error so the reader
+  // knows WHERE the gate broke, not just that it did.
+  let step = 'changed-files';
   try {
     // Trigger-skip: a net-new broken integration requires a change to a client
     // call, a route, or a spec. When the diff touched none, there is nothing to
@@ -199,6 +212,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
     // a PR that edits the plugin changes both sides' lens — intended, the
     // same rule the gate's policy config follows). Under --untrusted the
     // overlay is empty on both sides — symmetric degradation.
+    step = 'plugin-overlay';
     const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
     const overlayGather = {
       dialects: overlay.dialects,
@@ -208,6 +222,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
 
     // HEAD side (the working tree). Served truth = live routes ∪ any committed
     // counterpart snapshot (split-repo case).
+    step = 'head-gather';
     const headModel = await gatherFlowModel({
       roots: [cwd],
       specs: config.specs.map((s) => path.resolve(cwd, s)),
@@ -226,6 +241,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
     // Base side, gathered from a detached worktree at the ref (Rule 11). Read
     // ITS committed snapshot so the base served set reflects the counterpart as
     // it was at base — keeping the grandfathering diff honest.
+    step = 'base-worktree';
     const base = await withRefWorktree({ cwd, ref }, async (wt) => {
       const baseModel = await gatherFlowModel({
         roots: [wt],
@@ -251,6 +267,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
     // from a call served by a repo we can't see. Skip rather than false-block.
     if (headServed.size === 0 && baseServed.size === 0) return skip(gateMode, 'no-served-truth');
 
+    step = 'evaluate';
     const found = evaluateFlowGate({
       headConsumed,
       baseConsumed: base.consumed,
@@ -289,11 +306,11 @@ export async function evaluateFlowGateForGuardrail(opts: {
       warns,
       ...(contractGeneratedAt ? { contractGeneratedAt } : {}),
     };
-  } catch {
+  } catch (err) {
     // Fail-open: a ref that can't be checked out, an unparseable tree, a git
-    // error — none of these should fail the guardrail. The gate simply did not
-    // run.
-    return skip(gateMode, 'error');
+    // error — none of these should fail the guardrail. The gate did not run, but
+    // it says WHY (the step + a clean message) rather than swallowing the throw.
+    return skip(gateMode, 'error', captureGateFailure(step, err));
   }
 }
 
