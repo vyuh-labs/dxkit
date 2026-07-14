@@ -111,8 +111,9 @@ interactively (a TTY) inside a fresh git repo, it also **offers to wire the
 Stop-gate in for you** with one keystroke — that opt-in runs the additive
 `init --claude-loop` and is the only thing that writes anything. It defaults to
 **no**, never prompts in a piped or CI run, and never touches a repo that already
-has dxkit. It stops at `init`; you run `baseline create` yourself when you are
-ready to grandfather today's debt.
+has dxkit. The `init --claude-loop` it runs finishes setup — it captures today's
+debt as the baseline automatically (pass `--no-finish` to defer and run
+`baseline create` yourself later).
 
 ## `vyuh-dxkit loop doctor`
 

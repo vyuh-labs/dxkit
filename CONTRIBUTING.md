@@ -18,7 +18,6 @@ dxkit/
 │   ├── generator.ts, files.ts, ... # Scaffolding machinery
 │   ├── analyzers/                  # Analyzer core — the bulk of recent work
 │   │   ├── health.ts               # Health orchestrator
-│   │   ├── scoring.ts              # Dimension formulas
 │   │   ├── security/, tests/, quality/, developer/
 │   │   ├── docs/, maintainability/, dx/     # Shallow-only dimensions
 │   │   └── tools/                  # Tool runners, registry, exclusions,
@@ -78,7 +77,7 @@ flag can silently drift versions in `package.json` during install.
 The first `npm install` registers husky hooks automatically:
 
 - **pre-commit:**
-  1. `scripts/check-architecture.sh` — enforces CLAUDE.md's 5 architecture rules
+  1. `scripts/check-architecture.sh` — enforces CLAUDE.md's 18 architecture rules
   2. `scripts/check-slop.sh` — blocks new `console.log`, `: any`, `debugger;`,
      committed `.pyc`/`.swp`, etc. Add `// slop-ok` or `# slop-ok` inline to
      suppress individual lines.
@@ -158,8 +157,11 @@ ls .claude/
 ### Adding a new analyzer dimension
 
 Today's shape: one directory under `src/analyzers/<name>/` with `types.ts`,
-`gather.ts`, `scoring.ts` (or delegate to `../scoring.ts`), `actions.ts`,
-`detailed.ts`, and `index.ts`. Wire the entry function into `cli.ts`.
+`gather.ts`, `actions.ts`, `detailed.ts`, and `index.ts`, plus a declarative
+scoring spec at `src/scoring/dimensions/<id>.ts` (Rule 7 — analyzer subdirs
+must NOT carry a `scoring.ts`). Wire the entry function into `cli.ts`. See
+[Adding a new dimension scoring spec](#adding-a-new-dimension-scoring-spec)
+for the full recipe.
 
 ### Adding a new language
 

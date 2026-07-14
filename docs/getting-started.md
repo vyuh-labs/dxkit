@@ -7,18 +7,25 @@ first report on an existing repo.
 
 Requires Node.js ≥ 18.
 
-**Canonical first install** (collapses install + scaffold into one
-step):
+**Canonical first install** — one zero-question command that finishes
+setup end to end:
 
 ```bash
-npm init @vyuhlabs/dxkit
+npm init @vyuhlabs/dxkit -- --claude-loop --yes
 ```
 
-This installs `@vyuhlabs/dxkit` as a devDependency in your repo,
-runs `vyuh-dxkit init --full --yes`, and lands the full set of
-`dxkit-*` agent skills + devcontainer + git hooks + CI workflows. The post-
-install hook also auto-activates `core.hooksPath = .githooks` so
-teammates who clone + `npm install` get hooks wired automatically.
+This installs `@vyuhlabs/dxkit` as a devDependency, detects the stack,
+wires the agent context (`dxkit-*` skills + `AGENTS.md`), arms the gates
+(git hooks + devcontainer + CI workflows), installs the scanner
+toolchain, and captures today's findings as the baseline — all in one
+run. The postinstall hook also auto-activates `core.hooksPath = .githooks`
+so teammates who clone + `npm install` get hooks wired automatically.
+Pass `--no-finish` to arm the gates now and capture the baseline later
+with `vyuh-dxkit baseline create`.
+
+The steps below (`tools install`, `baseline create`) are the manual
+equivalents of what that one command already does — reach for them
+when you deferred the finish arc, or want to run a single piece by hand.
 
 If you want dxkit available as a bare command in your shell (not
 just as a project-local install):
@@ -43,13 +50,18 @@ To upgrade an existing install later:
 vyuh-dxkit upgrade           # plan + execute the binary + scaffold refresh
 ```
 
-## 2. Install the external tools
+## 2. Install the external tools (optional — the canonical install does this)
+
+The finish arc of the canonical install already installs the scanner
+toolchain for your stack, so this step is normally diagnostic — reach
+for it to check what's detected, install a tool by hand, or when you
+deferred the finish arc with `--no-finish`.
 
 DXKit doesn't reimplement scanners — it drives best-in-class tools
 (gitleaks, semgrep, cloc, jscpd, ruff, eslint, govulncheck,
 osv-scanner, and more) and stitches their output together.
 
-First, see what's detected on your machine:
+To see what's detected on your machine:
 
 ```bash
 cd /path/to/your/repo
@@ -157,6 +169,16 @@ This is the full audit (`health` + `vulnerabilities` + `test-gaps` +
 minutes. On large JS-heavy codebases the `jscpd` (duplicate-code)
 phase dominates — expect 20-30 min.
 
+Two flagship commands worth knowing early:
+
+- `vyuh-dxkit describe` — a zero-write, shareable snapshot of the repo
+  (stack, HTTP flow spine, data models) plus a self-contained
+  contract-map HTML you can screenshot. See
+  [`describe`](commands/describe.md).
+- `vyuh-dxkit evaluate` — a zero-write trial that replays your recent
+  landings through the guardrail gate so you can see what it would have
+  blocked before you commit to it. See [`evaluate`](commands/evaluate.md).
+
 ## 5. Wire commit-time guardrails
 
 Once you've seen the reports, the next step for a brownfield repo is
@@ -165,19 +187,21 @@ from landing — without forcing a cleanup sprint first.
 
 ```bash
 # Install hooks + devcontainer + GitHub Actions PR-gate + baseline-refresh
-# + the dxkit-* agent skills + AGENTS.md.
+# + the dxkit-* agent skills + AGENTS.md. Because a baseline-consuming gate
+# (hooks / CI) is armed, the finish arc ALSO installs the scanner toolchain
+# and captures today's findings as the brownfield anchor in the same run.
 vyuh-dxkit init --full
 
 # Or pick à la carte:
 vyuh-dxkit init --with-hooks --with-ci
 
-# Capture today's findings as the brownfield anchor.
-# dxkit auto-picks the right baseline mode for your repo:
+# The baseline was captured automatically above. dxkit auto-picks the mode:
 #   - public repo  → ref-based  (no file written; recomputed from origin/main)
 #   - private repo → committed-full (rich entries in .dxkit/baselines/main.json)
+# Pass --no-finish to init to defer it, then capture it by hand later:
+#   vyuh-dxkit baseline create
 # See `vyuh-dxkit baseline create --help` and docs/commands/baseline.md
 # for the three modes (committed-full / committed-sanitized / ref-based).
-vyuh-dxkit baseline create
 
 # Commit the anchor + workflow files.
 # (Public repos using ref-based mode skip the baselines/ path — the
