@@ -759,6 +759,31 @@ if [ -n "$ROGUE_WORKTREE" ]; then
 fi
 
 # =============================================================================
+# Internal-push discipline (gh #156 / Rule 2): every dxkit machine push carries
+# `--no-verify`, built by exactly ONE constructor.
+# =============================================================================
+#
+# A dxkit-internal `git push` (side-ref anchors, refresh lands) is a MACHINE
+# push, never a gated developer push — it must NOT fire the repo's own pre-push
+# guardrail hook (dxkit installs `core.hooksPath=.githooks`), or under the
+# bounded exec timeout the hook is SIGTERM'd mid-run → ETIMEDOUT (gh #156, four
+# debug builds misread it as auth). The `--no-verify` flag is guaranteed by
+# `internalGitPushArgs` in `src/git-internal-push.ts`; a raw `['push', …]` git
+# argv anywhere else could silently drop it and reintroduce the class.
+ROGUE_PUSH=$(grep -rnE "\[[[:space:]]*['\"]push['\"]" src/ 2>/dev/null \
+  | grep -v "// internal-push-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/git-internal-push.ts:")
+if [ -n "$ROGUE_PUSH" ]; then
+  echo "❌ Internal-push rule violation: a raw 'git push' argv outside src/git-internal-push.ts:"
+  echo "$ROGUE_PUSH"
+  echo "   → Build the argv with internalGitPushArgs() from src/git-internal-push.ts"
+  echo "     (it guarantees --no-verify so the machine push never fires the pre-push hook, gh #156)."
+  echo "   → Annotate '// internal-push-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Effective-allowlist discipline (3.7.2 / Rule 2): one construction, one predicate.
 # =============================================================================
 #

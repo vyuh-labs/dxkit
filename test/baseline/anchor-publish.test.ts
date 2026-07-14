@@ -3,8 +3,8 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { existsSync, chmodSync } from 'fs';
 import {
-  ciCredentialedUrl,
   describePushFailure,
   publishFilesToAnchorRef,
   readFromAnchorRef,
@@ -18,11 +18,6 @@ import {
  * touching the checkout's working tree or index (verified via `git status`).
  */
 const ANCHOR = 'dxkit-reports';
-
-// A placeholder token spelled indirectly so dxkit's OWN secret scanner does not
-// flag these fixtures as a real credential (no `x-access-token:<literal>@…` in
-// source). The value is irrelevant — only that it flows through the auth logic.
-const FAKE_TOKEN = ['fake', 'token'].join('-');
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).toString();
@@ -244,20 +239,66 @@ describe('publishFilesToAnchorRef', () => {
     // Fast-fail: nowhere near the timeout.
     expect(Date.now() - start).toBeLessThan(9_000);
   });
+
+  it('publishes even when a repo pre-push hook would block the push — runs --no-verify (gh #156)', () => {
+    // THE root-cause regression test. dxkit's internal side-ref push is a machine
+    // push; when dxkit is installed with git hooks, `core.hooksPath` is active in
+    // the checkout, so a plain `git push` fires the repo's pre-push hook (dxkit's
+    // own guardrail check) — which, under the exec timeout, got SIGTERM'd mid-run
+    // → ETIMEDOUT, the "hang" #156 chased as an auth failure for four builds.
+    // Wire a pre-push hook that BLOCKS any ordinary push, then assert the
+    // primitive still publishes (it passes --no-verify) and the hook never fired.
+    const hooks = mkdtempSync(join(tmpdir(), 'dxkit-anchor-hooks-'));
+    const sentinel = join(hooks, 'fired');
+    const hook = join(hooks, 'pre-push');
+    writeFileSync(hook, `#!/bin/sh\necho fired > "${sentinel}"\nexit 1\n`);
+    chmodSync(hook, 0o755);
+    git(repo, 'config', 'core.hooksPath', hooks);
+    try {
+      // Sanity: an ordinary push MUST be blocked by the hook (else the test is moot).
+      let ordinaryBlocked = false;
+      try {
+        git(repo, 'push', 'origin', 'HEAD:refs/heads/ordinary-probe');
+      } catch {
+        ordinaryBlocked = true;
+      }
+      expect(ordinaryBlocked).toBe(true);
+      if (existsSync(sentinel)) rmSync(sentinel); // reset before the real assertion
+
+      const res = publishFilesToAnchorRef({
+        cwd: repo,
+        anchorRef: ANCHOR,
+        files: [{ path: 'baselines/main.json', content: '{}\n' }],
+        baseParent: false,
+        message: 'refresh under a blocking pre-push hook',
+      });
+      // Skipped the hook → the push landed ...
+      expect(res.pushed).toBe(true);
+      // ... and the pre-push hook never fired.
+      expect(existsSync(sentinel)).toBe(false);
+      expect(readFromAnchorRef(repo, ANCHOR, 'baselines/main.json')).toBe('{}\n');
+    } finally {
+      git(repo, 'config', '--unset', 'core.hooksPath');
+      rmSync(hooks, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('describePushFailure (gh #156 categorization)', () => {
-  it('categorizes a timeout as a stuck auth handshake with an actionable hint', () => {
+  it('does NOT assert auth for a bare timeout — the mislabel that cost four builds', () => {
     const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
     const reason = describePushFailure(err, 30_000);
-    expect(reason).toMatch(/timed out after 30s/);
-    expect(reason).toMatch(/contents: write/);
-    expect(reason).toMatch(/persist-credentials/);
+    expect(reason).toMatch(/did not complete within 30s/);
+    expect(reason).toMatch(/--no-verify/);
+    // The old message asserted the remote "did not authenticate" — the exact
+    // mislabel that sent four debug builds chasing a non-existent auth bug.
+    expect(reason).not.toMatch(/did not authenticate/i);
+    expect(reason).not.toMatch(/persist-credentials/);
   });
 
   it('categorizes a SIGTERM-killed push (timeout kill) as a timeout too', () => {
     const err = Object.assign(new Error('Command failed'), { signal: 'SIGTERM', killed: true });
-    expect(describePushFailure(err, 15_000)).toMatch(/timed out after 15s/);
+    expect(describePushFailure(err, 15_000)).toMatch(/did not complete within 15s/);
   });
 
   it('categorizes a permission denial distinctly', () => {
@@ -272,62 +313,21 @@ describe('describePushFailure (gh #156 categorization)', () => {
   });
 });
 
-describe('ciCredentialedUrl (gh #156 — CI token push auth)', () => {
-  const TOKEN = FAKE_TOKEN;
-
-  it('builds a token-credentialed URL for an HTTPS origin when a token is present', () => {
-    expect(ciCredentialedUrl('https://github.com/acme/widgets.git', { GITHUB_TOKEN: TOKEN })).toBe(
-      `https://x-access-token:${TOKEN}@github.com/acme/widgets.git`,
-    );
-  });
-
-  it('preserves the actual host (GitHub Enterprise)', () => {
-    expect(
-      ciCredentialedUrl('https://ghe.corp.example/acme/widgets.git', { GH_TOKEN: TOKEN }),
-    ).toBe(`https://x-access-token:${TOKEN}@ghe.corp.example/acme/widgets.git`);
-  });
-
-  it('strips any credentials already in the origin URL', () => {
-    expect(
-      ciCredentialedUrl('https://old@github.com/acme/widgets.git', { GITHUB_TOKEN: TOKEN }),
-    ).toBe(`https://x-access-token:${TOKEN}@github.com/acme/widgets.git`);
-  });
-
-  it('returns null when no token is in the env (falls back to ambient creds)', () => {
-    expect(ciCredentialedUrl('https://github.com/acme/widgets.git', {})).toBeNull();
-  });
-
-  it('returns null for an SSH origin (token URL does not apply)', () => {
-    expect(
-      ciCredentialedUrl('git@github.com:acme/widgets.git', { GITHUB_TOKEN: TOKEN }),
-    ).toBeNull();
-    expect(
-      ciCredentialedUrl('ssh://git@github.com/acme/widgets.git', { GH_TOKEN: TOKEN }),
-    ).toBeNull();
-  });
-});
-
 /**
- * End-to-end auth wiring through the primitive, via the injected exec seam — no
- * real remote needed. Proves the primitive points `origin` at the credentialed
- * URL for the operation (then restores it), and does NOT for the no-token / SSH
- * cases. The REAL auth (that the URL actually authenticates GitHub) is proven by
- * `.github/workflows/anchor-auth-smoke.yml` — a mock cannot cover that.
+ * Seam test (injected git exec, no real remote): every side-ref push carries
+ * `--no-verify` so the internal machine push never fires the repo's pre-push
+ * hook (gh #156). Both modes — replace-all (force) and accumulate — are covered.
+ * The REAL end-to-end proof (that --no-verify actually skips a live hook) is the
+ * real-git test above plus `.github/workflows/anchor-auth-smoke.yml`.
  */
-describe('publishFilesToAnchorRef — origin gets the credentialed URL for CI auth (gh #156)', () => {
-  /** A git spy that records every invocation and returns canned output so the
-   *  writer completes a full replace-all publish without a real remote. `remote
-   *  get-url` reports `originUrl`; `rev-parse` throws so `resolveTip` sees an
-   *  absent ref (first-publish path). */
+describe('publishFilesToAnchorRef — the push always runs --no-verify (gh #156)', () => {
   function gitSpy(originUrl: string) {
     const calls: string[][] = [];
     const exec = (args: string[]): string => {
       calls.push(args);
-      let i = 0;
-      while (args[i] === '-c') i += 2; // skip a prepended `-c credential.helper=`
-      switch (args[i]) {
+      switch (args[0]) {
         case 'remote':
-          return args[i + 1] === 'get-url' ? originUrl + '\n' : '';
+          return args[1] === 'get-url' ? originUrl + '\n' : '';
         case 'rev-parse':
           throw new Error('unknown revision'); // resolveTip → null (first publish)
         case 'hash-object':
@@ -338,60 +338,38 @@ describe('publishFilesToAnchorRef — origin gets the credentialed URL for CI au
           return '';
       }
     };
-    return { calls, exec };
+    return { calls, exec, pushCall: () => calls.find((c) => c.includes('push')) ?? [] };
   }
 
-  const pushCall = (calls: string[][]) => calls.find((c) => c.includes('push')) ?? [];
-
-  let saved: { gh?: string; ghp?: string };
-  beforeEach(() => {
-    saved = { gh: process.env.GITHUB_TOKEN, ghp: process.env.GH_TOKEN };
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
-  });
-  afterEach(() => {
-    if (saved.gh === undefined) delete process.env.GITHUB_TOKEN;
-    else process.env.GITHUB_TOKEN = saved.gh;
-    if (saved.ghp === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = saved.ghp;
-  });
-
-  const publish = (exec: (a: string[], i?: string) => string) =>
-    publishFilesToAnchorRef({
+  it('replace-all (baseParent:false) force-pushes with --no-verify', () => {
+    const spy = gitSpy('https://github.com/acme/widgets.git');
+    const res = publishFilesToAnchorRef({
       cwd: '/tmp/x',
       anchorRef: 'dxkit-baselines',
       files: [{ path: 'baselines/main.json', content: '{}' }],
       message: 'refresh',
       baseParent: false,
-      _exec: exec,
+      _exec: spy.exec,
     });
-
-  it('pushes DIRECTLY to the credentialed URL when HTTPS + GITHUB_TOKEN', () => {
-    process.env.GITHUB_TOKEN = FAKE_TOKEN;
-    const { calls, exec } = gitSpy('https://github.com/acme/widgets.git');
-    expect(publish(exec).pushed).toBe(true);
-    const push = pushCall(calls);
-    // The push targets the credentialed URL itself (the proven raw form), NOT
-    // the bare `origin`, and disables any ambient credential helper.
-    expect(push).toContain(`https://x-access-token:${FAKE_TOKEN}@github.com/acme/widgets.git`);
-    expect(push).not.toContain('origin');
-    expect(push.slice(0, 2)).toEqual(['-c', 'credential.helper=']);
+    expect(res.pushed).toBe(true);
+    const push = spy.pushCall();
+    expect(push).toContain('--no-verify');
+    expect(push).toContain('--force');
+    expect(push).toContain('origin');
   });
 
-  it('pushes to `origin` (ambient creds) when no token is present', () => {
-    const { calls, exec } = gitSpy('https://github.com/acme/widgets.git');
-    expect(publish(exec).pushed).toBe(true);
-    const push = pushCall(calls);
+  it('accumulate (default) pushes with --no-verify', () => {
+    const spy = gitSpy('https://github.com/acme/widgets.git');
+    const res = publishFilesToAnchorRef({
+      cwd: '/tmp/x',
+      anchorRef: 'dxkit-reports',
+      files: [{ path: 'report-history.jsonl', content: '{}\n' }],
+      message: 'snapshot',
+      _exec: spy.exec,
+    });
+    expect(res.pushed).toBe(true);
+    const push = spy.pushCall();
+    expect(push).toContain('--no-verify');
     expect(push).toContain('origin');
-    expect(push).not.toContain('-c');
-  });
-
-  it('pushes to `origin` for an SSH origin even with a token set (token URL n/a)', () => {
-    process.env.GITHUB_TOKEN = FAKE_TOKEN;
-    const { calls, exec } = gitSpy('git@github.com:acme/widgets.git');
-    expect(publish(exec).pushed).toBe(true);
-    const push = pushCall(calls);
-    expect(push).toContain('origin');
-    expect(push).not.toContain('-c');
   });
 });

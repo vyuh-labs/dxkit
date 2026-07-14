@@ -29,6 +29,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
+import { internalGitPushArgs } from '../git-internal-push';
 
 export interface AnchorFile {
   /** Repo-relative path on the side ref (POSIX separators). */
@@ -55,8 +56,7 @@ export interface PublishToAnchorOptions {
   readonly timeoutMs?: number;
   /** Test seam: override the git executor. Production leaves this undefined and
    *  runs `git` via `execFileSync`; a test injects a spy to assert the exact
-   *  argv (e.g. the CI-auth extraheader reaches the push) without a real remote.
-   *  Receives the FULL argv including any prepended auth `-c …` config. */
+   *  argv (e.g. the push carries `--no-verify`) without a real remote. */
   readonly _exec?: (args: string[], input?: string) => string;
 }
 
@@ -70,41 +70,19 @@ export interface PublishResult {
 const DEFAULT_IDENTITY = { name: 'dxkit-bot', email: 'dxkit-bot@users.noreply.github.com' };
 
 /**
- * A credentialed HTTPS push URL for `originUrl` using the CI token, or `null`
- * when none applies. The load-bearing fix for the after-merge refresh regression
- * (gh #156): the 2.x refresh ran an inline `git push` inside the checkout, so it
- * reused the credential `actions/checkout` persists; when 3.1.0 moved the
- * refresh to this shared side-ref writer, the plumbing push stopped reusing that
- * ambient credential and hung → ETIMEDOUT with no auth. So when the workflow
- * exposes the CI token in the env (`GITHUB_TOKEN` / `GH_TOKEN` — GitHub Actions
- * only puts it there when the step maps `${{ github.token }}`), the writer
- * points `origin` at a token-credentialed URL for the operation (the mechanism
- * proven to authenticate in real Actions; an `http.extraheader` override did
- * NOT take — the real-CI smoke caught that).
+ * Turn a failed `git push` into an ACTIONABLE reason. A bare `push rejected:
+ * Command failed … ETIMEDOUT` reads as a mystery hang; the caller (and CI logs)
+ * need to know what stalled.
  *
- * HTTPS only — an SSH origin authenticates by key (BatchMode handles the no-key
- * case). Any credentials already in the URL are stripped first. No token →
- * `null`, and the push falls back to the ambient credential (local dev: the
- * user's credential helper / SSH agent), so nothing changes off-CI.
- */
-export function ciCredentialedUrl(
-  originUrl: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string | null {
-  const token = env.GITHUB_TOKEN || env.GH_TOKEN;
-  if (!token) return null;
-  const m = /^https:\/\/(?:[^@/]*@)?(.+)$/.exec(originUrl); // strip any existing creds
-  if (!m) return null; // ssh:// or git@host:… — token URL does not apply
-  return `https://x-access-token:${token}@${m[1]}`;
-}
-
-/**
- * Turn a failed `git push` into an ACTIONABLE reason (gh #156). A bare
- * `push rejected: Command failed … ETIMEDOUT` reads as a mystery hang; the
- * caller (and CI logs) need to know it was a stuck/denied AUTH handshake and
- * what to check. A timeout after the prompt guards above almost always means
- * the remote never authenticated (the CI token lacks `contents: write`, or the
- * checkout didn't persist push credentials) rather than a slow network.
+ * gh #156 — the load-bearing lesson: DO NOT assert "auth" from a bare timeout.
+ * The original message here declared "the remote did not authenticate" on any
+ * timeout, and that single mislabel sent four debug builds chasing a
+ * non-existent credential bug. The REAL cause of the timeout was that the
+ * internal side-ref push fired the repo's own `pre-push` hook (dxkit's guardrail
+ * check), which ran past the `execFileSync` timeout and got SIGTERM'd
+ * mid-hook → ETIMEDOUT. That is now fixed at the source (the push runs with
+ * `--no-verify`, below), so a timeout here is a genuine transport/network stall,
+ * not auth and not a hook.
  */
 export function describePushFailure(err: Error, timeoutMs: number): string {
   const e = err as Error & { code?: string; signal?: string; killed?: boolean };
@@ -115,10 +93,9 @@ export function describePushFailure(err: Error, timeoutMs: number): string {
     /ETIMEDOUT|timed out/i.test(err.message);
   if (timedOut) {
     return (
-      `push timed out after ${Math.round(timeoutMs / 1000)}s with no response — the remote did ` +
-      `not authenticate. In GitHub Actions ensure the job grants \`contents: write\` and the ` +
-      `checkout persists push credentials (actions/checkout with \`persist-credentials: true\`); ` +
-      `locally ensure your git credential helper / SSH key can push to origin.`
+      `push did not complete within ${Math.round(timeoutMs / 1000)}s. The internal side-ref ` +
+      `push runs with \`--no-verify\` (so a project pre-push hook is not the cause); a persistent ` +
+      `timeout points at a stuck network/transport or an unreachable remote rather than auth.`
     );
   }
   if (/denied|forbidden|403|not authorized|authentication failed/i.test(err.message)) {
@@ -200,7 +177,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
   // stall is a stuck auth handshake, not slow transport. Kept low so a hang
   // fails FAST with a clear reason instead of 60s of CI silence (gh #156).
   const timeout = opts.timeoutMs ?? 30_000;
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     // BOTH prompt paths off so a push that would otherwise BLOCK on input fails
     // fast instead of hanging until the timeout: HTTPS credential prompts
@@ -226,17 +203,38 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       ...(input !== undefined ? { input } : {}),
       stdio: input !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
     }).toString();
-  // CI auth (gh #156): the plumbing writer does not reliably reuse the
-  // credential actions/checkout persists. When the env carries a CI token we
-  // point the NETWORK commands (fetch / ls-remote / push) DIRECTLY at a
-  // token-credentialed URL — the exact form a raw `git ls-remote` proves
-  // authenticates in Actions (a `set-url origin` rewrite or an
-  // `http.extraheader` override did NOT take — the real-CI smoke caught both).
-  // `credential.helper=` is disabled alongside so no ambient helper can hang the
-  // handshake. Off-CI (no token) `netRemote` stays `origin` and nothing changes.
-  const authPrefix: string[] = [];
+  // Auth is the ambient credential of `cwd` — in CI the one actions/checkout
+  // persists (`http.<host>.extraheader`); locally the git credential helper /
+  // SSH agent. We inject NOTHING: the whole gh #156 saga was a misdiagnosis
+  // (see `describePushFailure`) — a plain plumbing push always authenticated
+  // fine; the 30s "timeout" was the internal push firing the repo's own
+  // `pre-push` guardrail hook and getting SIGTERM'd mid-hook. The real fix is
+  // `--no-verify` on the push (below), not any credential handling.
   const exec = opts._exec ?? realExec;
-  const git = (args: string[], input?: string): string => exec([...authPrefix, ...args], input);
+  // Diagnosability (gh #156): with DXKIT_DEBUG set, trace every git command and
+  // how long it took, so a stall shows exactly which command hung (this is what
+  // finally surfaced the pre-push hook as the cause). Any embedded credential in
+  // a URL is masked.
+  const debugOn = !!env.DXKIT_DEBUG;
+  const mask = (s: string): string =>
+    s.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').replace(/(:\/\/)[^@/]+@/g, '$1***@');
+  const dbg = (msg: string): void => {
+    if (debugOn) process.stderr.write(`[dxkit-anchor] ${mask(msg)}\n`);
+  };
+  const git = (args: string[], input?: string): string => {
+    if (!debugOn) return exec(args, input);
+    const started = Date.now();
+    try {
+      const out = exec(args, input);
+      dbg(`git ${args.join(' ')}  (${Date.now() - started}ms)`);
+      return out;
+    } catch (err) {
+      dbg(
+        `git ${args.join(' ')}  FAILED after ${Date.now() - started}ms: ${(err as Error).message}`,
+      );
+      throw err;
+    }
+  };
 
   try {
     // Confirm a remote exists — no origin ⇒ nothing to publish to.
@@ -246,12 +244,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
     } catch {
       return { pushed: false, commit: null, reason: 'no origin remote' };
     }
-    const credUrl = ciCredentialedUrl(originUrl, env);
-    // The remote for every NETWORK op below: the credentialed URL in CI, else
-    // `origin`. Fetching by URL does not update `origin/<ref>` on its own, so the
-    // fetch below carries an explicit refspec that does (resolveTip reads it).
-    const netRemote = credUrl ?? 'origin';
-    if (credUrl) authPrefix.push('-c', 'credential.helper=');
+    dbg(`origin=${mask(originUrl)} · push=ambient-credential · hook=skipped (--no-verify)`);
 
     const buildAndPush = (): PublishResult => {
       const baseParent = opts.baseParent !== false;
@@ -260,15 +253,9 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       // `origin/<ref>` on every git version, and this also picks up a
       // concurrent merge's advance before we build. Both modes need it:
       // accumulate bases the commit on it, replace-all compares against it for
-      // the no-change skip below. Explicit refspec so a URL fetch updates
-      // `origin/<ref>` too.
+      // the no-change skip below.
       try {
-        git([
-          'fetch',
-          '--depth=1',
-          netRemote,
-          `+refs/heads/${anchorRef}:refs/remotes/origin/${anchorRef}`,
-        ]);
+        git(['fetch', '--depth=1', 'origin', anchorRef]);
       } catch {
         /* first publish (ref absent) / offline — resolveTip returns null */
       }
@@ -306,7 +293,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       if (
         remoteTip &&
         tree === remoteTip.tree &&
-        remoteRefExists(git, netRemote, anchorRef) !== false
+        remoteRefExists(git, 'origin', anchorRef) !== false
       ) {
         return { pushed: false, commit: null, reason: 'no change' };
       }
@@ -314,17 +301,18 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
       if (tip) commitArgs.push('-p', tip.commit);
       const commit = git(commitArgs).trim();
 
-      // Accumulate: a plain (fast-forward) push; a concurrent-merge rejection is
-      // retried once below. Replace-all (`baseParent:false`, latest-wins like the
-      // baseline anchor): a parentless commit is non-fast-forward by design, so
-      // force-overwrite the ref.
       const pushRefspec = `${commit}:refs/heads/${anchorRef}`;
-      const pushArgs =
-        baseParent === false
-          ? ['push', '--force', netRemote, pushRefspec]
-          : ['push', netRemote, pushRefspec];
+      // The push routes through `internalGitPushArgs` — the ONE constructor that
+      // guarantees `--no-verify` (gh #156: this is a machine push of a dxkit-owned
+      // side ref; running the repo's pre-push guardrail hook here is what caused
+      // the ETIMEDOUT the fix chased as auth for four builds). Accumulate: plain
+      // fast-forward push (a concurrent-merge rejection is retried once below).
+      // Replace-all (`baseParent:false`, latest-wins): a parentless commit is
+      // non-fast-forward by design, so force-overwrite.
+      const pushArgs = internalGitPushArgs(pushRefspec, { force: baseParent === false });
       try {
         git(pushArgs);
+        dbg('push succeeded (ambient credential, hook skipped)');
         return { pushed: true, commit };
       } catch (err) {
         return { pushed: false, commit, reason: describePushFailure(err as Error, timeout) };
@@ -336,12 +324,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
     // the commit onto the new tip once.
     if (!result.pushed && result.reason?.startsWith('push rejected') && opts.baseParent !== false) {
       try {
-        git([
-          'fetch',
-          '--depth=1',
-          netRemote,
-          `+refs/heads/${anchorRef}:refs/remotes/origin/${anchorRef}`,
-        ]);
+        git(['fetch', '--depth=1', 'origin', anchorRef]);
       } catch {
         /* offline — the retry will just fail again, returning the rejection */
       }
