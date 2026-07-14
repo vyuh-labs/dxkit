@@ -1,11 +1,17 @@
 #!/usr/bin/env sh
 #
-# dxkit pre-push hook — full guardrail check against the baseline.
+# dxkit pre-push hook — QUICK tier of a two-tier gate.
 #
-# Runs the full `vyuh-dxkit guardrail check` (no --changed-only),
-# so every regression introduced since the baseline blocks the push.
-# Slower than pre-commit, but the push boundary is the last point
-# we can stop bad code from leaving the developer's machine.
+# Enforcement is tiered so the push boundary stays fast while CI stays
+# comprehensive:
+#   - pre-push (here) = QUICK: the correctness floor scoped to the change
+#     (does it compile + do the affected tests pass?) followed by the
+#     findings guardrail scanned INCREMENTALLY (scoped to the change), so
+#     the check scales with the PR's size, not the whole repo's.
+#   - CI (dxkit-guardrails.yml) = COMPREHENSIVE: the full-scope findings
+#     guardrail plus the full-suite correctness floor.
+# The push boundary is the last point we can stop bad code from leaving
+# the developer's machine, so it blocks; but it does the cheap version.
 #
 # Install:
 #   git config core.hooksPath .githooks
@@ -70,4 +76,7 @@ if [ ! -f "${BASELINE_FILE}" ]; then
   exit 0
 fi
 
-"${DXKIT}" guardrail check --name "${BASELINE_NAME}"
+# Findings guardrail, scanned INCREMENTALLY — scoped to the change so the
+# check scales with the PR's size, not the whole repo's. CI runs the
+# full-scope guardrail as the comprehensive backstop.
+"${DXKIT}" guardrail check --name "${BASELINE_NAME}" --incremental
