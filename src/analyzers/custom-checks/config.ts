@@ -11,9 +11,13 @@
  * the lint capability. Both feed the SAME runner.
  */
 
-import type { CustomCheckConfig, LintPolicy } from '../../baseline/policy';
+import type { CustomCheckConfig, LintPolicy, RecallPolicy } from '../../baseline/policy';
 import type { LanguageSupport } from '../../languages/types';
-import type { LintGateContext } from '../../languages/capabilities/lint-gate';
+import type {
+  LintGateContext,
+  LintGateRecallContext,
+  RecallInputMode,
+} from '../../languages/capabilities/lint-gate';
 import { activeLintGateProviders } from '../../languages';
 import type { CustomCheckCommand, CustomCheckParse, CustomCheckSpec } from './types';
 
@@ -104,9 +108,11 @@ export function lintGateSpecs(
   packs: readonly LanguageSupport[],
   ctx: LintGateContext,
   lint: LintPolicy | undefined,
+  recall?: RecallPolicy,
 ): CustomCheckSpec[] {
   if (!lint?.enabled) return [];
   const blocking = lint.blocking === true; // default warn-only
+  const mode: RecallInputMode = recall?.inputs === 'locked' ? 'locked' : 'resolved';
   const specs: CustomCheckSpec[] = [];
   for (const { id, provider } of activeLintGateProviders(packs)) {
     const cmd = provider.lintCommand(ctx);
@@ -117,7 +123,31 @@ export function lintGateSpecs(
       blocking,
       expectedExit: typeof cmd.expectedExit === 'number' ? cmd.expectedExit : 0,
       parse: { mode: 'regex', pattern: cmd.parse },
+      // What determines what THIS linter sees, beyond its argv (Rule 19).
+      // Resolved by the pack, because only the pack knows its ecosystem
+      // (Rule 6). A pack that throws here must not take the gate down with it —
+      // recall inputs make attribution SHARPER, and failing to resolve them is
+      // a reason to attribute less confidently, not to stop linting. An empty
+      // set degrades to command-only recall, which is the pre-Rule-19 behavior.
+      recallInputs: safeRecallInputs(id, provider, { ...ctx, mode }),
     });
   }
   return specs;
+}
+
+function safeRecallInputs(
+  id: string,
+  provider: { recallInputs(ctx: LintGateRecallContext): Record<string, string> },
+  ctx: LintGateRecallContext,
+): Record<string, string> {
+  try {
+    return provider.recallInputs(ctx);
+  } catch (err) {
+    if (process.env.DXKIT_DEBUG === '1') {
+      process.stderr.write(
+        `    [lint-gate] pack '${id}' recallInputs threw: ${(err as Error)?.message ?? String(err)}\n`,
+      );
+    }
+    return {};
+  }
 }

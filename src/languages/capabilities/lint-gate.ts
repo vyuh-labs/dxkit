@@ -50,9 +50,46 @@ export interface LintGateCommand {
   readonly expectedExit?: number;
 }
 
+/** How a pack resolves the versions it reports as recall inputs.
+ *
+ *  - `resolved` (default): what ACTUALLY ran — the installed version
+ *    (`node_modules/eslint/package.json`, `ruff --version`). Honest: if a
+ *    developer and CI run different plugin versions they genuinely produce
+ *    different findings, and that IS worth surfacing.
+ *  - `locked`: the DECLARED range (`package.json` devDependencies:
+ *    `"eslint": "^9.0.0"`), which does not move when a caret range resolves
+ *    forward. For repos that tolerate dev != CI and want fewer re-baselines.
+ */
+export type RecallInputMode = 'resolved' | 'locked';
+
+export interface LintGateRecallContext extends LintGateContext {
+  readonly mode: RecallInputMode;
+}
+
 /** A pack's lint-gate provider. Pure command builder — it resolves the linter
  *  and returns the command (or `null` to skip); execution + fail-open policy
  *  live in the custom-check runner (a pack never shells out itself). */
 export interface LintGateProvider {
   lintCommand(ctx: LintGateContext): LintGateCommand | null;
+
+  /**
+   * What determines what THIS pack's linter can see, beyond its command
+   * (CLAUDE.md Rule 19). Returns `name -> version | hash` pairs: the linter's
+   * own version, its plugin versions, its config-file content hash.
+   *
+   * REQUIRED, because the command alone is not enough and the gap is not
+   * hypothetical: `eslint-plugin-react-hooks ^7.0.1 -> 7.1.1` adds rules under
+   * a byte-identical argv, so without this every newly-reported finding is
+   * attributed to whoever opened the next PR. Only the pack knows how to
+   * resolve its ecosystem's versions (Rule 6), and an optional field here would
+   * recreate exactly the second-class status that made lint unattributable for
+   * its entire life.
+   *
+   * Contract: keys must be STABLE across runs (never a timestamp or an absolute
+   * temp path — an unstable input reads as permanent drift and silently
+   * disables the gate). Return `{}` only when the pack genuinely has nothing to
+   * resolve; a missing linter resolves to no entry rather than an error, since
+   * the runner is fail-open on an absent binary.
+   */
+  recallInputs(ctx: LintGateRecallContext): Record<string, string>;
 }

@@ -18,7 +18,7 @@
  *        - severity from the current security aggregate or per-kind
  *          defaults
  *        - kind from the matched BaselineEntry
- *        - scannerVersionDiffers from per-kind tool version compare
+ *        - recallDrifted from per-kind recall compare (Rule 19)
  *        - configDiffers from envelope hash compare
  *        - overlapsChangedLines from `git diff base..HEAD` hunks
  *          intersected with the finding's line
@@ -31,9 +31,16 @@
  *      blocks/warns verdict so the CLI can pick exit code + render.
  *
  * Drift signals come from comparing the baseline's `analysis` /
- * `tools` envelope against the freshly-gathered envelope. Per-kind
- * tool attribution uses the current run's `SecurityAggregate.provenance`
- * — the cleaner alternative to a hardcoded kind→tool table.
+ * `tools` envelope against the freshly-gathered envelope.
+ *
+ * Per-kind attribution (CLAUDE.md Rule 19) compares the producer-declared
+ * `recall` contexts, kind by kind: unequal ⇒ that kind's delta has an
+ * explanation other than "the developer introduced it", so its net-new
+ * findings warn instead of blocking and every renderer says which input moved.
+ * This REPLACED a hardcoded kind→tool table here, whose five entries silently
+ * excluded every other kind — `custom-check` among them, which is why a lint
+ * finding could never be attributed to a tool change no matter how the
+ * producer side was fixed.
  */
 
 import { execFileSync } from 'child_process';
@@ -66,6 +73,8 @@ import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from './gather-scope';
 import { computeChangedFiles } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
+import { describeRecallDrift, diffRecall } from './recall';
+import type { RecallDrift } from './recall';
 import { evaluateFlowGateForGuardrail } from './flow-gate-check';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
@@ -243,12 +252,21 @@ export interface EnvelopeDrift {
   readonly ignoreHashChanged: boolean;
   readonly configHashChanged: boolean;
   readonly dxkitVersionChanged: boolean;
-  /** Per-tool version drift. Empty when `tools` maps agree. */
+  /** Per-tool version drift. Empty when `tools` maps agree. Reporting only —
+   *  attribution reads `recallDrift`, which knows WHICH kind each input
+   *  affects. */
   readonly toolVersionDiffs: ReadonlyArray<{
     readonly tool: string;
     readonly baselineVersion: string | undefined;
     readonly currentVersion: string | undefined;
   }>;
+  /** Kinds that cannot be attributed this run (CLAUDE.md Rule 19): dxkit or the
+   *  environment changed what the kind can SEE since the baseline, so its delta
+   *  has an explanation other than "the developer introduced it". Their net-new
+   *  findings warn instead of blocking, and every renderer says why. Filtered
+   *  to kinds with findings on at least one side — drift with nothing to
+   *  misattribute is not worth reporting. */
+  readonly recallDrift: ReadonlyArray<RecallDrift>;
   /** Scanners whose availability flipped between baseline capture and
    *  this check. A tool missing at baseline but present now means the
    *  baseline never covered that category — its findings surface as new
@@ -646,12 +664,14 @@ export async function runGuardrailCheck(
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
   const envelopeDrift = diffEnvelopes(baseline, current);
 
-  // Per-kind tool attribution drives the per-pair
-  // scannerVersionDiffers signal. A pair is in drift only when the
-  // tools that produced its kind actually changed version between
-  // runs — narrower than "any tool drifted globally," which would
-  // overstate the drift signal for unrelated kinds.
-  const toolsByKind = buildToolsByKind(current.aggregate);
+  // Per-kind recall attribution (Rule 19) drives the per-pair `recallDrifted`
+  // signal. A pair is in drift only when the inputs that determine ITS kind
+  // moved — narrower than "any tool drifted globally," which would overstate
+  // drift for unrelated kinds. The set is computed once by `diffEnvelopes`
+  // from the producer-declared contexts; there is no per-kind list here to
+  // fall out of date with the producer registry, which is what made the old
+  // hardcoded `buildToolsByKind` silently exclude every kind but five.
+  const driftByKind = new Map(envelopeDrift.recallDrift.map((d) => [d.kind, d]));
 
   const changedLineCache = new Map<string, Set<number>>();
   const headSha = readHeadSha(cwd);
@@ -702,8 +722,7 @@ export async function runGuardrailCheck(
         ? (linesChangedFor(file)?.has(line) ?? false)
         : undefined;
 
-    const scannerVersionDiffers =
-      pair.status === 'added' && kindHasDriftingTool(anchorEntry.kind, toolsByKind, envelopeDrift);
+    const kindDrift = pair.status === 'added' ? driftByKind.get(anchorEntry.kind) : undefined;
     const configDiffers =
       pair.status === 'added' &&
       (envelopeDrift.configHashChanged ||
@@ -725,7 +744,9 @@ export async function runGuardrailCheck(
     const context: ClassifyContext = {
       severity,
       kind: anchorEntry.kind,
-      ...(scannerVersionDiffers ? { scannerVersionDiffers: true } : {}),
+      ...(kindDrift
+        ? { recallDrifted: true, recallDriftDetail: describeRecallDrift(kindDrift) }
+        : {}),
       ...(configDiffers ? { configDiffers: true } : {}),
       ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
       ...(kindAbsentFromBaseline ? { kindAbsentFromBaseline: true } : {}),
@@ -942,52 +963,6 @@ function buildMaliciousIndex(aggregate: SecurityAggregate): Set<FindingId> {
   return out;
 }
 
-/**
- * Build a per-kind map of "tools that produced this kind in the
- * current run." Used by the `scannerVersionDiffers` per-pair
- * computation: a pair is in tool drift only when one of the tools
- * that produced its kind has actually drifted version.
- */
-function buildToolsByKind(
-  aggregate: SecurityAggregate,
-): Readonly<Partial<Record<BaselineEntry['kind'], ReadonlySet<string>>>> {
-  const secretTool = aggregate.provenance.secrets.tool ?? undefined;
-  const codeTool = aggregate.provenance.codePatterns.tool ?? undefined;
-  const depTool = aggregate.provenance.depVulns.tool ?? undefined;
-  const tlsBypassRan = aggregate.provenance.tlsBypass.ran;
-
-  const codeTools = new Set<string>();
-  if (codeTool) codeTools.add(codeTool);
-  if (tlsBypassRan) codeTools.add('tls-bypass-registry');
-
-  const secretTools = new Set<string>();
-  if (secretTool) secretTools.add(secretTool);
-
-  const depTools = new Set<string>();
-  if (depTool) depTools.add(depTool);
-
-  return {
-    secret: secretTools,
-    code: codeTools,
-    config: secretTools, // .env-in-git + private-key files come from the secrets/file pass
-    'dep-vuln': depTools,
-    'secret-hmac': secretTools,
-  };
-}
-
-function kindHasDriftingTool(
-  kind: BaselineEntry['kind'],
-  toolsByKind: Readonly<Partial<Record<BaselineEntry['kind'], ReadonlySet<string>>>>,
-  drift: EnvelopeDrift,
-): boolean {
-  const tools = toolsByKind[kind];
-  if (!tools || tools.size === 0) return false;
-  for (const diff of drift.toolVersionDiffs) {
-    if (tools.has(diff.tool)) return true;
-  }
-  return false;
-}
-
 function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDrift {
   const toolVersionDiffs: Array<{
     tool: string;
@@ -1002,6 +977,19 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
       toolVersionDiffs.push({ tool, baselineVersion, currentVersion });
     }
   }
+  // Per-kind recall attribution (CLAUDE.md Rule 19) — the ONE comparison that
+  // decides whether a kind's delta may be blamed on the developer. Filtered to
+  // the kinds this run actually has findings for: a kind with nothing on either
+  // side has nothing to misattribute, so reporting its drift would be noise
+  // that trains readers to ignore the signal.
+  const kindsInPlay = new Set<BaselineEntry['kind']>([
+    ...baseline.findings.map((e) => e.kind),
+    ...current.findings.map((e) => e.kind),
+  ]);
+  const recallDrift = diffRecall(baseline.recall, current.recall).filter((d) =>
+    kindsInPlay.has(d.kind),
+  );
+
   return {
     toolchainHashChanged: baseline.analysis.toolchainHash !== current.analysisMeta.toolchainHash,
     policyHashChanged: baseline.analysis.policyHash !== current.analysisMeta.policyHash,
@@ -1009,6 +997,7 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
     configHashChanged: baseline.analysis.configHash !== current.analysisMeta.configHash,
     dxkitVersionChanged: baseline.analysis.dxkitVersion !== current.analysisMeta.dxkitVersion,
     toolVersionDiffs,
+    recallDrift,
     coverageDrift: diffCoverage(baseline.coverage, current.coverage),
   };
 }

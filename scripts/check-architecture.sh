@@ -718,6 +718,63 @@ if [ -n "$ROGUE_IDENTITY" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Rule 19 (recall attribution): no hardcoded per-kind input lists ────────
+# Closes the class of bug this rule was written for: recall attribution
+# ("what determines what a kind can SEE") was computed in TWO places with
+# TWO different hardcoded lists — `create.ts:addTools` (three provenance
+# tools, global) and `check.ts:buildToolsByKind` (five kinds, per-kind).
+# Neither derived from the other, so `custom-check` fell off the end of the
+# consumer map and NO amount of tool drift could ever demote a lint finding
+# to `tooling_drift`. The mechanism looked present and was inert.
+#
+# Recall is now declared per kind by the producer that owns the kind
+# (`BaselineProducer.recallContexts`, required — the compiler catches an
+# omission) and unioned by `runRecallContexts`. What the compiler CANNOT
+# catch is someone re-introducing a hand-maintained kind→tool table
+# alongside it, which is what this rule greps for.
+#
+# Canonical sites:
+#   - `src/baseline/recall.ts` — the concept + the diff + RECALL_EPOCHS.
+#   - `src/baseline/producers/index.ts` — per-kind declaration + the union.
+#
+# Annotate `// rule19-recall-ok` on the violating line for justified
+# exceptions (today: zero needed).
+ROGUE_TOOLS_BY_KIND=$(grep -rnE "(buildToolsByKind|kindHasDriftingTool|toolsByKind)" src/ 2>/dev/null \
+  | grep -v "// rule19-recall-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ROGUE_TOOLS_BY_KIND" ]; then
+  echo "❌ Rule 19 violation: a hardcoded per-kind tool table is back:"
+  echo "$ROGUE_TOOLS_BY_KIND"
+  echo "   → Declare the kind's inputs in its producer's recallContexts()"
+  echo "     (src/baseline/producers/index.ts) and let runRecallContexts union them."
+  echo "   → A hand-maintained kind→tool map silently excludes every kind nobody"
+  echo "     remembered to add — that is exactly how lint became unattributable."
+  echo "   → Annotate '// rule19-recall-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# The toolchain hash must be derived from the recall union, never rebuilt
+# from a bespoke tool list. `buildToolsMap` resolves tool NAMES to versions
+# and belongs to the producers that declare recall (plus its own module).
+RULE19_TOOLSMAP_ALLOWLIST="src/baseline/tool-versions.ts src/baseline/producers/index.ts"
+RULE19_FILTER=""
+for f in $RULE19_TOOLSMAP_ALLOWLIST; do
+  RULE19_FILTER="$RULE19_FILTER -e ^${f}:"
+done
+ROGUE_TOOLSMAP=$(grep -rnE "buildToolsMap[[:space:]]*\(" src/ 2>/dev/null \
+  | grep -v "// rule19-recall-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | { [ -n "$RULE19_FILTER" ] && grep -v $RULE19_FILTER || cat; })
+if [ -n "$ROGUE_TOOLSMAP" ]; then
+  echo "❌ Rule 19 violation: buildToolsMap() called outside the recall producers:"
+  echo "$ROGUE_TOOLSMAP"
+  echo "   → A tool map built outside recallContexts() is a second source of truth"
+  echo "     for what a scan could see, and the two WILL diverge (they did)."
+  echo "   → Declare the tools in the owning producer's recallContexts() instead."
+  echo "   → Annotate '// rule19-recall-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # =============================================================================
 # Sprint 2 (2.6): baseline mode resolution discipline.
 # =============================================================================

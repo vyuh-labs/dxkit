@@ -41,6 +41,7 @@ import type {
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 interface GolangciIssue {
   FromLinter?: string;
@@ -959,6 +960,20 @@ const goLintGateProvider: LintGateProvider = {
       args: ['run', '--out-format', 'line-number'],
       parse: GO_GOLANGCI_LINE_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // golangci-lint is an aggregator: its version pins the whole bundled linter
+    // set, and its config decides which of them run. Both move findings without
+    // anyone touching the code.
+    return {
+      ...toolVersionInput(TOOL_DEFS['golangci-lint'], ctx.cwd, 'golangci-lint'),
+      ...hashFirstConfig(ctx.cwd, [
+        '.golangci.yml',
+        '.golangci.yaml',
+        '.golangci.toml',
+        '.golangci.json',
+      ]),
     };
   },
 };

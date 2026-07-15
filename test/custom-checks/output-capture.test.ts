@@ -83,7 +83,9 @@ describe('the itemization ceiling never slides (MAX_LOCATED)', () => {
   const emit = (n: number, skip = -1) =>
     Array.from({ length: n }, (_, i) => i)
       .filter((i) => i !== skip)
-      .map((i) => `src/f${String(i).padStart(5, '0')}.ts:1:1: Unexpected any. [error/no-explicit-any]`)
+      .map(
+        (i) => `src/f${String(i).padStart(5, '0')}.ts:1:1: Unexpected any. [error/no-explicit-any]`,
+      )
       .join('\n');
 
   it('fixing ONE pre-existing finding mints ZERO net-new', () => {
@@ -91,7 +93,11 @@ describe('the itemization ceiling never slides (MAX_LOCATED)', () => {
     // fix one, and #501 slid in as "net-new" — blocking a developer for FIXING
     // a lint error.
     const id = (o: string) =>
-      new Set(parseLocated('lint', false, P, o).filter((f) => f.file).map((f) => `${f.file}:${f.rule}`));
+      new Set(
+        parseLocated('lint', false, P, o)
+          .filter((f) => f.file)
+          .map((f) => `${f.file}:${f.rule}`),
+      );
     const before = id(emit(600));
     const after = id(emit(600, 2)); // developer fixes finding #3
 

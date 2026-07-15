@@ -50,7 +50,7 @@ describe('classify — direct pass-through for matcher statuses', () => {
 
 describe('classify — drift context reclassifies added', () => {
   it('reclassifies added → tooling_drift when scanner version differs', () => {
-    const ctx: ClassifyContext = { scannerVersionDiffers: true };
+    const ctx: ClassifyContext = { recallDrifted: true };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('tooling_drift');
     expect(result.blocks).toBe(false); // tooling_drift is in warn, not block
@@ -67,7 +67,7 @@ describe('classify — drift context reclassifies added', () => {
   });
 
   it('scanner-version drift wins over config drift when both are present', () => {
-    const ctx: ClassifyContext = { scannerVersionDiffers: true, configDiffers: true };
+    const ctx: ClassifyContext = { recallDrifted: true, configDiffers: true };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('tooling_drift');
   });
@@ -126,7 +126,7 @@ describe('classify — drift context reclassifies added', () => {
   });
 
   it('does not reclassify persisted on drift signals', () => {
-    const ctx: ClassifyContext = { scannerVersionDiffers: true };
+    const ctx: ClassifyContext = { recallDrifted: true };
     const result = classify(pair('persisted'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('persisted');
   });
@@ -174,7 +174,7 @@ describe('classify — block-rule overrides', () => {
   });
 
   it('does not block when scanner-version drift reclassifies a secret away from added', () => {
-    const ctx: ClassifyContext = { kind: 'secret', scannerVersionDiffers: true };
+    const ctx: ClassifyContext = { kind: 'secret', recallDrifted: true };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('tooling_drift');
     expect(result.blocks).toBe(false);
@@ -343,7 +343,7 @@ describe('classify — wobble demotion via addedRequiresChangedLines', () => {
       kind: 'code',
       severity: 'medium',
       overlapsChangedLines: false,
-      scannerVersionDiffers: true,
+      recallDrifted: true,
     };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('tooling_drift');
@@ -387,7 +387,7 @@ describe('classifyAll — bulk classification preserves order', () => {
   it('threads per-pair context via the callback', () => {
     const pairs: MatchPair[] = [pair('added'), pair('added')];
     const results = classifyAll(pairs, DEFAULT_BROWNFIELD_POLICY, (_p) => ({
-      scannerVersionDiffers: true,
+      recallDrifted: true,
     }));
     expect(results.every((r) => r.status === 'tooling_drift')).toBe(true);
   });

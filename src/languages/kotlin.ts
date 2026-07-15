@@ -25,6 +25,7 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFileInput, toolVersionInput } from './capabilities/recall-inputs';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -458,6 +459,15 @@ const kotlinLintGateProvider: LintGateProvider = {
       args: [],
       parse: KOTLIN_KTLINT_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // ktlint's rule set moves with its version; `.editorconfig` is where a
+    // Kotlin repo enables/disables rules and sets the code style, so it is the
+    // config input.
+    return {
+      ...toolVersionInput(TOOL_DEFS.ktlint, ctx.cwd, 'ktlint'),
+      ...hashFileInput(ctx.cwd, '.editorconfig'),
     };
   },
 };

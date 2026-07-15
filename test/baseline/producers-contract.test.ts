@@ -28,6 +28,8 @@ import {
   wiredKinds,
   type IdentityKind,
 } from '../../src/baseline/producers';
+import { RECALL_EPOCHS } from '../../src/baseline/recall';
+import { producerFixtureContext as recallFixtureContext } from './producer-fixture';
 import type { BaselineEntry } from '../../src/baseline/types';
 
 /**
@@ -134,5 +136,74 @@ describe('producer registry contract', () => {
       }
     }
     expect(conflicts).toEqual([]);
+  });
+});
+
+/**
+ * Recall-context contract (CLAUDE.md Rule 19).
+ *
+ * The class this closes: recall attribution used to be a hardcoded list of
+ * three tools in `create.ts` and a hardcoded map of five kinds in `check.ts`,
+ * so every kind added since — `custom-check` above all — was silently
+ * unattributable. Now the producer that OWNS a kind declares what the kind can
+ * see, and these assertions make an omission impossible to ship: a producer
+ * cannot contribute a kind without a context, and cannot declare a context for
+ * a kind it does not contribute.
+ */
+describe('producer recall-context contract (Rule 19)', () => {
+  const ctx = recallFixtureContext();
+
+  it('every producer covers EXACTLY its contributed kinds — no missing, no extra', () => {
+    const problems: string[] = [];
+    for (const p of PRODUCERS) {
+      const declared = new Set(p.recallContexts(ctx).keys());
+      for (const kind of p.contributes) {
+        if (!declared.has(kind)) problems.push(`${p.name}: contributes '${kind}' with no context`);
+      }
+      for (const kind of declared) {
+        if (!p.contributes.includes(kind)) {
+          problems.push(`${p.name}: context for '${kind}' it does not contribute`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('every declared context has a real epoch (>= 1)', () => {
+    for (const p of PRODUCERS) {
+      for (const [kind, recall] of p.recallContexts(ctx)) {
+        expect(recall.epoch, `${p.name}/${kind}.epoch`).toBeGreaterThanOrEqual(1);
+        expect(Number.isInteger(recall.epoch), `${p.name}/${kind}.epoch is an integer`).toBe(true);
+      }
+    }
+  });
+
+  it('RECALL_EPOCHS covers every IdentityKind', () => {
+    // A new kind must state its epoch deliberately rather than defaulting,
+    // since the epoch is how dxkit says "I changed what I can see here".
+    const missing = ALL_KINDS.filter((k) => RECALL_EPOCHS[k] === undefined);
+    expect(missing).toEqual([]);
+  });
+
+  it('declares contexts even when no analyzer ran — a clean run still has recall', () => {
+    // The fixture context has no securityAggregate and no checks: every
+    // producer's `produce` returns []. Recall must NOT follow it to zero,
+    // because "clean" is only meaningful against a comparable baseline.
+    for (const p of PRODUCERS) {
+      expect(p.recallContexts(ctx).size, `${p.name} declared no contexts`).toBe(
+        p.contributes.length,
+      );
+    }
+  });
+
+  it('inputs are plain string->string (comparable across runs, JSON-round-trippable)', () => {
+    for (const p of PRODUCERS) {
+      for (const [kind, recall] of p.recallContexts(ctx)) {
+        for (const [key, value] of Object.entries(recall.inputs)) {
+          expect(typeof value, `${p.name}/${kind}.inputs['${key}']`).toBe('string');
+        }
+        expect(JSON.parse(JSON.stringify(recall))).toEqual(recall);
+      }
+    }
   });
 });

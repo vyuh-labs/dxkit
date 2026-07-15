@@ -37,6 +37,7 @@ import type {
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 interface CargoMessage {
   reason: string;
@@ -962,6 +963,17 @@ const rustLintGateProvider: LintGateProvider = {
       args: ['clippy', '--message-format', 'short', '--', '-D', 'warnings'],
       parse: RUST_CLIPPY_SHORT_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // clippy's lint set is versioned WITH the toolchain, so its own version is
+    // the input that matters: a `rustup update` on a floating channel adds
+    // lints under an unchanged command. `rust-toolchain.toml` pins that
+    // channel; `clippy.toml` tunes the thresholds the lints fire at.
+    return {
+      ...toolVersionInput(TOOL_DEFS.clippy, ctx.cwd, 'clippy'),
+      ...hashFirstConfig(ctx.cwd, ['rust-toolchain.toml', 'rust-toolchain']),
+      ...hashFirstConfig(ctx.cwd, ['clippy.toml', '.clippy.toml']),
     };
   },
 };

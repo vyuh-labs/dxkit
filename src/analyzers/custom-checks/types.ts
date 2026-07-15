@@ -62,6 +62,23 @@ export interface CustomCheckSpec {
   readonly expectedExit: number;
   /** Output-to-findings extraction (default `{ mode: 'exit' }`). */
   readonly parse: CustomCheckParse;
+  /**
+   * Ecosystem-resolved inputs that determine what THIS check can see, beyond
+   * its command + parse pattern (which the recall producer derives from the
+   * fields above). Populated for pack-declared lint from
+   * `LintGateProvider.recallInputs` — the linter's own version, its plugin
+   * versions, its config-file hash — because only the pack knows its ecosystem
+   * (Rule 6).
+   *
+   * Absent for user-declared checks: dxkit cannot resolve what `make lint`
+   * depends on, and inventing an answer would be worse than admitting the
+   * limit. Such a check's recall is its command + parse pattern alone, so a
+   * toolchain bump underneath it is invisible — a known, documented gap.
+   *
+   * Feeds CLAUDE.md Rule 19 (recall attribution); never an identity input
+   * (Rule 9).
+   */
+  readonly recallInputs?: Readonly<Record<string, string>>;
 }
 
 /** A single failure extracted from a check's output. Maps 1:1 to a

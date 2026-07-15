@@ -50,6 +50,7 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFirstConfig, nodeLinterVersions } from './capabilities/recall-inputs';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
@@ -1319,6 +1320,35 @@ const tsLintGateProvider: LintGateProvider = {
       args: ['--no-install', 'eslint', '.', '--format', ESLINT_UNIX_FORMATTER],
       parse: TS_ESLINT_UNIX_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // eslint sees what its PLUGINS tell it to see, and the argv never mentions
+    // them. `eslint-plugin-react-hooks ^7.0.1 -> 7.1.1` adds rules under a
+    // byte-identical command; without these inputs every finding those new
+    // rules report is attributed to whoever opens the next PR.
+    return {
+      ...nodeLinterVersions({
+        cwd: ctx.cwd,
+        mode: ctx.mode,
+        roots: ['eslint', 'typescript'],
+        // Plugins + shareable configs both change the active rule set.
+        pluginPattern: /^(@[^/]+\/)?eslint-(plugin|config)(-|$)|^(@[^/]+\/)?eslint-plugin$/,
+      }),
+      // The config picks WHICH of those rules run. Flat config first (eslint 9+),
+      // then the legacy family.
+      ...hashFirstConfig(ctx.cwd, [
+        'eslint.config.js',
+        'eslint.config.mjs',
+        'eslint.config.cjs',
+        'eslint.config.ts',
+        '.eslintrc.js',
+        '.eslintrc.cjs',
+        '.eslintrc.json',
+        '.eslintrc.yml',
+        '.eslintrc.yaml',
+        '.eslintrc',
+      ]),
     };
   },
 };

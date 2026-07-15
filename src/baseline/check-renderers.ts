@@ -27,6 +27,7 @@
 
 import * as logger from '../logger';
 import type { ClassifiedPair, EnvelopeDrift, GuardrailCheckResult } from './check';
+import { RECALL_DRIFT_REMEDY, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
@@ -662,6 +663,17 @@ function formatDrift(drift: EnvelopeDrift): string[] {
     out.push(
       `tool drift: ${d.tool} ${d.baselineVersion ?? '(absent)'} → ${d.currentVersion ?? '(absent)'}`,
     );
+  }
+  // Recall drift (CLAUDE.md Rule 19) — the load-bearing disclosure. A drifted
+  // kind's net-new findings are NOT attributable to the diff, so they warn
+  // instead of blocking. That is a real reduction in what the gate enforces, so
+  // it must never be silent: name the kind, the evidence, and the remedy. Same
+  // discipline as `GateFailure` (3.7.1) — a fail-open gate always says why.
+  for (const d of drift.recallDrift) {
+    out.push(`cannot attribute ${describeRecallDrift(d)}`);
+  }
+  if (drift.recallDrift.length > 0) {
+    out.push(`${drift.recallDrift.length} kind(s) not attributable — ${RECALL_DRIFT_REMEDY}`);
   }
   for (const d of drift.coverageDrift) {
     if (!d.baselineAvailable && d.currentAvailable) {

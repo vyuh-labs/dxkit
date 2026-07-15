@@ -1090,6 +1090,102 @@ Rules, both directions:
    in-place `DepVulnsProvider` fields, wire-schema id registry pinned
    append-only, and `SDK_MAJOR` ↔ package version agreement.
 
+### 19. A net-new claim requires ruling out every other cause of a delta
+
+The guardrail reports `net-new` — a claim about CAUSE ("you introduced this") —
+derived from a DELTA (`current \ baseline`). A delta has six possible causes and
+exactly one of them should gate:
+
+| cause of a delta                                         | should gate?                        |
+| -------------------------------------------------------- | ----------------------------------- |
+| 1. the developer introduced a finding                    | **YES**                             |
+| 2. dxkit did not fully OBSERVE the current side          | no                                  |
+| 3. dxkit reported a PREFIX of it                         | no                                  |
+| 4. the finding MOVED                                     | no — the git-aware matcher (Rule 9) |
+| 5. the TOOL changed (version / plugins / rules / config) | no                                  |
+| 6. **dxkit itself changed what it can see**              | no                                  |
+
+Causes 2, 3, 5 and 6 are indistinguishable from cause 1 at the diff. The law:
+
+> **A finding delta may be attributed to the developer only if every other cause
+> is ruled out. A kind that cannot rule them out does not report `net-new` — it
+> reports "cannot attribute", and says why.**
+
+A `RecallContext` (`src/baseline/recall.ts`) is the evidence that rules out
+causes 5 and 6: `{ epoch, inputs }`, where `inputs` are environment-derived
+(tool versions, plugin versions, config hashes, the check command) and `epoch`
+is bumped BY US when a dxkit change alters what a kind observes. Two finding-sets
+are comparable iff their contexts match. This is NOT identity (Rule 9 — "are
+these the same finding?"); it is COMPARABILITY ("could these two sets even be
+diffed?").
+
+- **Declared** per KIND by the producer that owns it —
+  `BaselineProducer.recallContexts(ctx)`, **required** (Rule 10). Per kind, not
+  per producer: `security` contributes four kinds driven by three tools, so a
+  per-producer epoch would drift secrets every time semgrep bumps.
+- **Unioned** by `runRecallContexts` and written to `BaselineFile.recall`.
+  `tools` + `toolchainHash` are a DISPLAY projection of it
+  (`recallInputsUnion`), never an attribution source.
+- **Compared** per kind by `diffRecall`, consumed at the ONE per-pair callsite
+  in `check.ts`. Drifted ⇒ the kind's `added` findings reclassify to the
+  existing `tooling_drift` status (already `warn`, never `block`).
+- **Ecosystem inputs** come from the pack (Rule 6):
+  `LintGateProvider.recallInputs` resolves the linter's own version, its
+  PLUGINS, and its config hash.
+- **Seam inputs** come from the seam (Rule 17): `customCheckRecallInputs`
+  answers for all three consumers of the custom-check seam (user checks, pack
+  lint, extension findings), so the producer never re-derives what a check is.
+
+**Fail-open, never silent.** Drift never blocks (a tool upgrade is not a
+developer's mistake) and is never silent: every renderer names the kind, which
+input moved, old → new, and the remedy. Same discipline as `GateFailure`
+(3.7.1) — a fail-open gate stays fail-open, it just always says WHY.
+
+**Absent recall is not "comparable".** A baseline predating Rule 19 carries no
+evidence either way, so every kind drifts until re-baselined. `update` rides the
+migrate lane (`detectStaleRecall`) and rescans — but ONLY when no scanner is
+missing, because re-baselining without gitleaks writes a baseline with no
+secrets in it and turns a "degraded" warning into a wave of false blocks later.
+Rejected, permanently: stamping the current context on upgrade. That fabricates
+the evidence, which is the exact proxy this rule exists to kill.
+
+#### Why this rule exists (the class it closes)
+
+The mechanism was ALREADY present and inert, because one concept was computed in
+two places with two different hardcoded lists: `create.ts:addTools` (three
+provenance tools, global, feeding `toolchainHash`) and
+`check.ts:buildToolsByKind` (five kinds, per-kind, the one that actually
+decided). Neither derived from the other, so `custom-check` — along with
+`duplication`, `large-file`, `test-gap` — fell off the end of the consumer map
+and `kindHasDriftingTool` returned false unconditionally for them: **no amount of
+tool drift could ever demote a lint finding to `tooling_drift`.** Nobody forgot
+to wire lint in; there was nothing to wire it into. That is Rule 2.30's
+semantic-divergence variant — two lossy projections of one concept, in different
+files, with no shared token to grep.
+
+The shipped consequence: `eslint-plugin-react-hooks ^7.0.1 → 7.1.1` adds rules
+under a byte-identical argv, and every finding those new rules report is blamed
+on whoever opens the next PR.
+
+#### Enforcement
+
+1. **Compile**: `recallContexts` is required on `BaselineProducer`; a new
+   producer that omits it does not build.
+2. **`scripts/check-architecture.sh` Rule 19**: bans a per-kind tool table
+   (`buildToolsByKind` / `kindHasDriftingTool` / `toolsByKind`) and bans
+   `buildToolsMap(` outside the recall producers + its own module — a tool map
+   built elsewhere is a second source of truth, and the two WILL diverge (they
+   did). Annotate `// rule19-recall-ok` for justified exceptions.
+3. **`test/baseline/producers-contract.test.ts`**: every producer covers
+   EXACTLY its contributed kinds, every epoch is a real integer ≥ 1,
+   `RECALL_EPOCHS` covers every `IdentityKind`, and contexts are declared even
+   when no analyzer ran (a clean run still has recall).
+4. **`test/baseline/producer-playbook.test.ts`**: synthetic-producer injection
+   — its inputs must reach the union, MUTATING one must drift its kind, and an
+   UNCHANGED one must not. Both directions, because over-drift (a gate that
+   silently stops enforcing while looking healthy) is the more dangerous
+   failure.
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

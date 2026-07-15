@@ -75,6 +75,7 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
       configHashChanged: false,
       dxkitVersionChanged: false,
       toolVersionDiffs: [],
+      recallDrift: [],
       coverageDrift: [],
     },
     policy: {

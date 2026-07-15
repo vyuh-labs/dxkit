@@ -24,10 +24,23 @@ export interface ClassifyContext {
   readonly severity?: FindingSeverity;
   /** Kind discriminator from `IdentityInput`, for block-rule checks. */
   readonly kind?: string;
-  /** True when the baseline's scanner / advisory-db version differs
-   *  from the current scan. Reclassifies an `added` finding as
-   *  `tooling_drift` rather than blocking it as a new regression. */
-  readonly scannerVersionDiffers?: boolean;
+  /** True when what dxkit can SEE for this finding's KIND changed between the
+   *  baseline and this scan (CLAUDE.md Rule 19): a scanner or plugin version,
+   *  a linter config, a check command, an ingested engine — or dxkit's own
+   *  recall epoch for the kind. Reclassifies an `added` finding as
+   *  `tooling_drift` rather than blocking it as a new regression, because the
+   *  delta has an explanation other than "the developer introduced it".
+   *
+   *  Named for the CONCEPT, not one instance of it: this began as
+   *  `scannerVersionDiffers`, and the narrow name is part of why the
+   *  mechanism only ever covered five kinds' scanner versions while lint,
+   *  duplication and test-gap could never drift at all. */
+  readonly recallDrifted?: boolean;
+  /** The specific evidence behind `recallDrifted` — which input moved and from
+   *  what to what (`describeRecallDrift`). Rides onto the finding's reason
+   *  chain so a reader is told "eslint-plugin-react-hooks 7.0.1 -> 7.1.1", not
+   *  the useless generic "something changed". Absent ⇒ the generic wording. */
+  readonly recallDriftDetail?: string;
   /** True when the baseline's `.dxkit-ignore` / policy hash differs
    *  from the current scan. Reclassifies `added` as `config_drift` —
    *  UNLESS the finding is on a file the diff itself added/changed
@@ -102,11 +115,13 @@ export function classify(
 
   // Step 2: drift context can reclassify 'added'.
   if (status === 'added') {
-    if (context.scannerVersionDiffers) {
+    if (context.recallDrifted) {
       status = 'tooling_drift';
       reasons.push({
         code: 'tooling-drift',
-        detail: 'scanner or advisory-db version changed between runs',
+        detail:
+          context.recallDriftDetail ??
+          'what dxkit can see for this kind changed between runs, so this finding cannot be attributed to the diff',
       });
     } else if (context.configDiffers && !context.fileChangedInDiff) {
       // Config drift only explains a finding that appeared WITHOUT a code

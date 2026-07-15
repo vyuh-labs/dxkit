@@ -26,6 +26,7 @@ import * as path from 'path';
 import type { BaselineEntry, IdentitySchemeVersion } from './types';
 import type { SaltMode } from '../analyzers/tools/salt';
 import type { ScanCoverage } from './coverage';
+import type { RecallMap } from './recall';
 
 /** Banner stamped on every baseline file. Bump when the on-disk
  *  shape changes incompatibly so readers can refuse old / new files
@@ -79,11 +80,30 @@ export interface BaselineFile {
   readonly createdAt: string;
   readonly repo: BaselineRepoState;
   readonly analysis: BaselineAnalysisMeta;
-  /** Per-tool version strings keyed by tool name. Sparse: only the
-   *  tools that actually ran appear. Surfaced to the matcher as
-   *  the canonical "what scanned this repo" record so version drift
-   *  is detectable per-tool, not just at the aggregate level. */
+  /** Flattened name → version/hash record of everything that determined what
+   *  this scan could see. Sparse: only inputs that actually applied appear.
+   *
+   *  A DISPLAY projection of `recall` (`recallInputsUnion`) — human-readable in
+   *  `baseline show`, and the source of `analysis.toolchainHash`. NOT an
+   *  attribution source: the guardrail compares `recall` per kind, because a
+   *  flat union cannot say WHICH kind a given drift affects. That confusion is
+   *  exactly what made the pre-Rule-19 mechanism inert. */
   readonly tools: Readonly<Record<string, string>>;
+  /** What each finding kind could SEE when this baseline was captured
+   *  (CLAUDE.md Rule 19) — tool versions, plugin versions, check commands, plus
+   *  a dxkit-controlled `epoch` per kind.
+   *
+   *  The guardrail compares this against the current scan's per kind. Unequal ⇒
+   *  that kind's delta has an explanation other than "the developer introduced
+   *  it", so its net-new findings warn instead of blocking.
+   *
+   *  Optional: baselines written before Rule 19 omit it. Absent is NOT treated
+   *  as "comparable" — every kind reads as drifted until the repo re-baselines,
+   *  because assuming comparability is precisely the proxy Rule 19 exists to
+   *  kill. Do NOT bump `BASELINE_SCHEMA_VERSION` for this: a bump makes
+   *  `readBaselineFile` throw on every existing baseline, which is the opposite
+   *  of a graceful degrade. */
+  readonly recall?: RecallMap;
   /** Mode used to derive the salt for any `secret-hmac` entries.
    *  Read by the matcher to decide whether HMAC compare is
    *  available on the current run. Recorded even when no
