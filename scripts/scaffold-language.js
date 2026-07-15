@@ -462,6 +462,28 @@ export const ${id}: LanguageSupport = {
       // named (?<file>)(?<line>)(?<rule>)(?<message>) groups; or return null.
       return null;
     },
+    recallInputs(_ctx) {
+      // What determines what THIS linter can SEE, beyond its argv (Rule 19):
+      // its own version, its PLUGIN versions, its config file. Without these, a
+      // plugin bump adds rules under an unchanged command and every finding the
+      // new rules report is blamed on whoever opens the next PR.
+      //
+      // TODO(${id}): when \`lintCommand\` returns a real command, populate this:
+      //   return {
+      //     ...toolVersionInput(TOOL_DEFS.<tool>, _ctx.cwd, '<tool>'),
+      //     ...hashFirstConfig(_ctx.cwd, ['<linter>.toml', '.<linter>rc']),
+      //   };
+      // Helpers live in ./capabilities/recall-inputs. \`_ctx.mode\` is
+      // 'resolved' (what ran) or 'locked' (declared ranges).
+      //
+      // Inputs MUST be stable across MACHINES, not just runs: never an absolute
+      // path or a timestamp. An unstable input reads as permanent drift and
+      // silently turns the gate off while looking healthy.
+      //
+      // \`{}\` is correct while the gate is dormant — nothing runs, so nothing
+      // can drift.
+      return {};
+    },
   },
 
   // ─── LP-recipe metadata (populate every field) ─────────────────────────

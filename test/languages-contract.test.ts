@@ -47,6 +47,34 @@ describe('language registry', () => {
   });
 });
 
+/** Strip `//` line comments and block comments from TS source so a
+ *  source-grep tests the CODE, not the prose describing it. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+/**
+ * Packs that legitimately cannot probe their linter's VERSION as a recall input
+ * (CLAUDE.md Rule 19). A DECLARED exemption with a reason, never a silent
+ * omission — same discipline as Rule 10's `DEFERRED_KINDS` and Rule 16's
+ * `exemptionReason`. Adding an entry here is a deliberate, reviewable act;
+ * returning an empty input set quietly is not.
+ *
+ * Each entry states what is genuinely unavailable AND what closes it on the
+ * repo's side, so the residue is a known limit rather than a mystery.
+ */
+const RECALL_VERSION_EXEMPT: Readonly<Record<string, string>> = {
+  java:
+    'lintGate is dormant (lintCommand returns null): Java linters need project config, so no ' +
+    'stable text gate is pinned yet and nothing runs. Nothing runs means nothing can drift, so ' +
+    'an empty input set is accurate. Drop this exemption when a real command lands.',
+  csharp:
+    'the gate reads MSBuild warnings, whose analyzers ship with the .NET SDK — and the SDK is an ' +
+    'ambient runtime (cliBinaries), not a dxkit-managed registry tool (Rule 1), so there is no ' +
+    'honest version for findTool to probe. A repo closes this itself by pinning global.json, ' +
+    'which IS hashed here, alongside .editorconfig and Directory.Build.props.',
+};
+
 describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) => {
   it('has a non-empty displayName', () => {
     expect(typeof lang.displayName).toBe('string');
@@ -386,6 +414,112 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
       // The pattern must compile.
       expect(() => new RegExp(cmd.parse)).not.toThrow();
     }
+  });
+
+  // Rule 19: a pack that gates lint must also declare what makes its linter SEE
+  // differently. The command alone is not enough — `eslint-plugin-react-hooks
+  // ^7.0.1 -> 7.1.1` adds rules under a byte-identical argv, and without these
+  // inputs every finding the new rules report is blamed on the next PR.
+  it('declares lintGate.recallInputs returning a stable string map (Rule 19)', () => {
+    const g = lang.lintGate;
+    expect(
+      typeof g!.recallInputs,
+      `${lang.id}: lintGate must supply a recallInputs() builder (CLAUDE.md Rule 19)`,
+    ).toBe('function');
+
+    // Must not throw. The seam calls this behind a fail-open catch so a pack can
+    // never take the gate down — which also means a wiring bug (e.g. a
+    // `TOOL_DEFS.<missing>` that type-checks and is undefined at runtime, the
+    // one that shipped for cargo/dotnet) degrades to a silently empty input set
+    // rather than failing loudly. This assertion is what makes it loud.
+    let inputs!: Record<string, string>;
+    expect(() => {
+      inputs = g!.recallInputs({ cwd: process.cwd(), changedFiles: [], mode: 'resolved' });
+    }, `${lang.id}: recallInputs threw — a wiring bug here degrades to no attribution`).not.toThrow();
+
+    expect(inputs && typeof inputs).toBe('object');
+    for (const [key, value] of Object.entries(inputs)) {
+      expect(typeof value, `${lang.id}: recallInputs['${key}'] must be a string`).toBe('string');
+      // Inputs must be stable across MACHINES, not just runs. An absolute path
+      // differs between the machine that captured the baseline and the one that
+      // checks it, so it reads as permanent drift and silently turns the kind's
+      // gate off while looking healthy — the OVER-drift failure, which is worse
+      // than the misattribution Rule 19 fixes because nothing announces it.
+      expect(
+        path.isAbsolute(value),
+        `${lang.id}: recallInputs['${key}'] is an absolute path ('${value}') — ` +
+          `machine-specific inputs read as permanent drift`,
+      ).toBe(false);
+      expect(
+        /\d{4}-\d{2}-\d{2}T|\bGMT\b/.test(value),
+        `${lang.id}: recallInputs['${key}'] looks like a timestamp — it would drift on its own`,
+      ).toBe(false);
+    }
+  });
+
+  it('lintGate.recallInputs is deterministic across calls (Rule 19)', () => {
+    // An input that moves between two back-to-back calls on ONE machine can
+    // never be compared across two. Same discipline as D144's byte-identical
+    // tools map.
+    const g = lang.lintGate!;
+    const ctx = { cwd: process.cwd(), changedFiles: [], mode: 'resolved' as const };
+    expect(g.recallInputs(ctx)).toEqual(g.recallInputs(ctx));
+  });
+
+  it('lintGate.recallInputs honours the locked/resolved mode (Rule 19 / §8.1)', () => {
+    // Both modes must answer without throwing. They may agree (a pack whose
+    // linter is a standalone binary has no declared range to differ from).
+    const g = lang.lintGate!;
+    const base = { cwd: process.cwd(), changedFiles: [] };
+    expect(() => g.recallInputs({ ...base, mode: 'locked' })).not.toThrow();
+    expect(() => g.recallInputs({ ...base, mode: 'resolved' })).not.toThrow();
+  });
+
+  // Rule 19 PARITY: a pack that gates lint must probe its linter's VERSION, or
+  // declare why it cannot. Config hashes alone are not enough — they catch a
+  // repo editing its rules, never the toolchain moving underneath it, which is
+  // the case that shipped (an unchanged argv, a bumped plugin, 535 findings
+  // blamed on the next PR).
+  //
+  // Source-grep rather than a runtime probe, because at test time most packs'
+  // linters are not installed, so `recallInputs` legitimately returns `{}` and
+  // a runtime assertion could not tell "nothing installed here" from "this pack
+  // never asks". Mirrors the existing TOOL_DEFS ↔ tools[] parity rule above.
+  //
+  // An exemption is a DECLARED reason, never an omission — same discipline as
+  // Rule 10's DEFERRED_KINDS and Rule 16's `exemptionReason`. A new pack that
+  // returns the scaffold's placeholder `{}` fails here until it either wires a
+  // probe or says why it can't.
+  it('lintGate.recallInputs probes a linter version, or declares an exemption (Rule 19)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '..', 'src', 'languages', `${lang.id}.ts`),
+      'utf-8',
+    );
+    const whole = src.slice(src.indexOf('recallInputs('));
+    // Strip comments BEFORE grepping. The scaffold's own TODO says
+    // "...toolVersionInput(TOOL_DEFS.<tool>, …)" to show an author what to
+    // write — and a naive grep matched that comment and concluded the dormant
+    // scaffold already probed. A test that passes because of a code comment is
+    // worse than no test: it reports coverage that does not exist.
+    const body = stripComments(whole.slice(0, whole.indexOf('\n  },')));
+    const probes = /toolVersionInput|nodeLinterVersions|installedNodeVersion/.test(body);
+    const exemption = RECALL_VERSION_EXEMPT[lang.id];
+
+    if (exemption) {
+      expect(
+        probes,
+        `${lang.id}: declared exempt from a version probe but has one — drop the exemption`,
+      ).toBe(false);
+      expect(exemption.length, `${lang.id}: exemption needs a real reason`).toBeGreaterThan(40);
+      return;
+    }
+    expect(
+      probes,
+      `${lang.id}: lintGate.recallInputs does not probe its linter's version. A config hash ` +
+        `alone cannot see the toolchain move underneath the repo — which is the exact case ` +
+        `Rule 19 exists for. Add toolVersionInput(TOOL_DEFS.<tool>, …) (and declare the tool ` +
+        `in tools[]), or add an entry to RECALL_VERSION_EXEMPT saying why it is impossible.`,
+    ).toBe(true);
   });
 
   it('extraExcludes is an array of strings when defined', () => {

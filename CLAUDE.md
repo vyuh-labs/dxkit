@@ -1179,12 +1179,37 @@ on whoever opens the next PR.
 3. **`test/baseline/producers-contract.test.ts`**: every producer covers
    EXACTLY its contributed kinds, every epoch is a real integer ≥ 1,
    `RECALL_EPOCHS` covers every `IdentityKind`, and contexts are declared even
-   when no analyzer ran (a clean run still has recall).
+   when no analyzer ran (a clean run still has recall). Plus the parity guard
+   for the four kinds that are NOT wired per-pack: `secret` / `code` / `config`
+   / `dep-vuln` derive their inputs from whatever tool RAN (the aggregate's
+   provenance), so every pack's scanner flows through with no edit — and no
+   kind may read another kind's slot (the exact old-map bug).
 4. **`test/baseline/producer-playbook.test.ts`**: synthetic-producer injection
    — its inputs must reach the union, MUTATING one must drift its kind, and an
    UNCHANGED one must not. Both directions, because over-drift (a gate that
    silently stops enforcing while looking healthy) is the more dangerous
    failure.
+5. **`test/languages-contract.test.ts`** (the Rule 6 layer): every pack's
+   `lintGate.recallInputs` must exist, not throw, be deterministic across
+   calls, answer both `locked` and `resolved`, and contain no machine-specific
+   value (an absolute path or a timestamp reads as PERMANENT drift and silently
+   turns the kind's gate off). It must also probe its linter's VERSION — a
+   config hash alone never sees the toolchain move underneath the repo — or
+   carry a declared entry in `RECALL_VERSION_EXEMPT` explaining why it cannot
+   (today: `java`, whose gate is dormant; `csharp`, whose SDK is an ambient
+   runtime rather than a registry tool). A reason, never an omission — same
+   discipline as `DEFERRED_KINDS`.
+6. **`test/recipe-playbook.test.ts`**: the synthetic pack declares
+   `recallInputs`, and the playbook asserts they reach the spec AND the seam,
+   and that the `recall.inputs` knob reaches the pack. Without this the seam's
+   fail-open catch would make a pack that silently stopped contributing inputs
+   look identical to a pack with nothing to contribute.
+
+Note for the source-grepping assertions: strip comments first. The scaffold's
+own TODO reads `...toolVersionInput(TOOL_DEFS.<tool>, …)` to show an author what
+to write, and a naive grep matched that COMMENT and passed a dormant scaffold as
+if it probed. A test that passes because of a code comment reports coverage that
+does not exist.
 
 ## Release procedure
 
