@@ -78,7 +78,16 @@ export interface CustomCheckFinding {
   readonly message?: string;
 }
 
-export type CustomCheckStatus = 'pass' | 'fail' | 'skipped-unavailable' | 'skipped-timeout';
+export type CustomCheckStatus =
+  | 'pass'
+  | 'fail'
+  | 'skipped-unavailable'
+  | 'skipped-timeout'
+  /** The command's output outran the capture buffer, so dxkit never read it all.
+   *  Fail-OPEN (never a block): a finding count parsed from a fragment is fiction,
+   *  and it would slide between runs, so the baseline and the guardrail would
+   *  disagree about what is net-new. */
+  | 'skipped-overflow';
 
 /** Per-check outcome. `findings` is non-empty only on `fail`. */
 export interface CustomCheckResult {

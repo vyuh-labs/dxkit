@@ -24,6 +24,7 @@ import type { CorrectnessScope } from '../../languages/capabilities/correctness'
 import {
   makeCommandExec,
   defaultCommandExec,
+  tail,
   type CommandExec,
   type CommandOutcome,
 } from '../tools/bounded-exec';
@@ -35,6 +36,12 @@ export type CorrectnessStatus =
   | 'fail'
   | 'skipped-unavailable'
   | 'skipped-timeout'
+  /** The command's output outran the capture buffer. Fail-OPEN, for the same
+   *  reason a timeout is: the floor blocks, so it may only block on a failure it
+   *  actually OBSERVED. A fragment cut at an arbitrary byte is not an observation.
+   *  (This previously coded as `fail` and blocked — infrastructure failing closed,
+   *  contrary to this module's own stated policy.) */
+  | 'skipped-overflow'
   | 'skipped-none';
 
 export interface CorrectnessCheckResult {
@@ -94,12 +101,21 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-timeout' });
         continue;
       }
+      if (outcome.overflowed) {
+        // Output outran the capture buffer — fail-OPEN, same reasoning as the
+        // timeout above. The floor BLOCKS, so it must only block on a failure it
+        // actually read; a fragment is not evidence of a broken build.
+        checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-overflow' });
+        continue;
+      }
       checks.push({
         pack: id,
         label: cmd.label,
         bin: cmd.bin,
         status: outcome.code === 0 ? 'pass' : 'fail',
-        ...(outcome.code === 0 ? {} : { output: outcome.output }),
+        // DISPLAY only — `tail` belongs here, at the renderer boundary, not in the
+        // capture primitive where a parser could mistake it for the whole stream.
+        ...(outcome.code === 0 ? {} : { output: tail(outcome.output) }),
       });
     }
   }

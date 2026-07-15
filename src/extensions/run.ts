@@ -249,7 +249,6 @@ function runCommandProducer(
       bin: manifest.run.command,
       args: manifest.run.args ?? [],
       stdin: JSON.stringify(payload),
-      captureFullOutput: true,
     },
     cwd,
   );
