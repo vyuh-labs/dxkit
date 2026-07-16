@@ -75,6 +75,8 @@ import { computeChangedFiles } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { describeRecallDrift, diffRecall } from './recall';
 import type { RecallDrift } from './recall';
+import { collectAttributionGaps } from './attribution-gap';
+import type { AttributionGap } from './attribution-gap';
 import { evaluateFlowGateForGuardrail } from './flow-gate-check';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
@@ -290,12 +292,23 @@ export interface GuardrailCheckResult {
   readonly pairs: ReadonlyArray<ClassifiedPair>;
   readonly envelopeDrift: EnvelopeDrift;
   readonly policy: BrownfieldPolicy;
-  /** True when at least one classified pair blocks. The CLI maps
-   *  this to exit code 1. */
+  /** True when at least one classified pair blocks. Exit-code and verdict
+   *  derivation live in ONE place — `verdictCounts` in `check-renderers.ts` —
+   *  which also consumes `attributionGaps`; never map this field to an exit
+   *  code directly. */
   readonly blocks: boolean;
   /** True when at least one pair warns. Informational; doesn't
    *  affect exit code by itself. */
   readonly warns: boolean;
+  /**
+   * Kinds whose block-rule-class findings could not be attributed this run
+   * (recall drift demoted them out of block-rule reach — CLAUDE.md Rule 19).
+   * REQUIRED, and consumed by the one verdict derivation: while a gap exists
+   * the run cannot render PASSED — it refuses (`CANNOT GATE`, exit 1) and
+   * names the evidence + remedy, the same treatment the identity-scheme
+   * mismatch gets. Empty on a healthy run. See `src/baseline/attribution-gap.ts`.
+   */
+  readonly attributionGaps: ReadonlyArray<AttributionGap>;
   /** Allowlist entries added / removed between the baseline's
    *  commit SHA and the current working tree. Renderers (the PR
    *  comment markdown in particular) surface this so reviewers
@@ -870,6 +883,13 @@ export async function runGuardrailCheck(
   const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
   const baseWarns = options.changedOnly ? filteredWarns : warns;
 
+  // Attribution gaps: block-rule-class findings recall drift demoted out of
+  // block-rule reach. Computed from the SAME pair set the verdict reads
+  // (post --changed-only filter), so a filtered-out pair can neither block
+  // nor refuse. The verdict derivation (`verdictCounts`) consumes these —
+  // while one exists the run cannot render PASSED.
+  const attributionGaps = collectAttributionGaps(filteredPairs, envelopeDrift.recallDrift);
+
   return {
     mode,
     ...(baselinePath !== undefined ? { baselinePath } : {}),
@@ -881,6 +901,7 @@ export async function runGuardrailCheck(
     policy,
     blocks: baseBlocks || flowGate.blocks || schemaDriftGate.blocks || dupGate.blocks,
     warns: baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns,
+    attributionGaps,
     allowlistDelta,
     refExcludedKinds,
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),

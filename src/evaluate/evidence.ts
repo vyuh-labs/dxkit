@@ -36,8 +36,16 @@ export interface EvaluateRunEvidence {
   readonly subject?: string;
   readonly committedAt?: string;
   readonly prNumber?: number;
-  /** The gate verdict, lifted from the embedded payload. */
-  readonly verdict: { readonly blocks: boolean; readonly warns: boolean };
+  /** The gate verdict, lifted from the embedded payload. `refused` is the
+   *  CANNOT-GATE tier (attribution gap on a block-rule kind) — structurally
+   *  impossible in evaluate's ref-based runs (both sides gather under one
+   *  environment, so recall cannot drift), carried so the evidence never
+   *  under-reports the payload's own verdict. */
+  readonly verdict: {
+    readonly blocks: boolean;
+    readonly warns: boolean;
+    readonly refused: boolean;
+  };
   /** Blocking pairs, lifted for summary rendering (allowlist-suppressed
    *  pairs excluded — mirrors the payload's verdict). */
   readonly blocking: ReadonlyArray<{
@@ -270,7 +278,11 @@ export function buildRunEvidence(
     subject: meta.pair.subject || undefined,
     committedAt: meta.pair.committedAt || undefined,
     prNumber: meta.pair.prNumber,
-    verdict: { blocks: payload.verdict.blocks, warns: payload.verdict.warns },
+    verdict: {
+      blocks: payload.verdict.blocks,
+      warns: payload.verdict.warns,
+      refused: payload.verdict.refused,
+    },
     blocking,
     warningCount: payload.summary.warning,
     refExcludedKinds: result.refExcludedKinds,
@@ -299,7 +311,7 @@ export function buildErrorEvidence(
     subject: pair.subject || undefined,
     committedAt: pair.committedAt || undefined,
     prNumber: pair.prNumber,
-    verdict: { blocks: false, warns: false },
+    verdict: { blocks: false, warns: false, refused: false },
     blocking: [],
     warningCount: 0,
     refExcludedKinds: [],

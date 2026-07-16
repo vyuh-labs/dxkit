@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import { classify, classifyAll } from '../../src/baseline/classify';
+import { verdictWordFrom } from '../../src/baseline/check-renderers';
 import type { BrownfieldPolicy } from '../../src/baseline/policy';
 import type { ClassifyContext } from '../../src/baseline/classify';
 import type { MatchPair } from '../../src/baseline/types';
@@ -173,11 +174,68 @@ describe('classify — block-rule overrides', () => {
     expect(result.reasons.some((r) => r.detail.includes('newSecret'))).toBe(true);
   });
 
-  it('does not block when scanner-version drift reclassifies a secret away from added', () => {
+  it('does not block when scanner-version drift reclassifies a secret away from added — but records the disarmed rule', () => {
     const ctx: ClassifyContext = { kind: 'secret', recallDrifted: true };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.status).toBe('tooling_drift');
+    expect(result.blocks).toBe(false); // drift never blocks (Rule 19) …
+    // … but it never silently passes either: the disarmed rule is recorded, and
+    // the verdict layer refuses to print PASSED while this value exists.
+    expect(result.unattributableBlockRule).toBe('newSecret');
+  });
+
+  it('tooling drift does NOT weaken a net-new secret block into a silent pass (BLOCKER-1, the #20 bypass one status over)', () => {
+    // The exact shape that shipped: recall=ABSENT on every pre-Rule-19 baseline
+    // drifts `secret` → tooling_drift → classify's block-rule step used to skip
+    // it entirely → all 8 block rules disarmed → three live credentials exited 0
+    // under a PASSED banner. The classification can neither block (drift is real
+    // evidence of another cause) nor pass — it must surface the third answer.
+    const ctx: ClassifyContext = {
+      recallDrifted: true,
+      kindAbsentFromBaseline: true,
+      kind: 'secret',
+    };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.unattributableBlockRule).toBe('newSecret');
+    expect(result.reasons.some((r) => r.code === 'unattributable-block-rule')).toBe(true);
+    // And the verdict derivation refuses to pass over it:
+    const word = verdictWordFrom({ blocks: false, warns: true, unattributable: 1 });
+    expect(word.verdict).toBe('CANNOT GATE');
+    expect(word.exitCode).toBe(1);
+  });
+
+  it('a drifted kind with NO armed block rule stays a plain warning (the false-block prevention survives)', () => {
+    // The verified-desirable half of Rule 19: a one-byte lint-config change
+    // demoted the lint findings to warn — that must keep working. custom-check
+    // carries no block rule, so no refusal fires.
+    const ctx: ClassifyContext = { kind: 'custom-check', recallDrifted: true };
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('tooling_drift');
     expect(result.blocks).toBe(false);
+    expect(result.warns).toBe(true);
+    expect(result.unattributableBlockRule).toBeUndefined();
+  });
+
+  it('a DISARMED block rule produces no refusal (the policy owner opted out)', () => {
+    const noSecretRule: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      blockRules: { ...DEFAULT_BROWNFIELD_POLICY.blockRules, newSecret: false },
+    };
+    const ctx: ClassifyContext = { kind: 'secret', recallDrifted: true };
+    const result = classify(pair('added'), noSecretRule, ctx);
+    expect(result.status).toBe('tooling_drift');
+    expect(result.unattributableBlockRule).toBeUndefined();
+  });
+
+  it('a drifted code finding refuses only at the severities its block rules cover', () => {
+    const critical: ClassifyContext = { kind: 'code', severity: 'critical', recallDrifted: true };
+    const medium: ClassifyContext = { kind: 'code', severity: 'medium', recallDrifted: true };
+    expect(
+      classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, critical).unattributableBlockRule,
+    ).toBe('newCriticalSecurity');
+    expect(
+      classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, medium).unattributableBlockRule,
+    ).toBeUndefined();
   });
 
   it('a config-drift-demoted secret STILL blocks — config drift never disables a security block-rule (#20)', () => {

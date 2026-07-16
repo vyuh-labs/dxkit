@@ -81,6 +81,14 @@ export type SecretsGatherOutcome =
  */
 const gitleaksOutcomeCache = new Map<string, SecretsGatherOutcome>();
 
+/** The clear-cache seam the comment above anticipates: drop the per-cwd memo
+ *  so a caller that re-analyzes the SAME cwd after the tree changed within one
+ *  process (integration tests; a future daemon/diff mode) re-runs the scanner
+ *  instead of replaying a pre-change outcome. One-shot CLI runs never need it. */
+export function clearGitleaksOutcomeCache(): void {
+  gitleaksOutcomeCache.clear();
+}
+
 /**
  * Single source of truth for secret-scanning via gitleaks. Consumed by
  * `gitleaksProvider` (capability dispatcher) and by the Layer 2 legacy

@@ -38,6 +38,7 @@ function seed(cwd: string, markdown: string, blocks = false): void {
     blocks,
     warns: false,
     blockingCount: blocks ? 1 : 0,
+    unattributableCount: 0,
     warningCount: 0,
     markdown,
     ranAt: '2026-07-06T00:00:00.000Z',

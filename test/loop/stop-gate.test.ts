@@ -13,10 +13,30 @@ import type { CorrectnessCheckResult } from '../../src/analyzers/correctness/run
 type Pair = GuardrailJsonPayload['pairs'][number];
 
 function payload(pairs: Pair[]): GuardrailJsonPayload {
+  const blocks = pairs.some((p) => p.blocks && !p.suppressedByAllowlist);
   return {
+    verdict: { blocks, warns: false, refused: false, exitCode: blocks ? 1 : 0 },
+    attributionGaps: [],
     baseline: { findingsCount: 1020 },
     current: { branch: 'feature/x', commitSha: 'deadbeef', findingsCount: 1022 },
     pairs,
+  } as unknown as GuardrailJsonPayload;
+}
+
+/** A payload whose verdict REFUSED — block-rule-class findings recall drift
+ *  made unattributable (`CANNOT GATE`). Not agent-repairable. */
+function refusedPayload(): GuardrailJsonPayload {
+  return {
+    ...payload([]),
+    verdict: { blocks: false, warns: true, refused: true, exitCode: 1 },
+    attributionGaps: [
+      {
+        kind: 'secret',
+        rules: ['newSecret'],
+        findingCount: 3,
+        drift: { kind: 'secret', reason: 'absent-from-baseline', changed: [] },
+      },
+    ],
   } as unknown as GuardrailJsonPayload;
 }
 
@@ -74,6 +94,19 @@ describe('computeStopGate', () => {
     const d = await computeStopGate('/repo', { session_id: 's' }, async () => payload([waived]));
     expect(d.outcome).toBe('allow');
     expect(d.event.net_new_findings).toBe(0);
+  });
+
+  it('blocks the OPERATOR when the guardrail refused to gate (attribution gap) — never allows a stop over CANNOT GATE', async () => {
+    // BLOCKER-1's loop surface: on a pre-Rule-19 baseline the drifted secret
+    // used to demote to a warning and the loop declared "done" over three live
+    // credentials. Refusal is a baseline problem — the agent must not
+    // re-baseline to clear it, so the stop routes to the operator.
+    const d = await computeStopGate('/repo', { session_id: 's' }, async () => refusedPayload());
+    expect(d.outcome).toBe('block-operator');
+    expect(d.event.allowed).toBe(false);
+    expect(d.message).toContain('CANNOT GATE');
+    expect(d.message).toContain('secret');
+    expect(d.message).toContain('newSecret');
   });
 
   it('records stop_hook_active on the ledger event', async () => {

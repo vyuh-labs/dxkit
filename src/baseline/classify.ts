@@ -81,6 +81,22 @@ export interface ClassifyResult {
   readonly blocks: boolean;
   /** Whether the policy warns. */
   readonly warns: boolean;
+  /**
+   * Present when this finding was demoted `added` → `tooling_drift` by recall
+   * drift (CLAUDE.md Rule 19) BUT an armed block rule would have fired had it
+   * stayed `added`. Names the rule that would have fired.
+   *
+   * This is the value that makes un-observation impossible to render as a
+   * pass: the classifier can neither BLOCK (the drift is real evidence of a
+   * cause other than the developer — blocking would misattribute) nor let the
+   * finding warn its way into a PASSED banner (a net-new secret rode exactly
+   * that path out the door: recall-absent → `tooling_drift` → every block rule
+   * disarmed — the closed #20 config-drift bypass, one status over). So the
+   * classification records that the answer is UNKNOWABLE, and the verdict
+   * layer refuses to say PASSED while any such finding exists — the same
+   * treatment the identity-scheme mismatch already gets.
+   */
+  readonly unattributableBlockRule?: string;
   /** Reasons backing the status — composed of the matcher's reasons
    *  plus any classification-time additions. */
   readonly reasons: ReadonlyArray<MatchReason>;
@@ -112,6 +128,7 @@ export function classify(
 ): ClassifyResult {
   let status: FindingStatus = pair.status;
   const reasons: MatchReason[] = [...pair.reasons];
+  let unattributableBlockRule: string | undefined;
 
   // Step 2: drift context can reclassify 'added'.
   if (status === 'added') {
@@ -123,6 +140,26 @@ export function classify(
           context.recallDriftDetail ??
           'what dxkit can see for this kind changed between runs, so this finding cannot be attributed to the diff',
       });
+      // Rule 19 demotes because the delta has an explanation other than "the
+      // developer introduced it". But when the demoted finding would have been
+      // caught by an armed block rule — the policy's non-negotiable floor —
+      // demote-to-warn quietly disarms that floor (a live credential then rides
+      // a PASSED banner out the door). Blocking would misattribute; passing
+      // would under-claim what the gate enforces. Record the third answer:
+      // this finding is UNATTRIBUTABLE, and the verdict layer must refuse to
+      // pass over it. Evaluated through the ONE `evaluateBlockRules` (no
+      // second kind↔rule table to drift — CLAUDE.md 2.30).
+      const wouldHaveFired = evaluateBlockRules('added', policy.blockRules, context);
+      if (wouldHaveFired) {
+        unattributableBlockRule = wouldHaveFired;
+        reasons.push({
+          code: 'unattributable-block-rule',
+          detail:
+            `block rule ${wouldHaveFired} covers this finding, but recall drift means dxkit ` +
+            `cannot tell whether it is net-new — the guardrail refuses to pass until the ` +
+            `baseline is re-captured`,
+        });
+      }
     } else if (context.configDiffers && !context.fileChangedInDiff) {
       // Config drift only explains a finding that appeared WITHOUT a code
       // change (e.g. a path the policy newly un-ignored). A finding on a file
@@ -202,7 +239,13 @@ export function classify(
   const blocks = blockRuleHit !== null || policy.block.includes(status);
   const warns = policy.warn.includes(status);
 
-  return { status, blocks, warns, reasons };
+  return {
+    status,
+    blocks,
+    warns,
+    reasons,
+    ...(unattributableBlockRule !== undefined ? { unattributableBlockRule } : {}),
+  };
 }
 
 /**
@@ -220,7 +263,12 @@ export function classify(
  * pass as a warning (feedback #20). `tooling_drift` (a scanner / advisory-DB
  * version change CAN surface a phantom critical that isn't a real regression) and
  * `uncertain` (scanner wobble) still suppress block-rules, preserving the
- * legitimate false-block prevention there.
+ * legitimate false-block prevention there — but `tooling_drift` does NOT get to
+ * silently pass a block-rule-class finding: the recall-drift branch above records
+ * `unattributableBlockRule` for it, and the verdict layer refuses to print PASSED
+ * while one exists. Without that, `tooling_drift` is the #20 bypass one status
+ * over: every pre-Rule-19 baseline reads as drifted, so a net-new secret sailed
+ * through as a warning on upgrade day while the banner said PASSED.
  */
 function evaluateBlockRules(
   status: FindingStatus,
