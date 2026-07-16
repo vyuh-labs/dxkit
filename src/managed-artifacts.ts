@@ -54,6 +54,7 @@ import {
   extensionsRefreshEnabled,
   flowRefreshEnabled,
   installCiGuardrails,
+  installCiHostGates,
   installDevcontainer,
   installDxkitDevDependency,
   installHooks,
@@ -193,6 +194,26 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     install: (cwd, { force, flags }) =>
       installCiGuardrails(cwd, { force, pushTrigger: !!flags.withCiPushTrigger }),
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-guardrails.yml'),
+  },
+  {
+    // Per-host gate jobs GENERATED from pack-declared execution requirements
+    // (CLAUDE.md Rule 20): a capability whose hosts exclude the primary
+    // ubuntu runner (the `net*-windows` build class) gets a
+    // `dxkit-gate-<host>` job running its correctness floor. Derived from
+    // the ci-guardrails flag — the host gates are that surface's placement
+    // outputs, not an independent opt-in — while the ACTUAL emission is
+    // repo-derived inside the installer (no plan ⇒ no files; a stack change
+    // retires a stale generated job). Artifacts enumerate every possible
+    // host file so uninstall cleans whichever exist.
+    id: 'ci-host-gates',
+    gate: { kind: 'derived', enabled: (flags) => !!flags.withCiGuardrails },
+    artifacts: () => [
+      '.github/workflows/dxkit-gate-windows.yml',
+      '.github/workflows/dxkit-gate-macos.yml',
+    ],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiHostGates(cwd, { force }),
   },
   {
     // Self-heal a missing project-local devDependency on upgrade: the set of

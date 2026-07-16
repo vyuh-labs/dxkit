@@ -21,8 +21,11 @@ import {
   buildDevcontainerExtensions,
   buildDevcontainerFeatures,
   allCiSetupSteps,
+  collectExecutionRequirements,
+  detectActiveLanguages,
 } from './languages';
 import type { CiSetupStep } from './languages/types';
+import { resolvePlacement, type PlacementPlan } from './execution';
 import { VERSION } from './constants';
 import {
   resolveBaselineMode,
@@ -573,6 +576,106 @@ export function installCiGuardrails(
     result.notes.push('Refreshed the CI guardrails workflow for the current language stack.');
   }
   return result;
+}
+
+/** Destination filenames for generated per-host gate jobs. Enumerated (not
+ *  computed) so the managed-surface registry can list every artifact uninstall
+ *  may need to delete without reading the repo. */
+export const HOST_GATE_WORKFLOWS = {
+  windows: 'dxkit-gate-windows.yml',
+  macos: 'dxkit-gate-macos.yml',
+} as const;
+
+/** The placement plan for a repo — one derivation path for the generator and
+ *  its tests. Fail-open to an empty plan: host-gate generation is ADDITIVE,
+ *  and a detection error must not take the primary guardrail install down. */
+export function repoPlacementPlan(cwd: string): PlacementPlan {
+  try {
+    const packs = detectActiveLanguages(cwd);
+    return resolvePlacement(collectExecutionRequirements(cwd, packs));
+  } catch {
+    return { primary: [], hostJobs: [] };
+  }
+}
+
+/**
+ * Generate (or refresh, or retire) the per-host gate jobs the placement plan
+ * demands (CLAUDE.md Rule 20, design §4). A capability whose declared hosts
+ * exclude the primary ubuntu runner — the `net*-windows` build class — gets a
+ * `dxkit-gate-<host>` job running the correctness floor for exactly the packs
+ * placed there, with toolchain setup rendered from those packs' `ciSetup`.
+ * Deliberately setup-action-only: never a hardcoded IDE install path (the
+ * `Visual Studio\<year>` literal class — runner images move; pinned by test).
+ *
+ * A previously generated job whose host the plan no longer needs is REMOVED
+ * (ownership-sniffed — only a dxkit-managed file, never a user's), so a stack
+ * change cannot leave a stale required check behind.
+ */
+export function installCiHostGates(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  let result = emptyResult();
+  const plan = repoPlacementPlan(cwd);
+  const jobs = new Map(plan.hostJobs.map((j) => [j.host, j]));
+
+  for (const host of Object.keys(HOST_GATE_WORKFLOWS) as (keyof typeof HOST_GATE_WORKFLOWS)[]) {
+    const destName = HOST_GATE_WORKFLOWS[host];
+    const destAbs = path.join(cwd, '.github', 'workflows', destName);
+    const job = jobs.get(host);
+    if (!job) {
+      if (fs.existsSync(destAbs) && isDxkitManagedWorkflow(readFileSafe(destAbs))) {
+        fs.rmSync(destAbs, { force: true });
+        result.notes.push(
+          `Removed .github/workflows/${destName} — no capability requires a ${host} host anymore.`,
+        );
+      }
+      continue;
+    }
+
+    // Toolchain setup for the placed packs only (their pack-declared ciSetup,
+    // with the repo's detected versions — Rule 6 via allCiSetupSteps).
+    let setup = '';
+    try {
+      const flags = { ...detect(cwd).languages };
+      for (const id of Object.keys(flags) as (keyof typeof flags)[]) {
+        if (!job.packs.includes(id)) flags[id] = false;
+      }
+      const steps = allCiSetupSteps(flags, cwd);
+      setup = steps.length === 0 ? '' : steps.map(renderCiSetupStep).join('\n') + '\n';
+    } catch {
+      setup = '';
+    }
+
+    result = mergeShipResults(
+      result,
+      installWorkflow(
+        cwd,
+        'dxkit-gate-host.yml',
+        opts,
+        {
+          __DXKIT_GATE_HOST__: job.host,
+          __DXKIT_GATE_RUNNER__: job.runner,
+          __DXKIT_GATE_PACKS__: job.packs.join(','),
+          ['__DXKIT_GATE_HOST_SETUP__\n']: setup,
+        },
+        destName,
+      ),
+    );
+    if (result.installed.includes(path.join('.github', 'workflows', destName))) {
+      result.notes.push(
+        `Generated dxkit-gate-${host} (${job.packs.join(', ')}) — mark it a required PR check alongside dxkit-guardrails.`,
+      );
+    }
+  }
+  return result;
+}
+
+/** Combine two ship results — local helper for multi-file installers. */
+function mergeShipResults(a: ShipInstallResult, b: ShipInstallResult): ShipInstallResult {
+  return {
+    installed: [...a.installed, ...b.installed],
+    skipped: [...a.skipped, ...b.skipped],
+    sidecars: [...a.sidecars, ...b.sidecars],
+    notes: [...a.notes, ...b.notes],
+  };
 }
 
 /** The single destination filename for the baseline-refresh workflow, whatever

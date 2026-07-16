@@ -104,6 +104,10 @@ export interface RunFloorForSurfaceOptions {
   readonly exec?: CommandExec;
   /** Injected for tests; defaults to the active packs detected at `cwd`. */
   readonly packs?: readonly LanguageSupport[];
+  /** Scope the floor to these pack ids (a generated per-host gate job runs
+   *  only the packs PLACED on its host — Rule 20). Unknown ids are ignored;
+   *  undefined runs every active pack. */
+  readonly packIds?: readonly string[];
   /** Injected for tests; defaults to the real adaptive resolver. */
   readonly resolveEnabled?: (
     surface: RunnableSurface,
@@ -132,7 +136,9 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
     };
   }
 
-  const packs = (opts.packs ?? detectActiveLanguages(cwd)).filter((p) => p.correctness);
+  const packs = (opts.packs ?? detectActiveLanguages(cwd))
+    .filter((p) => p.correctness)
+    .filter((p) => !opts.packIds || opts.packIds.includes(p.id));
   if (packs.length === 0) {
     return {
       surface,

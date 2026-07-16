@@ -10,6 +10,7 @@ import type {
 } from './types';
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import type { CapabilityRequirement } from '../execution';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -793,6 +794,46 @@ export function buildDevcontainerExtensions(flags: DetectedStack['languages']): 
 
   for (const lang of activeLanguagesFromFlags(flags)) {
     for (const ext of lang.devcontainerExtensions ?? []) add(ext);
+  }
+  return out;
+}
+
+/**
+ * Collect every active pack's per-capability execution requirement (Rule 20)
+ * — the languages-layer input to the pure placement resolver
+ * (`src/execution/placement.ts:resolvePlacement`). One collector so the
+ * resolver, doctor, and the workflow generator all see the identical
+ * capability set from the identical path.
+ */
+export function collectExecutionRequirements(
+  cwd: string,
+  packs: readonly LanguageSupport[],
+): CapabilityRequirement[] {
+  const out: CapabilityRequirement[] = [];
+  for (const lang of packs) {
+    out.push({
+      pack: lang.id,
+      capability: 'correctness',
+      requirement: lang.correctness.execution(cwd),
+    });
+    if (lang.lintGate) {
+      out.push({
+        pack: lang.id,
+        capability: 'lintGate',
+        requirement: lang.lintGate.execution(cwd),
+      });
+    }
+    const dep = lang.capabilities?.depVulns;
+    if (dep) {
+      out.push({ pack: lang.id, capability: 'depVulns', requirement: dep.execution(cwd) });
+    }
+    if (lang.deepSast) {
+      out.push({
+        pack: lang.id,
+        capability: 'deepSast',
+        requirement: lang.deepSast.execution(cwd),
+      });
+    }
   }
   return out;
 }
