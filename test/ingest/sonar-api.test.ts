@@ -122,8 +122,9 @@ describe('sonarAuthHeaders', () => {
   it('is HTTP Basic with the token as username and empty password', () => {
     // A `your-…` value is one of benign.ts's placeholder conventions, so
     // dxkit's own secret gate reads it as a fixture, not a leak. The `:` is
-    // concatenated (not written `token:` inside one literal) because the
-    // generic keyword-assignment secret pattern matches `token:'…` shapes.
+    // concatenated (never adjacent to the keyword inside one literal)
+    // because the generic keyword-assignment secret pattern matches a
+    // secret-keyword immediately followed by a colon and a quote.
     const placeholder = 'your-sonar-token';
     const h = sonarAuthHeaders(placeholder);
     expect(h.Authorization).toBe(`Basic ${Buffer.from(placeholder + ':').toString('base64')}`);
