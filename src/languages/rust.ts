@@ -36,7 +36,8 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile } from './version-detect';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, jsonLines, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 interface CargoMessage {
@@ -944,14 +945,55 @@ const rustCorrectnessProvider: CorrectnessProvider = {
 /** clippy `--message-format short` line: `<file>:<line>:<col>: warning|error: <message>`.
  *  clippy's short format omits the lint name, so there is no `rule` group — the
  *  finding is (file, line, message). Exported for the format-contract test. */
-export const RUST_CLIPPY_SHORT_PARSE =
-  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?:warning|error):\\s+(?<message>.*)$';
+/**
+ * Map cargo/clippy `--message-format json` (newline-delimited JSON) to raw
+ * located findings. Each relevant line is `{ reason: 'compiler-message',
+ * message: { code: { code } | null, level, message, spans: [...] } }`; the
+ * primary span carries the location. Only `warning`/`error` levels count —
+ * `note`/`help` are sub-diagnostics of a parent finding.
+ *
+ * This is the rule-name identity fix: the short display format prints NO lint
+ * name, so the prior parse minted identities from file+lineWindow alone and
+ * two different lints in one 3-line window collided — a REAL net-new lint on
+ * a line that already carried a grandfathered one slid through the gate.
+ * `message.code.code` (`clippy::needless_return`, `unused_variables`) is the
+ * discriminator the display format was hiding.
+ *
+ * Exported so the lint-gate format contract is testable against real samples.
+ */
+export function parseClippyJson(output: string): RawLocatedFinding[] {
+  const out: RawLocatedFinding[] = [];
+  for (const entry of jsonLines(output)) {
+    const record = asRecord(entry);
+    if (str(record?.reason) !== 'compiler-message') continue;
+    const message = asRecord(record?.message);
+    if (!message) continue;
+    const level = str(message.level);
+    if (level !== 'warning' && level !== 'error') continue;
+    const text = str(message.message);
+    if (!text) continue;
+    const spans = Array.isArray(message.spans) ? message.spans.map(asRecord) : [];
+    const primary = spans.find((s) => s?.is_primary === true) ?? spans[0];
+    const file = str(primary?.file_name);
+    if (!file) continue; // e.g. the trailing "N warnings emitted" summary
+    const line = num(primary?.line_start);
+    const rule = str(asRecord(message.code)?.code);
+    out.push({
+      file,
+      ...(line !== undefined ? { line } : {}),
+      ...(rule !== undefined ? { rule } : {}),
+      message: text,
+    });
+  }
+  return out;
+}
 
 /**
  * Lint-GATE provider: clippy, the standard Rust linter that ships with the
  * toolchain (via cargo). `-D warnings` promotes every lint to a non-zero exit so
- * the gate actually fires (clippy is exit-0 on warnings otherwise); `--message-
- * format short` gives one `file:line:col: warning: message` per finding. A repo
+ * the gate actually fires (clippy is exit-0 on warnings otherwise);
+ * `--message-format json` is cargo's native NDJSON diagnostic stream — see
+ * `parseClippyJson` for why the short display format was an identity bug. A repo
  * without clippy is handled by the runner's fail-open on a failed cargo
  * subcommand only insofar as it produces no located matches — clippy is part of
  * a default rustup install, the common case when a Rust team opts into linting.
@@ -960,8 +1002,8 @@ const rustLintGateProvider: LintGateProvider = {
   lintCommand() {
     return {
       bin: 'cargo',
-      args: ['clippy', '--message-format', 'short', '--', '-D', 'warnings'],
-      parse: RUST_CLIPPY_SHORT_PARSE,
+      args: ['clippy', '--message-format', 'json', '--', '-D', 'warnings'],
+      parse: { kind: 'structured', label: 'clippy-json', parse: parseClippyJson },
       expectedExit: 0,
     };
   },

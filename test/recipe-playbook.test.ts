@@ -203,8 +203,27 @@ const mockPlaybookPack = {
   lintGate: {
     lintCommand: () => ({
       bin: 'playbook-lint-mock',
-      args: ['--gate'],
-      parse: '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
+      args: ['--gate', '--format', 'json'],
+      // STRUCTURED parse (the preferred kind, 3.9): a future pack maps its
+      // linter's native machine-readable output; this proves the seam carries
+      // a structured pack's parse function end-to-end with no per-pack wiring.
+      parse: {
+        kind: 'structured' as const,
+        label: 'playbook-json',
+        parse: (output: string) => {
+          try {
+            const data = JSON.parse(output) as Array<{
+              file: string;
+              line: number;
+              rule: string;
+              message: string;
+            }>;
+            return Array.isArray(data) ? data : [];
+          } catch {
+            return [];
+          }
+        },
+      },
       expectedExit: 0,
     }),
     // Recall inputs (Rule 19) — distinctive values so the assertion below can
@@ -439,7 +458,20 @@ describe('recipe playbook — synthetic pack', () => {
     expect(playbookSpec).toBeDefined();
     expect(playbookSpec?.command.bin).toBe('playbook-lint-mock');
     expect(playbookSpec?.blocking).toBe(true);
-    expect(playbookSpec?.parse).toEqual({ mode: 'regex', pattern: expect.any(String) });
+    // The structured parse function must reach the spec INTACT — the seam
+    // carries the pack's own parser, not a projection of it.
+    expect(playbookSpec?.parse).toEqual({
+      mode: 'structured',
+      label: 'playbook-json',
+      parse: expect.any(Function),
+    });
+    if (playbookSpec?.parse.mode === 'structured') {
+      expect(
+        playbookSpec.parse.parse(
+          JSON.stringify([{ file: 'a.pbk', line: 3, rule: 'PB1', message: 'mock' }]),
+        ),
+      ).toEqual([{ file: 'a.pbk', line: 3, rule: 'PB1', message: 'mock' }]);
+    }
     // Disabled lint policy yields nothing (opt-in default off).
     expect(lintGateSpecs(packs, { cwd: '/x', changedFiles: [] }, undefined)).toEqual([]);
   });
@@ -493,7 +525,10 @@ describe('recipe playbook — synthetic pack', () => {
       policy: { lint: { enabled: true } } as unknown as BrownfieldPolicy,
     });
     expect(inputs['lint:playbook/playbook-plugin-mock']).toBe('2.1.0');
-    expect(inputs['lint:playbook/cmd']).toBe('playbook-lint-mock --gate');
+    expect(inputs['lint:playbook/cmd']).toBe('playbook-lint-mock --gate --format json');
+    // A structured parse's recall identity is its pack-declared label — the
+    // function itself cannot be hashed (Rule 19).
+    expect(inputs['lint:playbook/parse']).toBe('structured:playbook-json');
   });
 
   // 2.7 Sprint 1: exported-symbol detection registry helper iterates

@@ -40,7 +40,8 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile } from './version-detect';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 interface GolangciIssue {
@@ -948,8 +949,32 @@ const goCorrectnessProvider: CorrectnessProvider = {
  */
 /** golangci-lint `--out-format line-number` line: `<file>:<line>:<col>: <message> (<linter>)`.
  *  Exported so the lint-gate format contract is testable against a real sample. */
-export const GO_GOLANGCI_LINE_PARSE =
-  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\((?<rule>[^)]+)\\)\\s*$';
+/** Map `golangci-lint run --out-format json` output to raw located findings.
+ *  One JSON object: `{ Issues: [{ FromLinter, Text, Pos: { Filename, Line } }] }`
+ *  (`Issues` is null on a clean run). `FromLinter` is the same rule tag the
+ *  line-number display format put in trailing parens, so identities carry over.
+ *  Exported so the lint-gate format contract is testable against real samples. */
+export function parseGolangciJson(output: string): RawLocatedFinding[] {
+  const data = asRecord(extractJsonBlob(output));
+  if (!data || !Array.isArray(data.Issues)) return [];
+  const out: RawLocatedFinding[] = [];
+  for (const entry of data.Issues) {
+    const issue = asRecord(entry);
+    const pos = asRecord(issue?.Pos);
+    const file = str(pos?.Filename);
+    const message = str(issue?.Text);
+    if (!issue || !file || !message) continue;
+    const line = num(pos?.Line);
+    const rule = str(issue.FromLinter);
+    out.push({
+      file,
+      ...(line !== undefined ? { line } : {}),
+      ...(rule !== undefined ? { rule } : {}),
+      message,
+    });
+  }
+  return out;
+}
 
 const goLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
@@ -957,8 +982,12 @@ const goLintGateProvider: LintGateProvider = {
     if (!gl.available || !gl.path) return null;
     return {
       bin: gl.path,
-      args: ['run', '--out-format', 'line-number'],
-      parse: GO_GOLANGCI_LINE_PARSE,
+      // Native JSON (v1 flag syntax — the registry pins golangci-lint v1;
+      // v2 renamed the flag family), parsed structurally: the line-number
+      // display format collapses a multi-line diagnostic to its first line
+      // and a regex over it silently drops what doesn't fit (Rule 5).
+      args: ['run', '--out-format', 'json'],
+      parse: { kind: 'structured', label: 'golangci-json', parse: parseGolangciJson },
       expectedExit: 0,
     };
   },

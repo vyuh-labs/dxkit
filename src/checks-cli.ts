@@ -75,7 +75,7 @@ function listChecks(
         source: isLintSpec(s) ? 'built-in-lint' : 'user-check',
         command: renderCommand(s),
         blocking: s.blocking,
-        parse: s.parse.mode, // 'exit' (binary) | 'regex' (located)
+        parse: s.parse.mode, // 'exit' (binary) | 'regex' | 'structured' (located)
         expectedExit: s.expectedExit,
       })),
       warnings,
@@ -111,7 +111,7 @@ function renderGroup(title: string, specs: readonly CustomCheckSpec[]): void {
   logger.info(title);
   for (const s of specs) {
     const intent = s.blocking ? 'blocking' : 'warn-only';
-    const shape = s.parse.mode === 'regex' ? 'located' : 'binary';
+    const shape = s.parse.mode === 'exit' ? 'binary' : 'located';
     logger.dim(`  ${s.name.padEnd(22)} ${intent} · ${shape}`);
     logger.dim(`    $ ${renderCommand(s)}`);
   }

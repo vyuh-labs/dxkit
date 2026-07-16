@@ -37,7 +37,8 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 import { readRepoFile, repoFileExists } from './version-detect';
 
@@ -958,8 +959,30 @@ const pyCorrectnessProvider: CorrectnessProvider = {
  */
 /** ruff `--output-format concise` line: `<file>:<line>:<col>: <CODE> <message>`.
  *  Exported so the lint-gate format contract is testable against a real sample. */
-export const PY_RUFF_CONCISE_PARSE =
-  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<rule>[A-Z]+\\d+)\\s+(?<message>.*)$';
+/** Map ruff `--output-format json` output to raw located findings. One entry
+ *  per diagnostic: `code` (the rule, null for syntax errors), an ABSOLUTE
+ *  `filename` (the seam boundary relativizes), `location.row`, `message`.
+ *  Exported so the lint-gate format contract is testable against real samples. */
+export function parseRuffJson(output: string): RawLocatedFinding[] {
+  const data = extractJsonBlob(output);
+  if (!Array.isArray(data)) return [];
+  const out: RawLocatedFinding[] = [];
+  for (const entry of data) {
+    const d = asRecord(entry);
+    const file = str(d?.filename);
+    const message = str(d?.message);
+    if (!d || !file || !message) continue;
+    const line = num(asRecord(d.location)?.row);
+    const rule = str(d.code);
+    out.push({
+      file,
+      ...(line !== undefined ? { line } : {}),
+      ...(rule !== undefined ? { rule } : {}),
+      message,
+    });
+  }
+  return out;
+}
 
 const pyLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
@@ -967,8 +990,11 @@ const pyLintGateProvider: LintGateProvider = {
     if (!ruff.available || !ruff.path) return null;
     return {
       bin: ruff.path,
-      args: ['check', '.', '--output-format', 'concise'],
-      parse: PY_RUFF_CONCISE_PARSE,
+      // Native JSON, parsed structurally — the concise display format is for
+      // humans, and a diagnostic whose message breaks the line shape is
+      // silently dropped by a display regex (the eslint class, Rule 5).
+      args: ['check', '.', '--output-format', 'json'],
+      parse: { kind: 'structured', label: 'ruff-json', parse: parseRuffJson },
       expectedExit: 0,
     };
   },
