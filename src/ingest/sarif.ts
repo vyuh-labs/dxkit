@@ -80,6 +80,9 @@ function engineFromDriver(name: string | undefined): SourceEngine {
   if (n.includes('codeql')) return 'codeql';
   if (n.includes('snyk')) return 'snyk-code';
   if (n.includes('semgrep')) return 'semgrep-pro';
+  // A customer who exports Sonar SARIF via a converter still gets the
+  // first-class engine label (the native path is the API reader).
+  if (n.includes('sonar')) return 'sonarqube';
   return 'sarif';
 }
 

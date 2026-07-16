@@ -236,6 +236,15 @@ describe('parseSarif', () => {
     expect(parseSarif(raw, 'codeql')[0].engine).toBe('codeql');
   });
 
+  it('labels a Sonar-exported SARIF with the first-class sonarqube engine', () => {
+    const raw = sarifWith(
+      [{ ruleId: 'r', locations: [loc('a.cs', 1)] }],
+      [{ id: 'r' }],
+      'SonarScanner for .NET',
+    );
+    expect(parseSarif(raw)[0].engine).toBe('sonarqube');
+  });
+
   it('resolves a rule referenced by index', () => {
     const raw = JSON.stringify({
       runs: [

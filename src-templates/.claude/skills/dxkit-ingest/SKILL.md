@@ -1,6 +1,6 @@
 ---
 name: dxkit-ingest
-description: Bring an external interprocedural-SAST engine's findings (Snyk Code, CodeQL, or any SARIF) into dxkit so they're fingerprinted, baselined, guardrailed, graph-linked, and fixable. Use when the user says "ingest Snyk", "pull our Snyk Code findings", "import a SARIF file", "run CodeQL and bring it in", or asks why dxkit's SAST finds less than Snyk/CodeQL.
+description: Bring an external SAST engine's findings (Snyk Code, SonarQube/SonarCloud, CodeQL, or any SARIF) into dxkit so they're fingerprinted, baselined, guardrailed, graph-linked, and fixable. Use when the user says "ingest Snyk", "ingest Sonar", "pull our Snyk Code findings", "bring in our SonarQube issues", "import a SARIF file", "run CodeQL and bring it in", or asks why dxkit's SAST finds less than Snyk/Sonar/CodeQL.
 ---
 
 # dxkit-ingest
@@ -16,6 +16,7 @@ Run the resolver's logic before ingesting:
 | Situation | Engine | Why |
 |---|---|---|
 | Customer already runs **Snyk** (any tier, incl. free) | **Snyk Code via REST** | Reads stored findings — consumes **no** Snyk test quota. Their own license. |
+| Customer already runs **SonarQube / SonarCloud** (common in .NET/Java shops) | **Sonar via Web API** | Reads the already-computed issues — no analysis re-run. Their own license; deepest C#/Java coverage most enterprises have. |
 | **Open-source** repo | **CodeQL on-demand** | CodeQL's CLI is licensed for open source. |
 | **Private** repo with **GitHub Advanced Security** | **CodeQL on-demand** | GHAS covers private-repo CodeQL. Confirm consent first. |
 | Private repo, no GHAS, no Snyk | stay on community semgrep | No licensed interprocedural engine available. Don't run CodeQL on private code without GHAS. |
@@ -54,7 +55,24 @@ token; only whoever runs `ingest` (ideally one CI refresh job) needs it.
 If `SNYK_TOKEN` is unset, dxkit says so explicitly — `export` it (or set the CI
 secret); it will not read a `.env` file for you.
 
-## Path B — ingest a SARIF file (any engine)
+## Path B — ingest SonarQube / SonarCloud
+
+Sonar is **not** SARIF-native — dxkit reads the already-computed issues from the Sonar Web API instead (no analysis re-run, quota-free). Scope is **BUG + VULNERABILITY** only, deliberately not `CODE_SMELL` (the maintainability firehose would make a security-shaped gate noisy).
+
+```bash
+# Token: a Sonar user token (My Account → Security → Generate Token).
+export SONAR_TOKEN=...       # or a SONAR_* key in .env — same lifting rules as SNYK_*
+npx vyuh-dxkit ingest --from-sonar --sonar-host https://sonarcloud.io --sonar-project <projectKey>
+```
+
+- host/project resolve from the flags, then `.vyuh-dxkit.json` (`{ "deepSast": { "sonar": { "hostUrl": "…", "projectKey": "…" } } }`), then the environment (`SONAR_HOST_URL` / `SONAR_PROJECT_KEY` — the names sonar-scanner itself uses, so a repo with Sonar CI already has them).
+- SonarCloud orgs may need `--sonar-org <org>` (or `SONAR_ORGANIZATION`).
+- Auth is HTTP Basic with the token as username — works on every SonarQube version and SonarCloud.
+- Writes `.dxkit/external/sonarqube.json`. **Commit it**, same as the Snyk snapshot.
+
+> **Freshness caveat (important):** the snapshot is what Sonar last *analyzed*, not a live re-scan. To gate a Sonar issue a PR **introduces**, Sonar must run on that PR and the ingest must read that analysis — `--sonar-pr <id>` from the same CI job that runs Sonar there. A post-merge-only Sonar setup gives you a lagging record of the default branch (still useful for unification: one baseline / allowlist / PR verdict across native + Sonar findings), not a live per-PR gate. `--sonar-branch <name>` reads a long-lived branch's analysis.
+
+## Path C — ingest a SARIF file (any engine)
 
 For CodeQL, a Snyk SARIF export, Semgrep Pro, Bearer, or anything that emits SARIF 2.1.0:
 
