@@ -55,3 +55,68 @@ describe('formatDriftWarningSummary', () => {
     expect(out[0]).toContain('1 finding unmatched');
   });
 });
+
+/**
+ * VERIFY-39 F-6: the TOOLING-drift wall collapses to one summary block per
+ * KIND. On a pre-Rule-19 baseline the entire backlog demotes at once — a real
+ * repo produced 18,396 four-line drift blocks (73,665 console lines) that
+ * buried the verdict. Same disease as gh #157, one status over.
+ */
+
+import { formatToolingDriftSummary } from '../../src/baseline/check-renderers';
+
+function toolingPair(kind: string, file: string, line: number, detail?: string): ClassifiedPair {
+  return {
+    kind,
+    file,
+    line,
+    locator: `${file}:${line}`,
+    classification: {
+      status: 'tooling_drift',
+      reasons: [
+        { code: 'no-prior-match', detail: 'identity fingerprint not present in the baseline' },
+        {
+          code: 'tooling-drift',
+          detail: detail ?? 'the baseline predates recall attribution',
+        },
+      ],
+      blocks: false,
+      warns: true,
+    },
+  } as unknown as ClassifiedPair;
+}
+
+describe('formatToolingDriftSummary (F-6)', () => {
+  it('collapses N same-kind drift findings into ONE block: count + cause + exemplar + remedy', () => {
+    const pairs = Array.from({ length: 500 }, (_, i) =>
+      toolingPair('custom-check', `src/f${i}.ts`, i + 1),
+    );
+    const out = formatToolingDriftSummary(pairs, '  ');
+    // Bounded output regardless of finding count — the whole point.
+    expect(out.length).toBeLessThanOrEqual(3);
+    expect(out[0]).toContain('500 custom-check findings demoted to TOOLING-DRIFT');
+    expect(out[0]).toContain('the baseline predates recall attribution');
+    expect(out[1]).toContain('e.g. src/f0.ts:1');
+    expect(out[out.length - 1]).toContain('--json');
+    expect(out[out.length - 1]).toContain('re-baseline');
+  });
+
+  it('groups per kind — each kind gets its own count, cause, and exemplar', () => {
+    const out = formatToolingDriftSummary(
+      [
+        toolingPair('custom-check', 'a.ts', 1),
+        toolingPair('custom-check', 'b.ts', 2),
+        toolingPair('dep-vuln', 'package.json', 1, 'osv-scanner version changed'),
+      ],
+      '  ',
+    );
+    expect(out.join('\n')).toContain('2 custom-check findings');
+    expect(out.join('\n')).toContain('1 dep-vuln finding');
+    expect(out.join('\n')).toContain('osv-scanner version changed');
+  });
+
+  it('singular form for one finding', () => {
+    const out = formatToolingDriftSummary([toolingPair('secret', 'x.env', 3)], '  ');
+    expect(out[0]).toContain('1 secret finding demoted');
+  });
+});
