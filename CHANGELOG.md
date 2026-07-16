@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-07-16
+
+> **Upgrade note.** The lint gate's command and parse changed (structured
+> output, below), so on the first `guardrail check` after upgrade the
+> `custom-check` kind reports tooling drift: pre-existing lint findings warn
+> as `TOOLING-DRIFT` instead of blocking, and the console summarizes them per
+> kind with the remedy. Re-baseline from CI (`dxkit-baseline-refresh`, or
+> `vyuh-dxkit baseline create --force`) to restore attribution. Nothing
+> false-blocks in the interim.
+
+### Added
+
+- **SonarQube / SonarCloud is a first-class ingest engine.** Sonar is the
+  deepest C#/Java analyzer most enterprise shops already run, and it is not
+  SARIF-native — `vyuh-dxkit ingest --from-sonar` reads a project's
+  already-computed issues from the Sonar Web API (no analysis re-run,
+  quota-free) and snapshots them to `.dxkit/external/sonarqube.json`, where
+  they inherit the whole native-finding machine: fingerprints, cross-tool
+  dedup, baseline, guardrail, graph links. Scope is BUG + VULNERABILITY
+  (deliberately not the CODE_SMELL firehose). Auth is HTTP Basic with the
+  token as username — works on every SonarQube version and SonarCloud.
+  host/project resolve from flags, then `.vyuh-dxkit.json:deepSast.sonar`,
+  then `SONAR_HOST_URL` / `SONAR_PROJECT_KEY` (the names sonar-scanner itself
+  uses); `SONAR_*` keys lift from a local `.env` under the same rules as
+  `SNYK_*`. To gate an issue a PR introduces, point `--sonar-pr <id>` at that
+  PR's analysis from the CI job that runs Sonar there (documented in the
+  dxkit-ingest skill). Validated against a live SonarCloud project (1,891
+  findings across paginated reads).
+
+- **The deep-SAST refresh degrades gracefully on infrastructure failures.**
+  A quota exhaustion, rate limit, auth failure, or network error during
+  `vyuh-dxkit ingest` used to red the refresh CI — a failure the team learns
+  to ignore, while the gate (which reads the committed snapshot, never a live
+  engine) was fine all along. One classifier + one shared handler now route
+  every engine's failure: infrastructure failure with a prior committed
+  snapshot keeps the snapshot, prints `refresh skipped: <engine> — <reason>`,
+  and exits 0; a genuine failure, or an infra failure with no snapshot to
+  fall back to, still exits 1. Fail-open is never silent: `doctor` now checks
+  external-snapshot freshness (30-day threshold) so a chronically failing
+  refresh surfaces instead of hiding behind the fail-open.
+
+### Changed
+
+- **The lint gate parses linters' native structured output instead of
+  display formats.** Six of the seven live gates regex-parsed a format meant
+  for humans (eslint's unix render, ruff concise, golangci line-number,
+  clippy short, ktlint plain, rubocop emacs). Two consequences shipped on
+  real repos: eslint's display round-trip dropped 562 of 19,177 findings
+  whose message text broke the line shape, and clippy's short format omits
+  the lint NAME entirely, so two different lints within one identity window
+  collided and a real net-new lint could slide through the gate. The packs
+  now parse eslint / ruff / golangci-lint / rubocop / ktlint JSON and
+  clippy's NDJSON diagnostic stream; MSBuild (`dotnet build`) remains the one
+  declared regex exception (it has no machine-readable diagnostic stream).
+  Verified at scale: 100% of eslint's deduped ground truth recovered on a
+  19,177-message repo, and identities stable across checkout paths on every
+  pack (453/453 on a real Kotlin repo). New language packs get the
+  structured contract from the scaffold, the contract tests, and the recipe
+  playbook.
+
+- **Tooling-drift warnings render as one summary block per kind.** On a
+  brownfield repo whose baseline predates the current recall context, the
+  entire backlog demotes to tooling-drift at once — and the console itemized
+  every finding (73,665 lines on a real repo, burying the verdict). The
+  console now prints per kind: the count, the shared cause, one exemplar,
+  and the remedy; the PR-body markdown gets a matching per-kind summary.
+  `--json` still carries the full itemization.
+
+### Fixed
+
+- **`init` no longer prints an unqualified "You're gated." over a partial
+  baseline.** A scanner class that was unavailable at capture time (no
+  gitleaks means secrets were never measured) now produces the qualified
+  "You're gated for what's measurable." headline with the remedy, the same
+  treatment a missing language toolchain already received.
+
+- **In-process re-scans see a changed tree.** The per-directory walk,
+  exclusion, gitleaks-outcome, and dispatcher memos were process-lifetime and
+  never invalidated, so a process that scanned the same directory twice with
+  the tree changed in between read a stale (possibly empty) snapshot. Every
+  fresh analysis now resets them at the one analysis entry seam.
+
 ## [3.8.0] - 2026-07-15
 
 > **Upgrade note (read before upgrading a repo with an existing baseline).**
