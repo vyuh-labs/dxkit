@@ -40,6 +40,19 @@ import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
 import { clearGitleaksOutcomeCache } from '../../src/analyzers/tools/gitleaks';
 import { defaultDispatcher } from '../../src/analyzers/dispatcher';
+import { findTool, TOOL_DEFS } from '../../src/analyzers/tools/tool-registry';
+
+// The two end-to-end tests below drive a REAL secret scan of a fixture repo, so
+// they need a secret scanner present. dxkit's grep fallback only emits its
+// branded (AWS-shaped) rules when gitleaks is absent, and those do not flow into
+// the security aggregate the guardrail reads — so without the gitleaks binary
+// the fixture secret is never seen and the test would false-fail. The unit-
+// coverage CI job has no scanner installed; the self-guardrail job (which runs
+// `tools install`) and local dev do. Skip when gitleaks is unavailable rather
+// than assert against an environment that cannot produce the finding — the
+// refusal LOGIC is proven binary-free by `policy.test.ts` and the
+// `collectAttributionGaps` / `verdictWordFrom` unit tests above.
+const gitleaksAvailable = findTool(TOOL_DEFS.gitleaks, process.cwd()).available;
 
 // ─── The pure collector ─────────────────────────────────────────────────────
 
@@ -127,9 +140,11 @@ describe('verdictWordFrom — PASSED is unconstructible over a gap', () => {
 
 // ─── End-to-end: the BLOCKER-1 A/B, in-suite ────────────────────────────────
 
-/** A synthetic AWS-shaped access key both secret scanners catch
- *  deterministically (branded regex, no entropy gate) and the placeholder
- *  filter does not suppress. Not a real credential. */
+/** A synthetic AWS-shaped access key gitleaks flags deterministically (its
+ *  `aws-access-token` rule; the placeholder filter does not suppress it). Not a
+ *  real credential. The two tests that write it are gated on `gitleaksAvailable`
+ *  above — dxkit's grep fallback recognizes the shape but its branded findings
+ *  do not reach the security aggregate the guardrail reads. */
 const FAKE_AWS_KEY = 'AKIAQ3EGRIJ7MZ4KX2B6';
 
 const tmps: string[] = [];
@@ -176,53 +191,61 @@ function addSecret(dir: string): void {
 }
 
 describe('runGuardrailCheck — a net-new secret under absent recall CANNOT pass (BLOCKER-1)', () => {
-  it('recall present: the net-new secret BLOCKS (the 3.7.5 behavior, preserved)', async () => {
-    const dir = makeRepo();
-    await createBaseline({ cwd: dir });
-    addSecret(dir);
-    const result = await runGuardrailCheck({ cwd: dir });
-    const secretPairs = result.pairs.filter(
-      (p) => p.kind === 'secret' && p.classification.status === 'added',
-    );
-    expect(secretPairs.length).toBeGreaterThan(0);
-    expect(secretPairs.some((p) => p.classification.blocks)).toBe(true);
-    expect(verdictCounts(result).verdict).toBe('BLOCKED');
-    expect(verdictCounts(result).exitCode).toBe(1);
-  }, 120_000);
+  it.skipIf(!gitleaksAvailable)(
+    'recall present: the net-new secret BLOCKS (the 3.7.5 behavior, preserved)',
+    async () => {
+      const dir = makeRepo();
+      await createBaseline({ cwd: dir });
+      addSecret(dir);
+      const result = await runGuardrailCheck({ cwd: dir });
+      const secretPairs = result.pairs.filter(
+        (p) => p.kind === 'secret' && p.classification.status === 'added',
+      );
+      expect(secretPairs.length).toBeGreaterThan(0);
+      expect(secretPairs.some((p) => p.classification.blocks)).toBe(true);
+      expect(verdictCounts(result).verdict).toBe('BLOCKED');
+      expect(verdictCounts(result).exitCode).toBe(1);
+    },
+    120_000,
+  );
 
-  it('recall ABSENT (pre-Rule-19 baseline): the same secret yields CANNOT GATE, exit 1 — never PASSED', async () => {
-    const dir = makeRepo();
-    await createBaseline({ cwd: dir });
-    stripRecall(dir);
-    addSecret(dir);
-    const result = await runGuardrailCheck({ cwd: dir });
+  it.skipIf(!gitleaksAvailable)(
+    'recall ABSENT (pre-Rule-19 baseline): the same secret yields CANNOT GATE, exit 1 — never PASSED',
+    async () => {
+      const dir = makeRepo();
+      await createBaseline({ cwd: dir });
+      stripRecall(dir);
+      addSecret(dir);
+      const result = await runGuardrailCheck({ cwd: dir });
 
-    // The demotion happened (drift is real — blocking would misattribute) …
-    const secretPairs = result.pairs.filter((p) => p.kind === 'secret');
-    expect(secretPairs.some((p) => p.classification.status === 'tooling_drift')).toBe(true);
-    expect(result.blocks).toBe(false);
-    // … but the disarmed rule is recorded and the verdict refuses.
-    expect(secretPairs.some((p) => p.classification.unattributableBlockRule === 'newSecret')).toBe(
-      true,
-    );
-    expect(result.attributionGaps.some((g) => g.kind === 'secret')).toBe(true);
-    const counts = verdictCounts(result);
-    expect(counts.verdict).toBe('CANNOT GATE');
-    expect(counts.exitCode).toBe(1);
+      // The demotion happened (drift is real — blocking would misattribute) …
+      const secretPairs = result.pairs.filter((p) => p.kind === 'secret');
+      expect(secretPairs.some((p) => p.classification.status === 'tooling_drift')).toBe(true);
+      expect(result.blocks).toBe(false);
+      // … but the disarmed rule is recorded and the verdict refuses.
+      expect(
+        secretPairs.some((p) => p.classification.unattributableBlockRule === 'newSecret'),
+      ).toBe(true);
+      expect(result.attributionGaps.some((g) => g.kind === 'secret')).toBe(true);
+      const counts = verdictCounts(result);
+      expect(counts.verdict).toBe('CANNOT GATE');
+      expect(counts.exitCode).toBe(1);
 
-    // Every surface says so — nothing prints PASSED over the gap.
-    const consoleOut = renderConsole(result);
-    expect(consoleOut).toContain('CANNOT GATE');
-    expect(consoleOut).toContain('Cannot attribute');
-    expect(consoleOut).toContain(ATTRIBUTION_GAP_REMEDY.slice(0, 30));
-    const json = renderJson(result);
-    expect(json.verdict.refused).toBe(true);
-    expect(json.verdict.exitCode).toBe(1);
-    expect(json.attributionGaps.length).toBeGreaterThan(0);
-    const md = renderMarkdown(result);
-    expect(md).toContain('## Guardrail: CANNOT GATE');
-    expect(md).not.toContain('## Guardrail: PASSED');
-  }, 120_000);
+      // Every surface says so — nothing prints PASSED over the gap.
+      const consoleOut = renderConsole(result);
+      expect(consoleOut).toContain('CANNOT GATE');
+      expect(consoleOut).toContain('Cannot attribute');
+      expect(consoleOut).toContain(ATTRIBUTION_GAP_REMEDY.slice(0, 30));
+      const json = renderJson(result);
+      expect(json.verdict.refused).toBe(true);
+      expect(json.verdict.exitCode).toBe(1);
+      expect(json.attributionGaps.length).toBeGreaterThan(0);
+      const md = renderMarkdown(result);
+      expect(md).toContain('## Guardrail: CANNOT GATE');
+      expect(md).not.toContain('## Guardrail: PASSED');
+    },
+    120_000,
+  );
 
   it('recall ABSENT but the tree is CLEAN: still PASSES (no unanswerable question was asked)', async () => {
     // The other half of the design: refusal fires only when a block-rule-class

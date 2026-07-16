@@ -86,10 +86,30 @@ export function toolVersionInput(
   try {
     const status = findTool(def, cwd);
     if (!status.available) return {};
-    return { [key]: status.version || 'present' };
+    return { [key]: normalizeVersion(status.version) };
   } catch {
     return {}; // probe failed (environment) — not our wiring
   }
+}
+
+/**
+ * Reduce a `--version` line to a stable recall input.
+ *
+ * A recall input must move when the tool VERSION moves and stay put otherwise
+ * (Rule 19), but raw `--version` output routinely carries build metadata that
+ * drifts on its own: a `go install`-built golangci-lint prints
+ * `... version v1.64.8 built ... on 2024-01-15T10:00:00Z`, and an ISO timestamp
+ * read as a recall input would demote the kind's gate to warn-only on every run,
+ * forever, while looking healthy (the OVER-drift failure Rule 19's own tests
+ * ban). So keep the first semver-shaped token (`1.64.8`) and drop the rest; the
+ * version still discriminates a real upgrade, and a rebuild of the same version
+ * no longer looks like a change. Falls back to the raw line when no semver is
+ * present, and to `'present'` when the probe returned nothing.
+ */
+function normalizeVersion(version: string | null): string {
+  if (!version) return 'present';
+  const m = version.match(/\d+\.\d+(?:\.\d+)?/);
+  return m ? m[0] : version;
 }
 
 /** Read `node_modules/<pkg>/package.json`'s version — the version that
