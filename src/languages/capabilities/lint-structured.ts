@@ -19,22 +19,36 @@
  * the pack parser then reports no findings and the runner's failed-exit
  * fallback surfaces the run as one binary finding, so a broken linter is
  * never silently read as "clean".
+ *
+ * Candidate starts are tried in order until one PARSES: the first bracket in
+ * the stream is often not the payload — ktlint logs to STDOUT before its
+ * JSON (`10:36:22 [main] INFO … patterns [**\/*.kt]`), so anchoring on the
+ * first `[` reads `[main]`, fails, and silently downgrades the whole run to
+ * one binary finding (found live on a real Kotlin repo). Attempts are capped:
+ * genuine linter noise carries a handful of brackets, and an output whose
+ * first hundred candidates all fail is not a payload with a bad prefix.
  */
 export function extractJsonBlob(output: string): unknown {
-  const start = firstPayloadStart(output);
-  if (start === -1) return null;
-  const end = matchingClose(output, start);
-  if (end === -1) return null;
-  try {
-    return JSON.parse(output.slice(start, end + 1));
-  } catch {
-    return null;
+  const MAX_ATTEMPTS = 100;
+  let attempts = 0;
+  for (let start = nextPayloadStart(output, 0); start !== -1 && attempts < MAX_ATTEMPTS; ) {
+    attempts++;
+    const end = matchingClose(output, start);
+    if (end !== -1) {
+      try {
+        return JSON.parse(output.slice(start, end + 1));
+      } catch {
+        // Balanced but not JSON (a bracketed log token) — try the next candidate.
+      }
+    }
+    start = nextPayloadStart(output, start + 1);
   }
+  return null;
 }
 
-/** First `[` or `{` that plausibly starts the payload. */
-function firstPayloadStart(s: string): number {
-  for (let i = 0; i < s.length; i++) {
+/** Next `[` or `{` at or after `from` that could start the payload. */
+function nextPayloadStart(s: string, from: number): number {
+  for (let i = from; i < s.length; i++) {
     const c = s[i];
     if (c === '[' || c === '{') return i;
   }

@@ -390,12 +390,24 @@ describe('lint-gate parse-format contract', () => {
     // deprecation warning after the payload (or an npx banner before it) must
     // cost nothing. NDJSON (clippy) tolerates interleaving by construction;
     // blob JSON goes through extractJsonBlob.
+    //
+    // The prefix uses ktlint's REAL log shape, verbatim from a live run —
+    // ktlint logs to STDOUT before its JSON, and its log lines contain
+    // BRACKETS (`[main]`, `[**/*.kt, **/*.kts]`). Anchoring the blob
+    // extraction on the first bracket read `[main]`, failed the parse, and
+    // silently downgraded a 453-finding Kotlin run to one binary finding
+    // (found live on a real repo, VERIFY-39 F-10).
     for (const fx of FIXTURES) {
       if (fx.parse.kind !== 'structured') continue;
-      const noisy = `npx: installed 1 package\n${fx.sample}\n(node:42) DeprecationWarning: legacy config detected\n`;
+      const noisy =
+        `npx: installed 1 package\n` +
+        `10:36:22.984 [main] INFO com.pinterest.ktlint.cli.internal.KtlintCommandLine -- Enable default patterns [**/*.kt, **/*.kts]\n` +
+        `10:36:23.627 [main] WARN {main} -- Lint has found errors than can be autocorrected using 'ktlint --format'\n` +
+        `${fx.sample}\n(node:42) DeprecationWarning: legacy config detected\n`;
       const clean = runFixture(fx.parse, fx.sample);
       const wrapped = runFixture(fx.parse, noisy);
       expect(wrapped, `${fx.label}: noise-wrapped parse must match clean parse`).toEqual(clean);
+      expect(clean.length, `${fx.label}: clean parse found nothing`).toBeGreaterThan(0);
     }
   });
 
