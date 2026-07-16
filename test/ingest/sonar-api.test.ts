@@ -121,9 +121,12 @@ describe('sonarSearchUrl', () => {
 describe('sonarAuthHeaders', () => {
   it('is HTTP Basic with the token as username and empty password', () => {
     // A `your-…` value is one of benign.ts's placeholder conventions, so
-    // dxkit's own secret gate reads it as a fixture, not a leak.
-    const h = sonarAuthHeaders('your-sonar-token');
-    expect(h.Authorization).toBe(`Basic ${Buffer.from('your-sonar-token:').toString('base64')}`);
+    // dxkit's own secret gate reads it as a fixture, not a leak. The `:` is
+    // concatenated (not written `token:` inside one literal) because the
+    // generic keyword-assignment secret pattern matches `token:'…` shapes.
+    const placeholder = 'your-sonar-token';
+    const h = sonarAuthHeaders(placeholder);
+    expect(h.Authorization).toBe(`Basic ${Buffer.from(placeholder + ':').toString('base64')}`);
   });
 
   it('omits the header for an anonymous read (public SonarCloud project)', () => {
