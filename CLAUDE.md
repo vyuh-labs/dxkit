@@ -1244,6 +1244,85 @@ to write, and a naive grep matched that COMMENT and passed a dormant scaffold as
 if it probed. A test that passes because of a code comment reports coverage that
 does not exist.
 
+### 20. Execution environment is pack-declared, predicate-resolved (4.0)
+
+dxkit models language and capability as first-class, pack-declared dimensions;
+the third is **where a capability can execute**. The pre-4.0 model implicitly
+assumed "the machine driving the analysis can build and scan the repo" — false
+for any stack needing a provisioned build environment (the dpl-studio class: a
+`net9.0-windows` WinForms build needs Windows + the .NET SDK + a chosen
+solution; it recurs harder for Swift/iOS, Android, C/C++). When it broke,
+capabilities either fail-open skipped invisibly or misread an environment
+problem as a code finding. The platform makes the requirement explicit:
+
+- **Declared** per capability, per pack (Rule 6): `execution(cwd):
+ExecutionRequirement { hosts, toolchains, needsBuild, buildTarget, weight }`
+  is REQUIRED on `CorrectnessProvider`, `LintGateProvider`, `DepVulnsProvider`
+  (a deliberate frozen-in-place addition, pinned by the freeze test) and
+  `DeepSastSupport`. The declaration is PURE and REPO-INTRINSIC — it reads
+  repo files only (a `.csproj` TFM, the build system present), never PATH,
+  never `process.platform` — deterministic with no machine-specific values
+  (the Rule 19 recall-inputs discipline). Where the truth is repo-dependent
+  it is DERIVED: csharp narrows `hosts` to `['windows']` from a
+  `net*-windows` TFM / WinForms/WPF opt-in.
+- **Toolchains vs tools — the boundary line**: `toolchains` names AMBIENT
+  SDKs/runtimes the ecosystem owns (dotnet-sdk, jdk, go…), registered once in
+  `src/execution/toolchains.ts:TOOLCHAIN_DEFS` (per-host non-privileged
+  install + health checks; `ToolchainId` is derived from the registry, so an
+  unregistered reference fails to compile). Registry TOOLS (gitleaks, ruff,
+  osv-scanner…) stay in `TOOL_DEFS` / `findTool` (Rule 1) and are NEVER
+  declared as toolchains. If `tools install` can provision it, it is a tool;
+  if the repo's ecosystem provisions it, it is a toolchain.
+- **Resolved** by the ONE predicate `unmetRequirement(req, env)` in
+  `src/execution/requirement.ts`, comparing the repo-intrinsic requirement
+  against the host-intrinsic environment (`currentEnvironment()` — the one
+  home of host detection). Every "can this run here?" question routes through
+  it; the placement resolver (the increment that routes capabilities to
+  ubuntu/windows/macos CI jobs) composes on the same predicate.
+- **Consumed** BEFORE execution, and every unmet requirement is DISCLOSED:
+  the correctness runner and the custom-check runner emit
+  `skipped-environment` with the structured reason (phrased once, by
+  `describeUnmetRequirement` — what is needed and where it would run), never
+  a silent skip and never a spawn that fails in a way that reads as a code
+  finding (the half-provisioned-SDK class). Fail-open stays fail-open, it
+  just always says why — the `GateFailure` discipline.
+
+**Bad**: a capability that shells a build with no `execution` declaration (it
+won't compile); a `process.platform` read in an analyzer; an inline
+`winget install …` string in a consumer; a second "can this run here?"
+predicate; declaring `osv-scanner` as a toolchain; a requirement that probes
+PATH or embeds a machine path.
+
+**Good**: `unmetRequirement(provider.execution(cwd), env)` in a runner;
+`csharpBuildExecution(cwd)` deriving hosts from TFMs; a new pack registering
+its SDK in `TOOLCHAIN_DEFS` and referencing the id.
+
+#### Execution-environment enforcement
+
+1. **Compile**: `execution` is required on all four capability contracts; a
+   pack that omits it does not build. `ToolchainId` is a closed union derived
+   from `TOOLCHAIN_DEFS`.
+2. **`scripts/check-architecture.sh` Rule 20**: (a) no new `process.platform`
+   outside `src/execution/` + the frozen pre-Rule-20 allowlist (annotate
+   `// exec-host-ok`); (b) no inline toolchain install literals outside the
+   two registries; (c) `unmetRequirement(` consumed only by its known
+   consumers (annotate `// exec-requirement-ok` and extend the allowlist
+   deliberately). All three verified to bite.
+3. **`test/languages-contract.test.ts`**: per pack × declaring capability —
+   well-formed requirement, every toolchain id resolves in `TOOLCHAIN_DEFS`,
+   deterministic + total + machine-independent, and the **cliBinaries parity**
+   (doctor's toolchain-coverage projection may not drift from the
+   declarations — Rule 2.30's two-projections shape, pinned).
+4. **`test/recipe-playbook.test.ts`**: the synthetic pack declares a
+   distinctive windows-only gate requirement; the playbook asserts it flows
+   pack → spec → runner, and that the runner honors it in BOTH directions
+   (unmet ⇒ disclosed skip decided before the spawn; met ⇒ executes — the
+   over-skip regression is the dangerous one).
+5. **`test/execution/execution-platform.test.ts`**: the predicate both
+   directions, the C# TFM host derivation, and the declaration-less user
+   check keeping the plain fail-open path (dxkit never invents a requirement
+   it cannot know).
+
 ## Release procedure
 
 **Every release goes through the CI pipeline. No exceptions.** Local

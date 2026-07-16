@@ -39,6 +39,8 @@ export interface CorrectnessCommand {
   readonly args: readonly string[];
 }
 
+import type { ExecutionRequirement } from '../../execution';
+
 /**
  * A pack's correctness-floor provider. Both methods are pure command builders —
  * they inspect the repo + changed files and return the command to run (or
@@ -54,4 +56,22 @@ export interface CorrectnessProvider {
    *  CI's `full` scope as the backstop. Returns `null` when nothing relevant
    *  changed, or when the pack has no test command at all. */
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null;
+  /**
+   * What the floor NEEDS from the environment that runs it (CLAUDE.md Rule 20):
+   * host OS, ambient toolchains, whether it builds the project, how its target
+   * resolves. REQUIRED — the pre-declaration model implicitly assumed
+   * `{ hosts: any, toolchains: [], needsBuild: false }` for every floor, which
+   * was wrong on every axis for compiled stacks (`dotnet build` of a
+   * `net9.0-windows` target on a Linux driver). The runner consults this
+   * BEFORE executing, so an unrunnable floor is a disclosed environment
+   * boundary, never a silent binary-missing skip; the placement resolver
+   * routes on the same declaration.
+   *
+   * Pure and repo-intrinsic: reads repo files only (a `.csproj` TFM, the build
+   * system present), NEVER the current machine — availability is the
+   * environment model's side of the line. Deterministic across calls with no
+   * machine-specific values, the same contract-tested discipline as
+   * `recallInputs` (Rule 19).
+   */
+  execution(cwd: string): ExecutionRequirement;
 }

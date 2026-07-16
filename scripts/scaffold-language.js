@@ -322,6 +322,12 @@ export const ${id}: LanguageSupport = {
   // ref-based dep-audit skip needs it to tell whether a PR touched this pack's
   // dependencies (CLAUDE.md Rule 6).
   //
+  // It must ALSO declare \`execution(cwd)\` (Rule 20): a lockfile-reading
+  // audit via a registry tool needs nothing ({ hosts: ['any'], toolchains: [],
+  // needsBuild: false, buildTarget: 'none', weight: 'cheap' }); an audit that
+  // drives the ecosystem's own toolchain (npm audit → 'node', govulncheck →
+  // 'go' + needsBuild) declares it.
+  //
   // ALSO declare \`lockfilePatterns\` when the ecosystem has a lockfile (or a
   // manifest that independently resolves, like go.mod / requirements.txt):
   // exact basenames marking an INDEPENDENT dependency-resolution root. The
@@ -433,6 +439,27 @@ export const ${id}: LanguageSupport = {
   // with CI's full scope as the backstop). See typescript.ts / python.ts, and
   // jvm-build.ts for a shared multi-build-system provider.
   correctness: {
+    // REQUIRED(${id}) — Rule 20: what the floor NEEDS from the environment
+    // that runs it. PURE and REPO-INTRINSIC (read repo files only — never
+    // PATH, never process.platform; the contract test rejects
+    // non-determinism). The dormant floor below runs nothing, so the empty
+    // requirement is accurate NOW — when you fill in real commands, declare
+    // their truth: the ambient toolchain (a ToolchainId from
+    // src/execution/toolchains.ts — register it there if new), needsBuild
+    // for compiled stacks, and hosts narrowed when the BUILD is OS-locked
+    // (csharp derives hosts from the repo's TFMs — the worked example).
+    execution(_cwd) {
+      // TODO(${id}): declare the floor's real requirement, e.g.
+      //   return { hosts: ['any'], toolchains: ['${id}'], needsBuild: true,
+      //            buildTarget: 'discovered', weight: 'build' };
+      return {
+        hosts: ['any'],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      };
+    },
     syntaxCheck(_ctx) {
       // TODO(${id}): compile/typecheck the change, e.g.
       //   return { label: 'compile', bin: '${id}', args: ['build'] };
@@ -456,6 +483,20 @@ export const ${id}: LanguageSupport = {
   // Java checkstyle), leave it dormant — users gate their linter via a
   // .dxkit/policy.json \`checks\` entry.
   lintGate: {
+    // Rule 20 (same contract as correctness.execution above): the dormant
+    // gate needs nothing; declare the real requirement with the real command
+    // (a JVM-jar linter needs 'jdk'; a build-stream gate like MSBuild needs
+    // the SDK + needsBuild + TFM-derived hosts — see csharp.ts).
+    execution(_cwd) {
+      // TODO(${id}): update alongside lintCommand.
+      return {
+        hosts: ['any'],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      };
+    },
     lintCommand(_ctx) {
       // TODO(${id}): resolve the linter (findTool(TOOL_DEFS.<tool>, ctx.cwd)) and
       // return { bin, args, parse, expectedExit }; or return null (dormant).

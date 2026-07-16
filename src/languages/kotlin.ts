@@ -9,7 +9,8 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import { isAndroidGradleBuild, jvmCorrectnessProvider } from './jvm-build';
+import { isAndroidGradleBuild, jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -287,6 +288,15 @@ const KOTLIN_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification
 
 const kotlinDepVulnsProvider: DepVulnsProvider = {
   source: 'kotlin',
+  // osv-scanner (a registry tool — Rule 1) reads the Gradle manifests
+  // directly; no build, no ambient toolchain.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   // The osv-scanner audit keys off KOTLIN_DEP_MANIFESTS, but a Gradle
   // dependency change shows up in the build scripts too — include them so the
   // incremental skip never misses a dep edit.
@@ -480,6 +490,15 @@ export function parseKtlintJson(output: string): RawLocatedFinding[] {
  * exits non-zero on violations.
  */
 const kotlinLintGateProvider: LintGateProvider = {
+  // ktlint is a registry tool (Rule 1) but ships as a JVM executable — the
+  // JDK is the ambient runtime it needs. No build: it lints source directly.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: ['jdk'],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   lintCommand(ctx) {
     const ktlint = findTool(TOOL_DEFS.ktlint, ctx.cwd);
     if (!ktlint.available || !ktlint.path) return null;
@@ -770,9 +789,9 @@ export const kotlin: LanguageSupport = {
   // there; Snyk Code supports Kotlin.
   deepSast: {
     codeqlLanguage: 'java',
-    codeqlBuildRequired: true,
     codeqlBeta: true,
     snykCode: true,
+    execution: jvmBuildExecution,
   },
 
   correctness: kotlinCorrectnessProvider,
@@ -797,7 +816,11 @@ export const kotlin: LanguageSupport = {
 
   permissions: ['Bash(./gradlew:*)', 'Bash(gradle:*)', 'Bash(detekt:*)'],
   ruleFile: 'kotlin.md',
-  cliBinaries: ['gradle', 'detekt'],
+  // `java` — the ambient JVM every Kotlin capability ultimately runs on
+  // (Gradle and ktlint are both JVM executables); its absence is the pack's
+  // deepest toolchain gap, and doctor must report it (Rule 20 parity: every
+  // declared execution toolchain surfaces through cliBinaries).
+  cliBinaries: ['java', 'gradle', 'detekt'],
   ciSetup: {
     // Kotlin/JVM runs on the JDK; shares `actions/setup-java` with the Java pack
     // (deduped by `uses` in allCiSetupSteps, so a Java+Kotlin repo sets it up once).

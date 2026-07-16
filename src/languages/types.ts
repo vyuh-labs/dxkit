@@ -1,4 +1,5 @@
 import type { LanguageId } from '../types';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -175,16 +176,24 @@ export interface DeepSastSupport {
   /** CodeQL query suite; defaults to the language's security-extended
    *  suite when omitted. */
   codeqlQuerySuite?: string;
-  /** CodeQL DB creation requires building the project (compiled
-   *  languages: Java/Kotlin/C#/Go). Source extractors (JS/TS, Python,
-   *  Ruby) leave this false. */
-  codeqlBuildRequired?: boolean;
   /** CodeQL extractor maturity is beta for this pack (Kotlin via the
    *  java extractor; Rust) — surfaced so callers can warn. */
   codeqlBeta?: boolean;
   /** Snyk Code (SAST) supports this language, so `ingest --from-snyk`
    *  is expected to return findings for it. */
   snykCode?: boolean;
+  /**
+   * What a deep-SAST run NEEDS from the environment (CLAUDE.md Rule 20):
+   * compiled languages need the toolchain + a project build for CodeQL DB
+   * creation (`execution(cwd).needsBuild` — this field REPLACED the old
+   * boolean `codeqlBuildRequired`, which was the same fact under a second
+   * name: one concept, one code path); source extractors need neither.
+   * Hosts follow the build (a `net*-windows` target extracts on Windows).
+   *
+   * REQUIRED, pure, repo-intrinsic, deterministic — the same discipline as
+   * the other capability `execution` declarations.
+   */
+  execution(cwd: string): ExecutionRequirement;
 }
 
 // The descriptor interfaces below moved to @vyuhlabs/dxkit-sdk (the frozen

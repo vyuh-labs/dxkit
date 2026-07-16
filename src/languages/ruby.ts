@@ -18,6 +18,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
   ImportsResult,
@@ -654,6 +655,15 @@ const RUBY_DEP_MANIFESTS = ['Gemfile.lock'];
 
 const rubyDepVulnsProvider: DepVulnsProvider = {
   source: 'ruby',
+  // osv-scanner (a registry tool — Rule 1) reads the committed Gemfile.lock;
+  // no build, no ambient toolchain.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   // osv-scanner audits Gemfile.lock; Gemfile / *.gemspec carry the dependency
   // declarations, so include them for the incremental skip check.
   manifestPatterns: [...RUBY_DEP_MANIFESTS, 'Gemfile', '*.gemspec'],
@@ -700,6 +710,16 @@ function isRubyTestFile(rel: string): boolean {
  * CI's full scope is the backstop).
  */
 const rubyCorrectnessProvider: CorrectnessProvider = {
+  // Rule 20: host-agnostic, needs the Ruby runtime; the floor runs the
+  // project's own specs — 'build' weight without a compiled-build env.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: ['ruby'],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'build',
+  }),
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     const changedRb = ctx.changedFiles.filter((f) => f.endsWith('.rb'));
     if (changedRb.length === 0) return null;
@@ -780,6 +800,14 @@ export function parseRubocopJson(output: string): RawLocatedFinding[] {
 }
 
 const rubyLintGateProvider: LintGateProvider = {
+  // rubocop is a Ruby gem — the Ruby runtime is its ambient toolchain.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: ['ruby'],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   lintCommand(ctx) {
     const rubocop = findTool(TOOL_DEFS.rubocop, ctx.cwd);
     if (!rubocop.available || !rubocop.path) return null;
@@ -958,7 +986,18 @@ export const ruby: LanguageSupport = {
 
   semgrepRulesets: ['p/ruby'],
   // CodeQL `ruby` extractor (no build); Snyk Code supports Ruby.
-  deepSast: { codeqlLanguage: 'ruby', snykCode: true },
+  deepSast: {
+    codeqlLanguage: 'ruby',
+    snykCode: true,
+    // Source extractor: no build, no ambient toolchain.
+    execution: () => ({
+      hosts: ['any'],
+      toolchains: [],
+      needsBuild: false,
+      buildTarget: 'none',
+      weight: 'build',
+    }),
+  },
 
   correctness: rubyCorrectnessProvider,
   lintGate: rubyLintGateProvider,
