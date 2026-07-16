@@ -243,6 +243,8 @@ describe('lint-gate path parity (identity must survive a checkout-path change)',
     // the ktlint/MSBuild/rubocop fixtures produced `file` values embedding CWD.
     for (const fx of FIXTURES) {
       for (const f of parseLocated('lint:test', true, fx.pattern, fx.sample, CWD)) {
+        expect(f.file, `${fx.label}: a located finding must carry a file`).toBeDefined();
+        if (f.file === undefined) continue; // narrows for TS; the assert above already failed
         expect(path.isAbsolute(f.file), `${fx.label}: "${f.file}" is absolute`).toBe(false);
         expect(f.file.startsWith('..'), `${fx.label}: "${f.file}" escapes the repo`).toBe(false);
         expect(f.file.includes('\\'), `${fx.label}: "${f.file}" is not POSIX`).toBe(false);
@@ -258,7 +260,7 @@ describe('lint-gate path parity (identity must survive a checkout-path change)',
     for (const fx of FIXTURES) {
       const files = byPack.get(fx.packId) ?? new Set<string>();
       for (const f of parseLocated('lint:test', true, fx.pattern, fx.sample, CWD)) {
-        files.add(f.file);
+        if (f.file !== undefined) files.add(f.file);
       }
       byPack.set(fx.packId, files);
     }

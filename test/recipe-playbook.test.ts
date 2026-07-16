@@ -36,6 +36,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { LanguageSupport } from '../src/languages';
+import type { LintGateRecallContext } from '../src/languages/capabilities/lint-gate';
 import {
   LANGUAGES,
   allAutogenSourcePatterns,
@@ -209,7 +210,7 @@ const mockPlaybookPack = {
     // Recall inputs (Rule 19) — distinctive values so the assertion below can
     // prove the SYNTHETIC pack's inputs reach the check spec. Without this the
     // playbook would not notice recall silently ceasing to be pack-driven.
-    recallInputs: (ctx) => ({
+    recallInputs: (ctx: LintGateRecallContext) => ({
       'playbook-linter': ctx.mode === 'locked' ? '^9.0.0' : '9.4.2',
       'playbook-plugin-mock': '2.1.0',
     }),

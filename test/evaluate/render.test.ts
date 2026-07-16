@@ -43,7 +43,7 @@ describe('renderEvaluateText — the clean replay is a first-class result', () =
       fakeRun({
         label: '#7',
         subject: 'feat: add auth',
-        verdict: { blocks: true, warns: false },
+        verdict: { blocks: true, warns: false, refused: false },
         blocking: [
           { kind: 'secret', severity: 'high' },
           { kind: 'secret', severity: 'high' },
@@ -147,7 +147,7 @@ describe('redactEvidence', () => {
   it('strips file/line from blocking entries and the embedded payload, and says so', () => {
     const payload = fakePayload(1);
     const run = fakeRun({
-      verdict: { blocks: true, warns: false },
+      verdict: { blocks: true, warns: false, refused: false },
       blocking: [{ kind: 'secret', file: 'src/config.ts', line: 12 }],
       guardrail: {
         ...payload,
