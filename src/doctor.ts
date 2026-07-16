@@ -14,6 +14,8 @@ import { detectEnforcement } from './enforcement';
 import { detectInstalledRefreshTransport, detectDefaultBranch } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { loadAllowlist, auditAllowlist } from './allowlist/file';
+import { snapshotEngines, readSnapshot } from './ingest/snapshot';
+import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-failure';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 
@@ -895,6 +897,44 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         tier: 'operational',
       });
     }
+  }
+
+  // 8. External deep-SAST snapshot freshness. The ingest refresh fails
+  // OPEN on infrastructure (quota / rate limit / auth / network): it
+  // keeps the committed snapshot and exits 0, so a chronically-broken
+  // refresh never reds a pipeline — this check is where that breakage
+  // becomes visible instead. Only emits when snapshots exist.
+  const now = new Date();
+  for (const engine of snapshotEngines(cwd)) {
+    const snap = readSnapshot(cwd, engine);
+    if (!snap) continue;
+    const age = snapshotAgeDays(snap.generatedAt, now);
+    if (age === null) continue;
+    const fresh = age <= EXTERNAL_SNAPSHOT_STALE_DAYS;
+    const refreshCommand =
+      engine === 'snyk-code'
+        ? dxkitCli('ingest --from-snyk')
+        : engine === 'codeql'
+          ? dxkitCli('ingest --codeql')
+          : undefined;
+    checks.push({
+      label: `external ${engine} snapshot fresh (${age}d old)`,
+      ok: fresh,
+      tier: 'operational',
+      ...(fresh
+        ? {}
+        : {
+            fix: {
+              hint:
+                `The committed ${engine} snapshot is ${age} days old (threshold: ` +
+                `${EXTERNAL_SNAPSHOT_STALE_DAYS}d). The gate is still using it, but its findings no ` +
+                `longer reflect the current code. The refresh may be failing open on an ` +
+                `infrastructure problem (quota / rate limit / auth) — check the ` +
+                `dxkit-deep-sast-refresh workflow logs, fix the engine access, and re-run ingest.`,
+              ...(refreshCommand ? { command: refreshCommand } : {}),
+            },
+          }),
+    });
   }
 
   return checks;
