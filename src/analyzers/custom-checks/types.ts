@@ -16,6 +16,8 @@
  * grandfathered and only a NET-NEW one blocks/warns.
  */
 
+import type { RawLocatedFinding } from '../../languages/capabilities/lint-gate';
+
 /** The binary + args a check runs. `bin` is resolved on PATH by the shared
  *  `bounded-exec` primitive (a missing binary is fail-OPEN — skipped, not
  *  failed). Structurally a `RunnableCommand`. */
@@ -40,10 +42,22 @@ export interface CustomCheckCommand {
  *     pre-existing lint debt is grandfathered. A failing exit that produces zero
  *     regex matches falls back to one BINARY finding, so a failing check never
  *     silently yields nothing.
+ *   - `{ mode: 'structured', label, parse }`: PARSED, from the tool's native
+ *     machine-readable output (a pack lint gate's `LintOutputParse`). Only
+ *     pack-declared lint reaches this mode — the policy JSON can express
+ *     `exit` and `regex` only, so a user-declared check can never smuggle a
+ *     function in. Same located semantics + binary fallback as `regex`.
+ *     `label` names the format for recall/diagnostics (a function cannot be
+ *     hashed).
  */
 export type CustomCheckParse =
   | { readonly mode: 'exit' }
-  | { readonly mode: 'regex'; readonly pattern: string };
+  | { readonly mode: 'regex'; readonly pattern: string }
+  | {
+      readonly mode: 'structured';
+      readonly label: string;
+      readonly parse: (output: string) => readonly RawLocatedFinding[];
+    };
 
 /**
  * A normalized check the runner executes. Built from a user policy entry

@@ -1570,7 +1570,13 @@ const csharpLintGateProvider: LintGateProvider = {
     return {
       bin: 'dotnet',
       args: ['build', '--nologo', '-clp:NoSummary'],
-      parse: CSHARP_MSBUILD_WARNING_PARSE,
+      // Deliberately still regex (the one pack not on structured output):
+      // `dotnet build` has no machine-readable diagnostic stream on stdout,
+      // and the SARIF alternative (`/p:ErrorLog=`) writes one file PER
+      // PROJECT — a multi-csproj solution means globbing per-project files
+      // with partial-failure semantics, a follow-on. The pattern is the
+      // 3.8-hardened MSBuild shape (two-path fixture-pinned).
+      parse: { kind: 'regex', pattern: CSHARP_MSBUILD_WARNING_PARSE },
       expectedExit: 0,
     };
   },

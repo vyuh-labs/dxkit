@@ -28,7 +28,8 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile, repoFileExists } from './version-detect';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFileInput, hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -747,8 +748,36 @@ const rubyCorrectnessProvider: CorrectnessProvider = {
  */
 /** rubocop `--format emacs` line: `<file>:<line>:<col>: <sev>: <Cop>: <message>`.
  *  Exported so the lint-gate format contract is testable against a real sample. */
-export const RUBY_RUBOCOP_EMACS_PARSE =
-  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+\\w:\\s+(?<rule>[\\w/]+):\\s+(?<message>.*)$';
+/** Map rubocop `--format json` output to raw located findings. One JSON
+ *  object: `{ files: [{ path, offenses: [{ cop_name, message,
+ *  location: { line } }] }] }`. `cop_name` (`Lint/UselessAssignment`) is the
+ *  same rule tag the emacs display format prefixed messages with, so
+ *  identities carry over. Exported so the lint-gate format contract is
+ *  testable against real samples. */
+export function parseRubocopJson(output: string): RawLocatedFinding[] {
+  const data = asRecord(extractJsonBlob(output));
+  if (!data || !Array.isArray(data.files)) return [];
+  const out: RawLocatedFinding[] = [];
+  for (const entry of data.files) {
+    const f = asRecord(entry);
+    const file = str(f?.path);
+    if (!f || !file || !Array.isArray(f.offenses)) continue;
+    for (const raw of f.offenses) {
+      const offense = asRecord(raw);
+      const message = str(offense?.message);
+      if (!offense || !message) continue;
+      const line = num(asRecord(offense.location)?.line);
+      const rule = str(offense.cop_name);
+      out.push({
+        file,
+        ...(line !== undefined ? { line } : {}),
+        ...(rule !== undefined ? { rule } : {}),
+        message,
+      });
+    }
+  }
+  return out;
+}
 
 const rubyLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
@@ -756,8 +785,10 @@ const rubyLintGateProvider: LintGateProvider = {
     if (!rubocop.available || !rubocop.path) return null;
     return {
       bin: rubocop.path,
-      args: ['--format', 'emacs'],
-      parse: RUBY_RUBOCOP_EMACS_PARSE,
+      // Native JSON, parsed structurally — the emacs display format printed
+      // ABSOLUTE paths and a lossy one-line render (Rule 5).
+      args: ['--format', 'json'],
+      parse: { kind: 'structured', label: 'rubocop-json', parse: parseRubocopJson },
       expectedExit: 0,
     };
   },

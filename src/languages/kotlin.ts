@@ -24,7 +24,8 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFileInput, toolVersionInput } from './capabilities/recall-inputs';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
@@ -441,14 +442,42 @@ const kotlinCorrectnessProvider = jvmCorrectnessProvider({
 
 /** ktlint line: `<file>:<line>:<col>: <message> (<rule>)`. Exported for the
  *  format-contract test. */
-export const KOTLIN_KTLINT_PARSE =
-  '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\((?<rule>[^)]+)\\)\\s*$';
+/** Map ktlint `--reporter=json` output to raw located findings. An array of
+ *  `{ file (ABSOLUTE — the seam boundary relativizes), errors: [{ line,
+ *  message, rule }] }`. `rule` matches what the plain format put in trailing
+ *  parens, so identities carry over. Exported so the lint-gate format contract
+ *  is testable against real samples. */
+export function parseKtlintJson(output: string): RawLocatedFinding[] {
+  const data = extractJsonBlob(output);
+  if (!Array.isArray(data)) return [];
+  const out: RawLocatedFinding[] = [];
+  for (const entry of data) {
+    const record = asRecord(entry);
+    const file = str(record?.file);
+    if (!record || !file || !Array.isArray(record.errors)) continue;
+    for (const raw of record.errors) {
+      const e = asRecord(raw);
+      const message = str(e?.message);
+      if (!e || !message) continue;
+      const line = num(e.line);
+      const rule = str(e.rule);
+      out.push({
+        file,
+        ...(line !== undefined ? { line } : {}),
+        ...(rule !== undefined ? { rule } : {}),
+        message,
+      });
+    }
+  }
+  return out;
+}
 
 /**
  * Lint-GATE provider: ktlint, the standard zero-config Kotlin linter/formatter.
  * Resolved via the tool registry (Rule 1); null when it isn't installed
- * (fail-open). ktlint's default output is one `file:line:col: message (rule)`
- * per violation, mapped to located findings; it exits non-zero on violations.
+ * (fail-open). `--reporter=json` is ktlint's native machine-readable output,
+ * parsed structurally (the plain display format is for humans — Rule 5); it
+ * exits non-zero on violations.
  */
 const kotlinLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
@@ -456,8 +485,8 @@ const kotlinLintGateProvider: LintGateProvider = {
     if (!ktlint.available || !ktlint.path) return null;
     return {
       bin: ktlint.path,
-      args: [],
-      parse: KOTLIN_KTLINT_PARSE,
+      args: ['--reporter=json'],
+      parse: { kind: 'structured', label: 'ktlint-json', parse: parseKtlintJson },
       expectedExit: 0,
     };
   },

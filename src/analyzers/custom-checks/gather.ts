@@ -80,7 +80,14 @@ export function customCheckRecallInputs(opts: GatherCustomChecksOptions): Record
   for (const spec of resolveCustomCheckSpecs(opts)) {
     inputs[`${spec.name}/cmd`] = normalizeCommandForRecall(spec.command.bin, spec.command.args);
     inputs[`${spec.name}/parse`] =
-      spec.parse.mode === 'regex' ? `regex:${hashText(spec.parse.pattern)}` : 'exit';
+      spec.parse.mode === 'regex'
+        ? `regex:${hashText(spec.parse.pattern)}`
+        : spec.parse.mode === 'structured'
+          ? // The function itself cannot be hashed; the pack-declared label IS
+            // the parse's recall identity, and packs must change it when the
+            // parse's semantics change.
+            `structured:${spec.parse.label}`
+          : 'exit';
     inputs[`${spec.name}/exit`] = String(spec.expectedExit);
     for (const [key, value] of Object.entries(spec.recallInputs ?? {})) {
       inputs[`${spec.name}/${key}`] = value;

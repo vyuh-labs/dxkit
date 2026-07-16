@@ -25,7 +25,7 @@
  */
 
 import { makeCommandExec, tail, type CommandExec } from '../tools/bounded-exec';
-import { binaryFinding, parseLocated } from './parse';
+import { binaryFinding, parseLocated, parseStructuredLocated } from './parse';
 import type {
   CustomCheckFinding,
   CustomCheckResult,
@@ -83,17 +83,20 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
         ? []
         : [binaryFinding(spec.name, spec.blocking, tail(outcome.output))];
     } else {
-      // Regex check: parse ALWAYS (many linters exit 0 with findings — C#/Java
+      // Located check: parse ALWAYS (many linters exit 0 with findings — C#/Java
       // build analyzers, eslint warnings). "Clean" = zero matches, not exit 0.
-      // Parses the COMPLETE output — `parseLocated` owns the finding cap, and it
-      // discloses when it bites.
-      const located = parseLocated(
-        spec.name,
-        spec.blocking,
-        spec.parse.pattern,
-        outcome.output,
-        opts.cwd,
-      );
+      // Parses the COMPLETE output — the parse boundary owns the finding cap,
+      // and it discloses when it bites.
+      const located =
+        spec.parse.mode === 'regex'
+          ? parseLocated(spec.name, spec.blocking, spec.parse.pattern, outcome.output, opts.cwd)
+          : parseStructuredLocated(
+              spec.name,
+              spec.blocking,
+              spec.parse.parse,
+              outcome.output,
+              opts.cwd,
+            );
       if (located.length > 0) {
         checkFindings = located;
       } else if (!passedExit) {

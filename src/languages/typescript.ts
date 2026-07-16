@@ -49,7 +49,8 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
-import type { LintGateProvider } from './capabilities/lint-gate';
+import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
+import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, nodeLinterVersions } from './capabilities/recall-inputs';
 
 const TS_JS_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -1294,31 +1295,51 @@ const tsCorrectnessProvider: CorrectnessProvider = {
  * (the same command their CI runs) and never fetches; a repo without eslint
  * gets no gate (null).
  *
- * The output format is dxkit's BUNDLED formatter (`--format <dist>/formatters/
- * eslint-unix.cjs`), not the core `unix` name: ESLint v9 removed `unix` from
- * core, so `--format unix` on a current install prints "The unix formatter is
- * no longer part of core ESLint" and emits nothing parseable. The bundled
- * formatter reproduces the same `file:line:col: message [severity/rule]` shape
- * (repo-relative paths for portable identity) on ESLint 8 AND 9 with no extra
- * install, so the parse regex below is unchanged. eslint exits non-zero when it
- * reports an error (expectedExit 0 = clean), which tells the runner to parse.
+ * The output is eslint's NATIVE `--format json` (core on ESLint 8 AND 9),
+ * parsed structurally. The prior path rendered a display format (a bundled
+ * unix-style formatter) and regex-parsed it back — a lossy round-trip through
+ * a shape meant for humans: on a real brownfield repo the JSON carried 19,177
+ * messages while the display parse recovered 562 fewer (messages whose text
+ * broke the line shape). The JSON result set IS what eslint found; nothing to
+ * recover. eslint exits non-zero when it reports an error (expectedExit 0 =
+ * clean), which tells the runner to surface a parse-empty run as a failure.
  */
-/** eslint unix-style line: `<file>:<line>:<col>: <message> [<severity>/<rule>]`.
- *  Exported so the lint-gate format contract is testable against a real sample. */
-export const TS_ESLINT_UNIX_PARSE =
-  '^(?<file>.+):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\[\\w+/(?<rule>[^\\]]+)\\]\\s*$';
-
-/** Absolute path to dxkit's bundled ESLint formatter (shipped to dist/formatters
- *  by copy-templates; resolves under src/ in vitest, dist/ at runtime). */
-export const ESLINT_UNIX_FORMATTER = path.join(__dirname, '..', 'formatters', 'eslint-unix.cjs');
+/** Map eslint `--format json` output to raw located findings. Exported so the
+ *  lint-gate format contract is testable against real samples. */
+export function parseEslintJson(output: string): RawLocatedFinding[] {
+  const data = extractJsonBlob(output);
+  if (!Array.isArray(data)) return [];
+  const out: RawLocatedFinding[] = [];
+  for (const entry of data) {
+    const result = asRecord(entry);
+    const file = str(result?.filePath);
+    if (!result || !file || !Array.isArray(result.messages)) continue;
+    for (const raw of result.messages) {
+      const m = asRecord(raw);
+      const message = str(m?.message);
+      if (!m || !message) continue;
+      const line = num(m.line);
+      out.push({
+        file,
+        ...(line !== undefined ? { line } : {}),
+        // 'unknown' (not undefined) for a rule-less message — fatal parse
+        // errors carry ruleId null — matching what the previous formatter
+        // emitted so those findings keep their identity.
+        rule: str(m.ruleId) ?? 'unknown',
+        message,
+      });
+    }
+  }
+  return out;
+}
 
 const tsLintGateProvider: LintGateProvider = {
   lintCommand(ctx) {
     if (!hasLocalBin(ctx.cwd, 'eslint')) return null;
     return {
       bin: 'npx',
-      args: ['--no-install', 'eslint', '.', '--format', ESLINT_UNIX_FORMATTER],
-      parse: TS_ESLINT_UNIX_PARSE,
+      args: ['--no-install', 'eslint', '.', '--format', 'json'],
+      parse: { kind: 'structured', label: 'eslint-json', parse: parseEslintJson },
       expectedExit: 0,
     };
   },

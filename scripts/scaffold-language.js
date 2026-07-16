@@ -458,8 +458,28 @@ export const ${id}: LanguageSupport = {
   lintGate: {
     lintCommand(_ctx) {
       // TODO(${id}): resolve the linter (findTool(TOOL_DEFS.<tool>, ctx.cwd)) and
-      // return { bin, args, parse, expectedExit } where \`parse\` is a regex with
-      // named (?<file>)(?<line>)(?<rule>)(?<message>) groups; or return null.
+      // return { bin, args, parse, expectedExit }; or return null (dormant).
+      //
+      // PREFER a STRUCTURED parse over your linter's native machine-readable
+      // output (its --format json / SARIF / NDJSON mode) — a display format is
+      // for humans, and every regex over one eventually diverges from it (the
+      // shipped 3.9 class: eslint's display render dropped findings its JSON
+      // carried; clippy's short format omitted the lint NAME, colliding
+      // identities). Map it to { file, line?, rule?, message? } entries; the
+      // seam boundary relativizes paths, dedupes, and caps — your parser must
+      // only be TOTAL (garbage in → [] out, never a throw; the contract test
+      // feeds it garbage). Helpers: ./capabilities/lint-structured
+      // (extractJsonBlob for a JSON blob amid combined-stream noise, jsonLines
+      // for NDJSON, asRecord/str/num for defensive field access).
+      //
+      //   parse: { kind: 'structured', label: '<tool>-json', parse: parse<Tool>Json }
+      //
+      // Fall back to { kind: 'regex', pattern } — named groups
+      // (?<file>)(?<line>)(?<rule>)(?<message>) — ONLY when the linter has no
+      // machine-readable output (today only MSBuild's diagnostic stream), and
+      // say why in a comment. Either way add relative + absolute fixtures in
+      // test/custom-checks/lint-formats.test.ts (the coverage guard fails
+      // without them).
       return null;
     },
     recallInputs(_ctx) {
