@@ -273,8 +273,16 @@ export function renderConsole(result: GuardrailCheckResult): string {
     // specific, actionable warnings under the wall — so print the drift group as
     // ONE summary line and enumerate only the specific warnings.
     const drift = warning.filter((p) => p.classification.status === 'config_drift');
-    const specific = warning.filter((p) => p.classification.status !== 'config_drift');
+    // The tooling-drift wall (VERIFY-39 F-6) is the same disease one status
+    // over: on a pre-Rule-19 baseline the whole backlog demotes at once
+    // (18,396 blocks on a real repo). One summary block per kind instead.
+    const toolingDrift = warning.filter((p) => p.classification.status === 'tooling_drift');
+    const specific = warning.filter(
+      (p) =>
+        p.classification.status !== 'config_drift' && p.classification.status !== 'tooling_drift',
+    );
     for (const p of specific) lines.push(...formatPairLines(p, '  '));
+    if (toolingDrift.length > 0) lines.push(...formatToolingDriftSummary(toolingDrift, '  '));
     if (drift.length > 0) lines.push(...formatDriftWarningSummary(drift, '  '));
     lines.push('');
   }
@@ -714,6 +722,49 @@ function formatPairLines(p: ClassifiedPair, indent: string): string[] {
  * in the right place instead of chasing "policy changed". Points at `--json` for
  * the un-collapsed per-finding payload.
  */
+/**
+ * Collapse `tooling_drift` warning pairs into ONE summary block per KIND
+ * (VERIFY-39 F-6). On a brownfield repo whose baseline predates the current
+ * recall context — a dxkit upgrade, a plugin bump, lint newly enabled — the
+ * ENTIRE backlog demotes to tooling-drift at once: a real repo produced
+ * 18,396 four-line drift blocks (73,665 lines of console output) that buried
+ * the one unattributable block-rule finding driving the verdict. Every block
+ * said the same cause and the same remedy, so itemizing them adds nothing a
+ * reader can act on. One block per kind carries everything actionable: the
+ * count, the shared cause, one exemplar, and the pointer at `--json` for the
+ * full per-finding payload (which is NOT collapsed). Sibling of the
+ * `config_drift` collapse above (gh #157) — same disease, one status over.
+ */
+export function formatToolingDriftSummary(
+  drift: ReadonlyArray<ClassifiedPair>,
+  indent: string,
+): string[] {
+  const byKind = new Map<string, ClassifiedPair[]>();
+  for (const p of drift) {
+    const list = byKind.get(p.kind) ?? [];
+    list.push(p);
+    byKind.set(p.kind, list);
+  }
+  const out: string[] = [];
+  for (const [kind, pairs] of byKind) {
+    const n = pairs.length;
+    const cause =
+      pairs[0].classification.reasons.find((r) => r.code === 'tooling-drift')?.detail ??
+      'what dxkit can see for this kind changed between runs';
+    out.push(
+      `${indent}${n} ${kind} finding${n === 1 ? '' : 's'} demoted to TOOLING-DRIFT — ${cause}`,
+    );
+    const exemplar = pairs[0];
+    const where = locatorProse(exemplar);
+    if (where) out.push(`${indent}  · e.g. ${where}`);
+  }
+  out.push(
+    `${indent}  · Not attributable to this diff, so these warn and never block. ` +
+      `Re-run with --json for the full per-finding list; re-baseline (from CI) to restore attribution.`,
+  );
+  return out;
+}
+
 export function formatDriftWarningSummary(
   drift: ReadonlyArray<ClassifiedPair>,
   indent: string,
@@ -1326,7 +1377,26 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     // Collapse the envelope-drift wall (gh #157): the drift group becomes one
     // summary line above the table, and only the specific warnings are tabled.
     const driftWarn = warning.filter((p) => p.classification.status === 'config_drift');
-    const specificWarn = warning.filter((p) => p.classification.status !== 'config_drift');
+    // Tooling drift collapses per KIND (VERIFY-39 F-6) — a brownfield upgrade
+    // demotes the whole backlog at once, and a PR body must not carry an
+    // 18k-row warnings table.
+    const toolingDriftWarn = warning.filter((p) => p.classification.status === 'tooling_drift');
+    const specificWarn = warning.filter(
+      (p) =>
+        p.classification.status !== 'config_drift' && p.classification.status !== 'tooling_drift',
+    );
+    if (toolingDriftWarn.length > 0) {
+      const byKind = new Map<string, number>();
+      for (const p of toolingDriftWarn) byKind.set(p.kind, (byKind.get(p.kind) ?? 0) + 1);
+      const perKind = [...byKind.entries()].map(([k, n]) => `${n} ${k}`).join(', ');
+      lines.push(
+        `> **${toolingDriftWarn.length} finding${toolingDriftWarn.length === 1 ? '' : 's'} demoted ` +
+          `to TOOLING-DRIFT** (${perKind}) — what dxkit can see for these kinds changed between ` +
+          `the baseline and this scan, so they cannot be attributed to this diff. They warn and ` +
+          `never block; see \`--json\` for each, and re-baseline (from CI) to restore attribution.`,
+      );
+      lines.push('');
+    }
     if (driftWarn.length > 0) {
       const gateEnabled = driftWarn.filter((p) =>
         p.classification.reasons.some((r) => r.code === 'dimension-newly-measured'),
@@ -1353,11 +1423,11 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
       for (const p of specificWarn) lines.push(markdownPairRow(p));
       lines.push('');
     }
-    if (driftWarn.length > 0) {
-      lines.push(
-        `_${driftWarn.length} envelope-drift warning${driftWarn.length === 1 ? '' : 's'} collapsed ` +
-          `above; see \`--json\` for each._`,
-      );
+    if (driftWarn.length > 0 || toolingDriftWarn.length > 0) {
+      const parts: string[] = [];
+      if (toolingDriftWarn.length > 0) parts.push(`${toolingDriftWarn.length} tooling-drift`);
+      if (driftWarn.length > 0) parts.push(`${driftWarn.length} envelope-drift`);
+      lines.push(`_${parts.join(' + ')} warning(s) collapsed above; see \`--json\` for each._`);
       lines.push('');
     }
     lines.push('</details>');
