@@ -668,6 +668,78 @@ export function installCiHostGates(cwd: string, opts: InstallerOpts = {}): ShipI
   return result;
 }
 
+/**
+ * Multi-environment baseline capture (Rule 20, design §3.4/§6.6): the refresh
+ * workflow's per-host fragment-capture jobs + merge steps, rendered from the
+ * placement plan. A host job earns a capture job only when a LINT GATE is
+ * placed on it (the floor is a pass/fail signal, never baselined) and lint
+ * gating is enabled — otherwise every slot renders empty and the refresh
+ * workflow stays byte-identical to its single-job form.
+ */
+export function renderFragmentOrchestration(cwd: string): {
+  captureJobs: string;
+  needs: string;
+  mergeSteps: string;
+} {
+  const empty = { captureJobs: '', needs: '', mergeSteps: '' };
+  let lintEnabled = false;
+  try {
+    lintEnabled = loadPolicyFromCwd(cwd)?.lint?.enabled === true;
+  } catch {
+    return empty; // fail-open: orchestration is additive
+  }
+  if (!lintEnabled) return empty;
+
+  const plan = repoPlacementPlan(cwd);
+  const lintHosts = plan.hostJobs
+    .map((j) => ({
+      host: j.host,
+      runner: j.runner,
+      lintPacks: j.capabilities.filter((c) => c.capability === 'lintGate').map((c) => c.pack),
+    }))
+    .filter((j) => j.lintPacks.length > 0);
+  if (lintHosts.length === 0) return empty;
+
+  const partial = (name: string): string =>
+    fs
+      .readFileSync(path.join(templatesDir(), '.github', 'workflows', 'partials', name), 'utf8')
+      // Strip the partial's own header comment (lines before the first
+      // non-comment content) — it documents the TEMPLATE, not the render.
+      .replace(/^(#[^\n]*\n)+/, '');
+
+  const jobs = lintHosts.map((j) => {
+    // The check names for this host's placed lint gates (`lint:<pack>` is the
+    // seam's reserved naming — LINT_CHECK_PREFIX).
+    const checks = j.lintPacks.map((p) => `lint:${p}`).join(',');
+    let setup = '';
+    try {
+      const flags = { ...detect(cwd).languages };
+      for (const id of Object.keys(flags) as (keyof typeof flags)[]) {
+        if (!j.lintPacks.includes(id)) flags[id] = false;
+      }
+      const steps = allCiSetupSteps(flags, cwd);
+      setup = steps.length === 0 ? '' : steps.map(renderCiSetupStep).join('\n') + '\n';
+    } catch {
+      setup = '';
+    }
+    return partial('fragment-capture-job.yml')
+      .split('__DXKIT_GATE_HOST__')
+      .join(j.host)
+      .split('__DXKIT_GATE_RUNNER__')
+      .join(j.runner)
+      .split('__DXKIT_FRAGMENT_CHECKS__')
+      .join(checks)
+      .split('__DXKIT_FRAGMENT_HOST_SETUP__\n')
+      .join(setup);
+  });
+
+  return {
+    captureJobs: jobs.join('\n'),
+    needs: `    needs: [${lintHosts.map((j) => `capture-${j.host}`).join(', ')}]\n`,
+    mergeSteps: partial('fragment-merge-steps.yml'),
+  };
+}
+
 /** Combine two ship results — local helper for multi-file installers. */
 function mergeShipResults(a: ShipInstallResult, b: ShipInstallResult): ShipInstallResult {
   return {
@@ -813,6 +885,7 @@ export function installCiBaselineRefresh(
   const installedTransport = detectInstalledRefreshTransport(cwd);
   const migrating = installedTransport !== null && installedTransport !== plan.transport;
   const effectiveOpts = migrating ? { ...opts, force: true } : opts;
+  const fragments = renderFragmentOrchestration(cwd);
   const result = installWorkflow(
     cwd,
     REFRESH_TEMPLATE_BY_TRANSPORT[plan.transport],
@@ -821,9 +894,20 @@ export function installCiBaselineRefresh(
       __DXKIT_DEFAULT_BRANCH__: defaultBranch,
       __DXKIT_ANCHOR_REF__: plan.anchorRef,
       [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+      // Multi-env capture (Rule 20 / design §3.4): per-host fragment jobs +
+      // the merge before the commit. All three slots render empty on a repo
+      // whose lint the primary runner fully observes.
+      ['__DXKIT_FRAGMENT_CAPTURE_JOBS__\n']: fragments.captureJobs,
+      ['__DXKIT_REFRESH_NEEDS__\n']: fragments.needs,
+      ['__DXKIT_FRAGMENT_MERGE_STEPS__\n']: fragments.mergeSteps,
     },
     REFRESH_WORKFLOW_DEST,
   );
+  if (fragments.captureJobs && result.installed.length > 0) {
+    result.notes.push(
+      'Baseline refresh captures host fragments (multi-env baseline) — merged before the anchor commit.',
+    );
+  }
   // Record a resolved 'branch' transport in the policy so the guardrail READER
   // activates: `loadAnchorFromBranch` gates on `policy.baseline.anchor ===
   // 'branch'`, so an enforcement-derived transport that lives only in the

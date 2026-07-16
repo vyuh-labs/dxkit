@@ -609,6 +609,10 @@ describe('recipe playbook — synthetic pack', () => {
       cwd: '/nonexistent-repo',
       packs: [...LANGUAGES],
       policy: { lint: { enabled: true } } as unknown as BrownfieldPolicy,
+      // The mock gate is windows-only (Rule 20); recall honesty excludes
+      // unobservable checks, so observe from a satisfying environment — the
+      // exclusion direction is pinned in test/baseline/fragment.test.ts.
+      env: { host: 'windows', hasToolchain: () => true },
     });
     expect(inputs['lint:playbook/playbook-plugin-mock']).toBe('2.1.0');
     expect(inputs['lint:playbook/cmd']).toBe('playbook-lint-mock --gate --format json');
