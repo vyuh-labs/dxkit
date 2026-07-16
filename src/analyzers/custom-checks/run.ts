@@ -24,7 +24,7 @@
  * exercise the policy without a real toolchain.
  */
 
-import { makeCommandExec, type CommandExec } from '../tools/bounded-exec';
+import { makeCommandExec, tail, type CommandExec } from '../tools/bounded-exec';
 import { binaryFinding, parseLocated } from './parse';
 import type {
   CustomCheckFinding,
@@ -64,22 +64,42 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
       results.push({ name: spec.name, status: 'skipped-timeout', findings: [] });
       continue;
     }
+    if (outcome.overflowed) {
+      // The command outran the capture buffer, so its output is a fragment cut at
+      // an arbitrary byte. Parsing it would report a count derived from a slice we
+      // cannot measure — and because the baseline producer and the guardrail share
+      // this runner, that count would shift between runs and mint false net-new
+      // findings. Fail-OPEN: say nothing rather than something unfounded.
+      results.push({ name: spec.name, status: 'skipped-overflow', findings: [] });
+      continue;
+    }
 
     const passedExit = outcome.code === spec.expectedExit;
     let checkFindings: CustomCheckFinding[];
     if (spec.parse.mode === 'exit') {
       // Binary check: the exit code IS the signal. Finding iff it failed.
-      checkFindings = passedExit ? [] : [binaryFinding(spec.name, spec.blocking, outcome.output)];
+      // `tail` here is DISPLAY: the message is human-facing, never hashed (Rule 9).
+      checkFindings = passedExit
+        ? []
+        : [binaryFinding(spec.name, spec.blocking, tail(outcome.output))];
     } else {
       // Regex check: parse ALWAYS (many linters exit 0 with findings — C#/Java
       // build analyzers, eslint warnings). "Clean" = zero matches, not exit 0.
-      const located = parseLocated(spec.name, spec.blocking, spec.parse.pattern, outcome.output);
+      // Parses the COMPLETE output — `parseLocated` owns the finding cap, and it
+      // discloses when it bites.
+      const located = parseLocated(
+        spec.name,
+        spec.blocking,
+        spec.parse.pattern,
+        outcome.output,
+        opts.cwd,
+      );
       if (located.length > 0) {
         checkFindings = located;
       } else if (!passedExit) {
         // Failed but parsed nothing — the linter/command errored (bad config,
         // crash). Surface it as a binary finding so the failure isn't lost.
-        checkFindings = [binaryFinding(spec.name, spec.blocking, outcome.output)];
+        checkFindings = [binaryFinding(spec.name, spec.blocking, tail(outcome.output))];
       } else {
         checkFindings = [];
       }

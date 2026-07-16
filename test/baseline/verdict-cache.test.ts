@@ -35,6 +35,7 @@ const FIELDS = {
   blocks: false,
   warns: false,
   blockingCount: 0,
+  unattributableCount: 0,
   warningCount: 0,
   markdown: '## Guardrail: PASSED',
   ranAt: '2026-07-06T00:00:00.000Z',
@@ -79,6 +80,16 @@ describe('verdict cache — replay contract', () => {
     fs.mkdirSync(path.join(d, '.dxkit', 'reports'), { recursive: true });
     fs.writeFileSync(path.join(d, '.dxkit', 'reports', 'health.json'), '{}');
     expect(readFreshVerdict(d, POLICY)?.markdown).toBe('## Guardrail: PASSED');
+  });
+
+  it('MISSES on a pre-refusal-tier entry (no unattributableCount) — replaying it could say PASSED over an attribution gap', () => {
+    const d = mkRepo();
+    writeVerdict(d, POLICY, FIELDS);
+    const cachePath = path.join(d, '.dxkit', 'cache', 'verdict.json');
+    const entry = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as Record<string, unknown>;
+    delete entry.unattributableCount; // what a 3.7.x-written cache entry looks like
+    fs.writeFileSync(cachePath, JSON.stringify(entry, null, 2) + '\n');
+    expect(readFreshVerdict(d, POLICY)).toBeNull();
   });
 
   it('returns null in a non-git dir (never caches without a commit)', () => {

@@ -36,6 +36,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { LanguageSupport } from '../src/languages';
+import type { LintGateRecallContext } from '../src/languages/capabilities/lint-gate';
 import {
   LANGUAGES,
   allAutogenSourcePatterns,
@@ -69,6 +70,8 @@ import {
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
+import { customCheckRecallInputs } from '../src/analyzers/custom-checks/gather';
+import type { BrownfieldPolicy } from '../src/baseline/policy';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { extractFromTree } from '../src/analyzers/flow/extract';
 import { parseSource } from '../src/ast/parse';
@@ -203,6 +206,13 @@ const mockPlaybookPack = {
       args: ['--gate'],
       parse: '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
       expectedExit: 0,
+    }),
+    // Recall inputs (Rule 19) — distinctive values so the assertion below can
+    // prove the SYNTHETIC pack's inputs reach the check spec. Without this the
+    // playbook would not notice recall silently ceasing to be pack-driven.
+    recallInputs: (ctx: LintGateRecallContext) => ({
+      'playbook-linter': ctx.mode === 'locked' ? '^9.0.0' : '9.4.2',
+      'playbook-plugin-mock': '2.1.0',
     }),
   },
   detect: vi.fn(() => false),
@@ -432,6 +442,58 @@ describe('recipe playbook — synthetic pack', () => {
     expect(playbookSpec?.parse).toEqual({ mode: 'regex', pattern: expect.any(String) });
     // Disabled lint policy yields nothing (opt-in default off).
     expect(lintGateSpecs(packs, { cwd: '/x', changedFiles: [] }, undefined)).toEqual([]);
+  });
+
+  // Rule 19: recall attribution must be pack-driven the same way the command is.
+  // The class this guards: `lintGateSpecs` calls a pack's `recallInputs` behind
+  // a fail-open catch (a pack must never take the gate down), so a pack that
+  // silently stopped contributing inputs would look EXACTLY like a pack with
+  // nothing to contribute. Without a synthetic pack asserting its own inputs
+  // arrive, recall could quietly cease being pack-driven and every test would
+  // still pass — which is how lint became unattributable in the first place.
+  it('lintGateSpecs carries the mock pack recall inputs onto the spec (Rule 19)', () => {
+    const packs = [...LANGUAGES];
+    const specs = lintGateSpecs(
+      packs,
+      { cwd: '/nonexistent-repo', changedFiles: [] },
+      {
+        enabled: true,
+      },
+    );
+    const playbookSpec = specs.find((s) => s.name === 'lint:playbook');
+    expect(playbookSpec?.recallInputs).toEqual({
+      'playbook-linter': '9.4.2',
+      'playbook-plugin-mock': '2.1.0',
+    });
+  });
+
+  it('the recall `inputs` policy knob reaches the pack (Rule 19 / §8.1)', () => {
+    const packs = [...LANGUAGES];
+    const locked = lintGateSpecs(
+      packs,
+      { cwd: '/nonexistent-repo', changedFiles: [] },
+      { enabled: true },
+      { inputs: 'locked' },
+    );
+    // The pack sees `mode`, so `locked` reports the declared range instead of
+    // the resolved version. A knob that never reached the pack would return the
+    // resolved value here and nothing else would notice.
+    expect(locked.find((s) => s.name === 'lint:playbook')?.recallInputs).toMatchObject({
+      'playbook-linter': '^9.0.0',
+    });
+  });
+
+  it('the seam namespaces the mock pack inputs into the custom-check kind (Rule 19)', () => {
+    // End of the chain: pack -> spec -> the ONE seam resolver the baseline
+    // producer reads. If any link stopped being registry-driven the synthetic
+    // pack's inputs would vanish here.
+    const inputs = customCheckRecallInputs({
+      cwd: '/nonexistent-repo',
+      packs: [...LANGUAGES],
+      policy: { lint: { enabled: true } } as unknown as BrownfieldPolicy,
+    });
+    expect(inputs['lint:playbook/playbook-plugin-mock']).toBe('2.1.0');
+    expect(inputs['lint:playbook/cmd']).toBe('playbook-lint-mock --gate');
   });
 
   // 2.7 Sprint 1: exported-symbol detection registry helper iterates

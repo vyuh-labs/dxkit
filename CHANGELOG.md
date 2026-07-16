@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-07-15
+
+> **Upgrade note (read before upgrading a repo with an existing baseline).**
+> Every baseline captured by an older dxkit predates recall attribution (below),
+> so on the first `guardrail check` after upgrade dxkit cannot yet tell whether
+> its findings are comparable to the current scan. A clean tree passes normally.
+> But if the diff contains a net-new finding an armed block rule covers (a
+> secret, a critical vulnerability, a SAST regression), the verdict is
+> `CANNOT GATE` with exit code 1 and a printed remedy, rather than a pass. That
+> is deliberate: the alternative shipped a real regression, see "the refusal
+> tier" below. Run `vyuh-dxkit update` to migrate the baseline and re-stamp
+> recall (install every scanner first, `vyuh-dxkit tools install`, so the
+> re-baseline is not written with a scanner missing), or
+> `vyuh-dxkit baseline create --force` to re-anchor manually. After that the
+> gate is back to normal.
+
+### Fixed
+
+- **A custom-check / lint gate parsed a truncated view of its own tool's
+  output.** A check's captured output was cut to a 4,000-byte display tail
+  before parsing, and a second cap kept only the first 500 located findings, so
+  dxkit saw a fragment and reported it as the whole. On a real repo the true
+  count was 19,177 lint findings and dxkit recorded 23. Both are content-
+  dependent slices, so fixing one pre-existing finding could slide an unbaselined
+  finding into the window and read as net-new, blocking a developer for fixing
+  lint. The runner now captures and parses the complete output and itemizes every
+  finding (a pathological run above a far higher ceiling collapses to one stable
+  whole-check finding rather than a truncated prefix). Verified on four ecosystems
+  (eslint, ruff, ktlint, golangci-lint).
+
+- **The refusal tier: dxkit no longer prints PASSED over a block-rule finding it
+  cannot attribute.** Recall attribution (below) demotes a drifted kind's net-new
+  findings to a warning, which is correct for a lint backlog but was catastrophic
+  for the security block rules: on any baseline without recall (every baseline
+  written before this release), the demotion disarmed all eight block rules at
+  once. Reproduced by A/B on a real repo where three live credentials passed the
+  gate with exit 0 that the previous release had blocked. Blocking the demoted
+  finding would misattribute a delta the developer may not have caused (the exact
+  false block recall attribution exists to prevent), and passing it certifies
+  security dxkit cannot verify. So the classifier now records the disarmed rule,
+  the guardrail result carries the attribution gaps, and the single verdict
+  derivation turns any gap into `CANNOT GATE` + exit 1, the same refuse-and-name-
+  the-remedy treatment an identity-scheme mismatch already gets. PASSED is
+  unconstructible while a gap exists, and every surface that reports a verdict
+  (the CLI exit code, the JSON payload, the PR-comment markdown, the receipt
+  cache, the loop Stop-gate, `evaluate`) routes through that derivation. A clean
+  tree under an old baseline still passes with drift warnings, and a drifted kind
+  with no armed block rule still demotes to a warning, so the false-block
+  prevention is intact.
+
+- **A lint finding's identity no longer embeds the checkout directory.** A
+  located finding's identity is hashed from its `file`, and three language packs
+  ran linters that print absolute paths (ktlint, MSBuild via `dotnet build`,
+  rubocop's emacs formatter). A baseline captured at one path therefore matched
+  nothing when the scan moved to CI at another path: proven at 0 of 453
+  identities surviving a checkout-path change, which is 453 false blocks on the
+  first CI run. `parseLocated` is now a validating boundary that relativizes
+  every finding path to a repo-relative POSIX form, the same contract the frozen
+  extension SDK already states for third-party findings. Packs whose linters
+  happened to print relative paths were safe by convention, not design; the
+  boundary makes it design, pinned per pack by a parity test with a relative and
+  an absolute fixture each.
+
+- **Additive fail-open gates disclose a structural skip, not only a structural
+  error.** 3.7.1 made a flow / schema / seam gate that errored say why. This
+  release does the same for a gate that is configured on but can never run as
+  configured: a `flow.mode: block` with no served-side truth, or a schema gate
+  with no models. Those now print the reason and the remedy in the console and
+  the PR comment instead of being silently inert while looking healthy.
+
+### Added
+
+- **Recall attribution: a finding delta is blamed on the developer only after
+  every other cause is ruled out.** The guardrail reports "net-new", a claim
+  about cause, from a delta, `current \ baseline`. A delta has six causes and
+  only one of them (the developer introduced a finding) should gate; a tool
+  version bump, a plugin update, a linter config change, or a change in what
+  dxkit itself can see are all indistinguishable from it at the diff. Each finding
+  kind now declares what determines what it can see (tool versions, plugin
+  versions, config-file hashes, the check command, plus a dxkit-owned epoch), the
+  baseline records it, and the guardrail compares it per kind. When a kind's
+  inputs moved, its net-new findings are reclassified as tooling drift and warn
+  instead of blocking, and every renderer names the kind, which input moved, and
+  the remedy. This closes the class where, for example, an eslint plugin adding
+  rules under a byte-identical command blamed every newly reported finding on
+  whoever opened the next PR. The classifier drift signal, the epochs, and the
+  per-kind comparison are one registry driven by the producers, replacing a pair
+  of hardcoded tool tables that had silently diverged.
+
+### Changed
+
+- **The lint and custom-check capture fix and recall attribution ship together
+  and cannot be separated.** The capture fix alone would mint roughly 17,800
+  false net-new findings on any repo with a lint backlog the day it upgrades;
+  recall attribution is its safety belt. The two land in the same release for
+  that reason.
+
 ## [3.7.5] - 2026-07-14
 
 ### Fixed

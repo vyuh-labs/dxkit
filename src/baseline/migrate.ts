@@ -31,8 +31,10 @@
 
 import * as fs from 'fs';
 import { createBaseline, gatherCurrentScan } from './create';
-import { pathForBaseline } from './baseline-file';
+import { pathForBaseline, readBaselineFile } from './baseline-file';
+import type { BaselineFile } from './baseline-file';
 import { identityFor } from './finding-identity';
+import { RECALL_EPOCHS } from './recall';
 import { isSanitized } from './sanitize';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type {
@@ -196,6 +198,53 @@ export function detectStaleScheme(
   if (allowlist && allowlist.entries.length > 0) found.add(allowlist.identityScheme ?? 'v1');
 
   if (found.has('v1') && CURRENT_IDENTITY_SCHEME !== 'v1') return 'v1';
+  return null;
+}
+
+/** Why a repo's baseline needs a recall refresh (CLAUDE.md Rule 19). */
+export type StaleRecall =
+  /** Written before recall attribution existed. dxkit cannot tell whether its
+   *  findings are comparable to today's, so every kind degrades to warn. */
+  | 'absent'
+  /** dxkit changed what it observes for a kind since the baseline was
+   *  captured (an epoch bump), so that kind degrades to warn. */
+  | 'epoch-gap';
+
+/**
+ * Detect whether a repo's committed baseline predates the current recall
+ * contract (Rule 19), returning WHY or `null` when it is current.
+ *
+ * A lightweight probe: reads the stamped `recall` map without re-scanning,
+ * mirroring `detectStaleScheme`. Used by `vyuh-dxkit update` to decide whether
+ * a refresh is owed.
+ *
+ * The asymmetry with identity migration is load-bearing. An identity-scheme
+ * bump changes how a finding is HASHED, so it migrates OFFLINE by recomputing
+ * ids from stored metadata. A recall bump changes what dxkit can SEE, and
+ * nothing stored can tell you what a scanner you never ran would have found —
+ * so the only honest migration is a RESCAN, which needs the toolchain present.
+ * That is why this returns a reason instead of a remap.
+ */
+export function detectStaleRecall(cwd: string, baselineName = 'main'): StaleRecall | null {
+  const blPath = pathForBaseline(cwd, baselineName);
+  if (!fs.existsSync(blPath)) return null; // ref-based / no committed baseline
+  let file: BaselineFile;
+  try {
+    file = readBaselineFile(blPath);
+  } catch {
+    return null; // unreadable — leave it to an explicit re-baseline
+  }
+  if (!file.recall) return 'absent';
+
+  // An epoch gap only matters for kinds the baseline actually holds findings
+  // for: a kind with nothing recorded has nothing to misattribute, so forcing
+  // a rescan over it would be churn with no signal.
+  const kinds = new Set(file.findings.map((e) => e.kind));
+  for (const kind of kinds) {
+    const recorded = file.recall[kind];
+    if (!recorded) return 'absent';
+    if (recorded.epoch !== RECALL_EPOCHS[kind]) return 'epoch-gap';
+  }
   return null;
 }
 

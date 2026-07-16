@@ -56,6 +56,8 @@ import type { TestGapsReport } from '../../analyzers/tests/types';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import type { BaselineEntry, RichBaselineEntry } from '../types';
+import { RECALL_EPOCHS, type RecallContext, type RecallMap } from '../recall';
+import { resolveToolInputs, splitTools, toolRecall } from './recall-inputs';
 import { customCheckFindingsToBaselineEntries } from './custom-checks';
 import { largeFilesToBaselineEntries } from './health';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
@@ -123,6 +125,15 @@ export interface ProducerContext {
    *  `gatherCustomCheckFindings`. Empty when no checks are configured (the
    *  common case) — the producer then emits nothing. */
   readonly customCheckFindings: ReadonlyArray<CustomCheckFinding>;
+  /** What determines what the custom-check kind can SEE (Rule 19), resolved by
+   *  the ONE Rule 17 seam entry point (`customCheckRecallInputs`) across all
+   *  three of its consumers: user checks, pack lint, extension findings.
+   *
+   *  Separate from `customCheckFindings` because recall is not a function of
+   *  the findings: a CLEAN lint run emits zero findings and still has a full
+   *  recall context, and a clean run is exactly when you need to know whether
+   *  "clean" was comparable to the baseline's "clean". */
+  readonly customCheckRecall: Readonly<Record<string, string>>;
 }
 
 /**
@@ -143,6 +154,34 @@ export interface BaselineProducer {
    *  for missing inputs. Producers always emit the rich shape;
    *  sanitization is applied at the write boundary, not here. */
   readonly produce: (ctx: ProducerContext) => RichBaselineEntry[];
+  /**
+   * What determines what each contributed kind can SEE this run (CLAUDE.md
+   * Rule 19). ONE context per kind in `contributes` — no missing, no extra;
+   * the contract test asserts exact coverage.
+   *
+   * REQUIRED. A new producer cannot ship without declaring what makes its
+   * kinds see differently — the omission is what made `custom-check`
+   * second-class for its entire life (there was no registry to be absent
+   * from, so lint could never be attributed to a tool change).
+   *
+   * Per KIND, not per producer: `security` contributes four kinds driven by
+   * three different tools, so a per-producer context would drift secrets
+   * every time semgrep bumps.
+   *
+   * Unlike `produce`, this MUST return a context for every contributed kind
+   * even when the upstream analyzer didn't run — a kind with no findings
+   * still has a recall context, and a clean run is exactly when you need to
+   * know whether "clean" was comparable to the baseline's "clean".
+   *
+   * Empty `inputs` is a legitimate, meaningful answer: it says "nothing
+   * environmental determines this kind's recall — only dxkit's own code,
+   * which `epoch` covers." (`large-file`, `test-gap`, `stale-file` are all
+   * in-process with no external tool.) Config knobs are NOT recall inputs:
+   * `.dxkit/policy.json` + `.vyuh-dxkit.json` already drive the separate,
+   * existing `config_drift` signal via `policyHash` / `configHash`, and
+   * duplicating them here would double-report one cause.
+   */
+  readonly recallContexts: (ctx: ProducerContext) => ReadonlyMap<IdentityKind, RecallContext>;
 }
 
 /**
@@ -226,6 +265,15 @@ export const DEFERRED_KINDS: Readonly<
 // surface — readers see every wired producer + every deferral in
 // one place.
 
+/** The tools that determine what the SECRETS pass can see. Shared by the
+ *  `secret` / `config` / `secret-hmac` kinds — all three come out of the same
+ *  scanner pass (`config` is the .env-in-git + private-key file sweep), so a
+ *  gitleaks bump moves all three together. */
+function secretsTools(ctx: ProducerContext): string[] {
+  const p = ctx.analysisResult.capabilities.securityAggregate?.provenance;
+  return splitTools(p?.secrets.tool);
+}
+
 const SECURITY_PRODUCER: BaselineProducer = {
   name: 'security',
   contributes: ['secret', 'code', 'config', 'dep-vuln'],
@@ -237,6 +285,25 @@ const SECURITY_PRODUCER: BaselineProducer = {
       commitSha: ctx.commitSha || undefined,
     });
   },
+  recallContexts(ctx) {
+    const p = ctx.analysisResult.capabilities.securityAggregate?.provenance;
+    const secrets = secretsTools(ctx);
+    // Code findings come from semgrep, PLUS the in-process TLS-bypass registry,
+    // PLUS any ingested external engine (Rule 13). An engine's snapshot being
+    // refreshed changes what `code` can see exactly like a semgrep bump does,
+    // so it is an input, not a footnote.
+    const code = [
+      ...splitTools(p?.codePatterns.tool),
+      ...(p?.tlsBypass.ran ? ['tls-bypass-registry'] : []),
+      ...(p?.external?.ran ? p.external.tools : []),
+    ];
+    return new Map<IdentityKind, RecallContext>([
+      ['secret', toolRecall('secret', secrets, ctx.cwd)],
+      ['code', toolRecall('code', code, ctx.cwd)],
+      ['config', toolRecall('config', secrets, ctx.cwd)],
+      ['dep-vuln', toolRecall('dep-vuln', splitTools(p?.depVulns.tool), ctx.cwd)],
+    ]);
+  },
 };
 
 const SECRET_HMAC_PRODUCER: BaselineProducer = {
@@ -244,6 +311,9 @@ const SECRET_HMAC_PRODUCER: BaselineProducer = {
   contributes: ['secret-hmac'],
   produce(ctx) {
     return rawSecretsToBaselineEntries({ rawSecrets: ctx.rawSecrets, salt: ctx.salt });
+  },
+  recallContexts(ctx) {
+    return new Map([['secret-hmac', toolRecall('secret-hmac', secretsTools(ctx), ctx.cwd)]]);
   },
 };
 
@@ -259,6 +329,16 @@ const QUALITY_PRODUCER: BaselineProducer = {
       ...staleFilesToBaselineEntries(ctx.hygiene.staleFiles),
     ];
   },
+  recallContexts(ctx) {
+    const dupTool = ctx.analysisResult.capabilities.duplication?.tool;
+    return new Map<IdentityKind, RecallContext>([
+      ['duplication', toolRecall('duplication', dupTool ? [dupTool] : [], ctx.cwd)],
+      // Stale files are a git ls-files sweep over a fixed suffix set — no
+      // external tool, so nothing environmental determines recall. The epoch
+      // covers a change to the suffix set itself.
+      ['stale-file', { epoch: RECALL_EPOCHS['stale-file'], inputs: {} }],
+    ]);
+  },
 };
 
 const HEALTH_PRODUCER: BaselineProducer = {
@@ -267,6 +347,13 @@ const HEALTH_PRODUCER: BaselineProducer = {
   produce(ctx) {
     return largeFilesToBaselineEntries(ctx.analysisResult.metrics);
   },
+  recallContexts() {
+    // In-process line count over the metrics envelope. The large-file threshold
+    // is a policy knob, and policy already drives the SEPARATE `config_drift`
+    // signal via `policyHash` — recording it here too would double-report one
+    // cause under two names.
+    return new Map([['large-file', { epoch: RECALL_EPOCHS['large-file'], inputs: {} }]]);
+  },
 };
 
 const TESTS_PRODUCER: BaselineProducer = {
@@ -274,6 +361,20 @@ const TESTS_PRODUCER: BaselineProducer = {
   contributes: ['test-gap', 'test-file-degradation'],
   produce(ctx) {
     return testGapsToBaselineEntries(ctx.testGapsReport);
+  },
+  recallContexts(ctx) {
+    // Coverage tooling decides which files read as tested: a repo that gains a
+    // real coverage report stops guessing from filenames, so gaps appear and
+    // vanish without anyone touching the code. `coverageSource` is the honest
+    // input, and the tools that produced it are named alongside.
+    const inputs: Record<string, string> = {
+      'coverage-source': ctx.testGapsReport.summary.coverageSource,
+      ...resolveToolInputs(ctx.testGapsReport.toolsUsed, ctx.cwd),
+    };
+    return new Map<IdentityKind, RecallContext>([
+      ['test-gap', { epoch: RECALL_EPOCHS['test-gap'], inputs }],
+      ['test-file-degradation', { epoch: RECALL_EPOCHS['test-file-degradation'], inputs }],
+    ]);
   },
 };
 
@@ -287,6 +388,13 @@ const STALE_ALLOW_PRODUCER: BaselineProducer = {
       commit: { cwd: ctx.cwd, commitSha: ctx.commitSha },
     });
   },
+  recallContexts(ctx) {
+    // A stale-allow finding means "this annotation's underlying finding is
+    // gone." Whether the finding is gone is exactly what the secret scanners
+    // decide — so a gitleaks bump that stops matching a value mints a NET-NEW
+    // stale-allow that no developer caused. Same inputs as `secret`.
+    return new Map([['stale-allow', toolRecall('stale-allow', secretsTools(ctx), ctx.cwd)]]);
+  },
 };
 
 const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
@@ -294,6 +402,15 @@ const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
   contributes: ['custom-check'],
   produce(ctx) {
     return customCheckFindingsToBaselineEntries(ctx.customCheckFindings);
+  },
+  recallContexts(ctx) {
+    // Resolved by the seam (Rule 17's one entry point) across all three of its
+    // consumers, so the producer never re-derives what a check IS. The epoch is
+    // the producer's own: it records that DXKIT changed what this kind can see,
+    // which no seam input can express.
+    return new Map([
+      ['custom-check', { epoch: RECALL_EPOCHS['custom-check'], inputs: ctx.customCheckRecall }],
+    ]);
   },
 };
 
@@ -329,6 +446,34 @@ export function runProducers(
   const out: RichBaselineEntry[] = [];
   for (const producer of producers) {
     out.push(...producer.produce(ctx));
+  }
+  return out;
+}
+
+/**
+ * Union every producer's per-kind recall contexts into the ONE map the
+ * baseline records and the guardrail compares (CLAUDE.md Rule 19).
+ *
+ * The orchestrator calls this with `PRODUCERS`; the playbook test calls it
+ * with an extended list to verify a synthetic producer's inputs actually reach
+ * the baseline. Registry-driven by construction — there is no per-kind list
+ * here to fall out of date, which is precisely the bug this replaces
+ * (`create.ts` hardcoded three tools; `check.ts` hardcoded five kinds; neither
+ * derived from the other, so lint could never be attributed).
+ *
+ * A producer that declares a context for a kind it does not contribute is a
+ * programming error the contract test catches; here we take what is given so a
+ * synthetic producer in a test needs no special-casing.
+ */
+export function runRecallContexts(
+  ctx: ProducerContext,
+  producers: ReadonlyArray<BaselineProducer> = PRODUCERS,
+): RecallMap {
+  const out: Partial<Record<IdentityKind, RecallContext>> = {};
+  for (const producer of producers) {
+    for (const [kind, recall] of producer.recallContexts(ctx)) {
+      out[kind] = recall;
+    }
   }
   return out;
 }

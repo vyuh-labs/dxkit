@@ -2615,17 +2615,16 @@ export async function run(argv: string[]): Promise<void> {
         // second gate this session) reuses it instead of re-gathering. Keyed on
         // a content-complete tree signature + policy hash, so a replay can never
         // hide a net-new finding. Best-effort — never breaks the check.
-        {
-          const counts = verdictCounts(result);
-          writeVerdict(targetPath, result.policy, {
-            blocks: result.blocks,
-            warns: result.warns,
-            blockingCount: counts.blocking,
-            warningCount: counts.warning,
-            markdown: renderMarkdown(result),
-            ranAt: new Date().toISOString(),
-          });
-        }
+        const counts = verdictCounts(result);
+        writeVerdict(targetPath, result.policy, {
+          blocks: result.blocks,
+          warns: result.warns,
+          blockingCount: counts.blocking,
+          unattributableCount: counts.unattributable,
+          warningCount: counts.warning,
+          markdown: renderMarkdown(result),
+          ranAt: new Date().toISOString(),
+        });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
           await emitJson(renderJson(result));
@@ -2635,7 +2634,9 @@ export async function run(argv: string[]): Promise<void> {
           process.stdout.write(renderConsole(result) + '\n');
           logger.dim(`Completed in ${elapsed}s`);
         }
-        process.exit(result.blocks ? 1 : 0);
+        // The ONE exit-code derivation (consumes attribution gaps) — never
+        // `result.blocks ? 1 : 0`, which would exit 0 over a CANNOT GATE.
+        process.exit(counts.exitCode);
       } catch (err) {
         logger.fail((err as Error).message);
         process.exit(1);

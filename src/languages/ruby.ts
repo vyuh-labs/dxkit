@@ -29,6 +29,7 @@ import type {
 import type { LanguageSupport, LintSeverity } from './types';
 import { readRepoFile, repoFileExists } from './version-detect';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFileInput, hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 
 // ─── Detection ──────────────────────────────────────────────────────────────
 
@@ -758,6 +759,17 @@ const rubyLintGateProvider: LintGateProvider = {
       args: ['--format', 'emacs'],
       parse: RUBY_RUBOCOP_EMACS_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // rubocop's cop set moves with its version, and `.rubocop.yml` decides
+    // which cops run — including `inherit_gem`, which pulls a whole cop set
+    // from another gem. `.rubocop_todo.yml` is a rubocop-managed exclusion
+    // list: regenerating it silently changes what is reported.
+    return {
+      ...toolVersionInput(TOOL_DEFS.rubocop, ctx.cwd, 'rubocop'),
+      ...hashFirstConfig(ctx.cwd, ['.rubocop.yml', '.rubocop.yaml']),
+      ...hashFileInput(ctx.cwd, '.rubocop_todo.yml'),
     };
   },
 };

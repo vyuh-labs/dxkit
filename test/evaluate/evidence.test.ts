@@ -39,7 +39,7 @@ export function fakeRun(over: Partial<EvaluateRunEvidence> = {}): EvaluateRunEvi
     label: '#1',
     baseSha: 'a'.repeat(40),
     headSha: 'b'.repeat(40),
-    verdict: { blocks: false, warns: false },
+    verdict: { blocks: false, warns: false, refused: false },
     blocking: [],
     warningCount: 0,
     refExcludedKinds: [],
@@ -151,9 +151,9 @@ describe('buildEvidenceDoc', () => {
   it('computes totals across clean, warned, blocked, and errored landings', () => {
     const doc = docWith([
       fakeRun(),
-      fakeRun({ verdict: { blocks: false, warns: true }, warningCount: 2 }),
+      fakeRun({ verdict: { blocks: false, warns: true, refused: false }, warningCount: 2 }),
       fakeRun({
-        verdict: { blocks: true, warns: false },
+        verdict: { blocks: true, warns: false, refused: false },
         blocking: [{ kind: 'secret' }],
       }),
       fakeRun({ error: { message: 'unreachable ref' } }),
@@ -167,7 +167,7 @@ describe('buildEvidenceDoc', () => {
 
     const disclosed = docWith([
       fakeRun({
-        verdict: { blocks: true, warns: false },
+        verdict: { blocks: true, warns: false, refused: false },
         blocking: [{ kind: 'dep-vuln', severity: 'critical' }],
         refExcludedKinds: [{ kind: 'test-gap', currentCount: 4 }],
       }),
@@ -193,7 +193,7 @@ describe('buildCosts', () => {
       fakeRun({ durationMs: 2000, warningCount: 3 }),
       fakeRun({
         durationMs: 9000,
-        verdict: { blocks: true, warns: false },
+        verdict: { blocks: true, warns: false, refused: false },
         coverage: {
           scanners: [
             { tool: 'gitleaks', available: true, source: 'path' },

@@ -217,6 +217,46 @@ export async function computeStopGate(
     return { outcome: 'block-model', event, message: buildRepairMessage(json) };
   }
 
+  // The guardrail REFUSED to gate: block-rule-class findings exist that recall
+  // drift made unattributable (`CANNOT GATE`). Not agent-repairable — the
+  // remedy is re-baselining, which an unattended loop must never do to clear a
+  // gate (that would grandfather whatever the drift is hiding). Fail CLOSED to
+  // the operator: allowing the stop would certify "no net-new secrets" over a
+  // gap dxkit just said it cannot see across.
+  if (json.verdict.refused) {
+    const gaps = json.attributionGaps
+      .map((g) => `${g.kind} (rules: ${g.rules.join(', ')}, findings: ${g.findingCount})`)
+      .join('; ');
+    const event = buildLedgerEvent(repoDir, {
+      session_id: session,
+      ...agentFields,
+      cwd: repoDir,
+      branch: json.current.branch,
+      commit: json.current.commitSha,
+      guardrail_status: 'error',
+      net_new_findings: 0,
+      ...breakdown,
+      baseline_findings: json.baseline.findingsCount,
+      files_changed: 0,
+      allowed: false,
+      stop_hook_active: stopActive,
+      tests_status: 'skipped',
+      lint_status: 'not_configured',
+      typecheck_status: 'not_configured',
+      duration_ms: Date.now() - start,
+    });
+    return {
+      outcome: 'block-operator',
+      event,
+      message:
+        `dxkit guardrail CANNOT GATE: findings covered by block rules cannot be attributed ` +
+        `(recall drift) — ${gaps}. This is a baseline problem, not something the agent can ` +
+        `fix: re-baseline via \`${dxkitCli('update')}\` or ` +
+        `\`${dxkitCli('baseline create --force')}\` and re-run the loop. Do NOT re-baseline ` +
+        `just to clear this if the drifted findings are unreviewed.`,
+    };
+  }
+
   // Guardrail passed — run the correctness FLOOR (liveness) before the optional
   // configured test command. The floor asks "does this code compile + do the
   // tests it affects pass", and blocks only on failures that are NET-NEW vs the

@@ -6,7 +6,9 @@ import { generate } from './generator';
 import { ShipInstallResult } from './ship-installers';
 import { detectInstallFlags, refreshManagedSurfaces } from './managed-artifacts';
 import * as logger from './logger';
-import { detectStaleScheme, migrateIdentity } from './baseline/migrate';
+import { detectStaleRecall, detectStaleScheme, migrateIdentity } from './baseline/migrate';
+import { createBaseline, gatherScanCoverage } from './baseline/create';
+import { missingScanners } from './baseline/coverage';
 import { dxkitCli } from './self-invocation';
 
 /**
@@ -203,8 +205,75 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   // to the rest of the update.
   await migrateIdentityIfStale(cwd);
 
+  // Recall-attribution refresh (CLAUDE.md Rule 19). Runs AFTER the identity
+  // migration on purpose: that path already re-baselines, which stamps recall
+  // as a side effect, so this is a no-op when both were stale.
+  await refreshRecallIfStale(cwd);
+
   console.log(''); // slop-ok
   logger.success('Update complete. dxkit-owned files refreshed; your files preserved.');
+}
+
+/**
+ * Bring a repo's baseline onto the current recall contract (Rule 19), or say
+ * plainly why it could not be done here.
+ *
+ * Unlike an identity-scheme bump, a recall bump cannot be migrated offline:
+ * nothing stored can tell you what a scanner you never ran would have found,
+ * so the only honest refresh is a rescan.
+ *
+ * And a rescan is only honest if this machine can see as much as the baseline's
+ * did. Re-baselining where gitleaks is not installed would write a baseline
+ * with no secrets in it, and every real pre-existing secret would then read as
+ * NET-NEW on the next CI check that does have gitleaks — turning a "your gate
+ * is degraded" warning into a wave of false blocks. So a missing scanner means
+ * we refuse to rescan and hand the user the remedy instead. The gate keeps
+ * working meanwhile: the affected kinds warn instead of blocking, and every
+ * renderer says which kinds and why.
+ */
+async function refreshRecallIfStale(cwd: string): Promise<void> {
+  let stale;
+  try {
+    stale = detectStaleRecall(cwd);
+  } catch {
+    return; // probe failed (unreadable artifacts) — nothing to do here
+  }
+  if (!stale) return;
+
+  const why =
+    stale === 'absent'
+      ? 'This baseline predates recall attribution'
+      : 'dxkit changed what it can observe for a finding kind in this baseline';
+
+  const missing = missingScanners(gatherScanCoverage(cwd));
+  if (missing.length > 0) {
+    logger.warn(`${why}, so its findings cannot be attributed to a diff until it is re-captured.`);
+    logger.dim(
+      `  Not re-baselining here: ${missing.map((s) => s.tool).join(', ')} ` +
+        `${missing.length === 1 ? 'is' : 'are'} missing on this machine, and a scan without ` +
+        `${missing.length === 1 ? 'it' : 'them'} would drop findings the baseline should hold.`,
+    );
+    logger.dim(
+      '  → Run `vyuh-dxkit tools install`, then `vyuh-dxkit baseline create --force` ' +
+        '(or let CI refresh it). Until then the affected kinds warn instead of blocking.',
+    );
+    return;
+  }
+
+  logger.info(`${why} — re-capturing the baseline so its findings stay attributable…`);
+  try {
+    const result = await createBaseline({ cwd, force: true });
+    if (result.path) {
+      logger.success('Baseline re-captured on the current recall contract.');
+      logger.dim('  → Commit .dxkit/baselines to finish the refresh.');
+    }
+  } catch (err) {
+    logger.warn(
+      `Could not re-capture the baseline: ${(err as Error)?.message ?? String(err)}. ` +
+        'Run `vyuh-dxkit baseline create --force` when convenient; until then the ' +
+        'affected kinds warn instead of blocking.',
+    );
+  }
 }
 
 /**

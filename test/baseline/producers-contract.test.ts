@@ -26,8 +26,12 @@ import {
   DEFERRED_KINDS,
   PRODUCERS,
   wiredKinds,
+  type BaselineProducer,
   type IdentityKind,
+  type ProducerContext,
 } from '../../src/baseline/producers';
+import { RECALL_EPOCHS } from '../../src/baseline/recall';
+import { producerFixtureContext as recallFixtureContext } from './producer-fixture';
 import type { BaselineEntry } from '../../src/baseline/types';
 
 /**
@@ -134,5 +138,132 @@ describe('producer registry contract', () => {
       }
     }
     expect(conflicts).toEqual([]);
+  });
+});
+
+/**
+ * Recall-context contract (CLAUDE.md Rule 19).
+ *
+ * The class this closes: recall attribution used to be a hardcoded list of
+ * three tools in `create.ts` and a hardcoded map of five kinds in `check.ts`,
+ * so every kind added since — `custom-check` above all — was silently
+ * unattributable. Now the producer that OWNS a kind declares what the kind can
+ * see, and these assertions make an omission impossible to ship: a producer
+ * cannot contribute a kind without a context, and cannot declare a context for
+ * a kind it does not contribute.
+ */
+describe('producer recall-context contract (Rule 19)', () => {
+  const ctx = recallFixtureContext();
+
+  it('every producer covers EXACTLY its contributed kinds — no missing, no extra', () => {
+    const problems: string[] = [];
+    for (const p of PRODUCERS) {
+      const declared = new Set(p.recallContexts(ctx).keys());
+      for (const kind of p.contributes) {
+        if (!declared.has(kind)) problems.push(`${p.name}: contributes '${kind}' with no context`);
+      }
+      for (const kind of declared) {
+        if (!p.contributes.includes(kind)) {
+          problems.push(`${p.name}: context for '${kind}' it does not contribute`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('every declared context has a real epoch (>= 1)', () => {
+    for (const p of PRODUCERS) {
+      for (const [kind, recall] of p.recallContexts(ctx)) {
+        expect(recall.epoch, `${p.name}/${kind}.epoch`).toBeGreaterThanOrEqual(1);
+        expect(Number.isInteger(recall.epoch), `${p.name}/${kind}.epoch is an integer`).toBe(true);
+      }
+    }
+  });
+
+  it('RECALL_EPOCHS covers every IdentityKind', () => {
+    // A new kind must state its epoch deliberately rather than defaulting,
+    // since the epoch is how dxkit says "I changed what I can see here".
+    const missing = ALL_KINDS.filter((k) => RECALL_EPOCHS[k] === undefined);
+    expect(missing).toEqual([]);
+  });
+
+  it('declares contexts even when no analyzer ran — a clean run still has recall', () => {
+    // The fixture context has no securityAggregate and no checks: every
+    // producer's `produce` returns []. Recall must NOT follow it to zero,
+    // because "clean" is only meaningful against a comparable baseline.
+    for (const p of PRODUCERS) {
+      expect(p.recallContexts(ctx).size, `${p.name} declared no contexts`).toBe(
+        p.contributes.length,
+      );
+    }
+  });
+
+  it('security-kind recall is PROVENANCE-driven, so every pack flows through (Rule 19)', () => {
+    // Parity for the four kinds that are NOT wired per-pack. `lintGate.
+    // recallInputs` is declared by each pack, but `secret` / `code` / `config` /
+    // `dep-vuln` derive their inputs from whatever tool actually RAN, as
+    // reported by the aggregate's provenance — so a new pack's dep scanner or a
+    // newly-ingested engine lands in recall with no edit here.
+    //
+    // The assertion is that a synthetic tool name appearing in provenance
+    // reaches the kind's inputs. If someone ever replaces this with a hardcoded
+    // per-kind tool list (which is exactly what shipped and made lint
+    // unattributable), the synthetic name vanishes and this fails.
+    const ctx = recallFixtureContext();
+    const withProvenance: ProducerContext = {
+      ...ctx,
+      analysisResult: {
+        ...ctx.analysisResult,
+        capabilities: {
+          securityAggregate: {
+            provenance: {
+              // In-process scanners: they resolve to a `dxkit-<version>` tag
+              // on ANY machine, so the assertions below can actually fail.
+              secrets: { tool: 'grep-secrets', ran: true },
+              codePatterns: { tool: 'synthetic-sast', ran: true },
+              depVulns: { tool: 'synthetic-dep-scanner', available: true, unavailableReason: '' },
+              tlsBypass: { ran: true, patternCount: 3 },
+              fileFindings: { ran: true },
+              external: { tools: ['synthetic-ingested-engine'], ran: true },
+            },
+          },
+        } as unknown as ProducerContext['analysisResult']['capabilities'],
+      } as ProducerContext['analysisResult'],
+    };
+
+    const security = PRODUCERS.find((p) => p.name === 'security') as BaselineProducer;
+    const recall = security.recallContexts(withProvenance);
+    const inputsFor = (kind: IdentityKind): string[] => Object.keys(recall.get(kind)!.inputs);
+
+    // These assertions must be able to FAIL. An arbitrary synthetic name
+    // resolves to 'unknown' and is dropped, which would leave every input set
+    // empty and every `not.toContain` vacuously true — measuring 0-of-0 in a
+    // configuration where the thing under test cannot fire. So the fixture
+    // names the two IN-PROCESS scanners, which resolve to a `dxkit-<version>`
+    // tag on any machine, installed toolchain or not.
+    expect(inputsFor('secret'), 'fixture must produce a non-empty set to be meaningful').toContain(
+      'grep-secrets',
+    );
+    expect(inputsFor('code')).toContain('tls-bypass-registry');
+
+    // The invariant the old hardcoded map got wrong: each kind reads its OWN
+    // provenance slot. A secrets bump must not drift dep-vulns, and vice versa.
+    expect(inputsFor('dep-vuln')).not.toContain('grep-secrets');
+    expect(inputsFor('dep-vuln')).not.toContain('tls-bypass-registry');
+    expect(inputsFor('code')).not.toContain('grep-secrets');
+    // config comes out of the same scanner pass as secrets (the .env-in-git +
+    // private-key sweep), so it tracks them together.
+    expect(inputsFor('config')).toEqual(inputsFor('secret'));
+  });
+
+  it('inputs are plain string->string (comparable across runs, JSON-round-trippable)', () => {
+    for (const p of PRODUCERS) {
+      for (const [kind, recall] of p.recallContexts(ctx)) {
+        for (const [key, value] of Object.entries(recall.inputs)) {
+          expect(typeof value, `${p.name}/${kind}.inputs['${key}']`).toBe('string');
+        }
+        expect(JSON.parse(JSON.stringify(recall))).toEqual(recall);
+      }
+    }
   });
 });

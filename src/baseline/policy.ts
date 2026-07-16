@@ -163,6 +163,30 @@ export interface LintPolicy {
 }
 
 /**
+ * `.dxkit/policy.json:recall` — tuning for recall attribution (CLAUDE.md
+ * Rule 19), which decides whether a finding delta may be blamed on the
+ * developer or must be reported as "cannot attribute".
+ *
+ * Guardrail TUNING, not a posture knob: it refines a gate the repo already
+ * adopted rather than opting into a capability, so it carries no Rule 16
+ * discovery contract — same class as `confidence` / `blockRules` /
+ * `largeFileThreshold`.
+ */
+export interface RecallPolicy {
+  /**
+   * How tool versions are resolved into recall inputs.
+   *
+   *  - `'resolved'` (default) — what ACTUALLY ran. If a developer's machine
+   *    and CI resolve different plugin versions they genuinely produce
+   *    different findings, and that is worth surfacing rather than hiding.
+   *  - `'locked'` — the DECLARED range from the manifest, which does not move
+   *    when a caret resolves forward. Fewer re-baselines, for repos that
+   *    tolerate dev != CI.
+   */
+  readonly inputs?: 'resolved' | 'locked';
+}
+
+/**
  * `.dxkit/policy.json:reports` — opt-in report snapshots published to the
  * dedicated `dxkit-reports` side ref on merge to the default branch. Off by
  * default; the on-merge workflow + `vyuh-dxkit report snapshot` read it.
@@ -260,6 +284,10 @@ export interface BrownfieldPolicy {
    * default — lint ships dormant).
    */
   readonly lint?: LintPolicy;
+  /**
+   * Recall-attribution tuning (Rule 19). Absent ⟹ `inputs: 'resolved'`.
+   */
+  readonly recall?: RecallPolicy;
   /**
    * Code-graph freshness transport. Absent/`'off'` ⟹ the graph is rebuilt on
    * demand by each consumer (the default). `'cache'` installs the

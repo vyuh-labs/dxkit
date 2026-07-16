@@ -43,6 +43,7 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFileInput } from './capabilities/recall-inputs';
 
 /**
  * Run dxkit's OWN `dotnet` subprocesses (build / format / test for ANALYSIS,
@@ -1571,6 +1572,25 @@ const csharpLintGateProvider: LintGateProvider = {
       args: ['build', '--nologo', '-clp:NoSummary'],
       parse: CSHARP_MSBUILD_WARNING_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // The gate reads MSBuild warnings, so the analyzer set is whatever the SDK
+    // plus the repo's analyzer packages provide: an SDK bump ships new built-in
+    // analyzers, `.editorconfig` sets severities, and `Directory.Build.props`
+    // is where a solution turns analysis on and pins its analyzer packages for
+    // every project at once. `global.json` pins the SDK itself.
+    //
+    // Residue, deliberate: on a repo with no `global.json`, `dotnet build` uses
+    // whatever SDK the machine has, and a machine-level SDK upgrade adds
+    // analyzers with no file change for us to notice. dxkit does not manage the
+    // .NET SDK — it is an ambient runtime (`cliBinaries`), not a registry tool
+    // (Rule 1) — so there is no honest version to probe here. Pinning the SDK
+    // with `global.json` closes it on the repo's side.
+    return {
+      ...hashFileInput(ctx.cwd, '.editorconfig'),
+      ...hashFileInput(ctx.cwd, 'Directory.Build.props'),
+      ...hashFileInput(ctx.cwd, 'global.json'),
     };
   },
 };

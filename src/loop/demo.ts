@@ -49,7 +49,8 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
   const pairs = blocked ? [ILLUSTRATIVE_FINDING] : [];
   return {
     schema: GUARDRAIL_JSON_SCHEMA,
-    verdict: { blocks: blocked, warns: false, exitCode: blocked ? 1 : 0 },
+    verdict: { blocks: blocked, warns: false, refused: false, exitCode: blocked ? 1 : 0 },
+    attributionGaps: [],
     baseline: {
       name: 'main',
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -75,6 +76,7 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
       configHashChanged: false,
       dxkitVersionChanged: false,
       toolVersionDiffs: [],
+      recallDrift: [],
       coverageDrift: [],
     },
     policy: {

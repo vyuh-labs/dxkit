@@ -34,6 +34,10 @@ export interface VerdictView {
   readonly blocks: boolean;
   readonly warns: boolean;
   readonly blocking: number;
+  /** Unattributable block-rule-class findings — the `CANNOT GATE` refusal
+   *  tier. Carried through the cache so a replayed receipt refuses exactly
+   *  like the run it replays. */
+  readonly unattributable: number;
   readonly warning: number;
   readonly cached: boolean;
   readonly ranAt: string;
@@ -97,14 +101,18 @@ export async function runReceipt(cwd: string, opts: ReceiptOptions = {}): Promis
   const { verdict, movement, markdown } = await buildReceipt(cwd, opts);
 
   if (opts.json) {
+    const { verdictWordFrom } = await import('./baseline/check-renderers');
     process.stdout.write(
       JSON.stringify(
         {
           schema: 'receipt.v1',
-          verdict: verdict.blocks ? 'BLOCKED' : verdict.warns ? 'PASSED (with warnings)' : 'PASSED',
+          // The ONE verdict-word derivation (consumes the refusal tier) — an
+          // inline `blocks ? … : …` here would say PASSED over a CANNOT GATE.
+          verdict: verdictWordFrom(verdict).verdict,
           blocks: verdict.blocks,
           warns: verdict.warns,
           blocking: verdict.blocking,
+          unattributable: verdict.unattributable,
           warning: verdict.warning,
           cached: verdict.cached,
           ranAt: verdict.ranAt,
@@ -137,6 +145,7 @@ async function resolveVerdict(
         blocks: cached.blocks,
         warns: cached.warns,
         blocking: cached.blockingCount,
+        unattributable: cached.unattributableCount,
         warning: cached.warningCount,
         cached: true,
         ranAt: cached.ranAt,
@@ -153,6 +162,7 @@ async function resolveVerdict(
     blocks: result.blocks,
     warns: result.warns,
     blockingCount: counts.blocking,
+    unattributableCount: counts.unattributable,
     warningCount: counts.warning,
     markdown,
     ranAt,
@@ -162,6 +172,7 @@ async function resolveVerdict(
     blocks: result.blocks,
     warns: result.warns,
     blocking: counts.blocking,
+    unattributable: counts.unattributable,
     warning: counts.warning,
     cached: false,
     ranAt,

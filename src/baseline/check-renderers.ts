@@ -27,6 +27,9 @@
 
 import * as logger from '../logger';
 import type { ClassifiedPair, EnvelopeDrift, GuardrailCheckResult } from './check';
+import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
+import type { AttributionGap } from './attribution-gap';
+import { RECALL_DRIFT_REMEDY, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
@@ -61,23 +64,69 @@ function isBlocking(p: ClassifiedPair): boolean {
   return p.classification.blocks && p.suppressedByAllowlist === undefined;
 }
 
-/** Whether a pair contributes a live WARNING — warns per the classifier, not a
- *  block, and not waived by an active allowlist entry (a suppressed pair is
- *  neither blocking nor warning; it lands in the suppressed bucket). */
-function isWarning(p: ClassifiedPair): boolean {
+/** Whether a pair is UNATTRIBUTABLE on a block-rule kind — demoted by recall
+ *  drift out of reach of an armed block rule, and not waived by an allowlist
+ *  entry. Such a pair forces the verdict to `CANNOT GATE` (never PASSED): the
+ *  run can neither blame the developer nor certify "no net-new". */
+function isUnattributable(p: ClassifiedPair): boolean {
   return (
-    !p.classification.blocks && p.classification.warns && p.suppressedByAllowlist === undefined
+    p.classification.unattributableBlockRule !== undefined && p.suppressedByAllowlist === undefined
   );
 }
+
+/** Whether a pair contributes a live WARNING — warns per the classifier, not a
+ *  block, not waived by an active allowlist entry (a suppressed pair is
+ *  neither blocking nor warning; it lands in the suppressed bucket), and not
+ *  an unattributable block-rule finding (which gets its own bucket + verdict
+ *  tier — rendering it as a mere warning is the bypass this closes). */
+function isWarning(p: ClassifiedPair): boolean {
+  return (
+    !p.classification.blocks &&
+    p.classification.warns &&
+    p.suppressedByAllowlist === undefined &&
+    p.classification.unattributableBlockRule === undefined
+  );
+}
+
+/** The four-tier verdict word. `CANNOT GATE` is the refusal tier: an
+ *  attribution gap on a block-rule kind means the run can neither certify
+ *  "no net-new" nor blame the developer, so it refuses to pass (exit 1) and
+ *  names the remedy — the identity-scheme-mismatch treatment, structural. */
+export type VerdictWord = 'BLOCKED' | 'CANNOT GATE' | 'PASSED (with warnings)' | 'PASSED';
 
 /** The headline verdict word + the counts behind it — the same numbers
  *  `renderMarkdown` shows, including folded-in flow-gate findings. One counting
  *  path so the cached verdict summary and the rendered block never disagree. */
 export interface VerdictCounts {
-  readonly verdict: 'BLOCKED' | 'PASSED (with warnings)' | 'PASSED';
+  readonly verdict: VerdictWord;
+  /** The exit code the verdict maps to. Derived HERE and nowhere else, so a
+   *  consumer cannot exit 0 over an attribution gap. */
+  readonly exitCode: 0 | 1;
   readonly blocking: number;
+  /** Unattributable block-rule-class findings (the `CANNOT GATE` tier). */
+  readonly unattributable: number;
   readonly warning: number;
   readonly resolved: number;
+}
+
+/**
+ * The ONE verdict-word + exit-code derivation. Every surface that names the
+ * verdict — the console banner, the summary footer, the JSON payload, the
+ * markdown heading, the verdict cache, `receipt` — routes through this (or
+ * through `verdictCounts`, which calls it), so PASSED is unconstructible while
+ * an unattributable block-rule finding exists. Precedence: a definite
+ * regression outranks a refusal (both exit 1); a refusal outranks any pass.
+ */
+export function verdictWordFrom(v: {
+  readonly blocks: boolean;
+  readonly warns: boolean;
+  readonly unattributable: number;
+}): { verdict: VerdictWord; exitCode: 0 | 1 } {
+  if (v.blocks) return { verdict: 'BLOCKED', exitCode: 1 };
+  if (v.unattributable > 0) return { verdict: 'CANNOT GATE', exitCode: 1 };
+  return v.warns
+    ? { verdict: 'PASSED (with warnings)', exitCode: 0 }
+    : { verdict: 'PASSED', exitCode: 0 };
 }
 /** Active findings of the ADDITIVE gates (flow + schema drift) tallied by
  *  verdict — the one counting path every surface (verdict banner, summary
@@ -104,9 +153,21 @@ function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: 
 
 export function verdictCounts(result: GuardrailCheckResult): VerdictCounts {
   const extra = extraGateTallies(result);
+  // Consumed from the REQUIRED `attributionGaps` field (not re-derived from the
+  // pairs) so the verdict's dependency on the gap value is explicit — the field
+  // and the per-pair markers come from the same classifier output, so the
+  // counts agree by construction.
+  const unattributable = result.attributionGaps.reduce((n, g) => n + g.findingCount, 0);
+  const word = verdictWordFrom({
+    blocks: result.blocks,
+    warns: result.warns,
+    unattributable,
+  });
   return {
-    verdict: result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED',
+    verdict: word.verdict,
+    exitCode: word.exitCode,
     blocking: result.pairs.filter(isBlocking).length + extra.block,
+    unattributable,
     warning: result.pairs.filter(isWarning).length + extra.warn,
     resolved: result.pairs.filter((p) => p.classification.status === 'removed').length,
   };
@@ -174,6 +235,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   // Group + render pairs by verdict bucket. Buckets ordered so the
   // most actionable surfaces first.
   const blocking = result.pairs.filter(isBlocking);
+  const unattributable = result.pairs.filter(isUnattributable);
   const suppressed = result.pairs.filter(isAllowlistSuppressed);
   const warning = result.pairs.filter(isWarning);
   const persisted = result.pairs.filter(
@@ -187,6 +249,15 @@ export function renderConsole(result: GuardrailCheckResult): string {
   if (blocking.length > 0) {
     lines.push(logger.bold(`Blocking (${blocking.length})`));
     for (const p of blocking) lines.push(...formatPairLines(p, '  '));
+    lines.push('');
+  }
+  if (unattributable.length > 0) {
+    lines.push(logger.bold(`Cannot attribute — refusing to pass (${unattributable.length})`));
+    for (const p of unattributable) lines.push(...formatPairLines(p, '  '));
+    for (const gap of result.attributionGaps) {
+      lines.push(`  · ${describeAttributionGap(gap)}`);
+    }
+    lines.push(`  · ${ATTRIBUTION_GAP_REMEDY}`);
     lines.push('');
   }
   if (suppressed.length > 0) {
@@ -223,6 +294,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   lines.push(
     `  Pairs:       ${result.pairs.length} (blocking: ${blocking.length}, ` +
       `suppressed: ${suppressed.length}, ` +
+      (unattributable.length > 0 ? `unattributable: ${unattributable.length}, ` : '') +
       `warning: ${warning.length}, persisted: ${persisted.length}, ` +
       `resolved: ${removed.length})`,
   );
@@ -265,10 +337,11 @@ export function renderConsole(result: GuardrailCheckResult): string {
         `(warning: ${dupGroups}, suppressed: ${dupSuppressed.length})`,
     );
   }
-  lines.push(
-    `  Verdict:     ${result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED'}`,
-  );
-  lines.push(`  Exit code:   ${result.blocks ? 1 : 0}`);
+  // Verdict + exit code from the ONE derivation (consumes attribution gaps) —
+  // a summary footer must never disagree with the process exit.
+  const counts = verdictCounts(result);
+  lines.push(`  Verdict:     ${counts.verdict}`);
+  lines.push(`  Exit code:   ${counts.exitCode}`);
   if (result.depVulnsUnmeasured) {
     lines.push('');
     lines.push(
@@ -323,10 +396,46 @@ function formatGateFailure(
   ];
 }
 
+/**
+ * Structural skips a CONFIGURED-ON gate must disclose — the gate can never run
+ * as configured, so silence here reads as "the gate is protecting this repo"
+ * when it is inert. 3.7.1 closed silent-*errors* (`formatGateFailure`); this
+ * closes silent-*skips*: a repo shipped with `flow.mode: block` and no served
+ * truth, so the gate skipped every run for months and nothing said so.
+ * Routine per-diff skips (`no-flow-surface-change`, `no-source-change`,
+ * `no-candidates`) stay quiet — they mean "nothing to gate in THIS diff", not
+ * "the gate cannot work"; `off` / `no-base-ref` stay quiet because the gate
+ * isn't configured on / the run has no base at all.
+ */
+const STRUCTURAL_GATE_SKIPS: Readonly<Record<string, string>> = {
+  'no-served-truth':
+    'no served-side truth is available (no committed served.json and no monorepo route set) — ' +
+    'publish one via `flow publish` (or set `flow.mode: off`) or this gate will never evaluate',
+  'no-models':
+    'neither side declares any data model — if models exist, check `schema.specs`; ' +
+    'otherwise set `schema.mode: off`',
+};
+
+/** A visible line for a configured-on gate that skipped STRUCTURALLY (it can
+ *  never run as configured) — never silent, mirror of `formatGateFailure`.
+ *  Empty for routine, error, off, and no-base-ref skips. */
+function formatGateSkip(label: string, gate: { skipped?: string } | undefined): string[] {
+  if (!gate?.skipped) return [];
+  const why = STRUCTURAL_GATE_SKIPS[gate.skipped];
+  if (!why) return [];
+  return [
+    logger.bold(`⚠ ${label} gate is configured but did not run — ${gate.skipped}`),
+    `  ${why}`,
+    '',
+  ];
+}
+
 function formatFlowGate(flow: FlowGateOutcome | undefined): string[] {
   if (!flow) return [];
   const failure = formatGateFailure('Flow', flow);
   if (failure.length > 0) return failure;
+  const structuralSkip = formatGateSkip('Flow', flow);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = flow.suppressed ?? [];
   if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -391,6 +500,8 @@ function formatSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): string
   if (!gate) return [];
   const failure = formatGateFailure('Schema drift', gate);
   if (failure.length > 0) return failure;
+  const structuralSkip = formatGateSkip('Schema drift', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -450,6 +561,8 @@ function formatDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
   const failure = formatGateFailure('Structural duplicate', gate);
   if (failure.length > 0) return failure;
+  const structuralSkip = formatGateSkip('Structural duplicate', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -541,6 +654,17 @@ function verdictBanner(result: GuardrailCheckResult): string {
   if (result.blocks) {
     const count = result.pairs.filter(isBlocking).length + extra.block;
     return logger.bold(`Guardrail BLOCKED — ${count} new regression${count === 1 ? '' : 's'}`);
+  }
+  const unattributable = result.attributionGaps.reduce((n, g) => n + g.findingCount, 0);
+  if (unattributable > 0) {
+    // The refusal tier: neither "BLOCKED" (would misattribute) nor "PASSED"
+    // (would certify what dxkit cannot verify). Same treatment as the
+    // identity-scheme mismatch — refuse, name the gap, exit 1.
+    const kinds = result.attributionGaps.map((g) => g.kind).join(', ');
+    return logger.bold(
+      `Guardrail CANNOT GATE — ${unattributable} finding${unattributable === 1 ? '' : 's'} on ` +
+        `block-rule kind${result.attributionGaps.length === 1 ? '' : 's'} (${kinds}) cannot be attributed`,
+    );
   }
   if (result.warns) {
     const count = result.pairs.filter(isWarning).length + extra.warn;
@@ -663,6 +787,17 @@ function formatDrift(drift: EnvelopeDrift): string[] {
       `tool drift: ${d.tool} ${d.baselineVersion ?? '(absent)'} → ${d.currentVersion ?? '(absent)'}`,
     );
   }
+  // Recall drift (CLAUDE.md Rule 19) — the load-bearing disclosure. A drifted
+  // kind's net-new findings are NOT attributable to the diff, so they warn
+  // instead of blocking. That is a real reduction in what the gate enforces, so
+  // it must never be silent: name the kind, the evidence, and the remedy. Same
+  // discipline as `GateFailure` (3.7.1) — a fail-open gate always says why.
+  for (const d of drift.recallDrift) {
+    out.push(`cannot attribute ${describeRecallDrift(d)}`);
+  }
+  if (drift.recallDrift.length > 0) {
+    out.push(`${drift.recallDrift.length} kind(s) not attributable — ${RECALL_DRIFT_REMEDY}`);
+  }
   for (const d of drift.coverageDrift) {
     if (!d.baselineAvailable && d.currentAvailable) {
       out.push(
@@ -693,8 +828,19 @@ export interface GuardrailJsonPayload {
   readonly verdict: {
     readonly blocks: boolean;
     readonly warns: boolean;
+    /** True when the run REFUSED to gate: block-rule-class findings exist
+     *  that recall drift made unattributable, so neither "no net-new" nor
+     *  "developer-introduced" can honestly be claimed. Maps to `CANNOT GATE`
+     *  and exit 1. Consumers deciding pass/fail must treat this as a fail
+     *  that is NOT the diff's fault — the remedy is re-baselining, not a
+     *  code fix (see `attributionGaps`). */
+    readonly refused: boolean;
     readonly exitCode: 0 | 1;
   };
+  /** Per-kind evidence behind `verdict.refused` — which block rules were
+   *  disarmed, how many findings, and which recall input moved. Empty on a
+   *  healthy run. */
+  readonly attributionGaps: ReadonlyArray<AttributionGap>;
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
@@ -749,6 +895,10 @@ export interface GuardrailJsonPayload {
     readonly status: FindingStatus;
     readonly blocks: boolean;
     readonly warns: boolean;
+    /** Present when this finding forces the refusal tier — the armed block
+     *  rule that would have tested it, had recall drift not made it
+     *  unattributable. */
+    readonly unattributableBlockRule?: string;
     readonly priorId?: string;
     readonly currentId?: string;
     readonly confidence: number;
@@ -878,10 +1028,17 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       (p.classification.status === 'persisted' || p.classification.status === 'relocated'),
   ).length;
   const resolved = result.pairs.filter((p) => p.classification.status === 'removed').length;
+  const counts = verdictCounts(result);
 
   return {
     schema: GUARDRAIL_JSON_SCHEMA,
-    verdict: { blocks: result.blocks, warns: result.warns, exitCode: result.blocks ? 1 : 0 },
+    verdict: {
+      blocks: result.blocks,
+      warns: result.warns,
+      refused: counts.verdict === 'CANNOT GATE',
+      exitCode: counts.exitCode,
+    },
+    attributionGaps: result.attributionGaps,
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     baseline: {
       ...(result.baselinePath !== undefined ? { path: result.baselinePath } : {}),
@@ -928,6 +1085,9 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       status: p.classification.status,
       blocks: p.classification.blocks,
       warns: p.classification.warns,
+      ...(p.classification.unattributableBlockRule !== undefined
+        ? { unattributableBlockRule: p.classification.unattributableBlockRule }
+        : {}),
       ...(p.pair.priorId !== undefined ? { priorId: p.pair.priorId } : {}),
       ...(p.pair.currentId !== undefined ? { currentId: p.pair.currentId } : {}),
       confidence: p.pair.confidence,
@@ -1066,9 +1226,12 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   const suppressed = result.pairs.filter(isAllowlistSuppressed);
   const warning = result.pairs.filter(isWarning);
   const resolved = result.pairs.filter((p) => p.classification.status === 'removed');
+  const unattributable = result.pairs.filter(isUnattributable);
 
-  const verdict = result.blocks ? 'BLOCKED' : result.warns ? 'PASSED (with warnings)' : 'PASSED';
-  lines.push(`## Guardrail: ${verdict}`);
+  // Verdict from the ONE derivation — the PR-comment heading must never say
+  // PASSED over an attribution gap.
+  const counts = verdictCounts(result);
+  lines.push(`## Guardrail: ${counts.verdict}`);
   lines.push('');
   const extra = extraGateTallies(result);
   lines.push(
@@ -1080,6 +1243,27 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     ),
   );
   lines.push('');
+
+  if (result.attributionGaps.length > 0) {
+    lines.push(
+      `> ⚠️ **Cannot attribute ${counts.unattributable} finding${counts.unattributable === 1 ? '' : 's'} ` +
+        `covered by block rules** — the guardrail refuses to pass rather than certify what it ` +
+        `cannot verify.`,
+    );
+    for (const gap of result.attributionGaps) {
+      lines.push(`> - ${escapeMd(describeAttributionGap(gap))}`);
+    }
+    lines.push(`> - Remedy: ${escapeMd(ATTRIBUTION_GAP_REMEDY)}`);
+    lines.push('');
+    if (unattributable.length > 0) {
+      lines.push('### Unattributable findings');
+      lines.push('');
+      lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
+      lines.push('|---|---|---|---|---|---|');
+      for (const p of unattributable) lines.push(markdownPairRow(p));
+      lines.push('');
+    }
+  }
 
   if (result.depVulnsUnmeasured) {
     lines.push(
@@ -1235,10 +1419,24 @@ function markdownGateFailure(
   return [`> ⚠️ **${label} gate did not run** — error${at}${why} (fail-open; did not block).`, ''];
 }
 
+/** The PR-comment mirror of `formatGateSkip` — a configured-on gate that can
+ *  never run as configured is disclosed, never silent. Empty otherwise. */
+function markdownGateSkip(label: string, gate: { skipped?: string } | undefined): string[] {
+  if (!gate?.skipped) return [];
+  const why = STRUCTURAL_GATE_SKIPS[gate.skipped];
+  if (!why) return [];
+  return [
+    `> ⚠️ **${label} gate is configured but did not run** — \`${escapeMd(gate.skipped)}\`: ${escapeMd(why)}`,
+    '',
+  ];
+}
+
 function markdownFlowGate(flow: FlowGateOutcome | undefined): string[] {
   if (!flow) return [];
   const failure = markdownGateFailure('Flow', flow);
   if (failure.length > 0) return failure;
+  const structuralSkip = markdownGateSkip('Flow', flow);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = flow.suppressed ?? [];
   if (flow.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -1302,6 +1500,8 @@ function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): stri
   if (!gate) return [];
   const failure = markdownGateFailure('Schema drift', gate);
   if (failure.length > 0) return failure;
+  const structuralSkip = markdownGateSkip('Schema drift', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -1380,6 +1580,8 @@ function markdownDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
   const failure = markdownGateFailure('Structural duplicate', gate);
   if (failure.length > 0) return failure;
+  const structuralSkip = markdownGateSkip('Structural duplicate', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
   const suppressed = gate.suppressed ?? [];
   if (gate.findings.length === 0 && suppressed.length === 0) return [];
   const out: string[] = [];
@@ -1452,6 +1654,12 @@ function summarySentence(
   const parts: string[] = [];
   if (blockingCount > 0) {
     parts.push(`${blockingCount} new regression${blockingCount === 1 ? '' : 's'}`);
+  }
+  const unattributableCount = result.attributionGaps.reduce((n, g) => n + g.findingCount, 0);
+  if (unattributableCount > 0) {
+    parts.push(
+      `${unattributableCount} unattributable finding${unattributableCount === 1 ? '' : 's'} on block-rule kinds`,
+    );
   }
   if (warningCount > 0) parts.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
   if (resolvedCount > 0) parts.push(`${resolvedCount} resolved`);

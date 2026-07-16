@@ -38,6 +38,7 @@ import type {
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
 import { readRepoFile, repoFileExists } from './version-detect';
 
 interface RuffResult {
@@ -969,6 +970,18 @@ const pyLintGateProvider: LintGateProvider = {
       args: ['check', '.', '--output-format', 'concise'],
       parse: PY_RUFF_CONCISE_PARSE,
       expectedExit: 0,
+    };
+  },
+  recallInputs(ctx) {
+    // ruff ships its rules in the binary (no plugin ecosystem), so its own
+    // version is the whole tool story. `resolved` and `locked` agree here:
+    // ruff is a standalone binary, not a declared node/python dependency the
+    // repo pins a range for.
+    return {
+      ...toolVersionInput(TOOL_DEFS.ruff, ctx.cwd, 'ruff'),
+      // Which rules are ENABLED lives in config, and ruff reads the first of
+      // these that exists.
+      ...hashFirstConfig(ctx.cwd, ['ruff.toml', '.ruff.toml', 'pyproject.toml', 'setup.cfg']),
     };
   },
 };

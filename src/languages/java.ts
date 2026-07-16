@@ -726,7 +726,11 @@ export const java: LanguageSupport = {
   // tool with varied, non-line-oriented output (XML/SARIF), so no stable text
   // gate is pinned yet; Java users gate their linter via a user-declared `checks`
   // entry. Promoting to a real gate is a one-pack change when a format is fixed.
-  lintGate: { lintCommand: () => null },
+  // Dormant: `lintCommand` returns null, so nothing runs and there is nothing
+  // whose recall could drift. An empty input set is the accurate answer here,
+  // not a stub — when a real command is pinned, its versions + config land
+  // alongside it.
+  lintGate: { lintCommand: () => null, recallInputs: () => ({}) },
 
   capabilities: {
     imports: javaImportsProvider,

@@ -38,6 +38,12 @@ export interface CachedVerdict {
   readonly blocks: boolean;
   readonly warns: boolean;
   readonly blockingCount: number;
+  /** Unattributable block-rule-class findings (the `CANNOT GATE` refusal
+   *  tier). A replayed verdict must refuse exactly like the run it replays —
+   *  `readFreshVerdict` rejects entries missing this field so a verdict
+   *  cached by an older dxkit (which could say PASSED over a gap) is never
+   *  replayed. */
+  readonly unattributableCount: number;
   readonly warningCount: number;
   /** The rendered "## dxkit signals" markdown (verdict + allowlist delta). */
   readonly markdown: string;
@@ -70,6 +76,9 @@ export function readFreshVerdict(cwd: string, policy: BrownfieldPolicy): CachedV
     return null;
   }
   if (typeof parsed.signature !== 'string' || typeof parsed.markdown !== 'string') return null;
+  // A pre-refusal-tier cache entry has no `unattributableCount`; replaying it
+  // could say PASSED over an attribution gap. Treat as stale — re-gather.
+  if (typeof parsed.unattributableCount !== 'number') return null;
   if (parsed.signature !== sig) return null; // tree moved
   if (parsed.policyHash !== policyHash(policy)) return null; // policy changed
   return parsed;

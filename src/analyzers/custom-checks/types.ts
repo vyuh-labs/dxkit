@@ -62,6 +62,23 @@ export interface CustomCheckSpec {
   readonly expectedExit: number;
   /** Output-to-findings extraction (default `{ mode: 'exit' }`). */
   readonly parse: CustomCheckParse;
+  /**
+   * Ecosystem-resolved inputs that determine what THIS check can see, beyond
+   * its command + parse pattern (which the recall producer derives from the
+   * fields above). Populated for pack-declared lint from
+   * `LintGateProvider.recallInputs` — the linter's own version, its plugin
+   * versions, its config-file hash — because only the pack knows its ecosystem
+   * (Rule 6).
+   *
+   * Absent for user-declared checks: dxkit cannot resolve what `make lint`
+   * depends on, and inventing an answer would be worse than admitting the
+   * limit. Such a check's recall is its command + parse pattern alone, so a
+   * toolchain bump underneath it is invisible — a known, documented gap.
+   *
+   * Feeds CLAUDE.md Rule 19 (recall attribution); never an identity input
+   * (Rule 9).
+   */
+  readonly recallInputs?: Readonly<Record<string, string>>;
 }
 
 /** A single failure extracted from a check's output. Maps 1:1 to a
@@ -78,7 +95,16 @@ export interface CustomCheckFinding {
   readonly message?: string;
 }
 
-export type CustomCheckStatus = 'pass' | 'fail' | 'skipped-unavailable' | 'skipped-timeout';
+export type CustomCheckStatus =
+  | 'pass'
+  | 'fail'
+  | 'skipped-unavailable'
+  | 'skipped-timeout'
+  /** The command's output outran the capture buffer, so dxkit never read it all.
+   *  Fail-OPEN (never a block): a finding count parsed from a fragment is fiction,
+   *  and it would slide between runs, so the baseline and the guardrail would
+   *  disagree about what is net-new. */
+  | 'skipped-overflow';
 
 /** Per-check outcome. `findings` is non-empty only on `fail`. */
 export interface CustomCheckResult {

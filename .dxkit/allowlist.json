@@ -393,6 +393,14 @@
       "reason": "fake credential in a test fixture for the secret-detection suite",
       "addedBy": "siddarth.ch1990@gmail.com",
       "addedAt": "2026-06-17"
+    },
+    {
+      "fingerprint": "684b651057d00ea6",
+      "kind": "secret",
+      "category": "test-fixture",
+      "reason": "Fabricated AWS access key used only as a fixture in test/baseline/attribution-gap.test.ts (the BLOCKER-1 net-new-secret refusal test); not a live credential.",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-16"
     }
   ],
   "identityScheme": "v2"
