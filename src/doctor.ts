@@ -5,6 +5,7 @@ import { commandExists } from './analyzers/tools/runner';
 import { Manifest } from './types';
 import { activeLanguagesFromStack } from './languages';
 import { assessLanguageToolchains } from './languages/toolchain-coverage';
+import { hostOf, toolchainForBinary, toolchainInstallHint, type ToolchainId } from './execution';
 import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
@@ -485,6 +486,11 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
       const missing = new Set(gaps.get(lang.id)?.missingBinaries ?? []);
       for (const bin of lang.cliBinaries ?? []) {
         const ok = !missing.has(bin);
+        // A missing binary that IS a registry toolchain's driver gets the
+        // per-host install from TOOLCHAIN_DEFS (Rule 20) — the ROOT remedy.
+        // `tools install` cannot provision an ambient SDK, so pointing there
+        // would loop; naming the real install is the fix for that class.
+        const toolchain = ok ? null : toolchainForBinary(bin);
         checks.push({
           label: bin,
           ok,
@@ -494,6 +500,9 @@ function runDxChecks(cwd: string, manifest: Manifest | null, hasManifest: boolea
             : {
                 fix: {
                   hint: `${bin} not on PATH — ${lang.id} analyzers will skip until it's available.`,
+                  ...(toolchain
+                    ? { command: toolchainInstallHint(toolchain.id as ToolchainId, hostOf()) }
+                    : {}),
                 },
               }),
         });

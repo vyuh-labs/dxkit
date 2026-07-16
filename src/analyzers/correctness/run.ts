@@ -19,8 +19,10 @@ import { activeCorrectnessProviders } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
 import {
+  classifyEnvironmentFailure,
   currentEnvironment,
   describeUnmetRequirement,
+  hostOf,
   unmetRequirement,
   type ExecutionEnvironment,
   type UnmetRequirement,
@@ -112,7 +114,8 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
     // unmet environment is a disclosed boundary — running anyway would either
     // fail-open invisibly (missing toolchain) or, worse, fail in a way that
     // reads as broken code (a Windows-only build target on a Linux host).
-    const unmet = unmetRequirement(provider.execution(opts.cwd), env);
+    const requirement = provider.execution(opts.cwd);
+    const unmet = unmetRequirement(requirement, env);
     if (unmet !== null) {
       checks.push({ pack: id, label: 'floor', bin: '', status: 'skipped-environment', unmet });
       continue;
@@ -137,6 +140,24 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         // actually read; a fragment is not evidence of a broken build.
         checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-overflow' });
         continue;
+      }
+      if (outcome.code !== 0) {
+        // Post-failure tier of the F-14 fix: a failure whose output is
+        // ENVIRONMENT-shaped (SDK resolution, toolchain-too-old — the
+        // registry-declared signatures of the toolchains this floor runs on)
+        // is a boundary, not broken code. The classifier defaults to null, so
+        // a real compile error / failing test stays a blocking failure.
+        const envFailure = classifyEnvironmentFailure(requirement.toolchains, outcome.output);
+        if (envFailure !== null) {
+          checks.push({
+            pack: id,
+            label: cmd.label,
+            bin: cmd.bin,
+            status: 'skipped-environment',
+            unmet: { kind: 'unhealthy-toolchain', ...envFailure },
+          });
+          continue;
+        }
       }
       checks.push({
         pack: id,
@@ -165,13 +186,14 @@ export function describeCorrectnessFloor(result: CorrectnessFloorResult): string
 
 /** The environment-boundary disclosures in a floor result, one line per pack
  *  (empty when none). Shared by every surface that renders a floor run, so a
- *  capability that cannot run HERE is always named, with where it would run —
- *  never a silent skip (Rule 20). */
+ *  capability that cannot run HERE is always named, with where it would run
+ *  and the root remedy — never a silent skip (Rule 20). The floor always runs
+ *  on the local host, so the local host selects the install hints. */
 export function describeEnvironmentSkips(result: CorrectnessFloorResult): string[] {
   return result.checks
     .filter((c) => c.status === 'skipped-environment' && c.unmet)
     .map(
       (c) =>
-        `${c.pack} floor not measurable in this environment: ${describeUnmetRequirement(c.unmet as UnmetRequirement)}`,
+        `${c.pack} floor not measurable in this environment: ${describeUnmetRequirement(c.unmet as UnmetRequirement, hostOf())}`,
     );
 }

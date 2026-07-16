@@ -1282,10 +1282,24 @@ ExecutionRequirement { hosts, toolchains, needsBuild, buildTarget, weight }`
 - **Consumed** BEFORE execution, and every unmet requirement is DISCLOSED:
   the correctness runner and the custom-check runner emit
   `skipped-environment` with the structured reason (phrased once, by
-  `describeUnmetRequirement` — what is needed and where it would run), never
-  a silent skip and never a spawn that fails in a way that reads as a code
-  finding (the half-provisioned-SDK class). Fail-open stays fail-open, it
-  just always says why — the `GateFailure` discipline.
+  `describeUnmetRequirement` — what is needed, where it would run, and the
+  ROOT remedy: the per-host install from the registry, never a `tools
+install` loop for an ambient SDK), never a silent skip and never a spawn
+  that fails in a way that reads as a code finding (the
+  half-provisioned-SDK class). Fail-open stays fail-open, it just always
+  says why — the `GateFailure` discipline.
+- **Two tiers close the present-but-unusable class (F-14)**: (1) a toolchain
+  may declare a HEALTH probe (`ToolchainHealth`) run once per environment via
+  `toolchainHealthProblem` (the one probe home, memoized by
+  `currentEnvironment`) — the probe runs in the SAME env dxkit's own spawns
+  use, so a self-healed condition (csharp's invariant-globalization) probes
+  healthy; (2) a FAILED command's output is classified against the
+  toolchain's declared `environmentFailurePatterns` by
+  `classifyEnvironmentFailure` (the one classifier, shared by both runners) —
+  strictly environment-shaped signatures (NETSDK/MSB4236/ICU/hostfxr, "go
+  requires >=", JVM class-version), biased hard toward false-NEGATIVE so a
+  real compile error is never reclassified. Both mint
+  `unhealthy-toolchain { problem, remedy }`.
 
 **Bad**: a capability that shells a build with no `execution` declaration (it
 won't compile); a `process.platform` read in an analyzer; an inline

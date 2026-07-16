@@ -9,7 +9,13 @@
  * "the driver's machine can run everything" assumption survived unexamined.
  */
 
-import { toolchainPresent, type ToolchainId } from './toolchains';
+import {
+  toolchainHealthProblem,
+  toolchainPresent,
+  type ProbeExec,
+  type ToolchainId,
+  type ToolchainProblem,
+} from './toolchains';
 import type { ExecutionEnvironment, ExecutionHost } from './requirement';
 
 /** Map a Node platform id to an execution host. Non-win/mac POSIX platforms
@@ -23,14 +29,18 @@ export function hostOf(platform: NodeJS.Platform = process.platform): ExecutionH
 }
 
 /**
- * The local environment, with toolchain probes memoized for the lifetime of
- * the returned object. Callers hold one instance per run (a runner probes the
- * same toolchain for several packs); nothing is cached module-globally, so a
- * toolchain installed between runs is seen by the next run — the walk-cache
- * staleness class stays closed.
+ * The local environment, with toolchain presence AND health probes memoized
+ * for the lifetime of the returned object. Callers hold one instance per run
+ * (a runner probes the same toolchain for several packs); nothing is cached
+ * module-globally, so a toolchain installed between runs is seen by the next
+ * run — the walk-cache staleness class stays closed.
+ *
+ * `probeExec` is injected for tests; health probes are cheap (`--list-sdks`
+ * class) and run at most once per toolchain per environment instance.
  */
-export function currentEnvironment(): ExecutionEnvironment {
+export function currentEnvironment(probeExec?: ProbeExec): ExecutionEnvironment {
   const probed = new Map<ToolchainId, boolean>();
+  const health = new Map<ToolchainId, ToolchainProblem | null>();
   return {
     host: hostOf(),
     hasToolchain(id: ToolchainId): boolean {
@@ -39,6 +49,13 @@ export function currentEnvironment(): ExecutionEnvironment {
       const present = toolchainPresent(id);
       probed.set(id, present);
       return present;
+    },
+    toolchainProblem(id: ToolchainId): ToolchainProblem | null {
+      const hit = health.get(id);
+      if (hit !== undefined) return hit;
+      const problem = toolchainHealthProblem(id, probeExec);
+      health.set(id, problem);
+      return problem;
     },
   };
 }
