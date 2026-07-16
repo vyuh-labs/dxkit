@@ -32,8 +32,26 @@ export interface ExternalSnapshot {
 }
 
 /** Absolute path to an engine's snapshot file. */
-function snapshotPath(cwd: string, engine: SourceEngine): string {
+function snapshotPath(cwd: string, engine: string): string {
   return path.join(cwd, EXTERNAL_DIR, `${engine}.json`);
+}
+
+/**
+ * Read one engine's snapshot. Fail-open: missing, unreadable, or
+ * malformed → null. Consumers: the ingest CLI's graceful-degradation
+ * path ("does a prior snapshot exist to fall back to?") and doctor's
+ * staleness check (accepts the string engine names `snapshotEngines`
+ * lists from disk, hence the wider param type).
+ */
+export function readSnapshot(cwd: string, engine: string): ExternalSnapshot | null {
+  try {
+    const raw = fs.readFileSync(snapshotPath(cwd, engine), 'utf-8');
+    const snap = JSON.parse(raw) as ExternalSnapshot;
+    if (!Array.isArray(snap.findings) || typeof snap.generatedAt !== 'string') return null;
+    return snap;
+  } catch {
+    return null;
+  }
 }
 
 /** Write (overwrite) an engine's snapshot. Creates `.dxkit/external/`

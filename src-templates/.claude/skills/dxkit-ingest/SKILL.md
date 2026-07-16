@@ -94,6 +94,14 @@ Ingested findings flow through the same aggregate as native findings, so they ap
 
 Add a scheduled refresh (mirrors `dxkit-baseline-refresh`): a CI job with the `SNYK_TOKEN` secret runs `ingest --from-snyk` and commits the updated snapshot. The bundled `--with-deep-sast-refresh` workflow (`workflow_dispatch`) does exactly this; its `method` input picks `api` (Enterprise, quota-free) or `cli` (free/team, one test per run). The ingested findings are a point-in-time snapshot of the engine's last scan — re-ingest after the engine re-scans.
 
+### When the refresh itself fails
+
+The gate never calls the engine live — it reads the committed snapshot — so an engine failure cannot block a PR. The refresh degrades accordingly:
+
+- **Infrastructure failure** (quota exhausted, rate limit, auth, network) with a prior snapshot on disk: the run prints `refresh skipped: <engine> — <reason>`, keeps the snapshot, and **exits 0**. The gate keeps enforcing against the last good snapshot. Fix the engine access (top up the quota, rotate the token) and re-run ingest; nothing else is wrong.
+- **Genuine failure** (bad config, malformed engine output), or an infra failure with **no** prior snapshot to fall back to: **exits 1** — this needs fixing, not waiting out.
+- A snapshot that keeps aging because the refresh is chronically failing open shows up in `doctor` as `external <engine> snapshot fresh (Nd old)` failing past 30 days, with the repair command. If a user asks why deep-SAST findings look outdated, run `doctor` and look for that check.
+
 ## Hand-offs
 
 - To fix the ingested findings → `dxkit-action` (it reads them like any code finding).

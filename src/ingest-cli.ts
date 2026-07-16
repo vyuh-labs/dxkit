@@ -27,6 +27,7 @@ import { fetchSnykCodeFindings } from './ingest/snyk-api';
 import { runSnykCodeTest } from './ingest/snyk-cli';
 import { runCodeql, type CodeqlTarget } from './ingest/codeql';
 import { readDeepSastConfig } from './ingest/config';
+import { resolveEngineFailure, failureMessage } from './ingest/engine-failure';
 import { loadSnykEnv } from './ingest/env-file';
 import { writeSnapshot } from './ingest/snapshot';
 import { detectActiveLanguages } from './languages/index';
@@ -105,8 +106,7 @@ async function ingestFromCodeql(cwd: string, opts: IngestOptions): Promise<void>
   try {
     findings = await runCodeql({ cwd, targets, onLog: (m) => logger.dim(`  ${m}`) });
   } catch (err) {
-    logger.warn(`CodeQL run failed: ${(err as Error).message}`);
-    process.exitCode = 1;
+    reportEngineFailure(cwd, 'codeql', err, 'CodeQL run failed');
     return;
   }
   writeAndReport(cwd, 'codeql', findings, opts);
@@ -133,6 +133,38 @@ function ingestFromSarif(cwd: string, opts: IngestOptions): void {
  *  only entitlement. We fall back to the CLI (Snyk Code product) path. */
 export function isNotEntitled(message: string): boolean {
   return /\b403\b/.test(message) || /not entitled/i.test(message) || /api access/i.test(message);
+}
+
+/**
+ * The ONE engine-failure exit policy (every engine catch routes here).
+ * Infrastructure failure (quota / rate limit / auth / network) with a
+ * prior committed snapshot → keep the snapshot, disclose the skip,
+ * exit 0: the gate reads the committed snapshot, never a live engine,
+ * so a red refresh the team learns to ignore is strictly worse than a
+ * stale-but-present snapshot. Anything else stays exit 1.
+ */
+function reportEngineFailure(cwd: string, engine: string, err: unknown, what: string): void {
+  const disposition = resolveEngineFailure(cwd, engine, failureMessage(err));
+  if (disposition.action === 'degrade') {
+    logger.warn(`refresh skipped: ${engine} — ${disposition.reason}`);
+    logger.dim(
+      '  This is an infrastructure failure (quota / rate limit / auth / network), not a code problem.',
+    );
+    logger.dim(
+      `  The gate continues on the committed snapshot from ${disposition.snapshotGeneratedAt}. ` +
+        'Fix the engine access and re-run ingest to refresh it.',
+    );
+    return;
+  }
+  logger.warn(`${what}: ${disposition.reason}`);
+  if (disposition.infra) {
+    logger.dim(
+      // Display string naming the path for the user, not snapshot access.
+      `  This looks like an infrastructure failure, but no prior .dxkit/external/${engine}.json ` + // ingest-snapshot-ok
+        'snapshot exists to fall back to — fix the engine access (token / quota / network) and retry.',
+    );
+  }
+  process.exitCode = 1;
 }
 
 async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
@@ -210,8 +242,7 @@ async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
       await ingestViaSnykCli(cwd, opts, orgId);
       return;
     }
-    logger.warn(`Snyk read failed: ${message}`);
-    process.exitCode = 1;
+    reportEngineFailure(cwd, 'snyk-code', err, 'Snyk read failed');
     return;
   }
   writeAndReport(cwd, 'snyk-code', findings, opts);
@@ -228,8 +259,7 @@ async function ingestViaSnykCli(
   try {
     findings = await runSnykCodeTest({ cwd, org: orgId, onLog: (m) => logger.dim(`  ${m}`) });
   } catch (err) {
-    logger.warn(`Snyk Code test failed: ${(err as Error).message}`);
-    process.exitCode = 1;
+    reportEngineFailure(cwd, 'snyk-code', err, 'Snyk Code test failed');
     return;
   }
   writeAndReport(cwd, 'snyk-code', findings, opts);

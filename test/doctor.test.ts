@@ -383,3 +383,60 @@ describe('doctor --json: structured output', () => {
     expect(r.stdout).not.toContain('━━━');
   });
 });
+
+describe('doctor: external snapshot staleness (3.9 graceful degradation)', () => {
+  let tmp: string;
+
+  function writeExternalSnapshot(engine: string, generatedAt: string): void {
+    const dir = path.join(tmp, '.dxkit', 'external');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `${engine}.json`),
+      JSON.stringify({ schemaVersion: 1, engine, generatedAt, findings: [] }, null, 2),
+    );
+  }
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-external-'));
+    execSync('git init -q', { cwd: tmp });
+  });
+
+  afterAll(() => {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('flags a stale external snapshot with a fix hint (the fail-open backstop)', () => {
+    // The ingest refresh fails OPEN on quota/auth/network — doctor is
+    // the only place a chronically-broken refresh becomes visible.
+    writeExternalSnapshot('snyk-code', '2020-01-01T00:00:00.000Z');
+    const r = runDoctor(tmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    const check = report.checks.find((c: { label: string }) =>
+      c.label.startsWith('external snyk-code snapshot'),
+    );
+    expect(check).toBeDefined();
+    expect(check.ok).toBe(false);
+    expect(check.fix.hint).toContain('failing open');
+    expect(check.fix.command).toContain('ingest --from-snyk');
+  });
+
+  it('passes on a fresh external snapshot', () => {
+    writeExternalSnapshot('snyk-code', new Date().toISOString());
+    const r = runDoctor(tmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    const check = report.checks.find((c: { label: string }) =>
+      c.label.startsWith('external snyk-code snapshot'),
+    );
+    expect(check).toBeDefined();
+    expect(check.ok).toBe(true);
+    expect(check.fix).toBeUndefined();
+  });
+
+  it('emits nothing when no external snapshots exist', () => {
+    fs.rmSync(path.join(tmp, '.dxkit', 'external'), { recursive: true, force: true });
+    const r = runDoctor(tmp, ['--json']);
+    const report = JSON.parse(r.stdout);
+    const check = report.checks.find((c: { label: string }) => c.label.startsWith('external '));
+    expect(check).toBeUndefined();
+  });
+});
