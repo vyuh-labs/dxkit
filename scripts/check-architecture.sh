@@ -1805,13 +1805,14 @@ if [ -n "$RULE20_INSTALL" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
-# 20c: the satisfaction predicate has ONE home and known consumers. A second
-# "can this run here?" implementation (or ad-hoc host/toolchain gating in an
+# 20c: the satisfaction predicate AND the environment-failure classifier have
+# ONE home and known consumers. A second "can this run here?" / "was that an
+# environment failure?" implementation (or ad-hoc host/toolchain gating in an
 # analyzer) is the semantic-divergence variant of Rule 2.30 — the gate and the
 # disclosure would drift. Annotate '// exec-requirement-ok' for a justified
 # new consumer (a placement resolver, doctor, init honesty).
 RULE20_PREDICATE=""
-for f in $(grep -rlE "unmetRequirement\(" src --include='*.ts' 2>/dev/null); do
+for f in $(grep -rlE "unmetRequirement\(|classifyEnvironmentFailure\(" src --include='*.ts' 2>/dev/null); do
   case "$f" in
     src/execution/*) continue ;;
     src/analyzers/correctness/*) continue ;;
