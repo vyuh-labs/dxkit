@@ -405,14 +405,38 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     if (cmd !== null) {
       expect(typeof cmd.bin).toBe('string');
       expect(Array.isArray(cmd.args)).toBe(true);
-      // A located gate MUST carry a parse pattern with a `file` capture group —
-      // without it every finding is binary and net-new lint can't be diffed.
-      expect(typeof cmd.parse).toBe('string');
-      expect(cmd.parse, `${lang.id}: lint parse regex must capture (?<file>…)`).toContain(
-        '(?<file>',
-      );
-      // The pattern must compile.
-      expect(() => new RegExp(cmd.parse)).not.toThrow();
+      if (cmd.parse.kind === 'regex') {
+        // A regex gate MUST capture a `file` group — without it every finding
+        // is binary and net-new lint can't be diffed. Regex is the documented
+        // EXCEPTION (a linter with no machine-readable output — today only
+        // MSBuild's diagnostic stream); prefer `structured` for a new pack.
+        expect(cmd.parse.pattern, `${lang.id}: lint parse regex must capture (?<file>…)`).toContain(
+          '(?<file>',
+        );
+        expect(() => new RegExp((cmd.parse as { pattern: string }).pattern)).not.toThrow();
+      } else {
+        // A structured gate parses the linter's NATIVE machine-readable output.
+        // Its label is the parse's recall identity (a function can't be
+        // hashed), and the parse must be TOTAL over untrusted linter output:
+        // garbage in → [] out, never a throw — the runner treats a throw as a
+        // misconfigured check, so a parser that throws on real-world noise
+        // silently downgrades every run to one binary finding.
+        expect(cmd.parse.kind).toBe('structured');
+        expect(cmd.parse.label, `${lang.id}: structured parse must carry a label`).toMatch(
+          /^[a-z0-9-]+$/,
+        );
+        const parse = cmd.parse.parse;
+        for (const garbage of ['', 'not json', '{"truncated": [', '[{"half": tru', '42', '[]']) {
+          let out!: unknown;
+          expect(
+            () => (out = parse(garbage)),
+            `${lang.id}: structured parse threw on garbage input ${JSON.stringify(garbage)}`,
+          ).not.toThrow();
+          expect(Array.isArray(out), `${lang.id}: structured parse must return an array`).toBe(
+            true,
+          );
+        }
+      }
     }
   });
 

@@ -15,6 +15,7 @@
  */
 
 import * as path from 'path';
+import type { RawLocatedFinding } from '../../languages/capabilities/lint-gate';
 import type { CustomCheckFinding } from './types';
 
 /**
@@ -78,16 +79,75 @@ export function parseLocated(
     ];
   }
 
-  const located: CustomCheckFinding[] = [];
-  const seen = new Set<string>();
+  const raw: RawLocatedFinding[] = [];
   for (const line of output.split('\n')) {
     const groups = re.exec(line)?.groups;
     if (!groups || groups.file === undefined) continue;
-    const file = toRepoRelativePosix(groups.file.trim(), cwd);
-    if (!file) continue;
     const lineNo = groups.line !== undefined ? parseIntSafe(groups.line) : undefined;
-    const rule = groups.rule?.trim() || undefined;
-    const message = groups.message?.trim() || line.trim() || undefined;
+    raw.push({
+      file: groups.file,
+      ...(lineNo !== undefined ? { line: lineNo } : {}),
+      ...(groups.rule !== undefined ? { rule: groups.rule } : {}),
+      message: groups.message?.trim() || line.trim(),
+    });
+  }
+  return validateLocated(check, blocking, raw, cwd);
+}
+
+/**
+ * Turn a pack parser's output over the tool's native machine-readable format
+ * into located findings, through the SAME validating boundary as the regex
+ * path (one post-condition, two producers — Rule 2.30). A parser throw is a
+ * check misconfiguration, reported as one binary finding, never a crash: the
+ * output it choked on is untrusted linter output, and a gate must degrade,
+ * not take the guardrail down.
+ */
+export function parseStructuredLocated(
+  check: string,
+  blocking: boolean,
+  parse: (output: string) => readonly RawLocatedFinding[],
+  output: string,
+  cwd: string,
+): CustomCheckFinding[] {
+  let raw: readonly RawLocatedFinding[];
+  try {
+    raw = parse(output);
+  } catch {
+    return [
+      binaryFinding(
+        check,
+        blocking,
+        `custom-check '${check}': structured output parse failed — reporting as a whole-command failure.`,
+      ),
+    ];
+  }
+  return validateLocated(check, blocking, raw, cwd);
+}
+
+/**
+ * The one validating boundary both parse modes exit through: enforce the
+ * repo-relative-POSIX `file` post-condition, sanitize line/rule/message,
+ * dedupe identical (file, line, rule), and apply the itemization ceiling.
+ */
+function validateLocated(
+  check: string,
+  blocking: boolean,
+  raw: readonly RawLocatedFinding[],
+  cwd: string,
+): CustomCheckFinding[] {
+  const located: CustomCheckFinding[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry?.file !== 'string' || entry.file.trim() === '') continue;
+    const file = toRepoRelativePosix(entry.file.trim(), cwd);
+    if (!file) continue;
+    const lineNo =
+      typeof entry.line === 'number' && Number.isFinite(entry.line) && entry.line > 0
+        ? Math.floor(entry.line)
+        : undefined;
+    const rule = typeof entry.rule === 'string' ? entry.rule.trim() || undefined : undefined;
+    const message =
+      typeof entry.message === 'string' ? entry.message.trim() || undefined : undefined;
     const key = `${file}\0${lineNo ?? ''}\0${rule ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);

@@ -14,29 +14,38 @@
  * window — the same structural blindness the fixture-analysis harness exists for,
  * recurring at a new boundary. Hence: a real subprocess, at real scale.
  *
- * These tests fail against the pre-fix code with `expected 4001 to be greater
- * than 2000000` — the `…` + 4000-byte tail, byte-exact — and with a finding
- * count of ~45 where the whole stream holds 30,000.
+ * Post-3.9 the stream is eslint's native `--format json` — a single multi-MB
+ * JSON blob — so this doubles as the proof that structured parsing works
+ * through the REAL capture path at brownfield scale, not just on fixtures.
  */
 
 import { describe, it, expect } from 'vitest';
 import { makeCommandExec } from '../../src/analyzers/tools/bounded-exec';
 import { runCustomChecks } from '../../src/analyzers/custom-checks/run';
 import { parseLocated } from '../../src/analyzers/custom-checks/parse';
-import { TS_ESLINT_UNIX_PARSE } from '../../src/languages/typescript';
+import { parseEslintJson } from '../../src/languages/typescript';
 
-/** A real child emitting a real eslint-unix stream at brownfield scale (~2.6 MB).
- *  `exitCode` (not `exit()`) so stdout flushes — a linter with a backlog exits
- *  non-zero, which is the path that matters. */
+/** A real child emitting a real eslint `--format json` blob at brownfield scale
+ *  (~5 MB for 30k messages). `exitCode` (not `exit()`) so stdout flushes — a
+ *  linter with a backlog exits non-zero, which is the path that matters. A
+ *  trailing stderr deprecation line rides along, because real eslint runs have
+ *  one and the combined capture appends it after the payload. */
 const LINES = 30_000;
-const EMIT_BACKLOG = `let s='';for(let i=0;i<${LINES};i++)s+='src/file'+String(i).padStart(6,'0')+'.ts:'+(i+1)+':1: Unexpected any. [error/@typescript-eslint/no-explicit-any]\\n';process.stdout.write(s);process.exitCode=1;`;
+const EMIT_BACKLOG =
+  `const n=${LINES};const out=[];` +
+  `for(let i=0;i<n;i++)out.push({filePath:process.cwd()+'/src/file'+String(i).padStart(6,'0')+'.ts',` +
+  `messages:[{ruleId:'@typescript-eslint/no-explicit-any',severity:2,message:'Unexpected any.',line:i+1,column:1}],` +
+  `errorCount:1,warningCount:0});` +
+  `process.stdout.write(JSON.stringify(out));` +
+  `process.stderr.write('(node:1) DeprecationWarning: legacy config\\n');` +
+  `process.exitCode=1;`;
 
 const lintSpec = {
   name: 'lint:typescript',
   command: { bin: 'node', args: ['-e', EMIT_BACKLOG] },
   blocking: false,
   expectedExit: 0,
-  parse: { mode: 'regex' as const, pattern: TS_ESLINT_UNIX_PARSE },
+  parse: { mode: 'structured' as const, label: 'eslint-json', parse: parseEslintJson },
 };
 
 describe('command output capture (real exec, real scale)', () => {
@@ -47,12 +56,11 @@ describe('command output capture (real exec, real scale)', () => {
     expect(outcome.overflowed ?? false).toBe(false);
     expect(outcome.code).toBe(1);
     // Pre-fix this was 4001. The point is not the exact size but that NOTHING was
-    // dropped: every emitted line survives to the parser.
+    // dropped: every emitted message survives to the parser — through the blob
+    // extraction, since the stderr line rides after the JSON in the combined
+    // capture.
     expect(outcome.output.length).toBeGreaterThan(2_000_000);
-    const matching = outcome.output
-      .split('\n')
-      .filter((l) => new RegExp(TS_ESLINT_UNIX_PARSE).test(l)).length;
-    expect(matching).toBe(LINES);
+    expect(parseEslintJson(outcome.output)).toHaveLength(LINES);
   });
 
   it('the gate itemizes EVERY finding in the stream', () => {
@@ -79,7 +87,9 @@ describe('command output capture (real exec, real scale)', () => {
 });
 
 describe('the itemization ceiling never slides (MAX_LOCATED)', () => {
-  const P = TS_ESLINT_UNIX_PARSE;
+  // The ceiling lives in the SHARED validating boundary, so a generic
+  // file:line regex exercises it for both parse modes.
+  const P = '^(?<file>.+?):(?<line>\\d+):\\d+:\\s+(?<message>.*?)\\s+\\[\\w+/(?<rule>[^\\]]+)\\]$';
   const emit = (n: number, skip = -1) =>
     Array.from({ length: n }, (_, i) => i)
       .filter((i) => i !== skip)

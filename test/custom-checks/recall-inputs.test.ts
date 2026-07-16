@@ -43,8 +43,9 @@ describe('customCheckRecallInputs — machine stability', () => {
   });
 
   it('reduces an absolute path ARGUMENT to its basename', () => {
-    // The real case: dxkit passes its own eslint formatter by absolute path,
-    // which lands wherever dxkit is installed.
+    // The class case (shipped pre-3.9, when the TS gate passed dxkit's own
+    // eslint formatter by absolute path): an argument that resolves under
+    // wherever a tool is installed differs per machine.
     const local = customCheckRecallInputs({
       ...NO_PACKS,
       policy: policyWithCheck(

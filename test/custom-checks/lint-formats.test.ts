@@ -1,35 +1,41 @@
 import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 
-import { parseLocated } from '../../src/analyzers/custom-checks/parse';
+import { parseLocated, parseStructuredLocated } from '../../src/analyzers/custom-checks/parse';
+import type { CustomCheckFinding } from '../../src/analyzers/custom-checks/types';
 import { LANGUAGES } from '../../src/languages';
-import { TS_ESLINT_UNIX_PARSE } from '../../src/languages/typescript';
-import { PY_RUFF_CONCISE_PARSE } from '../../src/languages/python';
-import { GO_GOLANGCI_LINE_PARSE } from '../../src/languages/go';
-import { RUBY_RUBOCOP_EMACS_PARSE } from '../../src/languages/ruby';
-import { RUST_CLIPPY_SHORT_PARSE } from '../../src/languages/rust';
-import { KOTLIN_KTLINT_PARSE } from '../../src/languages/kotlin';
+import type { LintOutputParse } from '../../src/languages/capabilities/lint-gate';
+import { parseEslintJson } from '../../src/languages/typescript';
+import { parseRuffJson } from '../../src/languages/python';
+import { parseGolangciJson } from '../../src/languages/go';
+import { parseRubocopJson } from '../../src/languages/ruby';
+import { parseClippyJson } from '../../src/languages/rust';
+import { parseKtlintJson } from '../../src/languages/kotlin';
 import { CSHARP_MSBUILD_WARNING_PARSE } from '../../src/languages/csharp';
 
 /**
- * The lint-gate format contract: each pack's parse regex must correctly extract
- * (file, line, rule?, message) from a REAL sample line of that linter's output.
- * This is the safety net for the per-linter regexes — if a linter's format is
- * misremembered, the fixture line fails here, not in a user's guardrail.
+ * The lint-gate format contract: each pack's parse must correctly extract
+ * (file, line, rule?, message) from a REAL sample of that linter's output in
+ * the format the pack's `lintCommand` requests — native machine-readable JSON
+ * for six packs, the MSBuild diagnostic line for csharp (the one declared
+ * regex exception). If a linter's format is misremembered, the fixture fails
+ * here, not in a user's guardrail.
  *
- * Samples are taken from each tool's documented default output format.
+ * PLUS the cross-pack path-parity net: whatever path shape a linter emits,
+ * every finding leaving the seam boundary must carry a REPO-RELATIVE POSIX
+ * `file` (the same contract the frozen SDK wire format states —
+ * `WireFinding.file`: "Repo-relative POSIX path"). `file` feeds the finding's
+ * identity (Rule 9), and an identity input must survive a checkout-path
+ * change: several linters emit ABSOLUTE paths (eslint/ruff/ktlint JSON,
+ * MSBuild), and before this boundary existed 0 of 453 real ktlint identities
+ * survived a two-path A/B — the grandfathered backlog false-blocked
+ * wholesale. Every pack therefore has BOTH a relative and an absolute
+ * fixture, so the post-condition is proven per pack, not per lucky linter.
  *
- * PLUS the cross-pack path-parity net: whatever path shape a linter prints,
- * every finding leaving `parseLocated` must carry a REPO-RELATIVE POSIX `file`
- * (the same contract the frozen SDK wire format states — `WireFinding.file`:
- * "Repo-relative POSIX path"). `file` feeds the finding's identity (Rule 9),
- * and an identity input must survive a checkout-path change: three linters
- * print ABSOLUTE paths (ktlint, MSBuild via `dotnet build`, rubocop's emacs
- * formatter), and before this boundary existed 0 of 453 real ktlint identities
- * survived a two-path A/B — the grandfathered backlog false-blocked wholesale.
- * The packs whose linters print relative paths were safe by convention, not by
- * design; every pack therefore has BOTH a relative and an absolute fixture, so
- * the post-condition is proven per pack, not per lucky linter.
+ * PLUS the noise net: the runner captures COMBINED output (stdout then
+ * stderr), so a JSON payload can be preceded/followed by non-JSON noise —
+ * every structured fixture is also parsed with noise wrapped around it and
+ * must extract the same findings.
  */
 
 /** The repo root every absolute-path fixture pretends the linter ran in. */
@@ -37,19 +43,169 @@ const CWD = '/home/ci/work/repo';
 
 interface Fixture {
   readonly label: string;
-  /** Which pack's parse pattern this exercises — drives the coverage guard. */
+  /** Which pack's parse this exercises — drives the coverage guard. */
   readonly packId: string;
-  readonly pattern: string;
+  readonly parse: LintOutputParse;
   readonly sample: string;
   readonly expect: { file: string; line: number; rule?: string; message?: string };
 }
 
+const eslintParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'eslint-json',
+  parse: parseEslintJson,
+};
+const ruffParse: LintOutputParse = { kind: 'structured', label: 'ruff-json', parse: parseRuffJson };
+const golangciParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'golangci-json',
+  parse: parseGolangciJson,
+};
+const rubocopParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'rubocop-json',
+  parse: parseRubocopJson,
+};
+const clippyParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'clippy-json',
+  parse: parseClippyJson,
+};
+const ktlintParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'ktlint-json',
+  parse: parseKtlintJson,
+};
+
+/** eslint `--format json` emits ABSOLUTE `filePath`s. */
+function eslintSample(filePath: string): string {
+  return JSON.stringify([
+    {
+      filePath,
+      messages: [
+        {
+          ruleId: '@typescript-eslint/no-unused-vars',
+          severity: 2,
+          message: "'x' is defined but never used.",
+          line: 2,
+          column: 7,
+        },
+      ],
+      errorCount: 1,
+      warningCount: 0,
+    },
+  ]);
+}
+
+/** ruff `--output-format json` emits ABSOLUTE `filename`s. */
+function ruffSample(filename: string): string {
+  return JSON.stringify([
+    {
+      cell: null,
+      code: 'F401',
+      filename,
+      location: { row: 1, column: 8 },
+      end_location: { row: 1, column: 10 },
+      message: '`os` imported but unused',
+      noqa_row: 1,
+      url: 'https://docs.astral.sh/ruff/rules/unused-import',
+    },
+  ]);
+}
+
+/** golangci-lint `--out-format json` emits repo-relative `Pos.Filename`s. */
+function golangciSample(filename: string): string {
+  return JSON.stringify({
+    Issues: [
+      {
+        FromLinter: 'typecheck',
+        Text: 'undeclared name: foo',
+        Severity: '',
+        SourceLines: ['\tfoo()'],
+        Pos: { Filename: filename, Offset: 100, Line: 42, Column: 2 },
+      },
+    ],
+    Report: { Linters: [{ Name: 'typecheck', Enabled: true }] },
+  });
+}
+
+/** rubocop `--format json` emits repo-relative `path`s. */
+function rubocopSample(p: string): string {
+  return JSON.stringify({
+    metadata: { rubocop_version: '1.66.0' },
+    files: [
+      {
+        path: p,
+        offenses: [
+          {
+            severity: 'convention',
+            message: 'Missing frozen string literal comment.',
+            cop_name: 'Style/FrozenStringLiteralComment',
+            corrected: false,
+            location: { start_line: 2, start_column: 1, line: 2, column: 1, length: 1 },
+          },
+        ],
+      },
+    ],
+    summary: { offense_count: 1, target_file_count: 1, inspected_file_count: 1 },
+  });
+}
+
+/** cargo/clippy `--message-format json` NDJSON, workspace-relative spans. */
+function clippySample(fileName: string): string {
+  return [
+    JSON.stringify({
+      reason: 'compiler-message',
+      package_id: 'path+file:///repo#demo@0.1.0',
+      message: {
+        rendered: 'warning: unused variable: `x`\n',
+        code: { code: 'unused_variables', explanation: null },
+        level: 'warning',
+        message: 'unused variable: `x`',
+        spans: [
+          {
+            file_name: fileName,
+            is_primary: true,
+            line_start: 4,
+            line_end: 4,
+            column_start: 9,
+            column_end: 10,
+          },
+        ],
+      },
+    }),
+    // The end-of-run summary diagnostic has no spans and must be skipped.
+    JSON.stringify({
+      reason: 'compiler-message',
+      message: { code: null, level: 'warning', message: '1 warning emitted', spans: [] },
+    }),
+    JSON.stringify({ reason: 'build-finished', success: false }),
+  ].join('\n');
+}
+
+/** ktlint `--reporter=json` emits ABSOLUTE `file`s (runtime-proven). */
+function ktlintSample(file: string): string {
+  return JSON.stringify([
+    {
+      file,
+      errors: [
+        {
+          line: 1,
+          column: 1,
+          message: 'Unexpected blank line(s) before "}"',
+          rule: 'standard:no-blank-line-before-rbrace',
+        },
+      ],
+    },
+  ]);
+}
+
 const FIXTURES: ReadonlyArray<Fixture> = [
   {
-    label: 'eslint --format unix (plugin rule with slash, absolute path)',
+    label: 'eslint --format json (absolute filePath — eslint convention)',
     packId: 'typescript',
-    pattern: TS_ESLINT_UNIX_PARSE,
-    sample: `${CWD}/src/a.ts:2:7: 'x' is defined but never used. [Error/@typescript-eslint/no-unused-vars]`,
+    parse: eslintParse,
+    sample: eslintSample(`${CWD}/src/a.ts`),
     expect: {
       file: 'src/a.ts',
       line: 2,
@@ -58,31 +214,31 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     },
   },
   {
-    label: 'eslint --format unix (core rule, relative path)',
+    label: 'eslint --format json (relative filePath)',
     packId: 'typescript',
-    pattern: TS_ESLINT_UNIX_PARSE,
-    sample: 'src/a.ts:10:1: Unexpected console statement. [Warning/no-console]',
-    expect: { file: 'src/a.ts', line: 10, rule: 'no-console' },
+    parse: eslintParse,
+    sample: eslintSample('src/a.ts'),
+    expect: { file: 'src/a.ts', line: 2, rule: '@typescript-eslint/no-unused-vars' },
   },
   {
-    label: 'ruff --output-format concise (relative path — ruff convention)',
+    label: 'ruff --output-format json (absolute filename — ruff convention)',
     packId: 'python',
-    pattern: PY_RUFF_CONCISE_PARSE,
-    sample: 'app/main.py:1:8: F401 `os` imported but unused',
+    parse: ruffParse,
+    sample: ruffSample(`${CWD}/app/main.py`),
     expect: { file: 'app/main.py', line: 1, rule: 'F401', message: '`os` imported but unused' },
   },
   {
-    label: 'ruff --output-format concise (absolute path)',
+    label: 'ruff --output-format json (relative filename)',
     packId: 'python',
-    pattern: PY_RUFF_CONCISE_PARSE,
-    sample: `${CWD}/app/main.py:1:8: F401 \`os\` imported but unused`,
-    expect: { file: 'app/main.py', line: 1, rule: 'F401', message: '`os` imported but unused' },
+    parse: ruffParse,
+    sample: ruffSample('app/main.py'),
+    expect: { file: 'app/main.py', line: 1, rule: 'F401' },
   },
   {
-    label: 'golangci-lint --out-format line-number (relative path — go convention)',
+    label: 'golangci-lint --out-format json (relative Pos.Filename — go convention)',
     packId: 'go',
-    pattern: GO_GOLANGCI_LINE_PARSE,
-    sample: 'internal/svc/user.go:42:2: undeclared name: foo (typecheck)',
+    parse: golangciParse,
+    sample: golangciSample('internal/svc/user.go'),
     expect: {
       file: 'internal/svc/user.go',
       line: 42,
@@ -91,22 +247,17 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     },
   },
   {
-    label: 'golangci-lint --out-format line-number (absolute path)',
+    label: 'golangci-lint --out-format json (absolute Pos.Filename)',
     packId: 'go',
-    pattern: GO_GOLANGCI_LINE_PARSE,
-    sample: `${CWD}/internal/svc/user.go:42:2: undeclared name: foo (typecheck)`,
-    expect: {
-      file: 'internal/svc/user.go',
-      line: 42,
-      rule: 'typecheck',
-      message: 'undeclared name: foo',
-    },
+    parse: golangciParse,
+    sample: golangciSample(`${CWD}/internal/svc/user.go`),
+    expect: { file: 'internal/svc/user.go', line: 42, rule: 'typecheck' },
   },
   {
-    label: 'rubocop --format emacs (absolute path — the emacs formatter prints raw)',
+    label: 'rubocop --format json (relative path — rubocop convention)',
     packId: 'ruby',
-    pattern: RUBY_RUBOCOP_EMACS_PARSE,
-    sample: `${CWD}/app/models/user.rb:2:1: C: Style/FrozenStringLiteralComment: Missing frozen string literal comment.`,
+    parse: rubocopParse,
+    sample: rubocopSample('app/models/user.rb'),
     expect: {
       file: 'app/models/user.rb',
       line: 2,
@@ -115,37 +266,36 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     },
   },
   {
-    label: 'rubocop --format emacs (relative path)',
+    label: 'rubocop --format json (absolute path)',
     packId: 'ruby',
-    pattern: RUBY_RUBOCOP_EMACS_PARSE,
-    sample:
-      'app/models/user.rb:2:1: C: Style/FrozenStringLiteralComment: Missing frozen string literal comment.',
+    parse: rubocopParse,
+    sample: rubocopSample(`${CWD}/app/models/user.rb`),
+    expect: { file: 'app/models/user.rb', line: 2, rule: 'Style/FrozenStringLiteralComment' },
+  },
+  {
+    label: 'clippy --message-format json (relative span — cargo convention, rule now captured)',
+    packId: 'rust',
+    parse: clippyParse,
+    sample: clippySample('src/main.rs'),
     expect: {
-      file: 'app/models/user.rb',
-      line: 2,
-      rule: 'Style/FrozenStringLiteralComment',
-      message: 'Missing frozen string literal comment.',
+      file: 'src/main.rs',
+      line: 4,
+      rule: 'unused_variables',
+      message: 'unused variable: `x`',
     },
   },
   {
-    label: 'clippy --message-format short (relative path, no rule group)',
+    label: 'clippy --message-format json (absolute span)',
     packId: 'rust',
-    pattern: RUST_CLIPPY_SHORT_PARSE,
-    sample: 'src/main.rs:4:9: warning: unused variable: `x`',
-    expect: { file: 'src/main.rs', line: 4, message: 'unused variable: `x`' },
+    parse: clippyParse,
+    sample: clippySample(`${CWD}/src/main.rs`),
+    expect: { file: 'src/main.rs', line: 4, rule: 'unused_variables' },
   },
   {
-    label: 'clippy --message-format short (absolute path)',
-    packId: 'rust',
-    pattern: RUST_CLIPPY_SHORT_PARSE,
-    sample: `${CWD}/src/main.rs:4:9: warning: unused variable: \`x\``,
-    expect: { file: 'src/main.rs', line: 4, message: 'unused variable: `x`' },
-  },
-  {
-    label: 'ktlint default (absolute path — ktlint prints absolute, runtime-proven)',
+    label: 'ktlint --reporter=json (absolute file — ktlint convention, runtime-proven)',
     packId: 'kotlin',
-    pattern: KOTLIN_KTLINT_PARSE,
-    sample: `${CWD}/src/Main.kt:1:1: Unexpected blank line(s) before "}" (standard:no-blank-line-before-rbrace)`,
+    parse: ktlintParse,
+    sample: ktlintSample(`${CWD}/src/Main.kt`),
     expect: {
       file: 'src/Main.kt',
       line: 1,
@@ -154,23 +304,17 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     },
   },
   {
-    label: 'ktlint default (relative path)',
+    label: 'ktlint --reporter=json (relative file)',
     packId: 'kotlin',
-    pattern: KOTLIN_KTLINT_PARSE,
-    sample:
-      'src/Main.kt:1:1: Unexpected blank line(s) before "}" (standard:no-blank-line-before-rbrace)',
-    expect: {
-      file: 'src/Main.kt',
-      line: 1,
-      rule: 'standard:no-blank-line-before-rbrace',
-      message: 'Unexpected blank line(s) before "}"',
-    },
+    parse: ktlintParse,
+    sample: ktlintSample('src/Main.kt'),
+    expect: { file: 'src/Main.kt', line: 1, rule: 'standard:no-blank-line-before-rbrace' },
   },
   {
     label:
       'dotnet build analyzer warning (absolute path — MSBuild prints absolute, runtime-proven)',
     packId: 'csharp',
-    pattern: CSHARP_MSBUILD_WARNING_PARSE,
+    parse: { kind: 'regex', pattern: CSHARP_MSBUILD_WARNING_PARSE },
     sample: `${CWD}/Controllers/HomeController.cs(12,5): warning CA1822: Member does not access instance data [${CWD}/App.csproj]`,
     expect: {
       file: 'Controllers/HomeController.cs',
@@ -182,7 +326,7 @@ const FIXTURES: ReadonlyArray<Fixture> = [
   {
     label: 'dotnet build analyzer warning (relative path, with project suffix)',
     packId: 'csharp',
-    pattern: CSHARP_MSBUILD_WARNING_PARSE,
+    parse: { kind: 'regex', pattern: CSHARP_MSBUILD_WARNING_PARSE },
     sample:
       'Controllers/HomeController.cs(12,5): warning CA1822: Member does not access instance data [/repo/App.csproj]',
     expect: {
@@ -194,10 +338,17 @@ const FIXTURES: ReadonlyArray<Fixture> = [
   },
 ];
 
+/** Run a fixture's sample through the seam entry its parse mode uses. */
+function runFixture(parse: LintOutputParse, output: string): CustomCheckFinding[] {
+  return parse.kind === 'regex'
+    ? parseLocated('lint:test', true, parse.pattern, output, CWD)
+    : parseStructuredLocated('lint:test', true, parse.parse, output, CWD);
+}
+
 /**
  * Packs whose lint gate is DORMANT (lintCommand always returns null, so no
- * parse pattern exists to exercise). A declared exemption with a reason —
- * never a silent omission (same discipline as `RECALL_VERSION_EXEMPT` /
+ * parse exists to exercise). A declared exemption with a reason — never a
+ * silent omission (same discipline as `RECALL_VERSION_EXEMPT` /
  * `DEFERRED_KINDS`). Wiring a real command for one of these means adding
  * relative + absolute fixtures above, or the coverage guard below fails.
  */
@@ -208,7 +359,7 @@ const DORMANT_LINT_GATES: ReadonlySet<string> = new Set([
 describe('lint-gate parse-format contract', () => {
   for (const fx of FIXTURES) {
     it(`${fx.label} → extracts a located finding`, () => {
-      const found = parseLocated('lint:test', true, fx.pattern, fx.sample, CWD);
+      const found = runFixture(fx.parse, fx.sample);
       expect(found, fx.label).toHaveLength(1);
       const f = found[0];
       expect(f.file, 'file').toBe(fx.expect.file);
@@ -218,31 +369,55 @@ describe('lint-gate parse-format contract', () => {
     });
   }
 
-  it('a non-diagnostic line (summary / banner) is ignored by every pattern', () => {
+  it('non-diagnostic output (summary / banner / empty) yields no findings, every pack', () => {
     const noise = [
       'Found 3 errors in 2 files.',
       'Build succeeded.',
       '',
       '  42 problems (40 errors, 2 warnings)',
+      '[]',
+      '{}',
     ];
     for (const fx of FIXTURES) {
       for (const line of noise) {
-        expect(
-          parseLocated('lint:test', true, fx.pattern, line, CWD),
-          `${fx.label}: "${line}"`,
-        ).toEqual([]);
+        expect(runFixture(fx.parse, line), `${fx.label}: "${line}"`).toEqual([]);
+      }
+    }
+  });
+
+  it('a structured payload wrapped in combined-stream noise still parses (stderr appended)', () => {
+    // The runner captures stdout THEN stderr, whole streams concatenated. A
+    // deprecation warning after the payload (or an npx banner before it) must
+    // cost nothing. NDJSON (clippy) tolerates interleaving by construction;
+    // blob JSON goes through extractJsonBlob.
+    for (const fx of FIXTURES) {
+      if (fx.parse.kind !== 'structured') continue;
+      const noisy = `npx: installed 1 package\n${fx.sample}\n(node:42) DeprecationWarning: legacy config detected\n`;
+      const clean = runFixture(fx.parse, fx.sample);
+      const wrapped = runFixture(fx.parse, noisy);
+      expect(wrapped, `${fx.label}: noise-wrapped parse must match clean parse`).toEqual(clean);
+    }
+  });
+
+  it('a structured parse never throws on garbage, truncation, or wrong shapes', () => {
+    const garbage = ['not json at all', '[{"trunc', '{"Issues": "nope"}', '[42, null, "x"]'];
+    for (const fx of FIXTURES) {
+      if (fx.parse.kind !== 'structured') continue;
+      for (const g of garbage) {
+        const out = runFixture(fx.parse, g);
+        expect(Array.isArray(out), `${fx.label}: "${g}"`).toBe(true);
       }
     }
   });
 });
 
 describe('lint-gate path parity (identity must survive a checkout-path change)', () => {
-  it('no finding leaves parseLocated with an absolute or repo-escaping file, on any pack', () => {
+  it('no finding leaves the seam with an absolute or repo-escaping file, on any pack', () => {
     // The post-condition, asserted across EVERY fixture — including the
-    // absolute-path ones, which is what makes this bite: before the boundary,
-    // the ktlint/MSBuild/rubocop fixtures produced `file` values embedding CWD.
+    // absolute-path ones, which is what makes this bite: eslint, ruff and
+    // ktlint emit absolute paths in their native JSON.
     for (const fx of FIXTURES) {
-      for (const f of parseLocated('lint:test', true, fx.pattern, fx.sample, CWD)) {
+      for (const f of runFixture(fx.parse, fx.sample)) {
         expect(f.file, `${fx.label}: a located finding must carry a file`).toBeDefined();
         if (f.file === undefined) continue; // narrows for TS; the assert above already failed
         expect(path.isAbsolute(f.file), `${fx.label}: "${f.file}" is absolute`).toBe(false);
@@ -259,7 +434,7 @@ describe('lint-gate path parity (identity must survive a checkout-path change)',
     const byPack = new Map<string, Set<string>>();
     for (const fx of FIXTURES) {
       const files = byPack.get(fx.packId) ?? new Set<string>();
-      for (const f of parseLocated('lint:test', true, fx.pattern, fx.sample, CWD)) {
+      for (const f of runFixture(fx.parse, fx.sample)) {
         if (f.file !== undefined) files.add(f.file);
       }
       byPack.set(fx.packId, files);
@@ -277,6 +452,30 @@ describe('lint-gate path parity (identity must survive a checkout-path change)',
         covered.has(pack.id),
         `pack '${pack.id}' declares a lint gate but has no fixture`,
       ).toBe(true);
+    }
+  });
+
+  it("every live pack's fixtures use the parse its lintCommand actually declares", () => {
+    // A fixture exercising a stale parse (yesterday's regex) reports coverage
+    // that does not exist. For structured parses, reference identity pins it;
+    // regex fixtures must use the declared pattern verbatim.
+    for (const pack of LANGUAGES) {
+      if (!pack.lintGate || DORMANT_LINT_GATES.has(pack.id)) continue;
+      const cmd = pack.lintGate.lintCommand({ cwd: process.cwd(), changedFiles: [] });
+      if (cmd === null) continue; // resolves against THIS machine; absent linter is fine
+      for (const fx of FIXTURES.filter((f) => f.packId === pack.id)) {
+        if (cmd.parse.kind === 'structured' && fx.parse.kind === 'structured') {
+          expect(fx.parse.parse, `${pack.id}: fixture parse fn ≠ declared parse fn`).toBe(
+            cmd.parse.parse,
+          );
+        } else if (cmd.parse.kind === 'regex' && fx.parse.kind === 'regex') {
+          expect(fx.parse.pattern, `${pack.id}: fixture pattern ≠ declared pattern`).toBe(
+            cmd.parse.pattern,
+          );
+        } else {
+          expect.fail(`${pack.id}: fixture parse kind ≠ declared parse kind`);
+        }
+      }
     }
   });
 });

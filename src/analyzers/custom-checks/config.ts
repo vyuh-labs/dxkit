@@ -122,7 +122,10 @@ export function lintGateSpecs(
       command: { bin: cmd.bin, args: cmd.args },
       blocking,
       expectedExit: typeof cmd.expectedExit === 'number' ? cmd.expectedExit : 0,
-      parse: { mode: 'regex', pattern: cmd.parse },
+      parse:
+        cmd.parse.kind === 'regex'
+          ? { mode: 'regex', pattern: cmd.parse.pattern }
+          : { mode: 'structured', label: cmd.parse.label, parse: cmd.parse.parse },
       // What determines what THIS linter sees, beyond its argv (Rule 19).
       // Resolved by the pack, because only the pack knows its ecosystem
       // (Rule 6). A pack that throws here must not take the gate down with it —

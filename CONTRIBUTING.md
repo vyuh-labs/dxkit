@@ -259,19 +259,38 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   contract test requires BOTH builders if you declare it. See
   `typescript.ts` (`tsc --noEmit` + vitest/jest) and `python.ts`
   (`py_compile` + pytest) for worked examples, and CLAUDE.md Rule 15.
-- **Lint gate** (3.0) — `lintGate?: LintGateProvider`, the pack's standard
-  zero-config linter wired as an opt-in guardrail gate (a net-new lint error
-  blocks; the repo's pre-existing lint debt is grandfathered). One pure builder
-  `lintCommand(ctx)` returns `{ bin, args, parse, expectedExit? }` — where
-  `parse` is a regex with named groups (`file`/`line`/`rule`/`message`) so the
-  finding is LOCATED (per file+line) — or `null` when the linter isn't
-  resolvable in the repo. A pack NEVER shells out itself; the check runner
+- **Lint gate** (3.0, structured since 3.9) — `lintGate?: LintGateProvider`,
+  the pack's standard zero-config linter wired as an opt-in guardrail gate (a
+  net-new lint error blocks; the repo's pre-existing lint debt is
+  grandfathered). One pure builder `lintCommand(ctx)` returns
+  `{ bin, args, parse, expectedExit? }` or `null` when the linter isn't
+  resolvable in the repo. `parse` is a `LintOutputParse`:
+  - **PREFER `{ kind: 'structured', label, parse }`** — run the linter in its
+    native machine-readable mode (`--format json`, NDJSON, …) and map that to
+    `{ file, line?, rule?, message? }` entries. A display format is for
+    humans, and every regex over one eventually diverges from it (the shipped
+    3.9 class: eslint's display render dropped findings its JSON carried;
+    clippy's short format omitted the lint NAME, colliding identities). Your
+    parser must be TOTAL over garbage (return `[]`, never throw — the
+    contract test feeds it garbage); the seam boundary owns path
+    relativization, dedupe, and the itemization cap. Shared helpers live in
+    `src/languages/capabilities/lint-structured.ts` (`extractJsonBlob` for a
+    JSON blob amid combined-stream noise, `jsonLines` for NDJSON). Worked
+    examples: `typescript.ts` `parseEslintJson`, `rust.ts` `parseClippyJson`.
+  - `{ kind: 'regex', pattern }` — named groups
+    (`file`/`line`/`rule`/`message`) matched per output line. The documented
+    EXCEPTION for a linter with no machine-readable output (today only
+    MSBuild's diagnostic stream — `csharp.ts` `CSHARP_MSBUILD_WARNING_PARSE`);
+    say why in a comment.
+
+  Either way, add relative + absolute path fixtures for your format in
+  `test/custom-checks/lint-formats.test.ts` — its coverage guard fails a live
+  gate with no fixtures. A pack NEVER shells out itself; the check runner
   (`src/analyzers/custom-checks/run.ts`) executes it and folds output into
   `custom-check` findings, exactly like a user-declared check. 7 of 8 packs
-  declare a real gate (see `typescript.ts` `TS_ESLINT_UNIX_PARSE`, `python.ts`
-  `PY_RUFF_CONCISE_PARSE`, `csharp.ts` `CSHARP_MSBUILD_WARNING_PARSE`); Java
-  ships a dormant provider (no single zero-config standalone linter). See
-  CLAUDE.md Rule 17.
+  declare a real gate; Java ships a dormant provider (no single zero-config
+  standalone linter). See CLAUDE.md Rule 17.
+
 - **HTTP flow** (M6) — `httpFlow?: HttpFlowSupport` +
   `treeSitterGrammars?`, the UI→API flow extraction surface. The recipe
   is DECLARATION-ONLY — the one extractor

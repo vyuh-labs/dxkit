@@ -31,14 +31,54 @@ export interface LintGateContext {
 }
 
 /**
- * A linter invocation whose text output is parsed per-line into located
- * findings.
+ * A located finding as the PACK's parser reports it, before validation. The
+ * seam boundary (`parseLocated`'s post-condition) — not the pack — enforces
+ * that `file` leaves as a repo-relative POSIX path, dedupes, and applies the
+ * itemization ceiling; the pack just maps its linter's native shape to this.
+ */
+export interface RawLocatedFinding {
+  readonly file: string;
+  readonly line?: number;
+  readonly rule?: string;
+  readonly message?: string;
+}
+
+/**
+ * How a linter's output becomes located findings.
+ *
+ *   - `structured` (preferred): the pack parses the linter's native
+ *     machine-readable output (eslint `--format json`, ruff `--output-format
+ *     json`, clippy `--message-format json`, …). A display format is for
+ *     humans and every regex over one eventually diverges from it — the
+ *     shipped class: eslint's unix render dropped findings the JSON carries,
+ *     and clippy's short format omits the LINT NAME entirely, so two
+ *     different lints in one 3-line window collided into one identity
+ *     (Rule 5 ×4: prefer the tool's own structured output over a custom
+ *     parser). `label` names the format for recall/diagnostics (a function
+ *     cannot be hashed); it must change if the parse's semantics change.
+ *   - `regex`: a regex (string, no flags) with NAMED capture groups — `file`
+ *     (required for a located finding), `line`, `rule`, `message` — matched
+ *     per output line. For linters with no stable machine-readable output
+ *     (today: the MSBuild diagnostic stream behind `dotnet build`).
+ *
+ * A pack parser must be PURE and total over untrusted linter output — throw
+ * on nothing, return [] for anything unrecognizable; the runner treats a
+ * throw as a check misconfiguration (one binary finding), never a crash.
+ */
+export type LintOutputParse =
+  | { readonly kind: 'regex'; readonly pattern: string }
+  | {
+      readonly kind: 'structured';
+      readonly label: string;
+      readonly parse: (output: string) => readonly RawLocatedFinding[];
+    };
+
+/**
+ * A linter invocation whose output is parsed into located findings.
  *
  *   - `bin` + `args`: the command. `bin` is PATH-resolvable or an absolute path
  *     the pack resolved (via `findTool` / a local-bin probe).
- *   - `parse`: a regex (string, no flags) with NAMED capture groups — `file`
- *     (required for a located finding), `line`, `rule`, `message` — matching
- *     THIS linter's output format. dxkit compiles it with the `g` flag.
+ *   - `parse`: see `LintOutputParse`.
  *   - `expectedExit`: the exit code that means "clean" (default 0). Most linters
  *     exit non-zero when they report findings; that non-zero exit is what tells
  *     the runner to parse the output.
@@ -46,7 +86,7 @@ export interface LintGateContext {
 export interface LintGateCommand {
   readonly bin: string;
   readonly args: readonly string[];
-  readonly parse: string;
+  readonly parse: LintOutputParse;
   readonly expectedExit?: number;
 }
 
