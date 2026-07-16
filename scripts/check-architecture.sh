@@ -756,7 +756,7 @@ fi
 # The toolchain hash must be derived from the recall union, never rebuilt
 # from a bespoke tool list. `buildToolsMap` resolves tool NAMES to versions
 # and belongs to the producers that declare recall (plus its own module).
-RULE19_TOOLSMAP_ALLOWLIST="src/baseline/tool-versions.ts src/baseline/producers/index.ts"
+RULE19_TOOLSMAP_ALLOWLIST="src/baseline/tool-versions.ts src/baseline/producers/index.ts src/baseline/producers/recall-inputs.ts"
 RULE19_FILTER=""
 for f in $RULE19_TOOLSMAP_ALLOWLIST; do
   RULE19_FILTER="$RULE19_FILTER -e ^${f}:"
