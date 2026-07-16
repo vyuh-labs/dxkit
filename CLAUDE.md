@@ -1300,6 +1300,22 @@ install` loop for an ambient SDK), never a silent skip and never a spawn
   requires >=", JVM class-version), biased hard toward false-NEGATIVE so a
   real compile error is never reclassified. Both mint
   `unhealthy-toolchain { problem, remedy }`.
+- **Placed** by the ONE resolver `resolvePlacement`
+  (`src/execution/placement.ts`), consuming `collectExecutionRequirements`
+  (the one languages-layer collector). A capability whose declared hosts
+  exclude the primary ubuntu runner is routed to a per-host CI job; the
+  generator (`installCiHostGates` in `src/ship-installers.ts`, registered as
+  the `ci-host-gates` managed surface — Rule 15) EMITS `dxkit-gate-<host>`
+  jobs from the plan: toolchain setup from the placed packs' `ciSetup`, the
+  floor scoped via `floor check --packs`, setup actions ONLY (a hardcoded
+  IDE install path is the class that broke on a runner image roll — pinned
+  by test: no `Visual Studio\<year>` literal, no `DisableOutOfProcBuild`).
+  A stack change retires a stale generated job (ownership-sniffed, never a
+  user file). Placement and the runners' disclosure are TWO CONSUMERS of one
+  concept holding different shapes, so they are pinned against each other by
+  the parity test (`test/execution/placement.test.ts`): off-primary-placed ⇔
+  wrong-host-skipped, both directions — the Rule 2.30 semantic-divergence
+  net.
 
 **Bad**: a capability that shells a build with no `execution` declaration (it
 won't compile); a `process.platform` read in an analyzer; an inline

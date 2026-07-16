@@ -20,6 +20,14 @@ export {
 export { currentEnvironment, hostOf } from './environment';
 
 export {
+  resolvePlacement,
+  CI_RUNNERS,
+  type CapabilityRequirement,
+  type HostJob,
+  type PlacementPlan,
+} from './placement';
+
+export {
   TOOLCHAIN_DEFS,
   toolchainPresent,
   toolchainInstallHint,
