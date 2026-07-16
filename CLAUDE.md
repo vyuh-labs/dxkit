@@ -991,6 +991,17 @@ The seam has one spine; every consumer routes through it:
   it for linter-shaped checks. BINARY (`exit` parse; identity = the check name)
   is for a genuine whole-command pass/fail and grandfathers the whole check, so
   reserve it for commands expected to pass.
+- **`parseLocated` is a VALIDATING boundary, not a passthrough** (3.8).
+  Whatever path shape a linter prints, every located finding leaves the parse
+  with a repo-relative POSIX `file` (`toRepoRelativePosix`) — the same contract
+  the frozen SDK wire format states for extension findings (`WireFinding.file`).
+  Identity-load-bearing: `file` feeds the fingerprint (Rule 9), and several
+  linters print ABSOLUTE paths (ktlint, MSBuild, rubocop's emacs formatter), so
+  without the boundary 0 of 453 real identities survived a checkout-path change
+  — the whole grandfathered backlog false-blocks in CI. Packs whose linters
+  print relative paths were safe by convention, not design. Pinned per pack
+  (relative + absolute fixture each, plus a live-gate coverage guard) by
+  `test/custom-checks/lint-formats.test.ts`.
 - **Gates in committed mode only.** `custom-check` is in
   `REF_UNRELIABLE_KINDS` (`src/baseline/check.ts`): a throwaway worktree at a
   git ref lacks the toolchain, so a linter would fail-open-skip on the "before"
@@ -1129,6 +1140,23 @@ diffed?").
 - **Compared** per kind by `diffRecall`, consumed at the ONE per-pair callsite
   in `check.ts`. Drifted ⇒ the kind's `added` findings reclassify to the
   existing `tooling_drift` status (already `warn`, never `block`).
+- **Refused, not passed, on the block-rule floor** (`attribution-gap.ts`, 3.8):
+  a demoted finding an ARMED block rule covers may neither block (would
+  misattribute) nor warn its way under a PASSED banner (that is the closed #20
+  bypass one status over — on every pre-Rule-19 baseline it disarmed all eight
+  block rules at once and waved three live credentials through on a real repo).
+  The classifier records the disarmed rule (`unattributableBlockRule`,
+  evaluated through the ONE `evaluateBlockRules` — no second kind↔rule table),
+  `GuardrailCheckResult.attributionGaps` (a REQUIRED field) aggregates them, and
+  the one verdict derivation (`verdictCounts` / `verdictWordFrom` in
+  `check-renderers.ts`) turns any gap into **`CANNOT GATE` + exit 1** — the same
+  refuse-and-name-the-remedy treatment the identity-scheme mismatch gets. PASSED
+  is unconstructible over a gap; every exit-code consumer (CLI, receipt via the
+  verdict cache, the loop Stop-gate, evaluate) routes through that derivation,
+  never `blocks ? 1 : 0`. Both directions pinned in
+  `test/baseline/attribution-gap.test.ts`: a clean tree under absent recall
+  still PASSES (no unanswerable question was asked), and a drifted kind with no
+  armed block rule still demotes to a warning (the false-block prevention).
 - **Ecosystem inputs** come from the pack (Rule 6):
   `LintGateProvider.recallInputs` resolves the linter's own version, its
   PLUGINS, and its config hash.
@@ -1139,7 +1167,10 @@ diffed?").
 **Fail-open, never silent.** Drift never blocks (a tool upgrade is not a
 developer's mistake) and is never silent: every renderer names the kind, which
 input moved, old → new, and the remedy. Same discipline as `GateFailure`
-(3.7.1) — a fail-open gate stays fail-open, it just always says WHY.
+(3.7.1) — a fail-open gate stays fail-open, it just always says WHY. The one
+carve-out is the refusal tier above: on a block-rule kind, "fail open" would be
+"certify what dxkit cannot verify", so the gate fails CLOSED to `CANNOT GATE`
+(still never a false block — the developer is not blamed; the baseline is).
 
 **Absent recall is not "comparable".** A baseline predating Rule 19 carries no
 evidence either way, so every kind drifts until re-baselined. `update` rides the
@@ -1198,7 +1229,9 @@ on whoever opens the next PR.
    carry a declared entry in `RECALL_VERSION_EXEMPT` explaining why it cannot
    (today: `java`, whose gate is dormant; `csharp`, whose SDK is an ambient
    runtime rather than a registry tool). A reason, never an omission — same
-   discipline as `DEFERRED_KINDS`.
+   discipline as `DEFERRED_KINDS`. Note: `RECALL_VERSION_EXEMPT` is a
+   TEST-side allowlist inside `test/languages-contract.test.ts`, not a product
+   registry in `src/`.
 6. **`test/recipe-playbook.test.ts`**: the synthetic pack declares
    `recallInputs`, and the playbook asserts they reach the spec AND the seam,
    and that the `recall.inputs` knob reaches the pack. Without this the seam's
