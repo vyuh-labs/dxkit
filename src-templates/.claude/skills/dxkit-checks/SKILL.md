@@ -104,6 +104,10 @@ npx vyuh-dxkit guardrail check        # blocks/warns on net-new check failures v
 
 Custom checks gate fully in **committed/baseline** mode. They are excluded from **ref-based** diff mode: a throwaway worktree at a git ref lacks the toolchain, so the linter would fail-open-skip on the "before" side and false-flag every finding as net-new. Committed mode (the private-repo default) captures the baseline from a provisioned tree, so the comparison is honest.
 
+### Gates that need a specific build environment (4.0)
+
+A pack lint gate declares what it needs to run (host OS, toolchain, a project build). When the current machine cannot satisfy it — the flagship case: the C# gate reads analyzer warnings out of `dotnet build`, and a `net*-windows` target only builds on Windows — the check is a **disclosed boundary**, never a silent skip and never a fake finding: `checks run` shows `skipped-environment` with what is needed, where it runs, and the install remedy. Its slice of the baseline is captured where it CAN run: the generated `dxkit-baseline-refresh` workflow gains a `capture-<host>` job that runs the gate on the right runner and merges its findings into the one committed baseline (`baseline fragment` / `baseline merge-fragment` — plumbing the workflow drives; you rarely run them by hand). No configuration: it is derived from the pack's declarations when lint gating is enabled.
+
 ## Security
 
 Custom-check commands are **executed**. dxkit runs them ONLY from the repo's own committed `.dxkit/policy.json` (or a pack's built-in lint command) — the same trust boundary as the repo's npm scripts or CI config. dxkit never runs a check from a CLI flag or any untrusted source. Treat a PR that edits `checks[].command` with the same review scrutiny as a PR that edits a CI workflow.
@@ -112,6 +116,7 @@ Custom-check commands are **executed**. dxkit runs them ONLY from the repo's own
 
 - **"My check doesn't appear in `checks list`"** — it was dropped as malformed (no `name`, empty `command`, a reserved `lint:` prefix, or a duplicate name). `checks list` prints the skip reason; fix and re-run.
 - **"`checks run` says skipped-unavailable"** — the binary isn't on `PATH`. Install it (`vyuh-dxkit tools install` for pack linters) or fix the command. Skips never block.
+- **"`checks run` says skipped-environment"** — the gate's declared execution requirement isn't met here (wrong OS, missing or unhealthy SDK). The reason line names the need and the remedy. This is by design: the check runs in the environment that can serve it (see the build-environment section above); nothing is wrong with your config.
 - **"A net-new lint error isn't blocking"** — check `lint.blocking` is `true` (default is warn-only), and that the gate is **located** not binary. A binary lint check grandfathers the whole linter.
 - **"An old failure is blocking as if net-new"** — the baseline predates the check, or a fingerprint churned. Re-capture the baseline in CI.
 

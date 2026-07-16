@@ -25,8 +25,8 @@ Ask the user what they want, then pick the right invocation:
 | `--with-hooks` | `.githooks/pre-push` + postinstall activation wire-up | Yes |
 | `--with-precommit-hook` | Adds `.githooks/pre-commit` (slow on large repos) | No (still opt-in) |
 | `--with-devcontainer` | `.devcontainer/devcontainer.json` (per-stack features) + post-create.sh | Yes |
-| `--with-ci` | `.github/workflows/dxkit-guardrails.yml` (PR gate) | Yes |
-| `--with-baseline-refresh` | `.github/workflows/dxkit-baseline-refresh.yml` (post-merge regen) | Yes |
+| `--with-ci` | `.github/workflows/dxkit-guardrails.yml` (PR gate) — plus, when the stack declares a capability the ubuntu runner can't serve (e.g. a `net*-windows` build), a generated `dxkit-gate-<host>.yml` per required host; tell the user to mark it a **required PR check** alongside `dxkit-guardrails` | Yes |
+| `--with-baseline-refresh` | `.github/workflows/dxkit-baseline-refresh.yml` (post-merge regen; on a multi-environment stack with lint gating enabled it also captures each placed host's baseline slice and merges before committing) | Yes |
 | `--with-pr-review` | `.github/workflows/pr-review.yml` (AI PR review; needs `ANTHROPIC_API_KEY`) | No (still opt-in) |
 | `--claude-loop` | Stop-gate hook for autonomous loops (additive merge into `.claude/settings.json` + CLAUDE.md); implies the dxkit skills. Pair with `--loop-preset security-only\|full-debt` | No (opt-in — registers a hook that blocks the agent from stopping) |
 | `--flow` / `--no-flow` | Set up / suppress the UI→API integration gate. When `init` detects a UI→API surface it offers this automatically (interactive prompt for the posture); `--flow` forces it on with `warn`, `--no-flow` skips it. There is **no standalone `flow init`** — flow setup lives inside `init`. | Auto-offered when a UI→API surface is detected (silent otherwise) |

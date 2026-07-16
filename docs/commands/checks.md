@@ -105,12 +105,13 @@ from a CLI flag or any untrusted source. Review a PR that edits
 
 ## Troubleshooting
 
-| Symptom                                  | Cause / fix                                                                                                           |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Check missing from `checks list`         | Dropped as malformed (no `name`, empty `command`, reserved `lint:` prefix, duplicate name). `list` prints the reason. |
-| `checks run` shows `skipped-unavailable` | The binary isn't on `PATH`. Install it (`vyuh-dxkit tools install` for pack linters). Skips never block.              |
-| A net-new lint error isn't blocking      | `lint.blocking` is `false` (default warn-only), or the gate is binary not located.                                    |
-| An old failure blocks as if net-new      | The baseline predates the check, or a fingerprint churned — re-capture the baseline in CI.                            |
+| Symptom                                  | Cause / fix                                                                                                                                                                                                                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Check missing from `checks list`         | Dropped as malformed (no `name`, empty `command`, reserved `lint:` prefix, duplicate name). `list` prints the reason.                                                                                                                                    |
+| `checks run` shows `skipped-unavailable` | The binary isn't on `PATH`. Install it (`vyuh-dxkit tools install` for pack linters). Skips never block.                                                                                                                                                 |
+| `checks run` shows `skipped-environment` | The gate's declared execution requirement isn't met here (wrong OS, missing/unhealthy SDK) — the reason names the need and the remedy. The check runs where it can: the generated per-host CI job captures its baseline slice. Nothing is misconfigured. |
+| A net-new lint error isn't blocking      | `lint.blocking` is `false` (default warn-only), or the gate is binary not located.                                                                                                                                                                       |
+| An old failure blocks as if net-new      | The baseline predates the check, or a fingerprint churned — re-capture the baseline in CI.                                                                                                                                                               |
 
 ## See also
 
