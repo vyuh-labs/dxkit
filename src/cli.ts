@@ -26,6 +26,7 @@ import {
   installHooks,
   installDevcontainer,
   installCiGuardrails,
+  installCiHostGates,
   installCiBaselineRefresh,
   installCiDeepSastRefresh,
   installCiGraphRefresh,
@@ -434,6 +435,7 @@ export async function run(argv: string[]): Promise<void> {
       mode: { type: 'string' },
       ref: { type: 'string' },
       surface: { type: 'string' },
+      packs: { type: 'string' },
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
       'keep-baselines': { type: 'boolean', default: false },
@@ -685,6 +687,14 @@ export async function run(argv: string[]): Promise<void> {
             force: !!values.force,
             pushTrigger: wantCiPushTrigger,
           }),
+        });
+        // Per-host gate jobs derived from the packs' declared execution
+        // requirements (Rule 20 placement) — emits nothing on a repo whose
+        // stack the primary ubuntu job fully serves. Registered as the
+        // `ci-host-gates` managed surface, so update/uninstall handle it too.
+        shipResults.push({
+          label: 'CI host gates (from execution requirements)',
+          result: installCiHostGates(cwd, { force: !!values.force }),
         });
       }
       if (wantBaselineRefresh) {
@@ -2751,7 +2761,7 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail(
           `Unknown floor subcommand: ${subCommand ?? '(missing)'}. ` +
             `Available: vyuh-dxkit floor check [path] [--surface pre-push|ci] [--base <ref>] ` +
-            `[--correctness | --no-correctness] [--json]`,
+            `[--packs <id,id>] [--correctness | --no-correctness] [--json]`,
         );
         process.exit(1);
       }
@@ -2764,11 +2774,19 @@ export async function run(argv: string[]): Promise<void> {
       // --correctness / --no-correctness → the explicit enable/disable override.
       const flag = values.correctness ? true : values['no-correctness'] ? false : undefined;
       const { runFloorForSurface } = await import('./analyzers/correctness/surface-run');
+      // --packs csharp[,kotlin] scopes the floor to those packs — how a
+      // generated per-host gate job (Rule 20 placement) runs ONLY the packs
+      // placed on its host instead of re-proving the primary job's work.
+      const packIds = (values.packs as string | undefined)
+        ?.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const outcome = runFloorForSurface({
         surface: surfaceRaw,
         cwd: targetPath,
         base: values.base as string | undefined,
         flag,
+        packIds,
       });
       if (values.json) {
         await emitJson({
