@@ -26,6 +26,7 @@
 
 import { makeCommandExec, tail, type CommandExec } from '../tools/bounded-exec';
 import {
+  classifyEnvironmentFailure,
   currentEnvironment,
   describeUnmetRequirement,
   unmetRequirement,
@@ -75,7 +76,7 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
           name: spec.name,
           status: 'skipped-environment',
           findings: [],
-          reason: describeUnmetRequirement(unmet),
+          reason: describeUnmetRequirement(unmet, env.host),
         });
         continue;
       }
@@ -100,6 +101,30 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
     }
 
     const passedExit = outcome.code === spec.expectedExit;
+
+    // Post-failure tier of the F-14 fix: a failed check whose output is
+    // ENVIRONMENT-shaped (the registry-declared signatures of the toolchains
+    // this check runs on — SDK resolution, toolchain-too-old) is a disclosed
+    // boundary, never a binary FINDING that would enter the baseline as if
+    // the repo were broken. Only declaration-carrying (pack lint) checks
+    // participate; the classifier defaults to null, so a real linter error
+    // stays a failure.
+    if (!passedExit && spec.execution) {
+      const envFailure = classifyEnvironmentFailure(spec.execution.toolchains, outcome.output);
+      if (envFailure !== null) {
+        results.push({
+          name: spec.name,
+          status: 'skipped-environment',
+          findings: [],
+          reason: describeUnmetRequirement(
+            { kind: 'unhealthy-toolchain', ...envFailure },
+            env.host,
+          ),
+        });
+        continue;
+      }
+    }
+
     let checkFindings: CustomCheckFinding[];
     if (spec.parse.mode === 'exit') {
       // Binary check: the exit code IS the signal. Finding iff it failed.

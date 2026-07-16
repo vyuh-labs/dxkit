@@ -28,7 +28,7 @@
  * instead of skipping silently.
  */
 
-import type { ToolchainId } from './toolchains';
+import { toolchainInstallHint, type ToolchainId, type ToolchainProblem } from './toolchains';
 
 /** An operating-system host a capability can execute on. */
 export type ExecutionHost = 'linux' | 'macos' | 'windows';
@@ -87,15 +87,21 @@ export type ExecutionRequirementFor = (cwd: string) => ExecutionRequirement;
 export interface ExecutionEnvironment {
   readonly host: ExecutionHost;
   hasToolchain(id: ToolchainId): boolean;
+  /** Health diagnosis for a PRESENT toolchain — null when healthy. Optional:
+   *  an environment that cannot answer (a hand-built test env, a remote CI
+   *  runner the resolver reasons about) simply skips the health tier; the
+   *  predicate then treats presence as the whole story. */
+  toolchainProblem?(id: ToolchainId): ToolchainProblem | null;
 }
 
 /**
  * Why a requirement is not satisfied here. Structured so renderers can phrase
  * it and the placement resolver can route on it — never a prose-only reason.
  *
- * `unhealthy-toolchain` is reserved for the provisioning increment (a toolchain
- * present but failing its registry health check — the half-provisioned-SDK
- * class); this increment mints only the first two kinds.
+ * `unhealthy-toolchain` covers the present-but-unusable class (the
+ * half-provisioned-SDK shape, F-14): minted from a failed registry health
+ * probe, or post-failure by `classifyEnvironmentFailure` when a capability
+ * command fails in an environment-shaped way.
  */
 export type UnmetRequirement =
   | {
@@ -108,6 +114,7 @@ export type UnmetRequirement =
       readonly kind: 'unhealthy-toolchain';
       readonly toolchain: ToolchainId;
       readonly problem: string;
+      readonly remedy?: string;
     };
 
 /**
@@ -129,28 +136,51 @@ export function unmetRequirement(
   }
   const missing = req.toolchains.filter((t) => !env.hasToolchain(t));
   if (missing.length > 0) return { kind: 'missing-toolchain', toolchains: missing };
+  // Health tier: a present toolchain may still be unable to serve (the F-14
+  // shape). Only environments that can answer participate — the check is
+  // memoized per environment, so the probe cost is once per run.
+  if (env.toolchainProblem) {
+    for (const t of req.toolchains) {
+      const problem = env.toolchainProblem(t);
+      if (problem !== null) {
+        return {
+          kind: 'unhealthy-toolchain',
+          toolchain: t,
+          problem: problem.problem,
+          remedy: problem.remedy,
+        };
+      }
+    }
+  }
   return null;
 }
 
 /**
  * One human line for an unmet requirement — shared by every renderer so the
- * boundary is phrased once. Says WHERE the capability can run, not just that
- * it can't run here: the point of the model is that "not here" is a routing
- * fact, not a dead end.
+ * boundary is phrased once. Says WHERE the capability can run and the ROOT
+ * remedy, not just that it can't run here: the point of the model is that
+ * "not here" is a routing fact with a named fix, never a dead end or a
+ * remediation loop. `host` (when the caller knows it) selects the per-host
+ * install hint for a missing toolchain.
  */
-export function describeUnmetRequirement(unmet: UnmetRequirement): string {
+export function describeUnmetRequirement(unmet: UnmetRequirement, host?: ExecutionHost): string {
   switch (unmet.kind) {
     case 'wrong-host':
       return (
         `needs ${unmet.requiredHosts.join(' or ')} (this environment is ${unmet.currentHost}) — ` +
         `runs where that host is available (e.g. a ${unmet.requiredHosts[0]} CI job)`
       );
-    case 'missing-toolchain':
-      return (
+    case 'missing-toolchain': {
+      const base =
         `needs the ${unmet.toolchains.join(', ')} toolchain${unmet.toolchains.length > 1 ? 's' : ''} — ` +
-        `not present in this environment`
-      );
-    case 'unhealthy-toolchain':
-      return `the ${unmet.toolchain} toolchain is present but not usable here: ${unmet.problem}`;
+        `not present in this environment`;
+      if (!host) return base;
+      const hints = unmet.toolchains.map((t) => toolchainInstallHint(t, host));
+      return `${base} (install: ${hints.join('; ')})`;
+    }
+    case 'unhealthy-toolchain': {
+      const base = `the ${unmet.toolchain} toolchain is present but not usable here: ${unmet.problem}`;
+      return unmet.remedy ? `${base} (remedy: ${unmet.remedy})` : base;
+    }
   }
 }
