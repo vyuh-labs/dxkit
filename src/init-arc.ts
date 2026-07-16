@@ -196,14 +196,21 @@ export function buildInitClosing(state: InitClosingState): InitClosing {
     return { headline: "You're gated for what's measurable.", ready, body, caution, actions };
   }
 
-  const caution =
-    state.incompleteScanners.length > 0
-      ? `${state.incompleteScanners.length} scanner class(es) weren't available ` +
-        `(${state.incompleteScanners.join(', ')}) — those finding types aren't gated yet. ` +
-        `Run \`${dxkitCli('tools install')}\` to complete coverage.`
-      : null;
+  // Same honesty gate, one class over: a scanner that wasn't available at
+  // capture time means the baseline is PARTIAL — those finding kinds were
+  // never measured, so they are not gated. An unqualified "You're gated."
+  // over that baseline is a confident answer where the honest output is a
+  // boundary (the same shape as the unprovisioned-toolchain case above).
+  if (state.incompleteScanners.length > 0) {
+    const caution =
+      `${state.incompleteScanners.length} scanner class(es) weren't available ` +
+      `(${state.incompleteScanners.join(', ')}) — those finding types are NOT gated yet. ` +
+      `Run \`${dxkitCli('tools install')}\`, then \`${dxkitCli('baseline create --force')}\` ` +
+      `so the baseline covers them.`;
+    return { headline: "You're gated for what's measurable.", ready, body, caution, actions };
+  }
 
-  return { headline: "You're gated.", ready, body, caution, actions };
+  return { headline: "You're gated.", ready, body, caution: null, actions };
 }
 
 /** Options for the finishing arc. */

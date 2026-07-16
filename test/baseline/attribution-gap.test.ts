@@ -38,8 +38,6 @@ import { verdictWordFrom, verdictCounts } from '../../src/baseline/check-rendere
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
-import { clearGitleaksOutcomeCache } from '../../src/analyzers/tools/gitleaks';
-import { defaultDispatcher } from '../../src/analyzers/dispatcher';
 import { findTool, TOOL_DEFS } from '../../src/analyzers/tools/tool-registry';
 
 // The two end-to-end tests below drive a REAL secret scan of a fixture repo, so
@@ -182,12 +180,10 @@ function addSecret(dir: string): void {
   );
   execFileSync('git', ['add', '.'], { cwd: dir });
   execFileSync('git', ['commit', '-q', '-m', 'add config'], { cwd: dir });
-  // Both per-process gather memos are keyed by cwd only (fine for one-shot
-  // CLI runs, where a process never re-scans a changed tree); this test
-  // re-scans the SAME cwd after changing the tree, so drop them or the check
-  // replays the pre-secret capability outcome.
-  clearGitleaksOutcomeCache();
-  defaultDispatcher.clearCache();
+  // No ad-hoc memo clears needed: every fresh analysis resets the
+  // process-lifetime per-cwd memos itself (resetAnalysisMemos at
+  // gatherAnalysisResultBody), so an in-process re-scan of a changed
+  // tree sees the new state. This test relying on that IS the coverage.
 }
 
 describe('runGuardrailCheck — a net-new secret under absent recall CANNOT pass (BLOCKER-1)', () => {
