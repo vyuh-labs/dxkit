@@ -150,6 +150,8 @@ git add .dxkit/baselines/   # only if mode wrote a file (committed-*)
 git commit -m "chore: capture dxkit baseline"
 ```
 
+**Multi-environment stacks (4.0):** if the repo's stack declares capabilities this machine cannot run (the flagship: a Windows-only `net*-windows` build — `baseline create` will say "not measurable in this environment" for those slices), that is expected, not a failure. The local capture records what THIS machine observed and records the rest as unobserved (never as "clean"); the generated `dxkit-baseline-refresh` workflow completes the picture on merge — its `capture-<host>` job runs the placed checks on the right runner and merges their slice into the committed baseline. Also tell the user to mark the generated `dxkit-gate-<host>` job a **required PR check** alongside `dxkit-guardrails` (branch-protection step). The old workaround of setting `correctness.surfaces.ci: false` for a non-Linux stack is obsolete — the floor now routes itself.
+
 If they want to PIN the mode explicitly (so every developer + CI run agrees), write `.dxkit/policy.json`:
 
 ```bash
