@@ -1756,6 +1756,78 @@ if [ -n "$INIT_ARC" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ── Rule 20: execution environment is pack-declared, predicate-resolved ────
+# The third pack-declared dimension (alongside language + capability): every
+# "can this capability run here?" question routes through the ONE predicate
+# `unmetRequirement` (src/execution/requirement.ts) over pack-declared
+# `ExecutionRequirement`s. The class this kills: scattered point checks and
+# implicit "the driver's machine can run everything" assumptions (the
+# dpl-studio Windows-only .NET onboarding).
+#
+# 20a: no NEW `process.platform` reads outside the environment model. Host
+# detection is one concept; a per-consumer point check is how the implicit
+# assumption survived unexamined. The allowlist below FREEZES the pre-Rule-20
+# call sites (each is a display/exec-mechanics concern, migrated
+# opportunistically); new files consult `hostOf()` / `currentEnvironment()`.
+# Annotate '// exec-host-ok' for a justified exception.
+RULE20_PLATFORM=""
+for f in $(grep -rlE "process\.platform" src --include='*.ts' 2>/dev/null); do
+  case "$f" in
+    src/execution/*) continue ;;
+    src/self-invocation.ts | src/doctor.ts | src/cli.ts | src/issue-cli.ts) continue ;;
+    src/analyzers/tools/runner.ts | src/analyzers/tools/install-exec.ts | src/analyzers/tools/tool-registry.ts) continue ;;
+  esac
+  grep -q "// exec-host-ok" "$f" && continue
+  RULE20_PLATFORM="$RULE20_PLATFORM $f"
+done
+if [ -n "$RULE20_PLATFORM" ]; then
+  echo "❌ Rule 20a violation: process.platform read outside the execution-environment model:"
+  for f in $RULE20_PLATFORM; do echo "     $f"; done
+  echo "   → Consult hostOf() / currentEnvironment() from src/execution/ instead — host"
+  echo "     detection is one concept (a scattered point check is how the implicit"
+  echo "     'this machine can run everything' assumption ships). Annotate"
+  echo "     '// exec-host-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 20b: toolchain install commands live in the toolchain registry (per-host,
+# non-privileged default, health checks) or TOOL_DEFS — never inline in a
+# consumer. An inline install string is the "'scoop' is not recognized" class:
+# unroutable, host-blind, and invisible to the provisioning increment.
+RULE20_INSTALL=$(grep -rlnE "winget install|dotnet-install|sh\.rustup\.rs|apt-get install" src --include='*.ts' 2>/dev/null \
+  | grep -v "src/execution/toolchains.ts" \
+  | grep -v "src/analyzers/tools/tool-registry.ts" || true)
+if [ -n "$RULE20_INSTALL" ]; then
+  echo "❌ Rule 20b violation: inline toolchain install command outside the registries:"
+  echo "$RULE20_INSTALL"
+  echo "   → Declare it in src/execution/toolchains.ts (ambient toolchain) or"
+  echo "     TOOL_DEFS.installCommands (registry tool) and reference it."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# 20c: the satisfaction predicate has ONE home and known consumers. A second
+# "can this run here?" implementation (or ad-hoc host/toolchain gating in an
+# analyzer) is the semantic-divergence variant of Rule 2.30 — the gate and the
+# disclosure would drift. Annotate '// exec-requirement-ok' for a justified
+# new consumer (a placement resolver, doctor, init honesty).
+RULE20_PREDICATE=""
+for f in $(grep -rlE "unmetRequirement\(" src --include='*.ts' 2>/dev/null); do
+  case "$f" in
+    src/execution/*) continue ;;
+    src/analyzers/correctness/*) continue ;;
+    src/analyzers/custom-checks/*) continue ;;
+  esac
+  grep -q "// exec-requirement-ok" "$f" && continue
+  RULE20_PREDICATE="$RULE20_PREDICATE $f"
+done
+if [ -n "$RULE20_PREDICATE" ]; then
+  echo "❌ Rule 20c violation: unmetRequirement() consumed outside its known consumers:"
+  for f in $RULE20_PREDICATE; do echo "     $f"; done
+  echo "   → New consumers are deliberate: annotate '// exec-requirement-ok' on the file"
+  echo "     and extend this allowlist in the same PR (CLAUDE.md Rule 20)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

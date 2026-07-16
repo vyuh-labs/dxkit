@@ -44,6 +44,7 @@ import type {
 import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import { hashFileInput } from './capabilities/recall-inputs';
+import type { ExecutionRequirement } from '../execution';
 
 /**
  * Run dxkit's OWN `dotnet` subprocesses (build / format / test for ANALYSIS,
@@ -949,6 +950,18 @@ function hasCsharpProject(cwd: string): boolean {
 
 const csharpDepVulnsProvider: DepVulnsProvider = {
   source: 'csharp',
+  // Host-agnostic BY DESIGN, unlike the build-based C# capabilities: the
+  // osv-scanner half (a registry tool — Rule 1) reads committed
+  // packages.lock.json / PackageReference entries with no dotnet and no
+  // build, precisely so dependency auditing works where the Windows build
+  // cannot run. The dotnet half enriches when present; it is not required.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   manifestPatterns: [
     '*.csproj',
     '*.sln',
@@ -1507,6 +1520,45 @@ function csharpIsTestProject(cwd: string, relProj: string): boolean {
 }
 
 /**
+ * Does any project in this repo target Windows? A `net*-windows` TFM (or an
+ * explicit WinForms/WPF opt-in) makes the BUILD Windows-only — `dotnet build`
+ * of such a target on Linux/macOS fails on missing Windows Desktop reference
+ * packs. This is the repo fact that narrows every build-based C# capability's
+ * host requirement (Rule 20): the dpl-studio class, where a Linux driver
+ * could never produce the build half of the gate and nothing said so.
+ */
+function csharpTargetsWindows(cwd: string): boolean {
+  for (const csproj of walkPaths(cwd, { extensions: ['.csproj'] })) {
+    const content = readRepoFile(cwd, csproj);
+    if (
+      /<TargetFrameworks?>[^<]*-windows/i.test(content) ||
+      /<UseWindowsForms>\s*true/i.test(content) ||
+      /<UseWPF>\s*true/i.test(content)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The execution requirement every BUILD-based C# capability shares (floor,
+ * Roslyn lint gate, CodeQL extraction): the .NET SDK, a project build, hosts
+ * narrowed to Windows when the repo targets it, and a build target that is
+ * `discovered` only when `dotnet` can auto-resolve one (a root `.sln` /
+ * `.csproj`) — the 29-solutions-no-root repo is `configured`.
+ */
+function csharpBuildExecution(cwd: string): ExecutionRequirement {
+  return {
+    hosts: csharpTargetsWindows(cwd) ? ['windows'] : ['any'],
+    toolchains: ['dotnet-sdk'],
+    needsBuild: true,
+    buildTarget: csharpHasBuildTarget(cwd) ? 'discovered' : 'configured',
+    weight: 'build',
+  };
+}
+
+/**
  * The C# correctness floor.
  *
  * syntaxCheck: `dotnet build` — compiles the solution/project `dotnet`
@@ -1521,6 +1573,8 @@ function csharpIsTestProject(cwd: string, relProj: string): boolean {
  * isn't cheaply resolvable. A change touching no `.cs` on the fast surface skips.
  */
 const csharpCorrectnessProvider: CorrectnessProvider = {
+  execution: csharpBuildExecution,
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     if (!csharpHasBuildTarget(ctx.cwd)) return null;
     ensureDotnetInvariant();
@@ -1565,6 +1619,11 @@ export const CSHARP_MSBUILD_WARNING_PARSE =
  * `dotnet format --verify-no-changes`.)
  */
 const csharpLintGateProvider: LintGateProvider = {
+  // The gate reads Roslyn analyzer warnings out of `dotnet build` — it is a
+  // BUILD, with everything that implies (SDK, host, target). The
+  // pre-declaration model implicitly claimed `{ hosts: any, toolchains: [],
+  // needsBuild: false }` here, which was wrong on every axis.
+  execution: csharpBuildExecution,
   lintCommand() {
     ensureDotnetInvariant();
     return {
@@ -1896,7 +1955,7 @@ export const csharp: LanguageSupport = {
   // p/csharp semgrep ruleset is sparse — skip until it matures.
   semgrepRulesets: [],
   // CodeQL `csharp` extractor needs a build; Snyk Code supports C#.
-  deepSast: { codeqlLanguage: 'csharp', codeqlBuildRequired: true, snykCode: true },
+  deepSast: { codeqlLanguage: 'csharp', snykCode: true, execution: csharpBuildExecution },
 
   correctness: csharpCorrectnessProvider,
   lintGate: csharpLintGateProvider,

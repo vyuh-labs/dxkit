@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages';
 import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
+import { TOOLCHAIN_DEFS } from '../src/execution';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
 
@@ -438,6 +440,107 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         }
       }
     }
+  });
+
+  // Rule 20 (4.0): every capability that executes repo-facing commands
+  // declares what it NEEDS from the environment that runs it. The
+  // pre-declaration model implicitly assumed `{ hosts: any, toolchains: [],
+  // needsBuild: false }` everywhere — wrong on every axis for the C# build
+  // gates (the dpl-studio class). This block makes the declaration total,
+  // well-formed, repo-intrinsic, and non-divergent from doctor's toolchain
+  // probe (the cliBinaries parity — two projections of one concept, Rule 2.30).
+  describe('execution requirements (Rule 20)', () => {
+    /** Every (capability, requirement) pair this pack declares at `cwd`. */
+    function declaredRequirements(cwd: string): Array<{ capability: string; req: unknown }> {
+      const out: Array<{ capability: string; req: unknown }> = [];
+      out.push({ capability: 'correctness', req: lang.correctness.execution(cwd) });
+      if (lang.lintGate) out.push({ capability: 'lintGate', req: lang.lintGate.execution(cwd) });
+      const dep = lang.capabilities?.depVulns;
+      if (dep) out.push({ capability: 'depVulns', req: dep.execution(cwd) });
+      if (lang.deepSast) {
+        out.push({ capability: 'deepSast', req: lang.deepSast.execution(cwd) });
+      }
+      return out;
+    }
+
+    const HOSTS = ['linux', 'macos', 'windows', 'any'];
+
+    it('every declaring capability returns a well-formed requirement', () => {
+      for (const { capability, req } of declaredRequirements(process.cwd())) {
+        const r = req as {
+          hosts: unknown;
+          toolchains: unknown;
+          needsBuild: unknown;
+          buildTarget: unknown;
+          weight: unknown;
+        };
+        const label = `${lang.id}.${capability}`;
+        expect(Array.isArray(r.hosts) && r.hosts.length > 0, `${label}: hosts non-empty`).toBe(
+          true,
+        );
+        for (const h of r.hosts as unknown[]) {
+          expect(HOSTS, `${label}: unknown host '${String(h)}'`).toContain(h);
+        }
+        expect(Array.isArray(r.toolchains), `${label}: toolchains is an array`).toBe(true);
+        for (const t of r.toolchains as unknown[]) {
+          // Every referenced toolchain must resolve in the ONE provisioning
+          // registry — an unregistered id would make the requirement
+          // unroutable and its install hint unanswerable.
+          expect(
+            Object.keys(TOOLCHAIN_DEFS),
+            `${label}: toolchain '${String(t)}' not in TOOLCHAIN_DEFS`,
+          ).toContain(t);
+        }
+        expect(typeof r.needsBuild, `${label}: needsBuild is boolean`).toBe('boolean');
+        expect(['none', 'discovered', 'configured'], `${label}: buildTarget`).toContain(
+          r.buildTarget,
+        );
+        expect(['cheap', 'build'], `${label}: weight`).toContain(r.weight);
+      }
+    });
+
+    it('requirements are deterministic, total, and repo-intrinsic', () => {
+      // Deterministic: same repo → byte-identical answer (a requirement that
+      // wobbles would flap placement and disclosures).
+      expect(declaredRequirements(process.cwd())).toEqual(declaredRequirements(process.cwd()));
+      // Total: an empty/alien cwd must still answer, never throw — the
+      // declaration is consulted before anything about the repo is known good.
+      const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-exec-contract-'));
+      try {
+        expect(() => declaredRequirements(empty)).not.toThrow();
+        // Repo-intrinsic, machine-independent: nothing machine-specific may
+        // leak into the declaration (the Rule 19 recall-inputs discipline —
+        // an absolute path would make the same repo read differently per host).
+        const serialized = JSON.stringify(declaredRequirements(empty));
+        expect(serialized).not.toContain(os.homedir());
+        expect(serialized).not.toContain(empty);
+      } finally {
+        fs.rmSync(empty, { recursive: true, force: true });
+      }
+    });
+
+    // The cliBinaries parity net: doctor's toolchain-coverage signal reads
+    // `cliBinaries` (the PATH projection) while placement reads the
+    // requirement declarations. Two projections of one concept drift unless
+    // pinned (Rule 2.30) — every declared toolchain must surface at least one
+    // of its registry binaries in the pack's cliBinaries, so a toolchain gap
+    // placement would route on is never invisible to doctor.
+    it('declared toolchains surface through cliBinaries (doctor parity)', () => {
+      const declared = new Set(
+        declaredRequirements(process.cwd()).flatMap(
+          ({ req }) => (req as { toolchains: readonly string[] }).toolchains,
+        ),
+      );
+      for (const id of declared) {
+        const def = TOOLCHAIN_DEFS[id as keyof typeof TOOLCHAIN_DEFS];
+        expect(
+          def.binaries.some((b) => (lang.cliBinaries ?? []).includes(b)),
+          `${lang.id}: toolchain '${id}' declares binaries [${def.binaries.join(', ')}] but ` +
+            `none appear in cliBinaries [${(lang.cliBinaries ?? []).join(', ')}] — doctor ` +
+            `would never report the gap placement routes on`,
+        ).toBe(true);
+      }
+    });
   });
 
   // Rule 19: a pack that gates lint must also declare what makes its linter SEE

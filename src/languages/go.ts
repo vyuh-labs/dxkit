@@ -24,6 +24,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -454,6 +455,9 @@ async function gatherGoDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome
 
 const goDepVulnsProvider: DepVulnsProvider = {
   source: 'go',
+  // govulncheck's call analysis compiles the module — the audit is only as
+  // available as the Go build environment.
+  execution: () => GO_BUILD_EXECUTION,
   manifestPatterns: ['go.mod', 'go.sum'],
   // Every go.mod is an independent module root (multi-module repos).
   lockfilePatterns: ['go.mod'],
@@ -919,7 +923,20 @@ function goChangedPackages(changedFiles: readonly string[]): string[] {
  * false-blocks. (Package-level rung — Go has no per-test impact selection; a
  * change to a package whose DEPENDENTS have tests is caught at full/CI scope.)
  */
+/** Rule 20: Go's floor, lint gate, and vuln audit all compile packages (go
+ *  build / golangci-lint's type-check / govulncheck's call analysis), so each
+ *  needs the Go toolchain + a build; `./...` discovers the target itself. */
+const GO_BUILD_EXECUTION: ExecutionRequirement = {
+  hosts: ['any'],
+  toolchains: ['go'],
+  needsBuild: true,
+  buildTarget: 'discovered',
+  weight: 'build',
+};
+
 const goCorrectnessProvider: CorrectnessProvider = {
+  execution: () => GO_BUILD_EXECUTION,
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     if (!fileExists(ctx.cwd, 'go.mod')) return null; // not a module
     // No `commandExists('go')` gate here — the runner fail-opens on a missing
@@ -977,6 +994,9 @@ export function parseGolangciJson(output: string): RawLocatedFinding[] {
 }
 
 const goLintGateProvider: LintGateProvider = {
+  // golangci-lint type-checks the packages it lints — it needs the Go
+  // toolchain and a loadable build, not just its own binary.
+  execution: () => GO_BUILD_EXECUTION,
   lintCommand(ctx) {
     const gl = findTool(TOOL_DEFS['golangci-lint'], ctx.cwd);
     if (!gl.available || !gl.path) return null;
@@ -1184,7 +1204,12 @@ export const go: LanguageSupport = {
   tools: ['golangci-lint', 'govulncheck', 'go-licenses'],
   semgrepRulesets: ['p/gosec'],
   // CodeQL `go` extractor needs a build (autobuild); Snyk Code supports Go.
-  deepSast: { codeqlLanguage: 'go', codeqlBuildRequired: true, snykCode: true },
+  deepSast: {
+    codeqlLanguage: 'go',
+    snykCode: true,
+    // CodeQL's Go extractor builds the module to trace it.
+    execution: () => GO_BUILD_EXECUTION,
+  },
 
   correctness: goCorrectnessProvider,
   lintGate: goLintGateProvider,

@@ -34,6 +34,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -549,6 +550,9 @@ async function gatherTsDepVulnsViaNpmAudit(
 
 const tsDepVulnsProvider: DepVulnsProvider = {
   source: 'typescript',
+  // `npm audit` shells npm (node); the osv-scanner path is a registry tool
+  // (Rule 1) and is deliberately NOT a toolchain here.
+  execution: () => TS_TOOLING_EXECUTION,
   manifestPatterns: [
     'package.json',
     'package-lock.json',
@@ -1226,6 +1230,17 @@ function tsTypecheckScript(cwd: string): string | null {
   }
 }
 
+/** Rule 20: the TS/JS tooling is host-agnostic and needs only Node — the
+ *  runtime dxkit itself runs on, so the requirement is trivially satisfiable
+ *  wherever dxkit runs. Declared anyway: the model is total, never assumed. */
+const TS_TOOLING_EXECUTION: ExecutionRequirement = {
+  hosts: ['any'],
+  toolchains: ['node'],
+  needsBuild: false,
+  buildTarget: 'none',
+  weight: 'cheap',
+};
+
 /**
  * The TS/JS correctness floor. `npx --no-install <tool>` is the portable
  * invocation — npx resolves the project-local `.bin` shim cross-platform (a
@@ -1233,6 +1248,10 @@ function tsTypecheckScript(cwd: string): string | null {
  * and `--no-install` guarantees it never reaches the network.
  */
 const tsCorrectnessProvider: CorrectnessProvider = {
+  // The floor runs the project's compiler pass + test suite — 'build' weight,
+  // though no compiled-output environment is needed (needsBuild false).
+  execution: () => ({ ...TS_TOOLING_EXECUTION, weight: 'build' }),
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     // Prefer the project's own typecheck script — it carries their exact
     // compiler flags and project-references, the same command their CI runs.
@@ -1334,6 +1353,7 @@ export function parseEslintJson(output: string): RawLocatedFinding[] {
 }
 
 const tsLintGateProvider: LintGateProvider = {
+  execution: () => TS_TOOLING_EXECUTION,
   lintCommand(ctx) {
     if (!hasLocalBin(ctx.cwd, 'eslint')) return null;
     return {
@@ -1981,7 +2001,19 @@ export const typescript: LanguageSupport = {
   semgrepRulesets: ['p/javascript', 'p/typescript'],
   // CodeQL's `javascript` extractor covers both JS and TS in one DB,
   // no build needed. Snyk Code supports JS/TS.
-  deepSast: { codeqlLanguage: 'javascript', snykCode: true },
+  deepSast: {
+    codeqlLanguage: 'javascript',
+    snykCode: true,
+    // Source extractor: no build, no toolchain (codeql itself is a registry
+    // tool). 'build' weight — a DB build + analyze is minutes, never cheap.
+    execution: () => ({
+      hosts: ['any'],
+      toolchains: [],
+      needsBuild: false,
+      buildTarget: 'none',
+      weight: 'build',
+    }),
+  },
 
   correctness: tsCorrectnessProvider,
   lintGate: tsLintGateProvider,

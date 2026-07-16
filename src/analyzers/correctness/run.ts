@@ -18,6 +18,13 @@
 import { activeCorrectnessProviders } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
+import {
+  currentEnvironment,
+  describeUnmetRequirement,
+  unmetRequirement,
+  type ExecutionEnvironment,
+  type UnmetRequirement,
+} from '../../execution';
 // The spawn + timeout + fail-open exec primitive is shared with the custom-check
 // gate runner — one code path (Rule 2). Re-exported so existing callers (and
 // tests) keep importing `CommandExec` / `makeCommandExec` from here.
@@ -42,6 +49,14 @@ export type CorrectnessStatus =
    *  (This previously coded as `fail` and blocked — infrastructure failing closed,
    *  contrary to this module's own stated policy.) */
   | 'skipped-overflow'
+  /** The pack's declared `ExecutionRequirement` (Rule 20) is unmet here —
+   *  wrong host / missing ambient toolchain. Fail-OPEN like the other
+   *  infrastructure skips, but DISCLOSED: `unmet` carries the structured
+   *  reason so every surface can say WHERE the floor would run instead of
+   *  silently reporting nothing (the dpl-studio class). Checked BEFORE exec,
+   *  so a `dotnet build` of a Windows-only target never runs on Linux just to
+   *  fail in a way that reads as broken code. */
+  | 'skipped-environment'
   | 'skipped-none';
 
 export interface CorrectnessCheckResult {
@@ -51,6 +66,9 @@ export interface CorrectnessCheckResult {
   readonly status: CorrectnessStatus;
   /** Captured output tail — present only on `fail`, for the block message. */
   readonly output?: string;
+  /** Present only on `skipped-environment` — the structured unmet-requirement
+   *  reason (phrase via `describeUnmetRequirement`). */
+  readonly unmet?: UnmetRequirement;
 }
 
 export interface CorrectnessFloorResult {
@@ -73,6 +91,8 @@ export interface CorrectnessFloorOptions {
   readonly timeoutMs?: number;
   /** Injected for tests; defaults to real PATH resolution + execFileSync. */
   readonly exec?: CommandExec;
+  /** Injected for tests; defaults to the real local host + toolchain probes. */
+  readonly env?: ExecutionEnvironment;
 }
 
 /**
@@ -83,10 +103,20 @@ export interface CorrectnessFloorOptions {
  */
 export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessFloorResult {
   const exec = opts.exec ?? makeCommandExec(opts.timeoutMs);
+  const env = opts.env ?? currentEnvironment();
   const ctx = { cwd: opts.cwd, changedFiles: opts.changedFiles, scope: opts.scope };
   const checks: CorrectnessCheckResult[] = [];
 
   for (const { id, provider } of activeCorrectnessProviders(opts.packs)) {
+    // Rule 20: consult the pack's declared requirement BEFORE executing. An
+    // unmet environment is a disclosed boundary — running anyway would either
+    // fail-open invisibly (missing toolchain) or, worse, fail in a way that
+    // reads as broken code (a Windows-only build target on a Linux host).
+    const unmet = unmetRequirement(provider.execution(opts.cwd), env);
+    if (unmet !== null) {
+      checks.push({ pack: id, label: 'floor', bin: '', status: 'skipped-environment', unmet });
+      continue;
+    }
     const commands = [provider.syntaxCheck(ctx), provider.affectedTests(ctx)];
     for (const cmd of commands) {
       if (cmd === null) continue; // pack declined this check for this change
@@ -131,4 +161,17 @@ export function describeCorrectnessFloor(result: CorrectnessFloorResult): string
   if (failed.length === 0) return 'correctness floor: all checks passed';
   const which = failed.map((c) => `${c.pack} ${c.label}`).join(', ');
   return `correctness floor: ${failed.length} check(s) failed — ${which}`;
+}
+
+/** The environment-boundary disclosures in a floor result, one line per pack
+ *  (empty when none). Shared by every surface that renders a floor run, so a
+ *  capability that cannot run HERE is always named, with where it would run —
+ *  never a silent skip (Rule 20). */
+export function describeEnvironmentSkips(result: CorrectnessFloorResult): string[] {
+  return result.checks
+    .filter((c) => c.status === 'skipped-environment' && c.unmet)
+    .map(
+      (c) =>
+        `${c.pack} floor not measurable in this environment: ${describeUnmetRequirement(c.unmet as UnmetRequirement)}`,
+    );
 }

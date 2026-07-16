@@ -19,6 +19,7 @@ import type {
   RecallInputMode,
 } from '../../languages/capabilities/lint-gate';
 import { activeLintGateProviders } from '../../languages';
+import type { ExecutionRequirement } from '../../execution';
 import type { CustomCheckCommand, CustomCheckParse, CustomCheckSpec } from './types';
 
 /** The reserved prefix for pack-declared built-in lint checks. */
@@ -133,9 +134,31 @@ export function lintGateSpecs(
       // a reason to attribute less confidently, not to stop linting. An empty
       // set degrades to command-only recall, which is the pre-Rule-19 behavior.
       recallInputs: safeRecallInputs(id, provider, { ...ctx, mode }),
+      // What this gate NEEDS from the environment (Rule 20) — the runner
+      // consults it before spawning. Same fail-soft posture as recallInputs:
+      // a throwing declaration must not take the gate down; absence degrades
+      // to the plain fail-open missing-binary path.
+      ...safeExecution(id, provider, ctx.cwd),
     });
   }
   return specs;
+}
+
+function safeExecution(
+  id: string,
+  provider: { execution(cwd: string): ExecutionRequirement },
+  cwd: string,
+): { execution: ExecutionRequirement } | Record<string, never> {
+  try {
+    return { execution: provider.execution(cwd) };
+  } catch (err) {
+    if (process.env.DXKIT_DEBUG === '1') {
+      process.stderr.write(
+        `    [lint-gate] pack '${id}' execution threw: ${(err as Error)?.message ?? String(err)}\n`,
+      );
+    }
+    return {};
+  }
 }
 
 function safeRecallInputs(

@@ -17,6 +17,7 @@
  */
 
 import type { RawLocatedFinding } from '../../languages/capabilities/lint-gate';
+import type { ExecutionRequirement } from '../../execution';
 
 /** The binary + args a check runs. `bin` is resolved on PATH by the shared
  *  `bounded-exec` primitive (a missing binary is fail-OPEN — skipped, not
@@ -93,6 +94,19 @@ export interface CustomCheckSpec {
    * (Rule 9).
    */
   readonly recallInputs?: Readonly<Record<string, string>>;
+  /**
+   * What this check NEEDS from the environment that runs it (Rule 20).
+   * Populated for pack-declared lint from `LintGateProvider.execution` — the
+   * runner consults it BEFORE spawning, so an unrunnable gate (a Windows-only
+   * `dotnet build` on a Linux host) is a disclosed `skipped-environment`
+   * boundary, never a spawn that fails in a way that reads as a finding.
+   *
+   * Absent for user-declared checks, mirroring `recallInputs`: dxkit cannot
+   * resolve what `make lint` needs, and inventing an answer would be worse
+   * than admitting the limit — such a check keeps the plain fail-open
+   * missing-binary path.
+   */
+  readonly execution?: ExecutionRequirement;
 }
 
 /** A single failure extracted from a check's output. Maps 1:1 to a
@@ -118,13 +132,23 @@ export type CustomCheckStatus =
    *  Fail-OPEN (never a block): a finding count parsed from a fragment is fiction,
    *  and it would slide between runs, so the baseline and the guardrail would
    *  disagree about what is net-new. */
-  | 'skipped-overflow';
+  | 'skipped-overflow'
+  /** The check's declared `ExecutionRequirement` (Rule 20) is unmet here —
+   *  wrong host / missing ambient toolchain. Fail-OPEN like the other skips
+   *  but DISCLOSED via `reason`, and decided BEFORE the spawn: an unrunnable
+   *  `dotnet build` must not execute just to fail in a way the parser would
+   *  surface as a binary finding (the half-provisioned-SDK class). */
+  | 'skipped-environment';
 
 /** Per-check outcome. `findings` is non-empty only on `fail`. */
 export interface CustomCheckResult {
   readonly name: string;
   readonly status: CustomCheckStatus;
   readonly findings: readonly CustomCheckFinding[];
+  /** Present on `skipped-environment`: the human-phrased unmet-requirement
+   *  boundary (from `describeUnmetRequirement`) — what is needed and where
+   *  the check would run instead. */
+  readonly reason?: string;
 }
 
 /** Aggregate result across every configured check. */

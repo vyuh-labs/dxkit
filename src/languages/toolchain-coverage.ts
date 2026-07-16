@@ -17,6 +17,18 @@
  * never be presented as full coverage on one surface while the other tells the
  * truth. Purely PATH-derived (`commandExists`) so it is cheap and side-effect
  * free.
+ *
+ * Relationship to the execution-environment model (Rule 20): `cliBinaries` is
+ * the PATH-probe PROJECTION of the richer per-capability
+ * `ExecutionRequirement` declarations — it covers toolchain drivers AND
+ * registry tools doctor should name, while the requirement model carries
+ * hosts/needsBuild/buildTarget for placement. Two projections of one concept
+ * is the Rule 2.30 drift shape, so the contract test pins their parity: every
+ * toolchain a pack's capabilities declare must surface one of its binaries in
+ * that pack's `cliBinaries` (and both sides probe presence through the ONE
+ * `commandExists`). Full convergence — this module deriving from the
+ * declarations — lands with the placement resolver, which replaces the
+ * boolean "unmeasured" with "unmeasured HERE, runs THERE".
  */
 
 import { commandExists } from '../analyzers/tools/runner';

@@ -22,6 +22,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -535,6 +536,15 @@ async function gatherPyDepVulnsResult(
 
 const pyDepVulnsProvider: DepVulnsProvider = {
   source: 'python',
+  // pip-audit is a registry tool, but it drives the repo's Python environment
+  // (project mode resolves via the PEP 517 backend) — the runtime is ambient.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: ['python'],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   manifestPatterns: [
     'pyproject.toml',
     'setup.py',
@@ -928,6 +938,16 @@ function isPyTestFile(rel: string): boolean {
  * CI. (Documented ceiling; testmon-based per-test selection is a future upgrade.)
  */
 const pyCorrectnessProvider: CorrectnessProvider = {
+  // Rule 20: host-agnostic, needs the Python runtime; py_compile + pytest run
+  // the project's own code — 'build' weight without a compiled-build env.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: ['python'],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'build',
+  }),
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     const changedPy = ctx.changedFiles.filter((f) => f.endsWith('.py'));
     if (changedPy.length === 0) return null; // full-scope backstop is the pytest import
@@ -985,6 +1005,15 @@ export function parseRuffJson(output: string): RawLocatedFinding[] {
 }
 
 const pyLintGateProvider: LintGateProvider = {
+  // ruff is a standalone registry tool (Rule 1 owns its provisioning), so the
+  // gate itself has no ambient-toolchain requirement.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   lintCommand(ctx) {
     const ruff = findTool(TOOL_DEFS.ruff, ctx.cwd);
     if (!ruff.available || !ruff.path) return null;
@@ -1455,7 +1484,18 @@ export const python: LanguageSupport = {
   tools: ['ruff', 'pip-audit', 'coverage-py', 'pip-licenses'],
   semgrepRulesets: ['p/python'],
   // CodeQL `python` extractor (no build); Snyk Code supports Python.
-  deepSast: { codeqlLanguage: 'python', snykCode: true },
+  deepSast: {
+    codeqlLanguage: 'python',
+    snykCode: true,
+    // Source extractor: no build, no ambient toolchain.
+    execution: () => ({
+      hosts: ['any'],
+      toolchains: [],
+      needsBuild: false,
+      buildTarget: 'none',
+      weight: 'build',
+    }),
+  },
 
   correctness: pyCorrectnessProvider,
   lintGate: pyLintGateProvider,
