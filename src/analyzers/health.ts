@@ -51,6 +51,7 @@ import { scoreDxDimension } from './dx/shallow';
 import { computeOverall } from '../scoring';
 import { ScoreInput } from './types';
 import { type GatherScope, FULL_SCOPE } from '../baseline/gather-scope';
+import { resetAnalysisMemos } from './analysis-memos';
 
 /** Default values for all HealthMetrics fields. */
 export function defaultMetrics(): HealthMetrics {
@@ -198,6 +199,12 @@ export async function gatherAnalysisResultBody(
 ): Promise<AnalysisResultBody> {
   const verbose = !!options.verbose;
   const scope = options.scope ?? FULL_SCOPE;
+
+  // A fresh analysis is starting: reset the process-lifetime per-cwd
+  // memos (walks, exclusions, gitleaks outcome, dispatcher) so a tree
+  // that changed since a PRIOR in-process analysis is re-walked instead
+  // of read as the stale (possibly empty) snapshot the memos hold.
+  resetAnalysisMemos();
 
   // Step 1: Detect stack
   const stack = timed('detect', verbose, () => detect(repoPath));

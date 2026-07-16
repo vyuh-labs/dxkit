@@ -173,14 +173,26 @@ describe('buildInitClosing', () => {
     });
     // Full coverage NOT claimed.
     expect(withGap.headline).not.toBe("You're gated.");
-    // A generic optional-scanner gap (no language toolchain missing) still reads
-    // as fully gated with the lighter caution.
-    const optionalOnly = buildInitClosing({
+    // The toolchain caution (the root prerequisite) is the one shown; the
+    // generic scanner caution would name tools install first.
+    expect(withGap.caution).toContain('toolchain');
+    // A scanner gap alone (no language toolchain missing) is ALSO a partial
+    // baseline — a missing gitleaks means secrets were never measured — so
+    // the headline is qualified there too (3.9: never print an unqualified
+    // "You're gated." over a partial baseline).
+    const scannerOnly = buildInitClosing({
       ...base,
       baselineFindings: 10,
       incompleteScanners: ['gitleaks'],
     });
-    expect(optionalOnly.headline).toBe("You're gated.");
+    expect(scannerOnly.headline).toBe("You're gated for what's measurable.");
+    expect(scannerOnly.caution).toContain('NOT gated');
+  });
+
+  it('claims the unqualified headline ONLY on full coverage', () => {
+    const full = buildInitClosing({ ...base, baselineFindings: 10 });
+    expect(full.headline).toBe("You're gated.");
+    expect(full.caution).toBeNull();
   });
 
   it('time-to-verdict is humanized across ranges', () => {
