@@ -295,6 +295,15 @@ dxkit covers 8 ecosystems. Detection is automatic from your manifests and
 source; each language brings its own native linter, dependency-audit tool, and
 coverage parser, layered on the universal scanners.
 
+Each capability also declares where it can execute: the host OS and SDK it
+needs, and whether it must build the project. Stacks whose build is OS-locked
+(a `net*-windows` WinForms target today; the same model covers Swift and
+Android later) get an honest answer instead of a silent gap: the parts your
+machine cannot run are disclosed with a remedy, a per-host CI gate job is
+generated to run them, and the committed baseline is composed from captures
+across those environments. See the execution-environment notes in
+[init](docs/commands/init.md) and [checks](docs/commands/checks.md).
+
 | Language                | Detected by                 | Native linter + audit                     |
 | ----------------------- | --------------------------- | ----------------------------------------- |
 | TypeScript / JavaScript | `package.json`              | ESLint, npm audit                         |

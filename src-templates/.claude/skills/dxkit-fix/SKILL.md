@@ -46,7 +46,9 @@ Capturing to a file (instead of piping inline) lets the customer re-read what wa
 
 ### 2. Read the fixable list
 
-The JSON has shape `{ schema: "doctor.v1", checks: [...], summary: { fixable: [...] } }`. Iterate `summary.fixable` only — each entry has `ok: false` AND a `fix` block. Failing checks WITHOUT a fix block are informational (e.g. a missing optional toolchain) and shouldn't be touched here.
+The JSON has shape `{ schema: "doctor.v1", checks: [...], summary: { fixable: [...] } }`. Iterate `summary.fixable` only — each entry has `ok: false` AND a `fix` block. Failing checks WITHOUT a fix block are informational and shouldn't be touched here.
+
+A missing language SDK (dotnet, a JDK, Go…) now carries the **per-host install command** as its fix — from dxkit's toolchain registry, non-privileged where one exists (e.g. `dotnet-install.sh --install-dir $HOME/.dotnet`). These install an SDK, not a dxkit artifact, so always show the command and get explicit confirmation; never route an SDK gap to `tools install` (it provisions scanners, not SDKs — that loop is the exact remediation bug this closed). Note some capabilities are legitimately NOT runnable on this machine (a Windows-only build target on a Linux laptop): dxkit reports those as disclosed environment boundaries handled by the generated per-host CI gate — nothing to fix locally.
 
 ### 3. Walk the customer through each fix
 

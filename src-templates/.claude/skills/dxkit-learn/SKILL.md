@@ -71,6 +71,16 @@ dxkit doesn't write parsers — it orchestrates established tools and computes s
 
 If a tool isn't installed, dxkit degrades gracefully (the affected dimension reports a partial score with a "missing tool" note instead of crashing).
 
+## Execution environments (4.0)
+
+dxkit models a third dimension alongside language and capability: **where a capability can execute**. Every gate declares what it needs (host OS, ambient SDK, whether it must build the project). Three consequences you will see:
+
+- **Disclosed boundaries, never silent skips.** A capability the current machine cannot serve says so — "needs windows (this environment is linux) — runs where that host is available" — with the per-host install remedy for a missing SDK. An SDK that is present but cannot serve the repo (too old for the target framework, half-installed) is likewise diagnosed as an environment boundary, never misread as broken code.
+- **Generated per-host gate jobs.** A stack whose build is OS-locked (a `net*-windows` WinForms target; Swift/iOS when it lands) gets a `dxkit-gate-<host>` CI job generated from the declarations, running the correctness floor for exactly the packs placed there. Mark it a required PR check alongside `dxkit-guardrails`.
+- **One baseline, composed across environments.** Finding identities are environment-independent by design, so the committed baseline can be assembled from captures on different runners — the refresh workflow captures each host's slice and merges it before the anchor commit. Unobserved is recorded as absent, never claimed as "clean".
+
+Nothing here is configured by hand — it derives from the language packs' declarations.
+
 ## Baselines explained
 
 A baseline is the per-finding identity snapshot of a scan. Every finding has a **fingerprint** (SHA-1[0:16] of file+rule+line-window+content). The baseline stores those fingerprints. The guardrail diffs today's scan against the baseline:
