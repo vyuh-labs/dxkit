@@ -224,7 +224,9 @@ describe('runIngest engine-failure exit codes', () => {
   beforeEach(() => {
     cwd = tmpRepo();
     process.exitCode = undefined;
-    process.env.SNYK_TOKEN = 'test-token';
+    // A `your-…` value is one of benign.ts's placeholder conventions, so
+    // dxkit's own secret gate reads it as a fixture, not a leak.
+    process.env.SNYK_TOKEN = 'your-snyk-token';
     process.env.SNYK_ORG_ID = 'test-org';
     process.env.SNYK_PROJECT_ID = 'test-project';
     fetchMock.mockReset();
