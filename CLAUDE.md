@@ -1316,6 +1316,21 @@ install` loop for an ambient SDK), never a silent skip and never a spawn
   the parity test (`test/execution/placement.test.ts`): off-primary-placed ⇔
   wrong-host-skipped, both directions — the Rule 2.30 semantic-divergence
   net.
+- **Composed** across environments (design §3.4 — the hidden enabler): ONE
+  committed baseline assembled from captures in different environments,
+  sound because finding identity is environment-independent (Rule 9). The
+  primitives live in `src/baseline/fragment.ts`: `captureFragment` (a placed
+  host's slice — its checks' findings + recall, via the seam's ONE producer
+  map and ONE recall formula) and `mergeFragment` (check-scoped ownership:
+  the fragment REPLACES its declared checks' entries + recall keys, touches
+  nothing else, and REFUSES a scheme/epoch mismatch with the remedy named).
+  The refresh workflow's per-host capture jobs + merge step are rendered
+  from the placement plan (`renderFragmentOrchestration`; template partials,
+  empty slots on a host-agnostic repo). Paired honesty fix: an
+  env-unrunnable check contributes NO recall inputs (`observableSpecs` in
+  the seam) — unobserved reads as ABSENT, never as "comparable and clean"
+  (the lie that would flag a whole pre-existing backlog as net-new on the
+  first host-side check).
 
 **Bad**: a capability that shells a build with no `execution` declaration (it
 won't compile); a `process.platform` read in an analyzer; an inline

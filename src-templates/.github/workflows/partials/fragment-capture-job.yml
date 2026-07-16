@@ -1,0 +1,40 @@
+# PARTIAL — one per-host baseline-fragment capture job, rendered by
+# installCiBaselineRefresh into the refresh workflow's __DXKIT_FRAGMENT_CAPTURE_JOBS__
+# slot when the placement plan routes lint gates to this host (CLAUDE.md Rule 20,
+# design §3.4). Never installed standalone.
+  capture-__DXKIT_GATE_HOST__:
+    runs-on: __DXKIT_GATE_RUNNER__
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+__DXKIT_FRAGMENT_HOST_SETUP__
+      - name: Install dxkit
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            npm install --no-save @vyuhlabs/dxkit >/dev/null 2>&1 || npm install -g @vyuhlabs/dxkit
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      # This host's slice of the baseline: the checks the primary runner
+      # cannot observe (their declared execution requirement needs this host).
+      - name: Capture baseline fragment (__DXKIT_FRAGMENT_CHECKS__)
+        shell: bash
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" baseline fragment --checks __DXKIT_FRAGMENT_CHECKS__ --out dxkit-fragment-__DXKIT_GATE_HOST__.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dxkit-fragment-__DXKIT_GATE_HOST__
+          path: dxkit-fragment-__DXKIT_GATE_HOST__.json

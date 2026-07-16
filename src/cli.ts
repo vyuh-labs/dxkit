@@ -436,6 +436,7 @@ export async function run(argv: string[]): Promise<void> {
       ref: { type: 'string' },
       surface: { type: 'string' },
       packs: { type: 'string' },
+      checks: { type: 'string' },
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
       'keep-baselines': { type: 'boolean', default: false },
@@ -2571,11 +2572,77 @@ export async function run(argv: string[]): Promise<void> {
         }
         break;
       }
+      if (subCommand === 'fragment') {
+        // Capture THIS host's slice of the baseline (Rule 20 / design §3.4):
+        // the custom-check findings + recall for the checks placed on this
+        // host — the generated per-host capture job's command. Default scope
+        // is exactly what the primary host cannot observe; --checks overrides.
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { captureFragment, writeFragment } = await import('./baseline/fragment');
+        const { loadPolicyFromCwd } = await import('./baseline/policy');
+        const checks = (values.checks as string | undefined)
+          ?.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const fragment = captureFragment({
+          cwd: targetPath,
+          policy: loadPolicyFromCwd(targetPath),
+          ...(checks ? { checks } : {}),
+        });
+        const out = (values.out as string | undefined) ?? 'dxkit-baseline-fragment.json';
+        writeFragment(out, fragment);
+        logger.success(
+          `Captured ${fragment.findings.length} finding(s) for ${fragment.checks.length} ` +
+            `check(s) [${fragment.checks.join(', ') || 'none placed on this host'}] → ${out}`,
+        );
+        process.exit(0);
+        break;
+      }
+      if (subCommand === 'merge-fragment') {
+        // Fold host-captured fragments into the committed baseline — the
+        // refresh workflow's merge step before the anchor commit. Refuses
+        // (exit 1, remedy named) on a scheme/epoch mismatch rather than
+        // poisoning the baseline with incomparable ids.
+        const files = positionals.slice(2).filter((p) => p.endsWith('.json'));
+        if (files.length === 0) {
+          logger.fail('Usage: vyuh-dxkit baseline merge-fragment <fragment.json…> [--name main]');
+          process.exit(1);
+        }
+        const { mergeFragment, readFragment, FragmentMergeError } =
+          await import('./baseline/fragment');
+        const { pathForBaseline, readBaselineFile, writeBaselineFile } =
+          await import('./baseline/baseline-file');
+        const name = (values.name as string | undefined) ?? 'main';
+        const baselinePath = pathForBaseline(process.cwd(), name);
+        try {
+          let file = readBaselineFile(baselinePath);
+          for (const f of files) {
+            const fragment = readFragment(f);
+            file = mergeFragment(file, fragment);
+            logger.info(
+              `Merged ${fragment.findings.length} finding(s) from ${f} ` +
+                `(${fragment.host}: ${fragment.checks.join(', ')})`,
+            );
+          }
+          writeBaselineFile(baselinePath, file);
+          logger.success(`Baseline '${name}' updated with ${files.length} fragment(s).`);
+          process.exit(0);
+        } catch (err) {
+          if (err instanceof FragmentMergeError) {
+            logger.fail(err.message);
+            process.exit(1);
+          }
+          throw err;
+        }
+        break;
+      }
       logger.fail(
         `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
           `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force] · ` +
           `vyuh-dxkit baseline publish [path] · ` +
-          `vyuh-dxkit baseline show [path] [--name <name>] [--baseline <path>] [--kind <kind>] [--json]`,
+          `vyuh-dxkit baseline show [path] [--name <name>] [--baseline <path>] [--kind <kind>] [--json] · ` +
+          `vyuh-dxkit baseline fragment [path] [--checks <a,b>] [--out <file>] · ` +
+          `vyuh-dxkit baseline merge-fragment <fragment.json…> [--name <name>]`,
       );
       process.exit(1);
       break;

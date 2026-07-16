@@ -1,0 +1,21 @@
+# PARTIAL — merge steps rendered into the refresh job's
+# __DXKIT_FRAGMENT_MERGE_STEPS__ slot (after `baseline create`, before the
+# commit) when host capture jobs exist. Never installed standalone.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dxkit-fragment-*
+          merge-multiple: true
+
+      # Fold each host's slice into the freshly-recomputed baseline. The
+      # fragments' finding ids are environment-independent (Rule 9), which is
+      # what makes one committed baseline composable across runners. A
+      # scheme/epoch mismatch refuses (exit 1) rather than poisoning the
+      # baseline — capture and merge must run the same dxkit version.
+      - name: Merge host-captured baseline fragments
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            DXKIT=./node_modules/.bin/vyuh-dxkit
+          else
+            DXKIT=vyuh-dxkit
+          fi
+          "${DXKIT}" baseline merge-fragment dxkit-fragment-*.json
