@@ -31,6 +31,7 @@ import { computeChangedFiles } from '../../baseline/changed-files';
 import {
   runCorrectnessFloor,
   describeCorrectnessFloor,
+  describeEnvironmentSkips,
   type CommandExec,
   type CorrectnessFloorResult,
 } from './run';
@@ -164,14 +165,24 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
     timeoutMs,
     exec: opts.exec,
   });
+  // A declared environment boundary is disclosed on every outcome — a floor
+  // that cannot run HERE names where it would run, never skips silently
+  // (Rule 20). Appended to the summary so hooks/CI logs carry it verbatim.
+  const envSkips = describeEnvironmentSkips(result);
+  const envSuffix = envSkips.length > 0 ? ` [${envSkips.join('; ')}]` : '';
   if (!result.ran) {
+    const cause =
+      envSkips.length > 0
+        ? 'not measurable in this environment'
+        : 'all checks skipped (toolchain not present)';
     return {
       surface,
       enabled: true,
       reason: res.reason,
       ran: false,
       blocks: false,
-      summary: `correctness floor (${surface}): all checks skipped (toolchain not present) — CI is the backstop`,
+      summary: `correctness floor (${surface}): ${cause} — CI is the backstop${envSuffix}`,
+      result,
     };
   }
   return {
@@ -180,7 +191,7 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
     reason: res.reason,
     ran: true,
     blocks: result.blocks,
-    summary: describeCorrectnessFloor(result),
+    summary: describeCorrectnessFloor(result) + envSuffix,
     result,
   };
 }

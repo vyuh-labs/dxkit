@@ -36,6 +36,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement, ToolchainId } from '../execution';
 
 type JvmBuildSystem = 'maven' | 'gradle';
 
@@ -196,6 +197,28 @@ function testCommandForModules(build: JvmBuild, mods: readonly string[]): Correc
   return { label: 'affected-tests', bin: build.bin, args: tasks };
 }
 
+/**
+ * The JVM build execution requirement (Rule 20), shared by both JVM packs and
+ * every build-based JVM capability (floor, deep SAST). Repo-intrinsic: the
+ * toolchain list names the build system the REPO uses — and a committed
+ * wrapper (`mvnw` / `gradlew`) provisions its own build tool, so only the JDK
+ * remains ambient in that case. Compile + tests are a build with a
+ * module-discovered target.
+ */
+export function jvmBuildExecution(cwd: string): ExecutionRequirement {
+  const toolchains: ToolchainId[] = ['jdk'];
+  const build = detectJvmBuild(cwd);
+  if (build?.system === 'maven' && !fileExists(cwd, 'mvnw')) toolchains.push('maven');
+  if (build?.system === 'gradle' && !fileExists(cwd, 'gradlew')) toolchains.push('gradle');
+  return {
+    hosts: ['any'],
+    toolchains,
+    needsBuild: true,
+    buildTarget: 'discovered',
+    weight: 'build',
+  };
+}
+
 export interface JvmCorrectnessOptions {
   /** Extensions that count as a relevant source change (`.java`, `.kt`/`.kts`). */
   readonly sourceExtensions: readonly string[];
@@ -214,6 +237,8 @@ export function jvmCorrectnessProvider(opts: JvmCorrectnessOptions): Correctness
   const isSource = (f: string): boolean => opts.sourceExtensions.some((e) => f.endsWith(e));
 
   return {
+    execution: jvmBuildExecution,
+
     syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
       if (opts.declineWhen?.(ctx.cwd)) return null;
       const build = detectJvmBuild(ctx.cwd);

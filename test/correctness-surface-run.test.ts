@@ -15,6 +15,15 @@ function fakePack(): LanguageSupport {
   return {
     id: 'typescript', // any real LanguageId; only `correctness` is exercised
     correctness: {
+      // Satisfiable everywhere (Rule 20) — these tests exercise surface
+      // resolution + exec policy, not the environment gate.
+      execution: () => ({
+        hosts: ['any' as const],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none' as const,
+        weight: 'cheap' as const,
+      }),
       syntaxCheck: () => cmd('compile'),
       affectedTests: () => cmd('affected-tests'),
     },
@@ -117,6 +126,13 @@ describe('runFloorForSurface — scope selection', () => {
     const scopePack = {
       id: 'typescript',
       correctness: {
+        execution: () => ({
+          hosts: ['any' as const],
+          toolchains: [],
+          needsBuild: false,
+          buildTarget: 'none' as const,
+          weight: 'cheap' as const,
+        }),
         syntaxCheck: () => null,
         affectedTests: (ctx: { scope: string }) => ({
           label: 'affected-tests',
@@ -144,6 +160,13 @@ describe('runFloorForSurface — scope selection', () => {
     const scopePack = {
       id: 'typescript',
       correctness: {
+        execution: () => ({
+          hosts: ['any' as const],
+          toolchains: [],
+          needsBuild: false,
+          buildTarget: 'none' as const,
+          weight: 'cheap' as const,
+        }),
         syntaxCheck: () => null,
         affectedTests: (ctx: { scope: string }) => ({
           label: 'affected-tests',

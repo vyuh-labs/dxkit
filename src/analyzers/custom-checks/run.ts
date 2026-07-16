@@ -25,6 +25,12 @@
  */
 
 import { makeCommandExec, tail, type CommandExec } from '../tools/bounded-exec';
+import {
+  currentEnvironment,
+  describeUnmetRequirement,
+  unmetRequirement,
+  type ExecutionEnvironment,
+} from '../../execution';
 import { binaryFinding, parseLocated, parseStructuredLocated } from './parse';
 import type {
   CustomCheckFinding,
@@ -43,6 +49,8 @@ export interface RunCustomChecksOptions {
   readonly timeoutMs?: number;
   /** Injected for tests; defaults to real PATH resolution + execFileSync. */
   readonly exec?: CommandExec;
+  /** Injected for tests; defaults to the real local host + toolchain probes. */
+  readonly env?: ExecutionEnvironment;
 }
 
 /**
@@ -51,10 +59,27 @@ export interface RunCustomChecksOptions {
  */
 export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunResult {
   const exec = opts.exec ?? makeCommandExec(opts.timeoutMs);
+  const env = opts.env ?? currentEnvironment();
   const results: CustomCheckResult[] = [];
   const findings: CustomCheckFinding[] = [];
 
   for (const spec of opts.specs) {
+    // Rule 20: a check with a declared execution requirement is checked
+    // against the environment BEFORE spawning — an unrunnable command must
+    // not execute just to fail in a way the parser reads as a finding (the
+    // half-provisioned-SDK class), and the skip is disclosed, never silent.
+    if (spec.execution) {
+      const unmet = unmetRequirement(spec.execution, env);
+      if (unmet !== null) {
+        results.push({
+          name: spec.name,
+          status: 'skipped-environment',
+          findings: [],
+          reason: describeUnmetRequirement(unmet),
+        });
+        continue;
+      }
+    }
     const outcome = exec(spec.command, opts.cwd);
     if (!outcome.available) {
       results.push({ name: spec.name, status: 'skipped-unavailable', findings: [] });

@@ -8,7 +8,8 @@ import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-d
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import { isAndroidGradleBuild, jvmCorrectnessProvider } from './jvm-build';
+import { isAndroidGradleBuild, jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -400,6 +401,15 @@ const JAVA_DEP_MANIFESTS = ['gradle.lockfile', 'pom.xml', 'gradle/verification-m
 
 const javaDepVulnsProvider: DepVulnsProvider = {
   source: 'java',
+  // osv-scanner (a registry tool — Rule 1) reads the Maven/Gradle manifests
+  // directly; no build, no ambient toolchain.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   // osv-scanner audits JAVA_DEP_MANIFESTS; the build scripts carry the actual
   // dependency declarations, so include them for the incremental skip check.
   manifestPatterns: [
@@ -719,7 +729,7 @@ export const java: LanguageSupport = {
   // Semgrep ships a Java ruleset under p/java.
   semgrepRulesets: ['p/java'],
   // CodeQL `java` extractor needs a build; Snyk Code supports Java.
-  deepSast: { codeqlLanguage: 'java', codeqlBuildRequired: true, snykCode: true },
+  deepSast: { codeqlLanguage: 'java', snykCode: true, execution: jvmBuildExecution },
 
   correctness: javaCorrectnessProvider,
   // Lint gate: DORMANT. Java linters (checkstyle/PMD/SpotBugs) run via the build
@@ -730,7 +740,19 @@ export const java: LanguageSupport = {
   // whose recall could drift. An empty input set is the accurate answer here,
   // not a stub — when a real command is pinned, its versions + config land
   // alongside it.
-  lintGate: { lintCommand: () => null, recallInputs: () => ({}) },
+  lintGate: {
+    lintCommand: () => null,
+    recallInputs: () => ({}),
+    // Dormant gate: nothing runs, so nothing is required — the empty
+    // requirement is the accurate answer, mirroring the empty recall inputs.
+    execution: () => ({
+      hosts: ['any'],
+      toolchains: [],
+      needsBuild: false,
+      buildTarget: 'none',
+      weight: 'cheap',
+    }),
+  },
 
   capabilities: {
     imports: javaImportsProvider,

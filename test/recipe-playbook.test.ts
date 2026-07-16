@@ -70,6 +70,7 @@ import {
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
+import { runCustomChecks } from '../src/analyzers/custom-checks/run';
 import { customCheckRecallInputs } from '../src/analyzers/custom-checks/gather';
 import type { BrownfieldPolicy } from '../src/baseline/policy';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
@@ -195,6 +196,15 @@ const mockPlaybookPack = {
   correctness: {
     syntaxCheck: () => ({ label: 'playbook-typecheck', bin: 'playbookc-mock', args: ['--check'] }),
     affectedTests: () => ({ label: 'playbook-tests', bin: 'playbookc-mock', args: ['test'] }),
+    // Rule 20: satisfiable everywhere, so the floor-pickup assertion above
+    // keeps exercising the dispatch path on any test host.
+    execution: () => ({
+      hosts: ['any' as const],
+      toolchains: [],
+      needsBuild: false,
+      buildTarget: 'none' as const,
+      weight: 'cheap' as const,
+    }),
   },
   // Lint-GATE contribution (custom-check flagship). Distinctive bin/parse so the
   // assertion verifies the synthetic pack's provider flows through
@@ -233,6 +243,19 @@ const mockPlaybookPack = {
       'playbook-linter': ctx.mode === 'locked' ? '^9.0.0' : '9.4.2',
       'playbook-plugin-mock': '2.1.0',
     }),
+    // Rule 20: a DISTINCTIVE, unsatisfiable-on-CI requirement (windows-only
+    // build gate — the csharp shape) so the assertions below can prove the
+    // declaration flows pack → spec → runner and that the runner honors it in
+    // BOTH directions. Without this, `execution` could silently cease being
+    // pack-driven behind `safeExecution`'s fail-soft catch — the same
+    // invisibility recallInputs had pre-Rule-19.
+    execution: () => ({
+      hosts: ['windows' as const],
+      toolchains: [],
+      needsBuild: true,
+      buildTarget: 'configured' as const,
+      weight: 'build' as const,
+    }),
   },
   detect: vi.fn(() => false),
   tools: [],
@@ -259,6 +282,14 @@ const mockPlaybookPack = {
       async gatherOutcome() {
         return { kind: 'no-manifest', reason: 'mock' };
       },
+      // Rule 20: lockfile-scan shape — no ambient toolchain, no build.
+      execution: () => ({
+        hosts: ['any' as const],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none' as const,
+        weight: 'cheap' as const,
+      }),
     },
   },
   permissions: ['Bash(mock-playbook-permission:*)'],
@@ -513,6 +544,61 @@ describe('recipe playbook — synthetic pack', () => {
     expect(locked.find((s) => s.name === 'lint:playbook')?.recallInputs).toMatchObject({
       'playbook-linter': '^9.0.0',
     });
+  });
+
+  // Rule 20: the execution-environment declaration must be pack-driven the same
+  // way the command and recall inputs are. `lintGateSpecs` reads it behind
+  // `safeExecution`'s fail-soft catch, so a pack that silently stopped
+  // declaring would look exactly like a pack with no requirement — this proves
+  // the synthetic pack's declaration ARRIVES on the spec.
+  it('lintGateSpecs carries the mock pack execution requirement onto the spec (Rule 20)', () => {
+    const specs = lintGateSpecs(
+      [...LANGUAGES],
+      { cwd: '/nonexistent-repo', changedFiles: [] },
+      { enabled: true },
+    );
+    expect(specs.find((s) => s.name === 'lint:playbook')?.execution).toEqual({
+      hosts: ['windows'],
+      toolchains: [],
+      needsBuild: true,
+      buildTarget: 'configured',
+      weight: 'build',
+    });
+  });
+
+  // Rule 20, both directions. Unsatisfied: the runner must NOT spawn the
+  // windows-only gate on a linux environment — it discloses a
+  // `skipped-environment` boundary naming the host. Satisfied: the same spec
+  // on a windows environment must execute normally. The second direction is
+  // the more dangerous regression (a gate that silently stops running while
+  // everything stays green), mirroring the recall playbook's over-drift guard.
+  it('runCustomChecks honors the mock pack requirement in both directions (Rule 20)', () => {
+    const specs = lintGateSpecs(
+      [...LANGUAGES],
+      { cwd: '/nonexistent-repo', changedFiles: [] },
+      { enabled: true },
+    ).filter((s) => s.name === 'lint:playbook');
+    expect(specs).toHaveLength(1);
+
+    const exec = vi.fn(() => ({ available: true, code: 0, output: '' }));
+    const onLinux = runCustomChecks({
+      cwd: '/nonexistent-repo',
+      specs,
+      exec,
+      env: { host: 'linux', hasToolchain: () => true },
+    });
+    expect(onLinux.results[0].status).toBe('skipped-environment');
+    expect(onLinux.results[0].reason).toContain('windows');
+    expect(exec).not.toHaveBeenCalled(); // decided BEFORE the spawn
+
+    const onWindows = runCustomChecks({
+      cwd: '/nonexistent-repo',
+      specs,
+      exec,
+      env: { host: 'windows', hasToolchain: () => true },
+    });
+    expect(onWindows.results[0].status).toBe('pass');
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it('the seam namespaces the mock pack inputs into the custom-check kind (Rule 19)', () => {

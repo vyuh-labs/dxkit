@@ -17,6 +17,7 @@ import type {
   LintGatherOutcome,
   LintResult,
 } from './types';
+import type { ExecutionRequirement } from '../../execution';
 
 /**
  * Outcome of a side-effecting `runTests()` invocation (D021).
@@ -116,6 +117,19 @@ export interface DepVulnGatherOptions {
 
 export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
   gatherOutcome(cwd: string, opts?: DepVulnGatherOptions): Promise<DepVulnGatherOutcome>;
+  /**
+   * What the audit NEEDS from the environment that runs it (CLAUDE.md
+   * Rule 20). REQUIRED. Registry tools (osv-scanner, pip-audit) are NOT
+   * declared here — `findTool` owns their lifecycle (Rule 1); this names the
+   * AMBIENT toolchains the audit shells beyond them: `npm audit` needs node,
+   * `govulncheck` needs the Go toolchain for call analysis, while a pure
+   * lockfile scan (osv-scanner on Gemfile.lock / a Maven tree) needs none.
+   *
+   * Pure and repo-intrinsic; deterministic. Field addition is a deliberate
+   * change to the frozen-in-place pack contract — pinned alongside
+   * `manifestPatterns` in `test/sdk-surface-freeze.test.ts`.
+   */
+  execution(cwd: string): ExecutionRequirement;
   /**
    * Filenames / patterns that identify this pack's dependency manifests and
    * lockfiles (e.g. `package.json`, `package-lock.json`, `*.csproj`,

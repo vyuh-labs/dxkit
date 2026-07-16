@@ -20,6 +20,7 @@ import type {
   CorrectnessContext,
   CorrectnessProvider,
 } from './capabilities/correctness';
+import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -480,6 +481,16 @@ async function gatherRustDepVulnsResult(cwd: string): Promise<DepVulnGatherOutco
 
 const rustDepVulnsProvider: DepVulnsProvider = {
   source: 'rust',
+  // cargo-audit reads the committed Cargo.lock directly (a registry tool —
+  // Rule 1); the `cargo metadata` top-level attribution is best-effort enrich,
+  // so the Rust toolchain is not a requirement of the audit itself.
+  execution: (): ExecutionRequirement => ({
+    hosts: ['any'],
+    toolchains: [],
+    needsBuild: false,
+    buildTarget: 'none',
+    weight: 'cheap',
+  }),
   manifestPatterns: ['Cargo.toml', 'Cargo.lock'],
   // A workspace member has no own Cargo.lock; a nested one marks an
   // independent crate the root audit cannot see.
@@ -915,7 +926,19 @@ function rustChangedCrates(cwd: string, changedFiles: readonly string[]): string
  * (Crate-level rung, like Go's package-level: a change whose DEPENDENTS live in
  * another crate is caught at full/CI scope, not the affected surface.)
  */
+/** Rule 20: cargo check/test/clippy all compile the crate graph — the Rust
+ *  toolchain + a build; Cargo discovers the workspace target itself. */
+const RUST_BUILD_EXECUTION: ExecutionRequirement = {
+  hosts: ['any'],
+  toolchains: ['rust'],
+  needsBuild: true,
+  buildTarget: 'discovered',
+  weight: 'build',
+};
+
 const rustCorrectnessProvider: CorrectnessProvider = {
+  execution: () => RUST_BUILD_EXECUTION,
+
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     if (!fileExists(ctx.cwd, 'Cargo.toml')) return null; // not a cargo project
     return { label: 'check', bin: 'cargo', args: ['check'] };
@@ -999,6 +1022,8 @@ export function parseClippyJson(output: string): RawLocatedFinding[] {
  * a default rustup install, the common case when a Rust team opts into linting.
  */
 const rustLintGateProvider: LintGateProvider = {
+  // `cargo clippy` compiles what it lints — same requirement as the floor.
+  execution: () => RUST_BUILD_EXECUTION,
   lintCommand() {
     return {
       bin: 'cargo',
@@ -1133,7 +1158,19 @@ export const rust: LanguageSupport = {
   semgrepRulesets: [],
   // CodeQL `rust` extractor is beta (no build). Snyk Code has no Rust
   // support today, so leave snykCode unset.
-  deepSast: { codeqlLanguage: 'rust', codeqlBeta: true },
+  deepSast: {
+    codeqlLanguage: 'rust',
+    codeqlBeta: true,
+    // The beta Rust extractor is build-less but resolves the crate graph via
+    // cargo metadata — the toolchain is required, a compiled build is not.
+    execution: () => ({
+      hosts: ['any'],
+      toolchains: ['rust'],
+      needsBuild: false,
+      buildTarget: 'discovered',
+      weight: 'build',
+    }),
+  },
 
   correctness: rustCorrectnessProvider,
   lintGate: rustLintGateProvider,

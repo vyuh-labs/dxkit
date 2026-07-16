@@ -106,11 +106,29 @@ export interface LintGateRecallContext extends LintGateContext {
   readonly mode: RecallInputMode;
 }
 
+import type { ExecutionRequirement } from '../../execution';
+
 /** A pack's lint-gate provider. Pure command builder — it resolves the linter
  *  and returns the command (or `null` to skip); execution + fail-open policy
  *  live in the custom-check runner (a pack never shells out itself). */
 export interface LintGateProvider {
   lintCommand(ctx: LintGateContext): LintGateCommand | null;
+
+  /**
+   * What the gate NEEDS from the environment that runs it (CLAUDE.md Rule 20).
+   * REQUIRED. Most linters are host-agnostic and cheap; the exception is the
+   * class that shipped as a defect — the C# gate reads Roslyn warnings out of
+   * `dotnet build`, which needs the .NET SDK, a build, and (for a
+   * `net*-windows` target) a Windows host. Declaring the truth lets the
+   * custom-check runner disclose an environment boundary instead of a silent
+   * skip, and lets the placement resolver put the gate where it can run.
+   * A dormant gate (`lintCommand` returns null unconditionally) declares the
+   * empty requirement — nothing runs, so nothing is needed.
+   *
+   * Pure and repo-intrinsic (repo files only, never the current machine);
+   * deterministic — same discipline as `recallInputs` below.
+   */
+  execution(cwd: string): ExecutionRequirement;
 
   /**
    * What determines what THIS pack's linter can see, beyond its command

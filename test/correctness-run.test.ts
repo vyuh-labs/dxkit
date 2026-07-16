@@ -26,6 +26,15 @@ function pack(
   return {
     id,
     correctness: {
+      // Satisfiable everywhere (Rule 20) — these tests exercise the exec
+      // policy, not the environment gate (that lives in test/execution/).
+      execution: () => ({
+        hosts: ['any' as const],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none' as const,
+        weight: 'cheap' as const,
+      }),
       syntaxCheck: (_ctx: CorrectnessContext) => syntax,
       affectedTests: (_ctx: CorrectnessContext) => affected,
     },

@@ -98,6 +98,7 @@ import type {
   DepVulnsProvider,
 } from '../src/languages/capabilities/provider';
 import type { DepVulnGatherOutcome } from '../src/languages/capabilities/types';
+import type { ExecutionRequirement } from '../src/execution';
 
 /**
  * The frozen runtime export set. Additive-only: append (with a changelog
@@ -243,4 +244,9 @@ export type DepVulnsProviderFrozenInPlace = [
   Expect<Equal<DepVulnsProvider['lockfilePatterns'], readonly string[] | undefined>>,
   Expect<Equal<ReturnType<DepVulnsProvider['gatherOutcome']>, Promise<DepVulnGatherOutcome>>>,
   Expect<Equal<Parameters<DepVulnsProvider['gatherOutcome']>[1], DepVulnGatherOptions | undefined>>,
+  // 4.0 (Rule 20): the execution-environment declaration joined the pack
+  // contract — a deliberate frozen-in-place field addition (all implementers
+  // are in-tree packs; extensions contribute dep findings via findings.v1 and
+  // never implement this interface).
+  Expect<Equal<ReturnType<DepVulnsProvider['execution']>, ExecutionRequirement>>,
 ];

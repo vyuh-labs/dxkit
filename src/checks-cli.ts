@@ -148,6 +148,7 @@ function runChecksDryRun(
         name: r.name,
         status: r.status,
         findings: r.findings.length,
+        ...(r.reason ? { reason: r.reason } : {}),
       })),
       findings: result.findings,
       warnings,
@@ -162,6 +163,9 @@ function runChecksDryRun(
     const line = `  ${r.name.padEnd(22)} ${r.status}${r.findings.length ? ` (${r.findings.length})` : ''}`;
     if (r.status === 'fail') logger.warn(line);
     else logger.dim(line);
+    // An environment boundary is always disclosed with its remedy/placement
+    // (Rule 20) — a check that cannot run HERE never skips silently.
+    if (r.reason) logger.dim(`    ↳ ${r.reason}`);
   }
   console.log(''); // slop-ok
   logger.info(describeCustomChecks(result));

@@ -1,0 +1,44 @@
+/**
+ * The AVAILABILITY side of the execution-environment model: what THIS machine
+ * is (host OS) and has (toolchains). The requirement side is repo-intrinsic
+ * and lives in `requirement.ts`; `unmetRequirement` compares the two.
+ *
+ * This module is the ONE place host detection lives (arch-check enforced —
+ * new `process.platform` reads outside the pre-existing allowlist fail CI).
+ * Point checks scattered per consumer are exactly how the implicit
+ * "the driver's machine can run everything" assumption survived unexamined.
+ */
+
+import { toolchainPresent, type ToolchainId } from './toolchains';
+import type { ExecutionEnvironment, ExecutionHost } from './requirement';
+
+/** Map a Node platform id to an execution host. Non-win/mac POSIX platforms
+ *  (the BSDs, AIX) are treated as linux — the POSIX approximation is right
+ *  for every placement decision dxkit makes (toolchain availability, CI
+ *  runner selection), and GitHub-hosted runners offer exactly these three. */
+export function hostOf(platform: NodeJS.Platform = process.platform): ExecutionHost {
+  if (platform === 'win32') return 'windows';
+  if (platform === 'darwin') return 'macos';
+  return 'linux';
+}
+
+/**
+ * The local environment, with toolchain probes memoized for the lifetime of
+ * the returned object. Callers hold one instance per run (a runner probes the
+ * same toolchain for several packs); nothing is cached module-globally, so a
+ * toolchain installed between runs is seen by the next run — the walk-cache
+ * staleness class stays closed.
+ */
+export function currentEnvironment(): ExecutionEnvironment {
+  const probed = new Map<ToolchainId, boolean>();
+  return {
+    host: hostOf(),
+    hasToolchain(id: ToolchainId): boolean {
+      const hit = probed.get(id);
+      if (hit !== undefined) return hit;
+      const present = toolchainPresent(id);
+      probed.set(id, present);
+      return present;
+    },
+  };
+}
