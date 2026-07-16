@@ -776,6 +776,31 @@ if [ -n "$ROGUE_TOOLSMAP" ]; then
 fi
 
 # =============================================================================
+# Rule 2.30: one CurrentScan -> BaselineFile conversion.
+# =============================================================================
+#
+# A `BaselineFile` is assembled from a freshly-gathered `CurrentScan` in exactly
+# ONE function — `scanToBaselineFile` in src/baseline/create.ts. Both the
+# committed write (`createBaseline`) and the ref-based prior side (`loadPriorSide`
+# in check.ts) route through it. This existed as two hand-built object literals
+# that DIVERGED: `recall` + `coverage` were added to the committed one and
+# silently omitted from the ref-based one (both optional on BaselineFile, so it
+# compiled), which made ref-based mode drift on every run. A second inline
+# construction is the exact hazard. Annotate '// baseline-file-construction-ok'
+# on the converter's own line.
+ROGUE_BASELINE_CTOR=$(grep -rnE "schemaVersion:[[:space:]]*BASELINE_SCHEMA_VERSION" src/ 2>/dev/null \
+  | grep -v "// baseline-file-construction-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ROGUE_BASELINE_CTOR" ]; then
+  echo "❌ Rule 2.30 violation: a BaselineFile is constructed outside scanToBaselineFile:"
+  echo "$ROGUE_BASELINE_CTOR"
+  echo "   → A second CurrentScan -> BaselineFile conversion WILL drift from the first"
+  echo "     (recall + coverage were dropped from the ref-based one exactly this way)."
+  echo "   → Route through scanToBaselineFile() in src/baseline/create.ts instead."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Sprint 2 (2.6): baseline mode resolution discipline.
 # =============================================================================
 #

@@ -48,14 +48,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { dxkitCli } from '../self-invocation';
 import { isMaliciousAdvisory } from '../analyzers/security/malicious';
-import { gatherCurrentScan } from './create';
+import { gatherCurrentScan, scanToBaselineFile } from './create';
 import type { CurrentScan } from './create';
-import {
-  BASELINE_SCHEMA_VERSION,
-  DEFAULT_BASELINE_NAME,
-  pathForBaseline,
-  readBaselineFile,
-} from './baseline-file';
+import { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } from './baseline-file';
 import type { BaselineFile } from './baseline-file';
 import { diffCoverage } from './coverage';
 import type { CoverageDrift } from './coverage';
@@ -1334,16 +1329,13 @@ async function loadPriorSide(
     // Match the current side: never execute untrusted source during the audit.
     untrusted: options.untrusted,
   });
-  const baseline: BaselineFile = {
-    schemaVersion: BASELINE_SCHEMA_VERSION,
+  // The ref-based prior side goes through the ONE `CurrentScan -> BaselineFile`
+  // converter, so it carries `recall` + `coverage` exactly like the committed
+  // write does. Hand-building it here is what dropped recall and made ref-based
+  // mode drift on every run (Rule 2.30) — never reconstruct it inline.
+  const baseline = scanToBaselineFile(refScan, {
     name: options.name ?? DEFAULT_BASELINE_NAME,
-    createdAt: new Date().toISOString(),
-    repo: refScan.repoState,
-    analysis: refScan.analysisMeta,
-    tools: refScan.tools,
-    saltMode: refScan.saltMode,
-    identityScheme: CURRENT_IDENTITY_SCHEME,
     findings: refScan.findings,
-  };
+  });
   return { baseline };
 }

@@ -199,6 +199,57 @@ export interface CurrentScan {
 }
 
 /**
+ * The ONE conversion from a freshly-gathered `CurrentScan` into a `BaselineFile`
+ * (CLAUDE.md Rule 2 — one concept, one code path).
+ *
+ * Both baseline paths use it: `createBaseline` (the committed write) and the
+ * ref-based prior side of the guardrail (`loadPriorSide` in `check.ts`). It is
+ * centralized because the two hand-built constructions DIVERGED — `recall` and
+ * `coverage` were added to the committed write and silently omitted from the
+ * ref-based one (both are optional on `BaselineFile`, so the omission compiled).
+ * The consequence was severe and invisible: ref-based mode (the public-repo
+ * default, the loop Stop-gate, `evaluate`, the self-guardrail) compared against a
+ * prior side with NO recall, so `diffRecall` read every kind as
+ * `absent-from-baseline` and reported spurious "cannot attribute" drift on every
+ * run — even though both sides were gathered by the same dxkit on the same
+ * machine and their recall was, by construction, identical. That is exactly the
+ * Rule 2.30 shape: one concept, two code paths, a field lands in one.
+ *
+ * Now a scan field is mapped in exactly ONE place, so a future addition cannot
+ * reach only half the callers. `scripts/check-architecture.sh` bans a second
+ * `schemaVersion: BASELINE_SCHEMA_VERSION` object construction outside this
+ * function, and `test/baseline/scan-to-baseline.test.ts` asserts every
+ * scan-derived field survives the conversion.
+ *
+ * `findings` is a parameter because the two callers legitimately differ: the
+ * committed write persists the allowlist-filtered `live` set; the ref-based prior
+ * side keeps the full gathered set. Everything else is scan-derived and shared.
+ */
+export function scanToBaselineFile(
+  scan: CurrentScan,
+  opts: {
+    readonly name: string;
+    readonly findings: ReadonlyArray<RichBaselineEntry>;
+    /** Injectable for deterministic tests; defaults to now. */
+    readonly createdAt?: string;
+  },
+): BaselineFile {
+  return {
+    schemaVersion: BASELINE_SCHEMA_VERSION, // baseline-file-construction-ok
+    name: opts.name,
+    createdAt: opts.createdAt ?? new Date().toISOString(),
+    repo: scan.repoState,
+    analysis: scan.analysisMeta,
+    tools: scan.tools,
+    saltMode: scan.saltMode,
+    identityScheme: CURRENT_IDENTITY_SCHEME,
+    recall: scan.recall,
+    coverage: scan.coverage,
+    findings: opts.findings,
+  };
+}
+
+/**
  * Run every analyzer once, dispatch through the producer registry,
  * and return the assembled `CurrentScan`. Used by `createBaseline`
  * to capture today's state and by `runGuardrailCheck` to gather the
@@ -429,19 +480,7 @@ export async function createBaseline(
   const byCategory: Record<string, number> = {};
   for (const s of suppressions) byCategory[s.category] = (byCategory[s.category] ?? 0) + 1;
 
-  const richFile: BaselineFile = {
-    schemaVersion: BASELINE_SCHEMA_VERSION,
-    name,
-    createdAt: new Date().toISOString(),
-    repo: scan.repoState,
-    analysis: scan.analysisMeta,
-    tools: scan.tools,
-    saltMode: scan.saltMode,
-    identityScheme: CURRENT_IDENTITY_SCHEME,
-    recall: scan.recall,
-    coverage: scan.coverage,
-    findings: live,
-  };
+  const richFile = scanToBaselineFile(scan, { name, findings: live });
 
   const file = mode.mode === 'committed-sanitized' ? sanitizeFile(richFile) : richFile;
   writeBaselineFile(filePath, file);

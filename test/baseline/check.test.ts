@@ -503,6 +503,23 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+  it('ref-based mode carries recall on the prior side — no spurious drift (Rule 2.30 regression)', async () => {
+    // The ref-based prior side is gathered by the same dxkit on the same machine,
+    // so its recall inputs are identical to the current side's and `diffRecall`
+    // must report ZERO drift. Before `scanToBaselineFile` unified the conversion,
+    // `loadPriorSide` hand-built the prior BaselineFile and dropped `recall`, so
+    // every kind read as `absent-from-baseline` and drifted on every ref-based
+    // run (the public-repo default, the loop, `evaluate`, the self-guardrail).
+    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    // The prior side carries recall (the direct fix): undefined before.
+    expect(result.baseline.recall).toBeDefined();
+    expect(Object.keys(result.baseline.recall ?? {}).length).toBeGreaterThan(0);
+    // And it also carries coverage — dropped by the same omission.
+    expect(result.baseline.coverage).toBeDefined();
+    // Same env on both sides ⇒ no recall drift, no "cannot attribute" noise.
+    expect(result.envelopeDrift.recallDrift).toEqual([]);
+  }, 300_000);
+
   it('folds a net-new broken integration into the top-level BLOCK verdict', async () => {
     writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
     const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
