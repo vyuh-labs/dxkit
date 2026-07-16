@@ -2,7 +2,7 @@
  * `vyuh-dxkit ingest` — bring an external SAST engine's findings into
  * dxkit's pipeline.
  *
- * Two sources today:
+ * Sources today:
  *   --sarif <file>   parse a SARIF 2.1.0 file from ANY engine (CodeQL,
  *                    Snyk Code export, Semgrep Pro, Bearer, …)
  *   --from-snyk      read a project's Code findings from the Snyk REST
@@ -13,6 +13,12 @@
  *                    SNYK_* credentials are read from the environment and,
  *                    as a fallback, from a local `.env` (only SNYK_* keys;
  *                    --no-env-file opts out, --env-file <path> overrides).
+ *   --from-sonar     read a project's open BUG + VULNERABILITY issues
+ *                    from the SonarQube / SonarCloud Web API (quota-free;
+ *                    Sonar is not SARIF-native, so this IS the Sonar
+ *                    path) using SONAR_TOKEN + host/project key. SONAR_*
+ *                    credentials load from the environment / `.env` the
+ *                    same way SNYK_* do.
  *
  * Either way the result is written to `.dxkit/external/<engine>.json`,
  * a committed snapshot every later scan reads — so the token is needed
@@ -28,7 +34,8 @@ import { runSnykCodeTest } from './ingest/snyk-cli';
 import { runCodeql, type CodeqlTarget } from './ingest/codeql';
 import { readDeepSastConfig } from './ingest/config';
 import { resolveEngineFailure, failureMessage } from './ingest/engine-failure';
-import { loadSnykEnv } from './ingest/env-file';
+import { loadSnykEnv, loadSonarEnv } from './ingest/env-file';
+import { fetchSonarFindings } from './ingest/sonar-api';
 import { writeSnapshot } from './ingest/snapshot';
 import { detectActiveLanguages } from './languages/index';
 import type { SourceEngine, ExternalFinding } from './ingest/types';
@@ -36,6 +43,7 @@ import type { SourceEngine, ExternalFinding } from './ingest/types';
 export interface IngestOptions {
   sarif?: string;
   fromSnyk?: boolean;
+  fromSonar?: boolean;
   codeql?: boolean;
   /** Force the `snyk code test` CLI path, skipping the REST attempt. The
    *  REST API is an Enterprise-only entitlement; free/team plans must use
@@ -46,6 +54,12 @@ export interface IngestOptions {
   /** Snyk identifiers (CLI flags override config / env). */
   org?: string;
   project?: string;
+  /** Sonar identifiers (CLI flags override config / env). */
+  sonarHost?: string;
+  sonarProject?: string;
+  sonarOrg?: string;
+  sonarBranch?: string;
+  sonarPr?: string;
   generatedAt: string;
   commitSha?: string;
   /** Skip opt-in `.env` loading of `SNYK_*` credentials (`--no-env-file`). */
@@ -55,12 +69,18 @@ export interface IngestOptions {
 }
 
 function isSourceEngine(s: string | undefined): s is SourceEngine {
-  return s === 'snyk-code' || s === 'codeql' || s === 'semgrep-pro' || s === 'sarif';
+  return (
+    s === 'snyk-code' || s === 'codeql' || s === 'semgrep-pro' || s === 'sonarqube' || s === 'sarif'
+  );
 }
 
 export async function runIngest(cwd: string, opts: IngestOptions): Promise<void> {
   if (opts.fromSnyk) {
     await ingestFromSnyk(cwd, opts);
+    return;
+  }
+  if (opts.fromSonar) {
+    await ingestFromSonar(cwd, opts);
     return;
   }
   if (opts.codeql) {
@@ -71,12 +91,15 @@ export async function runIngest(cwd: string, opts: IngestOptions): Promise<void>
     ingestFromSarif(cwd, opts);
     return;
   }
-  logger.warn('Nothing to ingest. Pass --sarif <file>, --from-snyk, or --codeql.');
+  logger.warn('Nothing to ingest. Pass --sarif <file>, --from-snyk, --from-sonar, or --codeql.');
   logger.dim('  Examples:');
   logger.dim('    vyuh-dxkit ingest --sarif results.sarif');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --org <id> --project <id>');
   logger.dim('    SNYK_TOKEN=… vyuh-dxkit ingest --from-snyk --snyk-cli  # free/team plans');
   logger.dim('    vyuh-dxkit ingest --from-snyk   # SNYK_* read from .env when present');
+  logger.dim(
+    '    SONAR_TOKEN=… vyuh-dxkit ingest --from-sonar --sonar-host <url> --sonar-project <key>',
+  );
   logger.dim('    vyuh-dxkit ingest --codeql        # OSS / GitHub Advanced Security only');
   process.exitCode = 1;
 }
@@ -246,6 +269,81 @@ async function ingestFromSnyk(cwd: string, opts: IngestOptions): Promise<void> {
     return;
   }
   writeAndReport(cwd, 'snyk-code', findings, opts);
+}
+
+/**
+ * Read a project's open BUG + VULNERABILITY issues from the SonarQube /
+ * SonarCloud Web API and snapshot them. Reading issues does not re-run
+ * analysis (quota-free); Sonar is not SARIF-native, so this API read IS
+ * the first-class path (Rule 13).
+ *
+ * FRESHNESS: the snapshot is what Sonar last ANALYZED. To gate an issue
+ * a PR introduces, point the fetch at that PR's analysis
+ * (`--sonar-pr <id>`) from the CI job that already runs Sonar there —
+ * a post-merge-only Sonar setup gives a lagging record, not a live gate.
+ */
+async function ingestFromSonar(cwd: string, opts: IngestOptions): Promise<void> {
+  // Opt-in: lift ONLY SONAR_* keys from a local `.env` (same loader +
+  // precedence as the Snyk path — real env / CI secret always wins).
+  const envLoad = loadSonarEnv(cwd, { noEnvFile: opts.noEnvFile, envFile: opts.envFile });
+  if (envLoad) {
+    for (const w of envLoad.warnings) logger.warn(w);
+    if (envLoad.loadedKeys.length > 0) {
+      logger.dim(`  Loaded ${envLoad.loadedKeys.join(', ')} from ${envLoad.path}`);
+    }
+  }
+
+  const token = process.env.SONAR_TOKEN;
+  if (!token) {
+    logger.warn('SONAR_TOKEN is not set.');
+    logger.dim(
+      '  dxkit reads SONAR_TOKEN from the environment (a Sonar user token: ' +
+        'My Account → Security → Generate Token). It also auto-loads SONAR_* keys from a ' +
+        'local .env (only those keys, never the rest of the file).',
+    );
+    logger.dim(
+      '  Export it (`export SONAR_TOKEN=…`), put it in .env, or add it as a CI secret, then retry.',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // host/project resolve flag → persisted config (`.vyuh-dxkit.json:
+  // deepSast.sonar`) → environment (the SONAR_HOST_URL / SONAR_PROJECT_KEY
+  // names sonar-scanner itself uses, so a repo with Sonar CI already has them).
+  const cfg = readDeepSastConfig(cwd);
+  const hostUrl = opts.sonarHost ?? cfg.sonar?.hostUrl ?? process.env.SONAR_HOST_URL;
+  const projectKey = opts.sonarProject ?? cfg.sonar?.projectKey ?? process.env.SONAR_PROJECT_KEY;
+  const organization = opts.sonarOrg ?? cfg.sonar?.organization ?? process.env.SONAR_ORGANIZATION;
+  if (!hostUrl || !projectKey) {
+    logger.warn('Sonar host + project key are required to read issues from the Web API.');
+    logger.dim(
+      '  Pass --sonar-host <url> --sonar-project <key>, set them once in .vyuh-dxkit.json:',
+    );
+    logger.dim('    { "deepSast": { "sonar": { "hostUrl": "…", "projectKey": "…" } } }');
+    logger.dim('  or export SONAR_HOST_URL / SONAR_PROJECT_KEY in your environment.');
+    logger.dim('  SonarCloud host is https://sonarcloud.io (add --sonar-org <org> for your org).');
+    process.exitCode = 1;
+    return;
+  }
+
+  logger.info('Reading Sonar issues via the Web API (no analysis re-run; BUG + VULNERABILITY)…');
+  let findings: ExternalFinding[];
+  try {
+    findings = await fetchSonarFindings({
+      token,
+      hostUrl,
+      projectKey,
+      organization,
+      branch: opts.sonarBranch,
+      pullRequest: opts.sonarPr,
+      onLog: (m) => logger.warn(m),
+    });
+  } catch (err) {
+    reportEngineFailure(cwd, 'sonarqube', err, 'Sonar read failed');
+    return;
+  }
+  writeAndReport(cwd, 'sonarqube', findings, opts);
 }
 
 /** Run `snyk code test` on the local checkout and snapshot the findings.

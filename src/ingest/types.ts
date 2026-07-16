@@ -29,13 +29,16 @@ import type { Severity, FindingCategory } from '../analyzers/security/types';
  * (OSS / GitHub Advanced Security), emitting SARIF.
  * - `semgrep-pro` — Semgrep Pro engine (interprocedural), if a
  * customer has it; SARIF.
+ * - `sonarqube` — SonarQube Server / SonarCloud, read from the Sonar
+ * Web API (`api/issues/search`, quota-free; Sonar is
+ * not SARIF-native so the API read IS the path).
  * - `sarif` — a generic SARIF file from any other tool. The
  * producer-of-last-resort; keeps dxkit open.
  *
  * The string also becomes the finding's `tool` provenance so reports
  * and the aggregator can attribute each finding to its origin.
  */
-export type SourceEngine = 'snyk-code' | 'codeql' | 'semgrep-pro' | 'sarif';
+export type SourceEngine = 'snyk-code' | 'codeql' | 'semgrep-pro' | 'sonarqube' | 'sarif';
 
 /**
  * One normalized finding from an external engine. Deliberately a

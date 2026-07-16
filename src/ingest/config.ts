@@ -10,7 +10,8 @@
  *   {
  *     "deepSast": {
  *       "engine": "snyk-code" | "codeql",
- *       "snyk": { "orgId": "...", "projectId": "..." }
+ *       "snyk": { "orgId": "...", "projectId": "..." },
+ *       "sonar": { "hostUrl": "...", "projectKey": "...", "organization": "..." }
  *     }
  *   }
  *
@@ -23,6 +24,7 @@ import * as path from 'path';
 export interface DeepSastConfig {
   engine?: 'snyk-code' | 'codeql';
   snyk?: { orgId?: string; projectId?: string };
+  sonar?: { hostUrl?: string; projectKey?: string; organization?: string };
 }
 
 /** Read `.vyuh-dxkit.json:deepSast`, or `{}` when absent/unreadable. */
