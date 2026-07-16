@@ -26,8 +26,10 @@ permissions:
   contents: read
 
 jobs:
+__DXKIT_FRAGMENT_CAPTURE_JOBS__
   refresh:
     runs-on: ubuntu-latest
+__DXKIT_REFRESH_NEEDS__
     steps:
       - uses: actions/checkout@v6
         with:
@@ -81,6 +83,7 @@ __DXKIT_CI_RUNTIME_SETUP__
             DXKIT=vyuh-dxkit
           fi
           "${DXKIT}" baseline create --force
+__DXKIT_FRAGMENT_MERGE_STEPS__
 
       - name: Store anchor in the Actions cache
         uses: actions/cache/save@v4

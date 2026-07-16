@@ -22,8 +22,10 @@ permissions:
   contents: write
 
 jobs:
+__DXKIT_FRAGMENT_CAPTURE_JOBS__
   refresh:
     runs-on: ubuntu-latest
+__DXKIT_REFRESH_NEEDS__
     # Don't re-run on our own auto-commit (defensive — paths-ignore
     # above already filters the common case).
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
@@ -82,6 +84,7 @@ __DXKIT_CI_RUNTIME_SETUP__
             DXKIT=vyuh-dxkit
           fi
           "${DXKIT}" baseline create --force
+__DXKIT_FRAGMENT_MERGE_STEPS__
 
       - name: Commit and push refreshed baseline
         run: |

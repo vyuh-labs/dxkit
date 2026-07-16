@@ -19,6 +19,7 @@ import type { BrownfieldPolicy } from '../../baseline/policy';
 import { lintGateSpecs, normalizeCustomChecks } from './config';
 import { runCustomChecks } from './run';
 import type { CommandExec } from '../tools/bounded-exec';
+import { currentEnvironment, unmetRequirement, type ExecutionEnvironment } from '../../execution';
 import {
   extensionRecallInputs,
   gatherExtensionFindings,
@@ -38,6 +39,30 @@ export interface GatherCustomChecksOptions {
   readonly timeoutMs?: number;
   /** Injected for tests; defaults to real PATH resolution + execFileSync. */
   readonly exec?: CommandExec;
+  /** Injected for tests; defaults to the real local host + toolchain probes. */
+  readonly env?: ExecutionEnvironment;
+  /**
+   * Scope the gather to these check names — the fragment capture's slice
+   * (Rule 20 / design §3.4). When set, ONLY the named checks run, and
+   * committed extension findings are NOT appended (a scoped host capture owns
+   * its checks; extension snapshots are the primary capture's to read).
+   * Undefined = the full seam, exactly as before.
+   */
+  readonly onlyChecks?: readonly string[];
+}
+
+/**
+ * The specs whose declared execution requirement THIS environment satisfies
+ * (Rule 20) — the ONE observability filter shared by the recall derivation
+ * below and the fragment capture (`src/baseline/fragment.ts`). A spec with no
+ * declaration (a user check) always passes: dxkit cannot know what `make
+ * lint` needs and does not invent a requirement.
+ */
+export function observableSpecs(
+  specs: readonly CustomCheckSpec[],
+  env: ExecutionEnvironment,
+): CustomCheckSpec[] {
+  return specs.filter((s) => !s.execution || unmetRequirement(s.execution, env) === null);
 }
 
 /** Resolve the full spec set (user checks + built-in lint) for a repo. Pure
@@ -76,8 +101,28 @@ export function resolveCustomCheckSpecs(opts: GatherCustomChecksOptions): Custom
  * the ones that find nothing.
  */
 export function customCheckRecallInputs(opts: GatherCustomChecksOptions): Record<string, string> {
+  // Rule 20 honesty: a check this environment CANNOT run contributes no
+  // recall inputs — it was not observed, and claiming its recall would
+  // fabricate comparability (the exact proxy Rule 19 exists to kill). The
+  // latent lie this closes: a baseline captured on linux recorded
+  // `lint:csharp/...` inputs (config hashes need no dotnet) while the runner
+  // env-skipped the check, so a later windows gate read "comparable, zero
+  // grandfathered findings" and flagged the repo's ENTIRE pre-existing lint
+  // backlog as net-new. Unobserved must read as ABSENT, which the recall
+  // diff already treats as "cannot attribute" — the honest answer.
+  const env = opts.env ?? currentEnvironment();
+  return {
+    ...recallInputsForSpecs(observableSpecs(resolveCustomCheckSpecs(opts), env)),
+    ...extensionRecallInputs(opts.cwd),
+  };
+}
+
+/** The per-spec recall derivation, factored so the fragment capture
+ *  (`src/baseline/fragment.ts`) reuses the ONE formula for the checks it
+ *  observed on its host (Rule 2 — a second derivation would drift). */
+export function recallInputsForSpecs(specs: readonly CustomCheckSpec[]): Record<string, string> {
   const inputs: Record<string, string> = {};
-  for (const spec of resolveCustomCheckSpecs(opts)) {
+  for (const spec of specs) {
     inputs[`${spec.name}/cmd`] = normalizeCommandForRecall(spec.command.bin, spec.command.args);
     inputs[`${spec.name}/parse`] =
       spec.parse.mode === 'regex'
@@ -93,7 +138,7 @@ export function customCheckRecallInputs(opts: GatherCustomChecksOptions): Record
       inputs[`${spec.name}/${key}`] = value;
     }
   }
-  return { ...inputs, ...extensionRecallInputs(opts.cwd) };
+  return inputs;
 }
 
 /**
@@ -152,7 +197,8 @@ function hashText(text: string): string {
 export function gatherCustomCheckFindings(
   opts: GatherCustomChecksOptions,
 ): readonly CustomCheckFinding[] {
-  const specs = resolveCustomCheckSpecs(opts);
+  const all = resolveCustomCheckSpecs(opts);
+  const specs = opts.onlyChecks ? all.filter((s) => opts.onlyChecks!.includes(s.name)) : all;
   const commandFindings =
     specs.length === 0
       ? []
@@ -161,7 +207,9 @@ export function gatherCustomCheckFindings(
           specs,
           ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
           ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
+          ...(opts.env !== undefined ? { env: opts.env } : {}),
         }).findings;
+  if (opts.onlyChecks) return commandFindings;
   // The seam's third consumer (after user checks + pack lint): findings
   // committed by findings-kind EXTENSIONS. Snapshot reads only — nothing
   // executes here (extensions run at refresh time; gates stay offline) —
