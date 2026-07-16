@@ -185,12 +185,13 @@ describe('parseLocated — dedupe + malformed regex', () => {
       true,
       '^(?<file>[^:]+):(?<line>\\d+):\\s+(?<rule>\\w+)\\s+(?<message>.*)$',
       out,
+      '/repo',
     );
     expect(found).toHaveLength(1);
   });
 
   it('a malformed regex degrades to a binary finding (never crashes the gate)', () => {
-    const found = parseLocated('lint:x', true, '(', 'some output');
+    const found = parseLocated('lint:x', true, '(', 'some output', '/repo');
     expect(found).toHaveLength(1);
     expect(found[0].file).toBeUndefined();
     expect(found[0].message).toMatch(/invalid parse regex/);

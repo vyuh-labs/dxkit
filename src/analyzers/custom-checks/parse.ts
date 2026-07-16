@@ -14,6 +14,7 @@
  *     never silently yields zero findings.
  */
 
+import * as path from 'path';
 import type { CustomCheckFinding } from './types';
 
 /**
@@ -52,12 +53,17 @@ const MAX_LOCATED = 50_000;
  * gate while thousands of pre-existing ones stay quiet. Only a pathological run
  * (> `MAX_LOCATED`) collapses to a binary finding; it never returns a truncated
  * PREFIX, because a content-dependent prefix makes identity slide.
+ *
+ * This is a VALIDATING boundary, not a passthrough: whatever shape a linter
+ * prints, every finding that leaves here satisfies the post-condition `file` is
+ * a repo-relative POSIX path (relative to `cwd`) — see `toRepoRelativePosix`.
  */
 export function parseLocated(
   check: string,
   blocking: boolean,
   pattern: string,
   output: string,
+  cwd: string,
 ): CustomCheckFinding[] {
   let re: RegExp;
   try {
@@ -77,7 +83,7 @@ export function parseLocated(
   for (const line of output.split('\n')) {
     const groups = re.exec(line)?.groups;
     if (!groups || groups.file === undefined) continue;
-    const file = groups.file.trim();
+    const file = toRepoRelativePosix(groups.file.trim(), cwd);
     if (!file) continue;
     const lineNo = groups.line !== undefined ? parseIntSafe(groups.line) : undefined;
     const rule = groups.rule?.trim() || undefined;
@@ -126,4 +132,40 @@ export function binaryFinding(
 function parseIntSafe(s: string): number | undefined {
   const n = parseInt(s.trim(), 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Enforce the located-finding path post-condition: `file` is a repo-relative
+ * POSIX path — the same contract the frozen SDK wire format states for
+ * extension findings (`WireFinding.file`: "Repo-relative POSIX path"). dxkit
+ * must hold its own parsers to the standard it holds third parties to.
+ *
+ * Identity-load-bearing, not cosmetic: `file` feeds the finding's fingerprint
+ * (Rule 9), and an identity input must be reproducible from one environment to
+ * the next. Several linters print ABSOLUTE paths (ktlint, MSBuild via
+ * `dotnet build`, rubocop's emacs formatter), so without this the identity
+ * embeds the checkout directory and none of those findings survive a
+ * checkout-path change — the whole grandfathered backlog false-blocks in CI
+ * (proven: 0 of 453 ktlint identities survived a two-path A/B on one machine).
+ * The packs whose linters happen to print relative paths were safe by their
+ * linters' convention, not by design; this boundary makes it design. Sibling
+ * parsers already relativize (`parseCoberturaXml`, `normalizeCommandForRecall`)
+ * — this closes the one consumer that didn't (CLAUDE.md 2.30: one concept, a
+ * divergent sibling, no shared token for grep to find).
+ *
+ * A path OUTSIDE the repo is left verbatim: it cannot be expressed
+ * repo-relative, and a `../..` rewrite would embed the layout above the repo —
+ * the same bug wearing a relative disguise.
+ */
+function toRepoRelativePosix(file: string, cwd: string): string {
+  if (!path.isAbsolute(file)) return normalizeSeparators(file);
+  const rel = path.relative(cwd, file);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return file;
+  return normalizeSeparators(rel);
+}
+
+/** POSIX separators in the output path. Only rewrites `\` when it IS the host
+ *  separator (win32) — on POSIX a backslash is a legal filename character. */
+function normalizeSeparators(p: string): string {
+  return path.sep === '\\' ? p.replaceAll('\\', '/') : p;
 }

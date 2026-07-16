@@ -166,6 +166,10 @@ export const RECALL_EPOCHS: Readonly<Record<IdentityKind, number>> = Object.free
   // this kind observes (a real repo went 45 -> 17,882 findings), so a baseline
   // captured under epoch 1 is not comparable to one captured under epoch 2 —
   // every newly-visible finding would otherwise read as the developer's fault.
+  // Epoch 2 also covers `parseLocated`'s path relativization (a located
+  // finding's `file` became repo-relative POSIX, changing identities minted
+  // from linters that print absolute paths) — shipped in the same release, so
+  // no epoch-2 baseline ever held an absolute-path identity.
   'custom-check': 2,
 });
 

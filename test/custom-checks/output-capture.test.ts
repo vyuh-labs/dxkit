@@ -94,7 +94,7 @@ describe('the itemization ceiling never slides (MAX_LOCATED)', () => {
     // a lint error.
     const id = (o: string) =>
       new Set(
-        parseLocated('lint', false, P, o)
+        parseLocated('lint', false, P, o, '/repo')
           .filter((f) => f.file)
           .map((f) => `${f.file}:${f.rule}`),
       );
@@ -107,7 +107,7 @@ describe('the itemization ceiling never slides (MAX_LOCATED)', () => {
   });
 
   it('a pathological run gates as ONE stable binary finding, not a prefix', () => {
-    const huge = parseLocated('lint', false, P, emit(50_001));
+    const huge = parseLocated('lint', false, P, emit(50_001), '/repo');
     expect(huge).toHaveLength(1);
     expect(huge[0].file).toBeUndefined(); // binary => identity is the check name
     expect(huge[0].message).toMatch(/above the .* itemization ceiling/);

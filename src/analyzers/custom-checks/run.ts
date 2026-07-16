@@ -87,7 +87,13 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
       // build analyzers, eslint warnings). "Clean" = zero matches, not exit 0.
       // Parses the COMPLETE output — `parseLocated` owns the finding cap, and it
       // discloses when it bites.
-      const located = parseLocated(spec.name, spec.blocking, spec.parse.pattern, outcome.output);
+      const located = parseLocated(
+        spec.name,
+        spec.blocking,
+        spec.parse.pattern,
+        outcome.output,
+        opts.cwd,
+      );
       if (located.length > 0) {
         checkFindings = located;
       } else if (!passedExit) {
