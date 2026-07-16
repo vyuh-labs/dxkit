@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadSnykEnv, parseSnykEnv } from '../../src/ingest/env-file';
+import { execSync } from 'child_process';
+import { loadSnykEnv, loadSonarEnv, parseSnykEnv } from '../../src/ingest/env-file';
 
 function makeTmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-envfile-'));
@@ -103,5 +104,59 @@ describe('loadSnykEnv', () => {
     const result = loadSnykEnv(tmp, { envFile: 'creds.env' });
     expect(result?.loadedKeys).toEqual(['SNYK_TOKEN']);
     expect(process.env.SNYK_TOKEN).toBe('xyz');
+  });
+});
+
+// ─── loadSonarEnv / loadPrefixedEnv (3.9: one loader, two prefixes) ─────────
+
+describe('loadSonarEnv', () => {
+  let tmp: string;
+  const KEYS = ['SONAR_TOKEN', 'SONAR_HOST_URL', 'SONAR_PROJECT_KEY', 'SNYK_TOKEN'];
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    tmp = makeTmpdir();
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    rmrf(tmp);
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('lifts ONLY SONAR_* keys — a SNYK_ key in the same file is untouched', () => {
+    fs.writeFileSync(
+      path.join(tmp, '.env'),
+      'SONAR_TOKEN=st\nSONAR_HOST_URL=https://sonar.example.com\nSNYK_TOKEN=nope\nGITHUB_TOKEN=never\n',
+    );
+    const res = loadSonarEnv(tmp);
+    expect([...(res?.loadedKeys ?? [])].sort()).toEqual(['SONAR_HOST_URL', 'SONAR_TOKEN']);
+    expect(process.env.SONAR_TOKEN).toBe('st');
+    expect(process.env.SNYK_TOKEN).toBeUndefined();
+    expect(process.env.GITHUB_TOKEN === 'never').toBe(false);
+  });
+
+  it('names SONAR_TOKEN (not SNYK_TOKEN) in the committed-secrets advisory', () => {
+    fs.writeFileSync(path.join(tmp, '.env'), 'SONAR_TOKEN=st\n');
+    // Make the .env tracked so the advisory fires.
+    execSync('git init -q && git add .env', { cwd: tmp });
+    const res = loadSonarEnv(tmp);
+    expect(res?.warnings.join(' ')).toContain('SONAR_TOKEN');
+    expect(res?.warnings.join(' ')).not.toContain('SNYK_TOKEN');
+  });
+
+  it('regression: loadSnykEnv behavior + advisory text are unchanged by the refactor', () => {
+    fs.writeFileSync(path.join(tmp, '.env'), 'SNYK_TOKEN=abc\nSONAR_TOKEN=st\n');
+    execSync('git init -q && git add .env', { cwd: tmp });
+    const res = loadSnykEnv(tmp);
+    expect(res?.loadedKeys).toEqual(['SNYK_TOKEN']);
+    expect(process.env.SONAR_TOKEN).toBeUndefined();
+    expect(res?.warnings.join(' ')).toContain('Move SNYK_TOKEN out of version control');
   });
 });

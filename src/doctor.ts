@@ -916,7 +916,9 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         ? dxkitCli('ingest --from-snyk')
         : engine === 'codeql'
           ? dxkitCli('ingest --codeql')
-          : undefined;
+          : engine === 'sonarqube'
+            ? dxkitCli('ingest --from-sonar')
+            : undefined;
     checks.push({
       label: `external ${engine} snapshot fresh (${age}d old)`,
       ok: fresh,

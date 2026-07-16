@@ -333,10 +333,10 @@ export const COMMANDS = [
     id: 'ingest',
     audience: 'user',
     group: 'gate',
-    summary: 'Ingest external SAST (SARIF) findings as first-class',
-    typicalRuntime: 'varies (reads engine SARIF)',
+    summary: 'Ingest external SAST findings (Snyk / Sonar / CodeQL / SARIF) as first-class',
+    typicalRuntime: 'varies (reads engine API or SARIF)',
     docsBlurb:
-      'Pull CodeQL / Snyk / Semgrep-Pro SARIF into dxkit so external findings share one fingerprint + gate.',
+      'Pull Snyk Code / SonarQube (API) or CodeQL / Semgrep-Pro (SARIF) findings into dxkit so external findings share one fingerprint + gate.',
     skill: 'dxkit-ingest',
   },
   {

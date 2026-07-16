@@ -75,7 +75,7 @@ construction; commands with a linked page have a full reference under
 | `receipt`                                                        | Emit the PR "dxkit signals" block (verdict + allowlist + score delta)             | < 30 sec                           |
 | `pr`                                                             | Compute a reviewable PR body from the branch (title, changes, signals, checklist) | < 30 sec (longer with --since)     |
 | [`allowlist`](commands/allowlist.md)                             | Suppress / audit individual findings with typed reasons                           | < 1 sec                            |
-| `ingest`                                                         | Ingest external SAST (SARIF) findings as first-class                              | varies (reads engine SARIF)        |
+| `ingest`                                                         | Ingest external SAST findings (Snyk / Sonar / CodeQL / SARIF) as first-class      | varies (reads engine API or SARIF) |
 | [`loop`](commands/loop.md)                                       | Autonomous-loop utilities (doctor / ledger / snapshot)                            | < 5 sec                            |
 | [`checks`](commands/checks.md)                                   | List / dry-run your custom repo-invariant + lint gates                            | varies (runs your checks)          |
 | `extensions`                                                     | Plug your own extractors and sinks into dxkit (any language)                      | seconds (the `dev` loop)           |
