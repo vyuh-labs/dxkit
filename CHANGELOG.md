@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-07-17
+
+The execution-environment platform (CLAUDE.md Rule 20). dxkit already modeled
+language and capability as first-class, pack-declared dimensions; 4.0 adds the
+third — **where a capability can execute** — and everything that falls out of
+it: disclosed boundaries instead of silent skips, generated per-host CI gates,
+and one committed baseline composed from captures on different runners. The
+class it closes shipped repeatedly as "an environment problem read as a code
+finding" (a half-provisioned .NET SDK failing the lint gate; a Windows-only
+WinForms build unmeasurable on the ubuntu runner) and recurs harder for
+Swift/iOS, Android, and C/C++ down the road.
+
+> **Upgrade notes.**
+>
+> - On a stack whose gates are OS-locked (a `net*-windows` TFM, WinForms/WPF),
+>   `vyuh-dxkit update` now GENERATES a `dxkit-gate-<host>.yml` CI job — mark
+>   it a required PR check alongside `dxkit-guardrails`, and delete any
+>   hand-written equivalent (the `correctness.surfaces.ci: false` workaround
+>   is obsolete). Host-agnostic repos see no new files and a byte-identical
+>   refresh workflow (no churn).
+> - Check-level recall is now environment-honest: a check the capturing
+>   machine could not run contributes NO recall inputs (unobserved reads as
+>   absent, never as "comparable and clean"). On the rare repo whose 3.9
+>   baseline recorded such inputs, the affected check warns as TOOLING-DRIFT
+>   once until re-captured; nothing false-blocks.
+
+### Added
+
+- **`ExecutionRequirement` — the third pack-declared dimension.** Every
+  build-adjacent capability (correctness floor, lint gate, dependency audit,
+  deep SAST) declares what it needs from the environment that runs it:
+  `{ hosts, toolchains, needsBuild, buildTarget, weight }`. The declaration is
+  pure and repo-intrinsic — it reads repo files (a csproj TFM, the build
+  system present), never PATH or `process.platform` — and where the truth is
+  repo-dependent it is derived: csharp narrows `hosts` to `['windows']` from a
+  `net*-windows` TFM or a WinForms/WPF opt-in. The field is REQUIRED on all
+  four capability contracts, so a new pack that omits it does not compile.
+  ONE satisfaction predicate (`unmetRequirement`) answers "can this run
+  here?" for every consumer, and every unmet requirement is disclosed with
+  what is needed, where it would run, and the per-host install remedy —
+  `skipped-environment`, never a silent skip and never a spawn that fails in
+  a way that reads as a finding.
+- **The toolchain registry (`TOOLCHAIN_DEFS`).** Ambient SDKs/runtimes the
+  ecosystem owns (node, python, go, rust, dotnet-sdk, jdk, maven, gradle,
+  ruby) registered once with per-host non-privileged installs. Distinct from
+  registry TOOLS by a bright line: if `tools install` can provision it, it is
+  a tool; if the repo's ecosystem provisions it, it is a toolchain.
+- **Operational toolchain health + environment-failure classification.** Two
+  tiers close the present-but-unusable class: a toolchain may declare a
+  health probe (run once per environment, in the same env dxkit's own spawns
+  use), and a FAILED command's output is classified against the toolchain's
+  declared environment-failure signatures (NETSDK1045, MSB4236, missing
+  libicu, `requires go >=`, JVM class-version, a missing platform linker,
+  `requires rustc N`) — strictly environment-shaped and biased hard toward
+  false-negative, so a real compile error is never reclassified. Both tiers
+  disclose `{ problem, remedy }` in both runners (correctness + checks).
+- **Placement: generated per-host CI gates.** `resolvePlacement` routes
+  capabilities whose declared hosts exclude the primary ubuntu runner to
+  per-host jobs, and the generator emits `dxkit-gate-<host>.yml` from the
+  plan — toolchain setup from the placed packs' `ciSetup` with the repo's
+  DETECTED versions, the floor scoped via `floor check --packs`, setup
+  actions only (never a hardcoded IDE install path). Registered as a managed
+  surface: installed by init, refreshed by update, retired with the reason
+  named when the stack no longer needs it, removed by uninstall — and a user
+  file at the same path is never touched.
+- **Multi-environment baseline composition.** One committed baseline
+  assembled from captures in different environments — sound because finding
+  identity is environment-independent by design. `vyuh-dxkit baseline
+  fragment` captures a placed host's slice (its checks' findings + recall);
+  `vyuh-dxkit baseline merge-fragment` folds fragments in with check-scoped
+  ownership, refusing an identity-scheme or recall-epoch mismatch with the
+  remedy named. The generated refresh workflow renders the per-host capture
+  jobs + merge step from the placement plan; a host-agnostic repo renders the
+  plain single-job workflow byte-identically.
+- **Doctor knows toolchains.** A missing pack binary's fix now names the
+  per-host toolchain install (from the registry) instead of a generic hint,
+  and doctor gained a branch-transport **anchor content staleness** probe:
+  a local baseline migrated past the anchor branch's copy (scheme or
+  recall-presence divergence) is flagged with the `baseline publish` remedy —
+  presence alone no longer reads as healthy.
+
+### Fixed
+
+All five findings from the 4.0.0-rc.1 real-repo evaluation (11 repos,
+`VERIFY-40`), each re-proven live on the repo that surfaced it:
+
+- **A baseline fragment can no longer claim "comparable and clean" for a
+  check that never ran.** `baseline fragment --checks X` on a host where X
+  cannot run (wrong host, missing toolchain, unresolvable linter) now REFUSES
+  with exit 1 and the unmet requirement + remedy named, instead of writing
+  `findings: []` plus recall inputs — a fragment that would erase the check's
+  real backlog on merge and flag it all net-new at the next honest capture.
+  The same failure was reachable in CI whenever a capture job's toolchain
+  setup failed transiently.
+- **A degraded osv-scanner run is no longer recorded as a complete
+  observation.** The scanner's exit code now disambiguates completeness at
+  every invocation site: 0/1 (clean / vulns found) parse; anything else — a
+  scan that errored mid-run, possibly after emitting partial JSON — is a
+  disclosed `unavailable`. A transient network degradation once wrote a
+  1-of-14-findings baseline that false-blocked the next check 13 times.
+- **A policy-enabled lint gate whose linter is not installed is disclosed,
+  never silent.** `lint.enabled: true` with the pack's linter unresolvable
+  previously produced nothing at all; the gate now surfaces as
+  `skipped-unavailable` with the `tools install` remedy in `checks run` and
+  `checks list`, contributes no recall (unobserved reads as absent), and is
+  refused by fragment capture.
+- **Update's baseline migration hints match the anchor transport.** On a
+  branch-transport repo the guardrail hydrates its baseline from the side
+  branch, so the migration lanes now finish with "run `vyuh-dxkit baseline
+  publish`" (from the same transport resolver the check uses) instead of a
+  commit hint that changes nothing the gate reads.
+- **Rust environment failures classify as boundaries.** A missing platform
+  C linker (``linker `cc` not found``) or a dependency pinned to a newer
+  rustc minted a lint finding and failed the correctness floor on pristine
+  code; both now disclose the environment boundary with the install remedy.
+
 ## [3.9.0] - 2026-07-16
 
 > **Upgrade note.** The lint gate's command and parse changed (structured
