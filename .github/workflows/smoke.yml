@@ -285,9 +285,14 @@ jobs:
             echo "::error::fixture is no longer peer-conflicted — a bare 'npm ci' succeeded, so this step cannot catch the regression it exists for. Fix the fixture."
             exit 1
           fi
-          if ! npm ci 2>&1 | grep -q "code ERESOLVE"; then
+          # Capture first, then match. Under `set -o pipefail` a
+          # `npm ci | grep -q` pipeline returns npm's non-zero exit, not grep's,
+          # so the match result would be unreadable and this check would fire on
+          # a CORRECT fixture.
+          ci_out=$(npm ci 2>&1 || true)
+          if ! printf '%s' "$ci_out" | grep -q "code ERESOLVE"; then
             echo "::error::fixture fails for the WRONG reason (expected code ERESOLVE — a peer conflict). This guard would not prove the fix:"
-            npm ci 2>&1 | head -5
+            printf '%s\n' "$ci_out" | head -5
             exit 1
           fi
           echo "✓ fixture confirmed peer-conflicted (bare 'npm ci' fails with ERESOLVE)"
