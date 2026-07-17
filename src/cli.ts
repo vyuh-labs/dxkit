@@ -2536,10 +2536,15 @@ export async function run(argv: string[]): Promise<void> {
             `Anchor on '${outcome.anchorRef}' already matches .dxkit/baselines/ — nothing to publish.`,
           );
         } else {
-          // No origin / rejected push: in the refresh workflow this is a broken
-          // run, not a soft skip — fail loud so CI surfaces it.
-          logger.fail(`Anchor publish did not push: ${publish?.reason ?? 'unknown'}.`);
-          process.exit(1);
+          // Rejected / no-origin push: an INFRASTRUCTURE fact (a ruleset, a
+          // permission), not a broken run — and the guardrail falls back to a
+          // live re-gather when the anchor is absent. So FAIL OPEN (exit 0) but
+          // LOUD, via the ONE announcer both publishers share (Rule 2): a human
+          // warning + a GitHub Actions ::warning:: with the remedy. Exiting 1
+          // here reddened the refresh job on a governed-org main for a condition
+          // dxkit cannot fix and the developer did not cause.
+          const { announceAnchorNotPushed } = await import('./baseline/anchor-publish');
+          announceAnchorNotPushed(outcome.anchorRef ?? 'anchor', publish?.reason);
         }
         break;
       }

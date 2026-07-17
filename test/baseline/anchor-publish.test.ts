@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { existsSync, chmodSync } from 'fs';
 import {
+  announceAnchorNotPushed,
   describePushFailure,
   publishFilesToAnchorRef,
   readFromAnchorRef,
@@ -311,6 +312,55 @@ describe('describePushFailure (gh #156 categorization)', () => {
     const err = new Error('Updates were rejected because the remote contains work you do not have');
     const reason = describePushFailure(err, 30_000);
     expect(reason.startsWith('push rejected')).toBe(true);
+  });
+
+  it('names the remedy for a repository-ruleset rejection (GH013 — the customer incident)', () => {
+    const err = new Error(
+      'remote: error: GH013: Repository rule violations found for refs/heads/dxkit-baselines. ' +
+        'remote: - Cannot create ref due to creations being restricted.',
+    );
+    const reason = describePushFailure(err, 30_000);
+    // Not the raw wall, and not a generic "push rejected".
+    expect(reason).toMatch(/ruleset/i);
+    expect(reason).toContain('refs/heads/dxkit-**');
+    // Reassures that gating still works — the fail-open promise.
+    expect(reason).toMatch(/re-gather|unaffected/i);
+    expect(reason.startsWith('push rejected')).toBe(false);
+  });
+});
+
+describe('announceAnchorNotPushed — loud fail-open (baseline + reports share it)', () => {
+  const saved = process.env.GITHUB_ACTIONS;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = saved;
+  });
+
+  it('emits a ::warning:: annotation carrying the reason when running in Actions', () => {
+    process.env.GITHUB_ACTIONS = 'true';
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    announceAnchorNotPushed('dxkit-reports', 'push blocked by a repository/org ruleset');
+    spy.mockRestore();
+    const annotation = lines.find((l) => l.startsWith('::warning::'));
+    expect(annotation).toBeDefined();
+    expect(annotation).toContain('dxkit-reports');
+    expect(annotation).toContain('ruleset');
+  });
+
+  it('is a no-op annotation outside Actions (no ::warning:: noise on a terminal)', () => {
+    delete process.env.GITHUB_ACTIONS;
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    announceAnchorNotPushed('dxkit-baselines', 'no origin remote');
+    spy.mockRestore();
+    expect(lines.some((l) => l.startsWith('::warning::'))).toBe(false);
   });
 });
 

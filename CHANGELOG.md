@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead"), rather than surfacing the raw error that reads as "the product is
   broken". A non-pip failure keeps its raw text.
 
+- **A blocked anchor/report push no longer reddens the refresh job or vanishes
+  silently.** The two side-ref publishers had diverged: `baseline publish` exited
+  1 (turning the post-merge refresh red on a governed-org default branch for a
+  condition dxkit can't fix), while `report snapshot` emitted a buried warning and
+  exited 0 (so a ruleset that blocked the push produced no `dxkit-reports` ref with
+  no visible signal). Both now go through one announcer that FAILS OPEN — the
+  refresh job stays green, because the guardrail falls back to a live re-gather
+  when the anchor is absent — but is LOUD: a warning plus a GitHub Actions
+  `::warning::` annotation. When the cause is a repository/org ruleset (a `GH013`
+  rejection), the message names the exact remedy: exclude `refs/heads/dxkit-**`
+  from that ruleset, or add a bypass for the CI actor.
+
 ## [4.0.1] - 2026-07-17
 
 ### Fixed
