@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-07-17
+
+### Fixed
+
+- **The generated CI workflows no longer die on a peer-conflicted repo.** Every
+  shipped workflow template installed the project's node dependencies with a bare
+  `npm ci`. A repo whose tree only resolves under `--legacy-peer-deps` (a
+  pre-existing peer conflict its own install already tolerates) failed at the
+  install step, so the guardrail never ran and `dxkit-guardrails` — the check dxkit
+  asks you to make required — was red on the very first PR. All nine templates now
+  fall back: `npm ci || npm ci --legacy-peer-deps` (and the `npm install` pair when
+  there is no lockfile). `npm ci` installs the lockfile's tree either way and the
+  flag only skips the peer check that rejects it, so the audited tree is still the
+  tree the repo ships; a re-resolving fallback would fabricate a different tree and
+  is deliberately not used.
+
+- **A guardrail that could not run now says so.** The PR-comment step ran
+  `cat guardrail-report.md` unguarded under `if: always()`, so when an earlier step
+  failed the job surfaced `cat: guardrail-report.md: No such file or directory` —
+  burying the real cause several steps up. It now posts an explicit "did not run"
+  comment naming that the PR was not gated and that this is not a finding in the
+  change, and emits a `::error::` pointing at the failing step. Same discipline as
+  `GateFailure` (3.7.1): a gate that cannot run stays fail-open, it just always says
+  why.
+
+### Added
+
+- **A generated workflow is now executed against a peer-conflicted repo in CI**
+  (`smoke.yml`). The defect above shipped because nothing ever ran a generated
+  workflow — the existing smoke fixture is a `package.json` with no dependencies, so
+  its `npm ci` cannot fail, and dxkit's own repo has a clean tree. The new guard
+  builds a genuinely conflicted fixture, asserts it fails for the *right* reason
+  (`ERESOLVE`, not a desynced lockfile), then extracts and executes the rendered
+  install step. This is the generated-artifact analog of the fixture-repo analysis
+  harness (CLAUDE.md 2.30).
+
+- **Architecture rule: no bare `npm ci` / `npm install` in a shipped CI template.**
+  `scripts/check-architecture.sh` fails on one, naming the file and line. The
+  concept lived in three code paths and `.devcontainer/post-create.sh` had already
+  learned the fallback while the workflow templates had not — CLAUDE.md Rule 2.30,
+  caught by prose and never by a check.
+
 ## [4.0.0] - 2026-07-17
 
 The execution-environment platform (CLAUDE.md Rule 20). dxkit already modeled
