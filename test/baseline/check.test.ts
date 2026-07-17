@@ -120,9 +120,13 @@ describe('runGuardrailCheck (integration)', () => {
       // Orthogonal to the verdict: the deferred classes warn via recall, they do
       // not force a block. Exit code is exactly what it was without the marker.
       expect(renderJson(armed).verdict.exitCode).toBe(renderJson(base).verdict.exitCode);
-      // A complete capture shows nothing new.
-      expect(renderJson(base).deferredCapture).toBeUndefined();
-      expect(renderConsole(base)).not.toContain('COMPLETING ON CI');
+      // A complete capture shows nothing new. `base` is NOT asserted directly —
+      // a scanner-poor runner (missing cloc etc.) legitimately defers classes, so
+      // its own deferredCapture is environment-dependent. Clear it explicitly to
+      // pin the complete-capture rendering deterministically.
+      const complete = { ...base, deferredCapture: undefined };
+      expect(renderJson(complete).deferredCapture).toBeUndefined();
+      expect(renderConsole(complete)).not.toContain('COMPLETING ON CI');
     });
 
     it('reads a committed baseline’s deferred marker end-to-end, honestly, without blocking (Rule 20)', async () => {
