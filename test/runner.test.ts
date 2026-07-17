@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseJsonStream, runDetached } from '../src/analyzers/tools/runner';
+import { parseJsonStream, runDetached, runWithExit } from '../src/analyzers/tools/runner';
 
 describe('parseJsonStream', () => {
   it('parses concatenated single-line objects', () => {
@@ -121,5 +121,31 @@ describe('runDetached — process group lifecycle (10k.1.5c regression)', () => 
       { cwd: process.cwd(), timeoutMs: 5000 },
     );
     expect(outcome.stdout).toBe('$HOME and *');
+  });
+});
+
+describe('runWithExit (exit-aware run — the F-7 completeness disambiguator)', () => {
+  it('a clean exit returns code 0 with stdout', () => {
+    const r = runWithExit('node -e "process.stdout.write(String(7))"', process.cwd(), 10000);
+    expect(r).toEqual({ code: 0, stdout: '7' });
+  });
+
+  it('a non-zero exit surfaces BOTH the code and the partial stdout', () => {
+    // osv-scanner\'s hazard shape: JSON on stdout, then the process errors.
+    // run() returns that stdout indistinguishably from success; runWithExit
+    // lets the caller see the scan errored and refuse the partial output.
+    const r = runWithExit(
+      'node -e "process.stdout.write(\'partial\'); process.exit(3)"',
+      process.cwd(),
+      10000,
+    );
+    expect(r.code).toBe(3);
+    expect(r.stdout).toBe('partial');
+  });
+
+  it('a spawn failure yields code null and empty stdout', () => {
+    const r = runWithExit('definitely-not-a-binary-xyz', process.cwd(), 10000);
+    expect(r.code === null || r.code !== 0).toBe(true);
+    expect(r.stdout).toBe('');
   });
 });

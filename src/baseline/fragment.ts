@@ -38,7 +38,13 @@ import {
 // exec-requirement-ok: the fragment capture is a deliberate Rule 20 consumer —
 // it derives its default observation scope ("what can THIS host see that the
 // primary cannot") from the same predicate the runners and resolver use.
-import { currentEnvironment, hostOf, unmetRequirement, type ExecutionHost } from '../execution';
+import {
+  currentEnvironment,
+  describeUnmetRequirement,
+  hostOf,
+  unmetRequirement,
+  type ExecutionHost,
+} from '../execution';
 
 export const FRAGMENT_SCHEMA = 'dxkit-baseline-fragment.v1' as const;
 
@@ -78,15 +84,59 @@ export interface CaptureFragmentOptions extends GatherCustomChecksOptions {
 export function captureFragment(opts: CaptureFragmentOptions): BaselineFragment {
   const env = opts.env ?? currentEnvironment();
   const all = resolveCustomCheckSpecs(opts);
-  const selected = opts.checks
-    ? all.filter((s) => opts.checks!.includes(s.name))
-    : // Default: observable HERE, not observable on the primary host — the
-      // placement plan's slice, derived from the same declarations.
-      observableSpecs(all, env).filter(
-        (s) =>
-          s.execution &&
-          unmetRequirement(s.execution, { host: 'linux', hasToolchain: () => true }) !== null,
+  let selected;
+  if (opts.checks) {
+    // Explicit scope. A fragment OWNS its declared checks on merge (their
+    // prior entries + recall keys are replaced wholesale), so a check this
+    // environment cannot observe MUST refuse — writing `findings: []` +
+    // recall inputs for a check that never ran claims "comparable and clean",
+    // erases the check's real backlog, and flags it all net-new on the next
+    // honest capture. Unobserved reads as ABSENT, never as clean (the same
+    // invariant `observableSpecs` enforces on the default path and the
+    // baseline producer).
+    const byName = new Map(all.map((s) => [s.name, s] as const));
+    const unknown = opts.checks.filter((n) => !byName.has(n));
+    if (unknown.length > 0) {
+      throw new FragmentCaptureError(
+        `unknown check(s): ${unknown.join(', ')} — not in this repo's resolved check set ` +
+          `(see \`vyuh-dxkit checks list\`)`,
       );
+    }
+    selected = opts.checks.map((n) => byName.get(n)!);
+    const unobservable = selected
+      .map((s) => ({ s, unmet: s.execution ? unmetRequirement(s.execution, env) : null }))
+      .filter((x) => x.unmet !== null);
+    if (unobservable.length > 0) {
+      throw new FragmentCaptureError(
+        `cannot capture in this environment: ` +
+          unobservable
+            .map((x) => `${x.s.name} — ${describeUnmetRequirement(x.unmet!, env.host)}`)
+            .join('; ') +
+          `. Run this capture where the check's declared requirement is met ` +
+          `(the generated capture-<host> refresh job).`,
+      );
+    }
+    // Same refusal for a declared-but-unresolvable linter (the F-9 stub):
+    // the check did not run, so a fragment owning it would merge as
+    // "comparable and clean" and erase its real backlog.
+    const unavailable = selected.filter((s) => s.unavailable);
+    if (unavailable.length > 0) {
+      throw new FragmentCaptureError(
+        `cannot capture: ` + unavailable.map((s) => `${s.name} — ${s.unavailable}`).join('; '),
+      );
+    }
+  } else {
+    // Default: observable HERE, not observable on the primary host — the
+    // placement plan's slice, derived from the same declarations. An
+    // unresolvable-linter stub is excluded the same way an env-unmet check
+    // is: this host did not observe it, so the fragment must not own it.
+    selected = observableSpecs(all, env).filter(
+      (s) =>
+        !s.unavailable &&
+        s.execution &&
+        unmetRequirement(s.execution, { host: 'linux', hasToolchain: () => true }) !== null,
+    );
+  }
 
   // Through the seam's ONE entry point, scoped to the selected checks — a
   // fragment's findings are byte-compatible with what a full capture on this
@@ -107,6 +157,10 @@ export function captureFragment(opts: CaptureFragmentOptions): BaselineFragment 
     recallInputs: recallInputsForSpecs(selected),
   };
 }
+
+/** Capture-side refusal (unknown / environment-unobservable check) with the
+ *  remedy in the message — callers surface it verbatim and exit non-zero. */
+export class FragmentCaptureError extends Error {}
 
 /** Refusal error with the remedy in the message — callers surface it verbatim. */
 export class FragmentMergeError extends Error {}

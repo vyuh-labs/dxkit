@@ -10,7 +10,7 @@ import {
 } from '../analyzers/tools/nuget-package-reference';
 import { resolveCvssScores } from '../analyzers/tools/osv';
 import { parseOsvScannerFindings } from '../analyzers/tools/osv-scanner-deps';
-import { fileExists, run, runExitCode } from '../analyzers/tools/runner';
+import { fileExists, run, runExitCode, runWithExit } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { walkPaths } from '../analyzers/tools/walk-paths';
@@ -605,11 +605,25 @@ async function gatherDirectPackageReferenceFallback(
   const adhocPath = path.join(adhocDir, 'packages.lock.json');
   try {
     fs.writeFileSync(adhocPath, buildNugetAdhocLockfile(entries));
-    const raw = run(
+    // Exit-aware (VERIFY-40 F-7): 0/1 = complete scan (clean / vulns found);
+    // anything else = the scan errored and its JSON may be PARTIAL — a
+    // degraded OSV response once wrote a 1-of-14 baseline here that
+    // false-blocked the next check 13 times. Partial is disclosed
+    // unavailable, never recorded as a complete observation.
+    const { code, stdout: raw } = runWithExit(
       `${scanner.path} scan source --lockfile=${adhocPath} --format json`,
       cwd,
       180000,
     );
+    if (code !== 0 && code !== 1) {
+      return {
+        kind: 'unavailable',
+        reason:
+          `${dotnetFailureReason}; osv-scanner exited ` +
+          `${code ?? 'without a code (timeout/spawn failure)'} on the D025f fallback — the ` +
+          `scan errored, so its output may be partial and was discarded`,
+      };
+    }
     if (!raw) {
       return {
         kind: 'unavailable',
@@ -697,7 +711,21 @@ async function gatherRealLockfilePath(
   }
 
   const lockfileFlags = lockfiles.map((f) => `--lockfile=${f}`).join(' ');
-  const raw = run(`${scanner.path} scan source ${lockfileFlags} --format json`, cwd, 180000);
+  // Exit-aware for the same reason as the D025f fallback (VERIFY-40 F-7).
+  const { code, stdout: raw } = runWithExit(
+    `${scanner.path} scan source ${lockfileFlags} --format json`,
+    cwd,
+    180000,
+  );
+  if (code !== 0 && code !== 1) {
+    return {
+      kind: 'unavailable',
+      reason:
+        `osv-scanner exited ${code ?? 'without a code (timeout/spawn failure)'} on ` +
+        `${lockfiles.length} packages.lock.json file(s) — the scan errored, so its output ` +
+        `may be partial and was discarded`,
+    };
+  }
   if (!raw) {
     return {
       kind: 'unavailable',

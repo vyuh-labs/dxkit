@@ -123,6 +123,10 @@ export function customCheckRecallInputs(opts: GatherCustomChecksOptions): Record
 export function recallInputsForSpecs(specs: readonly CustomCheckSpec[]): Record<string, string> {
   const inputs: Record<string, string> = {};
   for (const spec of specs) {
+    // A declared-but-unresolvable gate (F-9 stub) was NOT observed — claiming
+    // its recall would fabricate comparability, the same lie the env filter
+    // above this function exists to kill. Unobserved reads as absent.
+    if (spec.unavailable) continue;
     inputs[`${spec.name}/cmd`] = normalizeCommandForRecall(spec.command.bin, spec.command.args);
     inputs[`${spec.name}/parse`] =
       spec.parse.mode === 'regex'

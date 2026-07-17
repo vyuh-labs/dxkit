@@ -15,6 +15,7 @@ import {
   mergeFragment,
   readFragment,
   writeFragment,
+  FragmentCaptureError,
   FragmentMergeError,
   FRAGMENT_SCHEMA,
   type BaselineFragment,
@@ -104,6 +105,79 @@ describe('captureFragment', () => {
       );
       expect(fragment.identityScheme).toBe(CURRENT_IDENTITY_SCHEME);
       expect(fragment.customCheckEpoch).toBe(RECALL_EPOCHS['custom-check']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('REFUSES an explicit check this environment cannot observe (VERIFY-40 F-12)', () => {
+    // The poisoned-fragment lie: `--checks lint:csharp` on linux (the check
+    // needs windows, it never ran) must refuse — a fragment with findings:[]
+    // + recall inputs claims "comparable and clean", erases the check's real
+    // backlog on merge, and flags it all net-new on the next honest capture.
+    // Same failure mode when the generated capture job's toolchain setup
+    // fails transiently, so the refusal is load-bearing, not flag hygiene.
+    const dir = winformsRepo();
+    try {
+      expect(() =>
+        captureFragment({
+          cwd: dir,
+          policy: LINT_ON,
+          packs: [csharp],
+          env: envOf('linux'),
+          checks: ['lint:csharp'],
+        }),
+      ).toThrow(FragmentCaptureError);
+      try {
+        captureFragment({
+          cwd: dir,
+          policy: LINT_ON,
+          packs: [csharp],
+          env: envOf('linux'),
+          checks: ['lint:csharp'],
+        });
+      } catch (err) {
+        // The refusal names the check, the unmet requirement, and the remedy.
+        const msg = (err as Error).message;
+        expect(msg).toContain('lint:csharp');
+        expect(msg).toContain('windows');
+        expect(msg).toContain('capture-<host>');
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('REFUSES an unknown explicit check (a typo must not silently own nothing)', () => {
+    const dir = winformsRepo();
+    try {
+      expect(() =>
+        captureFragment({
+          cwd: dir,
+          policy: LINT_ON,
+          packs: [csharp],
+          env: envOf('windows'),
+          checks: ['lint:chsarp'],
+        }),
+      ).toThrow(FragmentCaptureError);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an explicit check that IS observable here still captures', () => {
+    const dir = winformsRepo();
+    try {
+      const fragment = captureFragment({
+        cwd: dir,
+        policy: LINT_ON,
+        packs: [csharp],
+        env: envOf('windows'),
+        checks: ['lint:csharp'],
+        exec: () => ({ available: true, code: 0, output: '' }),
+      });
+      expect(fragment.checks).toEqual(['lint:csharp']);
+      expect(fragment.recallInputs['lint:csharp/cmd']).toBeTruthy();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

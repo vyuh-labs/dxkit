@@ -148,6 +148,26 @@ export const TOOLCHAIN_DEFS = {
       windows: 'winget install Rustlang.Rustup',
       fallback: 'https://rustup.rs',
     },
+    // rustc alone is not enough: linking needs the platform C toolchain, and
+    // cargo refuses a crate graph pinned to a newer rustc. Both fail before
+    // any of the user's code is judged — environment, not findings
+    // (VERIFY-40 F-10: `linker cc not found` minted a lint finding AND
+    // failed the correctness floor on pristine code).
+    environmentFailurePatterns: [
+      {
+        id: 'rust-no-linker',
+        pattern: 'linker `[^`]+` not found',
+        problem: 'rustc cannot link: no platform C toolchain/linker on this host',
+        remedy:
+          'install the platform C toolchain (linux: `sudo apt-get install -y build-essential`; macos: `xcode-select --install`; windows: the Visual Studio Build Tools)',
+      },
+      {
+        id: 'rust-too-old',
+        pattern: 'requires rustc \\d|rustc [\\d.]+ is not supported',
+        problem: 'a dependency requires a newer rustc than installed',
+        remedy: 'upgrade the toolchain: `rustup update stable`',
+      },
+    ],
   },
   'dotnet-sdk': {
     id: 'dotnet-sdk',
