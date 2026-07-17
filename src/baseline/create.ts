@@ -40,7 +40,13 @@ import {
   pathForBaseline,
   writeBaselineFile,
 } from './baseline-file';
-import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
+import type {
+  BaselineAnalysisMeta,
+  BaselineFile,
+  BaselineRepoState,
+  DeferredCaptureClass,
+} from './baseline-file';
+import { assessCaptureDeferral } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { DEFAULT_BROWNFIELD_POLICY, loadPolicyFromCwd } from './policy';
@@ -190,6 +196,13 @@ export interface CurrentScan {
   /** Scanner availability snapshot for the run — which finding-
    *  contributing tools were detected vs missing on this machine. */
   readonly coverage: ScanCoverage;
+  /** Finding classes this environment could NOT observe (CLAUDE.md Rule 20
+   *  applied to capture): a missing registry scanner (a stale mirror) or an
+   *  unmet host/toolchain requirement. Non-empty ⇒ the capture is partial by
+   *  construction — recorded honestly on the committed baseline so the gate's
+   *  arming banner reads it, rather than fail-open-committing a partial baseline
+   *  as if whole. */
+  readonly deferred: ReadonlyArray<DeferredCaptureClass>;
   /** Envelope metadata for the run. `toolchainHash` is already
    *  resolved from `tools`. */
   readonly analysisMeta: BaselineAnalysisMeta;
@@ -245,6 +258,10 @@ export function scanToBaselineFile(
     identityScheme: CURRENT_IDENTITY_SCHEME,
     recall: scan.recall,
     coverage: scan.coverage,
+    // Only when non-empty: a complete capture omits the field entirely (the
+    // authoritative shape), so a baseline captured where everything was
+    // observable diffs byte-clean against a pre-4.0.2 one.
+    ...(scan.deferred.length > 0 ? { deferred: scan.deferred } : {}),
     findings: opts.findings,
   };
 }
@@ -375,8 +392,11 @@ export async function gatherCurrentScan(options: {
 
   // Scanner availability for the active stack. Recorded on the baseline
   // so a later guardrail check can detect when a category was never
-  // scanned (tool missing) rather than scanned-and-clean.
-  const coverage = coverageFromToolStatuses(checkAllTools(analysisResult.stack.languages, cwd));
+  // scanned (tool missing) rather than scanned-and-clean. The same probed
+  // statuses feed the capture-deferral partition — no second probe.
+  const toolStatuses = checkAllTools(analysisResult.stack.languages, cwd);
+  const coverage = coverageFromToolStatuses(toolStatuses);
+  const { deferred } = assessCaptureDeferral(cwd, { statuses: toolStatuses });
 
   return {
     findings,
@@ -386,6 +406,7 @@ export async function gatherCurrentScan(options: {
     tools,
     recall,
     coverage,
+    deferred,
     analysisMeta,
     producerCtx,
   };

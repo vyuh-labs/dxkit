@@ -51,7 +51,7 @@ import { isMaliciousAdvisory } from '../analyzers/security/malicious';
 import { gatherCurrentScan, scanToBaselineFile } from './create';
 import type { CurrentScan } from './create';
 import { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } from './baseline-file';
-import type { BaselineFile } from './baseline-file';
+import type { BaselineFile, DeferredCaptureClass } from './baseline-file';
 import { diffCoverage } from './coverage';
 import type { CoverageDrift } from './coverage';
 import { entriesToLocated } from './entry-to-located';
@@ -323,6 +323,19 @@ export interface GuardrailCheckResult {
     readonly kind: BaselineEntry['kind'];
     readonly currentCount: number;
   }>;
+  /** Finding classes the committed baseline's capture environment could not
+   *  observe (CLAUDE.md Rule 20 applied to capture) — read from
+   *  `baseline.deferred`. Non-empty ⇒ the baseline is INCOMPLETE by
+   *  construction (a stale mirror couldn't install a scanner, a wrong-host
+   *  build gate), so the renderers surface an arming banner ("completing on CI
+   *  — not yet gating") rather than certifying a class that never ran. Does NOT
+   *  change the exit code: the deferred classes are demoted to warn by the
+   *  recall mechanism (Rule 19 — absent/divergent recall), never false-blocked;
+   *  this field only makes the incompleteness LOUD instead of silently green
+   *  (the incident: a partial baseline that read as fully gated). Empty/absent
+   *  in ref-based mode (no committed baseline to complete) and on a complete
+   *  capture. */
+  readonly deferredCapture?: ReadonlyArray<DeferredCaptureClass>;
   /** The flow integration-gate pass — an additive, fail-open layer that flags
    *  net-new UI→API breakage from a base↔HEAD contract diff. Runs in BOTH
    *  modes (the base commit is the resolved ref in ref-based mode, the
@@ -899,6 +912,12 @@ export async function runGuardrailCheck(
     attributionGaps,
     allowlistDelta,
     refExcludedKinds,
+    // Capture-deferral (Rule 20): classes the committed baseline could not
+    // observe at capture. Committed modes only — ref-based has no committed
+    // baseline to complete, so the "completing on CI" framing does not apply.
+    ...(mode.mode !== 'ref-based' && baseline.deferred && baseline.deferred.length > 0
+      ? { deferredCapture: baseline.deferred }
+      : {}),
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),
     // Attach when the gate is configured on (ran, or skipped for a reason
     // worth disclosing); an off/no-base-ref skip stays out of the result so

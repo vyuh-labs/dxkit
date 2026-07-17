@@ -186,7 +186,10 @@ describe('buildInitClosing', () => {
       incompleteScanners: ['gitleaks'],
     });
     expect(scannerOnly.headline).toBe("You're gated for what's measurable.");
-    expect(scannerOnly.caution).toContain('NOT gated');
+    // The scanner gap is now DEFERRED to CI (captured with the guaranteed
+    // toolchain), not silently dropped — the caution says so and stays honest
+    // that the class is not yet gating.
+    expect(scannerOnly.caution).toMatch(/deferred|not yet gating/i);
   });
 
   it('claims the unqualified headline ONLY on full coverage', () => {

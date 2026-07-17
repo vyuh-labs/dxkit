@@ -41,6 +41,9 @@ function fixtureScan(): CurrentScan {
     coverage: {
       tools: [{ tool: 'gitleaks', available: true }],
     } as unknown as CurrentScan['coverage'],
+    deferred: [
+      { id: 'semgrep', label: 'SAST', reason: 'mirror', cause: 'scanner-missing' },
+    ] as CurrentScan['deferred'],
     analysisMeta: {
       dxkitVersion: '3.8.0',
       toolchainHash: 'abc',
@@ -61,6 +64,18 @@ describe('scanToBaselineFile — every scan-derived field survives the conversio
     expect(file.coverage).toEqual(scan.coverage);
     expect(file.recall).toBeDefined();
     expect(file.coverage).toBeDefined();
+  });
+
+  it('carries the capture-deferral record (Rule 20 — the arming banner reads it)', () => {
+    const scan = fixtureScan();
+    const file = scanToBaselineFile(scan, { name: 'main', findings: scan.findings });
+    expect(file.deferred).toEqual(scan.deferred);
+  });
+
+  it('omits `deferred` entirely on a complete capture (authoritative shape)', () => {
+    const scan = { ...fixtureScan(), deferred: [] as CurrentScan['deferred'] };
+    const file = scanToBaselineFile(scan, { name: 'main', findings: scan.findings });
+    expect('deferred' in file).toBe(false);
   });
 
   it('carries every other scan-derived field verbatim', () => {
@@ -105,6 +120,7 @@ describe('scanToBaselineFile — every scan-derived field survives the conversio
       'identityScheme',
       'recall',
       'coverage',
+      'deferred',
       'findings',
     ] as const) {
       expect(file[key], `scanToBaselineFile dropped '${key}'`).toBeDefined();

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-07-17
+
+### Fixed
+
+- **A baseline captured where a scanner couldn't run is no longer committed as if
+  it were whole.** When the machine running `init` / `baseline create` can't
+  observe a finding class — a package index too stale to install a pinned scanner
+  (a corporate mirror / offline proxy), or a host/toolchain not present here — that
+  class is now recorded as **deferred**, not fail-open-committed as measured.
+  Previously a partial capture was promoted to authoritative (`--yes` /
+  `--allow-incomplete` waved it through); on the first CI run, where the full
+  pinned toolchain does install, the recall mechanism then saw a toolchain mismatch
+  and demoted every affected security kind to warn-only — the gate read green while
+  enforcing nothing. Now the guardrail surfaces an honest arming banner ("baseline
+  COMPLETING ON CI — N classes not yet gating") instead of a silent pass, and the
+  existing baseline-refresh workflow completes the baseline on CI with the
+  guaranteed toolchain, clearing the state automatically. Completes CLAUDE.md
+  Rule 20 (execution environment) for the moment dxkit captures the baseline: the
+  new `assessCaptureDeferral` asks the one predicate "can this environment observe
+  the class?" before the baseline claims it did. The arming banner never changes
+  the exit code — deferred classes warn, they are never false-blocked.
+
+- **A stale-index install failure reads as one sentence, not a wall of pip errors.**
+  When a pinned Python scanner won't install because the package index can't reach
+  that version, dxkit now parses pip's `No matching distribution` / `from versions:`
+  output and says so plainly ("`semgrep 1.165.0` isn't in your package index —
+  newest it offers `1.99.0` — likely a mirror; dxkit captures this class on CI
+  instead"), rather than surfacing the raw error that reads as "the product is
+  broken". A non-pip failure keeps its raw text.
+
 ## [4.0.1] - 2026-07-17
 
 ### Fixed

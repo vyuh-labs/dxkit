@@ -96,6 +96,65 @@ describe('runGuardrailCheck (integration)', () => {
       expect(renderJson(base).depVulnsUnmeasured).toBeUndefined();
     });
 
+    it('arming banner surfaces a deferred capture without changing the verdict (Rule 20)', async () => {
+      await createBaseline({ cwd: dir });
+      const base = await runGuardrailCheck({ cwd: dir });
+      // A baseline captured where a scanner could not run (stale mirror) records
+      // the class as deferred; the gate reads it into `deferredCapture`.
+      const armed = {
+        ...base,
+        deferredCapture: [
+          {
+            id: 'semgrep',
+            label: 'Static analysis security scanner (SAST)',
+            reason: 'mirror',
+            cause: 'scanner-missing' as const,
+          },
+        ],
+      };
+      // Loud in every renderer — never a silent green pass over an unobserved class.
+      expect(renderConsole(armed)).toContain('COMPLETING ON CI');
+      expect(renderConsole(armed)).toContain('Static analysis security scanner (SAST)');
+      expect(renderMarkdown(armed)).toContain('COMPLETING ON CI');
+      expect(renderJson(armed).deferredCapture).toHaveLength(1);
+      // Orthogonal to the verdict: the deferred classes warn via recall, they do
+      // not force a block. Exit code is exactly what it was without the marker.
+      expect(renderJson(armed).verdict.exitCode).toBe(renderJson(base).verdict.exitCode);
+      // A complete capture shows nothing new.
+      expect(renderJson(base).deferredCapture).toBeUndefined();
+      expect(renderConsole(base)).not.toContain('COMPLETING ON CI');
+    });
+
+    it('reads a committed baseline’s deferred marker end-to-end, honestly, without blocking (Rule 20)', async () => {
+      const created = await createBaseline({ cwd: dir });
+      expect(created.path).toBeDefined();
+      // Simulate the incident: a capture that could not observe a class (a stale
+      // mirror couldn't install the scanner) lands a `deferred` record on the
+      // committed baseline instead of fail-open-committing it as measured.
+      const file = JSON.parse(readFileSync(created.path!, 'utf8'));
+      file.deferred = [
+        {
+          id: 'semgrep',
+          label: 'Static analysis security scanner (SAST)',
+          reason: 'behind a mirror',
+          cause: 'scanner-missing',
+        },
+      ];
+      writeFileSync(created.path!, JSON.stringify(file, null, 2));
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      // The gate READS it from disk (not injected) — proves the whole wiring:
+      // baseline.deferred → result.deferredCapture → arming banner.
+      expect(result.deferredCapture).toHaveLength(1);
+      expect(result.deferredCapture![0].id).toBe('semgrep');
+      expect(renderConsole(result)).toContain('COMPLETING ON CI');
+      // Honest, NOT a false block: nothing net-new here, and the deferred class
+      // is disclosed rather than silently certified.
+      expect(result.blocks).toBe(false);
+      expect(renderJson(result).verdict.exitCode).toBe(0);
+      expect(renderJson(result).deferredCapture).toHaveLength(1);
+    });
+
     it('UNMEASURED remediation is reason-aware — absent vs present-but-unusable (#15)', async () => {
       await createBaseline({ cwd: dir });
       const base = await runGuardrailCheck({ cwd: dir });

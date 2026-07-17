@@ -198,15 +198,20 @@ export function buildInitClosing(state: InitClosingState): InitClosing {
 
   // Same honesty gate, one class over: a scanner that wasn't available at
   // capture time means the baseline is PARTIAL — those finding kinds were
-  // never measured, so they are not gated. An unqualified "You're gated."
-  // over that baseline is a confident answer where the honest output is a
-  // boundary (the same shape as the unprovisioned-toolchain case above).
+  // never measured here, so they are DEFERRED to an environment that can
+  // observe them (CI, with the guaranteed toolchain), not fail-open-committed
+  // as if gated. An unqualified "You're gated." over that baseline is a
+  // confident answer where the honest output is a boundary (the same shape as
+  // the unprovisioned-toolchain case above).
   if (state.incompleteScanners.length > 0) {
     const caution =
-      `${state.incompleteScanners.length} scanner class(es) weren't available ` +
-      `(${state.incompleteScanners.join(', ')}) — those finding types are NOT gated yet. ` +
-      `Run \`${dxkitCli('tools install')}\`, then \`${dxkitCli('baseline create --force')}\` ` +
-      `so the baseline covers them.`;
+      `${state.incompleteScanners.length} scanner class(es) weren't available here ` +
+      `(${state.incompleteScanners.join(', ')}) — likely a package index that can't reach the ` +
+      `pinned versions (a mirror / offline proxy). They are DEFERRED to CI, which captures them ` +
+      `with the guaranteed toolchain and completes the baseline automatically. Until that first ` +
+      `CI run lands, those classes are not yet gating — nothing else to do. ` +
+      `(Or, offline: \`${dxkitCli('tools install')}\` then \`${dxkitCli('baseline create --force')}\` ` +
+      `once the scanners resolve.)`;
     return { headline: "You're gated for what's measurable.", ready, body, caution, actions };
   }
 
@@ -335,8 +340,16 @@ async function runFinishingArc(
       const modeWord =
         result.mode.mode === 'committed-sanitized' ? 'committed (sanitized)' : 'committed';
       bl.note(`private repo → ${modeWord} baseline`);
-      if (incompleteScanners.length > 0) {
-        bl.note(`⚠ ${incompleteScanners.length} scanner class(es) not yet covered`);
+      // A class this environment could not observe (a scanner your package index
+      // couldn't reach, a wrong-host build gate) is recorded as DEFERRED, not
+      // fail-open-committed as if measured. It completes on CI with the
+      // guaranteed toolchain; the gate is honest ("completing on CI") until then.
+      const deferred = result.file.deferred ?? [];
+      if (deferred.length > 0) {
+        bl.note(
+          `→ ${deferred.length} class(es) deferred to CI: ${deferred.map((d) => d.label).join(', ')}`,
+        );
+        bl.note('  (captured on the first CI run with the guaranteed toolchain — nothing to do)');
       }
       bl.succeed(`${b.total} finding${b.total === 1 ? '' : 's'} grandfathered`);
     } else {
