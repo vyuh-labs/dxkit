@@ -84,6 +84,39 @@ export function run(cmd: string, cwd: string, timeoutMs = 30000): string {
 }
 
 /**
+ * Like `run`, but the caller sees the EXIT CODE alongside stdout. For tools
+ * whose non-zero exits are ambiguous: osv-scanner exits 1 both meaning
+ * "vulnerabilities found" (output complete) and >1 when the scan itself
+ * errored (network/API degradation) — possibly after emitting PARTIAL JSON.
+ * `run()` returns that partial stdout indistinguishably from success, which
+ * let a degraded scan write a 1-of-14-findings baseline that then false-
+ * blocked the next check 13 times (VERIFY-40 F-7). `code` is null when the
+ * process never yielded one (spawn failure / timeout).
+ */
+export function runWithExit(
+  cmd: string,
+  cwd: string,
+  timeoutMs = 30000,
+): { code: number | null; stdout: string } {
+  try {
+    const stdout = execSync(cmd, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim();
+    return { code: 0, stdout };
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; status?: number | null };
+    return {
+      code: typeof e.status === 'number' ? e.status : null,
+      stdout: typeof e.stdout === 'string' ? e.stdout.trim() : '',
+    };
+  }
+}
+
+/**
  * Run a binary directly (NO shell) and return stdout, or '' on failure.
  *
  * Synchronous sibling of `runDetached` for single-binary tools that must

@@ -81,6 +81,20 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
         continue;
       }
     }
+    // A declared check whose tool is unresolvable (the pack's lintCommand
+    // returned null) is disclosed, never spawned and never silent — the user
+    // enabled this gate in policy and deserves to know why it isn't gating
+    // (VERIFY-40 F-9). After the env check: a wrong host is the more
+    // fundamental boundary and its remedy supersedes "install the linter".
+    if (spec.unavailable) {
+      results.push({
+        name: spec.name,
+        status: 'skipped-unavailable',
+        findings: [],
+        reason: spec.unavailable,
+      });
+      continue;
+    }
     const outcome = exec(spec.command, opts.cwd);
     if (!outcome.available) {
       results.push({ name: spec.name, status: 'skipped-unavailable', findings: [] });

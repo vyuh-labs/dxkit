@@ -117,7 +117,26 @@ export function lintGateSpecs(
   const specs: CustomCheckSpec[] = [];
   for (const { id, provider } of activeLintGateProviders(packs)) {
     const cmd = provider.lintCommand(ctx);
-    if (cmd === null) continue;
+    if (cmd === null) {
+      // The pack's linter is not resolvable here (findTool missed, no local
+      // bin). Pre-F-9 the spec simply didn't exist and a policy-ENABLED gate
+      // went silent; now it exists as a disclosed stub the runner reports as
+      // `skipped-unavailable` (never spawned — the sentinel bin is
+      // unexecutable by construction) and the recall derivation ignores
+      // (unobserved reads as absent).
+      specs.push({
+        name: `${LINT_CHECK_PREFIX}${id}`,
+        command: { bin: 'dxkit-lint-unavailable', args: [] },
+        blocking,
+        expectedExit: 0,
+        parse: { mode: 'exit' },
+        unavailable:
+          `the ${id} pack's linter is not installed or resolvable in this environment — ` +
+          `run \`vyuh-dxkit tools install\` (inventory: \`vyuh-dxkit tools list\`)`,
+        ...safeExecution(id, provider, ctx.cwd),
+      });
+      continue;
+    }
     specs.push({
       name: `${LINT_CHECK_PREFIX}${id}`,
       command: { bin: cmd.bin, args: cmd.args },

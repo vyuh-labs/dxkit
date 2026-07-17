@@ -110,6 +110,14 @@ function renderGroup(title: string, specs: readonly CustomCheckSpec[]): void {
   console.log(''); // slop-ok
   logger.info(title);
   for (const s of specs) {
+    if (s.unavailable) {
+      // A policy-enabled gate whose linter isn't resolvable here — declared,
+      // disclosed, never silent (VERIFY-40 F-9). The sentinel command is an
+      // implementation detail, not something a user should see or run.
+      logger.dim(`  ${s.name.padEnd(22)} unavailable`);
+      logger.dim(`    ↳ ${s.unavailable}`);
+      continue;
+    }
     const intent = s.blocking ? 'blocking' : 'warn-only';
     const shape = s.parse.mode === 'exit' ? 'binary' : 'located';
     logger.dim(`  ${s.name.padEnd(22)} ${intent} · ${shape}`);

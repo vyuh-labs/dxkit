@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { normalizeCustomChecks } from '../../src/analyzers/custom-checks/config';
+import { lintGateSpecs, normalizeCustomChecks } from '../../src/analyzers/custom-checks/config';
+import { recallInputsForSpecs } from '../../src/analyzers/custom-checks/gather';
 import { resolvePolicy } from '../../src/baseline/policy';
 import type { CustomCheckConfig } from '../../src/baseline/policy';
 
@@ -119,5 +120,40 @@ describe('resolvePolicy — checks/lint passthrough', () => {
     const cwd = withPolicy({ mode: 'brownfield' });
     expect(resolvePolicy(undefined, cwd).largeFileThreshold).toBeUndefined();
     fs.rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
+describe('lintGateSpecs — unresolvable linter becomes a disclosed stub (VERIFY-40 F-9)', () => {
+  const nullPack = {
+    id: 'ruby',
+    lintGate: {
+      execution: () => ({
+        hosts: ['any'],
+        toolchains: ['ruby'],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      }),
+      lintCommand: () => null,
+      recallInputs: () => ({ rubocop: '9.9.9' }),
+    },
+  } as unknown as import('../../src/languages/types').LanguageSupport;
+
+  it('a policy-enabled gate whose lintCommand returns null still exists, marked unavailable', () => {
+    const specs = lintGateSpecs([nullPack], { cwd: '/repo', changedFiles: [] }, { enabled: true });
+    expect(specs).toHaveLength(1);
+    expect(specs[0].name).toBe('lint:ruby');
+    expect(specs[0].unavailable).toContain('tools install');
+    // The sentinel command must be unexecutable by construction.
+    expect(specs[0].command.bin).toBe('dxkit-lint-unavailable');
+  });
+
+  it('the stub contributes NO recall inputs (unobserved reads as absent)', () => {
+    const specs = lintGateSpecs([nullPack], { cwd: '/repo', changedFiles: [] }, { enabled: true });
+    expect(recallInputsForSpecs(specs)).toEqual({});
+  });
+
+  it('lint disabled still yields nothing (the stub only exists for an ENABLED gate)', () => {
+    expect(lintGateSpecs([nullPack], { cwd: '/repo', changedFiles: [] }, undefined)).toEqual([]);
   });
 });

@@ -9,6 +9,8 @@ import * as logger from './logger';
 import { detectStaleRecall, detectStaleScheme, migrateIdentity } from './baseline/migrate';
 import { createBaseline, gatherScanCoverage } from './baseline/create';
 import { missingScanners } from './baseline/coverage';
+import { loadPolicyFromCwd } from './baseline/policy';
+import { resolveAnchorTransport } from './baseline/modes';
 import { dxkitCli } from './self-invocation';
 
 /**
@@ -265,7 +267,7 @@ async function refreshRecallIfStale(cwd: string): Promise<void> {
     const result = await createBaseline({ cwd, force: true });
     if (result.path) {
       logger.success('Baseline re-captured on the current recall contract.');
-      logger.dim('  → Commit .dxkit/baselines to finish the refresh.');
+      logger.dim(baselineFinishingStep(cwd));
     }
   } catch (err) {
     logger.warn(
@@ -274,6 +276,36 @@ async function refreshRecallIfStale(cwd: string): Promise<void> {
         'affected kinds warn instead of blocking.',
     );
   }
+}
+
+/**
+ * The finishing step after the migration lanes rewrite the local baseline,
+ * phrased for the repo's anchor transport (VERIFY-40 F-6). On `branch`
+ * transport the guardrail hydrates the anchor from the side branch, so
+ * committing the local file changes NOTHING the gate reads — the migration is
+ * inert until `baseline publish` lands it. The transport comes from the SAME
+ * resolver the check uses (Rule 11), so the hint and the read cannot
+ * disagree.
+ */
+function baselineFinishingStep(cwd: string, alsoAllowlist = false): string {
+  try {
+    const transport = resolveAnchorTransport({
+      mode: 'committed-full', // both migration lanes only run over a committed baseline file
+      policyAnchor: loadPolicyFromCwd(cwd).baseline?.anchor,
+    });
+    if (transport === 'branch') {
+      return (
+        `  → Run \`${dxkitCli('baseline publish')}\` to land it on the anchor branch the ` +
+        `guardrail reads${alsoAllowlist ? ', and commit .dxkit/allowlist.json' : ''} — ` +
+        `committing the file alone does not update the anchor.`
+      );
+    }
+  } catch {
+    /* unreadable policy — fall through to the tree-transport hint */
+  }
+  return alsoAllowlist
+    ? '  → Commit .dxkit/baselines + .dxkit/allowlist.json to finish the migration.'
+    : '  → Commit .dxkit/baselines to finish the refresh.';
 }
 
 /**
@@ -313,7 +345,7 @@ async function migrateIdentityIfStale(cwd: string): Promise<void> {
         logger.dim(`  ${e.fingerprint}  ${e.kind}/${e.category}`);
       }
     }
-    logger.dim('  → Commit .dxkit/baselines + .dxkit/allowlist.json to finish the migration.');
+    logger.dim(baselineFinishingStep(cwd, true));
   } catch (err) {
     logger.warn(
       `Identity migration could not complete: ${(err as Error).message}. ` +

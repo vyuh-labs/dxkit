@@ -197,3 +197,45 @@ describe('parseLocated — dedupe + malformed regex', () => {
     expect(found[0].message).toMatch(/invalid parse regex/);
   });
 });
+
+describe('declared-but-unresolvable lint gate (VERIFY-40 F-9 — disclosed, never silent)', () => {
+  const stub = spec({
+    name: 'lint:ruby',
+    command: { bin: 'dxkit-lint-unavailable', args: [] },
+    unavailable: "the ruby pack's linter is not installed or resolvable in this environment",
+  });
+
+  it('the runner discloses skipped-unavailable with the reason, without spawning', () => {
+    let spawned = 0;
+    const counting: CommandExec = () => {
+      spawned++;
+      return { available: true, code: 0, output: '' };
+    };
+    const r = runCustomChecks({ cwd: CWD, specs: [stub], exec: counting });
+    expect(r.results[0].status).toBe('skipped-unavailable');
+    expect(r.results[0].reason).toContain('not installed');
+    expect(r.findings).toEqual([]);
+    expect(spawned).toBe(0);
+  });
+
+  it('an unmet environment supersedes the unavailable reason (wrong host first)', () => {
+    const winOnly = spec({
+      name: 'lint:csharp',
+      unavailable: 'linter missing',
+      execution: {
+        hosts: ['windows'],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      },
+    });
+    const r = runCustomChecks({
+      cwd: CWD,
+      specs: [winOnly],
+      exec: pass,
+      env: { host: 'linux', hasToolchain: () => true },
+    });
+    expect(r.results[0].status).toBe('skipped-environment');
+  });
+});

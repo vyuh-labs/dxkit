@@ -33,7 +33,7 @@ import {
   type OsvVuln,
 } from './osv';
 import { isMaliciousAdvisory } from '../security/malicious';
-import { fileExists, run } from './runner';
+import { fileExists, runWithExit } from './runner';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import type {
   DepVulnFinding,
@@ -172,9 +172,13 @@ export function parseOsvScannerFindings(
  *     before pom.xml; ruby: Gemfile.lock).
  *
  * `scan source --lockfile <path>` is the v2.x form. JSON output to
- * stdout. Exit code is non-zero when findings exist — we ignore the
- * exit code and parse the JSON regardless (run() already swallows
- * non-zero exits cleanly via execSync's catch).
+ * stdout. Exit codes disambiguate completeness (VERIFY-40 F-7): 0 = clean,
+ * 1 = vulnerabilities found — BOTH mean the scan finished and its output is
+ * the whole observation. Anything else means the scan itself errored
+ * (network/API degradation, bad input) and any JSON on stdout may be a
+ * PARTIAL result — recording it as complete writes a baseline that
+ * under-observes and false-blocks the next check, so those exits are
+ * `unavailable` (disclosed), never parsed.
  *
  * CVSS alias-fallback: osv-scanner ships CVSS vectors when present,
  * but advisory data quality varies by ecosystem — some carry only
@@ -206,7 +210,20 @@ export async function gatherOsvScannerDepVulnsResult(
     return { kind: 'unavailable', reason: 'osv-scanner not installed' };
   }
 
-  const raw = run(`${scanner.path} scan source --lockfile ${manifest} --format json`, cwd, 180000);
+  const { code, stdout: raw } = runWithExit(
+    `${scanner.path} scan source --lockfile ${manifest} --format json`,
+    cwd,
+    180000,
+  );
+  if (code !== 0 && code !== 1) {
+    return {
+      kind: 'unavailable',
+      reason:
+        `osv-scanner exited ${code ?? 'without a code (timeout/spawn failure)'} — the scan ` +
+        `errored, so its output may be partial and was discarded rather than recorded as a ` +
+        `complete observation`,
+    };
+  }
   if (!raw) return { kind: 'unavailable', reason: 'osv-scanner produced no output' };
 
   const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem, packId);

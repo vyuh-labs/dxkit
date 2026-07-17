@@ -107,6 +107,17 @@ export interface CustomCheckSpec {
    * missing-binary path.
    */
   readonly execution?: ExecutionRequirement;
+  /**
+   * Present when the check is DECLARED (policy-enabled lint) but its tool is
+   * not resolvable here — the pack's `lintCommand` returned null. The runner
+   * discloses it as `skipped-unavailable` with this reason BEFORE any spawn,
+   * and the recall derivation contributes NOTHING for it (unobserved reads as
+   * absent). Without this marker the spec simply didn't exist, and a user who
+   * set `lint.enabled: true` saw total silence about why nothing gated
+   * (VERIFY-40 F-9). The stub's `command` is a sentinel that is never
+   * executed.
+   */
+  readonly unavailable?: string;
 }
 
 /** A single failure extracted from a check's output. Maps 1:1 to a
@@ -145,9 +156,11 @@ export interface CustomCheckResult {
   readonly name: string;
   readonly status: CustomCheckStatus;
   readonly findings: readonly CustomCheckFinding[];
-  /** Present on `skipped-environment`: the human-phrased unmet-requirement
-   *  boundary (from `describeUnmetRequirement`) — what is needed and where
-   *  the check would run instead. */
+  /** Present on `skipped-environment` (the human-phrased unmet-requirement
+   *  boundary from `describeUnmetRequirement` — what is needed and where the
+   *  check would run instead) and on a declared-but-unresolvable
+   *  `skipped-unavailable` (the spec's `unavailable` reason — which tool is
+   *  missing and the install remedy). */
   readonly reason?: string;
 }
 

@@ -9,6 +9,7 @@ import {
   publishFilesToAnchorRef,
   readFromAnchorRef,
 } from '../../src/baseline/anchor-publish';
+import { anchorStalenessFromContents } from '../../src/baseline/anchor';
 
 /**
  * Real-git tests for the shared anchor writer/reader. A local bare repo stands
@@ -371,5 +372,38 @@ describe('publishFilesToAnchorRef — the push always runs --no-verify (gh #156)
     const push = spy.pushCall();
     expect(push).toContain('--no-verify');
     expect(push).toContain('origin');
+  });
+});
+
+describe('anchorStalenessFromContents (VERIFY-40 F-6 — migrated local over stale anchor)', () => {
+  it('scheme divergence alarms with both schemes named', () => {
+    const problem = anchorStalenessFromContents(
+      { identityScheme: undefined, recall: undefined },
+      { identityScheme: 'v2', recall: {} },
+    );
+    expect(problem).toContain("'pre-v2'");
+    expect(problem).toContain("'v2'");
+  });
+
+  it('anchor without recall while local carries it alarms', () => {
+    const problem = anchorStalenessFromContents(
+      { identityScheme: 'v2' },
+      { identityScheme: 'v2', recall: { secret: { epoch: 1, inputs: {} } } },
+    );
+    expect(problem).toContain('predates recall attribution');
+  });
+
+  it('ordinary content lag stays quiet (same scheme, both have recall)', () => {
+    expect(
+      anchorStalenessFromContents(
+        { identityScheme: 'v2', recall: {} },
+        { identityScheme: 'v2', recall: {} },
+      ),
+    ).toBeNull();
+  });
+
+  it('an unreadable side never alarms (fail-open — the presence probe covers absence)', () => {
+    expect(anchorStalenessFromContents(null, { identityScheme: 'v2' })).toBeNull();
+    expect(anchorStalenessFromContents({ identityScheme: 'v2' }, null)).toBeNull();
   });
 });
