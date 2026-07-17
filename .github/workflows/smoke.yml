@@ -237,6 +237,84 @@ jobs:
           fi
           echo "Guardrail passed on clean state as expected."
 
+      # 4.0.1 class-fix. Every shipped workflow template carried a bare `npm ci`,
+      # so a repo whose tree only resolves under --legacy-peer-deps died at the
+      # install step and the guardrail never ran — the check we ask customers to
+      # make REQUIRED was red on their first PR. Nothing caught it: no test
+      # EXECUTES a generated workflow, and the fixture above is a package.json with
+      # no dependencies at all, so `npm ci` there cannot fail. This runs the REAL
+      # rendered step against a REAL conflicting tree, in the order a real
+      # onboarding hits it (the repo's own install, then the dxkit devDep, then
+      # init) — that order matters, because it is what keeps package.json and the
+      # lockfile in sync. A desynced lockfile fails `npm ci` with EUSAGE for an
+      # unrelated reason and would make this guard test nothing.
+      - name: Generated workflow's install step survives a peer-conflicted tree
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dxkit-peer
+          cd /tmp/dxkit-peer
+          git init -q -b main
+          git config user.email "smoke@example.com"
+          git config user.name "smoke"
+          # eslint 10 at the root against a config that peer-requires eslint 8:
+          # the real shape that broke. npm rejects this tree without
+          # --legacy-peer-deps, while the repo itself installs and ships fine.
+          cat > package.json <<'EOF'
+          {
+            "name": "dxkit-peer-conflict",
+            "version": "0.0.0",
+            "private": true,
+            "devDependencies": {
+              "eslint": "^10.0.0",
+              "@loopback/eslint-config": "^16.0.1"
+            }
+          }
+          EOF
+          mkdir -p src && echo 'export const x = 1;' > src/index.ts
+          npm install --legacy-peer-deps --silent
+          git add -A && git commit -q -m "init"
+          npm install --save-dev --legacy-peer-deps --silent \
+            "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}"
+          ./node_modules/.bin/vyuh-dxkit init --full --yes --no-finish
+
+          # The fixture must actually BE conflicted, or this guard rots into a
+          # vacuous pass. Assert the negative first, and assert the RIGHT negative:
+          # ERESOLVE (a peer conflict) and not EUSAGE (a desynced lockfile).
+          rm -rf node_modules
+          if npm ci >/dev/null 2>&1; then
+            echo "::error::fixture is no longer peer-conflicted — a bare 'npm ci' succeeded, so this step cannot catch the regression it exists for. Fix the fixture."
+            exit 1
+          fi
+          if ! npm ci 2>&1 | grep -q "code ERESOLVE"; then
+            echo "::error::fixture fails for the WRONG reason (expected code ERESOLVE — a peer conflict). This guard would not prove the fix:"
+            npm ci 2>&1 | head -5
+            exit 1
+          fi
+          echo "✓ fixture confirmed peer-conflicted (bare 'npm ci' fails with ERESOLVE)"
+
+          # Execute the install step exactly as the generated workflow ships it.
+          node -e "
+            const yaml = require('${{ github.workspace }}/node_modules/js-yaml');
+            const fs = require('fs');
+            const wf = yaml.load(fs.readFileSync('.github/workflows/dxkit-guardrails.yml', 'utf8'));
+            const steps = Object.values(wf.jobs)[0].steps;
+            const step = steps.find(s => s.name && s.name.startsWith('Install dependencies'));
+            if (!step) { console.error('no install step in the rendered workflow'); process.exit(1); }
+            fs.writeFileSync('/tmp/rendered-install-step.sh', step.run);
+          "
+          echo "==> running the rendered install step:"
+          cat /tmp/rendered-install-step.sh
+          rm -rf node_modules
+          if ! bash -e /tmp/rendered-install-step.sh; then
+            echo "::error::the generated dxkit-guardrails.yml install step FAILED on a peer-conflicted repo — this is the 4.0.0 defect (a bare npm ci). The guardrail would never run, and the required check would be red on the customer's first PR."
+            exit 1
+          fi
+          test -x node_modules/.bin/vyuh-dxkit || {
+            echo "::error::install step exited 0 but dxkit is not resolvable — the guardrail still could not run."
+            exit 1
+          }
+          echo "✓ generated workflow's install step survived a peer-conflicted tree"
+
   devcontainer-smoke:
     name: devcontainer build + post-create
     runs-on: ubuntu-latest

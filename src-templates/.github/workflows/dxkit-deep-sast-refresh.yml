@@ -60,9 +60,12 @@ jobs:
       - name: Install dxkit
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            # A peer-conflicted tree (one that only installs under
+            # --legacy-peer-deps) must not fail the refresh. `npm ci` installs the
+            # LOCKFILE's tree either way; the flag only skips the peer check.
+            npm ci || npm ci --legacy-peer-deps
           elif [ -f package.json ]; then
-            npm install
+            npm install || npm install --legacy-peer-deps
           else
             npm install -g @vyuhlabs/dxkit
           fi

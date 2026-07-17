@@ -1829,6 +1829,40 @@ if [ -n "$RULE20_PREDICATE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Generated-workflow dependency-install rule (4.0.1 class-fix): a shipped CI
+# template installs the repo's node deps with a peer-conflict fallback, never a
+# bare `npm ci` / `npm install`.
+#
+# What this prevents:
+#   A repo whose tree only resolves under --legacy-peer-deps (a pre-existing peer
+#   conflict its own install already tolerates) dies at the generated workflow's
+#   install step, so the guardrail never runs and the check we ask customers to
+#   make REQUIRED is red on their very first PR. That shipped in 4.0.0: all nine
+#   workflow templates carried a bare `npm ci`, while .devcontainer/post-create.sh
+#   had ALREADY learned the fallback. One concept, three code paths, two of them
+#   wrong (CLAUDE.md Rule 2.30). Nothing caught it because no test executes a
+#   generated workflow, and the smoke fixture is a package.json with no deps.
+#
+# Canonical form:
+#   npm ci || npm ci --legacy-peer-deps            (lockfile present)
+#   npm install || npm install --legacy-peer-deps  (no lockfile)
+#   `npm ci` installs the LOCKFILE's tree either way and the flag only skips the
+#   peer check that rejects it, so the audited tree stays the tree the repo ships.
+#   Falling back to a RE-RESOLVING `npm install` is NOT valid here: it fabricates a
+#   different tree, and the dep audit then reports phantom vulns and misses real
+#   ones (the reason the install step uses the repo's own PM in the first place).
+TEMPLATE_BARE_NPM=$(grep -rn -E '^[[:space:]]*npm (ci|install)[[:space:]]*$' \
+  src-templates/.github/workflows/ 2>/dev/null \
+  | grep -v "# bare-npm-ok")
+if [ -n "$TEMPLATE_BARE_NPM" ]; then
+  echo "❌ Generated-workflow install violation: bare 'npm ci'/'npm install' in a shipped CI template:"
+  echo "$TEMPLATE_BARE_NPM"
+  echo "   → Use 'npm ci || npm ci --legacy-peer-deps' (or the npm install pair)."
+  echo "   → A peer-conflicted repo must not fail the gate at the install step."
+  echo "   → Annotate '# bare-npm-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

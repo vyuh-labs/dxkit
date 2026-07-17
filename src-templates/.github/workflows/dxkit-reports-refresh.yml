@@ -52,9 +52,15 @@ __DXKIT_CI_RUNTIME_SETUP__
             npm install -g bun >/dev/null 2>&1 || true
             bun install --frozen-lockfile
           elif [ -f package-lock.json ]; then
-            npm ci
+            # A repo whose tree only resolves under --legacy-peer-deps (a peer
+            # conflict its own install already tolerates) must not fail the gate.
+            # `npm ci` installs the LOCKFILE's tree either way — the flag only
+            # skips the peer check that rejects it — so the audited tree is still
+            # the tree the repo ships. Re-resolving (`npm install`) is NOT a valid
+            # fallback here: it would fabricate a different tree.
+            npm ci || npm ci --legacy-peer-deps
           elif [ -f package.json ]; then
-            npm install
+            npm install || npm install --legacy-peer-deps
           else
             npm install -g @vyuhlabs/dxkit
           fi
