@@ -69,6 +69,25 @@ export interface BaselineAnalysisMeta {
 }
 
 /**
+ * A finding class the capture environment could NOT observe, deferred to one
+ * that can (CI, with the guaranteed pinned toolchain). Recorded so a guardrail
+ * check on the capture window can be honest — "this class is completing on CI,
+ * not yet gating" — instead of reading an unobserved class as measured-and-clean
+ * (the incident: a partial baseline that drifted every class to warn-only).
+ * Populated by `assessCaptureDeferral`; consumed by the gate's arming banner.
+ * Absent / empty ⇒ the baseline is authoritative for every class.
+ */
+export interface DeferredCaptureClass {
+  /** Scanner tool name, or `<pack>:<capability>` — stable + machine-independent. */
+  readonly id: string;
+  /** Human label for the arming banner. */
+  readonly label: string;
+  /** Why the capture environment could not observe it. */
+  readonly reason: string;
+  readonly cause: 'scanner-missing' | 'unmet-requirement';
+}
+
+/**
  * The full on-disk envelope. Fields are ordered to match the order
  * the matcher reads them in: identity-related fields first, then
  * envelope metadata. Serialized via `JSON.stringify(file, null, 2)`
@@ -124,6 +143,15 @@ export interface BaselineFile {
    *  baselines written before this field existed omit it and are treated
    *  as the original `'v1'` scheme. */
   readonly identityScheme?: IdentitySchemeVersion;
+  /** Finding classes this capture environment could NOT observe, deferred to
+   *  one that can (CLAUDE.md Rule 20 applied to capture). Non-empty ⇒ the
+   *  baseline is INCOMPLETE by construction, honestly recorded rather than
+   *  fail-open-committed as if whole — a `--yes` capture on a machine with an
+   *  incomplete toolchain lands the deferred classes here, and the gate's
+   *  arming banner reads them instead of certifying a class that never ran.
+   *  Cleared once a complete environment (CI) re-captures the whole baseline.
+   *  Optional: a baseline captured somewhere that observed everything omits it. */
+  readonly deferred?: ReadonlyArray<DeferredCaptureClass>;
   /** Per-finding entries. Multiset — duplicates allowed (an
    *  identity appearing twice means two distinct occurrences). */
   readonly findings: ReadonlyArray<BaselineEntry>;

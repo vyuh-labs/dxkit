@@ -67,6 +67,20 @@ export function fail(text: string): void {
   write(`  ${RED}✗${RESET} ${text}`);
 }
 
+/**
+ * Emit a GitHub Actions annotation — a `::warning::` / `::error::` / `::notice::`
+ * workflow command that surfaces in the run summary + PR checks UI, not just the
+ * raw log. No-op outside Actions (a bare `::warning::…` line is noise on a
+ * terminal). One line only: annotation commands cannot span newlines, so any
+ * embedded newline is flattened. Written straight to stdout (not `write`) so
+ * `--quiet` / JSON mode never suppress a CI-visible signal.
+ */
+export function ciAnnotate(level: 'warning' | 'error' | 'notice', message: string): void {
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    process.stdout.write(`::${level}::${message.replace(/\r?\n/g, ' ')}\n`);
+  }
+}
+
 export function info(text: string): void {
   write(`  ${CYAN}→${RESET} ${text}`);
 }

@@ -197,6 +197,30 @@ export function depVulnsUnmeasuredRemediation(reason: string): string {
   return 'The scanner is present but did not produce a result — investigate the reason above rather than reinstalling.';
 }
 
+/**
+ * The arming banner for a committed baseline captured with classes DEFERRED
+ * (CLAUDE.md Rule 20 — a stale mirror couldn't install a scanner, or a
+ * wrong-host build gate). One phrasing, shared by every renderer, so the
+ * boundary is stated once. The point: never certify a class that was never
+ * observed. Returns the note lines (no leading blank) or `[]` when nothing was
+ * deferred. `armed` is the count of classes NOT yet gating.
+ */
+export function deferredCaptureBannerLines(result: GuardrailCheckResult): string[] {
+  const deferred = result.deferredCapture ?? [];
+  if (deferred.length === 0) return [];
+  const labels = deferred.map((d) => d.label).join(', ');
+  return [
+    `Baseline COMPLETING ON CI — ${deferred.length} class${deferred.length === 1 ? '' : 'es'} ` +
+      `not yet gating (${labels}).`,
+    `These could not be captured in the environment that ran this baseline ` +
+      `(a scanner your package index couldn't reach, or a host/toolchain not present here). ` +
+      `CI captures them with the guaranteed pinned toolchain and refreshes the baseline anchor; ` +
+      `the gate is fully armed once that lands. A pass here does NOT yet verify these classes. ` +
+      `If this repo has no CI to complete on, capture them in the generated devcontainer ` +
+      `(a guaranteed-complete environment).`,
+  ];
+}
+
 export function renderConsole(result: GuardrailCheckResult): string {
   const lines: string[] = [];
 
@@ -366,6 +390,10 @@ export function renderConsole(result: GuardrailCheckResult): string {
         `artifacts (node_modules / coverage) absent at a bare git ref. Use ` +
         `committed-full mode to gate them.`,
     );
+  }
+  for (const line of deferredCaptureBannerLines(result)) {
+    lines.push('');
+    lines.push(`  ⚠ ${line}`);
   }
   if (result.blocks) {
     lines.push('');
@@ -895,6 +923,15 @@ export interface GuardrailJsonPayload {
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
+  /** Present when the committed baseline was captured with classes deferred to
+   *  CI (CLAUDE.md Rule 20). A pass does NOT yet verify these classes — they are
+   *  completing on CI. Absent on a complete capture and in ref-based mode. */
+  readonly deferredCapture?: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly reason: string;
+    readonly cause: 'scanner-missing' | 'unmet-requirement';
+  }>;
   readonly baseline: {
     /** Absent when the run used `ref-based` mode (no on-disk
      *  baseline file). */
@@ -1091,6 +1128,9 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     },
     attributionGaps: result.attributionGaps,
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
+    ...(result.deferredCapture && result.deferredCapture.length > 0
+      ? { deferredCapture: result.deferredCapture }
+      : {}),
     baseline: {
       ...(result.baselinePath !== undefined ? { path: result.baselinePath } : {}),
       name: result.baseline.name,
@@ -1334,6 +1374,14 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
         `Switch \`.dxkit/policy.json\` to \`committed-full\` to gate them.`,
     );
     lines.push('');
+  }
+
+  {
+    const banner = deferredCaptureBannerLines(result);
+    if (banner.length > 0) {
+      lines.push(`> ⚠️ **${banner[0]}** ${banner.slice(1).join(' ')}`);
+      lines.push('');
+    }
   }
 
   if (blocking.length > 0) {

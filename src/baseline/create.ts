@@ -41,6 +41,7 @@ import {
   writeBaselineFile,
 } from './baseline-file';
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
+import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { DEFAULT_BROWNFIELD_POLICY, loadPolicyFromCwd } from './policy';
@@ -190,6 +191,9 @@ export interface CurrentScan {
   /** Scanner availability snapshot for the run — which finding-
    *  contributing tools were detected vs missing on this machine. */
   readonly coverage: ScanCoverage;
+  /** Finding classes this environment could NOT observe (Rule 20 — see
+   *  `deferral.ts`). Non-empty ⇒ partial capture; persisted for the arming banner. */
+  readonly deferred: ReadonlyArray<DeferredCaptureClass>;
   /** Envelope metadata for the run. `toolchainHash` is already
    *  resolved from `tools`. */
   readonly analysisMeta: BaselineAnalysisMeta;
@@ -199,31 +203,19 @@ export interface CurrentScan {
 }
 
 /**
- * The ONE conversion from a freshly-gathered `CurrentScan` into a `BaselineFile`
- * (CLAUDE.md Rule 2 — one concept, one code path).
+ * The ONE conversion from a `CurrentScan` into a `BaselineFile` (CLAUDE.md
+ * Rule 2 — one concept, one code path). Both baseline paths use it: the
+ * committed write (`createBaseline`) and the ref-based prior side
+ * (`loadPriorSide` in `check.ts`). Centralized because the two hand-built
+ * constructions DIVERGED — `recall`/`coverage` landed on one and were silently
+ * omitted from the other (both optional, so it compiled), making ref-based mode
+ * read every kind as `absent-from-baseline` drift — the Rule 2.30 shape.
  *
- * Both baseline paths use it: `createBaseline` (the committed write) and the
- * ref-based prior side of the guardrail (`loadPriorSide` in `check.ts`). It is
- * centralized because the two hand-built constructions DIVERGED — `recall` and
- * `coverage` were added to the committed write and silently omitted from the
- * ref-based one (both are optional on `BaselineFile`, so the omission compiled).
- * The consequence was severe and invisible: ref-based mode (the public-repo
- * default, the loop Stop-gate, `evaluate`, the self-guardrail) compared against a
- * prior side with NO recall, so `diffRecall` read every kind as
- * `absent-from-baseline` and reported spurious "cannot attribute" drift on every
- * run — even though both sides were gathered by the same dxkit on the same
- * machine and their recall was, by construction, identical. That is exactly the
- * Rule 2.30 shape: one concept, two code paths, a field lands in one.
- *
- * Now a scan field is mapped in exactly ONE place, so a future addition cannot
- * reach only half the callers. `scripts/check-architecture.sh` bans a second
- * `schemaVersion: BASELINE_SCHEMA_VERSION` object construction outside this
- * function, and `test/baseline/scan-to-baseline.test.ts` asserts every
- * scan-derived field survives the conversion.
- *
- * `findings` is a parameter because the two callers legitimately differ: the
- * committed write persists the allowlist-filtered `live` set; the ref-based prior
- * side keeps the full gathered set. Everything else is scan-derived and shared.
+ * A scan field is now mapped in exactly ONE place. `check-architecture.sh` bans
+ * a second `schemaVersion: BASELINE_SCHEMA_VERSION` construction outside this
+ * function; `test/baseline/scan-to-baseline.test.ts` asserts every scan field
+ * survives. `findings` is a param: the committed write persists the
+ * allowlist-filtered `live` set, the ref-based side keeps the full gathered set.
  */
 export function scanToBaselineFile(
   scan: CurrentScan,
@@ -245,6 +237,8 @@ export function scanToBaselineFile(
     identityScheme: CURRENT_IDENTITY_SCHEME,
     recall: scan.recall,
     coverage: scan.coverage,
+    // Omitted when empty — a complete capture keeps the pre-4.0.2 authoritative shape.
+    ...(scan.deferred.length > 0 ? { deferred: scan.deferred } : {}),
     findings: opts.findings,
   };
 }
@@ -373,10 +367,12 @@ export async function gatherCurrentScan(options: {
     toolchainHash: hashContent(JSON.stringify(tools)),
   };
 
-  // Scanner availability for the active stack. Recorded on the baseline
-  // so a later guardrail check can detect when a category was never
-  // scanned (tool missing) rather than scanned-and-clean.
-  const coverage = coverageFromToolStatuses(checkAllTools(analysisResult.stack.languages, cwd));
+  // Scanner availability for the active stack (so a later check can tell "never
+  // scanned, tool missing" from "scanned and clean"). The same probed statuses
+  // feed the capture-deferral partition — no second probe.
+  const toolStatuses = checkAllTools(analysisResult.stack.languages, cwd);
+  const coverage = coverageFromToolStatuses(toolStatuses);
+  const { deferred } = assessCaptureDeferral(cwd, { statuses: toolStatuses });
 
   return {
     findings,
@@ -386,6 +382,7 @@ export async function gatherCurrentScan(options: {
     tools,
     recall,
     coverage,
+    deferred,
     analysisMeta,
     producerCtx,
   };

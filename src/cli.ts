@@ -2400,12 +2400,18 @@ export async function run(argv: string[]): Promise<void> {
           logger.warn(
             `${missing.length} scanner(s) not detected: ${missing.map((m) => m.tool).join(', ')}`,
           );
-          logger.dim('  Findings in these categories will NOT be captured in the baseline.');
           logger.dim(
-            '  Install with `' + dxkitCli('tools install') + '`, or if a tool IS installed but',
+            '  These classes are recorded as DEFERRED — captured on CI with the guaranteed',
           );
           logger.dim(
-            '  not detected, point dxkit at it via .dxkit/tools.json (ask Claude: "fix dxkit").',
+            '  toolchain, not committed as if measured here. The gate reads them honestly',
+          );
+          logger.dim('  ("completing on CI") until that first CI run lands.');
+          logger.dim(
+            '  Offline: install with `' + dxkitCli('tools install') + '`, or if a tool IS',
+          );
+          logger.dim(
+            '  installed but not detected, point dxkit at it via .dxkit/tools.json ("fix dxkit").',
           );
           // `--force` is an explicit "overwrite, non-interactive, I know
           // what I'm doing" signal — and the shipped baseline-refresh
@@ -2419,18 +2425,21 @@ export async function run(argv: string[]): Promise<void> {
           if (!proceedAnyway && interactive) {
             const readline = await import('node:readline/promises');
             const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-            const answer = (await rl.question('  Capture an INCOMPLETE baseline anyway? [y/N]: '))
+            const answer = (
+              await rl.question('  Capture now and defer these classes to CI? [Y/n]: ')
+            )
               .trim()
               .toLowerCase();
             rl.close();
-            if (!answer.startsWith('y')) {
+            if (answer.startsWith('n')) {
               logger.info('Aborted. Install the missing scanners, then re-run `baseline create`.');
               process.exit(1);
             }
           } else if (!proceedAnyway) {
             logger.fail(
-              'Refusing to write an incomplete baseline non-interactively. ' +
-                'Re-run with --allow-incomplete to proceed, or install the missing scanners.',
+              'Refusing to write a baseline with deferred classes non-interactively. ' +
+                'Re-run with --allow-incomplete to capture-and-defer (the deferred classes ' +
+                'complete on CI), or install the missing scanners first.',
             );
             process.exit(1);
           }
@@ -2527,10 +2536,15 @@ export async function run(argv: string[]): Promise<void> {
             `Anchor on '${outcome.anchorRef}' already matches .dxkit/baselines/ — nothing to publish.`,
           );
         } else {
-          // No origin / rejected push: in the refresh workflow this is a broken
-          // run, not a soft skip — fail loud so CI surfaces it.
-          logger.fail(`Anchor publish did not push: ${publish?.reason ?? 'unknown'}.`);
-          process.exit(1);
+          // Rejected / no-origin push: an INFRASTRUCTURE fact (a ruleset, a
+          // permission), not a broken run — and the guardrail falls back to a
+          // live re-gather when the anchor is absent. So FAIL OPEN (exit 0) but
+          // LOUD, via the ONE announcer both publishers share (Rule 2): a human
+          // warning + a GitHub Actions ::warning:: with the remedy. Exiting 1
+          // here reddened the refresh job on a governed-org main for a condition
+          // dxkit cannot fix and the developer did not cause.
+          const { announceAnchorNotPushed } = await import('./baseline/anchor-publish');
+          announceAnchorNotPushed(outcome.anchorRef ?? 'anchor', publish?.reason);
         }
         break;
       }

@@ -29,6 +29,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
+import * as logger from '../logger';
 import { internalGitPushArgs } from '../git-internal-push';
 
 export interface AnchorFile {
@@ -98,10 +99,49 @@ export function describePushFailure(err: Error, timeoutMs: number): string {
       `timeout points at a stuck network/transport or an unreachable remote rather than auth.`
     );
   }
+  if (
+    /GH013|rule violations|push declined|creations? (is|are|being) restricted|cannot create ref due to|protected branch/i.test(
+      err.message,
+    )
+  ) {
+    // A repository/organization RULESET blocks writing the side ref (restrict
+    // creations / block non-fast-forward). This is an environment fact, not a
+    // dxkit fault or a developer mistake — name the exact remedy. The dxkit-**
+    // side refs are internal anchors, not code branches, so the fix is to exempt
+    // them, never to weaken the rule for real branches.
+    return (
+      `push blocked by a repository/org ruleset — the remote restricts writing this side ref ` +
+      `(branch creation / non-fast-forward). Exclude 'refs/heads/dxkit-**' from that ruleset ` +
+      `(Settings → Rules, at the repo or org), or add a bypass for the CI actor. Gating is ` +
+      `unaffected: the guardrail falls back to a live re-gather when the anchor is absent.`
+    );
+  }
   if (/denied|forbidden|403|not authorized|authentication failed/i.test(err.message)) {
     return `push denied by the remote (authentication/permission): ${err.message}`;
   }
   return `push rejected: ${err.message}`;
+}
+
+/**
+ * The ONE way both side-ref publishers (`baseline publish` and `report
+ * snapshot`) announce a push that did NOT land — Rule 2 applied to the publish
+ * outcome, because the two handlers had diverged: baseline `fail`ed + exited 1
+ * (reddening the refresh job on an infra push-rejection — the exact false-red
+ * that read as "dxkit is broken" on a governed-org main), while reports emitted
+ * a buried `warn` and exited 0 (so a ruleset silently produced no reports ref).
+ *
+ * A rejected side-ref push is INFRASTRUCTURE (a ruleset, a permission, a stale
+ * network), never a code defect or a developer mistake, and the guardrail falls
+ * back to a live re-gather when the anchor is absent — so publishing FAILS OPEN:
+ * the refresh job stays green. But it is LOUD, never silent (the fail-open gate
+ * discipline — CLAUDE.md Rule 19/§3.7.1): a human `warn` plus a GitHub Actions
+ * `::warning::` annotation that surfaces in the run + PR-checks summary, carrying
+ * the reason and its remedy. Callers announce, then exit 0.
+ */
+export function announceAnchorNotPushed(anchorRef: string, reason: string | undefined): void {
+  const why = reason ?? 'unknown';
+  logger.warn(`Anchor '${anchorRef}' not published: ${why}`);
+  logger.ciAnnotate('warning', `dxkit could not publish the '${anchorRef}' side ref: ${why}`);
 }
 
 /**

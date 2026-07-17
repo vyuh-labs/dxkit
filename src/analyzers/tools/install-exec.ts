@@ -18,6 +18,7 @@ import { detect } from '../../detect';
 import { DetectedStack, type Manifest } from '../../types';
 import { serializePreservingJson } from '../../files';
 import { detectPackageManager, pmAwareDevInstall } from '../../package-manager';
+import { diagnoseStaleIndex } from './install-diagnosis';
 import {
   TOOL_DEFS,
   findTool,
@@ -184,7 +185,14 @@ export function execInstall(
   if (resolved.kind === 'builtin') return { status: 'skipped', detail: 'builtin' };
   const def = TOOL_DEFS[resolved.name]!;
   const result = runInstallCmd(resolved.command!, getInstallEnv(targetPath), opts.quiet);
-  if (!result.success) return { status: 'failed', detail: result.message };
+  if (!result.success) {
+    // Problem C (Rule 20): a stale-mirror failure surfaces as pip's
+    // unsatisfiable-requirement wall. Replace it with one legible sentence
+    // naming the root cause + the remedy dxkit already takes (defer to CI).
+    // Only when the signature matches — a genuine failure keeps its raw text.
+    const stale = diagnoseStaleIndex(result.message);
+    return { status: 'failed', detail: stale ? stale.message : result.message };
+  }
   // An install command can legitimately exit 0 without producing the binary —
   // e.g. the vitest-coverage guard no-ops when vitest isn't a target dep. Treat
   // "exit 0 + tool still missing" as a skip, not a failure.

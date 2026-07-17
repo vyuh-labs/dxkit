@@ -23,6 +23,7 @@ import {
 import type { ReportHistoryEntry } from './reports/history';
 import { renderHistoryMarkdown } from './reports/render';
 import { loadPolicyFromCwd, type ReportsPolicy } from './baseline/policy';
+import { announceAnchorNotPushed } from './baseline/anchor-publish';
 import * as logger from './logger';
 
 /** The repo's `policy.json:reports` block (opt-in), via the one policy loader. */
@@ -112,7 +113,13 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   }
 
   const result = publishReportSnapshot({ cwd, anchorRef, entry, artifacts, retainHistory });
+  // A rejected publish is infrastructure, not a failure to red the job — but it
+  // must never be silent (the class that shipped: a ruleset blocked the push,
+  // the workflow went green, and no reports ref ever appeared). Announce it the
+  // ONE way both publishers do, in JSON and human mode alike.
+  const notPushed = !result.publish.pushed && result.publish.reason !== 'no change';
   if (opts.json) {
+    if (notPushed) announceAnchorNotPushed(result.anchorRef, result.publish.reason);
     process.stdout.write(
       JSON.stringify({
         pushed: result.publish.pushed,
@@ -133,7 +140,7 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   } else if (result.publish.reason === 'no change') {
     logger.info('No change since the last snapshot — nothing published.');
   } else {
-    logger.warn(`Snapshot not published: ${result.publish.reason ?? 'unknown'}.`);
+    announceAnchorNotPushed(result.anchorRef, result.publish.reason);
   }
   return 0;
 }
