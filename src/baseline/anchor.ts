@@ -120,6 +120,55 @@ export interface AnchorBranchStatus {
   branchExists: boolean;
 }
 
+/**
+ * The dangerous anchor↔local divergence, pure over the two parsed baseline
+ * payloads (VERIFY-40 F-6): update's migration lanes rewrite the LOCAL file,
+ * but the branch-transport guardrail reads the ANCHOR — a migrated local over
+ * a pre-migration anchor means every check still drifts (or CANNOT GATE)
+ * while `update` and this file both look done. Only the migration-shaped
+ * divergences alarm; ordinary content lag (CI refreshed the anchor after a
+ * merge, the local copy is older) is normal and stays quiet.
+ */
+export function anchorStalenessFromContents(
+  anchor: { identityScheme?: unknown; recall?: unknown } | null,
+  local: { identityScheme?: unknown; recall?: unknown } | null,
+): string | null {
+  if (anchor == null || local == null) return null;
+  if (local.identityScheme && anchor.identityScheme !== local.identityScheme) {
+    return (
+      `the anchor branch holds identity scheme '${String(anchor.identityScheme ?? 'pre-v2')}' ` +
+      `while the local baseline is '${String(local.identityScheme)}'`
+    );
+  }
+  if (local.recall != null && anchor.recall == null) {
+    return 'the anchor branch predates recall attribution while the local baseline carries it';
+  }
+  return null;
+}
+
+/**
+ * IO wrapper over `anchorStalenessFromContents`: reads the side-branch anchor
+ * (when the transport is `branch` and the branch is reachable) and the local
+ * baseline file. `null` on any unreadable side — the presence probe above
+ * covers absence; this probe only speaks when it can actually compare.
+ */
+export function anchorStalenessProblem(
+  cwd: string,
+  baselinePath: string,
+  section: BaselineSection | undefined,
+): string | null {
+  try {
+    const tmp = loadAnchorFromBranch(cwd, baselinePath, section);
+    if (tmp == null || !fs.existsSync(baselinePath)) return null;
+    return anchorStalenessFromContents(
+      JSON.parse(fs.readFileSync(tmp, 'utf8')),
+      JSON.parse(fs.readFileSync(baselinePath, 'utf8')),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Outcome of a `baseline publish`. `ok:false` carries `error` (wrong
  *  transport / nothing captured); a transport failure (no origin, rejected
  *  push) surfaces on `publish.reason` with `ok:true` left false-ish only via

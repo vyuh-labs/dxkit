@@ -9,7 +9,7 @@ import { hostOf, toolchainForBinary, toolchainInstallHint, type ToolchainId } fr
 import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
-import { anchorBranchStatus } from './baseline/anchor';
+import { anchorBranchStatus, anchorStalenessProblem } from './baseline/anchor';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
 import { detectInstalledRefreshTransport, detectDefaultBranch } from './ship-installers';
@@ -544,6 +544,34 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
             },
           }),
     });
+    // 0b. Anchor CONTENT staleness (VERIFY-40 F-6). Presence is not enough:
+    // update's migration lanes rewrite the LOCAL baseline while the guardrail
+    // reads the ANCHOR — a migrated local over a pre-migration anchor keeps
+    // every check drifting while everything above reports green. Only the
+    // migration-shaped divergences alarm (scheme / recall-presence); ordinary
+    // content lag stays quiet.
+    if (anchorStatus.branchExists) {
+      const staleness = anchorStalenessProblem(
+        cwd,
+        path.join(cwd, '.dxkit', 'baselines', 'main.json'),
+        safeLoadPolicy(cwd)?.baseline,
+      );
+      checks.push({
+        label: `baseline anchor branch current (${anchorStatus.anchorRef})`,
+        ok: staleness === null,
+        tier: 'operational',
+        ...(staleness === null
+          ? {}
+          : {
+              fix: {
+                hint:
+                  `${staleness}. The guardrail hydrates its baseline from the anchor branch, ` +
+                  `so the local migration is inert until published.`,
+                command: dxkitCli('baseline publish'),
+              },
+            }),
+      });
+    }
   }
 
   // 1. Hooks active. Two independent conditions must BOTH hold for the

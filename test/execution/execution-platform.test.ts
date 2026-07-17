@@ -337,6 +337,27 @@ describe('classifyEnvironmentFailure (the F-14 post-failure tier)', () => {
     expect(classifyEnvironmentFailure(['dotnet-sdk'], '')).toBeNull();
   });
 
+  it('rust: a missing platform linker is environment, not a finding (VERIFY-40 F-10)', () => {
+    // The exact output cargo emitted on the axum eval repo: rustc present,
+    // no C toolchain — every build script fails before the user's code is
+    // judged. Pre-fix this minted a lint finding AND failed the floor.
+    const CC_MISSING = 'error: linker `cc` not found\n  = note: No such file or directory';
+    const hit = classifyEnvironmentFailure(['rust'], CC_MISSING);
+    expect(hit?.toolchain).toBe('rust');
+    expect(hit?.problem).toContain('linker');
+    expect(hit?.remedy).toContain('build-essential');
+    // windows spelling of the same boundary
+    expect(classifyEnvironmentFailure(['rust'], 'error: linker `link.exe` not found')).toBeTruthy();
+    // crate pinned to a newer rustc
+    expect(
+      classifyEnvironmentFailure(['rust'], 'package `foo v1.0.0` requires rustc 1.99 or newer'),
+    ).toBeTruthy();
+    // a real rust compile error is never reclassified
+    expect(
+      classifyEnvironmentFailure(['rust'], 'error[E0308]: mismatched types\n --> src/main.rs:3:5'),
+    ).toBeNull();
+  });
+
   it('missing-toolchain descriptions name the per-host install (root remedy)', () => {
     const line = describeUnmetRequirement(
       { kind: 'missing-toolchain', toolchains: ['dotnet-sdk'] },

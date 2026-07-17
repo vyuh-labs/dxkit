@@ -2578,17 +2578,30 @@ export async function run(argv: string[]): Promise<void> {
         // host — the generated per-host capture job's command. Default scope
         // is exactly what the primary host cannot observe; --checks overrides.
         const targetPath = resolveRepoPath(positionals[2]);
-        const { captureFragment, writeFragment } = await import('./baseline/fragment');
+        const { captureFragment, writeFragment, FragmentCaptureError } =
+          await import('./baseline/fragment');
         const { loadPolicyFromCwd } = await import('./baseline/policy');
         const checks = (values.checks as string | undefined)
           ?.split(',')
           .map((s) => s.trim())
           .filter(Boolean);
-        const fragment = captureFragment({
-          cwd: targetPath,
-          policy: loadPolicyFromCwd(targetPath),
-          ...(checks ? { checks } : {}),
-        });
+        let fragment;
+        try {
+          fragment = captureFragment({
+            cwd: targetPath,
+            policy: loadPolicyFromCwd(targetPath),
+            ...(checks ? { checks } : {}),
+          });
+        } catch (err) {
+          // A refused capture (unknown check / this environment cannot
+          // observe it) must exit non-zero — a poisoned fragment that merges
+          // "clean" erases the check's real backlog (VERIFY-40 F-12).
+          if (err instanceof FragmentCaptureError) {
+            logger.fail(err.message);
+            process.exit(1);
+          }
+          throw err;
+        }
         const out = (values.out as string | undefined) ?? 'dxkit-baseline-fragment.json';
         writeFragment(out, fragment);
         logger.success(
