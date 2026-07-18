@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.4] - 2026-07-18
+
+The debt-surface UX pass and the v2 audit's extension trust + safety cluster.
+
+### Added
+
+- **`vyuh-dxkit debt --stored`** reads the baseline's recorded floor-debt
+  envelope instantly (no compile/test run), labeled with capture provenance
+  and staleness; live mode announces up front that it runs the build.
+  `baseline create` now says when it recorded failing correctness checks as
+  grandfathered floor debt, and `guardrail check` output carries one
+  informational floor-debt line when the baseline holds failing checks — a
+  PASSED gate on a repo with a broken build stays honest. The dxkit-action
+  skill routes baseline-cleanup asks ("clean up the baseline", "fix the build
+  the baseline grandfathered") and documents the `debt`-driven playbook.
+
 ### Security
 
 - **The plugin-trust boundary is now ACTIVE on the shipped PR workflow.** The
