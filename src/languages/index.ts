@@ -19,6 +19,7 @@ import { typescript } from './typescript';
 import { kotlin } from './kotlin';
 import { java } from './java';
 import { ruby } from './ruby';
+import { swift } from './swift';
 
 export type {
   ArchitecturalShape,
@@ -38,6 +39,7 @@ export const LANGUAGES: readonly LanguageSupport[] = [
   kotlin,
   java,
   ruby,
+  swift,
 ];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {

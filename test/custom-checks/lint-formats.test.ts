@@ -11,6 +11,7 @@ import { parseGolangciJson } from '../../src/languages/go';
 import { parseRubocopJson } from '../../src/languages/ruby';
 import { parseClippyJson } from '../../src/languages/rust';
 import { parseKtlintJson } from '../../src/languages/kotlin';
+import { parseSwiftlintJson } from '../../src/languages/swift';
 import { CSHARP_MSBUILD_WARNING_PARSE } from '../../src/languages/csharp';
 
 /**
@@ -200,6 +201,29 @@ function ktlintSample(file: string): string {
   ]);
 }
 
+const swiftlintParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'swiftlint-json',
+  parse: parseSwiftlintJson,
+};
+
+/** swiftlint `--reporter json` emits ABSOLUTE `file`s (runtime-proven against
+ *  0.65.0 — field names + severity casing match the captured bytes in
+ *  test/fixtures/raw/swift/lint-output.json). */
+function swiftlintSample(file: string): string {
+  return JSON.stringify([
+    {
+      character: 27,
+      file,
+      line: 4,
+      reason: 'Force casts should be avoided',
+      rule_id: 'force_cast',
+      severity: 'Error',
+      type: 'Force Cast',
+    },
+  ]);
+}
+
 const FIXTURES: ReadonlyArray<Fixture> = [
   {
     label: 'eslint --format json (absolute filePath — eslint convention)',
@@ -309,6 +333,25 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     parse: ktlintParse,
     sample: ktlintSample('src/Main.kt'),
     expect: { file: 'src/Main.kt', line: 1, rule: 'standard:no-blank-line-before-rbrace' },
+  },
+  {
+    label: 'swiftlint --reporter json (absolute file — swiftlint convention, runtime-proven)',
+    packId: 'swift',
+    parse: swiftlintParse,
+    sample: swiftlintSample(`${CWD}/Sources/App/BadLint.swift`),
+    expect: {
+      file: 'Sources/App/BadLint.swift',
+      line: 4,
+      rule: 'force_cast',
+      message: 'Force casts should be avoided',
+    },
+  },
+  {
+    label: 'swiftlint --reporter json (relative file)',
+    packId: 'swift',
+    parse: swiftlintParse,
+    sample: swiftlintSample('Sources/App/BadLint.swift'),
+    expect: { file: 'Sources/App/BadLint.swift', line: 4, rule: 'force_cast' },
   },
   {
     label:

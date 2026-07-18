@@ -85,6 +85,9 @@ const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   { stack: 'csharp-svc', flow: { calls: 2 } },
   { stack: 'ruby-svc', flow: { calls: 2 } },
   { stack: 'rust-svc', flow: { calls: 2 } },
+  // No flow row: the swift pack declares no httpFlow (iOS apps consume APIs
+  // through URLSession wrappers a v1 descriptor can't resolve honestly).
+  { stack: 'swift-app' },
 ];
 
 const staged: Record<string, string> = {};

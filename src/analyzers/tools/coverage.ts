@@ -34,7 +34,8 @@ export type CoverageSource =
   | 'cobertura'
   | 'lcov'
   | 'jacoco'
-  | 'simplecov';
+  | 'simplecov'
+  | 'swift';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */

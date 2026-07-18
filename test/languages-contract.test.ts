@@ -77,6 +77,19 @@ const RECALL_VERSION_EXEMPT: Readonly<Record<string, string>> = {
     'which IS hashed here, alongside .editorconfig and Directory.Build.props.',
 };
 
+/**
+ * Packs with NO devcontainer feature surface — with the reason. A feature is
+ * the wrong mechanism when the ecosystem's canonical container story is a
+ * base image; declaring a bogus feature would break container builds.
+ */
+const DEVCONTAINER_FEATURE_EXEMPT: Readonly<Record<string, string>> = {
+  swift:
+    'no swift feature exists in ghcr.io/devcontainers or the community registry (450 features ' +
+    'audited 2026-07, zero swift). The canonical Swift devcontainer is the BASE IMAGE ' +
+    'mcr.microsoft.com/devcontainers/swift, which the per-pack feature mechanism cannot ' +
+    'express. Drop this exemption if a first-party/community feature lands.',
+};
+
 describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) => {
   it('has a non-empty displayName', () => {
     expect(typeof lang.displayName).toBe('string');
@@ -282,9 +295,18 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   });
 
   it('declares `devcontainerFeature` (per-stack feature for installDevcontainer)', () => {
-    // Every shipped pack today has a canonical ghcr.io feature. If a
-    // future pack genuinely has no feature surface, drop this
-    // assertion for that pack and document why.
+    // Every pack has a canonical ghcr.io feature OR a declared exemption
+    // stating why none can exist — a reason, never an omission (the
+    // RECALL_VERSION_EXEMPT discipline applied to the devcontainer surface).
+    const exemption = DEVCONTAINER_FEATURE_EXEMPT[lang.id];
+    if (exemption) {
+      expect(
+        lang.devcontainerFeature,
+        `${lang.id}: declared feature-exempt but has one — drop the exemption`,
+      ).toBeUndefined();
+      expect(exemption.length, `${lang.id}: exemption needs a real reason`).toBeGreaterThan(40);
+      return;
+    }
     expect(
       lang.devcontainerFeature,
       `${lang.id}: missing devcontainerFeature — installDevcontainer would omit this pack's toolchain`,
