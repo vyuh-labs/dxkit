@@ -1,6 +1,6 @@
 ---
 name: dxkit-action
-description: Read a dxkit report and execute fixes — prioritize findings by severity, plan the fix sequence, run the fix, verify the score moved, re-baseline if appropriate. Supports a SCOPED pass to burn down one category at a time (dependency/BOM vulnerabilities, security, code quality, tests, docs). Use when the user says "fix these findings", "act on the health report", "close out these vulnerabilities", "just fix the dependency vulns", "only the security findings", or after dxkit-reports has surfaced something concrete.
+description: Read a dxkit report and execute fixes — prioritize findings by severity, plan the fix sequence, run the fix, verify the score moved, re-baseline if appropriate. Supports a SCOPED pass to burn down one category at a time (dependency/BOM vulnerabilities, security, code quality, tests, docs), and a BASELINE-CLEANUP pass driven by `vyuh-dxkit debt` (the prioritized inventory of grandfathered debt — the broken build / failing tests recorded in the baseline's floor-debt envelope, then findings by severity; fix the build first). Use when the user says "fix these findings", "act on the health report", "close out these vulnerabilities", "just fix the dependency vulns", "only the security findings", "clean up the baseline", "burn down the debt", "fix the build the baseline grandfathered", "pay down the grandfathered findings", or after dxkit-reports / doctor's debt recommendation has surfaced something concrete.
 ---
 
 # dxkit-action
