@@ -656,7 +656,18 @@ export const swift: LanguageSupport = {
   clocLanguageNames: ['Swift'],
 
   detect(cwd) {
-    return hasSpmManifest(cwd) || fileExists(cwd, 'Podfile') || hasXcodeProject(cwd);
+    // Manifest signals first (cheap), then a depth-unlimited source walk —
+    // the kotlin/java pattern. Without the source walk, a bare-source or
+    // lockfile-only checkout reads as "no supported language" and every
+    // disclosure downstream (the CocoaPods UNAUDITED reason included)
+    // silently never fires — the pack must ACTIVATE to be honest.
+    return (
+      hasSpmManifest(cwd) ||
+      fileExists(cwd, 'Podfile') ||
+      fileExists(cwd, 'Podfile.lock') ||
+      hasXcodeProject(cwd) ||
+      walkPaths(cwd, { extensions: ['.swift'] }).length > 0
+    );
   },
 
   tools: ['swiftlint', 'osv-scanner'],
