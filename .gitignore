@@ -38,3 +38,5 @@ test/fixtures/benchmarks/**/bin/
 test/fixtures/benchmarks/**/target/
 test/fixtures/benchmarks/**/coverage.out
 test/fixtures/benchmarks/**/lcov.info
+#   - .build/       → SwiftPM (4.1 floor verification — swift build/test on the analysis fixture)
+test/fixtures/**/.build/

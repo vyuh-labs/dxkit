@@ -32,10 +32,13 @@ cd test/fixtures/benchmarks/swift
 osv-scanner scan source --lockfile Package.resolved --format json \
   > ../../raw/swift/depvulns-output.json
 
-# coverage-output.json — needs the swift toolchain (Linux builds work):
-cd test/fixtures/analysis/swift-app
-swift test --enable-code-coverage
-cp .build/debug/codecov/App.json ../../raw/swift/coverage-output.json
+# coverage-output.json — needs the swift toolchain (Linux builds work).
+# Run from a NEUTRAL directory: llvm-cov filenames are absolute committed
+# bytes (the parser-side test re-anchors them to a fake root).
+cp -r test/fixtures/analysis/swift-app /tmp/dxkit-harvest/swift-app
+cd /tmp/dxkit-harvest/swift-app && swift test --enable-code-coverage
+cp .build/debug/codecov/App.json \
+  <dxkit>/test/fixtures/raw/swift/coverage-output.json
 ```
 
 ## Why committed
