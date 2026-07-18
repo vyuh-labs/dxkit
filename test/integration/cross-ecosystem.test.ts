@@ -92,7 +92,8 @@ interface BenchmarkLanguage {
       | 'dotnet-format'
       | 'detekt'
       | 'pmd'
-      | 'rubocop';
+      | 'rubocop'
+      | 'swiftlint';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -190,6 +191,20 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     lint: { file: 'bad_lint.rb', expectedTool: 'rubocop', requires: 'rubocop' },
     dup: { file: 'duplications.rb' },
     untested: { file: 'untested_module.rb' },
+  },
+  {
+    name: 'Swift',
+    dir: 'swift',
+    secret: { file: path.join('Sources', 'Benchmark', 'Secrets.swift') },
+    // SwiftLint's static Linux binary is self-contained (no Swift
+    // toolchain) — `requires: 'swiftlint'` gates only on the linter itself.
+    lint: {
+      file: path.join('Sources', 'Benchmark', 'BadLint.swift'),
+      expectedTool: 'swiftlint',
+      requires: 'swiftlint',
+    },
+    dup: { file: path.join('Sources', 'Benchmark', 'Duplications.swift') },
+    untested: { file: path.join('Sources', 'Benchmark', 'UntestedModule.swift') },
   },
 ];
 
@@ -571,6 +586,30 @@ describe('cross-ecosystem benchmarks — Ruby', () => {
   );
 });
 
+describe('cross-ecosystem benchmarks — Swift', () => {
+  const fixture = path.join(FIXTURES, 'swift');
+  const hasOsvScanner = commandExists('osv-scanner');
+
+  it.skipIf(!hasOsvScanner)(
+    'osv-scanner surfaces swift-nio@2.39.0 advisories from Package.resolved',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // Swift delegates to the shared osv-scanner-deps.ts gather with
+      // ecosystem='SwiftURL' (package names are repo URLs). Requires
+      // osv-scanner >= 2.4.0 — 2.3.8's Package.resolved extractor emitted an
+      // empty ecosystem and every Swift dep read clean.
+      const swiftFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
+      expect(swiftFindings.length).toBeGreaterThan(0);
+      // swift-nio 2.39.0 carries GHSA-7fj7-39wj-c64f + three later
+      // advisories. Anchor on the package coordinate, which is stable.
+      const nioFindings = swiftFindings.filter((f) => f.package === 'github.com/apple/swift-nio');
+      expect(nioFindings.length).toBeGreaterThan(0);
+      expect(nioFindings[0].installedVersion).toBe('2.39.0');
+    },
+  );
+});
+
 describe('cross-ecosystem benchmarks — Go', () => {
   const fixture = path.join(FIXTURES, 'go');
   const hasGovulncheck = commandExists('govulncheck');
@@ -638,7 +677,13 @@ describe('matrix — secrets (Phase 10i.0.1)', () => {
       expect(secrets.length).toBeGreaterThan(0);
       const aws = secrets.find((f) => f.file.endsWith(secretFile));
       expect(aws, `expected a secret finding on ${secretFile}`).toBeDefined();
-      expect(aws!.tool).toBe('gitleaks');
+      // The grep-secrets fallback may independently flag the same line
+      // (fixture naming that matches its generic-credential patterns —
+      // swift's camelCase `awsAccessKeyId` does); cross-tool dedup then
+      // merges the attribution ('gitleaks, grep-secrets'). Two scanners
+      // agreeing on one leak is the dedup design, not a second finding —
+      // assert gitleaks is among the attributed tools.
+      expect(aws!.tool).toContain('gitleaks');
       expect(aws!.rule).toBe('aws-access-token');
     });
   }
@@ -783,6 +828,7 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
         Kotlin: 'kotlin',
         Java: 'java',
         Ruby: 'ruby',
+        Swift: 'swift',
       };
       const id = idMap[lang.name];
       expect(id, `${lang.name}: missing id mapping in matrix coverage row`).toBeDefined();

@@ -278,6 +278,73 @@ export const TOOLCHAIN_DEFS = {
       windows: 'winget install Gradle.Gradle',
       fallback: 'https://gradle.org/install/',
     },
+    // The Android variant floor (4.1 task #15) runs Debug-variant task names.
+    // If a build lacks them (an unusual AGP setup the flavor probe missed),
+    // that is dxkit's command misfitting the repo — never the developer's
+    // code. Scoped to OUR variant task names so a genuinely misspelled user
+    // task in a custom check stays a real failure.
+    environmentFailurePatterns: [
+      {
+        id: 'gradle-variant-task-missing',
+        pattern: "Task '(compileDebug|testDebug)[A-Za-z]*' not found",
+        problem:
+          "this Android build does not have the default Debug-variant tasks dxkit's floor runs",
+        remedy:
+          "declare the repo's real variant task as a .dxkit/policy.json custom check (e.g. `./gradlew testYourVariantDebugUnitTest`); CI remains the backstop",
+      },
+    ],
+  },
+  swift: {
+    id: 'swift',
+    displayName: 'Swift',
+    binaries: ['swift'],
+    install: {
+      // swiftly is swift.org's official toolchain installer (user-local,
+      // no sudo — installs under ~/.local/share/swiftly).
+      linux:
+        'curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar -xz && ./swiftly init --assume-yes',
+      // The macOS Swift toolchain ships with the Xcode Command Line Tools;
+      // xcodebuild (full Xcode) comes from the App Store.
+      macos: 'xcode-select --install',
+      windows: 'winget install Swift.Toolchain',
+      fallback: 'https://www.swift.org/install/',
+    },
+    // SwiftPM refuses a Package.swift pinned to a newer tools-version than
+    // the installed toolchain — the repo is judged before any user code
+    // compiles. Environment, not a finding.
+    environmentFailurePatterns: [
+      {
+        id: 'swift-tools-version-too-old',
+        pattern:
+          'is using Swift tools version [0-9.]+ but the installed version is|requires a minimum Swift tools version',
+        problem: "the repo's Package.swift requires a newer Swift toolchain than installed",
+        remedy:
+          'install the Swift version Package.swift requires (swiftly: `swiftly install latest`, or https://www.swift.org/install/)',
+      },
+    ],
+  },
+  xcode: {
+    id: 'xcode',
+    displayName: 'Xcode',
+    binaries: ['xcodebuild'],
+    // Xcode is macOS-only and App-Store/developer-portal distributed — no
+    // Linux/Windows install exists BY DESIGN, so those hosts carry only the
+    // fallback URL and placement routes Xcode-needing capabilities to a
+    // macos job instead of naming an impossible install.
+    install: {
+      macos: 'xcode-select --install # Command Line Tools; full Xcode via the App Store',
+      fallback: 'https://developer.apple.com/xcode/',
+    },
+    environmentFailurePatterns: [
+      {
+        id: 'xcode-clt-only',
+        pattern:
+          "requires Xcode|xcode-select: error|tool 'xcodebuild' requires Xcode, but active developer directory",
+        problem: 'xcodebuild needs full Xcode; only the Command Line Tools are selected',
+        remedy:
+          'install Xcode from the App Store, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`',
+      },
+    ],
   },
   ruby: {
     id: 'ruby',
@@ -396,6 +463,9 @@ export function toolchainForBinary(bin: string): ToolchainDef | null {
 /** The install command for a toolchain on a host — the actionable remedy line
  *  renderers surface instead of a raw "not recognized" error. */
 export function toolchainInstallHint(id: ToolchainId, host: ExecutionHost): string {
-  const def = TOOLCHAIN_DEFS[id];
+  // Widen to the interface: an entry may legitimately omit hosts where no
+  // install exists (xcode is macOS-only by design), so index via the
+  // Partial-typed shape rather than the literal union.
+  const def: ToolchainDef = TOOLCHAIN_DEFS[id];
   return def.install[host] ?? def.install.fallback;
 }

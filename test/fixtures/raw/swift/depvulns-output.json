@@ -1,0 +1,372 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "/home/sidc42/projects/dxkit-repo/test/fixtures/benchmarks/swift/Package.resolved",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "github.com/apple/swift-nio",
+            "version": "2.39.0",
+            "ecosystem": "SwiftURL"
+          },
+          "groups": [
+            {
+              "ids": [
+                "GHSA-7fj7-39wj-c64f"
+              ],
+              "aliases": [
+                "CVE-2022-3215",
+                "GHSA-7fj7-39wj-c64f"
+              ],
+              "max_severity": "5.3"
+            },
+            {
+              "ids": [
+                "GHSA-cq87-8r7h-962v"
+              ],
+              "aliases": [
+                "CVE-2026-28970",
+                "GHSA-cq87-8r7h-962v"
+              ],
+              "max_severity": "6.3"
+            },
+            {
+              "ids": [
+                "GHSA-r3rc-9hpw-54v9"
+              ],
+              "aliases": [
+                "CVE-2026-43671",
+                "GHSA-r3rc-9hpw-54v9"
+              ],
+              "max_severity": "8.3"
+            },
+            {
+              "ids": [
+                "GHSA-rj37-6j9x-74q6"
+              ],
+              "aliases": [
+                "CVE-2026-28980",
+                "GHSA-rj37-6j9x-74q6"
+              ],
+              "max_severity": "8.7"
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2023/06/GHSA-7fj7-39wj-c64f/GHSA-7fj7-39wj-c64f.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com/apple/swift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "2.41.0"
+                        },
+                        {
+                          "fixed": "2.42.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2023/06/GHSA-7fj7-39wj-c64f/GHSA-7fj7-39wj-c64f.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com/apple/swift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "2.39.0"
+                        },
+                        {
+                          "fixed": "2.39.1"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2023/06/GHSA-7fj7-39wj-c64f/GHSA-7fj7-39wj-c64f.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com/apple/swift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.29.1"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2022-3215"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-113",
+                  "CWE-74"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2023-06-07T16:01:53Z",
+                "nvd_published_at": "2022-09-28T20:15:00Z",
+                "severity": "MODERATE"
+              },
+              "details": "`NIOHTTP1` and projects using it for generating HTTP responses, including SwiftNIO, can be subject to a HTTP Response Injection attack. This occurs when a HTTP/1.1 server accepts user generated input from an incoming request and reflects it into a HTTP/1.1 response header in some form. A malicious user can add newlines to their input (usually in encoded form) and \"inject\" those newlines into the returned HTTP response.\n\nThis capability allows users to work around security headers and HTTP/1.1 framing headers by injecting entirely false responses or other new headers. The injected false responses may also be treated as the response to subsequent requests, which can lead to XSS, cache poisoning, and a number of other flaws.\n\nThis issue was resolved by adding a default channel handler that polices outbound headers. This channel handler is added by default to channel pipelines, but can be removed by users if they are doing this validation themselves.",
+              "id": "GHSA-7fj7-39wj-c64f",
+              "modified": "2026-07-08T06:28:22.007836654Z",
+              "published": "2023-06-07T16:01:53Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-7fj7-39wj-c64f"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-3215"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/apple/swift-nio/commit/a16e2f54a25b2af217044e5168997009a505930f"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/apple/swift-nio"
+                }
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "SwiftNIO vulnerable to Improper Neutralization of CRLF Sequences in HTTP Headers ('HTTP Response Splitting')"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "last_known_affected_version_range": "\u003c= 2.99.0",
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/06/GHSA-cq87-8r7h-962v/GHSA-cq87-8r7h-962v.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com%2Fapple%2Fswift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "2.0.0"
+                        },
+                        {
+                          "fixed": "2.100.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-28970"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-93"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2026-06-12T15:07:01Z",
+                "nvd_published_at": null,
+                "severity": "MODERATE"
+              },
+              "details": "Programs using swift-nio is vulnerable to HTTP request smuggling and HTTP response splitting attacks, caused by insufficient validation of outbound HTTP/1.1 request and response start line components.\n\nThis vulnerability affects all swift-nio versions from 2.0.0 to 2.99.0. It is fixed in 2.100.0 and later releases.                                                                                         \n                  \nThis vulnerability is caused by the `NIOHTTPRequestHeadersValidator` and `NIOHTTPResponseHeadersValidator` channel handlers only validating header field names and values, while leaving the request URI, request method, and response reason phrase unvalidated. An attacker who can influence the content of these fields — for example by controlling a URL path or a custom HTTP method in a proxy application — can inject CR/LF sequences or other control characters into the HTTP start line. This allows construction of arbitrary additional HTTP requests or responses on the wire, a classic HTTP request smuggling or HTTP response splitting attack.\n\nExploiting this vulnerability requires the attacker to influence the content of outbound HTTP start line fields. In proxy applications that forward attacker-controlled URIs or methods, this is straightforward. For clients, a malicious server that triggers a redirect to a crafted URL could exploit the URI validation gap. For servers, any client that can cause the server to emit a crafted response reason phrase could exploit the response splitting gap.                                                                                                                                          \n                  \nIn vulnerable applications, where attacker controlled data is supplied to these fields, the attack is low-effort: injecting a CRLF sequence into a URI or reason phrase requires only a single crafted request. Successful exploitation can allow an attacker to smuggle additional HTTP requests past intermediaries or split HTTP responses, potentially bypassing WAFs or poisoning web caches. However, most applications are not vulnerable at all.\n                                                                                                                                                                                                            \nThe risk can be mitigated by ensuring that all user-controlled input is sanitized before being used in HTTP start line components. However, this mitigation places the burden on application developers and is error-prone.\n                                                                                                                                                                                                            \nThe issue is fixed by extending `NIOHTTPRequestHeadersValidator` to validate request URIs against the character set defined in RFC 9112 Section 3.2 and RFC 3986 Section 3, and to validate custom HTTP methods against the token grammar defined in RFC 9110. `NIOHTTPResponseHeadersValidator` is extended to validate custom response reason phrases against RFC 9112 Section 4. Applications that use these validator channel handlers — which are installed by default when using `addHTTPClientHandlers()` or `addHTTPServerHandlers()` — will reject invalid outbound messages with an HTTPParserError.invalidHeaderToken error rather than emitting them to the network.\n\nSwiftNIO is grateful to @kuranikaran and @YLChen-007 for their reporting and assistance with the project's process.",
+              "id": "GHSA-cq87-8r7h-962v",
+              "modified": "2026-06-12T15:15:20.180420335Z",
+              "published": "2026-06-12T15:07:01Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/apple/swift-nio"
+                }
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:H/SA:N/E:U",
+                  "type": "CVSS_V4"
+                }
+              ],
+              "summary": "SwiftNIO: CRLF Injection in outbound HTTP request URI via NIOHTTPRequestHeadersValidator"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "last_known_affected_version_range": "\u003c= 2.99.0",
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/06/GHSA-r3rc-9hpw-54v9/GHSA-r3rc-9hpw-54v9.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com%2Fapple%2Fswift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "1.0.0"
+                        },
+                        {
+                          "fixed": "2.100.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-43671"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-787"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2026-06-12T15:07:23Z",
+                "nvd_published_at": null,
+                "severity": "HIGH"
+              },
+              "details": "### Summary\n\nA program using swift-nio is vulnerable to a potential out-of-bounds write when attacker-controlled index or length values exceeding `UInt32.max` are passed to some `ByteBuffer` methods. This affects all swift-nio versions from 1.0.0 to 2.99.0. It is fixed in 2.100.0 and later releases.\n\n### Details\n\n`ByteBuffer` internally stores indices and capacities as `UInt32` values. The internal helper functions `_toIndex` and `_toCapacity`, which convert from `Int` to `UInt32`, used `UInt32(truncatingIfNeeded:)`. On 64-bit platforms, this silently discards the upper 32 bits of the value rather than trapping on overflow. For example, a value of `UInt32.max + 1` (0x100000000) would be truncated to `0`.\n\nThis truncation can cause safety preconditions to pass when they should fail. Subsequent operations would then use the incorrect truncated value, potentially leading to out-of-bounds memory writes or reads.\n\nThe affected `ByteBuffer` methods that may lead to out-of-bounds writes are:\n\n- `copyBytes(at:to:length:)` — a crafted destination index exceeding `UInt32.max` could copy bytes to an incorrect offset.\n- `writeWithUnsafeMutableBytes(minimumWritableBytes:)` — a crafted `minimumWritableBytes` exceeding `UInt32.max` could provide the caller with a buffer pointer of incorrect length, which can easily be subsequently overflowed.\n\nThe affected `ByteBuffer` methods that have logic errors but do neither expose out-of-bounds reads nor out-of-bounds writes:\n\n  - `moveReaderIndex(forwardBy:)` / `moveWriterIndex(forwardBy:)` — a crafted offset exceeding `UInt32.max` could move indices to incorrect positions, bypassing bounds checks. These indices cannot be out of the bounds of the buffer, so they do not expose access to uninitialized memory or produce wild pointers.\n  - The `ByteBuffer(takingOwnershipOf:allocator:)` initialiser — passing a buffer larger than `UInt32.max` bytes could create a `ByteBuffer` with an incorrect capacity.\n\nOutside of these methods, there are still impacts, but they are simply logical bugs. In these cases applications can be forced to read from or write to unexpected parts of the buffer. This does not cause memory-safety issues, but it can cause logical issues or corruption of outbound packets.\n\n### Impact\n\nExploitation requires an attacker to influence the `index`, `offset`, or `length` parameter of the affected `ByteBuffer` methods with a value exceeding `UInt32.max` (approximately 4 GiB). This is a high bar for most applications: attacker-controlled length parameters to ByteBuffer are typically used on the read path, and the above methods are typically not used on the read paths. However, applications that calculate buffer positions arithmetically from untrusted input when attempting to do writes, or that process very large payloads, may be at risk of memory safety issues.\n\nOther applications may encounter logical issues due to reading unexpected bytes, or writing to unexpected parts of the buffer.\n\nWhen the memory-safety issue is exploitable, the consequences are severe. Because `truncatingIfNeeded` silently produces an incorrect but valid `UInt32` value, subsequent operations may write to or read from memory outside the valid buffer region. In optimised (release) builds where preconditions are not checked, this could lead to out-of-bounds memory writes, potentially corrupting adjacent heap memory.\n\nIn debug builds, some of these conditions are caught by assertions, but `truncatingIfNeeded` occurs before the assertion checks the (already-truncated) value, so even assertions may not reliably catch the issue.\n\n### Patches\n\nThe issue is fixed by replacing `UInt32(truncatingIfNeeded:)` with `UInt32(_:)` in the `_toIndex` and `_toCapacity` helper functions. The `UInt32(_:)` initialiser traps on overflow in both debug and release builds, converting a potential silent memory corruption into a deterministic crash.\n\nOne call site in `getSlice(at:length:)` retains `truncatingIfNeeded` because prior bounds checks against the non-truncated `Int` values mathematically guarantee the values fit within `UInt32`.\n\n### Workarounds\n\nApplications can mitigate this issue by validating that all index and length values passed to `ByteBuffer` methods do not exceed `UInt32.max` (4,294,967,295). In practice, most applications are not affected because buffer indices are derived from protocol parsing rather than raw untrusted input.",
+              "id": "GHSA-r3rc-9hpw-54v9",
+              "modified": "2026-06-12T15:15:20.467399805Z",
+              "published": "2026-06-12T15:07:23Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-r3rc-9hpw-54v9"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/apple/swift-nio"
+                }
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:L/VI:H/VA:L/SC:N/SI:N/SA:N",
+                  "type": "CVSS_V4"
+                }
+              ],
+              "summary": "SwiftNIO: Out-of-bounds write via ByteBuffer index and length UInt32 overflow"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "last_known_affected_version_range": "\u003c= 2.99.0",
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/06/GHSA-rj37-6j9x-74q6/GHSA-rj37-6j9x-74q6.json"
+                  },
+                  "package": {
+                    "ecosystem": "SwiftURL",
+                    "name": "github.com/apple/swift-nio",
+                    "purl": "pkg:swift/github.com%2Fapple%2Fswift-nio"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "2.100.0"
+                        }
+                      ],
+                      "type": "SEMVER"
+                    }
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-28980"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-400",
+                  "CWE-770"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2026-06-12T15:07:53Z",
+                "nvd_published_at": null,
+                "severity": "HIGH"
+              },
+              "details": "### Summary\n\nThe `HTTPDecoder` in `NIOHTTP1` enforces no limit on the total size of an HTTP/1 message's header block or on the number of header fields per message. A remote peer can submit an arbitrary number of small, valid headers in a single request and have them all accumulated into the resulting `HTTPHeaders` value before any application code runs. This can be used to exhaust memory, or — for consumers that subsequently convert headers into `swift-http-types`' `HTTPFields` — to crash the process.\n\n### Details\n\n`HTTPDecoder` previously enforced only a single hardcoded parsing limit: 80 KB per individual header field (name + value). There was no cap on the cumulative size of the header block, nor on the number of header fields per message. Because each individual field can remain well below the 80 KB threshold, a peer can submit hundreds of thousands of valid headers in a single request, all of which are appended to the decoded `HTTPHeaders` without bound.\n\nThe headers are then visible to user code through the standard `HTTPServerRequestPart.head` / `HTTPClientResponsePart.head` events. Two observed downstream effects:\n\n  - **Hummingbird 2** (and other consumers that bridge `HTTPHeaders` into `swift-http-types`' `HTTPFields`) crashes via a precondition failure inside `HTTPFields` once the configured field count is exceeded.\n  - **Vapor 4** does not crash, but the per-request memory footprint scales linearly with the number of headers received, allowing a single connection to inflate server memory use substantially.\n  \n### Impact\n\nA single unauthenticated remote peer can trigger a denial of service against any HTTP/1 server (or, in the response direction, any HTTP/1 client) built on `NIOHTTP1` — either by crashing the process, depending on the downstream framework, or by driving the process's resident memory to arbitrary sizes.\n\n### Patches\n\nThis issue is addressed in `swift-nio` 2.100.0 and later.\n\nThe `HTTPDecoder` now applies three parsing limits with conservative defaults, exposed through the new `NIOHTTPDecoderLimitConfiguration` type:\n\n  | Limit | Default |\n  | --- | --- |\n  | `maxHeaderFieldSize` | 80 KB |\n  | `maxHeaderListSize` | 2 MB |\n  | `maxHeaderFieldCount` | 256 |\n\nExceeding any of these limits causes the decoder to fail with `HTTPParserError.headerOverflow`. The configuration can be supplied directly to `HTTPRequestDecoder` / `HTTPResponseDecoder`, or via the `decoderConfiguration` property on `NIOUpgradableHTTPServerPipelineConfiguration` and `NIOUpgradableHTTPClientPipelineConfiguration`.\n\nUsers who require larger limits — for example, applications that legitimately exchange very large header blocks — can opt into them explicitly by constructing a custom `NIOHTTPDecoderLimitConfiguration`.\n\n### Workarounds\n\nUsers unable to upgrade can mitigate by placing a reverse proxy in front of the service that enforces equivalent limits on request header count and total header size.\n\n### Credit\n\nThis issue was reported by @Joannis. SwiftNIO thanks @Joannis for the report and the support in landing the fix.",
+              "id": "GHSA-rj37-6j9x-74q6",
+              "modified": "2026-06-12T15:15:20.672132335Z",
+              "published": "2026-06-12T15:07:53Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-rj37-6j9x-74q6"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/apple/swift-nio"
+                }
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+                  "type": "CVSS_V4"
+                }
+              ],
+              "summary": "SwiftNIO NIOHTTP1:  HTTPDecoder accepts unbounded HTTP/1 header blocks, enabling remote DoS"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "experimental_config": {
+    "licenses": {
+      "summary": false,
+      "allowlist": null
+    }
+  }
+}

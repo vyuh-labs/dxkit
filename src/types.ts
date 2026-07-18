@@ -18,7 +18,8 @@ export type LanguageId =
   | 'csharp'
   | 'kotlin'
   | 'java'
-  | 'ruby';
+  | 'ruby'
+  | 'swift';
 
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {

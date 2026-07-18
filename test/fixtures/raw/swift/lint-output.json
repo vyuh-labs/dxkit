@@ -1,0 +1,29 @@
+[
+  {
+    "character" : 5,
+    "file" : "/tmp/dxkit-harvest/repo/Sources/App/Short.swift",
+    "line" : 1,
+    "reason" : "Variable name 'x' should be between 3 and 40 characters long",
+    "rule_id" : "identifier_name",
+    "severity" : "Error",
+    "type" : "Identifier Name"
+  },
+  {
+    "character" : 27,
+    "file" : "/tmp/dxkit-harvest/repo/Sources/App/BadLint.swift",
+    "line" : 4,
+    "reason" : "Force casts should be avoided",
+    "rule_id" : "force_cast",
+    "severity" : "Error",
+    "type" : "Force Cast"
+  },
+  {
+    "character" : 16,
+    "file" : "/tmp/dxkit-harvest/repo/Sources/App/BadLint.swift",
+    "line" : 5,
+    "reason" : "Force tries should be avoided",
+    "rule_id" : "force_try",
+    "severity" : "Error",
+    "type" : "Force Try"
+  }
+]
