@@ -86,6 +86,45 @@ describe('runCorrectnessFloor', () => {
     expect(r.checks[0].status).toBe('skipped-unavailable');
   });
 
+  it('an unavailable skip CARRIES its reason, and the disclosure surfaces it (T2.4)', async () => {
+    // The android-oculus class: ./gradlew committed without the exec bit
+    // spawned EACCES in 0.2s and read as "kotlin compile failed" with EMPTY
+    // output — an environment problem reported as broken code, undiagnosable
+    // from the gate log. The exec now reports it unavailable WITH the remedy;
+    // the runner must carry that through and the skip disclosure must name it.
+    const reason =
+      './gradlew exists but is not executable — restore the executable bit (chmod +x ./gradlew; committed to git: git update-index --chmod=+x ./gradlew)';
+    const exec: CommandExec = () => ({ available: false, code: -1, output: reason });
+    const r = runCorrectnessFloor({
+      ...base,
+      packs: [pack('kotlin', cmd('compile', './gradlew'), cmd('affected-tests', './gradlew'))],
+      exec,
+    });
+    expect(r.blocks).toBe(false); // infrastructure, never a block
+    expect(r.checks.every((c) => c.status === 'skipped-unavailable')).toBe(true);
+    expect(r.checks[0].output).toBe(reason);
+    const { describeEnvironmentSkips } = await import('../src/analyzers/correctness/run');
+    const lines = describeEnvironmentSkips(r);
+    expect(lines.some((l) => l.includes('not executable'))).toBe(true);
+  });
+
+  it('makeCommandExec: a path-like bin WITHOUT the exec bit is unavailable, resolved vs the command cwd', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-noexec-'));
+    try {
+      writeFileSync(join(dir, 'wrapper'), '#!/bin/sh\necho hi\n'); // mode 644
+      const exec = makeCommandExec();
+      const out = exec({ bin: './wrapper', args: [] }, dir);
+      expect(out.available).toBe(false);
+      expect(out.output).toContain('not executable');
+      expect(out.output).toContain('git update-index --chmod=+x');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('fail-OPEN: a timed-out command is skipped, not failed (a slow suite is not a broken one)', () => {
     const exec: CommandExec = (c) =>
       c.bin === 'vitest'

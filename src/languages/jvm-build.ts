@@ -102,12 +102,29 @@ function isJvmBuildFile(rel: string): boolean {
  * file. Exported so both JVM packs share the one detector.
  */
 export function isAndroidGradleBuild(cwd: string): boolean {
-  for (const rel of [
+  // Root build files (classpath / plugins-block declarations), the version
+  // catalog (modern projects reference the plugin as
+  // `alias(libs.plugins.android.application)` in build files and the
+  // `com.android.application` literal lives ONLY in gradle/libs.versions.toml
+  // — the shape that shipped a false floor run on a real Android repo), and
+  // first-level module build files (`app/build.gradle.kts` declaring the
+  // plugin id directly).
+  const candidates = [
     'build.gradle.kts',
     'build.gradle',
     'settings.gradle.kts',
     'settings.gradle',
-  ]) {
+    'gradle/libs.versions.toml',
+  ];
+  try {
+    for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      candidates.push(`${entry.name}/build.gradle.kts`, `${entry.name}/build.gradle`);
+    }
+  } catch {
+    /* unreadable cwd → root candidates only */
+  }
+  for (const rel of candidates) {
     if (!fileExists(cwd, rel)) continue;
     try {
       if (fs.readFileSync(path.join(cwd, rel), 'utf-8').includes('com.android')) return true;

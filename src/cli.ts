@@ -2895,7 +2895,13 @@ export async function run(argv: string[]): Promise<void> {
         if (outcome.blocks) {
           logger.fail(outcome.summary);
           for (const c of outcome.result?.checks.filter((c) => c.status === 'fail') ?? []) {
-            if (c.output) process.stdout.write(`\n[${c.pack} ${c.label}]\n${c.output}\n`);
+            // Never a bare label: a failure with no captured output is itself
+            // load-bearing information (the command produced nothing before
+            // exiting non-zero) — say so instead of printing nothing, which
+            // made a real onboarding gate failure undiagnosable from CI logs.
+            process.stdout.write(
+              `\n[${c.pack} ${c.label}] (${c.bin})\n${c.output || '(the command exited non-zero without producing any output)'}\n`,
+            );
           }
         } else {
           logger.success(outcome.summary);
