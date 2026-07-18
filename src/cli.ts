@@ -981,6 +981,7 @@ export async function run(argv: string[]): Promise<void> {
         stub: !!values.stub,
         plugin: !!values.plugin,
         land: values.land as string | undefined,
+        scheduled: values.scheduled as string | undefined,
       });
       break;
     }
@@ -1299,7 +1300,14 @@ export async function run(argv: string[]): Promise<void> {
       // `flow` / `flow map` → the traceability map (writes the graph overlay).
       if (subCommand === undefined || subCommand === 'map') {
         const { runFlowMap } = await import('./flow-cli');
-        await runFlowMap({ cwd, frontend, backend, specs, json: !!values.json });
+        await runFlowMap({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          json: !!values.json,
+          untrusted: !!values.untrusted,
+        });
         break;
       }
       // `flow trace "<METHOD> <path>"` → one endpoint's full trace.
@@ -1310,7 +1318,15 @@ export async function run(argv: string[]): Promise<void> {
           process.exit(1);
         }
         const { runFlowTrace } = await import('./flow-cli');
-        await runFlowTrace({ cwd, frontend, backend, specs, json: !!values.json, target });
+        await runFlowTrace({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          json: !!values.json,
+          untrusted: !!values.untrusted,
+          target,
+        });
         break;
       }
       // `flow extract` → the parity CSVs.
@@ -1323,6 +1339,7 @@ export async function run(argv: string[]): Promise<void> {
           specs,
           out: values.out as string | undefined,
           json: !!values.json,
+          untrusted: !!values.untrusted,
         });
         break;
       }
@@ -1339,6 +1356,7 @@ export async function run(argv: string[]): Promise<void> {
           out: values.out as string | undefined,
           noGate: !!values['no-gate'],
           json: !!values.json,
+          untrusted: !!values.untrusted,
         });
         break;
       }

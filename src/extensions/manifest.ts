@@ -204,6 +204,17 @@ function validateManifest(raw: unknown, dirName: string, at: string): string[] {
         'output',
         'must be a repo-relative .json path (no absolute paths, no "..", no leading "-")',
       );
+    } else if (!output.startsWith('.dxkit/')) {
+      // S-06 (4.0.4): the runner OWNS the output file (it may replace it on
+      // every refresh), so it must never be a user file — `package.json`
+      // used to be a legal target and was deleted before each run. dxkit
+      // state lives under `.dxkit/`; the convention is
+      // `.dxkit/contrib/<name>.json`. Every shipped example and fixture
+      // already used it, so the tightening is compat-safe in practice.
+      add(
+        'output',
+        `must live under .dxkit/ (dxkit owns and replaces this file; use .dxkit/contrib/<name>.json) — got ${JSON.stringify(output)}`,
+      );
     }
   } else if (plugin !== undefined) {
     for (const [field, value] of [
