@@ -2,21 +2,25 @@
  * Run the correctness floor for a NON-loop surface (`pre-push` / `ci`).
  *
  * The loop Stop-gate has its own runner (`src/loop/stop-gate.ts`) because it
- * diffs against a cheap entry snapshot to block only on NET-NEW failures. The
- * pre-push and CI surfaces are point-in-time LIVENESS gates instead: they run
- * the floor at the current tree and are fail-CLOSED on the surface's scope.
- * There is no net-new diffing here (that would cost a base-ref worktree run on
- * every push / PR); the entry-snapshot trick is the loop's alone.
+ * diffs against a cheap entry snapshot to block only on NET-NEW failures.
  *
  *   - `pre-push` — AFFECTED scope, changed files computed vs the merge-base with
  *     the integration branch. Runs on the developer's machine where the
  *     toolchain is present, so the floor is meaningful; a per-command timeout
  *     keeps `git push` fast. Blocks the push when the affected tests don't pass.
  *     (It does not distinguish a pre-existing red test in a touched module from
- *     a newly-broken one — that distinction is the loop Stop-gate's job. Bypass
- *     with `--no-verify`.)
- *   - `ci` — FULL scope, no timeout (the full suite is expected to run). The
- *     backstop.
+ *     a newly-broken one — that distinction belongs to the two-sided surfaces.
+ *     Bypass with `--no-verify`.)
+ *   - `ci` — FULL scope, no timeout. DIFF-SCOPED (T2.3): when the current tree
+ *     has failures and a merge-base is resolvable, the floor also runs at the
+ *     base in a throwaway worktree and each failure is ATTRIBUTED through the
+ *     ONE comparator the loop uses (`attributeFloorFailures`): only NET-NEW
+ *     failures block (a PR bundling a breakage with, say, a dxkit install
+ *     still blocks — base green, PR red), pre-existing debt warns by name,
+ *     and a failure whose base side could not be observed is `unattributed`
+ *     (disclosed, never blocked — the Rule 19 law applied to the floor). The
+ *     base side only runs when the current side FAILED, so a green PR pays
+ *     nothing.
  *
  * Both surfaces are ADAPTIVE (`resolveCorrectnessSurface`): when the repo
  * already runs its tests in its own CI, the floor defaults to opt-in here, so
@@ -24,8 +28,10 @@
  */
 
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
-import { detectActiveLanguages } from '../../languages';
+import { detectActiveLanguages, changedFilesTouchDependencyManifest } from '../../languages';
 import type { LanguageSupport } from '../../languages/types';
 import { computeChangedFiles } from '../../baseline/changed-files';
 import {
@@ -35,6 +41,7 @@ import {
   type CommandExec,
   type CorrectnessFloorResult,
 } from './run';
+import { attributeFloorFailures, type AttributedFloorFailure } from './attribution';
 import { resolveCorrectnessSurface } from './surface';
 
 /** The surfaces this runner serves (the loop-stop surface has its own runner). */
@@ -53,6 +60,10 @@ export interface SurfaceFloorOutcome {
   /** One-line human summary for CLI / hook output. */
   readonly summary: string;
   readonly result?: CorrectnessFloorResult;
+  /** Present after a two-sided ci run (T2.3): every current failure with its
+   *  attribution vs the merge-base. Renderers print net-new with full output
+   *  and the non-blocking tiers by name. */
+  readonly attributed?: readonly AttributedFloorFailure[];
 }
 
 /** Best-effort git stdout for a fixed arg vector; '' on any failure. */
@@ -199,5 +210,133 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
     blocks: result.blocks,
     summary: describeCorrectnessFloor(result) + envSuffix,
     result,
+  };
+}
+
+/**
+ * Provision a base-ref worktree well enough for the floor to run (best
+ * effort). Ecosystems with user-level caches (Gradle/Maven, go, cargo, pip)
+ * just work in a fresh worktree; node needs node_modules. When the diff
+ * touched NO dependency manifest (pack-declared patterns — Rule 6), the
+ * current tree's install IS the base's install, so a symlink is sound. When
+ * manifests changed (or the changed set is unknowable) we provision nothing —
+ * affected checks then skip on the base side and their failures come back
+ * `unattributed` (disclosed, non-blocking) rather than resting on a tree the
+ * base never had.
+ */
+function provisionBaseWorktree(
+  cwd: string,
+  worktree: string,
+  baseSha: string,
+  packs: readonly LanguageSupport[],
+): void {
+  const changed = computeChangedFiles(cwd, baseSha);
+  if (changed === null || changedFilesTouchDependencyManifest(changed, packs)) return;
+  const src = path.join(cwd, 'node_modules');
+  const dst = path.join(worktree, 'node_modules');
+  try {
+    if (fs.existsSync(src) && !fs.existsSync(dst)) fs.symlinkSync(src, dst, 'dir');
+  } catch {
+    /* best-effort — an unprovisioned base side degrades to `unattributed` */
+  }
+}
+
+/**
+ * Two-sided attribution for a BLOCKING ci floor outcome (T2.3): run the floor
+ * at the merge-base in a throwaway worktree and re-derive `blocks` from the
+ * ONE comparator — only failures the base side PASSED (net-new) block. Called
+ * only when the current side failed, so a green PR never pays the base run.
+ *
+ * Fail-open discipline: an unresolvable base keeps the point-in-time verdict
+ * (blocking — push-to-default-branch runs have no base and stay the liveness
+ * backstop); a base-side crash attributes every failure `unattributed`
+ * (non-blocking, disclosed) — the developer is never blamed on evidence dxkit
+ * does not have.
+ */
+export async function attributeCiFloorOutcome(
+  outcome: SurfaceFloorOutcome,
+  opts: {
+    readonly cwd: string;
+    readonly base?: string;
+    /** Injected for tests; default real exec / worktree pack detection. */
+    readonly exec?: CommandExec;
+    readonly packs?: readonly LanguageSupport[];
+  },
+): Promise<SurfaceFloorOutcome> {
+  if (outcome.surface !== 'ci' || !outcome.blocks || !outcome.result) return outcome;
+  const baseSha = resolvePrePushBase(opts.cwd, opts.base);
+  if (!baseSha) {
+    return {
+      ...outcome,
+      summary: `${outcome.summary} [no merge-base resolvable — point-in-time verdict]`,
+    };
+  }
+
+  let baseResult: CorrectnessFloorResult | null = null;
+  try {
+    const { withRefWorktree } = await import('../../baseline/ref-baseline');
+    baseResult = await withRefWorktree({ cwd: opts.cwd, ref: baseSha }, async (wt) => {
+      const packs = (opts.packs ?? detectActiveLanguages(wt)).filter((p) => p.correctness);
+      provisionBaseWorktree(opts.cwd, wt, baseSha, packs);
+      return runCorrectnessFloor({
+        cwd: wt,
+        changedFiles: [],
+        scope: 'full',
+        packs,
+        exec: opts.exec,
+      });
+    });
+  } catch {
+    baseResult = null; // base side unobservable → every failure unattributed
+  }
+
+  const baseChecks =
+    baseResult === null
+      ? null
+      : baseResult.checks.map((c) => ({
+          pack: c.pack as string,
+          label: c.label,
+          status:
+            c.status === 'pass' || c.status === 'fail' ? c.status : ('skipped' as const),
+        }));
+  const attributed = attributeFloorFailures(outcome.result, baseChecks, {
+    absentMeans: 'unattributed',
+  });
+  const netNew = attributed.filter((a) => a.attribution === 'net-new');
+  const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
+  const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
+
+  const parts: string[] = [];
+  if (netNew.length > 0) {
+    parts.push(
+      `correctness floor: ${netNew.length} NET-NEW failure(s) vs ${baseSha.slice(0, 12)} — ${netNew
+        .map((a) => `${a.check.pack} ${a.check.label}`)
+        .join(', ')}`,
+    );
+  } else {
+    parts.push(`correctness floor: no net-new failure vs ${baseSha.slice(0, 12)}`);
+  }
+  if (preExisting.length > 0) {
+    parts.push(
+      `${preExisting.length} pre-existing failure(s) also present at the base (not blocked): ${preExisting
+        .map((a) => `${a.check.pack} ${a.check.label}`)
+        .join(', ')}`,
+    );
+  }
+  if (unattributed.length > 0) {
+    parts.push(
+      `${unattributed.length} failure(s) could not be attributed (the base side did not run that check — ${
+        baseResult === null ? 'base floor run failed' : 'toolchain/deps unavailable in the base worktree'
+      }); not blocked, review advised: ${unattributed
+        .map((a) => `${a.check.pack} ${a.check.label}`)
+        .join(', ')}`,
+    );
+  }
+
+  return {
+    ...outcome,
+    blocks: netNew.length > 0,
+    summary: parts.join(' | '),
+    attributed,
   };
 }
