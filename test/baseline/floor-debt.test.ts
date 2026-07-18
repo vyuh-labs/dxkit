@@ -90,7 +90,8 @@ describe('createBaseline floor-debt wiring', () => {
           name: 'fixture',
           version: '1.0.0',
           scripts: {
-            typecheck: 'node -e "console.error(\'TS9999: fixture broken\');process.exit(1)"',
+            // The fixture's fake compiler writing to ITS stderr — not a stray console. // slop-ok
+            typecheck: 'node -e "console.error(\'TS9999: fixture broken\');process.exit(1)"', // slop-ok
           },
         },
         null,
