@@ -128,11 +128,59 @@ describe('buildDebtReport', () => {
     expect(out).toContain('SUGGESTED ORDER');
   });
 
+  it('--stored reads the envelope instantly: no live run, provenance labeled, staleness named (UX)', () => {
+    writeBaseline(
+      dir,
+      {
+        capturedAtCommit: 'basebasebase',
+        capturedAt: '2026-07-16T00:00:00.000Z',
+        checks: [
+          {
+            pack: 'ts',
+            label: 'typecheck',
+            command: 'npx tsc --noEmit',
+            status: 'fail',
+            output: 'boom',
+          },
+          { pack: 'go', label: 'compile', command: 'go build ./...', status: 'pass' },
+        ],
+      },
+      [],
+    );
+    const boom = () => {
+      throw new Error('stored mode must NOT run the live floor');
+    };
+    const r = buildDebtReport(dir, { stored: true, liveFloor: boom });
+    expect(r.floorSource).toBe('stored');
+    // Every recorded failure is by definition baseline debt; nothing is
+    // credited as fixed (we did not look).
+    expect(r.floor.failures.map((f) => f.sinceBaseline)).toEqual(['baseline']);
+    expect(r.floor.fixedSinceBaseline).toEqual([]);
+    const out = renderDebtConsole(r);
+    expect(out).toContain('possibly stale');
+    expect(out).toContain('drop --stored');
+  });
+
   it('no baseline file at all still inventories the live floor and says what is missing', () => {
     const r = buildDebtReport(dir, { liveFloor: () => LIVE });
     expect(r.baselinePresent).toBe(false);
     expect(r.floor.failures.length).toBeGreaterThan(0);
     const out = renderDebtConsole(r);
     expect(out).toContain('baseline create');
+  });
+});
+
+describe('floorDebtNotice (guardrail renderers surface grandfathered floor debt)', () => {
+  it('one line when the baseline carries failing floor checks; silent otherwise', async () => {
+    const { floorDebtNotice } = await import('../src/baseline/check-renderers');
+    expect(
+      floorDebtNotice({
+        floorDebt: {
+          checks: [{ status: 'fail' }, { status: 'fail' }, { status: 'pass' }],
+        },
+      }),
+    ).toContain('2 failing correctness check(s) grandfathered');
+    expect(floorDebtNotice({ floorDebt: { checks: [{ status: 'pass' }] } })).toBeNull();
+    expect(floorDebtNotice({})).toBeNull();
   });
 });
