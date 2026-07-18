@@ -43,7 +43,6 @@
  * producer side was fixed.
  */
 
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { dxkitCli } from '../self-invocation';
@@ -66,7 +65,7 @@ import type { ClassifyContext, ClassifyResult } from './classify';
 import { hydrateAnchorFromBranch, loadAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
 import { type GatherScope, FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from './gather-scope';
-import { computeChangedFiles } from './changed-files';
+import { computeChangedFiles, createChangedLineIndex } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { describeRecallDrift, diffRecall } from './recall';
 import type { RecallDrift } from './recall';
@@ -694,17 +693,14 @@ export async function runGuardrailCheck(
   // hardcoded `buildToolsByKind` silently exclude every kind but five.
   const driftByKind = new Map(envelopeDrift.recallDrift.map((d) => [d.kind, d]));
 
-  const changedLineCache = new Map<string, Set<number>>();
-  const headSha = readHeadSha(cwd);
+  // Changed-line attribution vs the WORKING TREE (canonical index — the
+  // line-granularity sibling of computeChangedFiles, same diff basis). The
+  // scan reads the working tree, so attribution must too: diffing committed
+  // HEAD instead demoted every finding an uncommitted edit introduced.
   const baseSha = baseline.repo.commitSha;
-  const linesChangedFor = (file: string): Set<number> | undefined => {
-    if (!baseSha || !headSha) return undefined;
-    let cached = changedLineCache.get(file);
-    if (cached) return cached;
-    cached = readChangedLineSet(cwd, baseSha, headSha, file);
-    changedLineCache.set(file, cached);
-    return cached;
-  };
+  const changedLineIndex = createChangedLineIndex(cwd, baseSha);
+  const linesChangedFor = (file: string): ReadonlySet<number> | 'all' | null =>
+    changedLineIndex ? changedLineIndex.linesFor(file) : null;
 
   // Load the per-finding allowlist once. An active (unexpired) entry
   // whose fingerprint matches a would-block finding waives the block —
@@ -738,9 +734,13 @@ export async function runGuardrailCheck(
     const file = locatorFile(anchorEntry);
     const line = locatorLine(anchorEntry);
     const locator = describeEntryLocation(anchorEntry);
+    // `null` (attribution unavailable) maps to `undefined` — UNKNOWN must not
+    // demote (classify only demotes on a strict `false`). An untracked file
+    // ('all') overlaps at every line: the whole file is this change's work.
+    const changedInFile = file !== undefined ? linesChangedFor(file) : null;
     const overlapsChangedLines =
-      file !== undefined && line !== undefined && line > 0
-        ? (linesChangedFor(file)?.has(line) ?? false)
+      file !== undefined && line !== undefined && line > 0 && changedInFile !== null
+        ? changedInFile === 'all' || changedInFile.has(line)
         : undefined;
 
     const kindDrift = pair.status === 'added' ? driftByKind.get(anchorEntry.kind) : undefined;
@@ -753,7 +753,8 @@ export async function runGuardrailCheck(
     // so it outranks config_drift (a coincident policy.json edit must not
     // re-label a net-new finding on a new file). Non-empty changed-line set = the
     // file is in the diff (a brand-new file has all its lines added).
-    const fileChangedInDiff = file !== undefined && (linesChangedFor(file)?.size ?? 0) > 0;
+    const fileChangedInDiff =
+      changedInFile !== null && (changedInFile === 'all' || changedInFile.size > 0);
     // Dimension newly measured: the baseline held no findings of this kind, so
     // this one is unmatched because the gate/dimension was just enabled — a
     // truer reason than generic config_drift (gh #157). Reason-only.
@@ -1206,55 +1207,6 @@ function keepUnderChangedOnly(p: ClassifiedPair): boolean {
     p.classification.status === 'newly_detected';
   if (!isNewSide) return true;
   return p.overlapsChangedLines === true;
-}
-
-function readHeadSha(cwd: string): string {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Compute the set of HEAD-side line numbers modified between
- * `baseSha` and `headSha` for `file`. Used by the per-pair
- * `overlapsChangedLines` signal: a current-side finding at line N
- * overlaps the diff iff N is in this set.
- *
- * Walks `git diff --unified=0` hunks. Returns an empty set on any
- * failure (file missing in either revision, git unavailable, etc.).
- */
-function readChangedLineSet(
-  cwd: string,
-  baseSha: string,
-  headSha: string,
-  file: string,
-): Set<number> {
-  const out = new Set<number>();
-  let diff: string;
-  try {
-    diff = execFileSync(
-      'git',
-      ['diff', '--unified=0', '--no-color', '--find-renames', baseSha, headSha, '--', file],
-      { cwd, encoding: 'utf8' },
-    );
-  } catch {
-    return out;
-  }
-  if (!diff.trim()) return out;
-  const hunkRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
-  let match: RegExpExecArray | null;
-  while ((match = hunkRe.exec(diff)) !== null) {
-    const newStart = parseInt(match[1], 10);
-    const newCount = match[2] !== undefined ? parseInt(match[2], 10) : 1;
-    if (newCount === 0) {
-      // Pure-deletion hunk on the new side — no new-side lines.
-      continue;
-    }
-    for (let i = 0; i < newCount; i++) out.add(newStart + i);
-  }
-  return out;
 }
 
 /**

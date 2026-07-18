@@ -61,3 +61,77 @@ export function computeChangedFiles(cwd: string, baseSha: string): ReadonlyArray
     return null; // any failure → full scan (safe default)
   }
 }
+
+/**
+ * Line-granularity sibling of `computeChangedFiles` — the ONE changed-line
+ * attribution the guardrail consults. Both live in this module because they
+ * are two projections of one concept ("what did the working tree change vs
+ * the base?") and MUST share a diff basis: base → WORKING TREE. The scan
+ * reads the working tree, so attribution that diffed committed HEAD instead
+ * demoted every finding an agent's uncommitted edit introduced (the 4.0.3
+ * T1.1 hole).
+ *
+ * Per file, `linesFor` answers one of:
+ *   - a set of working-tree line numbers changed vs base (tracked file);
+ *   - `'all'` — the file is untracked, so every line is new;
+ *   - `null` — attribution failed for this file. Callers must treat `null`
+ *     as UNKNOWN (do not demote), never as "nothing changed": under-reporting
+ *     here is a false negative in a safety gate.
+ */
+export interface ChangedLineIndex {
+  linesFor(file: string): ReadonlySet<number> | 'all' | null;
+}
+
+export function createChangedLineIndex(cwd: string, baseSha: string): ChangedLineIndex | null {
+  if (!baseSha) return null;
+  let untracked: Set<string>;
+  try {
+    untracked = new Set(gitLines(cwd, ['ls-files', '--others', '--exclude-standard']));
+  } catch {
+    return null; // attribution unavailable everywhere → callers see unknown
+  }
+  const cache = new Map<string, ReadonlySet<number> | 'all' | null>();
+  return {
+    linesFor(file: string) {
+      let hit = cache.get(file);
+      if (hit === undefined) {
+        hit = untracked.has(file) ? 'all' : readChangedLineSet(cwd, baseSha, file);
+        cache.set(file, hit);
+      }
+      return hit;
+    },
+  };
+}
+
+/**
+ * Working-tree line numbers modified since `baseSha` for `file`, from
+ * `git diff --unified=0` hunk headers (new-side `+start,count`). One-sided
+ * diff: base → working tree, staged + unstaged. Returns `null` on git
+ * failure (unknown, per the ChangedLineIndex contract).
+ */
+function readChangedLineSet(cwd: string, baseSha: string, file: string): Set<number> | null {
+  let diff: string;
+  try {
+    diff = execFileSync(
+      'git',
+      ['diff', '--unified=0', '--no-color', '--find-renames', baseSha, '--', file],
+      { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+    );
+  } catch {
+    return null;
+  }
+  const out = new Set<number>();
+  if (!diff.trim()) return out;
+  const hunkRe = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
+  let match: RegExpExecArray | null;
+  while ((match = hunkRe.exec(diff)) !== null) {
+    const newStart = parseInt(match[1], 10);
+    const newCount = match[2] !== undefined ? parseInt(match[2], 10) : 1;
+    if (newCount === 0) {
+      // Pure-deletion hunk on the new side — no new-side lines.
+      continue;
+    }
+    for (let i = 0; i < newCount; i++) out.add(newStart + i);
+  }
+  return out;
+}
