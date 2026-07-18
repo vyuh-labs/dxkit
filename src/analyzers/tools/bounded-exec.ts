@@ -52,15 +52,45 @@ export interface RunnableCommand {
  * be wrongly treated as missing and the check skipped (fail-open on a tool that
  * IS present) — so this keeps the fail-open gate honest.
  */
-export function binaryAvailable(bin: string): boolean {
+export function binaryAvailable(bin: string, cwd?: string): boolean {
   if (bin.includes('/') || bin.includes(path.sep)) {
+    // A relative bin (`./gradlew`) is relative to the COMMAND's cwd, not
+    // dxkit's process cwd — the two differ under the Stop-gate and any
+    // multi-repo caller.
+    const resolved = cwd ? path.resolve(cwd, bin) : bin;
     try {
-      return fs.statSync(bin).isFile();
+      if (!fs.statSync(resolved).isFile()) return false;
+      // Present but not RUNNABLE is not available: a committed wrapper
+      // script without the executable bit (`git add gradlew` from Windows)
+      // spawns EACCES in ~0ms, which used to read as "compile failed" with
+      // empty output — an environment problem reported as broken code.
+      fs.accessSync(resolved, fs.constants.X_OK);
+      return true;
     } catch {
       return false;
     }
   }
   return commandExists(bin);
+}
+
+/**
+ * WHY a bin is unavailable, for disclosure (never a silent skip — Rule 20).
+ * Distinguishes the actionable case: the file exists but is not executable,
+ * which has a one-line repo-side remedy.
+ */
+export function explainUnavailable(bin: string, cwd?: string): string {
+  if (bin.includes('/') || bin.includes(path.sep)) {
+    const resolved = cwd ? path.resolve(cwd, bin) : bin;
+    try {
+      if (fs.statSync(resolved).isFile()) {
+        return `${bin} exists but is not executable — restore the executable bit (chmod +x ${bin}; committed to git: git update-index --chmod=+x ${bin})`;
+      }
+    } catch {
+      /* fall through */
+    }
+    return `${bin} not found`;
+  }
+  return `${bin} is not on PATH`;
 }
 
 /** Outcome of running one command:
@@ -104,7 +134,9 @@ const OUTPUT_TAIL = 4000; // display cap — applied by RENDERERS, never at capt
  */
 export function makeCommandExec(timeoutMs?: number): CommandExec {
   return (cmd, cwd) => {
-    if (!binaryAvailable(cmd.bin)) return { available: false, code: -1, output: '' };
+    if (!binaryAvailable(cmd.bin, cwd)) {
+      return { available: false, code: -1, output: explainUnavailable(cmd.bin, cwd) };
+    }
     try {
       const out = execFileSync(cmd.bin, [...cmd.args], {
         cwd,
@@ -139,9 +171,27 @@ export function makeCommandExec(timeoutMs?: number): CommandExec {
       if (err.code === 'ENOBUFS') {
         return { available: true, overflowed: true, code: -1, output: combined };
       }
-      // A non-numeric status (spawn error, non-timeout signal) is treated as a
-      // failure with code 1 — the binary existed (binaryAvailable passed) but the
-      // run broke.
+      // A spawn-level errno (EACCES / ENOENT / EPERM / ENOTDIR — status is not
+      // a number, no signal, and the child produced no output) means the
+      // command never RAN. That is infrastructure, not broken code: fail-OPEN
+      // as unavailable, with the errno named so the skip is disclosed. Without
+      // this, a non-executable ./gradlew "failed the compile" in 0.2s with
+      // empty output on a real onboarding gate.
+      if (
+        typeof err.status !== 'number' &&
+        !err.signal &&
+        typeof err.code === 'string' &&
+        combined === ''
+      ) {
+        return {
+          available: false,
+          code: -1,
+          output: `${err.code}: ${cmd.bin} could not be executed — ${explainUnavailable(cmd.bin, cwd)}`,
+        };
+      }
+      // A non-numeric status otherwise (non-timeout signal) is treated as a
+      // failure with code 1 — the binary existed (binaryAvailable passed), the
+      // run started, and it broke.
       return {
         available: true,
         code: typeof err.status === 'number' ? err.status : 1,

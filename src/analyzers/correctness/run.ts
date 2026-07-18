@@ -66,7 +66,9 @@ export interface CorrectnessCheckResult {
   readonly label: string;
   readonly bin: string;
   readonly status: CorrectnessStatus;
-  /** Captured output tail — present only on `fail`, for the block message. */
+  /** Captured output tail on `fail` (for the block message), or the
+   *  disclosed reason on `skipped-unavailable` (missing binary / wrapper
+   *  not executable — carries the remedy). */
   readonly output?: string;
   /** Present only on `skipped-environment` — the structured unmet-requirement
    *  reason (phrase via `describeUnmetRequirement`). */
@@ -125,7 +127,16 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       if (cmd === null) continue; // pack declined this check for this change
       const outcome = exec(cmd, opts.cwd);
       if (!outcome.available) {
-        checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-unavailable' });
+        checks.push({
+          pack: id,
+          label: cmd.label,
+          bin: cmd.bin,
+          status: 'skipped-unavailable',
+          // WHY it was unavailable (not-on-PATH vs present-but-not-executable
+          // vs spawn errno) — carried so every surface can disclose the skip
+          // with its remedy instead of silently thinning the floor (Rule 20).
+          ...(outcome.output ? { output: outcome.output } : {}),
+        });
         continue;
       }
       if (outcome.timedOut) {
@@ -190,10 +201,18 @@ export function describeCorrectnessFloor(result: CorrectnessFloorResult): string
  *  and the root remedy — never a silent skip (Rule 20). The floor always runs
  *  on the local host, so the local host selects the install hints. */
 export function describeEnvironmentSkips(result: CorrectnessFloorResult): string[] {
-  return result.checks
-    .filter((c) => c.status === 'skipped-environment' && c.unmet)
-    .map(
-      (c) =>
-        `${c.pack} floor not measurable in this environment: ${describeUnmetRequirement(c.unmet as UnmetRequirement, hostOf())}`,
-    );
+  return [
+    ...result.checks
+      .filter((c) => c.status === 'skipped-environment' && c.unmet)
+      .map(
+        (c) =>
+          `${c.pack} floor not measurable in this environment: ${describeUnmetRequirement(c.unmet as UnmetRequirement, hostOf())}`,
+      ),
+    // Unavailable-with-a-reason is the same disclosure obligation: a check
+    // that could not even spawn (binary missing / wrapper not executable)
+    // must be named with its remedy, never silently thin the floor.
+    ...result.checks
+      .filter((c) => c.status === 'skipped-unavailable' && c.output)
+      .map((c) => `${c.pack} ${c.label} skipped: ${c.output}`),
+  ];
 }
