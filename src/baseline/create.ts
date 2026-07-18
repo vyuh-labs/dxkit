@@ -19,8 +19,6 @@
  * registering a producer there, never an edit here.
  */
 
-import { execFileSync } from 'child_process';
-import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { gatherAnalysisResultBody } from '../analyzers/health';
@@ -31,7 +29,6 @@ import { checkAllTools } from '../analyzers/tools/tool-registry';
 import { detect } from '../detect';
 import { coverageFromToolStatuses } from './coverage';
 import type { ScanCoverage } from './coverage';
-import { VERSION as DXKIT_VERSION } from '../constants';
 import { clearToolVersionCache } from './tool-versions';
 export { clearToolVersionCache };
 import {
@@ -44,7 +41,7 @@ import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './ba
 import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
-import { DEFAULT_BROWNFIELD_POLICY, loadPolicyFromCwd } from './policy';
+import { loadPolicyFromCwd } from './policy';
 import {
   customCheckRecallInputs,
   gatherCustomCheckFindings,
@@ -62,6 +59,7 @@ import type { RichBaselineEntry } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { captureFloorDebt, type FloorDebt } from './floor-debt';
+import { hashContent, readRepoState, buildAnalysisMeta } from './envelope-meta';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -115,59 +113,6 @@ export interface CreateBaselineResult {
     readonly allowlisted: number;
     readonly byCategory: Readonly<Record<string, number>>;
   };
-}
-
-/** Hash used for baseline-envelope metadata fields (policy, ignore,
- *  toolchain, config). Distinct concern from finding-identity
- *  fingerprints — these never enter the matcher's identity space. */
-function hashContent(content: string): string {
-  return createHash('sha1').update(content).digest('hex').slice(0, 16); // fingerprint-helper-ok: envelope-metadata hash, not finding identity
-}
-
-/**
- * Read a small file's text content with the canonical "absent → ''"
- * convention. Treating absent files as the empty string keeps the
- * downstream metadata hash stable across runs where the file is
- * still missing.
- */
-function readOptionalFile(filePath: string): string {
-  try {
-    return fs.readFileSync(filePath, 'utf8');
-  } catch {
-    return '';
-  }
-}
-
-/** Resolve the absolute commit SHA + branch name of the working tree.
- *  Empty strings when the directory isn't a git repo — the rest of
- *  the orchestrator works fine, only the git-aware matcher loses its
- *  diff anchor on a future check. */
-function readRepoState(cwd: string): { commitSha: string; branch: string } {
-  const run = (...args: string[]): string => {
-    try {
-      return execFileSync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
-    } catch {
-      return '';
-    }
-  };
-  return {
-    commitSha: run('rev-parse', 'HEAD'),
-    branch: run('rev-parse', '--abbrev-ref', 'HEAD'),
-  };
-}
-
-/** Build the analysis-environment hash bundle from the live repo. */
-function buildAnalysisMeta(cwd: string): BaselineAnalysisMeta {
-  const policyHash = hashContent(JSON.stringify(DEFAULT_BROWNFIELD_POLICY));
-  const ignoreHash = hashContent(readOptionalFile(path.join(cwd, '.dxkit-ignore')));
-  const configHash = hashContent(readOptionalFile(path.join(cwd, '.vyuh-dxkit.json')));
-  // toolchainHash is filled in by `createBaseline` once the
-  // per-tool version map has been resolved (depends on the gather).
-  return { dxkitVersion: DXKIT_VERSION, policyHash, ignoreHash, toolchainHash: '', configHash };
 }
 
 /**

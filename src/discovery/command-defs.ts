@@ -1,6 +1,7 @@
 /** THE command registry data (CLAUDE.md Rule 16) — one descriptor per top-level
  *  CLI command; `commands.ts` re-exports `COMMANDS` + `CommandId` + helpers. */
 import type { CapabilityDescriptor } from './command-types';
+import { INTERNAL_COMMANDS } from './command-defs-internal';
 import {
   recommendConfigure,
   recommendBaseline,
@@ -482,25 +483,7 @@ export const COMMANDS = [
     docsBlurb: 'Render a dxkit JSON report into a 15-column spreadsheet for sharing.',
   },
 
-  // ── Internal (machine-invoked; registered, not user-facing) ────────────
-  {
-    id: 'context-hook',
-    audience: 'internal',
-    group: 'internal',
-    summary: 'Claude Code PreToolUse hook body (graph context injection)',
-  },
-  {
-    id: 'hook',
-    audience: 'internal',
-    group: 'internal',
-    summary: 'Claude Code lifecycle-hook bodies for the loop pack (stop-gate)',
-  },
-  {
-    id: 'floor',
-    audience: 'internal',
-    group: 'internal',
-    summary: 'Correctness-floor plumbing (snapshot / check) for the loop + hooks',
-  },
+  ...INTERNAL_COMMANDS, // machine-invoked partition — command-defs-internal.ts
   {
     id: 'demo',
     audience: 'user',

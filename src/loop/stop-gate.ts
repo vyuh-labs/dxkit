@@ -38,7 +38,6 @@ import {
   type CheckStatus,
   type LedgerEvent,
 } from './ledger';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { dxkitCli } from '../self-invocation';
@@ -55,26 +54,7 @@ import {
   floorLedgerStatuses,
   type FloorGateOutcome,
 } from './floor-gate';
-import { resolveLoopTestCommand } from './policy';
-
-/** Subset of the Claude Code Stop-hook stdin payload we consume. */
-interface StopHookPayload {
-  readonly session_id?: string;
-  readonly cwd?: string;
-  readonly stop_hook_active?: boolean;
-  readonly agent_id?: string;
-  readonly agent_type?: string;
-  /**
-   * Active permission mode, when Claude Code includes it
-   * (`default` | `plan` | `acceptEdits` | `auto` | `dontAsk` |
-   * `bypassPermissions`). `bypassPermissions` is the canonical
-   * unattended/headless mode (`--dangerously-skip-permissions` /
-   * `--permission-mode bypassPermissions`), so it auto-activates the gate.
-   * Not guaranteed present on every event, so the env / sentinel remain the
-   * reliable override for guaranteed gating.
-   */
-  readonly permission_mode?: string;
-}
+import { readStdinPayload, runConfiguredTests, type StopHookPayload } from './stop-gate-io';
 
 /** What the gate decided, before any process I/O. */
 export interface StopGateDecision {
@@ -85,41 +65,6 @@ export interface StopGateDecision {
   readonly message: string;
   /** Ledger event recorded for this decision. */
   readonly event: LedgerEvent;
-}
-
-/** Read and parse the stdin hook payload; {} on any problem. */
-function readStdinPayload(): StopHookPayload {
-  let raw = '';
-  try {
-    raw = fs.readFileSync(0, 'utf8');
-  } catch {
-    return {};
-  }
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw) as StopHookPayload;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Optional configured test command (DXKIT_LOOP_TEST_COMMAND). Runs only
- * after the guardrail passes. Returns the status plus a short failure
- * tail to surface in the block message. `not_configured` when unset.
- */
-function runConfiguredTests(repoDir: string): { status: CheckStatus; tail: string } {
-  const cmd = resolveLoopTestCommand(repoDir);
-  if (!cmd || !cmd.trim()) return { status: 'not_configured', tail: '' };
-  try {
-    execSync(cmd, { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    return { status: 'pass', tail: '' };
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    const out = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim();
-    const tail = out.split('\n').slice(-15).join('\n');
-    return { status: 'fail', tail };
-  }
 }
 
 /**
