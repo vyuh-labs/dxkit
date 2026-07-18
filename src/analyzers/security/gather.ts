@@ -15,7 +15,7 @@ import { enrichEpss, extractCveId } from '../tools/epss';
 import { spanHash, stampFingerprints } from '../tools/fingerprint';
 import { enrichKev } from '../tools/kev';
 import { resolveAliases } from '../tools/osv';
-import { buildReachablePackageSet, markReachable } from '../tools/reachability';
+import { annotateReachability } from '../tools/reachability';
 import { scoreFindings } from '../tools/risk-score';
 import { resolveTransitiveUpgradePlans } from '../tools/upgrade-plan-resolver';
 import { externalToSecurityFindings } from '../../ingest/normalize';
@@ -508,10 +508,7 @@ export async function gatherDepVulns(cwd: string): Promise<DepVulnSummary> {
     const importsProviders = providersFor(IMPORTS);
     if (importsProviders.length > 0) {
       const importsEnvelope = await defaultDispatcher.gather(cwd, IMPORTS, importsProviders);
-      if (importsEnvelope && importsEnvelope.extracted.size > 0) {
-        const reachable = buildReachablePackageSet(importsEnvelope);
-        markReachable(findings, reachable);
-      }
+      annotateReachability(findings, importsEnvelope);
     }
 
     // Cross-pack upgrade-plan resolver (Phase 10h.6.4). Runs after

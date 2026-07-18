@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import { classify, classifyAll } from '../../src/baseline/classify';
 import { verdictWordFrom } from '../../src/baseline/check-renderers';
+import { buildReachableIndex } from '../../src/baseline/check';
 import type { BrownfieldPolicy } from '../../src/baseline/policy';
 import type { ClassifyContext } from '../../src/baseline/classify';
 import type { MatchPair } from '../../src/baseline/types';
@@ -276,10 +277,51 @@ describe('classify — block-rule overrides', () => {
     expect(result2.reasons.some((r) => r.code === 'block-rule')).toBe(false);
   });
 
+  it('rule liveness: the reachable index feeds the exact context the high-reachable rule reads (T1.2)', () => {
+    // The evidence CHAIN, not just the classifier: aggregate finding with
+    // `reachable: true` → buildReachableIndex membership → the
+    // `reachable: true` context field → the armed rule fires under the
+    // security-only shape (empty `block` list, so the generic 'added'
+    // block cannot mask a dead rule — the exact configuration the rule
+    // was structurally dead under when it shipped).
+    const aggregate = {
+      findingsByCategory: {
+        dependency: [
+          { fingerprint: 'aaaa111122223333', package: 'axios', reachable: true },
+          { fingerprint: 'bbbb111122223333', package: 'inert', reachable: false },
+          { package: 'no-fingerprint', reachable: true },
+        ],
+      },
+    } as unknown as Parameters<typeof buildReachableIndex>[0];
+    const index = buildReachableIndex(aggregate);
+    expect(index.has('aaaa111122223333')).toBe(true);
+    expect(index.has('bbbb111122223333')).toBe(false);
+    expect(index.size).toBe(1);
+
+    const securityOnly: BrownfieldPolicy = { ...DEFAULT_BROWNFIELD_POLICY, block: [], warn: [] };
+    const fire = classify(pair('added'), securityOnly, {
+      kind: 'dep-vuln',
+      severity: 'high',
+      reachable: index.has('aaaa111122223333') || undefined,
+    });
+    expect(fire.blocks).toBe(true);
+    expect(
+      fire.reasons.some((r) => r.detail.includes('newHighReachableDependencyVulnerability')),
+    ).toBe(true);
+    // Without the evidence the rule must NOT fire under the same shape.
+    const noEvidence = classify(pair('added'), securityOnly, {
+      kind: 'dep-vuln',
+      severity: 'high',
+    });
+    expect(
+      noEvidence.reasons.some((r) => r.detail.includes('newHighReachableDependencyVulnerability')),
+    ).toBe(false);
+  });
+
   it('blocks a new malicious dependency at ANY severity (the supply-chain rule)', () => {
     // The July 2025 eslint-config-prettier compromise shipped as severity
-    // HIGH — below the critical rule, unreachable by the reachability rule
-    // (never populated on the check path). The malicious rule fires on the
+    // HIGH — below the critical rule, and independent of reachability (a
+    // malicious dep executes at install). The malicious rule fires on the
     // advisory class alone.
     for (const severity of ['high', 'medium', 'low'] as const) {
       const ctx: ClassifyContext = { kind: 'dep-vuln', severity, malicious: true };

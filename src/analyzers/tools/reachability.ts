@@ -100,3 +100,21 @@ export function markReachable(findings: DepVulnFinding[], reachable: ReadonlySet
     f.reachable = reachable.has(f.package);
   }
 }
+
+/**
+ * The ONE reachability-annotation entry point (Rule 2): given an
+ * already-gathered IMPORTS envelope, mark every finding. Consumed by
+ * BOTH the standalone enriched scan (`gatherDepVulns`, which dispatches
+ * IMPORTS itself) and the guardrail/health path (which reuses the
+ * envelope its own scope.imports gather produced). An absent or empty
+ * envelope leaves `reachable` UNSET on every finding — "reachability
+ * unknown", never mass-`false` (an unknown must not disarm the
+ * high-reachable block rule's evidence, nor fabricate it).
+ */
+export function annotateReachability(
+  findings: DepVulnFinding[],
+  imports: ImportsResult | null | undefined,
+): void {
+  if (!imports || imports.extracted.size === 0) return;
+  markReachable(findings, buildReachablePackageSet(imports));
+}

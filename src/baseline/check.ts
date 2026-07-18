@@ -682,6 +682,7 @@ export async function runGuardrailCheck(
   const currentById = indexById(current.findings);
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
+  const reachableByCurrentId = buildReachableIndex(current.aggregate);
   const envelopeDrift = diffEnvelopes(baseline, current);
 
   // Per-kind recall attribution (Rule 19) drives the per-pair `recallDrifted`
@@ -762,6 +763,8 @@ export async function runGuardrailCheck(
 
     const malicious =
       pair.currentId !== undefined && maliciousByCurrentId.has(pair.currentId) ? true : undefined;
+    const reachable =
+      pair.currentId !== undefined && reachableByCurrentId.has(pair.currentId) ? true : undefined;
 
     const context: ClassifyContext = {
       severity,
@@ -774,6 +777,7 @@ export async function runGuardrailCheck(
       ...(kindAbsentFromBaseline ? { kindAbsentFromBaseline: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(malicious ? { malicious } : {}),
+      ...(reachable ? { reachable } : {}),
     };
 
     // `classify` is kind-agnostic; fold in the custom-check block INTENT (a
@@ -995,6 +999,25 @@ function buildMaliciousIndex(aggregate: SecurityAggregate): Set<FindingId> {
   const out = new Set<FindingId>();
   for (const f of aggregate.findingsByCategory.dependency) {
     if (f.fingerprint && isMaliciousAdvisory(f)) out.add(f.fingerprint);
+  }
+  return out;
+}
+
+/**
+ * Fingerprints of current-scan dependency findings the import graph marks
+ * REACHABLE — the `newHighReachableDependencyVulnerability` block rule's
+ * evidence. Mirror of `buildMaliciousIndex` (current side only, same
+ * rationale). `f.reachable` is annotated by the ONE entry point
+ * (`annotateReachability`) on both the standalone and the guardrail
+ * gather paths; when reachability was not computed (no imports gathered)
+ * the field is unset and the index stays empty — the rule then simply
+ * has no evidence, it never fabricates `false` or `true` (T1.2).
+ * Exported for the rule-liveness test.
+ */
+export function buildReachableIndex(aggregate: SecurityAggregate): Set<FindingId> {
+  const out = new Set<FindingId>();
+  for (const f of aggregate.findingsByCategory.dependency) {
+    if (f.fingerprint && f.reachable === true) out.add(f.fingerprint);
   }
   return out;
 }

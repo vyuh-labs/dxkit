@@ -39,7 +39,7 @@
  * gain the matching analyzer here or a real finding could be skipped — the
  * scope contract test pins this.
  */
-import type { BrownfieldPolicy } from './policy';
+import type { BrownfieldPolicy, BrownfieldBlockRules } from './policy';
 
 /**
  * One boolean per skippable analyzer. `true` = run it. The names mirror the
@@ -141,28 +141,6 @@ export function scopeSignature(s: GatherScope): string {
     .join('+');
 }
 
-/**
- * Derive the minimal gather scope a policy needs.
- *
- * The verdict can only be changed by a kind the policy BLOCKS, so the scope
- * tracks `evaluateBlockRules` (in `./policy.ts`) one-to-one:
- *
- *   newSecret                              → secrets
- *   newCriticalSecurity / newHighSecurity  → codePatterns
- *   newCritical/HighReachableDependency…   → depVulns
- *   newUntestedChangedSource               → testGaps
- *   newSevereQualityIssueInChangedFiles    → codePatterns + hygiene
- *
- * A non-empty `policy.block` list (statuses that block regardless of kind,
- * e.g. `full-debt`'s `['added']`) means any kind can block, so we cannot
- * skip anything → `FULL_SCOPE`.
- *
- * NB: `newHighReachableDependencyVulnerability` needs reachability, which the
- * guardrail's classifier never populates today (`context.reachable` is unset
- * on the check path), so it cannot actually fire — but we still scope in
- * `depVulns` for it so the mapping stays a faithful, future-proof mirror of
- * the rule table rather than relying on that downstream gap.
- */
 /** The finding kinds a ref-based diff structurally excludes, mapped to the
  *  scope flags of the analyzers that produce them. `secret-hmac` is absent
  *  deliberately: it is a companion output of the secrets analyzer, which
@@ -206,25 +184,59 @@ export function scopeForRefBasedDiff(scope: GatherScope): {
   return { scope: Object.freeze(next), skippedKinds: skipped };
 }
 
+/**
+ * The evidence each block rule needs, declared once (T1.2 class fix).
+ *
+ * A block rule is only alive when EVERY analyzer producing its evidence
+ * actually runs. The shipped bug: `newHighReachableDependencyVulnerability`
+ * was armed in both presets, scoped in `depVulns` — and was still
+ * structurally dead, because its reachability evidence comes from the
+ * IMPORTS gather, which the hand-maintained if-chain here never pulled in
+ * (and the check path never threaded). The rule table and the scope
+ * mapping were two projections of one concept in two places (Rule 2.30).
+ *
+ * This table is the ONE declaration. `scopeForPolicy` derives from it, and
+ * the `Record` over `keyof BrownfieldBlockRules` makes omission a COMPILE
+ * error: a new block rule cannot land without declaring which analyzers
+ * produce its evidence. `test/baseline/gather-scope.test.ts` additionally
+ * pins per-rule scope derivation both directions (armed ⇒ scoped,
+ * un-armed ⇒ not scoped).
+ */
+export const BLOCK_RULE_EVIDENCE: Record<
+  keyof BrownfieldBlockRules,
+  ReadonlyArray<keyof GatherScope>
+> = Object.freeze({
+  newSecret: ['secrets'],
+  newCriticalSecurity: ['codePatterns'],
+  newHighSecurity: ['codePatterns'],
+  newCriticalDependencyVulnerability: ['depVulns'],
+  // Reachability evidence = the import graph. Without `imports` the
+  // classifier can never see `reachable === true` and the rule is dead.
+  newHighReachableDependencyVulnerability: ['depVulns', 'imports'],
+  newMaliciousDependency: ['depVulns'],
+  newUntestedChangedSource: ['testGaps'],
+  newSevereQualityIssueInChangedFiles: ['codePatterns', 'hygiene'],
+});
+
+/**
+ * Derive the minimal gather scope a policy needs.
+ *
+ * The verdict can only be changed by a kind the policy BLOCKS, so the scope
+ * is the union of `BLOCK_RULE_EVIDENCE[rule]` over the armed rules.
+ *
+ * A non-empty `policy.block` list (statuses that block regardless of kind,
+ * e.g. `full-debt`'s `['added']`) means any kind can block, so we cannot
+ * skip anything → `FULL_SCOPE`.
+ */
 export function scopeForPolicy(policy: BrownfieldPolicy): GatherScope {
   // Any status-based block applies across all kinds — nothing is safe to skip.
   if (policy.block.length > 0) return FULL_SCOPE;
 
   const r = policy.blockRules;
   const scope = { ...EMPTY_SCOPE };
-  if (r.newSecret) scope.secrets = true;
-  if (r.newCriticalSecurity || r.newHighSecurity) scope.codePatterns = true;
-  if (
-    r.newCriticalDependencyVulnerability ||
-    r.newHighReachableDependencyVulnerability ||
-    r.newMaliciousDependency
-  ) {
-    scope.depVulns = true;
-  }
-  if (r.newUntestedChangedSource) scope.testGaps = true;
-  if (r.newSevereQualityIssueInChangedFiles) {
-    scope.codePatterns = true;
-    scope.hygiene = true;
+  for (const rule of Object.keys(BLOCK_RULE_EVIDENCE) as Array<keyof BrownfieldBlockRules>) {
+    if (!r[rule]) continue;
+    for (const flag of BLOCK_RULE_EVIDENCE[rule]) scope[flag] = true;
   }
   // Custom checks gate via their own per-check `blocking` flag, not a status in
   // `policy.block`, so scope them in whenever the repo configured any — else the
