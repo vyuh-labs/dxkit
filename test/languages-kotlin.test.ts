@@ -328,10 +328,21 @@ describe('kotlin.correctness (shared JVM floor)', () => {
     expect(kotlin.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
   });
 
-  it('declines entirely on an Android Gradle build', () => {
+  it('runs Debug-variant commands on a plain Android Gradle build (4.1 task #15)', () => {
     fs.writeFileSync(
       path.join(tmp, 'build.gradle.kts'),
       'plugins { id("com.android.application") }\n',
+    );
+    expect(kotlin.correctness!.syntaxCheck(ctx())?.args).toEqual(['compileDebugKotlin']);
+    expect(kotlin.correctness!.affectedTests(ctx({ changedFiles: [] }))?.args).toEqual([
+      'testDebugUnitTest',
+    ]);
+  });
+
+  it('still declines on a FLAVORED Android build (flavor-qualified task names)', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'build.gradle.kts'),
+      'plugins { id("com.android.application") }\nandroid { productFlavors { create("free") {} } }\n',
     );
     expect(kotlin.correctness!.syntaxCheck(ctx())).toBeNull();
     expect(kotlin.correctness!.affectedTests(ctx())).toBeNull();

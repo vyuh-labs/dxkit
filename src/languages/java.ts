@@ -8,7 +8,7 @@ import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-d
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import { isAndroidGradleBuild, jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
+import { jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
@@ -434,13 +434,14 @@ const javaDepVulnsProvider: DepVulnsProvider = {
 // ─── Correctness floor (Maven/Gradle compile + module-affected tests) ──────
 //
 // Shared with the kotlin pack via `jvmCorrectnessProvider` (CLAUDE.md Rule 2) —
-// both run on Maven/Gradle with the module as the affected unit. Java's only
-// contribution is its source extension. An Android Gradle build declines (its
-// variant-specific test tasks aren't the standard `test`/`testClasses`).
+// both run on Maven/Gradle with the module as the affected unit. Java
+// contributes its source extension + its Android default-variant compile task
+// (4.1 task #15: a plain Android build runs Debug-variant commands; flavored
+// builds still decline — see `androidGradleShape`).
 
 const javaCorrectnessProvider = jvmCorrectnessProvider({
   sourceExtensions: ['.java'],
-  declineWhen: isAndroidGradleBuild,
+  androidCompileTask: 'compileDebugJavaWithJavac',
 });
 
 // ─── Pack export ────────────────────────────────────────────────────────────

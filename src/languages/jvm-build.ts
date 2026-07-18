@@ -93,22 +93,30 @@ function isJvmBuildFile(rel: string): boolean {
 }
 
 /**
- * Is this an Android Gradle build? The Android Gradle Plugin replaces the
- * standard `test` / `testClasses` lifecycle tasks with variant-specific ones
+ * The Android shape of a Gradle build. The Android Gradle Plugin replaces the
+ * standard `test` / `testClasses` lifecycle tasks with VARIANT-specific ones
  * (`testDebugUnitTest`, `compileDebugKotlin`, …), so the plain commands this
- * module builds don't apply — an Android project should decline the floor and
- * let CI (which knows the variant) backstop, rather than false-fail on a
- * "task not found". Cheap signal: the `com.android.*` plugin in a root build
- * file. Exported so both JVM packs share the one detector.
+ * module builds don't apply to an Android project. Three answers:
+ *
+ *   - `'none'`      — not Android; the standard commands apply.
+ *   - `'plain'`     — Android with the default variant set (every AGP project
+ *                     has a `debug` variant unless product flavors qualify the
+ *                     task names) → the floor runs the Debug-variant tasks
+ *                     (4.1, task #15 — replaces the blanket decline that left
+ *                     Android repos floor-less out of the box).
+ *   - `'flavored'`  — Android WITH product flavors: variant tasks are
+ *                     flavor-qualified (`compileFreeDebugKotlin`) and a bare
+ *                     Debug task does not exist, so a hardcoded task would
+ *                     false-fail. The floor declines (disclosed) and the repo
+ *                     closes the gap with a Rule-17 custom check naming its
+ *                     variant; CI backstops.
+ *
+ * Cheap signals: the `com.android.*` plugin marker for Android-ness (root
+ * build files, the version catalog — where modern `alias(libs.plugins.…)`
+ * projects keep the only literal — and first-level module build files), and
+ * `productFlavors` / `flavorDimensions` in the same files for flavors.
  */
-export function isAndroidGradleBuild(cwd: string): boolean {
-  // Root build files (classpath / plugins-block declarations), the version
-  // catalog (modern projects reference the plugin as
-  // `alias(libs.plugins.android.application)` in build files and the
-  // `com.android.application` literal lives ONLY in gradle/libs.versions.toml
-  // — the shape that shipped a false floor run on a real Android repo), and
-  // first-level module build files (`app/build.gradle.kts` declaring the
-  // plugin id directly).
+export function androidGradleShape(cwd: string): 'none' | 'plain' | 'flavored' {
   const candidates = [
     'build.gradle.kts',
     'build.gradle',
@@ -124,15 +132,25 @@ export function isAndroidGradleBuild(cwd: string): boolean {
   } catch {
     /* unreadable cwd → root candidates only */
   }
+  let android = false;
+  let flavored = false;
   for (const rel of candidates) {
     if (!fileExists(cwd, rel)) continue;
     try {
-      if (fs.readFileSync(path.join(cwd, rel), 'utf-8').includes('com.android')) return true;
+      const content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+      if (content.includes('com.android')) android = true;
+      if (/productFlavors|flavorDimensions/.test(content)) flavored = true;
     } catch {
       /* ignore unreadable */
     }
   }
-  return false;
+  if (!android) return 'none';
+  return flavored ? 'flavored' : 'plain';
+}
+
+/** Back-compat boolean form of `androidGradleShape`. */
+export function isAndroidGradleBuild(cwd: string): boolean {
+  return androidGradleShape(cwd) !== 'none';
 }
 
 /**
@@ -236,49 +254,85 @@ export function jvmBuildExecution(cwd: string): ExecutionRequirement {
   };
 }
 
+/** The Android default-variant unit-test task, shared by both JVM packs (the
+ *  variant's unit-test run compiles every source set it needs, so it is also
+ *  the honest test command for mixed Kotlin+Java modules). */
+const ANDROID_TEST_TASK = 'testDebugUnitTest';
+
 export interface JvmCorrectnessOptions {
   /** Extensions that count as a relevant source change (`.java`, `.kt`/`.kts`). */
   readonly sourceExtensions: readonly string[];
-  /** Optional escape hatch: decline the floor entirely when true (e.g. an
-   *  Android Gradle build, whose variant-specific `testDebugUnitTest` tasks the
-   *  standard `test`/`testClasses` commands don't cover — CI backstops). */
-  readonly declineWhen?: (cwd: string) => boolean;
+  /**
+   * The pack's Android default-variant COMPILE task (`compileDebugKotlin` /
+   * `compileDebugJavaWithJavac`) — the variant-aware `testClasses` analog.
+   * Task #15 (4.1): a plain (unflavored) Android Gradle build runs
+   * Debug-variant commands instead of the pre-4.1 blanket decline; a
+   * flavored build still declines (its task names are flavor-qualified —
+   * a Rule-17 custom check naming the variant closes the gap, CI backstops).
+   */
+  readonly androidCompileTask: string;
 }
 
 /**
  * Build a `CorrectnessProvider` for a JVM language pack. Shared by the Java and
  * Kotlin packs (CLAUDE.md Rule 2) — the two differ only in which extensions mark
- * a relevant change and whether an Android build should decline.
+ * a relevant change and which Android variant compile task is theirs.
  */
 export function jvmCorrectnessProvider(opts: JvmCorrectnessOptions): CorrectnessProvider {
   const isSource = (f: string): boolean => opts.sourceExtensions.some((e) => f.endsWith(e));
+
+  /** The build + Android shape, folded to "what commands apply here":
+   *  null build → no floor; flavored Android → decline (null); plain Android
+   *  → variant tasks; plain JVM → standard tasks. */
+  function resolveBuild(cwd: string): { build: JvmBuild; android: boolean } | null {
+    const build = detectJvmBuild(cwd);
+    if (!build) return null;
+    const shape = build.system === 'gradle' ? androidGradleShape(cwd) : 'none';
+    if (shape === 'flavored') return null;
+    return { build, android: shape === 'plain' };
+  }
 
   return {
     execution: jvmBuildExecution,
 
     syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
-      if (opts.declineWhen?.(ctx.cwd)) return null;
-      const build = detectJvmBuild(ctx.cwd);
-      if (!build) return null;
-      return compileCommand(build);
+      const resolved = resolveBuild(ctx.cwd);
+      if (!resolved) return null;
+      if (resolved.android) {
+        return { label: 'compile', bin: resolved.build.bin, args: [opts.androidCompileTask] };
+      }
+      return compileCommand(resolved.build);
     },
 
     affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
-      if (opts.declineWhen?.(ctx.cwd)) return null;
-      const build = detectJvmBuild(ctx.cwd);
-      if (!build) return null;
+      const resolved = resolveBuild(ctx.cwd);
+      if (!resolved) return null;
+      const { build, android } = resolved;
+      const fullCommand = android
+        ? { label: 'affected-tests', bin: build.bin, args: [ANDROID_TEST_TASK] }
+        : testCommandFull(build);
 
       const undeterminable = ctx.changedFiles.length === 0;
-      if (ctx.scope !== 'affected' || undeterminable) return testCommandFull(build);
+      if (ctx.scope !== 'affected' || undeterminable) return fullCommand;
 
       const changedSources = ctx.changedFiles.filter(isSource);
       if (changedSources.length === 0) return null; // no relevant source change → skip
       // A build-descriptor change can affect any module — don't narrow.
-      if (ctx.changedFiles.some(isJvmBuildFile)) return testCommandFull(build);
+      if (ctx.changedFiles.some(isJvmBuildFile)) return fullCommand;
 
       const mods = jvmChangedModules(ctx.cwd, changedSources, MODULE_MANIFESTS[build.system]);
-      if (mods && mods.length > 0) return testCommandForModules(build, mods);
-      return testCommandFull(build); // single-module / unattributable → whole build
+      if (mods && mods.length > 0) {
+        if (android) {
+          // Gradle project path per changed module, variant task qualified:
+          // `app` → `:app:testDebugUnitTest`.
+          const tasks = mods.map(
+            (d) => `:${d.replace(/\\/g, '/').split('/').join(':')}:${ANDROID_TEST_TASK}`,
+          );
+          return { label: 'affected-tests', bin: build.bin, args: tasks };
+        }
+        return testCommandForModules(build, mods);
+      }
+      return fullCommand; // single-module / unattributable → whole build
     },
   };
 }
