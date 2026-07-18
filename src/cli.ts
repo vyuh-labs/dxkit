@@ -440,6 +440,7 @@ export async function run(argv: string[]): Promise<void> {
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
       'no-floor': { type: 'boolean' },
+      'report-md': { type: 'string' },
       'keep-baselines': { type: 'boolean', default: false },
       'remove-devdep': { type: 'boolean', default: false },
       'no-feedback': { type: 'boolean', default: false },
@@ -2911,6 +2912,35 @@ export async function run(argv: string[]): Promise<void> {
           cwd: targetPath,
           base: values.base as string | undefined,
         });
+      }
+      // LOUD DISCLOSURE (never silent-in-a-log): a failing floor — even a
+      // pre-existing, non-blocking one — must reach the surfaces reviewers
+      // actually look at. One builder feeds all three: the PR comment (the
+      // workflow passes --report-md with the report file it posts), GitHub
+      // check annotations, and the run's step summary. A green floor emits
+      // nothing.
+      {
+        const { floorDisclosureMarkdown, githubAnnotations } =
+          await import('./analyzers/correctness/floor-disclosure');
+        const noise = floorDisclosureMarkdown(outcome);
+        const reportMd = values['report-md'] as string | undefined;
+        if (noise && reportMd) {
+          try {
+            fs.appendFileSync(reportMd, `\n${noise}\n`, 'utf8');
+          } catch {
+            /* best-effort: the annotations + summary below still fire */
+          }
+        }
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          for (const a of githubAnnotations(outcome)) process.stdout.write(`${a}\n`);
+          if (noise && process.env.GITHUB_STEP_SUMMARY) {
+            try {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${noise}\n`, 'utf8');
+            } catch {
+              /* best-effort */
+            }
+          }
+        }
       }
       if (values.json) {
         await emitJson({

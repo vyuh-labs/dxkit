@@ -29,6 +29,13 @@ fix what the baseline grandfathered.
   Informational — always exits 0; the gates do the blocking, and they hold
   the ratchet: a fixed floor check regresses as net-new and blocks, no
   re-baseline needed.
+- **A failing build is loud in the PR, even when it is pre-existing.** The
+  diff-scoped CI floor never lets "warn" mean "a line in a green check's log":
+  one disclosure builder feeds the PR comment (a broken base branch gets an
+  explicit approver call-out — "approving merges onto a broken build" — with
+  reproduction commands and output), GitHub check annotations
+  (`::error` for net-new, `::warning` for pre-existing/unattributed), and the
+  workflow step summary. A green floor emits nothing.
 - **`baseline create` records the floor-debt envelope** (`floorDebt` on the
   baseline file): the full-scope correctness floor at capture time, bounded
   per-check, details included. Never consulted by the gate verdict (a failing
