@@ -296,8 +296,7 @@ export async function attributeCiFloorOutcome(
       : baseResult.checks.map((c) => ({
           pack: c.pack as string,
           label: c.label,
-          status:
-            c.status === 'pass' || c.status === 'fail' ? c.status : ('skipped' as const),
+          status: c.status === 'pass' || c.status === 'fail' ? c.status : ('skipped' as const),
         }));
   const attributed = attributeFloorFailures(outcome.result, baseChecks, {
     absentMeans: 'unattributed',
@@ -326,7 +325,9 @@ export async function attributeCiFloorOutcome(
   if (unattributed.length > 0) {
     parts.push(
       `${unattributed.length} failure(s) could not be attributed (the base side did not run that check — ${
-        baseResult === null ? 'base floor run failed' : 'toolchain/deps unavailable in the base worktree'
+        baseResult === null
+          ? 'base floor run failed'
+          : 'toolchain/deps unavailable in the base worktree'
       }); not blocked, review advised: ${unattributed
         .map((a) => `${a.check.pack} ${a.check.label}`)
         .join(', ')}`,

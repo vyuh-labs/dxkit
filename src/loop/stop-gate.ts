@@ -385,7 +385,11 @@ export async function runStopGate(cwd: string): Promise<void> {
   // observer (dxkit / policy / test command / scanner binaries) must MISS,
   // or a scanner upgrade between sessions replays a stale ALLOW.
   const envSignature = signature
-    ? environmentSignature(repoDir, { preset, policy, modes: { flowMode, schemaMode, duplicationMode } })
+    ? environmentSignature(repoDir, {
+        preset,
+        policy,
+        modes: { flowMode, schemaMode, duplicationMode },
+      })
     : null;
   const agentFields = {
     ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
