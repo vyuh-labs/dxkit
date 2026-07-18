@@ -333,6 +333,7 @@ across those environments. See the execution-environment notes in
 | Java     | `pom.xml`, `src/main/java/`, `*.java`     | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹        | PMD, osv-scanner (Maven)            | ✅ PMD priority tiers  | ✅ osv-scanner + OSV.dev (Maven)              |
 | Ruby     | `*.rb`                                    | ✅ SimpleCov JSON   | ⚠️ require/require_relative, extracted only¹ | rubocop, bundler-audit, osv-scanner | ✅ rubocop severity    | ✅ bundler-audit + osv-scanner (Gemfile.lock) |
 | Swift    | `Package.swift`, `Podfile`, `*.xcodeproj` | ✅ llvm-cov JSON    | ✅ SwiftPM target dirs                       | swiftlint, osv-scanner (SwiftURL)   | ✅ SwiftLint rule tier | ✅ osv-scanner + OSV.dev (Package.resolved)³  |
+| PHP      | `composer.json`, `*.php`                  | ✅ PHPUnit clover   | ⚠️ use/require, extracted only¹              | phpcs, osv-scanner (Packagist)      | ✅ phpcs sniff tier    | ✅ osv-scanner + OSV.dev (composer.lock)      |
 
 ¹ Rust, C#, Kotlin, Java, and Ruby populate `imports.extracted` but the
 file-level resolver is a no-op. Downstream analyses that need an edge graph

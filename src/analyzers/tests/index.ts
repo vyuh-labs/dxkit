@@ -184,6 +184,8 @@ function coverageSourceLabel(source: CoverageSource, file?: string): string {
       return `from ${file ?? 'coverage/.resultset.json'}`;
     case 'swift':
       return `from ${file ?? '.build/debug/codecov (llvm-cov export)'}`;
+    case 'php-clover':
+      return `from ${file ?? 'clover.xml (PHPUnit)'}`;
   }
 }
 

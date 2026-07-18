@@ -132,6 +132,14 @@ jobs:
           install -m 0755 /tmp/swiftlint/swiftlint-static ~/.local/bin/swiftlint
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Install phpcs # lint (4.1) — phar on the runner's preinstalled php
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSfL -o ~/.local/bin/phpcs \
+            https://github.com/PHPCSStandards/PHP_CodeSniffer/releases/download/4.0.1/phpcs.phar
+          chmod a+x ~/.local/bin/phpcs
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Typecheck
         run: npm run typecheck
 

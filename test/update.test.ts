@@ -122,6 +122,7 @@ describe('resolveInstallFlags + writeInstallFlags: manifest persistence', () => 
         java: false,
         ruby: false,
         swift: false,
+        php: false,
       },
       infrastructure: { docker: false, postgres: false, redis: false },
       projectName: 'test',

@@ -181,6 +181,7 @@ _EXT_TO_PACK = {
     '.java': 'java',
     '.rb': 'ruby',
     '.swift': 'swift',
+    '.php': 'php',
 }
 
 # Reliability tier per pack (mirrors LanguageSupport declarations).
@@ -188,7 +189,7 @@ _EXT_TO_PACK = {
 _PACK_RELIABILITY = {
     'typescript': 'full', 'python': 'partial', 'go': 'full',
     'rust': 'full', 'csharp': 'full', 'kotlin': 'full',
-    'java': 'full', 'ruby': 'unreliable', 'swift': 'full',
+    'java': 'full', 'ruby': 'unreliable', 'swift': 'full', 'php': 'full',
 }
 
 # File-line cache so each source file is read at most once during
@@ -253,6 +254,9 @@ def _detect_exported(source_file, line_no, name):
     if pack == 'swift':
         # Swift is internal-by-default; \`public\` / \`open\` marks API surface.
         return bool(_re.search(r'\\b(public|open)\\b', line))
+    if pack == 'php':
+        # PHP: public-by-default unless an explicit narrower modifier.
+        return not bool(_re.search(r'\\b(private|protected)\\b', line))
     return None
 
 def _parse_line_no(node_attrs):

@@ -12,6 +12,7 @@ import { parseRubocopJson } from '../../src/languages/ruby';
 import { parseClippyJson } from '../../src/languages/rust';
 import { parseKtlintJson } from '../../src/languages/kotlin';
 import { parseSwiftlintJson } from '../../src/languages/swift';
+import { parsePhpcsJson } from '../../src/languages/php';
 import { CSHARP_MSBUILD_WARNING_PARSE } from '../../src/languages/csharp';
 
 /**
@@ -224,6 +225,38 @@ function swiftlintSample(file: string): string {
   ]);
 }
 
+const phpcsParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'phpcs-json',
+  parse: parsePhpcsJson,
+};
+
+/** phpcs `--report=json` keys files by ABSOLUTE path (runtime-proven against
+ *  4.0.1 — field names match the captured bytes in
+ *  test/fixtures/raw/php/lint-output.json). */
+function phpcsSample(file: string): string {
+  return JSON.stringify({
+    totals: { errors: 1, warnings: 0, fixable: 1 },
+    files: {
+      [file]: {
+        errors: 1,
+        warnings: 0,
+        messages: [
+          {
+            message: 'Opening brace should be on a new line',
+            source: 'Squiz.Functions.MultiLineFunctionDeclaration.BraceOnSameLine',
+            severity: 5,
+            fixable: true,
+            type: 'ERROR',
+            line: 5,
+            column: 25,
+          },
+        ],
+      },
+    },
+  });
+}
+
 const FIXTURES: ReadonlyArray<Fixture> = [
   {
     label: 'eslint --format json (absolute filePath — eslint convention)',
@@ -352,6 +385,29 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     parse: swiftlintParse,
     sample: swiftlintSample('Sources/App/BadLint.swift'),
     expect: { file: 'Sources/App/BadLint.swift', line: 4, rule: 'force_cast' },
+  },
+  {
+    label: 'phpcs --report=json (absolute file key — phpcs convention, runtime-proven)',
+    packId: 'php',
+    parse: phpcsParse,
+    sample: phpcsSample(`${CWD}/src/bad_lint.php`),
+    expect: {
+      file: 'src/bad_lint.php',
+      line: 5,
+      rule: 'Squiz.Functions.MultiLineFunctionDeclaration.BraceOnSameLine',
+      message: 'Opening brace should be on a new line',
+    },
+  },
+  {
+    label: 'phpcs --report=json (relative file key)',
+    packId: 'php',
+    parse: phpcsParse,
+    sample: phpcsSample('src/bad_lint.php'),
+    expect: {
+      file: 'src/bad_lint.php',
+      line: 5,
+      rule: 'Squiz.Functions.MultiLineFunctionDeclaration.BraceOnSameLine',
+    },
   },
   {
     label:

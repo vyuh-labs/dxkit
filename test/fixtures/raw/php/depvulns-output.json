@@ -1,0 +1,1647 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "/home/sidc42/projects/dxkit-repo/test/fixtures/benchmarks/php/composer.lock",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "guzzlehttp/guzzle",
+            "version": "7.4.0",
+            "ecosystem": "Packagist"
+          },
+          "groups": [
+            {
+              "ids": [
+                "GHSA-25mq-v84q-4j7r"
+              ],
+              "aliases": [
+                "CVE-2022-31090",
+                "GHSA-25mq-v84q-4j7r"
+              ],
+              "max_severity": "7.7"
+            },
+            {
+              "ids": [
+                "GHSA-cwmx-hcrq-mhc3"
+              ],
+              "aliases": [
+                "BIT-drupal-2022-29248",
+                "CVE-2022-29248",
+                "DRUPAL-CORE-2022-010",
+                "GHSA-cwmx-hcrq-mhc3"
+              ],
+              "max_severity": "8.0"
+            },
+            {
+              "ids": [
+                "GHSA-cwxw-98qj-8qjx"
+              ],
+              "aliases": [
+                "CVE-2026-55767",
+                "GHSA-cwxw-98qj-8qjx"
+              ],
+              "max_severity": "5.8"
+            },
+            {
+              "ids": [
+                "GHSA-f2wf-25xc-69c9",
+                "GHSA-w248-ffj2-4v5q"
+              ],
+              "aliases": [
+                "BIT-drupal-2022-31042",
+                "BIT-drupal-2022-31043",
+                "CVE-2022-31042",
+                "CVE-2022-31043",
+                "DRUPAL-CORE-2022-011",
+                "GHSA-f2wf-25xc-69c9",
+                "GHSA-w248-ffj2-4v5q"
+              ],
+              "max_severity": "7.5"
+            },
+            {
+              "ids": [
+                "GHSA-q559-8m2m-g699"
+              ],
+              "aliases": [
+                "CVE-2022-31091",
+                "GHSA-q559-8m2m-g699"
+              ],
+              "max_severity": "7.7"
+            },
+            {
+              "ids": [
+                "GHSA-wpwq-4j6v-78m3"
+              ],
+              "aliases": [
+                "CVE-2026-55568",
+                "GHSA-wpwq-4j6v-78m3"
+              ],
+              "max_severity": "5.9"
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-25mq-v84q-4j7r/GHSA-25mq-v84q-4j7r.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "6.5.8"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.0-rc.1",
+                    "4.0.0-rc.2",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6",
+                    "6.5.7",
+                    "v1.0.3",
+                    "v1.0.4",
+                    "v2.0.0",
+                    "v2.0.1",
+                    "v2.0.2",
+                    "v2.0.3",
+                    "v2.0.4",
+                    "v2.0.5",
+                    "v2.1.0",
+                    "v2.1.1",
+                    "v2.1.2",
+                    "v2.1.3",
+                    "v2.1.4",
+                    "v2.2.0",
+                    "v2.2.1",
+                    "v2.2.2",
+                    "v2.2.3",
+                    "v2.2.4",
+                    "v2.3.2",
+                    "v2.4.0",
+                    "v2.4.1",
+                    "v2.5.0",
+                    "v2.6.0",
+                    "v2.6.1",
+                    "v2.6.2",
+                    "v2.6.3",
+                    "v2.6.4",
+                    "v2.6.5",
+                    "v2.6.6",
+                    "v2.7.0",
+                    "v2.7.1",
+                    "v2.7.2",
+                    "v2.8.0",
+                    "v2.8.1",
+                    "v2.8.2",
+                    "v2.8.3",
+                    "v2.8.4",
+                    "v2.8.5",
+                    "v2.8.6",
+                    "v2.8.7",
+                    "v2.8.8",
+                    "v3.0.0",
+                    "v3.0.1",
+                    "v3.0.2",
+                    "v3.0.3",
+                    "v3.0.4",
+                    "v3.0.5",
+                    "v3.0.6",
+                    "v3.0.7",
+                    "v3.1.0",
+                    "v3.1.1",
+                    "v3.1.2",
+                    "v3.2.0",
+                    "v3.3.0",
+                    "v3.3.1",
+                    "v3.4.0",
+                    "v3.4.1",
+                    "v3.4.2",
+                    "v3.4.3",
+                    "v3.5.0",
+                    "v3.6.0",
+                    "v3.7.0",
+                    "v3.7.1",
+                    "v3.7.2",
+                    "v3.7.3",
+                    "v3.7.4",
+                    "v3.8.0",
+                    "v3.8.1"
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-25mq-v84q-4j7r/GHSA-25mq-v84q-4j7r.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "7.0.0"
+                        },
+                        {
+                          "fixed": "7.4.5"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "7.0.0",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3",
+                    "7.4.4"
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2022-31090"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-200",
+                  "CWE-212"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-06-21T16:57:10Z",
+                "nvd_published_at": "2022-06-27T22:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "### Impact\n\n`Authorization` headers on requests are sensitive information. When using our Curl handler, it is possible to use the `CURLOPT_HTTPAUTH` option to specify an `Authorization` header. On making a request which responds with a redirect to a URI with a different origin, if we choose to follow it, we should remove the `CURLOPT_HTTPAUTH` and `CURLOPT_USERPWD` options before continuing, stopping curl from appending the `Authorization` header to the new request. Previously, we would only consider a change in host. Now, we consider any change in host, port or scheme to be a change in origin.\n\n### Patches\n\nAffected Guzzle 7 users should upgrade to Guzzle 7.4.5 as soon as possible. Affected users using any earlier series of Guzzle should upgrade to Guzzle 6.5.8 or 7.4.5. Note that a partial fix was implemented in Guzzle 7.4.2, where a change in host would trigger removal of the curl-added Authorization header, however this earlier fix did not cover change in scheme or change in port.\n\n### Workarounds\n\nIf you do not require or expect redirects to be followed, one should simply disable redirects all together. Alternatively, one can specify to use the Guzzle stream handler backend, rather than curl.\n\n### References\n\n* [RFC9110 Section 15.4](https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx)\n* [CVE-2022-27776](https://curl.se/docs/CVE-2022-27776.html)\n\n### For more information\n\nIf you have any questions or comments about this advisory, please get in touch with us in `#guzzle` on the [PHP HTTP Slack](https://php-http.slack.com/). Do not report additional security advisories in that public channel, however - please follow our [vulnerability reporting process](https://github.com/guzzle/guzzle/security/policy).\n",
+              "id": "GHSA-25mq-v84q-4j7r",
+              "modified": "2024-02-16T08:21:48.242166Z",
+              "published": "2022-06-21T16:57:10Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-25mq-v84q-4j7r"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-31090"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/commit/1dd98b0564cb3f6bd16ce683cb755f94c10fbd82"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/FriendsOfPHP/security-advisories/blob/master/guzzlehttp/guzzle/CVE-2022-31090.yaml"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/blob/6.5.8/CHANGELOG.md"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/blob/7.4.5/CHANGELOG.md"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://security.gentoo.org/glsa/202305-24"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.debian.org/security/2022/dsa-5246"
+                }
+              ],
+              "schema_version": "1.7.3",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:N/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "CURLOPT_HTTPAUTH option not cleared on change of origin"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/05/GHSA-cwmx-hcrq-mhc3/GHSA-cwmx-hcrq-mhc3.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "6.5.6"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.0-rc.1",
+                    "4.0.0-rc.2",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "v1.0.3",
+                    "v1.0.4",
+                    "v2.0.0",
+                    "v2.0.1",
+                    "v2.0.2",
+                    "v2.0.3",
+                    "v2.0.4",
+                    "v2.0.5",
+                    "v2.1.0",
+                    "v2.1.1",
+                    "v2.1.2",
+                    "v2.1.3",
+                    "v2.1.4",
+                    "v2.2.0",
+                    "v2.2.1",
+                    "v2.2.2",
+                    "v2.2.3",
+                    "v2.2.4",
+                    "v2.3.2",
+                    "v2.4.0",
+                    "v2.4.1",
+                    "v2.5.0",
+                    "v2.6.0",
+                    "v2.6.1",
+                    "v2.6.2",
+                    "v2.6.3",
+                    "v2.6.4",
+                    "v2.6.5",
+                    "v2.6.6",
+                    "v2.7.0",
+                    "v2.7.1",
+                    "v2.7.2",
+                    "v2.8.0",
+                    "v2.8.1",
+                    "v2.8.2",
+                    "v2.8.3",
+                    "v2.8.4",
+                    "v2.8.5",
+                    "v2.8.6",
+                    "v2.8.7",
+                    "v2.8.8",
+                    "v3.0.0",
+                    "v3.0.1",
+                    "v3.0.2",
+                    "v3.0.3",
+                    "v3.0.4",
+                    "v3.0.5",
+                    "v3.0.6",
+                    "v3.0.7",
+                    "v3.1.0",
+                    "v3.1.1",
+                    "v3.1.2",
+                    "v3.2.0",
+                    "v3.3.0",
+                    "v3.3.1",
+                    "v3.4.0",
+                    "v3.4.1",
+                    "v3.4.2",
+                    "v3.4.3",
+                    "v3.5.0",
+                    "v3.6.0",
+                    "v3.7.0",
+                    "v3.7.1",
+                    "v3.7.2",
+                    "v3.7.3",
+                    "v3.7.4",
+                    "v3.8.0",
+                    "v3.8.1"
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/05/GHSA-cwmx-hcrq-mhc3/GHSA-cwmx-hcrq-mhc3.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "7.0.0"
+                        },
+                        {
+                          "fixed": "7.4.3"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "7.0.0",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2"
+                  ]
+                }
+              ],
+              "aliases": [
+                "BIT-drupal-2022-29248",
+                "CVE-2022-29248",
+                "DRUPAL-CORE-2022-010"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-200",
+                  "CWE-565"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-05-25T18:09:55Z",
+                "nvd_published_at": "2022-05-25T18:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "### Impact\n\nPrevious version of Guzzle contain a vulnerability with the cookie middleware. The vulnerability is that it is not checked if the cookie domain equals the domain of the server which sets the cookie via the `Set-Cookie` header, allowing a malicious server to set cookies for unrelated domains. For example an attacker at `www.example.com` might set a session cookie for `api.example.net`, logging the Guzzle client into their account and retrieving private API requests from the security log of their account.\n\nNote that our cookie middleware is disabled by default, so most library consumers will not be affected by this issue. Only those who manually add the cookie middleware to the handler stack or construct the client with `['cookies' =\u003e true]` are affected. Moreover, those who do not use the same Guzzle client to call multiple domains and have disabled redirect forwarding are not affected by this vulnerability.\n\n### Patches\n\nAffected Guzzle 7 users should upgrade to Guzzle 7.4.3 as soon as possible. Affected users using any earlier series of Guzzle should upgrade to Guzzle 6.5.6 or 7.4.3.\n\n### Workarounds\n\nIf you do not need support for cookies, turn off the cookie middleware. It is already off by default, but if you have turned it on and no longer need it, turn it off.\n\n### References\n\n* [RFC6265 Section 5.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.3)\n* [RFC9110 Section 15.4](https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx)\n\n### For more information\n\nIf you have any questions or comments about this advisory, please get in touch with us in `#guzzle` on the [PHP HTTP Slack](https://php-http.slack.com/). Do not report additional security advisories in that public channel, however - please follow our [vulnerability reporting process](https://github.com/guzzle/guzzle/security/policy).\n",
+              "id": "GHSA-cwmx-hcrq-mhc3",
+              "modified": "2025-12-10T23:41:02.272273Z",
+              "published": "2022-05-25T18:09:55Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-cwmx-hcrq-mhc3"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-29248"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/pull/3018"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/commit/74a8602c6faec9ef74b7a9391ac82c5e65b1cdab"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/FriendsOfPHP/security-advisories/blob/master/guzzlehttp/guzzle/CVE-2022-29248.yaml"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.debian.org/security/2022/dsa-5246"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.drupal.org/sa-core-2022-010"
+                }
+              ],
+              "schema_version": "1.7.3",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:H/I:H/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "Cross-domain cookie leakage in Guzzle"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/06/GHSA-cwxw-98qj-8qjx/GHSA-cwxw-98qj-8qjx.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp%2Fguzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "7.12.1"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.0-rc.1",
+                    "4.0.0-rc.2",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6",
+                    "6.5.7",
+                    "6.5.8",
+                    "7.0.0",
+                    "7.0.0-beta.1",
+                    "7.0.0-beta.2",
+                    "7.0.0-rc.1",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.10.0",
+                    "7.10.1",
+                    "7.10.2",
+                    "7.10.3",
+                    "7.10.4",
+                    "7.10.5",
+                    "7.10.6",
+                    "7.11.0",
+                    "7.11.1",
+                    "7.11.2",
+                    "7.12.0",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3",
+                    "7.4.4",
+                    "7.4.5",
+                    "7.5.0",
+                    "7.5.1",
+                    "7.5.2",
+                    "7.5.3",
+                    "7.6.0",
+                    "7.6.1",
+                    "7.7.0",
+                    "7.7.1",
+                    "7.8.0",
+                    "7.8.1",
+                    "7.8.2",
+                    "7.9.0",
+                    "7.9.1",
+                    "7.9.2",
+                    "7.9.3",
+                    "v1.0.3",
+                    "v1.0.4",
+                    "v2.0.0",
+                    "v2.0.1",
+                    "v2.0.2",
+                    "v2.0.3",
+                    "v2.0.4",
+                    "v2.0.5",
+                    "v2.1.0",
+                    "v2.1.1",
+                    "v2.1.2",
+                    "v2.1.3",
+                    "v2.1.4",
+                    "v2.2.0",
+                    "v2.2.1",
+                    "v2.2.2",
+                    "v2.2.3",
+                    "v2.2.4",
+                    "v2.3.2",
+                    "v2.4.0",
+                    "v2.4.1",
+                    "v2.5.0",
+                    "v2.6.0",
+                    "v2.6.1",
+                    "v2.6.2",
+                    "v2.6.3",
+                    "v2.6.4",
+                    "v2.6.5",
+                    "v2.6.6",
+                    "v2.7.0",
+                    "v2.7.1",
+                    "v2.7.2",
+                    "v2.8.0",
+                    "v2.8.1",
+                    "v2.8.2",
+                    "v2.8.3",
+                    "v2.8.4",
+                    "v2.8.5",
+                    "v2.8.6",
+                    "v2.8.7",
+                    "v2.8.8",
+                    "v3.0.0",
+                    "v3.0.1",
+                    "v3.0.2",
+                    "v3.0.3",
+                    "v3.0.4",
+                    "v3.0.5",
+                    "v3.0.6",
+                    "v3.0.7",
+                    "v3.1.0",
+                    "v3.1.1",
+                    "v3.1.2",
+                    "v3.2.0",
+                    "v3.3.0",
+                    "v3.3.1",
+                    "v3.4.0",
+                    "v3.4.1",
+                    "v3.4.2",
+                    "v3.4.3",
+                    "v3.5.0",
+                    "v3.6.0",
+                    "v3.7.0",
+                    "v3.7.1",
+                    "v3.7.2",
+                    "v3.7.3",
+                    "v3.7.4",
+                    "v3.8.0",
+                    "v3.8.1"
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-55767"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-1286",
+                  "CWE-346"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2026-06-19T14:37:29Z",
+                "nvd_published_at": null,
+                "severity": "MODERATE"
+              },
+              "details": "### Impact\n\n`CookieJar` incorrectly accepts cookies with a dot-only `Domain` attribute, such as `Domain=.`, `Domain=..`, `Domain=...`, and whitespace-padded variants such as `Domain= . `. In affected versions, `SetCookie::matchesDomain()` removes leading dots from the cookie domain, normalizing dot-only values to the empty string; `SetCookie::validate()` only rejected a strictly empty domain, so these cookies could be stored and the empty normalized domain was treated as matching any request host.\n\nAn attacker-controlled origin that an application requests with a shared cookie jar can therefore set a cookie that Guzzle later sends to unrelated hosts using the same jar. This may allow cookie injection or session fixation against downstream services, depending on how those services interpret the injected cookie. Applications are affected when they use Guzzle's cookie support, for example `new Client(['cookies' =\u003e true])` or an explicit shared `CookieJar`, and reuse the same jar across attacker-controlled and trusted origins.\n\nApplications that do not use Guzzle's cookie support, or that use separate cookie jars per origin or trust boundary, are not affected. This issue is distinct from public suffix list validation: dot-only domains contain no domain label and should not match unrelated hosts.\n\n### Patches\n\nThe issue is patched in `7.12.1` and later. Starting in that release, Guzzle rejects dot-only cookie `Domain` attributes and prevents an empty normalized cookie domain from matching any request host.\n\n### Workarounds\n\nIf you cannot upgrade immediately, do not reuse the same `CookieJar` instance across untrusted and trusted origins. Use separate cookie jars per origin or trust boundary, or disable cookie handling for requests to untrusted hosts.\n\nAvoid using `new Client(['cookies' =\u003e true])` for clients that may contact unrelated hosts with different trust levels, because that option creates one shared jar for the client.",
+              "id": "GHSA-cwxw-98qj-8qjx",
+              "modified": "2026-06-22T16:29:30.352672990Z",
+              "published": "2026-06-19T14:37:29Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-cwxw-98qj-8qjx"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                }
+              ],
+              "related": [
+                "CGA-g3fh-7vj4-c2w7"
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:L/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "guzzlehttp/guzzle: Dot-Only Cookie Domains Match All Hosts"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-f2wf-25xc-69c9/GHSA-f2wf-25xc-69c9.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "4.0.0"
+                        },
+                        {
+                          "fixed": "6.5.7"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6"
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-f2wf-25xc-69c9/GHSA-f2wf-25xc-69c9.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "7.0.0"
+                        },
+                        {
+                          "fixed": "7.4.4"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "7.0.0",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3"
+                  ]
+                }
+              ],
+              "aliases": [
+                "BIT-drupal-2022-31042",
+                "BIT-drupal-2022-31043",
+                "CVE-2022-31042",
+                "CVE-2022-31043",
+                "DRUPAL-CORE-2022-011",
+                "GHSA-w248-ffj2-4v5q"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-200",
+                  "CWE-212"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-06-09T23:47:25Z",
+                "nvd_published_at": "2022-06-10T00:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "### Impact\n\n`Cookie` headers on requests are sensitive information. On making a request using the `https` scheme to a server which responds with a redirect to a URI with the `http` scheme, or on making a request to a server which responds with a redirect to a a URI to a different host, we should not forward the `Cookie` header on. Prior to this fix, only cookies that were managed by our cookie middleware would be safely removed, and any `Cookie` header manually added to the initial request would not be stripped. We now always strip it, and allow the cookie middleware to re-add any cookies that it deems should be there.\n\n### Patches\n\nAffected Guzzle 7 users should upgrade to Guzzle 7.4.4 as soon as possible. Affected users using any earlier series of Guzzle should upgrade to Guzzle 6.5.7 or 7.4.4.\n\n### Workarounds\n\nAn alternative approach would be to use your own redirect middleware, rather than ours, if you are unable to upgrade. If you do not require or expect redirects to be followed, one should simply disable redirects all together.\n\n### References\n\n* [RFC9110 Section 15.4](https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx)\n\n### For more information\n\nIf you have any questions or comments about this advisory, please get in touch with us in `#guzzle` on the [PHP HTTP Slack](https://php-http.slack.com/). Do not report additional security advisories in that public channel, however - please follow our [vulnerability reporting process](https://github.com/guzzle/guzzle/security/policy).\n",
+              "id": "GHSA-f2wf-25xc-69c9",
+              "modified": "2025-12-10T23:40:57.755467Z",
+              "published": "2022-06-09T23:47:25Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-f2wf-25xc-69c9"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-31042"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/commit/e3ff079b22820c2029d4c2a87796b6a0b8716ad8"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/FriendsOfPHP/security-advisories/blob/master/guzzlehttp/guzzle/CVE-2022-31042.yaml"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.debian.org/security/2022/dsa-5246"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.drupal.org/sa-core-2022-011"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx"
+                }
+              ],
+              "schema_version": "1.7.3",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "Failure to strip the Cookie header on change in host or HTTP downgrade"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-q559-8m2m-g699/GHSA-q559-8m2m-g699.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "6.5.8"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.0-rc.1",
+                    "4.0.0-rc.2",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6",
+                    "6.5.7",
+                    "v1.0.3",
+                    "v1.0.4",
+                    "v2.0.0",
+                    "v2.0.1",
+                    "v2.0.2",
+                    "v2.0.3",
+                    "v2.0.4",
+                    "v2.0.5",
+                    "v2.1.0",
+                    "v2.1.1",
+                    "v2.1.2",
+                    "v2.1.3",
+                    "v2.1.4",
+                    "v2.2.0",
+                    "v2.2.1",
+                    "v2.2.2",
+                    "v2.2.3",
+                    "v2.2.4",
+                    "v2.3.2",
+                    "v2.4.0",
+                    "v2.4.1",
+                    "v2.5.0",
+                    "v2.6.0",
+                    "v2.6.1",
+                    "v2.6.2",
+                    "v2.6.3",
+                    "v2.6.4",
+                    "v2.6.5",
+                    "v2.6.6",
+                    "v2.7.0",
+                    "v2.7.1",
+                    "v2.7.2",
+                    "v2.8.0",
+                    "v2.8.1",
+                    "v2.8.2",
+                    "v2.8.3",
+                    "v2.8.4",
+                    "v2.8.5",
+                    "v2.8.6",
+                    "v2.8.7",
+                    "v2.8.8",
+                    "v3.0.0",
+                    "v3.0.1",
+                    "v3.0.2",
+                    "v3.0.3",
+                    "v3.0.4",
+                    "v3.0.5",
+                    "v3.0.6",
+                    "v3.0.7",
+                    "v3.1.0",
+                    "v3.1.1",
+                    "v3.1.2",
+                    "v3.2.0",
+                    "v3.3.0",
+                    "v3.3.1",
+                    "v3.4.0",
+                    "v3.4.1",
+                    "v3.4.2",
+                    "v3.4.3",
+                    "v3.5.0",
+                    "v3.6.0",
+                    "v3.7.0",
+                    "v3.7.1",
+                    "v3.7.2",
+                    "v3.7.3",
+                    "v3.7.4",
+                    "v3.8.0",
+                    "v3.8.1"
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-q559-8m2m-g699/GHSA-q559-8m2m-g699.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "7.0.0"
+                        },
+                        {
+                          "fixed": "7.4.5"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "7.0.0",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3",
+                    "7.4.4"
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2022-31091"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-200"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-06-21T20:07:16Z",
+                "nvd_published_at": "2022-06-27T22:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "### Impact\n\n`Authorization` and `Cookie` headers on requests are sensitive information. On making a request which responds with a redirect to a URI with a different port, if we choose to follow it, we should remove the `Authorization` and `Cookie` headers from the request, before containing. Previously, we would only consider a change in host or scheme downgrade. Now, we consider any change in host, port or scheme to be a change in origin.\n\n### Patches\n\nAffected Guzzle 7 users should upgrade to Guzzle 7.4.5 as soon as possible. Affected users using any earlier series of Guzzle should upgrade to Guzzle 6.5.8 or 7.4.5.\n\n### Workarounds\n\nAn alternative approach would be to use your own redirect middleware, rather than ours, if you are unable to upgrade. If you do not require or expect redirects to be followed, one should simply disable redirects all together.\n\n### References\n\n* [RFC9110 Section 15.4](https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx)\n* [CVE-2022-27776](https://curl.se/docs/CVE-2022-27776.html)\n\n### For more information\n\nIf you have any questions or comments about this advisory, please get in touch with us in `#guzzle` on the [PHP HTTP Slack](https://php-http.slack.com/). Do not report additional security advisories in that public channel, however please follow our [vulnerability reporting process](https://github.com/guzzle/guzzle/security/policy).\n",
+              "id": "GHSA-q559-8m2m-g699",
+              "modified": "2023-11-08T04:09:25.594961Z",
+              "published": "2022-06-21T20:07:16Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-q559-8m2m-g699"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-31091"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/commit/1dd98b0564cb3f6bd16ce683cb755f94c10fbd82"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/FriendsOfPHP/security-advisories/blob/master/guzzlehttp/guzzle/CVE-2022-31091.yaml"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://security.gentoo.org/glsa/202305-24"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.debian.org/security/2022/dsa-5246"
+                }
+              ],
+              "schema_version": "1.7.3",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:N/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "Change in port should be considered a change in origin"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-w248-ffj2-4v5q/GHSA-w248-ffj2-4v5q.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "4.0.0"
+                        },
+                        {
+                          "fixed": "6.5.7"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6"
+                  ]
+                },
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2022/06/GHSA-w248-ffj2-4v5q/GHSA-w248-ffj2-4v5q.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp/guzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "7.0.0"
+                        },
+                        {
+                          "fixed": "7.4.4"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "7.0.0",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3"
+                  ]
+                }
+              ],
+              "aliases": [
+                "BIT-drupal-2022-31042",
+                "BIT-drupal-2022-31043",
+                "CVE-2022-31042",
+                "CVE-2022-31043",
+                "DRUPAL-CORE-2022-011",
+                "GHSA-f2wf-25xc-69c9"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-200",
+                  "CWE-212",
+                  "CWE-863"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2022-06-09T23:47:23Z",
+                "nvd_published_at": "2022-06-10T00:15:00Z",
+                "severity": "HIGH"
+              },
+              "details": "### Impact\n\n`Authorization` headers on requests are sensitive information. On making a request using the `https` scheme to a server which responds with a redirect to a URI with the `http` scheme, we should not forward the `Authorization` header on. This is much the same as to how we don't forward on the header if the host changes. Prior to this fix, `https` to `http` downgrades did not result in the `Authorization` header being removed, only changes to the host.\n\n### Patches\n\nAffected Guzzle 7 users should upgrade to Guzzle 7.4.4 as soon as possible. Affected users using any earlier series of Guzzle should upgrade to Guzzle 6.5.7 or 7.4.4.\n\n### Workarounds\n\nAn alternative approach would be to use your own redirect middleware, rather than ours, if you are unable to upgrade. If you do not require or expect redirects to be followed, one should simply disable redirects all together.\n\n### References\n\n* [RFC9110 Section 15.4](https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx)\n\n### For more information\n\nIf you have any questions or comments about this advisory, please get in touch with us in `#guzzle` on the [PHP HTTP Slack](https://php-http.slack.com/). Do not report additional security advisories in that public channel, however - please follow our [vulnerability reporting process](https://github.com/guzzle/guzzle/security/policy).\n",
+              "id": "GHSA-w248-ffj2-4v5q",
+              "modified": "2025-12-10T23:40:57.755467Z",
+              "published": "2022-06-09T23:47:23Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-w248-ffj2-4v5q"
+                },
+                {
+                  "type": "ADVISORY",
+                  "url": "https://nvd.nist.gov/vuln/detail/CVE-2022-31043"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/commit/e3ff079b22820c2029d4c2a87796b6a0b8716ad8"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/FriendsOfPHP/security-advisories/blob/master/guzzlehttp/guzzle/CVE-2022-31043.yaml"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.debian.org/security/2022/dsa-5246"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.drupal.org/sa-core-2022-011"
+                },
+                {
+                  "type": "WEB",
+                  "url": "https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx"
+                }
+              ],
+              "schema_version": "1.7.3",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "Fix failure to strip Authorization header on HTTP downgrade"
+            },
+            {
+              "affected": [
+                {
+                  "database_specific": {
+                    "source": "https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/06/GHSA-wpwq-4j6v-78m3/GHSA-wpwq-4j6v-78m3.json"
+                  },
+                  "package": {
+                    "ecosystem": "Packagist",
+                    "name": "guzzlehttp/guzzle",
+                    "purl": "pkg:composer/guzzlehttp%2Fguzzle"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "7.12.1"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ],
+                  "versions": [
+                    "4.0.0",
+                    "4.0.0-rc.1",
+                    "4.0.0-rc.2",
+                    "4.0.1",
+                    "4.0.2",
+                    "4.1.0",
+                    "4.1.1",
+                    "4.1.2",
+                    "4.1.3",
+                    "4.1.4",
+                    "4.1.5",
+                    "4.1.6",
+                    "4.1.7",
+                    "4.1.8",
+                    "4.2.0",
+                    "4.2.1",
+                    "4.2.2",
+                    "4.2.3",
+                    "4.2.4",
+                    "5.0.0",
+                    "5.0.1",
+                    "5.0.2",
+                    "5.0.3",
+                    "5.1.0",
+                    "5.2.0",
+                    "5.3.0",
+                    "5.3.1",
+                    "5.3.2",
+                    "5.3.3",
+                    "5.3.4",
+                    "6.0.0",
+                    "6.0.1",
+                    "6.0.2",
+                    "6.1.0",
+                    "6.1.1",
+                    "6.2.0",
+                    "6.2.1",
+                    "6.2.2",
+                    "6.2.3",
+                    "6.3.0",
+                    "6.3.1",
+                    "6.3.2",
+                    "6.3.3",
+                    "6.4.0",
+                    "6.4.1",
+                    "6.5.0",
+                    "6.5.1",
+                    "6.5.2",
+                    "6.5.3",
+                    "6.5.4",
+                    "6.5.5",
+                    "6.5.6",
+                    "6.5.7",
+                    "6.5.8",
+                    "7.0.0",
+                    "7.0.0-beta.1",
+                    "7.0.0-beta.2",
+                    "7.0.0-rc.1",
+                    "7.0.1",
+                    "7.1.0",
+                    "7.1.1",
+                    "7.10.0",
+                    "7.10.1",
+                    "7.10.2",
+                    "7.10.3",
+                    "7.10.4",
+                    "7.10.5",
+                    "7.10.6",
+                    "7.11.0",
+                    "7.11.1",
+                    "7.11.2",
+                    "7.12.0",
+                    "7.2.0",
+                    "7.3.0",
+                    "7.4.0",
+                    "7.4.1",
+                    "7.4.2",
+                    "7.4.3",
+                    "7.4.4",
+                    "7.4.5",
+                    "7.5.0",
+                    "7.5.1",
+                    "7.5.2",
+                    "7.5.3",
+                    "7.6.0",
+                    "7.6.1",
+                    "7.7.0",
+                    "7.7.1",
+                    "7.8.0",
+                    "7.8.1",
+                    "7.8.2",
+                    "7.9.0",
+                    "7.9.1",
+                    "7.9.2",
+                    "7.9.3",
+                    "v1.0.3",
+                    "v1.0.4",
+                    "v2.0.0",
+                    "v2.0.1",
+                    "v2.0.2",
+                    "v2.0.3",
+                    "v2.0.4",
+                    "v2.0.5",
+                    "v2.1.0",
+                    "v2.1.1",
+                    "v2.1.2",
+                    "v2.1.3",
+                    "v2.1.4",
+                    "v2.2.0",
+                    "v2.2.1",
+                    "v2.2.2",
+                    "v2.2.3",
+                    "v2.2.4",
+                    "v2.3.2",
+                    "v2.4.0",
+                    "v2.4.1",
+                    "v2.5.0",
+                    "v2.6.0",
+                    "v2.6.1",
+                    "v2.6.2",
+                    "v2.6.3",
+                    "v2.6.4",
+                    "v2.6.5",
+                    "v2.6.6",
+                    "v2.7.0",
+                    "v2.7.1",
+                    "v2.7.2",
+                    "v2.8.0",
+                    "v2.8.1",
+                    "v2.8.2",
+                    "v2.8.3",
+                    "v2.8.4",
+                    "v2.8.5",
+                    "v2.8.6",
+                    "v2.8.7",
+                    "v2.8.8",
+                    "v3.0.0",
+                    "v3.0.1",
+                    "v3.0.2",
+                    "v3.0.3",
+                    "v3.0.4",
+                    "v3.0.5",
+                    "v3.0.6",
+                    "v3.0.7",
+                    "v3.1.0",
+                    "v3.1.1",
+                    "v3.1.2",
+                    "v3.2.0",
+                    "v3.3.0",
+                    "v3.3.1",
+                    "v3.4.0",
+                    "v3.4.1",
+                    "v3.4.2",
+                    "v3.4.3",
+                    "v3.5.0",
+                    "v3.6.0",
+                    "v3.7.0",
+                    "v3.7.1",
+                    "v3.7.2",
+                    "v3.7.3",
+                    "v3.7.4",
+                    "v3.8.0",
+                    "v3.8.1"
+                  ]
+                }
+              ],
+              "aliases": [
+                "CVE-2026-55568"
+              ],
+              "database_specific": {
+                "cwe_ids": [
+                  "CWE-311",
+                  "CWE-319",
+                  "CWE-636"
+                ],
+                "github_reviewed": true,
+                "github_reviewed_at": "2026-06-19T14:17:59Z",
+                "nvd_published_at": null,
+                "severity": "MODERATE"
+              },
+              "details": "### Impact\n\nThe built-in cURL handlers (`GuzzleHttp\\Handler\\CurlHandler` and `GuzzleHttp\\Handler\\CurlMultiHandler`, used by default whenever the PHP cURL extension is available) accept an `https://` proxy — a proxy reached over a TLS-encrypted connection — through the `proxy` request option, client-level `proxy` defaults, or proxy environment variables such as `http_proxy`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, and `ALL_PROXY`.\n\nWhen the installed libcurl does not support HTTPS proxies, behavior depends on the libcurl version/build:\n\n- libcurl older than 7.50.2 silently treats an `https://` proxy as a plaintext `http://` proxy. The TLS connection to the proxy is never established, and the proxy leg is cleartext with no error or warning.\n- libcurl 7.50.2 through 7.51.x rejects the unsupported proxy scheme at connect time, so no cleartext exposure occurs, but the failure is late and opaque.\n- libcurl 7.52.0 or newer builds without HTTPS-proxy support also fail at connect time rather than downgrading.\n\nThe security-relevant case is the silent downgrade on libcurl older than 7.50.2. An application is affected when it sends requests through one of the built-in cURL handlers, configures an `https://` proxy expecting the proxy connection itself to be encrypted, and runs with libcurl older than 7.50.2.\n\nIn that configuration, traffic expected to be protected by TLS on the hop to the proxy is transmitted in cleartext. Proxy authentication credentials (the `Proxy-Authorization` header, proxy userinfo in the proxy URL, or `CURLOPT_PROXYUSERPWD`) are sent without encryption, and the `CONNECT` target host and port for tunneled HTTPS requests are exposed. For plain HTTP requests, request headers and bodies are also exposed on the proxy leg. End-to-end HTTPS requests tunneled through the proxy remain protected by their inner TLS session; the exposure is limited to the proxy negotiation and proxy credentials.\n\nApplications that do not configure an `https://` proxy are not affected. Installations running libcurl 7.52.0 or newer built with HTTPS-proxy support are not affected because HTTPS proxies work as intended. Installations running libcurl 7.50.2 through 7.51.x, or libcurl 7.52.0 or newer built without HTTPS-proxy support, are not exposed to the silent cleartext downgrade, but Guzzle now rejects those unsupported configurations up front as well. The built-in stream handler is not affected; the issue is specific to the cURL handlers' proxy handling. Low-level cURL options under the `curl` request option, such as `CURLOPT_PROXY` or `CURLOPT_PROXYTYPE`, are advanced custom configuration and remain the caller's responsibility.\n\n### Patches\n\nThe issue is patched in `7.12.1` and later. Starting in that release, the built-in cURL handlers detect whether the installed libcurl supports HTTPS proxies — requiring both libcurl 7.52.0 or newer and the `CURL_VERSION_HTTPS_PROXY` feature bit — and reject a request configured through Guzzle's first-class proxy handling with an `https://` proxy up front by throwing a `GuzzleHttp\\Exception\\RequestException`. No request bytes reach the network when the proxy cannot be used securely. Versions before `7.12.1` are affected by the silent downgrade when run against libcurl older than 7.50.2.\n\n### Workarounds\n\nIf you cannot upgrade immediately, do not configure an `https://` proxy on an installation whose libcurl lacks HTTPS-proxy support, and verify the capability in application code before using one. Remember to check proxy environment variables as well as any explicit `proxy` option:\n\n```php\n$curl = \\curl_version();\n$httpsProxyBit = \\defined('CURL_VERSION_HTTPS_PROXY') ? \\CURL_VERSION_HTTPS_PROXY : (1 \u003c\u003c 21);\n\nif (\\version_compare($curl['version'], '7.52.0', '\u003c') || 0 === ($curl['features'] \u0026 $httpsProxyBit)) {\n    throw new \\RuntimeException('Installed libcurl does not support HTTPS proxies.');\n}\n```\n\nUpgrading the system libcurl to 7.52.0 or newer built with HTTPS-proxy support also resolves the underlying unsupported-proxy behavior.",
+              "id": "GHSA-wpwq-4j6v-78m3",
+              "modified": "2026-06-22T18:29:21.271364148Z",
+              "published": "2026-06-19T14:17:59Z",
+              "references": [
+                {
+                  "type": "WEB",
+                  "url": "https://github.com/guzzle/guzzle/security/advisories/GHSA-wpwq-4j6v-78m3"
+                },
+                {
+                  "type": "PACKAGE",
+                  "url": "https://github.com/guzzle/guzzle"
+                }
+              ],
+              "related": [
+                "CGA-pjg6-g657-f2mc"
+              ],
+              "schema_version": "1.7.5",
+              "severity": [
+                {
+                  "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                  "type": "CVSS_V3"
+                }
+              ],
+              "summary": "guzzlehttp/guzzle: Silent HTTPS-Proxy Downgrade to Cleartext"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "experimental_config": {
+    "licenses": {
+      "summary": false,
+      "allowlist": null
+    }
+  }
+}

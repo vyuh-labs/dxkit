@@ -35,7 +35,8 @@ export type CoverageSource =
   | 'lcov'
   | 'jacoco'
   | 'simplecov'
-  | 'swift';
+  | 'swift'
+  | 'php-clover';
 
 export interface FileCoverage {
   /** Project-relative path (normalized to forward slashes). */

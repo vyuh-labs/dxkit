@@ -115,6 +115,87 @@ const GENERIC_FIXTURE_STUB = {
 };
 
 const FIXTURE_PROFILES = {
+  php: {
+    ext: 'php',
+    filenameCase: 'snake',
+    comment: '//',
+    secrets:
+      '<?php\n' +
+      '// Hardcoded fake AWS access key — gitleaks should flag this as\n' +
+      '// `aws-access-token`. Per-language secret fixture pre-staging the\n' +
+      '// cross-ecosystem assertion surface.\n' +
+      '//\n' +
+      '// The key below is intentionally fake (low-entropy, no valid AWS\n' +
+      '// checksum) so it cannot be used to authenticate.\n' +
+      '$awsAccessKeyId = "AKIA1234567890ABCDEF";\n',
+    badLint:
+      '<?php\n' +
+      '// Deliberate PHP_CodeSniffer violations on the PSR-12 standard:\n' +
+      '//   - opening brace on the declaration line (PSR12.Functions)\n' +
+      '//   - uppercase TRUE/FALSE (Generic.PHP.LowerCaseConstant)\n' +
+      'function bad_lint($flag){ if ($flag === TRUE){ return 1; } return FALSE; }\n',
+    duplications:
+      '<?php\n' +
+      '// Two near-identical functions — jscpd should detect this clone with\n' +
+      '// default thresholds (--min-lines 5 --min-tokens 50).\n' +
+      'function summarize_items_a(array $items): float\n' +
+      '{\n' +
+      '    $total = 0;\n' +
+      '    $sumPositive = 0;\n' +
+      '    $sumNegative = 0;\n' +
+      '    $countPositive = 0;\n' +
+      '    $countNegative = 0;\n' +
+      '    foreach ($items as $item) {\n' +
+      '        if ($item > 0) {\n' +
+      '            $total = $total + $item;\n' +
+      '            $sumPositive = $sumPositive + $item;\n' +
+      '            $countPositive = $countPositive + 1;\n' +
+      '        } else {\n' +
+      '            $total = $total - $item;\n' +
+      '            $sumNegative = $sumNegative + $item;\n' +
+      '            $countNegative = $countNegative + 1;\n' +
+      '        }\n' +
+      '    }\n' +
+      '    $avgPos = $countPositive > 0 ? $sumPositive / $countPositive : 0.0;\n' +
+      '    $avgNeg = $countNegative > 0 ? $sumNegative / $countNegative : 0.0;\n' +
+      '    return $total + $avgPos + $avgNeg;\n' +
+      '}\n' +
+      '\n' +
+      'function summarize_items_b(array $items): float\n' +
+      '{\n' +
+      '    $total = 0;\n' +
+      '    $sumPositive = 0;\n' +
+      '    $sumNegative = 0;\n' +
+      '    $countPositive = 0;\n' +
+      '    $countNegative = 0;\n' +
+      '    foreach ($items as $item) {\n' +
+      '        if ($item > 0) {\n' +
+      '            $total = $total + $item;\n' +
+      '            $sumPositive = $sumPositive + $item;\n' +
+      '            $countPositive = $countPositive + 1;\n' +
+      '        } else {\n' +
+      '            $total = $total - $item;\n' +
+      '            $sumNegative = $sumNegative + $item;\n' +
+      '            $countNegative = $countNegative + 1;\n' +
+      '        }\n' +
+      '    }\n' +
+      '    $avgPos = $countPositive > 0 ? $sumPositive / $countPositive : 0.0;\n' +
+      '    $avgNeg = $countNegative > 0 ? $sumNegative / $countNegative : 0.0;\n' +
+      '    return $total + $avgPos + $avgNeg;\n' +
+      '}\n',
+    untested:
+      '<?php\n' +
+      '// Deliberate untested file fixture. No matching `*Test.php` exists;\n' +
+      "// dxkit's `test-gaps` filename-match coverage source should report\n" +
+      '// this in `gaps[]` with `hasMatchingTest: false`.\n' +
+      'class UntestedModule\n' +
+      '{\n' +
+      '    public function describe(): string\n' +
+      '    {\n' +
+      "        return 'untested';\n" +
+      '    }\n' +
+      '}\n',
+  },
   swift: {
     ext: 'swift',
     filenameCase: 'pascal',

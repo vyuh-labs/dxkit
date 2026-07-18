@@ -93,7 +93,8 @@ interface BenchmarkLanguage {
       | 'detekt'
       | 'pmd'
       | 'rubocop'
-      | 'swiftlint';
+      | 'swiftlint'
+      | 'phpcs';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -205,6 +206,16 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     },
     dup: { file: path.join('Sources', 'Benchmark', 'Duplications.swift') },
     untested: { file: path.join('Sources', 'Benchmark', 'UntestedModule.swift') },
+  },
+  {
+    name: 'PHP',
+    dir: 'php',
+    secret: { file: 'secrets.php' },
+    // phpcs is a phar running on the ambient php CLI — gate on the runtime
+    // (the detekt-needs-a-JVM pattern), not on the shim's presence.
+    lint: { file: 'bad_lint.php', expectedTool: 'phpcs', requires: 'php' },
+    dup: { file: 'duplications.php' },
+    untested: { file: 'untested_module.php' },
   },
 ];
 
@@ -610,6 +621,27 @@ describe('cross-ecosystem benchmarks — Swift', () => {
   );
 });
 
+describe('cross-ecosystem benchmarks — PHP', () => {
+  const fixture = path.join(FIXTURES, 'php');
+  const hasOsvScanner = commandExists('osv-scanner');
+
+  it.skipIf(!hasOsvScanner)(
+    'osv-scanner surfaces guzzle@7.4.0 advisories from composer.lock',
+    async () => {
+      const dep = await runDxkitVulnerabilities(fixture);
+      expect(dep.findings.length).toBeGreaterThan(0);
+      // PHP delegates to the shared osv-scanner-deps.ts gather with
+      // ecosystem='Packagist' (live-probed before the pack shipped —
+      // guzzle 7.4.0 carries CURLOPT_HTTPAUTH + header-injection GHSAs).
+      const phpFindings = dep.findings.filter((f) => f.tool === 'osv-scanner');
+      expect(phpFindings.length).toBeGreaterThan(0);
+      const guzzle = phpFindings.filter((f) => f.package === 'guzzlehttp/guzzle');
+      expect(guzzle.length).toBeGreaterThan(0);
+      expect(guzzle[0].installedVersion).toBe('7.4.0');
+    },
+  );
+});
+
 describe('cross-ecosystem benchmarks — Go', () => {
   const fixture = path.join(FIXTURES, 'go');
   const hasGovulncheck = commandExists('govulncheck');
@@ -829,6 +861,7 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
         Java: 'java',
         Ruby: 'ruby',
         Swift: 'swift',
+        PHP: 'php',
       };
       const id = idMap[lang.name];
       expect(id, `${lang.name}: missing id mapping in matrix coverage row`).toBeDefined();
