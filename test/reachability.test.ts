@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  annotateReachability,
   buildReachablePackageSet,
   markReachable,
   specifierToPackage,
@@ -99,5 +100,41 @@ describe('markReachable', () => {
     expect(fs[0].reachable).toBe(true);
     expect(fs[1].reachable).toBe(true);
     expect(fs[2].reachable).toBe(false);
+  });
+});
+
+describe('annotateReachability (the ONE entry point both gather paths consume — T1.2)', () => {
+  function finding(pkg: string): DepVulnFinding {
+    return { id: 'CVE-1', package: pkg, tool: 'test', severity: 'high' };
+  }
+  function imports(specsByFile: Record<string, string[]>): ImportsResult {
+    const extracted = new Map<string, ReadonlyArray<string>>();
+    for (const [f, s] of Object.entries(specsByFile)) extracted.set(f, s);
+    return {
+      schemaVersion: 1,
+      tool: 'test',
+      sourceExtensions: ['.ts'],
+      extracted,
+      edges: new Map(),
+    };
+  }
+
+  it('marks findings from a populated envelope', () => {
+    const fs = [finding('axios'), finding('inert')];
+    annotateReachability(fs, imports({ 'src/a.ts': ['axios'] }));
+    expect(fs[0].reachable).toBe(true);
+    expect(fs[1].reachable).toBe(false);
+  });
+
+  it('a null envelope leaves reachable UNSET — unknown, never mass-false', () => {
+    const fs = [finding('axios')];
+    annotateReachability(fs, null);
+    expect(fs[0].reachable).toBeUndefined();
+  });
+
+  it('an empty envelope (no files parsed) leaves reachable UNSET', () => {
+    const fs = [finding('axios')];
+    annotateReachability(fs, imports({}));
+    expect(fs[0].reachable).toBeUndefined();
   });
 });

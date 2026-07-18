@@ -10,9 +10,10 @@ import {
   isFullScope,
   isEmptyScope,
   FULL_SCOPE,
+  BLOCK_RULE_EVIDENCE,
   type GatherScope,
 } from '../../src/baseline/gather-scope';
-import type { BrownfieldPolicy } from '../../src/baseline/policy';
+import type { BrownfieldPolicy, BrownfieldBlockRules } from '../../src/baseline/policy';
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import { resolveLoopPolicy } from '../../src/loop/policy';
 import { gatherCurrentScan } from '../../src/baseline/create';
@@ -69,13 +70,16 @@ describe('scopeForPolicy', () => {
     expect(s.secrets).toBe(true); // newSecret
     expect(s.codePatterns).toBe(true); // newCritical/HighSecurity
     expect(s.depVulns).toBe(true); // newCritical/HighReachableDependency
+    // Reachability EVIDENCE for the high-reachable rule (T1.2): the armed
+    // rule needs the import graph or it is structurally dead — the shipped
+    // bug was this flag staying false while the rule was armed.
+    expect(s.imports).toBe(true);
     // Everything a security-only posture can never block on is skipped.
     expect(s.structural).toBe(false);
     expect(s.duplication).toBe(false);
     expect(s.lint).toBe(false);
     expect(s.coverage).toBe(false);
     expect(s.licenses).toBe(false);
-    expect(s.imports).toBe(false);
     expect(s.testFramework).toBe(false);
     expect(s.cloc).toBe(false);
     expect(s.testGaps).toBe(false);
@@ -119,42 +123,45 @@ describe('scopeForPolicy', () => {
   });
 
   /**
-   * SAFETY CONTRACT: every block rule that can fire MUST pull at least one
-   * analyzer into scope. If a future rule is added to `evaluateBlockRules`
-   * without a matching scope branch, a security-only-style posture would
-   * silently skip the analyzer that feeds it — a missed-finding bug. This
-   * asserts each rule, toggled alone, yields a non-empty scope.
+   * SAFETY CONTRACT (rule liveness, both directions): the declarative
+   * evidence table is the ONE rule→analyzer mapping, and `scopeForPolicy`
+   * must track it exactly. For every block rule, armed alone:
+   *   - every analyzer in its declared evidence set is scoped IN (a
+   *     missing analyzer = the rule is structurally dead, the T1.2 bug);
+   *   - no analyzer outside the set is scoped in (over-gathering erodes
+   *     the loop's speed contract and hides derivation drift).
+   * The table itself is a `Record` over `keyof BrownfieldBlockRules`, so
+   * a NEW rule that omits its evidence declaration fails to compile; this
+   * test closes the remaining runtime half of the loop. Also asserts no
+   * rule declares an empty evidence set.
    */
-  it('every block rule individually yields a non-empty scope (no silent skips)', () => {
-    const rules = [
-      'newSecret',
-      'newCriticalSecurity',
-      'newHighSecurity',
-      'newCriticalDependencyVulnerability',
-      'newHighReachableDependencyVulnerability',
-      'newMaliciousDependency',
-      'newUntestedChangedSource',
-      'newSevereQualityIssueInChangedFiles',
-    ] as const;
-    for (const rule of rules) {
+  it('every block rule scopes in EXACTLY its declared evidence analyzers', () => {
+    const allOff: Record<keyof BrownfieldBlockRules, boolean> = {
+      newSecret: false,
+      newCriticalSecurity: false,
+      newHighSecurity: false,
+      newCriticalDependencyVulnerability: false,
+      newHighReachableDependencyVulnerability: false,
+      newMaliciousDependency: false,
+      newUntestedChangedSource: false,
+      newSevereQualityIssueInChangedFiles: false,
+    };
+    for (const rule of Object.keys(BLOCK_RULE_EVIDENCE) as Array<keyof BrownfieldBlockRules>) {
+      const evidence = BLOCK_RULE_EVIDENCE[rule];
+      expect(evidence.length, `rule ${rule} must declare evidence analyzers`).toBeGreaterThan(0);
       const policy: BrownfieldPolicy = {
         ...DEFAULT_BROWNFIELD_POLICY,
         block: [],
-        blockRules: {
-          newSecret: false,
-          newCriticalSecurity: false,
-          newHighSecurity: false,
-          newCriticalDependencyVulnerability: false,
-          newHighReachableDependencyVulnerability: false,
-          newMaliciousDependency: false,
-          newUntestedChangedSource: false,
-          newSevereQualityIssueInChangedFiles: false,
-          [rule]: true,
-        },
+        checks: [],
+        blockRules: { ...allOff, [rule]: true },
       };
-      expect(isEmptyScope(scopeForPolicy(policy)), `rule ${rule} must scope in an analyzer`).toBe(
-        false,
-      );
+      const s = scopeForPolicy(policy);
+      for (const flag of Object.keys(s) as Array<keyof GatherScope>) {
+        // customChecks is driven by policy.checks/lint, not block rules.
+        if (flag === 'customChecks') continue;
+        const expected = evidence.includes(flag);
+        expect(s[flag], `rule ${rule}: scope.${flag} should be ${expected}`).toBe(expected);
+      }
     }
   });
 });

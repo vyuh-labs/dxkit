@@ -27,6 +27,7 @@ import { gatherPackageJsonMetrics } from './tools/package-json';
 import { gatherHygieneMarkers, gatherCommentRatio } from './quality/gather';
 import { timed, timedAsync } from './tools/timing';
 import { defaultDispatcher } from './dispatcher';
+import { annotateReachability } from './tools/reachability';
 import {
   CODE_PATTERNS,
   COVERAGE,
@@ -627,6 +628,15 @@ async function gatherCapabilityReport(
     available: licensesWithAvail.available,
     unavailableReason: licensesWithAvail.unavailableReason,
   };
+
+  // Dep-vuln reachability for the guardrail path (T1.2). The enriched
+  // standalone scan annotates inside gatherDepVulns; this path reuses
+  // the imports envelope the scope.imports gather above already
+  // produced — same ONE annotation entry point (Rule 2), no second
+  // IMPORTS dispatch. Without this the `newHighReachableDependencyVulnerability`
+  // block rule was structurally dead on the check path: `f.reachable`
+  // was never computed, so the classifier's evidence never existed.
+  annotateReachability(depVulnsWithAvail.envelope?.findings ?? [], imports);
 
   // G_v4_8 (C1.3): build the canonical aggregate from everything we
   // just gathered, plus the two security finders not represented in
