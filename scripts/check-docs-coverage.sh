@@ -43,7 +43,11 @@ done
 
 # Extract LanguageId list from the LANGUAGES registry. Same shape as
 # check-cross-ecosystem-coverage.sh — multi-line robust.
-LANG_BLOCK=$(awk '/^export const LANGUAGES/,/^\];/' "$LANG_REGISTRY" | tr -d '\n')
+# Stop at the FIRST line containing `]`, wherever it sits — the previous
+# `/^\];/` end-pattern never matched a single-line array (the shape the
+# scaffolder's registry append briefly leaves before prettier runs), so the
+# range swallowed the rest of the file and test globs parsed as language ids.
+LANG_BLOCK=$(awk '/^export const LANGUAGES/{f=1} f{print} f&&/\]/{exit}' "$LANG_REGISTRY" | tr -d '\n')
 LANG_BODY=$(echo "$LANG_BLOCK" | sed 's/.*\[\(.*\)\].*/\1/' | sed 's/,[[:space:]]*$//')
 LANG_IDS=$(echo "$LANG_BODY" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
 

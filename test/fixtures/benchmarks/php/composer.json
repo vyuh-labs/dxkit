@@ -1,0 +1,8 @@
+{
+    "name": "dxkit/benchmark-php",
+    "description": "Benchmark fixture pinning a known-vulnerable dependency",
+    "require": {
+        "php": "^8.1",
+        "guzzlehttp/guzzle": "7.4.0"
+    }
+}

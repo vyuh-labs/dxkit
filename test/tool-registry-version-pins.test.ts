@@ -60,6 +60,9 @@ const PINNED_TOOLS: Record<string, string> = {
   // 4.1 swift pack: SwiftLint's lint-gate JSON is parsed by the pack, so
   // the linux artifact is pinned + checksum-verified (brew tracks its own).
   swiftlint: '0.65.0',
+  // 4.1 php pack: phpcs's lint-gate JSON is parsed by the pack — same
+  // pin + checksum discipline.
+  phpcs: '4.0.1',
 };
 
 /**

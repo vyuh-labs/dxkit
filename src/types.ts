@@ -19,7 +19,8 @@ export type LanguageId =
   | 'kotlin'
   | 'java'
   | 'ruby'
-  | 'swift';
+  | 'swift'
+  | 'php';
 
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {

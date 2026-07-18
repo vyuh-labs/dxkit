@@ -20,6 +20,7 @@ import { kotlin } from './kotlin';
 import { java } from './java';
 import { ruby } from './ruby';
 import { swift } from './swift';
+import { php } from './php';
 
 export type {
   ArchitecturalShape,
@@ -40,6 +41,7 @@ export const LANGUAGES: readonly LanguageSupport[] = [
   java,
   ruby,
   swift,
+  php,
 ];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {

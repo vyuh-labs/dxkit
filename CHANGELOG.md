@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **PHP language pack** (10th pack). Detection (`composer.json` + a
+  depth-unlimited `.php` source walk), PHP_CodeSniffer lint gate (PSR-12
+  default, the repo's own `phpcs.xml` respected; structured JSON with
+  absolute-path keys, runtime-proven on 4.0.1; recall inputs = phpcs version
+  + standard-file hash), dep-vulns via the shared osv-scanner gather over
+  `composer.lock` (OSV `Packagist` ecosystem — live-verified against a
+  known-vulnerable guzzle pin BEFORE ship, the swift 2.3.8 lesson), PHPUnit
+  clover coverage parser + `--coverage-clover` runTests, use/require imports
+  extraction, Laravel/Symfony architectural shape, `shivammathur/setup-php`
+  ciSetup, and a diff-scoped `php -l` correctness floor (multi-file lint
+  verified on php 8.5; parse error fails the floor, both directions
+  runner-tested) with the repo's own `vendor/bin/phpunit` as the test half.
+  phpcs ships as a checksum-pinned phar riding the ambient `php` toolchain
+  (registered in TOOLCHAIN_DEFS with a composer platform-check failure
+  signature).
+
 4.1 — mobile coverage: the Swift/iOS pack + the Android variant-aware floor.
 
 - **Swift language pack** (9th pack). Detection (`Package.swift` / `Podfile` /

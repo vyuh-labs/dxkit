@@ -294,6 +294,30 @@ export const TOOLCHAIN_DEFS = {
       },
     ],
   },
+  php: {
+    id: 'php',
+    displayName: 'PHP',
+    binaries: ['php'],
+    install: {
+      linux: 'sudo apt-get install -y php-cli # or a static build from https://dl.static-php.dev',
+      macos: 'brew install php',
+      windows: 'winget install PHP.PHP.8.4',
+      fallback: 'https://www.php.net/downloads',
+    },
+    // A repo can require a newer PHP than installed — composer refuses the
+    // platform check, and newer syntax parses as an error on an old CLI.
+    // Only the composer platform-check shape is safely environment-shaped;
+    // a bare parse error stays a real finding (false-negative bias).
+    environmentFailurePatterns: [
+      {
+        id: 'php-too-old',
+        pattern:
+          'your php version \\([0-9.]+\\) does not satisfy that requirement|composer requires php',
+        problem: "the repo's composer platform requirement needs a newer PHP than installed",
+        remedy: 'install the PHP version composer.json requires (https://www.php.net/downloads)',
+      },
+    ],
+  },
   swift: {
     id: 'swift',
     displayName: 'Swift',

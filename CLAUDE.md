@@ -280,7 +280,7 @@ pack's toolchain, unioned through `allCiSetupSteps` and rendered into the
 workflow templates, so CI is never Node-only)
 lives in a single
 `LanguageSupport` implementation in
-`src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby,swift}.ts`. Dispatch everywhere
+`src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby,swift,php}.ts`. Dispatch everywhere
 goes through `detectActiveLanguages()` / `activeLanguagesFromStack()` /
 `activeLanguagesFromFlags()` / `getLanguage()` — never per-language
 `if (stack.languages.python)` chains in report code.
@@ -1513,7 +1513,7 @@ vyuh-dxkit tools [list|install]   # Tool status & installation
 - `src/detect.ts` — stack detection (languages, frameworks, tools)
 - `src/types.ts` — `LanguageId` union + `DetectedStack` (`languages: Record<LanguageId, boolean>` post-10f.4) + `ToolRequirement`
 - `src/languages/types.ts` — `LanguageSupport` interface (the contract)
-- `src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby,swift}.ts` — one file per language
+- `src/languages/{python,typescript,go,rust,csharp,kotlin,java,ruby,swift,php}.ts` — one file per language
 - `src/languages/index.ts` — `LANGUAGES` registry; `getLanguage`, `detectActiveLanguages`, `activeLanguagesFromStack`, `activeLanguagesFromFlags`, `allSourceExtensions`, `allTestFilePatterns`, `splitTestFilePatterns`
 - `src/analyzers/tools/tool-registry.ts` — tool definitions, detection, install
 - `src/analyzers/tools/exclusions.ts` — centralized exclusion paths

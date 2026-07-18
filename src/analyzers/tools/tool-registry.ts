@@ -1143,6 +1143,27 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'scoop install ktlint',
     },
   },
+  phpcs: {
+    name: 'phpcs',
+    description: 'PHP_CodeSniffer — PHP coding-standard linter (PSR-12 default)',
+    install: 'brew install php-code-sniffer',
+    check: 'phpcs --version',
+    for: 'php',
+    layer: 'language',
+    binaries: ['phpcs'],
+    versionCheck: 'phpcs --version',
+    // Single-file phar with a `#!/usr/bin/env php` shebang — directly
+    // executable once chmod'd, but it RUNS on the ambient php toolchain
+    // (the detekt-needs-a-JVM shape). Pinned to 4.0.1; the publisher signs
+    // .asc only, so the sha256 was computed from the downloaded artifact at
+    // pin time (T2.1 discipline).
+    installCommands: {
+      macos: 'brew install php-code-sniffer',
+      linux:
+        'mkdir -p ~/.local/bin && dxkit_fetch https://github.com/PHPCSStandards/PHP_CodeSniffer/releases/download/4.0.1/phpcs.phar a211817baf28918b2cff8e80af5d53d7e7060f9761384c0d9df0f003afb51a40 ~/.local/bin/phpcs && chmod a+x ~/.local/bin/phpcs',
+      windows: 'scoop install php-codesniffer',
+    },
+  },
   swiftlint: {
     name: 'swiftlint',
     description: 'Swift linter (style + anti-pattern checks, SwiftSyntax-based)',
