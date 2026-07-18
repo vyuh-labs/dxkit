@@ -31,7 +31,7 @@ import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 /** tool name → version substring that MUST appear in its install commands. */
 const PINNED_TOOLS: Record<string, string> = {
   gitleaks: 'v8.24.0',
-  'osv-scanner': 'v2.3.8',
+  'osv-scanner': 'v2.4.0',
   pmd: '7.24.0',
   detekt: 'v1.23.6',
   ktlint: '1.5.0',
@@ -57,6 +57,9 @@ const PINNED_TOOLS: Record<string, string> = {
   // both unpinned AND unverifiable. Now pinned to a bundle tag with the
   // release's published sha256 checksums verified at install time.
   codeql: 'codeql-bundle-v2.26.1',
+  // 4.1 swift pack: SwiftLint's lint-gate JSON is parsed by the pack, so
+  // the linux artifact is pinned + checksum-verified (brew tracks its own).
+  swiftlint: '0.65.0',
 };
 
 /**
