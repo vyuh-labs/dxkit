@@ -6,7 +6,9 @@
 before the edit, and a deterministic stop-gate before the loop can finish.**
 
 It maps the relevant code, callers, dependencies, and blast radius before the
-agent edits. At stop time it checks compilation, affected tests, and the
+agent edits. When an unattended loop tries to stop, it runs the compilation
+and affected-test checks it can establish in that environment — anything it
+cannot run is reported explicitly, never silently passed — plus the
 configured detector-backed policy, and blocks if the change introduced a
 prohibited regression.
 
@@ -139,9 +141,10 @@ steps:
 2. **Baseline.** `baseline create` records today's findings with durable
    fingerprints, so pre-existing issues stay visible and auditable without
    blocking the work.
-3. **Gate.** On every stop attempt, a Claude Code Stop hook reruns the
-   guardrail against that baseline: compilation, affected tests, and the
-   configured detector-backed policy.
+3. **Gate.** On every unattended-loop stop attempt, a Claude Code Stop hook
+   reruns the guardrail against that baseline: the compilation and
+   affected-test checks it can establish (unavailable ones are reported,
+   not silently passed), and the configured detector-backed policy.
 4. **Repair.** If the change introduced a finding, the stop is blocked and the
    exact finding comes back to the agent while it still holds the task
    context. The loop finishes only when the change is clean.
@@ -164,7 +167,8 @@ more than all debt.
 The one-liner above is the default: it adds dxkit as a devDependency, installs
 the Claude Code Stop hook, provisions scanners, and captures the baseline.
 Everything is additive, preserving your existing `.claude` settings. Then run Claude Code
-as you normally would; the Stop-gate fires on every stop.
+as you normally would; the Stop-gate fires on every stop of an unattended loop
+(interactive sessions are not gated — review and the CI guardrail cover those).
 
 ```bash
 npx vyuh-dxkit loop doctor            # verify the wiring
@@ -268,7 +272,7 @@ tries to declare done.
 
 | Loop Stop-gate need                                         | dxkit | Cloud or CI scanners                   |
 | ----------------------------------------------------------- | ----- | -------------------------------------- |
-| Runs locally on every stop, in seconds                      | yes   | usually CI or cloud cadence            |
+| Runs locally on every unattended-loop stop, in seconds      | yes   | usually CI or cloud cadence            |
 | Deterministic verdict, no model in the gate                 | yes   | varies (some add an LLM judge)         |
 | Grandfathers existing debt                                  | yes   | tool-dependent                         |
 | Feeds the exact block reason back to the warm agent session | yes   | usually a human-facing dashboard or PR |
@@ -362,7 +366,7 @@ secret-task premium pointed the same way but was weak (mean +19%, median
 slightly negative), so we lean on the robust test-gap result.) So the gate is not
 just safer than deferring, it is plausibly cheaper too.
 
-**And the gate is fast enough to run on every stop.** dxkit scopes the
+**And the gate is fast enough to run on every unattended-loop stop.** dxkit scopes the
 Stop-gate scan to the active preset's blockable finding kinds and re-scans only
 the changed files, reusing cached results for everything unchanged. The verdict
 is identical to a full scan; the cost is seconds per stop, not minutes, even on

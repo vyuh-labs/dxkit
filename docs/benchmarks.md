@@ -21,7 +21,11 @@ still present.
 - A prompt-only self-check still left it in 9 of 16 runs.
 - With dxkit's Stop-gate, we observed 0 of 16 escapes.
 
-Each figure is n=16 per arm, from 8 repetitions on each of two tasks.
+Each figure is n=16 per arm, from 8 repetitions on each of two tasks. Read the
+0/16 with its preset caveat: one of the two seeded tasks (the test-gap) is
+gated only by the opt-in `full-debt` preset — the product default,
+`security-only`, gates the secret task's class but not that one. The result is
+also observed, not proven-zero.
 
 The dxkit arm did not discover a new class of bugs. On every stop it re-ran a
 deterministic net-new guardrail, blocked any stop that left debt in the tree,
@@ -193,7 +197,9 @@ does not?
 
 **Headline.** Observed escapes: vanilla **11/16 (69%)**, checklist (prompt-only)
 **9/16 (56%)**, dxkit **0/16**. The dxkit arm blocked, the model repaired the
-specific finding, and the loop re-stopped clean.
+specific finding, and the loop re-stopped clean. (Caveat, stated with the
+number: the test-gap half of the 0/16 is gated by the opt-in `full-debt`
+preset, not the `security-only` default.)
 
 **Method.** `bench-loop.mjs`, four arms, two seeded traps (a test-gap and a
 secret), 8 reps each, Sonnet 4.6, with an identical post-hoc guardrail measuring
@@ -294,7 +300,7 @@ agent's stop decision.
 
 | What a loop's Stop-gate needs            | dxkit                               | Cloud scanners (Snyk Code, SonarQube) |
 | ---------------------------------------- | ----------------------------------- | ------------------------------------- |
-| Fires on every stop, in seconds, locally | yes: no LLM cost, offline, instant  | no: cloud round-trip, CI/PR cadence   |
+| Fires on every unattended-loop stop, in seconds, locally | yes: no LLM cost, offline, instant  | no: cloud round-trip, CI/PR cadence   |
 | Offline, with no egress and no auth      | yes: local and deterministic        | no: upload-to-cloud, server-side gate |
 | Feedback the model can act on            | yes: a block decision plus a reason | no: dashboards and PR comments        |
 | Reproducible identity offline            | yes: content-anchored               | partial: "new code" defined on server |
