@@ -13,6 +13,7 @@
  *   grep      → hygiene markers (TODO, FIXME, HACK, console.log)
  */
 import { run } from '../tools/runner';
+import { isExcludedPath } from '../tools/exclusions';
 import { findTool, TOOL_DEFS } from '../tools/tool-registry';
 import { gatherClocMetrics } from '../tools/cloc';
 import { walkSourceFiles, countLineMatches } from '../tools/walk-source-files';
@@ -190,12 +191,23 @@ export function gatherHygieneMarkers(cwd: string): {
   staleFiles: string[];
   mixedLanguages: boolean;
 } {
-  // Stale files: vim swap, backup, temp files tracked in git
+  // Stale files: vim swap, backup, temp files tracked in git. The glob
+  // pathspecs match tracked files ANYWHERE in the tree — including a
+  // committed/vendored node_modules — so the list is filtered through the
+  // ONE exclusion predicate (Rule 4). The shipped bug: a repo with
+  // node_modules in git got `node_modules/**/*.orig` flagged as net-new
+  // stale files the developer never touched (the baseline's install tree
+  // differed from CI's).
   const staleRaw = run(
     `git ls-files '*.swp' '*.swo' '*.bak' '*.orig' '*.tmp' '*.log' '*.pyc'`,
     cwd,
   );
-  const staleFiles = staleRaw ? staleRaw.split('\n').filter((l) => l.trim()) : [];
+  const staleFiles = staleRaw
+    ? staleRaw
+        .split('\n')
+        .filter((l) => l.trim())
+        .filter((rel) => !isExcludedPath(cwd, rel))
+    : [];
 
   // Mixed languages: .js files alongside .ts in same source directories (not config files at root)
   const jsInSrc = run(
