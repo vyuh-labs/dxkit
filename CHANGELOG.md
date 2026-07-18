@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+4.1 — mobile coverage: the Swift/iOS pack + the Android variant-aware floor.
+
+- **Swift language pack** (9th pack). Detection (`Package.swift` / `Podfile` /
+  `*.xcodeproj`), SwiftLint lint gate (structured JSON, absolute-path-proven,
+  recall inputs = tool version + `.swiftlint.yml` hash), dep-vulns via
+  osv-scanner over `Package.resolved` (OSV `SwiftURL` ecosystem), llvm-cov
+  coverage (`swift test --enable-code-coverage`), SwiftPM imports graph,
+  architectural shape (Views/ViewModels/ViewControllers), CI setup
+  (`swift-actions/setup-swift`), and a SwiftPM correctness floor
+  (`swift build` / `swift test`) that runs on Linux. Xcode-project builds
+  declare `hosts: ['macos']` + the new `xcode` toolchain (Rule 20), so a
+  non-mac host discloses `skipped-environment` and CI placement routes a
+  macos job instead of failing weirdly.
+- **Honest CocoaPods posture.** OSV.dev has NO CocoaPods ecosystem (verified
+  against the API), so a `Podfile.lock` is disclosed as UNAUDITED rather than
+  scanned-into-a-fake-clean — the wrong-artifact-reads-as-CLEAN class,
+  stopped at design time.
+- **osv-scanner pin bumped 2.3.8 → 2.4.0** (publisher-checksummed): 2.4.0 is
+  the first release whose `Package.resolved` extractor works end-to-end;
+  2.3.8 needed a manual plugin flag AND emitted an empty ecosystem, so every
+  Swift dep read clean. CI now installs gitleaks / osv-scanner / SwiftLint
+  explicitly instead of riding a stale actions cache.
+- **Android variant-aware correctness floor** (the 4.0.4 rollout gap): a
+  plain (unflavored) Android Gradle build now runs Debug-variant commands
+  (`compileDebugKotlin` / `compileDebugJavaWithJavac` +
+  `testDebugUnitTest`, module-narrowed on the affected surface) instead of
+  the blanket decline that left Android repos floor-less. Product-flavored
+  builds still decline (their task names are flavor-qualified — a Rule-17
+  custom check naming the variant closes the gap), and a missing Debug task
+  classifies as an environment boundary, never a code failure.
+- Recipe hardening from dogfooding the 9th pack: swift fixture profile in the
+  scaffolder, a declared-exemption registry for packs with no devcontainer
+  feature (Swift is the first), swift export-detection in the graphify
+  symbol pipeline, and lint-format parity fixtures for SwiftLint.
+
 ## [4.0.4] - 2026-07-18
 
 The debt-surface UX pass and the v2 audit's extension trust + safety cluster.

@@ -266,7 +266,7 @@ export interface LanguageSupport {
    * help text when explaining exclusion or partial coverage.
    *
    * Detection itself is implemented in the Python graphify-symbols
-   * extension (`src/analyzers/tools/graphify-graph.ts`) — AST-based
+   * extension (`src/analyzers/tools/graphify.ts`) — AST-based
    * per-language patterns living next to the tree-sitter language
    * dispatch. Packs declare the reliability promise here; the script
    * keeps the per-language detection code organized.

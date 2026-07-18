@@ -115,6 +115,86 @@ const GENERIC_FIXTURE_STUB = {
 };
 
 const FIXTURE_PROFILES = {
+  swift: {
+    ext: 'swift',
+    filenameCase: 'pascal',
+    comment: '//',
+    secrets:
+      '// Hardcoded fake AWS access key — gitleaks should flag this as\n' +
+      '// `aws-access-token`. Per-language secret fixture pre-staging the\n' +
+      '// cross-ecosystem assertion surface.\n' +
+      '//\n' +
+      '// The key below is intentionally fake (low-entropy, no valid AWS\n' +
+      '// checksum) so it cannot be used to authenticate.\n' +
+      'let awsAccessKeyId = "AKIA1234567890ABCDEF"\n',
+    badLint:
+      '// Deliberate SwiftLint violations on default config:\n' +
+      '//   - force_cast (error): `as!`\n' +
+      '//   - force_try (error): `try!`\n' +
+      'import Foundation\n' +
+      '\n' +
+      'func badLint() -> Int {\n' +
+      '    let anyValue: Any = 42\n' +
+      '    let forced = anyValue as! Int\n' +
+      '    let data = try! JSONSerialization.data(withJSONObject: ["k": forced])\n' +
+      '    return data.count\n' +
+      '}\n',
+    duplications:
+      '// Two near-identical functions — jscpd should detect this clone with\n' +
+      '// default thresholds (--min-lines 5 --min-tokens 50).\n' +
+      'func summarizeItemsA(_ items: [Int]) -> Double {\n' +
+      '    var total = 0\n' +
+      '    var sumPositive = 0\n' +
+      '    var sumNegative = 0\n' +
+      '    var countPositive = 0\n' +
+      '    var countNegative = 0\n' +
+      '    for item in items {\n' +
+      '        if item > 0 {\n' +
+      '            total = total + item\n' +
+      '            sumPositive = sumPositive + item\n' +
+      '            countPositive = countPositive + 1\n' +
+      '        } else {\n' +
+      '            total = total - item\n' +
+      '            sumNegative = sumNegative + item\n' +
+      '            countNegative = countNegative + 1\n' +
+      '        }\n' +
+      '    }\n' +
+      '    let avgPos = countPositive > 0 ? Double(sumPositive) / Double(countPositive) : 0.0\n' +
+      '    let avgNeg = countNegative > 0 ? Double(sumNegative) / Double(countNegative) : 0.0\n' +
+      '    return Double(total) + avgPos + avgNeg\n' +
+      '}\n' +
+      '\n' +
+      'func summarizeItemsB(_ items: [Int]) -> Double {\n' +
+      '    var total = 0\n' +
+      '    var sumPositive = 0\n' +
+      '    var sumNegative = 0\n' +
+      '    var countPositive = 0\n' +
+      '    var countNegative = 0\n' +
+      '    for item in items {\n' +
+      '        if item > 0 {\n' +
+      '            total = total + item\n' +
+      '            sumPositive = sumPositive + item\n' +
+      '            countPositive = countPositive + 1\n' +
+      '        } else {\n' +
+      '            total = total - item\n' +
+      '            sumNegative = sumNegative + item\n' +
+      '            countNegative = countNegative + 1\n' +
+      '        }\n' +
+      '    }\n' +
+      '    let avgPos = countPositive > 0 ? Double(sumPositive) / Double(countPositive) : 0.0\n' +
+      '    let avgNeg = countNegative > 0 ? Double(sumNegative) / Double(countNegative) : 0.0\n' +
+      '    return Double(total) + avgPos + avgNeg\n' +
+      '}\n',
+    untested:
+      '// Deliberate untested file fixture. No matching `*Tests.swift` exists;\n' +
+      "// dxkit's `test-gaps` filename-match coverage source should report\n" +
+      '// this in `gaps[]` with `hasMatchingTest: false`.\n' +
+      'struct UntestedModule {\n' +
+      '    func describe() -> String {\n' +
+      '        "untested"\n' +
+      '    }\n' +
+      '}\n',
+  },
   ruby: {
     ext: 'rb',
     filenameCase: 'snake',
@@ -350,7 +430,7 @@ export const ${id}: LanguageSupport = {
   //                   (Ruby metaprogramming defeats AST analysis)
   // The strategy string is a single-line human-readable description
   // surfaced when consumers explain exclusion or partial coverage.
-  // Detection itself lives in src/analyzers/tools/graphify-graph.ts.
+  // Detection itself lives in src/analyzers/tools/graphify.ts.
   exportDetection: {
     reliability: 'unreliable',
     strategy: 'TODO(${id}): describe how exported symbols are detected for this language',
