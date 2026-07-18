@@ -573,7 +573,10 @@ const swiftCorrectnessProvider: CorrectnessProvider = {
 // ─── Version detection ──────────────────────────────────────────────────────
 
 /** The Swift version this repo targets — `.swift-version` (swiftly/swiftenv
- *  pin) first, else Package.swift's `// swift-tools-version:X.Y`. */
+ *  pin) first, else Package.swift's `// swift-tools-version:X.Y`, else the
+ *  Xcode project's `SWIFT_VERSION` build setting (the only signal an
+ *  Xcode-shaped repo has — verified on a real iOS repo whose root carries
+ *  neither manifest). */
 function detectSwiftVersion(cwd: string): string | undefined {
   const pin = readRepoFile(cwd, '.swift-version').trim();
   const pinMatch = pin.match(/^(\d+\.\d+(?:\.\d+)?)/);
@@ -581,7 +584,12 @@ function detectSwiftVersion(cwd: string): string | undefined {
   const tools = readRepoFile(cwd, 'Package.swift').match(
     /\/\/\s*swift-tools-version\s*:\s*(\d+\.\d+)/,
   );
-  return tools ? tools[1] : undefined;
+  if (tools) return tools[1];
+  for (const rel of walkPaths(cwd, { extensions: [], basenames: ['project.pbxproj'] })) {
+    const m = readRepoFile(cwd, rel).match(/SWIFT_VERSION\s*=\s*(\d+(?:\.\d+)?)/);
+    if (m) return m[1].includes('.') ? m[1] : `${m[1]}.0`;
+  }
+  return undefined;
 }
 
 // ─── The pack ───────────────────────────────────────────────────────────────
