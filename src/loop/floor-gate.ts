@@ -22,6 +22,7 @@ import {
 } from '../analyzers/correctness/run';
 import { resolveCorrectnessSurface } from '../analyzers/correctness/surface';
 import { readFloorBaseline, writeFloorBaseline, netNewFloorFailures } from './floor-state';
+import { clearStateCache } from './gate-cache';
 import { type CheckStatus } from './ledger';
 
 /**
@@ -161,6 +162,10 @@ export function buildFloorGate(repoDir: string): FloorGateOutcome | null {
  * reporting, or null when no active pack provides a floor. Best-effort write.
  */
 export function captureFloorSnapshot(repoDir: string): CorrectnessFloorResult | null {
+  // A new loop session must never replay a previous session's verdict:
+  // activation clears the Stop-gate verdict cache regardless of whether a
+  // floor is available below (T1.3 session-scope belt).
+  clearStateCache(repoDir);
   const packs = detectActiveLanguages(repoDir).filter((p) => p.correctness);
   if (packs.length === 0) return null;
   const result = runCorrectnessFloor({

@@ -45,6 +45,7 @@ import { dxkitCli } from '../self-invocation';
 import {
   loopGateActive,
   workingTreeSignature,
+  environmentSignature,
   readStateCache,
   writeStateCache,
 } from './gate-cache';
@@ -380,13 +381,19 @@ export async function runStopGate(cwd: string): Promise<void> {
   // only ever a genuinely-identical tree and the cache can never skip a
   // real net-new finding. Bypass with DXKIT_LOOP_NO_CACHE=1.
   const signature = process.env.DXKIT_LOOP_NO_CACHE === '1' ? null : workingTreeSignature(repoDir);
+  // The environment half of the cache key (T1.3): same tree + DIFFERENT
+  // observer (dxkit / policy / test command / scanner binaries) must MISS,
+  // or a scanner upgrade between sessions replays a stale ALLOW.
+  const envSignature = signature
+    ? environmentSignature(repoDir, { preset, policy, modes: { flowMode, schemaMode, duplicationMode } })
+    : null;
   const agentFields = {
     ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
     ...(payload.agent_type ? { agent_type: payload.agent_type } : {}),
   };
-  if (signature) {
+  if (signature && envSignature) {
     const cached = readStateCache(repoDir);
-    if (cached && cached.signature === signature) {
+    if (cached && cached.signature === signature && cached.envSignature === envSignature) {
       const event = buildLedgerEvent(repoDir, {
         session_id: payload.session_id || '',
         ...agentFields,
@@ -462,9 +469,14 @@ export async function runStopGate(cwd: string): Promise<void> {
   // an unchanged tree replays it instead of re-gathering. Only the
   // tree-deterministic outcomes are cached; an operator/preflight failure
   // is environment-dependent and must be re-tried.
-  if (signature && (decision.outcome === 'allow' || decision.outcome === 'block-model')) {
+  if (
+    signature &&
+    envSignature &&
+    (decision.outcome === 'allow' || decision.outcome === 'block-model')
+  ) {
     writeStateCache(repoDir, {
       signature,
+      envSignature,
       outcome: decision.outcome,
       message: decision.message,
       netNew: decision.event.net_new_findings,
