@@ -87,7 +87,7 @@ describe('runCorrectnessFloor', () => {
   });
 
   it('an unavailable skip CARRIES its reason, and the disclosure surfaces it (T2.4)', async () => {
-    // The android-oculus class: ./gradlew committed without the exec bit
+    // The rollout class: ./gradlew committed without the exec bit
     // spawned EACCES in 0.2s and read as "kotlin compile failed" with EMPTY
     // output — an environment problem reported as broken code, undiagnosable
     // from the gate log. The exec now reports it unavailable WITH the remedy;
