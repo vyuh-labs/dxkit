@@ -441,6 +441,7 @@ export async function run(argv: string[]): Promise<void> {
       'no-correctness': { type: 'boolean' },
       'no-floor': { type: 'boolean' },
       'report-md': { type: 'string' },
+      stored: { type: 'boolean' },
       'keep-baselines': { type: 'boolean', default: false },
       'remove-devdep': { type: 'boolean', default: false },
       'no-feedback': { type: 'boolean', default: false },
@@ -2494,6 +2495,19 @@ export async function run(argv: string[]): Promise<void> {
             logger.success(
               `Wrote ${rel}${tag} — ${result.file.findings.length} findings baselined${allowlistNote}, salt: ${result.file.saltMode} (${elapsed}s)`,
             );
+            // The capture moment is when a user should LEARN their build is
+            // red — a silently-recorded floor envelope helps nobody. One
+            // line, with the inventory command; green/absent stays silent.
+            const failingFloor = (result.file.floorDebt?.checks ?? []).filter(
+              (c) => c.status === 'fail',
+            ).length;
+            if (failingFloor > 0) {
+              logger.warn(
+                `Also recorded ${failingFloor} failing correctness check(s) as grandfathered floor debt ` +
+                  `(broken build / failing tests). They never block the gate — run \`vyuh-dxkit debt\` ` +
+                  `for the prioritized repair inventory.`,
+              );
+            }
           }
         } catch (err) {
           logger.fail((err as Error).message);
@@ -2863,6 +2877,8 @@ export async function run(argv: string[]): Promise<void> {
       await runDebtCli(targetPath, {
         json: !!values.json,
         name: values.name as string | undefined,
+        // --stored: instant envelope-only read (no compile/test run).
+        stored: !!values.stored,
       });
       process.exit(0);
       break;

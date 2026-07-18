@@ -239,6 +239,8 @@ export function renderConsole(result: GuardrailCheckResult): string {
     `  Commit:      ${shortSha(result.baseline.repo.commitSha)} (${result.baseline.repo.branch || 'detached'})`,
   );
   lines.push(`  Findings:    ${result.baseline.findings.length}`);
+  const debtNote = floorDebtNotice(result.baseline);
+  if (debtNote) lines.push(`  ${debtNote}`);
   lines.push('');
 
   lines.push(logger.bold('Current'));
@@ -683,6 +685,22 @@ function dupFingerprintLine(id: string): string {
     `    · fingerprint: ${id}  (accept if by-design: allowlist add ` +
     `--fingerprint=${id} --kind=code-reimplementation --category=false-positive --reason="<why>")`
   );
+}
+
+/**
+ * One informational line when the baseline carries recorded floor debt
+ * (a grandfathered broken build / failing tests). A PASSED gate on such a
+ * repo is technically correct and experientially misleading — the gate
+ * proves no NEW debt, and this line keeps the OLD debt from being
+ * invisible at the one place people actually look. Exported for tests;
+ * null when there is no envelope or it is all green.
+ */
+export function floorDebtNotice(baseline: {
+  readonly floorDebt?: { readonly checks: ReadonlyArray<{ readonly status: string }> };
+}): string | null {
+  const failing = (baseline.floorDebt?.checks ?? []).filter((c) => c.status === 'fail').length;
+  if (failing === 0) return null;
+  return `Floor debt:  ${failing} failing correctness check(s) grandfathered (build/tests) — \`vyuh-dxkit debt\` for the repair inventory`;
 }
 
 function verdictBanner(result: GuardrailCheckResult): string {
@@ -1506,6 +1524,13 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
 
   const allowlistLines = formatAllowlistDelta(result);
   for (const l of allowlistLines) lines.push(l);
+
+  const mdDebtNote = floorDebtNotice(result.baseline);
+  if (mdDebtNote) {
+    lines.push('');
+    lines.push(`> ℹ️ ${mdDebtNote}`);
+    lines.push('');
+  }
 
   lines.push('---');
   lines.push('');

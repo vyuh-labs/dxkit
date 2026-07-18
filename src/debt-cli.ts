@@ -63,6 +63,9 @@ export interface DebtFindingGroup {
 export interface DebtReport {
   readonly schema: 'dxkit.debt.v1';
   readonly baselinePresent: boolean;
+  /** 'live' — the floor was re-run now (ground truth); 'stored' — the
+   *  baseline's recorded envelope only (instant, possibly stale). */
+  readonly floorSource: 'live' | 'stored';
   readonly floor: {
     readonly live: FloorDebt | null;
     readonly baseline: FloorDebt | null;
@@ -84,6 +87,9 @@ export function buildDebtReport(
   opts: {
     readonly name?: string;
     readonly liveFloor?: (cwd: string) => FloorDebt | null;
+    /** Skip the live floor run and read only the baseline's recorded
+     *  envelope — instant, honest about its staleness. */
+    readonly stored?: boolean;
   } = {},
 ): DebtReport {
   const name = opts.name ?? 'main';
@@ -96,8 +102,11 @@ export function buildDebtReport(
     baseline = null; // unreadable baseline → report proceeds without it
   }
 
-  const live = (opts.liveFloor ?? captureFloorDebt)(cwd);
   const storedFloor = baseline?.floorDebt ?? null;
+  // Stored mode reads the envelope AS the floor state: every recorded
+  // failure is by definition 'baseline' debt, and nothing can be credited
+  // as fixed (we did not look). Live mode is ground truth.
+  const live = opts.stored ? storedFloor : (opts.liveFloor ?? captureFloorDebt)(cwd);
   const storedByKey = new Map(
     (storedFloor?.checks ?? []).map((c) => [checkKey(c.pack, c.label), c.status]),
   );
@@ -113,7 +122,7 @@ export function buildDebtReport(
     };
   });
   const liveByKey = new Map((live?.checks ?? []).map((c) => [checkKey(c.pack, c.label), c]));
-  const fixedSinceBaseline = (storedFloor ? failingFloorDebt(storedFloor) : [])
+  const fixedSinceBaseline = (!opts.stored && storedFloor ? failingFloorDebt(storedFloor) : [])
     .filter((c) => {
       const now = liveByKey.get(checkKey(c.pack, c.label));
       return now !== undefined && now.status === 'pass';
@@ -176,6 +185,7 @@ export function buildDebtReport(
   return {
     schema: 'dxkit.debt.v1',
     baselinePresent: baseline !== null,
+    floorSource: opts.stored ? 'stored' : 'live',
     floor: { live, baseline: storedFloor, failures, fixedSinceBaseline, unobservable },
     findings: { total: baseline?.findings.length ?? 0, groups },
     plan,
@@ -188,6 +198,14 @@ export function renderDebtConsole(report: DebtReport): string {
   lines.push('Repair inventory (informational — never gates; exit is always 0)');
   lines.push('');
   lines.push('CORRECTNESS FLOOR');
+  if (report.floorSource === 'stored') {
+    const cap = report.floor.baseline;
+    lines.push(
+      cap
+        ? `  (recorded at baseline capture ${cap.capturedAt}${cap.capturedAtCommit ? ` @ ${cap.capturedAtCommit.slice(0, 12)}` : ''} — possibly stale; drop --stored for live state)`
+        : '  (no recorded floor envelope in the baseline — drop --stored for a live run)',
+    );
+  }
   if (report.floor.live === null) {
     lines.push('  no active language pack provides a floor');
   } else if (report.floor.failures.length === 0) {
@@ -232,9 +250,14 @@ export function renderDebtConsole(report: DebtReport): string {
 /** CLI entry: render (or emit JSON) and always exit 0 — a report, not a gate. */
 export async function runDebtCli(
   cwd: string,
-  opts: { readonly json?: boolean; readonly name?: string },
+  opts: { readonly json?: boolean; readonly name?: string; readonly stored?: boolean },
 ): Promise<void> {
-  const report = buildDebtReport(cwd, { name: opts.name });
+  if (!opts.stored && !opts.json) {
+    logger.info(
+      'running the correctness floor (compile + tests) for live state — minutes on large repos; `--stored` reads the recorded inventory instantly',
+    );
+  }
+  const report = buildDebtReport(cwd, { name: opts.name, stored: opts.stored });
   if (opts.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
   } else {
