@@ -27,14 +27,8 @@ import { loadAllowlist } from './allowlist/file';
 import { readVisNetworkBundle } from './dashboard/vendor';
 import { readDxkitVersion } from './issue-cli';
 
-export interface FlowExtractOptions {
-  readonly cwd: string;
-  readonly frontend?: string;
-  readonly backend?: string;
-  /** Comma-separated OpenAPI spec paths (served side, unioned with static). */
-  readonly specs?: string;
+export interface FlowExtractOptions extends FlowViewOptions {
   readonly out?: string;
-  readonly json?: boolean;
 }
 
 /** Shared options for the graph-backed `flow` / `flow trace` views. */
@@ -44,6 +38,11 @@ export interface FlowViewOptions {
   readonly backend?: string;
   readonly specs?: string;
   readonly json?: boolean;
+  /** Treat the scanned source as attacker-controlled: executable flow
+   *  plugins are NOT loaded (disclosed, not silent — the same trust tier
+   *  the guardrail's --untrusted uses). The shipped PR workflow passes
+   *  this on pull_request events (S-05). */
+  readonly untrusted?: boolean;
 }
 
 /**
@@ -79,11 +78,12 @@ function resolveRoots(opts: { cwd: string; frontend?: string; backend?: string }
 function gatherOptions(
   opts: FlowViewOptions,
   extra?: { relativeTo?: string },
-): { roots: string[]; extraSpecs: string[]; relativeTo?: string } {
+): { roots: string[]; extraSpecs: string[]; relativeTo?: string; untrusted?: boolean } {
   return {
     roots: resolveRoots(opts),
     extraSpecs: splitPaths(opts.specs, opts.cwd),
     ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
+    ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
   };
 }
 

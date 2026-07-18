@@ -236,13 +236,33 @@ function runCommandProducer(
   };
 
   const outputAbs = path.join(cwd, manifest.output);
-  // Remove a stale output first so "file exists after the run" means the
-  // RUN produced it, not a previous invocation.
+  // S-06: hold the last-known-good snapshot in memory before clearing the
+  // output (existence-after-run must mean THIS run wrote it), and RESTORE
+  // it on any non-ok outcome — a failed or skipped refresh never destroys
+  // the prior evidence. Combined with the manifest constraint (output must
+  // live under .dxkit/), the runner can no longer delete a user file.
+  let prior: string | null = null;
+  try {
+    prior = fs.readFileSync(outputAbs, 'utf-8');
+  } catch {
+    prior = null; // absent before the run
+  }
   try {
     fs.rmSync(outputAbs, { force: true });
   } catch {
     /* a locked stale file surfaces below as an invalid/missing emit */
   }
+  const finish = (r: ExtensionRunOutcome): ExtensionRunOutcome => {
+    if (r.status !== 'ok' && prior !== null) {
+      try {
+        fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
+        fs.writeFileSync(outputAbs, prior);
+      } catch {
+        /* restoration is best-effort; the failure itself is already reported */
+      }
+    }
+    return r;
+  };
 
   const outcome = exec(
     {
@@ -254,21 +274,21 @@ function runCommandProducer(
   );
 
   if (!outcome.available) {
-    return { status: 'skipped', reason: `interpreter '${manifest.run.command}' not found` };
+    return finish({ status: 'skipped', reason: `interpreter '${manifest.run.command}' not found` });
   }
   if (outcome.timedOut) {
-    return {
+    return finish({
       status: 'skipped',
       reason: `timed out after ${manifest.run.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS}s`,
-    };
+    });
   }
   if (outcome.code !== 0) {
-    return {
+    return finish({
       status: 'invalid',
       errors: [
         `extension exited ${outcome.code}${outcome.output ? ` — output tail: ${outcome.output.slice(-800)}` : ''}`,
       ],
-    };
+    });
   }
 
   // Prefer the output file the extension wrote; fall back to stdout.
@@ -279,17 +299,17 @@ function runCommandProducer(
     text = outcome.output.trim().length > 0 ? outcome.output : null;
   }
   if (text === null) {
-    return {
+    return finish({
       status: 'invalid',
       errors: [
         `extension exited 0 but wrote neither its output file (${manifest.output}) nor a document on stdout`,
       ],
-    };
+    });
   }
 
   const parsed = parseWireDocText(manifest.contributes, text);
-  if (!parsed.ok) return { status: 'invalid', errors: parsed.errors };
-  return persistSnapshot(cwd, manifest.output, parsed.doc, parsed.schemaId, opts.now);
+  if (!parsed.ok) return finish({ status: 'invalid', errors: parsed.errors });
+  return finish(persistSnapshot(cwd, manifest.output, parsed.doc, parsed.schemaId, opts.now));
 }
 
 /**
@@ -309,6 +329,11 @@ function persistSnapshot(
   const stamped = { ...(doc as unknown as Record<string, unknown>) };
   stamped['generatedAt'] = (now?.() ?? new Date()).toISOString();
   fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
-  fs.writeFileSync(outputAbs, `${JSON.stringify(stamped, null, 2)}\n`);
+  // Atomic replace (S-06): the VALIDATED document is written to a temp
+  // sibling and renamed over the target, so a crash or invalid emit can
+  // never leave a half-written snapshot where the last-known-good was.
+  const tmp = `${outputAbs}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(stamped, null, 2)}\n`);
+  fs.renameSync(tmp, outputAbs);
   return { status: 'ok', doc, schemaId, outputPath };
 }

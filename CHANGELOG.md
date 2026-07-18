@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The plugin-trust boundary is now ACTIVE on the shipped PR workflow.** The
+  generated guardrail workflow passes `--untrusted` on `pull_request` events
+  (gate and flow console), so executable flow/extension plugins from a PR head
+  never run — the boundary existed but nothing turned it on. Plugin-derived
+  routes still reach the gate via the committed `served.json` produced from
+  trusted default-branch runs. The `flow` view commands (`map` / `trace` /
+  `extract` / `console`) accept `--untrusted` directly.
+- **Extension output can no longer target a user file.** `output` must live
+  under `.dxkit/` (convention: `.dxkit/contrib/<name>.json`) — previously
+  `package.json` was a legal target and the runner deleted it before every
+  run. ⚠ Tightening: an extension writing elsewhere now fails validation with
+  the migration path in the message; every shipped example already complied.
+  The runner also RESTORES the last-known-good snapshot when a refresh fails
+  or times out, and persists new snapshots atomically.
+
+### Fixed
+
+- **`refresh: manual` finally means manual.** The generated on-merge workflow
+  now runs `extensions refresh --scheduled on-merge`, so extensions declaring
+  `refresh: manual` are skipped there (previously the unfiltered refresh ran
+  everything). An explicit operator `extensions refresh` still runs all.
+- **Wire `file` locators are validated as the contract always claimed.**
+  `contract.v1` / `inventory.v1` / `findings.v1` reject absolute, traversal,
+  drive-prefixed, and non-POSIX paths with field-precise errors — they feed
+  finding identity, and a silent violation corrupted fingerprints. ⚠
+  Tightening for extensions that emitted non-canonical paths.
+- Extension-SDK docs no longer call the rung-4 plugin path "sandboxed" — it
+  is in-process and trust-tier-gated, not OS-sandboxed.
+
 ## [4.0.3] - 2026-07-17
 
 Correctness and trust. Closes the three enforcement-boundary holes an external

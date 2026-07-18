@@ -94,6 +94,28 @@ describe('manifest discovery', () => {
   });
 });
 
+describe('output-path safety (S-06 — the runner owns the file it replaces)', () => {
+  it('rejects an output outside .dxkit/ — package.json used to be a legal target', () => {
+    writeManifest('grabby', { ...GOOD, name: 'grabby', output: 'package.json' });
+    const r = discoverExtensions(tmp);
+    expect(r.extensions).toEqual([]);
+    expect(r.errors.join('\n')).toContain('.dxkit/');
+  });
+
+  it('rejects a nested non-dxkit json target too', () => {
+    writeManifest('grabby2', { ...GOOD, name: 'grabby2', output: 'src/config.json' });
+    const r = discoverExtensions(tmp);
+    expect(r.extensions).toEqual([]);
+  });
+
+  it('accepts the .dxkit/contrib convention', () => {
+    writeManifest('fine', { ...GOOD, name: 'fine', output: '.dxkit/contrib/fine.json' });
+    const r = discoverExtensions(tmp);
+    expect(r.errors).toEqual([]);
+    expect(r.extensions).toHaveLength(1);
+  });
+});
+
 describe('rung-4 plugin manifests', () => {
   const PLUGIN_GATHER = {
     schemaVersion: 1,
@@ -262,6 +284,28 @@ describe('the ONE runner (policy matrix via injected exec)', () => {
     if (r2.status === 'ok') {
       expect(JSON.stringify(r2.doc)).toContain('FromFile');
     }
+  });
+
+  it('a FAILED refresh restores the last-known-good snapshot (S-06 — never destroy evidence)', async () => {
+    const outAbs = path.join(tmp, '.dxkit/contrib/ui-inventory.json');
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    const good = JSON.stringify({ schema: 'inventory.v1', entities: [], generatedAt: 'x' });
+    fs.writeFileSync(outAbs, good);
+    // The run fails outright — the prior snapshot must come back.
+    const exec: CommandExec = () => ({ available: true, code: 1, output: 'boom' });
+    const r = await runExtension(tmp, loaded(), { exec });
+    expect(r.status).toBe('invalid');
+    expect(fs.readFileSync(outAbs, 'utf-8')).toBe(good);
+    // A timeout (skip) restores too.
+    const execTimeout: CommandExec = () => ({
+      available: true,
+      timedOut: true,
+      code: -1,
+      output: '',
+    });
+    const r2 = await runExtension(tmp, loaded(), { exec: execTimeout });
+    expect(r2.status).toBe('skipped');
+    expect(fs.readFileSync(outAbs, 'utf-8')).toBe(good);
   });
 
   it('invalid emit → the field-precise wire errors surface verbatim', async () => {

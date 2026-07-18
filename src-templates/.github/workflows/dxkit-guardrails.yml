@@ -164,7 +164,14 @@ __DXKIT_CI_RUNTIME_SETUP__
             EXTRA="--mode ref-based --ref origin/${DXKIT_PR_BASE:-$DEFAULT_BRANCH}"
           fi
           set +e
-          "${DXKIT}" guardrail check $EXTRA --markdown > guardrail-report.md
+          # S-05 (4.0.4): a pull_request head is third-party input — run with
+          # the plugin-trust boundary ACTIVE. Executable flow/extension
+          # plugins are disabled (disclosed, not silent); plugin-derived
+          # routes still reach the gate through the committed served.json
+          # snapshot, which was produced from trusted default-branch runs.
+          UNTRUSTED=""
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then UNTRUSTED="--untrusted"; fi
+          "${DXKIT}" guardrail check $EXTRA $UNTRUSTED --markdown > guardrail-report.md
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           # Surface WHY it blocked in the job log itself (not only the PR
@@ -222,7 +229,9 @@ __DXKIT_CI_RUNTIME_SETUP__
             DXKIT=vyuh-dxkit
           fi
           set +e
-          "${DXKIT}" flow console --diff "${{ github.event.pull_request.base.sha }}" \
+          UNTRUSTED=""
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then UNTRUSTED="--untrusted"; fi
+          "${DXKIT}" flow console $UNTRUSTED --diff "${{ github.event.pull_request.base.sha }}" \
             --out flow-console.html --json > console.json 2>/dev/null
           set -e
           eps=$(node -e "try{const j=require('./console.json');process.stdout.write(String((j.shownEndpoints||0)+(j.broken||0)))}catch(e){process.stdout.write('0')}" 2>/dev/null || echo 0)

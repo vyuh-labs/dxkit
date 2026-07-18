@@ -61,6 +61,12 @@ export interface ExtensionsOptions {
   /** refresh: land the snapshot changes ('pr' = standing PR, 'push' = direct
    *  [skip ci] commit). Omitted → refresh writes the working tree only. */
   readonly land?: string;
+  /** refresh: run only extensions whose manifest declares this `refresh`
+   *  trigger (e.g. 'on-merge'). The generated on-merge workflow passes it,
+   *  so `refresh: manual` finally MEANS manual (S-14) — previously the
+   *  unfiltered refresh ran every extension. Omitted → all (explicit
+   *  operator invocation keeps its run-everything semantics). */
+  readonly scheduled?: string;
   /** init: contribution kind. */
   readonly kind?: string;
   /** init: the run command line (first token = interpreter, rest = args). */
@@ -284,10 +290,19 @@ export async function runExtensionsCli(
     }
 
     case 'refresh': {
-      const chosen = target ? extensions.filter((e) => e.manifest.name === target) : extensions;
+      let chosen = target ? extensions.filter((e) => e.manifest.name === target) : extensions;
       if (target && chosen.length === 0) {
         logger.fail(`No extension named '${target}' under ${EXTENSIONS_DIR}/.`);
         return 1;
+      }
+      if (opts.scheduled) {
+        const skipped = chosen.filter((e) => e.manifest.refresh !== opts.scheduled);
+        chosen = chosen.filter((e) => e.manifest.refresh === opts.scheduled);
+        for (const e of skipped) {
+          logger.info(
+            `  ${e.manifest.name}: refresh '${e.manifest.refresh}' — skipped by --scheduled ${opts.scheduled}`,
+          );
+        }
       }
       logger.header('vyuh-dxkit extensions refresh');
       for (const e of errors) logger.fail(`  ${e}`);

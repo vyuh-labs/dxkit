@@ -80,6 +80,60 @@ function checkOptionalString(
   }
 }
 
+/**
+ * Why a `file` value is NOT a repo-relative POSIX path, or null when it is
+ * (S-15 / 4.0.4). The wire contract PROMISES repo-relative POSIX locators —
+ * they feed finding identity (Rule 9) and topology evidence — but the
+ * validators accepted any string, so absolute paths, traversal, drive
+ * prefixes, and backslashes could enter fingerprints (the exact class the
+ * 3.8 parseLocated boundary closed for linters). A protocol invariant is
+ * VALIDATED at the boundary, never assumed.
+ */
+function fileLocatorError(v: string): string | null {
+  if (v.includes('\0')) return 'must not contain NUL bytes';
+  if (v.startsWith('/') || v.startsWith('\\'))
+    return 'must be repo-relative (got an absolute path)';
+  if (/^[A-Za-z]:/.test(v)) return 'must be repo-relative (got a drive-prefixed path)';
+  if (v.includes('\\')) return 'must use POSIX separators (got a backslash)';
+  const segs = v.split('/');
+  if (segs.some((seg) => seg === '..')) return "must not traverse ('..' segment)";
+  if (segs.some((seg) => seg === ''))
+    return 'must not contain empty segments (leading/double slash)';
+  return null;
+}
+
+/** `file` locator, required: non-empty string AND a valid repo-relative
+ *  POSIX path. */
+function checkRequiredFile(
+  sink: ErrorSink,
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+): void {
+  checkRequiredString(sink, obj, key, path);
+  const v = obj[key];
+  if (typeof v === 'string' && v.length > 0) {
+    const err = fileLocatorError(v);
+    if (err) sink.add(`${path}.${key}`, `${err} (got ${JSON.stringify(v)})`);
+  }
+}
+
+/** `file` locator, optional: absent fine; present must be a valid
+ *  repo-relative POSIX path. */
+function checkOptionalFile(
+  sink: ErrorSink,
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+): void {
+  checkOptionalString(sink, obj, key, path);
+  const v = obj[key];
+  if (typeof v === 'string') {
+    const err = fileLocatorError(v);
+    if (err) sink.add(`${path}.${key}`, `${err} (got ${JSON.stringify(v)})`);
+  }
+}
+
 /** Optional 1-based line number: absent fine; present must be a positive integer. */
 function checkOptionalLine(
   sink: ErrorSink,
@@ -173,7 +227,7 @@ export function validateContractV1(raw: unknown): string[] {
   checkOptionalArray(sink, raw, 'consumed', '', (item, p) => {
     checkRequiredString(sink, item, 'method', p);
     checkRequiredString(sink, item, 'url', p);
-    checkOptionalString(sink, item, 'file', p);
+    checkOptionalFile(sink, item, 'file', p);
     checkOptionalLine(sink, item, 'line', p);
     checkOptionalMeta(sink, item, p);
   });
@@ -181,13 +235,13 @@ export function validateContractV1(raw: unknown): string[] {
     checkRequiredString(sink, item, 'method', p);
     checkRequiredString(sink, item, 'path', p);
     checkOptionalString(sink, item, 'handler', p);
-    checkOptionalString(sink, item, 'file', p);
+    checkOptionalFile(sink, item, 'file', p);
     checkOptionalLine(sink, item, 'line', p);
     checkOptionalMeta(sink, item, p);
   });
   checkOptionalArray(sink, raw, 'dynamicCalls', '', (item, p) => {
     checkRequiredString(sink, item, 'receiver', p);
-    checkOptionalString(sink, item, 'file', p);
+    checkOptionalFile(sink, item, 'file', p);
     checkOptionalLine(sink, item, 'line', p);
   });
   return sink.errors;
@@ -201,7 +255,7 @@ export function validateInventoryV1(raw: unknown): string[] {
   checkRequiredArray(sink, raw, 'entities', '', (entity, p) => {
     checkRequiredString(sink, entity, 'kind', p);
     checkRequiredString(sink, entity, 'name', p);
-    checkOptionalString(sink, entity, 'file', p);
+    checkOptionalFile(sink, entity, 'file', p);
     checkOptionalLine(sink, entity, 'line', p);
     checkOptionalMeta(sink, entity, p);
     checkOptionalArray(sink, entity, 'fields', `${p}.`, (field, fp) => {
@@ -230,7 +284,7 @@ export function validateFindingsV1(raw: unknown): string[] {
   checkRequiredArray(sink, raw, 'findings', '', (finding, p) => {
     checkRequiredString(sink, finding, 'rule', p);
     checkRequiredString(sink, finding, 'message', p);
-    checkRequiredString(sink, finding, 'file', p);
+    checkRequiredFile(sink, finding, 'file', p);
     const sev = finding['severity'];
     if (typeof sev !== 'string' || !WIRE_SEVERITIES.has(sev)) {
       sink.add(

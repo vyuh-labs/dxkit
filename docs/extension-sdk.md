@@ -19,7 +19,7 @@ never leave rungs 1 and 2.
 | 1    | a `.dxkit/policy.json` key                  | no                           |
 | 2    | a path to an artifact you already have      | no                           |
 | 3    | a manifest pointing at your existing script | your script, at refresh time |
-| 4    | a TypeScript plugin (mostly a data table)   | sandboxed, in-process        |
+| 4    | a TypeScript plugin (mostly a data table)   | in-process, NOT OS-sandboxed |
 
 ## What is frozen
 

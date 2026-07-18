@@ -218,3 +218,45 @@ describe('extensions init --plugin (rung 4)', () => {
     expect(await runExtensionsCli(tmp, 'list', undefined, { json: true })).toBe(0);
   });
 });
+
+describe('refresh --scheduled honors the manifest trigger (S-14)', () => {
+  function manifest(name: string, refresh: string): void {
+    const dir = path.join(tmp, '.dxkit/extensions', name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'extension.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        name,
+        contributes: 'inventory',
+        // node -e writing a valid doc to stdout — runs anywhere the suite runs.
+        run: {
+          command: 'node',
+          args: ['-e', 'console.log(JSON.stringify({schema:"inventory.v1",entities:[]}))'], // slop-ok: the fixture extension's own emit
+        },
+        refresh,
+        output: `.dxkit/contrib/${name}.json`,
+      }),
+    );
+  }
+
+  it('runs only on-merge extensions; manual ones are skipped and produce no snapshot', async () => {
+    manifest('auto-ext', 'on-merge');
+    manifest('manual-ext', 'manual');
+    const code = await runExtensionsCli(tmp, 'refresh', undefined, { scheduled: 'on-merge' });
+    expect(code).toBe(0);
+    expect(fs.existsSync(path.join(tmp, '.dxkit/contrib/auto-ext.json'))).toBe(true);
+    // The manual extension must NOT have run — that was the shipped bug:
+    // the generated on-merge workflow refreshed everything.
+    expect(fs.existsSync(path.join(tmp, '.dxkit/contrib/manual-ext.json'))).toBe(false);
+  });
+
+  it('an unfiltered explicit refresh still runs everything (operator semantics unchanged)', async () => {
+    manifest('auto-ext', 'on-merge');
+    manifest('manual-ext', 'manual');
+    const code = await runExtensionsCli(tmp, 'refresh', undefined, {});
+    expect(code).toBe(0);
+    expect(fs.existsSync(path.join(tmp, '.dxkit/contrib/auto-ext.json'))).toBe(true);
+    expect(fs.existsSync(path.join(tmp, '.dxkit/contrib/manual-ext.json'))).toBe(true);
+  });
+});

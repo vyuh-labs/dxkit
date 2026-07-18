@@ -81,4 +81,6 @@ __DXKIT_CI_RUNTIME_SETUP__
           # Runs every committed extension manifest and lands the snapshot
           # delta — execution/validation/landing logic lives in the tested
           # CLI, never in this workflow's bash.
-          "${DXKIT}" extensions refresh --land pr
+          # --scheduled on-merge: only extensions that DECLARED the on-merge
+          # trigger run here; `refresh: manual` extensions are skipped (S-14).
+          "${DXKIT}" extensions refresh --scheduled on-merge --land pr

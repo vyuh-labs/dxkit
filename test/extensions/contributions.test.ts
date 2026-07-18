@@ -21,6 +21,11 @@ import {
   parseWireDocText,
   type ContributionKindDef,
 } from '../../src/extensions/contributions';
+import {
+  validateContractV1,
+  validateInventoryV1,
+  validateFindingsV1,
+} from '../../src/extensions/contributions/validate';
 
 const ALL_KINDS: ContributionKind[] = ['contract', 'inventory', 'findings', 'export'];
 
@@ -164,6 +169,44 @@ describe('validator field precision (errors are the docs)', () => {
     const r = parseWireDoc('inventory', { schema: 'inventory.v1', entities });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.length).toBeLessThanOrEqual(25);
+  });
+});
+
+describe('wire file locators are validated repo-relative POSIX (S-15)', () => {
+  const bad = [
+    ['/etc/passwd', 'absolute'],
+    ['..\u002fescape.ts', 'traversal'],
+    ['C:\\repo\\x.ts', 'drive-prefixed'],
+    ['src//x.ts', 'empty segment'],
+  ] as const;
+  it('findings.v1 rejects non-canonical file locators (they feed identity — Rule 9)', () => {
+    for (const [file] of bad) {
+      const errors = validateFindingsV1({
+        schema: 'findings.v1',
+        findings: [{ rule: 'r', message: 'm', file, severity: 'high' }],
+      });
+      expect(errors.length, `should reject ${JSON.stringify(file)}`).toBeGreaterThan(0);
+    }
+    expect(
+      validateFindingsV1({
+        schema: 'findings.v1',
+        findings: [{ rule: 'r', message: 'm', file: 'src/app.ts', severity: 'high' }],
+      }),
+    ).toEqual([]);
+  });
+  it('contract.v1 + inventory.v1 reject them on their optional file fields too', () => {
+    expect(
+      validateContractV1({
+        schema: 'contract.v1',
+        consumed: [{ method: 'GET', url: '/x', file: '/abs/path.ts' }],
+      }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      validateInventoryV1({
+        schema: 'inventory.v1',
+        entities: [{ kind: 'screen', name: 'A', file: '../outside.ts' }],
+      }).length,
+    ).toBeGreaterThan(0);
   });
 });
 
