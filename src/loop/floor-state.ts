@@ -31,6 +31,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { LEDGER_DIR } from './ledger';
 import type { CorrectnessCheckResult, CorrectnessFloorResult } from '../analyzers/correctness/run';
+import { attributeFloorFailures } from '../analyzers/correctness/attribution';
 
 /** File under `.dxkit/loop/` holding the entry snapshot. */
 export const FLOOR_BASELINE_FILE = 'floor-baseline.json';
@@ -52,10 +53,10 @@ export interface FloorBaseline {
   readonly checks: readonly FloorCheckState[];
 }
 
-/** Stable per-check identity used to diff a Stop against the entry snapshot. */
-export function checkKey(pack: string, label: string): string {
-  return `${pack}:${label}`;
-}
+/** Stable per-check identity used to diff a Stop against the entry snapshot.
+ *  Re-exported from the canonical attribution module (T2.3) so the loop and
+ *  the CI floor share ONE key scheme. */
+export { checkKey } from '../analyzers/correctness/attribution';
 
 function floorBaselinePath(cwd: string): string {
   return path.join(cwd, LEDGER_DIR, FLOOR_BASELINE_FILE);
@@ -119,12 +120,15 @@ export function netNewFloorFailures(
   current: CorrectnessFloorResult,
   baseline: FloorBaseline | null,
 ): CorrectnessCheckResult[] {
-  const alreadyFailing = new Set(
-    (baseline?.checks ?? [])
-      .filter((c) => c.status === 'fail')
-      .map((c) => checkKey(c.pack, c.label)),
-  );
-  return current.checks.filter(
-    (c) => c.status === 'fail' && !alreadyFailing.has(checkKey(c.pack, c.label)),
-  );
+  // ONE comparator with the CI floor (attributeFloorFailures — T2.3).
+  // `absentMeans: 'net-new'` is the loop's declared policy: the snapshot is
+  // captured in the SAME environment, and skipped checks are deliberately
+  // dropped from it, so a check absent from the snapshot that fails now was
+  // enabled by the change — fail toward blocking. A cross-tree CI base run
+  // declares 'unattributed' instead; the difference is an argument, never a
+  // second comparator.
+  const base = baseline === null ? null : baseline.checks;
+  return attributeFloorFailures(current, base, { absentMeans: 'net-new' })
+    .filter((a) => a.attribution === 'net-new')
+    .map((a) => a.check);
 }

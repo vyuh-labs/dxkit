@@ -30,6 +30,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history: the diff-scoped floor resolves the merge-base and
+          # runs the base side in a worktree (a shallow clone breaks both).
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -58,4 +62,4 @@ __DXKIT_GATE_HOST_SETUP__
           else
             DXKIT=vyuh-dxkit
           fi
-          "${DXKIT}" floor check --surface ci --correctness --packs __DXKIT_GATE_PACKS__
+          "${DXKIT}" floor check --surface ci --correctness --packs __DXKIT_GATE_PACKS__ ${GITHUB_BASE_REF:+--base "origin/${GITHUB_BASE_REF}"}

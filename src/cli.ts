@@ -2875,13 +2875,25 @@ export async function run(argv: string[]): Promise<void> {
         ?.split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      const outcome = runFloorForSurface({
+      let outcome = runFloorForSurface({
         surface: surfaceRaw,
         cwd: targetPath,
         base: values.base as string | undefined,
         flag,
         packIds,
       });
+      // Diff-scope the CI floor (T2.3): a failing ci run is attributed
+      // against the merge-base before it may block — pre-existing debt
+      // (an onboarding PR on a repo whose tests were already red) warns by
+      // name; only net-new failures block. Runs ONLY when the current side
+      // failed, so a green PR pays nothing extra.
+      if (surfaceRaw === 'ci' && outcome.blocks) {
+        const { attributeCiFloorOutcome } = await import('./analyzers/correctness/surface-run');
+        outcome = await attributeCiFloorOutcome(outcome, {
+          cwd: targetPath,
+          base: values.base as string | undefined,
+        });
+      }
       if (values.json) {
         await emitJson({
           surface: outcome.surface,
@@ -2890,11 +2902,30 @@ export async function run(argv: string[]): Promise<void> {
           blocks: outcome.blocks,
           reason: outcome.reason,
           checks: outcome.result?.checks ?? [],
+          ...(outcome.attributed
+            ? {
+                attribution: outcome.attributed.map((a) => ({
+                  pack: a.check.pack,
+                  label: a.check.label,
+                  attribution: a.attribution,
+                })),
+              }
+            : {}),
         });
       } else {
+        // With attribution, only NET-NEW failures print with full output —
+        // pre-existing/unattributed tiers are already named in the summary.
+        const failing =
+          outcome.attributed !== undefined
+            ? outcome.attributed.filter((a) => a.attribution === 'net-new').map((a) => a.check)
+            : (outcome.result?.checks.filter((c) => c.status === 'fail') ?? []);
         if (outcome.blocks) {
           logger.fail(outcome.summary);
-          for (const c of outcome.result?.checks.filter((c) => c.status === 'fail') ?? []) {
+        } else {
+          logger.success(outcome.summary);
+        }
+        if (outcome.blocks || outcome.attributed !== undefined) {
+          for (const c of failing) {
             // Never a bare label: a failure with no captured output is itself
             // load-bearing information (the command produced nothing before
             // exiting non-zero) — say so instead of printing nothing, which
@@ -2903,8 +2934,6 @@ export async function run(argv: string[]): Promise<void> {
               `\n[${c.pack} ${c.label}] (${c.bin})\n${c.output || '(the command exited non-zero without producing any output)'}\n`,
             );
           }
-        } else {
-          logger.success(outcome.summary);
         }
       }
       process.exit(outcome.blocks ? 1 : 0);
