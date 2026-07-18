@@ -9,7 +9,7 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import { isAndroidGradleBuild, jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
+import { jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
@@ -441,13 +441,14 @@ const kotlinTestFrameworkProvider: CapabilityProvider<TestFrameworkResult> = {
 //
 // Shared with the java pack via `jvmCorrectnessProvider` (CLAUDE.md Rule 2).
 // Kotlin contributes both source extensions (`.kt` for sources, `.kts` for
-// build/scratch scripts). An Android Gradle build declines — its variant-
-// specific `testDebugUnitTest` / `compileDebugKotlin` tasks aren't the standard
-// `test`/`testClasses` the shared commands run, so CI (variant-aware) backstops.
+// build/scratch scripts) + its Android default-variant compile task (4.1 task
+// #15: a plain Android build runs `compileDebugKotlin` / `testDebugUnitTest`
+// instead of the pre-4.1 blanket decline; flavored builds still decline —
+// see `androidGradleShape`).
 
 const kotlinCorrectnessProvider = jvmCorrectnessProvider({
   sourceExtensions: ['.kt', '.kts'],
-  declineWhen: isAndroidGradleBuild,
+  androidCompileTask: 'compileDebugKotlin',
 });
 
 /** ktlint line: `<file>:<line>:<col>: <message> (<rule>)`. Exported for the

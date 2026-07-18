@@ -512,9 +512,21 @@ describe('java.correctness (shared JVM floor)', () => {
     ]);
   });
 
-  it('declines entirely on an Android Gradle build', () => {
+  it('runs Debug-variant commands on a plain Android Gradle build (4.1 task #15)', () => {
     writeGradleMulti();
     fs.writeFileSync(path.join(tmp, 'build.gradle'), "plugins { id 'com.android.application' }\n");
+    expect(java.correctness!.syntaxCheck(ctx())?.args).toEqual(['compileDebugJavaWithJavac']);
+    expect(java.correctness!.affectedTests(ctx({ changedFiles: [] }))?.args).toEqual([
+      'testDebugUnitTest',
+    ]);
+  });
+
+  it('still declines on a FLAVORED Android build (flavor-qualified task names)', () => {
+    writeGradleMulti();
+    fs.writeFileSync(
+      path.join(tmp, 'build.gradle'),
+      "plugins { id 'com.android.application' }\nandroid { productFlavors { free {} } }\n",
+    );
     expect(java.correctness!.syntaxCheck(ctx())).toBeNull();
     expect(java.correctness!.affectedTests(ctx())).toBeNull();
   });
