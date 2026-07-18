@@ -240,6 +240,132 @@ describe('runGuardrailCheck (integration)', () => {
       expect(viaPath.baseline.name).toBe('main');
     }, 300_000);
 
+    it('an UNCOMMITTED edit introducing a high code finding BLOCKS (T1.1 — dirty-tree attribution)', async () => {
+      // The 4.0.3 T1.1 hole: at Stop time an agent's edits are dirty. The
+      // scan reads the working tree, but changed-line attribution diffed
+      // committed history — so a net-new high/critical `code` finding in an
+      // uncommitted edit had `overlapsChangedLines=false`, demoted
+      // `added → uncertain`, and WARNED instead of blocking. Every other
+      // fixture in this file commits its edits, which is exactly why the
+      // hole shipped. This one does not commit.
+      //
+      // The `code` finding is minted through the ingest path (Rule 13) so
+      // the test is scanner-independent: CI installs no semgrep. The
+      // engine snapshot exists at baseline time (empty) so engine
+      // provenance is identical on both sides — no recall drift in play.
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'handler.js'), 'const a = 1;\nconst b = 2;\nconst c = 3;\n');
+      mkdirSync(join(dir, '.dxkit', 'external'), { recursive: true });
+      const emptySnapshot = {
+        schemaVersion: 1,
+        engine: 'sarif',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        findings: [],
+      };
+      writeFileSync(
+        join(dir, '.dxkit', 'external', 'sarif.json'),
+        JSON.stringify(emptySnapshot, null, 2) + '\n',
+      );
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'source + empty engine snapshot'], { cwd: dir });
+
+      await createBaseline({ cwd: dir });
+
+      // The agent's dirty edit: line 2 changes, and the refreshed engine
+      // snapshot reports a HIGH finding on that line. NOTHING is committed.
+      writeFileSync(
+        join(dir, 'src', 'handler.js'),
+        'const a = 1;\nconst b = eval(userInput);\nconst c = 3;\n',
+      );
+      writeFileSync(
+        join(dir, '.dxkit', 'external', 'sarif.json'),
+        JSON.stringify(
+          {
+            ...emptySnapshot,
+            findings: [
+              {
+                engine: 'sarif',
+                severity: 'high',
+                category: 'code',
+                cwe: 'CWE-95',
+                rule: 'js/eval-injection',
+                title: 'Eval of user-controlled input',
+                file: 'src/handler.js',
+                line: 2,
+              },
+            ],
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      const codeAdds = result.pairs.filter(
+        (p) => p.kind === 'code' && p.classification.status === 'added',
+      );
+      expect(codeAdds).toHaveLength(1);
+      // The uncommitted line IS this change's work — attribution must see it.
+      expect(codeAdds[0].overlapsChangedLines).toBe(true);
+      expect(codeAdds[0].classification.blocks).toBe(true);
+      expect(result.blocks).toBe(true);
+    }, 300_000);
+
+    it('a finding in an UNTRACKED new file BLOCKS (T1.1 — untracked = all lines changed)', async () => {
+      // Same hole, second shape: `git diff <base>` never mentions an
+      // untracked file, so a finding in a brand-new uncommitted file
+      // slipped the same way. Untracked files attribute as 'all'.
+      mkdirSync(join(dir, '.dxkit', 'external'), { recursive: true });
+      const emptySnapshot = {
+        schemaVersion: 1,
+        engine: 'sarif',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        findings: [],
+      };
+      writeFileSync(
+        join(dir, '.dxkit', 'external', 'sarif.json'),
+        JSON.stringify(emptySnapshot, null, 2) + '\n',
+      );
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-q', '-m', 'empty engine snapshot'], { cwd: dir });
+
+      await createBaseline({ cwd: dir });
+
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'brand-new.js'), 'const x = eval(input);\n'); // untracked
+      writeFileSync(
+        join(dir, '.dxkit', 'external', 'sarif.json'),
+        JSON.stringify(
+          {
+            ...emptySnapshot,
+            findings: [
+              {
+                engine: 'sarif',
+                severity: 'critical',
+                category: 'code',
+                cwe: 'CWE-95',
+                rule: 'js/eval-injection',
+                title: 'Eval of user-controlled input',
+                file: 'src/brand-new.js',
+                line: 1,
+              },
+            ],
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+
+      const result = await runGuardrailCheck({ cwd: dir });
+      const codeAdds = result.pairs.filter(
+        (p) => p.kind === 'code' && p.classification.status === 'added',
+      );
+      expect(codeAdds).toHaveLength(1);
+      expect(codeAdds[0].overlapsChangedLines).toBe(true);
+      expect(codeAdds[0].classification.blocks).toBe(true);
+      expect(result.blocks).toBe(true);
+    }, 300_000);
+
     it('surfaces allowlist additions in the markdown PR-comment section', async () => {
       // Baseline-time: no .dxkit/allowlist.json file
       await createBaseline({ cwd: dir });
