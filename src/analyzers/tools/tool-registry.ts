@@ -609,9 +609,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     versionCheck: 'gitleaks version',
     installCommands: {
       macos: 'brew install gitleaks',
-      // Install to ~/.local/bin (user path, no sudo)
+      // Install to ~/.local/bin (user path, no sudo). sha256 pinned from the
+      // publisher's gitleaks_8.24.0_checksums.txt (T2.1 — verified download).
       linux:
-        'mkdir -p ~/.local/bin && curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz | tar xz -C ~/.local/bin gitleaks && chmod +x ~/.local/bin/gitleaks',
+        'mkdir -p ~/.local/bin && t="$(mktemp)" && dxkit_fetch https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz cb49b7de5ee986510fe8666ca0273a6cc15eb82571f2f14832c9e8920751f3a4 "$t" && tar xzf "$t" -C ~/.local/bin gitleaks && rm -f "$t" && chmod +x ~/.local/bin/gitleaks',
       windows: 'scoop install gitleaks',
     },
   },
@@ -750,11 +751,11 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       macos:
         'brew install osv-scanner || ' +
         '(mkdir -p ~/.local/bin && ' +
-        'curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_darwin_amd64 -o ~/.local/bin/osv-scanner && ' +
+        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_darwin_amd64 b8a80a9f14ca4c0cd0fc2d351b28f740da9e6a5b18385ac9f9d083360b5b504e ~/.local/bin/osv-scanner && ' +
         'chmod +x ~/.local/bin/osv-scanner)',
       linux:
         'mkdir -p ~/.local/bin && ' +
-        'curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64 -o ~/.local/bin/osv-scanner && ' +
+        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64 bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc ~/.local/bin/osv-scanner && ' +
         'chmod +x ~/.local/bin/osv-scanner',
       windows: 'scoop install osv-scanner',
     },
@@ -945,11 +946,15 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // the repo's DETECTED .NET version at resolve time, so a .NET 9 repo gets a
     // .NET 9 SDK — not a hardcoded 8.0. (Onboarding cluster: sudo-apt + wrong
     // major shipped an auto-bootstrap that was broken on the common non-root box.)
+    // The installer SCRIPT is fetched from a PINNED dotnet/install-scripts
+    // commit and sha256-verified before bash sees it (T2.1): the mutable
+    // https://dot.net/v1/ URL piped straight to bash was the sharpest
+    // supply-chain edge in the registry. Bumping = new commit + new hash.
     installCommands: {
       macos:
-        'curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"',
+        't="$(mktemp)" && dxkit_fetch https://raw.githubusercontent.com/dotnet/install-scripts/da3ce11ba63f3dbb0fb835d41bda2665d5c48e84/src/dotnet-install.sh 082f7685e156738a1b2e2ed8381a621870d4ce8e8c59278034556f05c186eb2e "$t" && bash "$t" --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"; r=$?; rm -f "$t"; exit $r',
       linux:
-        'curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"',
+        't="$(mktemp)" && dxkit_fetch https://raw.githubusercontent.com/dotnet/install-scripts/da3ce11ba63f3dbb0fb835d41bda2665d5c48e84/src/dotnet-install.sh 082f7685e156738a1b2e2ed8381a621870d4ce8e8c59278034556f05c186eb2e "$t" && bash "$t" --channel __DOTNET_CHANNEL__ --install-dir "$HOME/.dotnet"; r=$?; rm -f "$t"; exit $r',
       windows: 'winget install Microsoft.DotNet.SDK.__DOTNET_MAJOR__',
     },
   },
@@ -993,7 +998,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     installCommands: {
       macos: 'brew install pmd',
       linux:
-        'mkdir -p ~/.local/share/pmd ~/.local/bin && curl -sSfL -o /tmp/pmd.zip "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.24.0/pmd-dist-7.24.0-bin.zip" && unzip -q -o /tmp/pmd.zip -d ~/.local/share/pmd && chmod +x ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd && ln -sf ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd ~/.local/bin/pmd',
+        'mkdir -p ~/.local/share/pmd ~/.local/bin && t="$(mktemp)" && dxkit_fetch "https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.24.0/pmd-dist-7.24.0-bin.zip" 110934b36d39c19094d1b77386931978093f238f2c2f1851748822b69c7367ac "$t" && unzip -q -o "$t" -d ~/.local/share/pmd && rm -f "$t" && chmod +x ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd && ln -sf ~/.local/share/pmd/pmd-bin-7.24.0/bin/pmd ~/.local/bin/pmd',
       windows: 'scoop install pmd',
     },
   },
@@ -1019,7 +1024,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     installCommands: {
       macos: 'brew install detekt',
       linux:
-        'mkdir -p ~/.local/share/detekt ~/.local/bin && curl -sSfL -o /tmp/detekt-cli.zip https://github.com/detekt/detekt/releases/download/v1.23.6/detekt-cli-1.23.6.zip && unzip -q -o /tmp/detekt-cli.zip -d ~/.local/share/detekt && chmod +x ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt',
+        'mkdir -p ~/.local/share/detekt ~/.local/bin && t="$(mktemp)" && dxkit_fetch https://github.com/detekt/detekt/releases/download/v1.23.6/detekt-cli-1.23.6.zip 6b4d41865b58baaff5ff931726b637cc3c2434f4c4f89b900b5829016d244abd "$t" && unzip -q -o "$t" -d ~/.local/share/detekt && rm -f "$t" && chmod +x ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt-cli && ln -sf ~/.local/share/detekt/detekt-cli-1.23.6/bin/detekt-cli ~/.local/bin/detekt',
       windows: 'scoop install detekt',
     },
   },
@@ -1125,8 +1130,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // their own version (mirrors detekt, ktlint's sibling Kotlin linter).
     installCommands: {
       macos: 'brew install ktlint',
+      // Verified download to ~/.local/bin — no sudo (the old command moved
+      // it to /usr/local/bin with sudo, which dies on sudo-less CI anyway).
       linux:
-        'curl -sSLO https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint && chmod a+x ktlint && sudo mv ktlint /usr/local/bin/',
+        'mkdir -p ~/.local/bin && dxkit_fetch https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint a16be01dcc480aab2f55f444b620142152f66e31564b3b9376506d624c28a2ad ~/.local/bin/ktlint && chmod a+x ~/.local/bin/ktlint',
       windows: 'scoop install ktlint',
     },
   },
@@ -1198,12 +1205,16 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     installCommands: {
       // Download the CodeQL bundle (CLI + precompiled query packs) into
       // the dxkit cache and symlink the launcher onto the user path.
+      // Pinned to codeql-bundle-v2.26.1 with publisher-issued sha256s
+      // (the release's *.checksum.txt assets) — the old `releases/latest`
+      // URL was both unpinned AND unverifiable (T2.1). Bumping = new tag
+      // + the three new published checksums.
       macos:
-        'mkdir -p "$HOME/.cache/dxkit" && curl -sSfL https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-osx64.tar.gz | tar xz -C "$HOME/.cache/dxkit" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
+        'mkdir -p "$HOME/.cache/dxkit" && t="$(mktemp)" && dxkit_fetch https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-osx64.tar.gz 49a4514336f1c155d8c54eb94c2445ff1ea7b4ff0bb61af5b3749d9a82fb27f9 "$t" && tar xzf "$t" -C "$HOME/.cache/dxkit" && rm -f "$t" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
       linux:
-        'mkdir -p "$HOME/.cache/dxkit" && curl -sSfL https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-linux64.tar.gz | tar xz -C "$HOME/.cache/dxkit" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
+        'mkdir -p "$HOME/.cache/dxkit" && t="$(mktemp)" && dxkit_fetch https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-linux64.tar.gz 38eca75ea296a6c48c52aff942b0678f06d3367140a5aa18caf80176943422ba "$t" && tar xzf "$t" -C "$HOME/.cache/dxkit" && rm -f "$t" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
       windows:
-        'powershell -Command "New-Item -ItemType Directory -Force $HOME/.cache/dxkit; Invoke-WebRequest -Uri https://github.com/github/codeql-action/releases/latest/download/codeql-bundle-win64.tar.gz -OutFile $env:TEMP/codeql.tar.gz; tar xz -C $HOME/.cache/dxkit -f $env:TEMP/codeql.tar.gz"',
+        'powershell -Command "New-Item -ItemType Directory -Force $HOME/.cache/dxkit; Invoke-WebRequest -Uri https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-win64.tar.gz -OutFile $env:TEMP/codeql.tar.gz; if ((Get-FileHash -Algorithm SHA256 $env:TEMP/codeql.tar.gz).Hash -ne \'CA630F02E0BCF4F35F5C39159E82A794F1F598FF8DF51F32BA1D20A9BFD75CBB\') { Remove-Item $env:TEMP/codeql.tar.gz; throw \'dxkit: checksum mismatch for codeql-bundle-win64.tar.gz — refusing to install\' }; tar xz -C $HOME/.cache/dxkit -f $env:TEMP/codeql.tar.gz"',
     },
   },
 };

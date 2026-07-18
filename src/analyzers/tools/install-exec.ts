@@ -86,6 +86,38 @@ export function recordToolDep(cwd: string, pkg: string): void {
   }
 }
 
+/**
+ * The ONE verified-download primitive (T2.1). Install commands never raw
+ * `curl | tar`; they call `dxkit_fetch <url> <sha256> <dest>`, which
+ * downloads to a temp file, verifies the sha256 against the registry-pinned
+ * value, and only then moves the artifact into place. FAIL CLOSED: a
+ * mismatch deletes the download and exits non-zero with both hashes named —
+ * a tampered or substituted artifact is never executed or extracted. The
+ * function is prepended to any install command that references it, so the
+ * pinned hash lives in ONE place per artifact (the tool registry) and the
+ * verification logic lives here.
+ */
+export const DXKIT_FETCH_PREAMBLE = `dxkit_fetch() {
+  _dxkit_url="$1"; _dxkit_sha="$2"; _dxkit_dest="$3"
+  _dxkit_tmp="$(mktemp)" || return 1
+  if ! curl -sSfL "$_dxkit_url" -o "$_dxkit_tmp"; then
+    echo "dxkit: download failed: $_dxkit_url" >&2; rm -f "$_dxkit_tmp"; return 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    _dxkit_got="$(sha256sum "$_dxkit_tmp" | awk '{print $1}')"
+  else
+    _dxkit_got="$(shasum -a 256 "$_dxkit_tmp" | awk '{print $1}')"
+  fi
+  if [ "$_dxkit_got" != "$_dxkit_sha" ]; then
+    echo "dxkit: checksum mismatch for $_dxkit_url" >&2
+    echo "  expected: $_dxkit_sha" >&2
+    echo "  got:      $_dxkit_got" >&2
+    echo "  refusing to install an artifact that does not match the pinned hash." >&2
+    rm -f "$_dxkit_tmp"; return 1
+  fi
+  mv "$_dxkit_tmp" "$_dxkit_dest"
+}`;
+
 function runInstallCmd(
   cmd: string,
   envOverlay?: Record<string, string>,
@@ -98,6 +130,12 @@ function runInstallCmd(
     // path doesn't exist there, which made every `tools install` fail
     // outright).
     const shell = process.platform === 'win32' ? undefined : '/bin/bash';
+    // Checksum-verified downloads: define the fetch helper for commands
+    // that use it. POSIX-shell only; Windows commands go through package
+    // managers (winget/scoop) or carry their own PowerShell verification.
+    if (cmd.includes('dxkit_fetch ') && process.platform !== 'win32') {
+      cmd = `${DXKIT_FETCH_PREAMBLE}\n${cmd}`;
+    }
     // Quiet mode (the init finishing arc): capture the child's output instead
     // of inheriting it, so a package manager's install noise doesn't bleed
     // through the step UI. On failure the captured text becomes the message.

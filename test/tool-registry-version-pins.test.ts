@@ -53,6 +53,10 @@ const PINNED_TOOLS: Record<string, string> = {
   'golangci-lint': '@v1.64.8',
   govulncheck: '@v1.3.0',
   'go-licenses': '@v1.6.0',
+  // T2.1 (4.0.3): previously KNOWN_UNPINNED on `releases/latest`, which was
+  // both unpinned AND unverifiable. Now pinned to a bundle tag with the
+  // release's published sha256 checksums verified at install time.
+  codeql: 'codeql-bundle-v2.26.1',
 };
 
 /**
@@ -67,9 +71,6 @@ const PINNED_TOOLS: Record<string, string> = {
  *   - `snyk` — a SaaS CLI that authenticates against Snyk's backend and
  *     self-manages client/server compatibility. Pinning an old client
  *     risks server-side deprecation breaking it; let it float.
- *   - `codeql` — a GitHub-managed bundle paired with versioned query
- *     packs; the CLI and packs must stay in lockstep, so GitHub's
- *     channel owns the version, not dxkit.
  *   - `cloc` — a stable line-counter on a non-semver npm tag
  *     (`2.6.0-cloc`); lowest-risk output schema in the registry, and the
  *     odd version string makes a clean pin fragile for negligible gain.
@@ -77,7 +78,7 @@ const PINNED_TOOLS: Record<string, string> = {
  * Moving a tool here into PINNED_TOOLS (with a tested version) is the
  * closure step for any future backlog entry.
  */
-const KNOWN_UNPINNED = ['eslint', 'vitest-coverage', 'snyk', 'codeql', 'cloc'];
+const KNOWN_UNPINNED = ['eslint', 'vitest-coverage', 'snyk', 'cloc'];
 
 /**
  * Tools installed through a system / language package manager that owns its
@@ -158,4 +159,80 @@ describe('tool-registry version pins', () => {
     const stale = [...counts.keys()].filter((n) => !registry.has(n));
     expect(stale, `bucketed tools no longer in the registry: ${stale.join(', ')}`).toEqual([]);
   });
+});
+
+describe('tool-registry download verification (T2.1 supply chain)', () => {
+  const allCommands: Array<{ name: string; cmd: string }> = [];
+  for (const [name, def] of Object.entries(TOOL_DEFS)) {
+    for (const cmd of Object.values(def.installCommands ?? {})) {
+      if (typeof cmd === 'string' && cmd.length > 0) allCommands.push({ name, cmd });
+    }
+  }
+
+  it('every dxkit_fetch call carries a 64-hex sha256 argument', () => {
+    // dxkit_fetch <url> <sha256> <dest> — a call missing the hash (or with a
+    // truncated one) would verify nothing while LOOKING verified.
+    const calls = allCommands.filter(({ cmd }) => cmd.includes('dxkit_fetch '));
+    expect(calls.length).toBeGreaterThanOrEqual(7); // gitleaks, osv×2, dotnet×2, pmd, detekt, ktlint, codeql×2
+    for (const { name, cmd } of calls) {
+      for (const m of cmd.matchAll(/dxkit_fetch\s+(\S+)\s+(\S+)\s+/g)) {
+        expect(m[1], `${name}: dxkit_fetch first arg should be a URL`).toMatch(/^["']?https:\/\//);
+        expect(m[2], `${name}: dxkit_fetch second arg must be a sha256: ${cmd}`).toMatch(
+          /^[0-9a-f]{64}$/,
+        );
+      }
+    }
+  });
+
+  it('no unverified network download remains in any install command', () => {
+    // Runtime mirror of the arch-check rule: a raw curl/wget with a URL is a
+    // new unverified download path; an Invoke-WebRequest must be paired with
+    // a Get-FileHash comparison in the same command.
+    for (const { name, cmd } of allCommands) {
+      const rawFetch = /(curl|wget)\s[^|]*https?:\/\//.test(cmd);
+      expect(rawFetch, `${name}: unverified curl/wget download: ${cmd}`).toBe(false);
+      if (cmd.includes('Invoke-WebRequest')) {
+        expect(cmd, `${name}: Invoke-WebRequest without Get-FileHash: ${cmd}`).toContain(
+          'Get-FileHash',
+        );
+      }
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'dxkit_fetch verifies and fails CLOSED on mismatch (functional)',
+    async () => {
+      const { DXKIT_FETCH_PREAMBLE } = await import('../src/analyzers/tools/install-exec');
+      const { execSync } = await import('child_process');
+      const { mkdtempSync, writeFileSync, existsSync, rmSync } = await import('fs');
+      const { createHash } = await import('crypto');
+      const { join } = await import('path');
+      const { tmpdir } = await import('os');
+      const dir = mkdtempSync(join(tmpdir(), 'dxkit-fetch-'));
+      try {
+        const src = join(dir, 'artifact.bin');
+        writeFileSync(src, 'artifact-bytes\n');
+        const sha = createHash('sha256').update('artifact-bytes\n').digest('hex');
+        const good = join(dir, 'good.out');
+        const bad = join(dir, 'bad.out');
+        // Correct hash → artifact lands at dest.
+        execSync(`${DXKIT_FETCH_PREAMBLE}\ndxkit_fetch "file://${src}" ${sha} "${good}"`, {
+          shell: '/bin/bash',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        expect(existsSync(good)).toBe(true);
+        // Wrong hash → non-zero exit AND no artifact at dest (fail closed).
+        const wrong = '0'.repeat(64);
+        expect(() =>
+          execSync(`${DXKIT_FETCH_PREAMBLE}\ndxkit_fetch "file://${src}" ${wrong} "${bad}"`, {
+            shell: '/bin/bash',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }),
+        ).toThrow();
+        expect(existsSync(bad)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
