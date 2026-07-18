@@ -439,6 +439,7 @@ export async function run(argv: string[]): Promise<void> {
       checks: { type: 'string' },
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
+      'no-floor': { type: 'boolean' },
       'keep-baselines': { type: 'boolean', default: false },
       'remove-devdep': { type: 'boolean', default: false },
       'no-feedback': { type: 'boolean', default: false },
@@ -2464,6 +2465,8 @@ export async function run(argv: string[]): Promise<void> {
             verbose: !!values.verbose,
             cliMode: cliMode ?? undefined,
             cliRef: values.ref as string | undefined,
+            // --no-floor skips the floor-debt inventory (compile + tests).
+            ...(values['no-floor'] ? { floor: false } : {}),
           });
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           logger.info(`Baseline ${result.mode.explanation}`);
@@ -2845,6 +2848,21 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim(`  ${url}`);
         logger.dim('  (skip with --no-feedback)');
       }
+      process.exit(0);
+      break;
+    }
+
+    case 'debt': {
+      // The composed repair inventory for cleanup agents: live floor state
+      // (with baseline provenance) + fingerprinted finding debt, ordered by
+      // the one hard dependency (build → tests → findings by severity).
+      // Informational — always exits 0; the gates do the blocking.
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { runDebtCli } = await import('./debt-cli');
+      await runDebtCli(targetPath, {
+        json: !!values.json,
+        name: values.name as string | undefined,
+      });
       process.exit(0);
       break;
     }

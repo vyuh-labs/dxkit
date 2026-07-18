@@ -65,6 +65,10 @@ export interface CorrectnessCheckResult {
   readonly pack: LanguageId;
   readonly label: string;
   readonly bin: string;
+  /** Full argv (excluding the bin) — with `bin`, the reproduction command
+   *  an agent runs to see the failure itself. Absent on requirement-level
+   *  skips (no command was built). */
+  readonly args?: readonly string[];
   readonly status: CorrectnessStatus;
   /** Captured output tail on `fail` (for the block message), or the
    *  disclosed reason on `skipped-unavailable` (missing binary / wrapper
@@ -131,6 +135,7 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
           pack: id,
           label: cmd.label,
           bin: cmd.bin,
+          args: cmd.args,
           status: 'skipped-unavailable',
           // WHY it was unavailable (not-on-PATH vs present-but-not-executable
           // vs spawn errno) — carried so every surface can disclose the skip
@@ -142,14 +147,26 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       if (outcome.timedOut) {
         // Exceeded the budget — fail-OPEN. The run didn't finish, so it says
         // nothing about correctness; CI (unbounded) is the backstop.
-        checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-timeout' });
+        checks.push({
+          pack: id,
+          label: cmd.label,
+          bin: cmd.bin,
+          args: cmd.args,
+          status: 'skipped-timeout',
+        });
         continue;
       }
       if (outcome.overflowed) {
         // Output outran the capture buffer — fail-OPEN, same reasoning as the
         // timeout above. The floor BLOCKS, so it must only block on a failure it
         // actually read; a fragment is not evidence of a broken build.
-        checks.push({ pack: id, label: cmd.label, bin: cmd.bin, status: 'skipped-overflow' });
+        checks.push({
+          pack: id,
+          label: cmd.label,
+          bin: cmd.bin,
+          args: cmd.args,
+          status: 'skipped-overflow',
+        });
         continue;
       }
       if (outcome.code !== 0) {
@@ -164,6 +181,7 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
             pack: id,
             label: cmd.label,
             bin: cmd.bin,
+            args: cmd.args,
             status: 'skipped-environment',
             unmet: { kind: 'unhealthy-toolchain', ...envFailure },
           });
@@ -174,6 +192,7 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         pack: id,
         label: cmd.label,
         bin: cmd.bin,
+        args: cmd.args,
         status: outcome.code === 0 ? 'pass' : 'fail',
         // DISPLAY only — `tail` belongs here, at the renderer boundary, not in the
         // capture primitive where a parser could mistake it for the whole stream.

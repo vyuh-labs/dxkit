@@ -135,6 +135,25 @@ export function recommendChecks(ctx: RecommendContext): Recommendation | null {
   };
 }
 
+/**
+ * Debt inventory: fires when the committed baseline carries recorded
+ * correctness-floor debt (a broken build / failing tests were grandfathered
+ * at capture). The gates keep the debt from growing; this points at the
+ * surface that inventories it for a cleanup pass. Reads the envelope only —
+ * never re-runs the floor (doctor stays fast).
+ */
+export function recommendDebt(ctx: RecommendContext): Recommendation | null {
+  const parsed = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'baselines', 'main.json')) as {
+    floorDebt?: { checks?: Array<{ status?: string }> };
+  } | null;
+  const failing = (parsed?.floorDebt?.checks ?? []).filter((c) => c.status === 'fail').length;
+  if (failing === 0) return null; // no baseline / no envelope / all green
+  return {
+    reason: `the baseline grandfathered ${failing} failing correctness check(s) (broken build / failing tests) — inventory and burn the debt down while the gates hold the line`,
+    command: 'vyuh-dxkit debt',
+  };
+}
+
 // ─── Deterministic config planners (`vyuh-dxkit configure`) ──────────────────
 // Each is a PURE function of observable repo facts — same repo, same plan, every
 // run and every environment. That reproducibility is the whole point: the config

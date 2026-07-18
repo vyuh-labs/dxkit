@@ -27,6 +27,7 @@ import type { BaselineEntry, IdentitySchemeVersion } from './types';
 import type { SaltMode } from '../analyzers/tools/salt';
 import type { ScanCoverage } from './coverage';
 import type { RecallMap } from './recall';
+import type { FloorDebt } from './floor-debt';
 
 /** Banner stamped on every baseline file. Bump when the on-disk
  *  shape changes incompatibly so readers can refuse old / new files
@@ -152,6 +153,18 @@ export interface BaselineFile {
    *  Cleared once a complete environment (CI) re-captures the whole baseline.
    *  Optional: a baseline captured somewhere that observed everything omits it. */
   readonly deferred?: ReadonlyArray<DeferredCaptureClass>;
+  /** The correctness-floor state at capture time — the committed inventory
+   *  of pre-existing build/test debt (per check: reproduction command,
+   *  status, the actual error output). INFORMATIONAL ONLY: a failing floor
+   *  check is a signal, not a finding (Rule 15) — this envelope is never
+   *  read by the guardrail verdict, cannot be allowlisted, and does not
+   *  gate. It exists so cleanup agents can PRIORITIZE and fix the baseline
+   *  debt (`vyuh-dxkit debt`), with live floor runs as ground truth.
+   *  Optional: omitted when no active pack provides a floor, when capture
+   *  was skipped (`--no-floor` / DXKIT_BASELINE_NO_FLOOR=1), or on
+   *  baselines written before the field existed. Do NOT bump the schema
+   *  version for it — same graceful-degrade contract as `recall`. */
+  readonly floorDebt?: FloorDebt;
   /** Per-finding entries. Multiset — duplicates allowed (an
    *  identity appearing twice means two distinct occurrences). */
   readonly findings: ReadonlyArray<BaselineEntry>;

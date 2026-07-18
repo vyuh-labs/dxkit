@@ -7,6 +7,34 @@ description: Read a dxkit report and execute fixes — prioritize findings by se
 
 This skill takes a dxkit report and drives the fix loop with the user. Reach for it after `dxkit-reports` has surfaced concrete findings.
 
+## Cleaning the BASELINE (grandfathered debt): start from `debt`
+
+For a whole-baseline cleanup pass — the deployment where the gates are armed
+and your job is to burn down what they grandfathered — start from the composed
+inventory instead of a single report:
+
+```bash
+npx vyuh-dxkit debt --json
+```
+
+It returns one priority-ordered plan across BOTH debt classes:
+
+- **Correctness-floor debt** (broken build, failing tests) — live-run, with
+  the reproduction command and captured error output per failing check, and
+  provenance vs the baseline's `floorDebt` envelope (`failing since baseline`
+  = the debt you're here to fix; `new since baseline` = the gate's business,
+  it already blocks). **Fix the build first** — until it compiles, nothing
+  else is reliably measurable.
+- **Finding debt** (secrets, CVEs, SAST, lint backlog) — fingerprinted
+  baseline entries grouped by severity; drive each group with the scoped
+  action loop below.
+
+The command is informational and always exits 0 — the gates do the blocking,
+and they also hold the ratchet: once you fix a floor check, any regression is
+net-new and blocks automatically. No re-baselining is needed for floor fixes;
+finding fixes surface as `removed` on the next check and leave the baseline
+on the next re-capture.
+
 ## The action loop
 
 ```

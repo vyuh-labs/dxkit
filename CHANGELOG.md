@@ -9,9 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.0.3] - 2026-07-17
 
-Correctness and trust only — no new features. Closes the three
-enforcement-boundary holes an external audit verified against 4.0.2, plus the
-supply-chain gap and the defect cluster the first 16-repo org rollout surfaced.
+Correctness and trust. Closes the three enforcement-boundary holes an external
+audit verified against 4.0.2, plus the supply-chain gap and the defect cluster
+the first 16-repo org rollout surfaced. One deliberate addition completes the
+adoption arc those fixes enable: the committed floor-debt inventory + `debt`
+surface, so once the gates hold the line, cleanup agents can prioritize and
+fix what the baseline grandfathered.
+
+### Added
+
+- **`vyuh-dxkit debt [--json]` — the prioritized repair inventory for cleanup
+  agents.** One composed, agent-readable plan across both debt classes: the
+  correctness-floor debt (broken build / failing tests — live-run, with the
+  reproduction command and captured error output per failing check, and
+  provenance against the baseline's envelope: failing-since-baseline vs
+  new-since-baseline vs fixed) and the fingerprinted finding debt grouped by
+  severity. Ordered by the one hard dependency: fix the build first (nothing
+  else is measurable until it compiles), then tests, then findings.
+  Informational — always exits 0; the gates do the blocking, and they hold
+  the ratchet: a fixed floor check regresses as net-new and blocks, no
+  re-baseline needed.
+- **`baseline create` records the floor-debt envelope** (`floorDebt` on the
+  baseline file): the full-scope correctness floor at capture time, bounded
+  per-check, details included. Never consulted by the gate verdict (a failing
+  build is a signal, not a grandfatherable finding — Rule 15 intact), never
+  allowlistable. Opt out with `--no-floor` or `DXKIT_BASELINE_NO_FLOOR=1`;
+  `update`'s re-baseline refreshes it automatically. `doctor` recommends
+  `debt` when the committed baseline carries floor debt.
 
 ### Fixed
 
