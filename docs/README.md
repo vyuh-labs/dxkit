@@ -70,6 +70,7 @@ construction; commands with a linked page have a full reference under
 | [`dashboard`](commands/dashboard.md)                             | Render .dxkit/reports/ into one HTML dashboard                                    | < 5 sec (renders existing reports) |
 | [`report`](commands/report.md)                                   | Full audit (report), or publish/read a score snapshot (report snapshot\|history)  | 5-30 min                           |
 | `metrics`                                                        | Findings the gate stopped before merge + the score-over-time trend                | < 5 sec                            |
+| `debt`                                                           | The prioritized repair inventory: floor debt + finding debt                       | varies (runs your compile + tests) |
 | [`baseline`](commands/baseline.md)                               | Capture / publish / show per-finding baselines for the guardrail                  | 30 sec - 2 min                     |
 | [`guardrail`](commands/guardrail.md)                             | Diff current scan vs baseline; block on net-new regressions                       | 30 sec - 2 min                     |
 | `receipt`                                                        | Emit the PR "dxkit signals" block (verdict + allowlist + score delta)             | < 30 sec                           |
