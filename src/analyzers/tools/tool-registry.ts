@@ -379,7 +379,14 @@ function findGraphifyPython(cwd: string): string | null {
  * Find a tool across multiple installation methods.
  * Returns the first matching absolute path, or null.
  */
-export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
+/** Options for `findTool`. `skipVersion` suppresses the `--version`
+ *  subprocess so pure path-probing callers (the Stop-gate's environment
+ *  signature stats the resolved binary instead) stay spawn-free. */
+export interface FindToolOptions {
+  readonly skipVersion?: boolean;
+}
+
+export function findTool(def: ToolDefinition, cwd?: string, opts?: FindToolOptions): ToolStatus {
   // Applicability gate runs first. Non-applicable tools (e.g.
   // vitest-coverage on a mocha repo) get an explicit "n/a" status so
   // they never inflate the missing-count.
@@ -425,7 +432,7 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
   // Node packages without a CLI binary (e.g. vitest plugins):
   if (def.nodePackage && cwd) {
     const pkgPath = findNodePackage(def.nodePackage, cwd);
-    if (pkgPath) return makeStatus(def, pkgPath, 'probe');
+    if (pkgPath) return makeStatus(def, pkgPath, 'probe', opts);
     // Nothing more to check — the package has no binary.
     return {
       name: def.name,
@@ -440,7 +447,7 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
   // Ruby gems without a CLI binary (e.g. SimpleCov):
   if (def.gemPackage) {
     const gemPath = findGemPackage(def.gemPackage);
-    if (gemPath) return makeStatus(def, gemPath, 'probe');
+    if (gemPath) return makeStatus(def, gemPath, 'probe', opts);
     return {
       name: def.name,
       available: false,
@@ -455,30 +462,30 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
     // 0. Project-local node_modules (for language tools)
     if (cwd && def.layer === 'language' && def.for === 'node') {
       const localResult = findInProjectNodeModules(binary, cwd);
-      if (localResult) return makeStatus(def, localResult, 'probe');
+      if (localResult) return makeStatus(def, localResult, 'probe', opts);
     }
 
     // 1. PATH
     const pathResult = findInPath(binary);
-    if (pathResult) return makeStatus(def, pathResult, 'path');
+    if (pathResult) return makeStatus(def, pathResult, 'path', opts);
 
     // 2. brew
     const brewResult = findInBrew(binary);
-    if (brewResult) return makeStatus(def, brewResult, 'brew');
+    if (brewResult) return makeStatus(def, brewResult, 'brew', opts);
 
     // 3. npm global
     const npmResult = findInNpmGlobal(binary);
-    if (npmResult) return makeStatus(def, npmResult, 'npm-g');
+    if (npmResult) return makeStatus(def, npmResult, 'npm-g', opts);
 
     // 4. pipx
     const pipxResult = findInPipx(binary);
-    if (pipxResult) return makeStatus(def, pipxResult, 'pipx');
+    if (pipxResult) return makeStatus(def, pipxResult, 'pipx', opts);
 
     // 4b. gem-installed binaries (ruby toolchain — system + --user-install
     // bin dirs discovered via `gem env`). Mirrors the pipx step for the
     // Ruby ecosystem.
     const gemResult = findInGemBin(binary);
-    if (gemResult) return makeStatus(def, gemResult, 'probe');
+    if (gemResult) return makeStatus(def, gemResult, 'probe', opts);
 
     // 5. System probe paths (includes cargo/go/graphify venv) plus any
     //    user-configured `.dxkit/tools.json:probePaths` — lets dxkit find
@@ -489,7 +496,7 @@ export function findTool(def: ToolDefinition, cwd?: string): ToolStatus {
       let source: ToolStatus['source'] = 'probe';
       if (probeResult.includes('/.cargo/')) source = 'cargo';
       else if (probeResult.includes('/go/bin/')) source = 'go';
-      return makeStatus(def, probeResult, source);
+      return makeStatus(def, probeResult, source, opts);
     }
   }
 
@@ -507,8 +514,9 @@ function makeStatus(
   def: ToolDefinition,
   binPath: string,
   source: ToolStatus['source'],
+  opts?: FindToolOptions,
 ): ToolStatus {
-  const version = def.versionCheck ? quickRun(def.versionCheck) : null;
+  const version = def.versionCheck && !opts?.skipVersion ? quickRun(def.versionCheck) : null;
   return {
     name: def.name,
     available: true,

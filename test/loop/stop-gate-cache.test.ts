@@ -5,8 +5,11 @@ import { tmpdir } from 'os';
 import * as path from 'path';
 import {
   workingTreeSignature,
+  environmentSignature,
+  registryToolStamps,
   readStateCache,
   writeStateCache,
+  clearStateCache,
   loopGateActive,
   type StopGateStateCache,
 } from '../../src/loop/gate-cache';
@@ -140,6 +143,110 @@ describe('verdict cache read/write', () => {
       JSON.stringify({ signature: 'x', outcome: 'block-operator' }),
     );
     expect(readStateCache(repo)).toBeNull();
+  });
+
+  it('a LEGACY entry (no envSignature) can never match a computed environment key', () => {
+    // Entries written before T1.3 carry no envSignature. The Stop-gate
+    // requires `cached.envSignature === envSignature` (a real string), so
+    // a legacy entry is a MISS — the gate re-scans rather than replaying a
+    // verdict minted under an unknown environment.
+    const legacy = {
+      signature: 'tree-sig',
+      outcome: 'allow',
+      message: '',
+      netNew: 0,
+      baselineFindings: 3,
+    };
+    const dir = path.join(repo, '.dxkit', 'loop');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'last-state.json'), JSON.stringify(legacy));
+    const cached = readStateCache(repo);
+    expect(cached).not.toBeNull();
+    const envSig = environmentSignature(repo, { preset: 'security-only', policy: {} }, ['t:x']);
+    expect(cached!.envSignature === envSig).toBe(false);
+  });
+
+  it('clearStateCache removes the verdict (loop activation = session scope)', () => {
+    const c: StopGateStateCache = {
+      signature: 'abc',
+      envSignature: 'env',
+      outcome: 'allow',
+      message: '',
+      netNew: 0,
+      baselineFindings: 1,
+    };
+    writeStateCache(repo, c);
+    expect(readStateCache(repo)).not.toBeNull();
+    clearStateCache(repo);
+    expect(readStateCache(repo)).toBeNull();
+  });
+});
+
+describe('environmentSignature (the observer half of the cache key — T1.3)', () => {
+  let repo: string;
+  beforeEach(() => {
+    repo = makeRepo();
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+    delete process.env.DXKIT_LOOP_TEST_COMMAND;
+  });
+
+  const inputs = { preset: 'security-only', policy: { block: [] }, modes: { flowMode: 'off' } };
+  const stamps = ['tool:gitleaks:/usr/bin/gitleaks:100:1'];
+
+  it('is deterministic for identical inputs', () => {
+    expect(environmentSignature(repo, inputs, stamps)).toBe(
+      environmentSignature(repo, inputs, stamps),
+    );
+  });
+
+  it('changes when the policy changes', () => {
+    const other = { ...inputs, policy: { block: ['added'] } };
+    expect(environmentSignature(repo, other, stamps)).not.toBe(
+      environmentSignature(repo, inputs, stamps),
+    );
+  });
+
+  it('changes when the preset changes', () => {
+    const other = { ...inputs, preset: 'full-debt' };
+    expect(environmentSignature(repo, other, stamps)).not.toBe(
+      environmentSignature(repo, inputs, stamps),
+    );
+  });
+
+  it('changes when a gate mode changes', () => {
+    const other = { ...inputs, modes: { flowMode: 'block' } };
+    expect(environmentSignature(repo, other, stamps)).not.toBe(
+      environmentSignature(repo, inputs, stamps),
+    );
+  });
+
+  it('changes when the resolved postflight test command changes', () => {
+    const before = environmentSignature(repo, inputs, stamps);
+    process.env.DXKIT_LOOP_TEST_COMMAND = 'npm run test:special';
+    expect(environmentSignature(repo, inputs, stamps)).not.toBe(before);
+  });
+
+  it('changes when a scanner binary stamp changes (the stale-ALLOW replay hole)', () => {
+    // A byte-identical tree with an upgraded scanner MUST miss: the old
+    // key replayed the previous verdict and the drift Rule 19 exists to
+    // catch was never consulted.
+    const upgraded = ['tool:gitleaks:/usr/bin/gitleaks:200:2'];
+    expect(environmentSignature(repo, inputs, upgraded)).not.toBe(
+      environmentSignature(repo, inputs, stamps),
+    );
+  });
+
+  it('registryToolStamps is deterministic, sorted, and covers the whole registry', () => {
+    const a = registryToolStamps(repo);
+    const b = registryToolStamps(repo);
+    expect(a).toEqual(b);
+    expect(a).toEqual([...a].sort());
+    // One stamp per registry tool — the probe iterates ALL of TOOL_DEFS
+    // (no per-kind tool table; over-invalidation is the safe direction).
+    expect(a.length).toBeGreaterThan(10);
+    for (const s of a) expect(s.startsWith('tool:')).toBe(true);
   });
 });
 

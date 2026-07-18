@@ -14,6 +14,9 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { LEDGER_DIR } from './ledger';
+import { VERSION } from '../constants';
+import { TOOL_DEFS, findTool } from '../analyzers/tools/tool-registry';
+import { resolveLoopTestCommand } from './policy';
 
 /** Permission modes that mean "running unattended", so the gate
  *  auto-activates. `bypassPermissions` is what `--dangerously-skip-permissions`
@@ -125,11 +128,85 @@ export function workingTreeSignature(repoDir: string): string | null {
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32);
 }
 
-/** Cached verdict keyed on a working-tree signature. Only the
- *  tree-deterministic outcomes (allow / block-model) are cached;
- *  operator/preflight failures are environment-dependent and re-tried. */
+/**
+ * A signature of everything OUTSIDE the tree that can change the verdict
+ * (T1.3). The tree signature proves the CODE is identical; a replay is
+ * only sound when the OBSERVER is identical too — the same dxkit, the
+ * same policy/posture, the same postflight test command, and the same
+ * scanner binaries. Keying on tree bytes alone replayed a stale ALLOW
+ * after a scanner or toolchain upgrade between sessions — exactly the
+ * drift class Rule 19 exists to catch, never consulted here.
+ *
+ * Inputs, all cheap and scan-free (computable on the fast path):
+ *   - dxkit's own version + the node runtime;
+ *   - the resolved loop policy + preset + gate modes (caller-supplied,
+ *     already resolved by the Stop-gate before the cache is consulted);
+ *   - the resolved postflight test command;
+ *   - a stamp (path + size + mtime) of every registry tool's RESOLVED
+ *     binary. Iterates the WHOLE registry rather than a per-kind tool
+ *     table (the table is the exact shape Rule 19 bans — it drifts).
+ *     Over-invalidation is the safe direction: a stamp change on an
+ *     irrelevant tool costs one re-scan; a missed change replays a
+ *     stale verdict. `skipVersion` keeps the probe spawn-free.
+ *
+ * Known residual (documented, accepted): an ecosystem toolchain upgrade
+ * (JDK, dotnet SDK) that changes a floor outcome on an identical tree is
+ * not stamped; CI remains the backstop, and the entry snapshot is
+ * re-captured at each loop activation.
+ */
+export function environmentSignature(
+  repoDir: string,
+  inputs: { readonly preset: string; readonly policy: unknown; readonly modes?: unknown },
+  toolStamps?: ReadonlyArray<string>,
+): string {
+  const parts: string[] = [
+    `dxkit:${VERSION}`,
+    `node:${process.version}`,
+    `preset:${inputs.preset}`,
+    `policy:${JSON.stringify(inputs.policy)}`,
+    `modes:${JSON.stringify(inputs.modes ?? null)}`,
+    `test-cmd:${resolveLoopTestCommand(repoDir) ?? ''}`,
+    ...(toolStamps ?? registryToolStamps(repoDir)),
+  ];
+  return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32);
+}
+
+/** One deterministic stamp per registry tool: resolved binary identity
+ *  (path + size + mtime) or 'missing'. Sorted by tool name. Exported for
+ *  the cache tests. */
+export function registryToolStamps(repoDir: string): string[] {
+  const stamps: string[] = [];
+  for (const def of Object.values(TOOL_DEFS)) {
+    let stamp = `tool:${def.name}:missing`;
+    try {
+      const status = findTool(def, repoDir, { skipVersion: true });
+      if (status.available && status.path) {
+        try {
+          const st = fs.statSync(status.path);
+          stamp = `tool:${def.name}:${status.path}:${st.size}:${Math.floor(st.mtimeMs)}`;
+        } catch {
+          stamp = `tool:${def.name}:${status.path}:unstattable`;
+        }
+      } else if (status.source === 'n/a') {
+        stamp = `tool:${def.name}:n/a`;
+      }
+    } catch {
+      /* keep 'missing' — a probe failure must not break the gate */
+    }
+    stamps.push(stamp);
+  }
+  return stamps.sort();
+}
+
+/** Cached verdict keyed on a working-tree signature AND an environment
+ *  signature. Only the tree-deterministic outcomes (allow / block-model)
+ *  are cached; operator/preflight failures are environment-dependent and
+ *  re-tried. Entries written before the environment key existed carry no
+ *  `envSignature` and therefore never match — a legacy entry is a MISS,
+ *  never a replay (fail toward re-scanning). */
 export interface StopGateStateCache {
   readonly signature: string;
+  readonly envSignature?: string;
   readonly outcome: 'allow' | 'block-model';
   readonly message: string;
   readonly netNew: number;
@@ -160,5 +237,19 @@ export function writeStateCache(repoDir: string, cache: StopGateStateCache): voi
     fs.writeFileSync(path.join(dir, STATE_FILE), JSON.stringify(cache, null, 2) + '\n', 'utf8');
   } catch {
     /* best-effort: a cache write must never break the gate */
+  }
+}
+
+/** Drop any cached verdict. Called at loop ACTIVATION (`loop snapshot`)
+ *  so a new session never replays a verdict minted by a previous one —
+ *  the session-scope belt on top of the environment signature's
+ *  suspenders (the signature covers scanners + policy + dxkit itself;
+ *  this covers everything it cannot see, e.g. an ecosystem toolchain
+ *  upgrade between sessions). */
+export function clearStateCache(repoDir: string): void {
+  try {
+    fs.rmSync(path.join(repoDir, LEDGER_DIR, STATE_FILE), { force: true });
+  } catch {
+    /* best-effort */
   }
 }
