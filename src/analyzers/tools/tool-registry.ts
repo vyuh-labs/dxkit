@@ -1214,7 +1214,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       linux:
         'mkdir -p "$HOME/.cache/dxkit" && t="$(mktemp)" && dxkit_fetch https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-linux64.tar.gz 38eca75ea296a6c48c52aff942b0678f06d3367140a5aa18caf80176943422ba "$t" && tar xzf "$t" -C "$HOME/.cache/dxkit" && rm -f "$t" && mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.cache/dxkit/codeql/codeql" "$HOME/.local/bin/codeql"',
       windows:
-        'powershell -Command "New-Item -ItemType Directory -Force $HOME/.cache/dxkit; Invoke-WebRequest -Uri https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-win64.tar.gz -OutFile $env:TEMP/codeql.tar.gz; if ((Get-FileHash -Algorithm SHA256 $env:TEMP/codeql.tar.gz).Hash -ne \'CA630F02E0BCF4F35F5C39159E82A794F1F598FF8DF51F32BA1D20A9BFD75CBB\') { Remove-Item $env:TEMP/codeql.tar.gz; throw \'dxkit: checksum mismatch for codeql-bundle-win64.tar.gz — refusing to install\' }; tar xz -C $HOME/.cache/dxkit -f $env:TEMP/codeql.tar.gz"',
+        "powershell -Command \"New-Item -ItemType Directory -Force $HOME/.cache/dxkit; Invoke-WebRequest -Uri https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.1/codeql-bundle-win64.tar.gz -OutFile $env:TEMP/codeql.tar.gz; if ((Get-FileHash -Algorithm SHA256 $env:TEMP/codeql.tar.gz).Hash -ne 'CA630F02E0BCF4F35F5C39159E82A794F1F598FF8DF51F32BA1D20A9BFD75CBB') { Remove-Item $env:TEMP/codeql.tar.gz; throw 'dxkit: checksum mismatch for codeql-bundle-win64.tar.gz — refusing to install' }; tar xz -C $HOME/.cache/dxkit -f $env:TEMP/codeql.tar.gz\"",
     },
   },
 };

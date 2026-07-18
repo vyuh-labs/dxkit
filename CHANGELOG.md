@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.3] - 2026-07-17
+
+Correctness and trust only — no new features. Closes the three
+enforcement-boundary holes an external audit verified against 4.0.2, plus the
+supply-chain gap and the defect cluster the first 16-repo org rollout surfaced.
+
+### Fixed
+
+- **An uncommitted edit that introduces a high/critical SAST finding now
+  BLOCKS.** The scan reads the working tree, but changed-line attribution
+  diffed committed history — at Stop time an agent's dirty edits sat outside
+  an empty diff, so net-new `code` findings demoted `added → uncertain` and
+  warned instead of blocking. Attribution now diffs base → working tree
+  (staged + unstaged + untracked; an untracked file attributes as all-lines),
+  through one canonical index beside `computeChangedFiles` so file-level and
+  line-level discovery can never diverge on diff basis again. A per-file
+  attribution failure now reads as UNKNOWN (no demotion), never as "nothing
+  changed".
+- **The `newHighReachableDependencyVulnerability` block rule actually fires.**
+  It was armed in both shipped presets and structurally dead twice over: the
+  guardrail gather never computed reachability, and the classifier context
+  never carried it. Reachability is now annotated on the guardrail path from
+  the imports gather (one annotation entry point shared with the standalone
+  scan), threaded into classification, and the rule→evidence mapping is a
+  compile-enforced table — a future block rule cannot land without declaring
+  which analyzers produce its evidence.
+- **The loop Stop-gate verdict cache is environment-complete.** It keyed on
+  tree bytes alone, so a scanner/policy/dxkit upgrade on an unchanged tree
+  replayed a stale ALLOW. The key now carries an environment signature (dxkit
+  + node versions, resolved loop policy/preset/modes, the postflight test
+  command, and a spawn-free stamp of every registry tool's resolved binary),
+  and loop activation clears the cache so a session never replays a verdict
+  minted by a previous one. Legacy cache entries never match (miss, re-scan).
+- **`stale-file` findings no longer come from `node_modules/`.** The hygiene
+  glob matched tracked files anywhere, so a repo with a committed
+  node_modules saw `*.orig`/`*.log` under it flagged as net-new on its
+  onboarding PR. The discovery now consults the one canonical exclusion
+  source; pinned by an analysis-fixture case both directions.
+- **The CI correctness floor is diff-scoped: only NET-NEW compile/test
+  failures block a PR.** A repo with a pre-existing red suite can now adopt
+  dxkit without the onboarding PR being walled off — while a PR that bundles
+  a real breakage still blocks (the base was green). Failures also present at
+  the merge-base warn by name; a failure whose base side could not be
+  observed is disclosed as unattributed and never blocked. One comparator
+  serves both the loop Stop-gate and CI, with the absent-from-base policy an
+  explicit declared argument. Pushes to the default branch (no base) keep the
+  point-in-time liveness verdict.
+- **Environment failures on Android/Gradle repos read as environment, not
+  broken code.** Catalog-based Android projects (the `com.android` literal
+  only in `gradle/libs.versions.toml`) are now detected, so the JVM floor
+  declines them as designed; an unspawnable command (`gradlew` committed
+  without the executable bit) is a disclosed fail-open skip carrying its
+  one-line remedy instead of a 0.2-second "compile failed" with empty
+  output; and a failing floor check always prints its command and output (or
+  says explicitly that there was none).
+
+### Security
+
+- **Every executed tool download is now sha256-verified, fail-closed.**
+  gitleaks, osv-scanner, pmd, detekt, ktlint, the dotnet-install script
+  (now pinned to an immutable dotnet/install-scripts commit instead of the
+  mutable dot.net URL), and CodeQL (now pinned to a bundle tag with the
+  release's published checksums; previously `releases/latest`, unpinned and
+  unverifiable) all route through one verified-fetch primitive that refuses
+  a mismatched artifact. An architecture gate bans any new unverified
+  download in the registry. ktlint's installer also stops using sudo.
+
+### Documentation
+
+- SECURITY.md supported versions corrected to 4.x; "every stop" claims scoped
+  to unattended-loop stops; the floor's capability stated precisely (runs the
+  checks it can establish, reports unavailable ones explicitly); the
+  benchmark's preset caveat now sits beside the 0/16 headline.
+
 ## [4.0.2] - 2026-07-17
 
 ### Fixed

@@ -298,12 +298,12 @@ The difference is one of architecture and tempo, not detection. Cloud scanners
 are detection engines on a CI cadence, and they were never built to sit inside an
 agent's stop decision.
 
-| What a loop's Stop-gate needs            | dxkit                               | Cloud scanners (Snyk Code, SonarQube) |
-| ---------------------------------------- | ----------------------------------- | ------------------------------------- |
+| What a loop's Stop-gate needs                            | dxkit                               | Cloud scanners (Snyk Code, SonarQube) |
+| -------------------------------------------------------- | ----------------------------------- | ------------------------------------- |
 | Fires on every unattended-loop stop, in seconds, locally | yes: no LLM cost, offline, instant  | no: cloud round-trip, CI/PR cadence   |
-| Offline, with no egress and no auth      | yes: local and deterministic        | no: upload-to-cloud, server-side gate |
-| Feedback the model can act on            | yes: a block decision plus a reason | no: dashboards and PR comments        |
-| Reproducible identity offline            | yes: content-anchored               | partial: "new code" defined on server |
+| Offline, with no egress and no auth                      | yes: local and deterministic        | no: upload-to-cloud, server-side gate |
+| Feedback the model can act on                            | yes: a block decision plus a reason | no: dashboards and PR comments        |
+| Reproducible identity offline                            | yes: content-anchored               | partial: "new code" defined on server |
 
 A note on what not to claim, so that the comparison holds up. Do not say cloud
 scanners cannot detect net-new findings, because SonarQube has a new-code quality

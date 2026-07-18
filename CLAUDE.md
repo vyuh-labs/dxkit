@@ -12,6 +12,19 @@ Every external tool (cloc, gitleaks, semgrep, graphify, jscpd, ruff, etc.) MUST 
 
 Builtins (grep, find, wc, git, node) are exempt — they're always available.
 
+**Executed downloads are checksum-verified (4.0.3 / T2.1).** Any network
+artifact an install command fetches goes through
+`dxkit_fetch <url> <sha256> <dest>` — defined ONCE in
+`src/analyzers/tools/install-exec.ts` (the single install executor prepends
+it), with the pinned hash declared in the registry beside the URL. It fails
+CLOSED on mismatch. The arch-check bans a raw curl/wget-with-URL in
+`tool-registry.ts` and an `Invoke-WebRequest` without a `Get-FileHash` check
+(annotate `// unverified-download-ok` for a justified exception);
+`test/tool-registry-version-pins.test.ts` pins that every `dxkit_fetch` call
+carries a 64-hex sha and that no unverified fetch exists in any install
+command. Bumping a tool version means re-pinning its hash (prefer the
+publisher's published checksum file where one exists — gitleaks, codeql).
+
 **CI tool discoverability is registry-derived, never a hardcoded PATH.** The
 places a tool binary can live are declared once — `getSystemPaths()` plus each
 tool's `probePaths` in the registry — and `findTool` probes them. The CI PATH
@@ -77,6 +90,35 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   leading `{var}` has no anchor → warn, not block);
 - benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
   (Rule 5's benign module), consulted by BOTH secret detectors.
+- what the working tree CHANGED vs a base → `computeChangedFiles` +
+  `createChangedLineIndex`, BOTH in `src/baseline/changed-files.ts`, both
+  diffing base → WORKING TREE (staged + unstaged + untracked; an untracked
+  file attributes as all-lines). The 4.0.3 T1.1 class: line attribution
+  lived in check.ts and diffed committed HEAD while the scan read the dirty
+  tree, so every finding an agent's uncommitted edit introduced demoted
+  `added→uncertain` and warned instead of blocking. Parity pinned in
+  `test/baseline/changed-files.test.ts` (a file the file-level sibling
+  reports changed must carry line attribution). Attribution failure reads
+  as UNKNOWN (no demotion), never as "nothing changed".
+- a block rule's required EVIDENCE (which analyzers must gather for it to
+  fire) → `BLOCK_RULE_EVIDENCE` in `src/baseline/gather-scope.ts`, typed
+  `Record<keyof BrownfieldBlockRules, ...>` so a new rule without an
+  evidence declaration fails to COMPILE; `scopeForPolicy` derives from it.
+  The 4.0.3 T1.2 class: `newHighReachableDependencyVulnerability` was armed
+  in both presets and structurally dead — the scope if-chain never pulled in
+  the imports gather its evidence needed, and the check path never threaded
+  `reachable`. Reachability itself is ONE entry point
+  (`annotateReachability` in `tools/reachability.ts`), consumed by both the
+  standalone enriched scan and the guardrail/health path.
+- is a floor FAILURE the change's fault → `attributeFloorFailures` in
+  `src/analyzers/correctness/attribution.ts` (base pass → net-new BLOCKS;
+  base fail → pre-existing warns; base unobserved → unattributed, disclosed,
+  never blocked — Rule 19 applied to the floor). BOTH consumers route
+  through it: the loop Stop-gate (`netNewFloorFailures` is a thin wrapper)
+  and the two-sided CI floor (`attributeCiFloorOutcome`). The one honest
+  policy difference — what an ABSENT base check means — is a declared
+  argument (`absentMeans`), never a second comparator. Parity pinned in
+  `test/correctness-attribution.test.ts`.
 - what dxkit OWNS vs what the user owns, for a managed file → the manifest's
   `provenance` (`created`/`overwritten`/`skipped`) + `hash`. BOTH the update
   write path (`decideUpdateDisposition` in `src/update-disposition.ts`, consumed
