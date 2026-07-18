@@ -43,7 +43,7 @@ jobs:
             ~/.local/bin
             ~/.local/share/detekt
             ~/.local/share/pmd
-          key: dxkit-scanner-toolchain-${{ runner.os }}-v1
+          key: dxkit-scanner-toolchain-${{ runner.os }}-v2
 
       - run: pipx install pip-audit # depVulns
       - run: pipx install ruff # lint (Phase 10i.0.2)
@@ -101,6 +101,36 @@ jobs:
           # explicitly to $GITHUB_PATH so subsequent steps see rubocop
           # without relying on shell-init.
           echo "$(gem env executable_directory)" >> $GITHUB_PATH
+
+      - name: Install gitleaks # secrets (matrix, Phase 10i.0.1) — was riding the toolchain cache only
+        run: |
+          mkdir -p ~/.local/bin
+          command -v gitleaks || { \
+            curl -sSfL -o /tmp/gitleaks.tgz \
+              https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz && \
+            tar -C ~/.local/bin -xzf /tmp/gitleaks.tgz gitleaks && chmod +x ~/.local/bin/gitleaks; }
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # depVulns (Maven / RubyGems / SwiftURL). Unconditional overwrite, not
+      # command -v guarded: 2.4.0 is the FIRST release whose Package.resolved
+      # extractor works (2.3.8 emitted an empty ecosystem — every Swift dep
+      # read clean), and a stale cached binary must not survive the bump.
+      - name: Install osv-scanner 2.4.0
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSfL -o ~/.local/bin/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          chmod +x ~/.local/bin/osv-scanner
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install SwiftLint # lint (4.1) — the static linux binary is self-contained (no swift toolchain)
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSfL -o /tmp/swiftlint.zip \
+            https://github.com/realm/SwiftLint/releases/download/0.65.0/swiftlint_linux_amd64.zip
+          unzip -q -o /tmp/swiftlint.zip -d /tmp/swiftlint
+          install -m 0755 /tmp/swiftlint/swiftlint-static ~/.local/bin/swiftlint
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Typecheck
         run: npm run typecheck

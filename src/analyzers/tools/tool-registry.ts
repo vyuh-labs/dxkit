@@ -748,14 +748,20 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     // fallback. Bumping requires editing this line, copy-package, and
     // dist/ rebuild.
     installCommands: {
+      // v2.4.0 (4.1 swift pack): first release whose Package.resolved
+      // extractor works end-to-end (2.3.8 needed a manual plugin flag AND
+      // emitted an empty ecosystem, so Swift deps always read clean — the
+      // wrong-artifact-reads-as-CLEAN class, verified against a
+      // known-vulnerable fixture). sha256 from the publisher's
+      // osv-scanner_SHA256SUMS (T2.1 — verified download).
       macos:
         'brew install osv-scanner || ' +
         '(mkdir -p ~/.local/bin && ' +
-        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_darwin_amd64 b8a80a9f14ca4c0cd0fc2d351b28f740da9e6a5b18385ac9f9d083360b5b504e ~/.local/bin/osv-scanner && ' +
+        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_darwin_amd64 088119325156321c34c456ac3703d6013538fd71cbac82b891ab34db491e4d66 ~/.local/bin/osv-scanner && ' +
         'chmod +x ~/.local/bin/osv-scanner)',
       linux:
         'mkdir -p ~/.local/bin && ' +
-        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64 bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc ~/.local/bin/osv-scanner && ' +
+        'dxkit_fetch https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64 15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0 ~/.local/bin/osv-scanner && ' +
         'chmod +x ~/.local/bin/osv-scanner',
       windows: 'scoop install osv-scanner',
     },
@@ -1135,6 +1141,29 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       linux:
         'mkdir -p ~/.local/bin && dxkit_fetch https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint a16be01dcc480aab2f55f444b620142152f66e31564b3b9376506d624c28a2ad ~/.local/bin/ktlint && chmod a+x ~/.local/bin/ktlint',
       windows: 'scoop install ktlint',
+    },
+  },
+  swiftlint: {
+    name: 'swiftlint',
+    description: 'Swift linter (style + anti-pattern checks, SwiftSyntax-based)',
+    install: 'brew install swiftlint',
+    check: 'swiftlint version',
+    for: 'swift',
+    layer: 'language',
+    binaries: ['swiftlint'],
+    versionCheck: 'swiftlint version',
+    // The release zip ships two Linux binaries: `swiftlint` (dynamic — needs
+    // libxml2 + the Swift runtime) and `swiftlint-static` (self-contained).
+    // Install the STATIC one under the plain name so the gate runs on hosts
+    // with no Swift toolchain at all (verified: dynamic dies on
+    // `libxml2.so.2 not found` on a stock runner). Pinned to 0.65.0 — the
+    // publisher signs no per-asset checksum file, so the sha256 below was
+    // computed from the downloaded artifact at pin time (T2.1 discipline).
+    installCommands: {
+      macos: 'brew install swiftlint',
+      linux:
+        'mkdir -p ~/.local/bin && t="$(mktemp)" && d="$(mktemp -d)" && dxkit_fetch https://github.com/realm/SwiftLint/releases/download/0.65.0/swiftlint_linux_amd64.zip 79306a34e5c7cc55a220cd108cbb861dcad5f10138dcdf261e2624ae8b0a486b "$t" && unzip -q -o "$t" -d "$d" && install -m 0755 "$d/swiftlint-static" ~/.local/bin/swiftlint && rm -rf "$t" "$d"',
+      windows: 'scoop install swiftlint',
     },
   },
   // SimpleCov is a pure Ruby gem, library-loaded (`require 'simplecov'`
