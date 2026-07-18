@@ -205,7 +205,24 @@ describe('osv-scanner SwiftURL parse (real 2.4.0 bytes)', () => {
   });
 });
 
-describe('parseSwiftCoverageJson (llvm-cov export shape)', () => {
+describe('parseSwiftCoverageJson (real llvm-cov export bytes)', () => {
+  it('computes per-file line coverage from the harvested swift-app artifact', () => {
+    // The artifact's filenames are absolute paths from the machine that ran
+    // `swift test --enable-code-coverage`; re-anchor them to a fake repo
+    // root so the fixture parses on any checkout (the parser scopes to cwd).
+    const raw = readFixture('coverage-output.json').replace(
+      /"filename"\s*:\s*"[^"]*swift-app\//g,
+      '"filename": "/repo/swift-app/',
+    );
+    const coverage = parseSwiftCoverageJson(raw, 'coverage-output.json', '/repo/swift-app');
+    expect(coverage).not.toBeNull();
+    expect(coverage!.linePercent).toBeGreaterThan(0);
+    const greeter = coverage!.files.get('Sources/App/Greeter.swift');
+    expect(greeter).toBeDefined();
+    expect(greeter!.total).toBeGreaterThan(0);
+    expect(greeter!.covered).toBe(greeter!.total); // the one test exercises all of Greeter
+  });
+
   it('is total over garbage', () => {
     expect(parseSwiftCoverageJson('', 'x.json', '/repo')).toBeNull();
     expect(parseSwiftCoverageJson('{"data": "nope"}', 'x.json', '/repo')).toBeNull();
