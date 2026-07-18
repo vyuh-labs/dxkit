@@ -27,6 +27,7 @@ import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { gatherFileFindings } from '../src/analyzers/security/gather';
 import { gatherGrepSecretsResult } from '../src/analyzers/tools/grep-secrets';
+import { gatherHygieneMarkers } from '../src/analyzers/quality/gather';
 import { gatherRepoFlowModel } from '../src/analyzers/flow/gather';
 import { gatherRepoModelSet } from '../src/analyzers/model-schema/gather';
 import { summarize } from '../src/analyzers/flow/model';
@@ -43,6 +44,11 @@ const FIXTURES = join(__dirname, 'fixtures', 'analysis');
 const MATERIALIZE: Array<{ marker: string; target: string }> = [
   { marker: 'env.example', target: '.env.example' },
   { marker: 'dxkit-policy.json', target: '.dxkit/policy.json' },
+  // Stale-suffix targets are committed under marker names for TWO reasons:
+  // node_modules/ is gitignored repo-wide, and a tracked `*.orig` would be
+  // flagged by dxkit's own self-guardrail hygiene scan.
+  { marker: 'nm-lookup-orig.marker', target: 'node_modules/cldr/dist/lookup.js.orig' },
+  { marker: 'src-legacy-orig.marker', target: 'src/legacy.js.orig' },
 ];
 
 /** Copy a fixture into a throwaway git repo (env-in-git needs tracked files). */
@@ -126,6 +132,17 @@ describe('analysis fixtures — language-agnostic invariants (every stack)', () 
       expect(result!.suppressedCount).toBeGreaterThanOrEqual(1);
     });
   }
+
+  it('ts-webapp: a tracked .orig under node_modules is NOT a stale file; one in src/ IS (T2.2)', () => {
+    // The rollout bug: a repo with node_modules committed to git got
+    // `node_modules/**/*.orig` flagged as net-new stale files (its baseline
+    // install tree differed from CI's `npm ci` tree). Stale-file discovery
+    // must consult the ONE exclusion source (Rule 4). The src/ control pins
+    // that the filter is exclusion-scoped, not suffix-dead.
+    const { staleFiles } = gatherHygieneMarkers(staged['ts-webapp']);
+    expect(staleFiles.some((f) => f.startsWith('node_modules/'))).toBe(false);
+    expect(staleFiles).toContain('src/legacy.js.orig');
+  });
 });
 
 describe('analysis fixtures — model-schema extraction (marker-based, every stack)', () => {
