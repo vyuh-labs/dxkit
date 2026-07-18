@@ -10,8 +10,8 @@ backports — please upgrade.
 
 | Version | Supported        |
 | ------- | ---------------- |
-| 3.x.y   | ✅ Latest minor  |
-| < 3.0   | ❌ Not supported |
+| 4.x.y   | ✅ Latest minor  |
+| < 4.0   | ❌ Not supported |
 
 ## Reporting a Vulnerability
 
