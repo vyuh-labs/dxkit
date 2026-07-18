@@ -112,7 +112,15 @@ describe('analysis fixtures — the fixtures actually reach CI', () => {
       'git',
       ['ls-files', '--others', '--ignored', '--exclude-standard', '--', 'test/fixtures/analysis'],
       { cwd: repoRoot, encoding: 'utf8' },
-    ).trim();
+    )
+      .trim()
+      .split('\n')
+      // Regenerable BUILD OUTPUT inside a fixture is deliberately ignored
+      // (SwiftPM's .build/ from a local floor-verification run) — it is not
+      // fixture content, and CI never has it. The guard is about SOURCE
+      // files silently failing to reach CI.
+      .filter((f) => f && !f.includes('/.build/'))
+      .join('\n');
     expect(ignored, `gitignored fixture files (would not reach CI):\n${ignored}`).toBe('');
   });
 });
