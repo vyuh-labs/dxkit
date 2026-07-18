@@ -18,6 +18,7 @@ import {
   planLintGate,
   planLoopPreset,
   recommendExtensions,
+  recommendDebt,
   planFlowSources,
 } from './advisor';
 
@@ -350,6 +351,21 @@ export const COMMANDS = [
     skill: 'dxkit-loop',
     whenToRecommend: recommendLoopPreset,
     planConfig: planLoopPreset,
+  },
+  {
+    id: 'debt',
+    audience: 'user',
+    group: 'assess',
+    summary: 'The prioritized repair inventory: floor debt + finding debt',
+    typicalRuntime: 'varies (runs your compile + tests)',
+    docsBlurb:
+      'One agent-readable inventory of everything the baseline grandfathered: the correctness-floor ' +
+      'debt (broken build / failing tests, with reproduction commands and captured error output, ' +
+      'live-run and diffed against the baseline envelope) plus the fingerprinted finding debt by ' +
+      'severity — ordered into a repair plan (build first, then tests, then findings). ' +
+      'Informational: it never gates.',
+    skill: 'dxkit-action',
+    whenToRecommend: recommendDebt,
   },
   {
     id: 'checks',

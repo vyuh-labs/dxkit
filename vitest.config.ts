@@ -28,6 +28,7 @@ export default defineConfig({
     // the integration suite as a separate step (`.github/workflows/
     // ci.yml`) so PRs still validate it.
     include: ['test/**/*.test.ts'],
+    setupFiles: ['test/vitest-setup.ts'],
     exclude: [
       'node_modules/**',
       'dist/**',

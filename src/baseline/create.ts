@@ -61,6 +61,7 @@ import { entryToAllowlistable, partitionByActiveAllowlist } from './allowlist-ma
 import type { RichBaselineEntry } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
+import { captureFloorDebt, type FloorDebt } from './floor-debt';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -87,6 +88,13 @@ export interface CreateBaselineOptions {
   /** Explicit CLI flag value for the ref (`--ref=<R>`). Only
    *  consulted when the resolved mode is `ref-based`. */
   readonly cliRef?: string;
+  /** Capture the correctness-floor debt envelope (compile + tests, full
+   *  scope, bounded per-check). Default ON — cleanup agents rely on the
+   *  envelope existing — with two opt-outs: pass `false` (the `--no-floor`
+   *  flag) or set DXKIT_BASELINE_NO_FLOOR=1 (the test suite does, so
+   *  hundreds of fixture baselines don't each run a floor pass). An
+   *  explicit option always wins over the env. */
+  readonly floor?: boolean;
 }
 
 /** Outcome of `createBaseline`. `path` and `file` are absent when
@@ -224,6 +232,11 @@ export function scanToBaselineFile(
     readonly findings: ReadonlyArray<RichBaselineEntry>;
     /** Injectable for deterministic tests; defaults to now. */
     readonly createdAt?: string;
+    /** Floor-debt envelope (informational — Rule 15; never gates). Only the
+     *  committed write supplies it: the ref-based prior side runs in a
+     *  throwaway worktree where the floor would mostly skip-unavailable,
+     *  and the guardrail never reads the envelope anyway. */
+    readonly floorDebt?: FloorDebt;
   },
 ): BaselineFile {
   return {
@@ -239,6 +252,7 @@ export function scanToBaselineFile(
     coverage: scan.coverage,
     // Omitted when empty — a complete capture keeps the pre-4.0.2 authoritative shape.
     ...(scan.deferred.length > 0 ? { deferred: scan.deferred } : {}),
+    ...(opts.floorDebt ? { floorDebt: opts.floorDebt } : {}),
     findings: opts.findings,
   };
 }
@@ -477,7 +491,13 @@ export async function createBaseline(
   const byCategory: Record<string, number> = {};
   for (const s of suppressions) byCategory[s.category] = (byCategory[s.category] ?? 0) + 1;
 
-  const richFile = scanToBaselineFile(scan, { name, findings: live });
+  // Floor-debt inventory (T2.3 follow-through): record the pre-existing
+  // build/test state WITH details so cleanup agents can prioritize and fix
+  // it (`vyuh-dxkit debt`). Bounded; never gates; explicit option beats env.
+  const captureFloor = options.floor ?? process.env.DXKIT_BASELINE_NO_FLOOR !== '1';
+  const floorDebt = captureFloor ? (captureFloorDebt(cwd) ?? undefined) : undefined;
+
+  const richFile = scanToBaselineFile(scan, { name, findings: live, floorDebt });
 
   const file = mode.mode === 'committed-sanitized' ? sanitizeFile(richFile) : richFile;
   writeBaselineFile(filePath, file);

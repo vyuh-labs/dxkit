@@ -451,7 +451,9 @@ export function partitionForRefBasedDiff<T extends { readonly kind: BaselineEntr
   };
 }
 
-const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSeverity>> =
+/** Canonical per-kind default severity (exported for the debt inventory —
+ *  the one severity table, never a second copy). */
+export const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], FindingSeverity>> =
   Object.freeze({
     secret: 'high',
     code: 'medium',
