@@ -1863,6 +1863,34 @@ if [ -n "$TEMPLATE_BARE_NPM" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# =============================================================================
+# T2.1 (4.0.3): every EXECUTED tool download is checksum-verified.
+#
+# Class: an install command that pipes a network artifact straight into
+# tar/bash/the filesystem executes whatever the network returned. The registry
+# is the ONE home of executed install commands; every download in it goes
+# through `dxkit_fetch <url> <sha256> <dest>` (defined + prepended by the ONE
+# executor, install-exec.ts), which fails CLOSED on hash mismatch. A raw
+# curl/wget with a URL in the registry is a new unverified download path.
+# Windows commands use package managers (winget/scoop) or carry an inline
+# Get-FileHash check — an Invoke-WebRequest without one fails too.
+REGISTRY_RAW_DL=$(grep -nE "(curl|wget)[^']*https?://" src/analyzers/tools/tool-registry.ts 2>/dev/null \
+  | grep -v "dxkit_fetch" | grep -v "// unverified-download-ok")
+if [ -n "$REGISTRY_RAW_DL" ]; then
+  echo "❌ Supply-chain violation: unverified download in the tool registry:"
+  echo "$REGISTRY_RAW_DL"
+  echo "   → Route it through dxkit_fetch <url> <sha256> <dest> with a pinned hash."
+  echo "   → Annotate '// unverified-download-ok' for a justified exception."
+  ERRORS=$((ERRORS + 1))
+fi
+REGISTRY_RAW_PS_DL=$(grep -n "Invoke-WebRequest" src/analyzers/tools/tool-registry.ts 2>/dev/null \
+  | grep -v "Get-FileHash" | grep -v "// unverified-download-ok")
+if [ -n "$REGISTRY_RAW_PS_DL" ]; then
+  echo "❌ Supply-chain violation: Invoke-WebRequest without a Get-FileHash check in the tool registry:"
+  echo "$REGISTRY_RAW_PS_DL"
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."
