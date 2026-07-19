@@ -1673,7 +1673,13 @@ export async function run(argv: string[]): Promise<void> {
         if (m.commentRatio !== null) {
           console.log(`  Comment ratio:  ${(m.commentRatio * 100).toFixed(1)}%`);
         }
-        console.log(`  Lint:           ${m.lintErrors} errors, ${m.lintWarnings} warnings`);
+        // The markdown renderer already carries the lint tool / "not run —
+        // <reason>" label; the console line dropped it, so an unavailable
+        // linter read as a clean "0 errors, 0 warnings" (caught in the php
+        // tarball validation on a phpcs that refused to start).
+        console.log(
+          `  Lint:           ${m.lintErrors} errors, ${m.lintWarnings} warnings${m.lintTool ? ` (${m.lintTool})` : ''}`,
+        );
         console.log(`  TODO/FIXME/HACK: ${m.todoCount}/${m.fixmeCount}/${m.hackCount}`);
         console.log(`  Console stmts:  ${m.consoleLogCount}`);
         if (m.functionCount !== null) {
