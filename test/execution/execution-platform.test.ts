@@ -361,8 +361,8 @@ describe('classifyEnvironmentFailure (the F-14 post-failure tier)', () => {
   it('xcode: a missing signing identity is environment, not a finding (4.1 macOS tester)', () => {
     // The exact output the macOS tester's real iOS repo emitted: scheme-less
     // build resolved fine, then died on the machine's missing distribution
-    // cert. The floor now builds with CODE_SIGNING_ALLOWED=NO; this net
-    // covers a target that force-enables signing anyway.
+    // cert. The built-in floor declines Xcode-only repos; this net covers a
+    // repo-configured xcodebuild custom check hitting the same machine state.
     const CERT_MISSING =
       'MovableApp.xcodeproj: error: No signing certificate "iOS Distribution" found: No "iOS Distribution" signing certificate matching team ID "DUW9E2KK9V" with a private key was found.';
     const hit = classifyEnvironmentFailure(['xcode'], CERT_MISSING);
