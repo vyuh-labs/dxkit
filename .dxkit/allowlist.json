@@ -401,6 +401,33 @@
       "reason": "Fabricated AWS access key used only as a fixture in test/baseline/attribution-gap.test.ts (the BLOCKER-1 net-new-secret refusal test); not a live credential.",
       "addedBy": "siddarth.ch1990@gmail.com",
       "addedAt": "2026-07-16"
+    },
+    {
+      "fingerprint": "f9cdc99b482dd1c4",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "swift language pack: Rule 6 mandates one file per pack (csharp.ts at 2,030 lines is the grandfathered precedent); 751 lines is the pack, not unowned growth",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-19",
+      "expiresAt": "2026-10-17"
+    },
+    {
+      "fingerprint": "6b2b51f8c681fd2d",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "php language pack: Rule 6 mandates one file per pack; 633 lines is the pack, not unowned growth",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-19",
+      "expiresAt": "2026-10-17"
+    },
+    {
+      "fingerprint": "d00f03221bab1d85",
+      "kind": "large-file",
+      "category": "accepted-risk",
+      "reason": "TOOLCHAIN_DEFS is deliberately ONE registry (Rule 20); it grew past the threshold when the swift/xcode/php toolchains landed",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-07-19",
+      "expiresAt": "2026-10-17"
     }
   ],
   "identityScheme": "v2"

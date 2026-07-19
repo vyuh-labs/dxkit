@@ -43,11 +43,16 @@ done
 
 # Extract LanguageId list from the LANGUAGES registry. Same shape as
 # check-cross-ecosystem-coverage.sh — multi-line robust.
-# Stop at the FIRST line containing `]`, wherever it sits — the previous
-# `/^\];/` end-pattern never matched a single-line array (the shape the
-# scaffolder's registry append briefly leaves before prettier runs), so the
-# range swallowed the rest of the file and test globs parsed as language ids.
-LANG_BLOCK=$(awk '/^export const LANGUAGES/{f=1} f{print} f&&/\]/{exit}' "$LANG_REGISTRY" | tr -d '\n')
+# Stop at the first line containing the closing `];`, wherever it sits.
+# History of this line, both failure shapes: the original `/^\];/` range
+# end never matched a SINGLE-line array (the shape the scaffolder's
+# registry append briefly leaves before prettier runs) and swallowed the
+# rest of the file; the first fix stopped at any `]` — which the
+# DECLARATION line itself contains (`LanguageSupport[]`), so it exited
+# before reading a single id and the gate failed on the normal multi-line
+# shape (caught by PR CI, masked locally). `];` appears only at the array
+# close in both shapes.
+LANG_BLOCK=$(awk '/^export const LANGUAGES/{f=1} f{print} f&&/\];/{exit}' "$LANG_REGISTRY" | tr -d '\n')
 LANG_BODY=$(echo "$LANG_BLOCK" | sed 's/.*\[\(.*\)\].*/\1/' | sed 's/,[[:space:]]*$//')
 LANG_IDS=$(echo "$LANG_BODY" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
 
