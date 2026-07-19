@@ -316,6 +316,16 @@ export const TOOLCHAIN_DEFS = {
         problem: "the repo's composer platform requirement needs a newer PHP than installed",
         remedy: 'install the PHP version composer.json requires (https://www.php.net/downloads)',
       },
+      // Distro-minimal php-cli lacks extensions PHP tooling requires —
+      // phpcs refuses to start (F-14 present-but-unusable, caught live on a
+      // minimal apt install during pack validation).
+      {
+        id: 'php-missing-extensions',
+        pattern:
+          'requires the tokenizer, xmlwriter and SimpleXML|Please enable (xmlwriter|SimpleXML)',
+        problem: 'the installed php runtime is missing extensions PHP tooling requires',
+        remedy: 'install them (e.g. `sudo apt-get install -y php-xml php-mbstring`)',
+      },
     ],
   },
   swift: {

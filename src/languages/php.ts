@@ -204,17 +204,19 @@ function gatherPhpLintResult(cwd: string): LintGatherOutcome {
   // the observation either way.
   const raw = run(`${lint.path} ${phpcsArgs(cwd).join(' ')}`, cwd, 120000);
   const counts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
-  if (!raw) {
-    const envelope: LintResult = { schemaVersion: 1, tool: 'phpcs', counts };
-    return { kind: 'success', envelope };
-  }
-  // Non-empty output with NO parseable JSON is a CRASH (a php fatal error,
-  // a truncated report), not a clean run — zero-counting it would report a
-  // tool failure as a clean repo (the class the swift/osv work killed).
-  if (!asRecord(extractJsonBlob(raw))?.files) {
+  // A CLEAN phpcs run still prints a JSON skeleton — for THIS tool, empty
+  // stdout ALWAYS means the run died (stderr-only refusal or crash). The
+  // "empty output = clean" convention other packs use minted a zero-count
+  // success on a php missing phpcs's required extensions (caught by the
+  // tarball validation: the error goes to stderr and stdout is empty).
+  // Same rule for non-empty output with no parseable JSON (a php fatal
+  // error mid-report). Unavailable, never a fabricated clean.
+  if (!raw || !asRecord(extractJsonBlob(raw))?.files) {
     return {
       kind: 'unavailable',
-      reason: `phpcs produced no parseable JSON: ${raw.slice(0, 120)}`,
+      reason: raw
+        ? `phpcs produced no parseable JSON: ${raw.slice(0, 120)}`
+        : 'phpcs produced no output (crashed, or the php runtime is missing the tokenizer/xmlwriter/SimpleXML extensions phpcs requires — e.g. `apt install php-xml`)',
     };
   }
   for (const m of parsePhpcsJsonMessages(raw)) {
