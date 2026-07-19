@@ -383,7 +383,12 @@ export function allCiSetupSteps(flags: DetectedStack['languages'], cwd?: string)
   const byUses = new Map<string, { step: CiSetupStep; detected: boolean }>();
   const order: string[] = [];
   for (const l of activeLanguagesFromFlags(flags)) {
-    const detected = cwd !== undefined ? l.detectVersion?.(cwd) : undefined;
+    // Provisioning consumes the PROVISIONABLE version: a pack whose detected
+    // version can name a mere language dialect (swift's pbxproj
+    // SWIFT_VERSION) declares detectToolchainVersion to keep that signal out
+    // of CI setup — see CiSetupSupport.
+    const detected =
+      cwd !== undefined ? (l.ciSetup?.detectToolchainVersion ?? l.detectVersion)?.(cwd) : undefined;
     for (const step of l.ciSetup?.steps ?? []) {
       const substituted =
         step.versionInput && detected
