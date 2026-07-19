@@ -171,31 +171,33 @@ describe('osv-scanner Packagist parse (real 2.4.0 bytes)', () => {
   });
 });
 
-describe('parsePhpCloverXml (PHPUnit clover shape)', () => {
-  it('computes per-file statement coverage and relativizes absolute names', () => {
-    // Interim format-shape sample pending a real harvest (needs a PHP with
-    // a coverage driver — see HARVEST.md). Field layout mirrors PHPUnit's
-    // clover writer.
-    const xml = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<coverage generated="1700000000">',
-      '  <project timestamp="1700000000">',
-      '    <file name="/repo/src/Greeter.php">',
-      '      <line num="9" type="method" name="greet" count="2"/>',
-      '      <line num="11" type="stmt" count="2"/>',
-      '      <line num="12" type="stmt" count="0"/>',
-      '    </file>',
-      '    <file name="/elsewhere/vendor/dep.php">',
-      '      <line num="1" type="stmt" count="1"/>',
-      '    </file>',
-      '  </project>',
-      '</coverage>',
-    ].join('\n');
-    const coverage = parsePhpCloverXml(xml, 'clover.xml', '/repo');
+describe('parsePhpCloverXml (real PHPUnit + xdebug bytes)', () => {
+  it('computes per-file statement coverage from the harvested clover report', () => {
+    // The artifact's filenames are absolute paths from the machine that ran
+    // PHPUnit; re-anchor them so the fixture parses on any checkout (the
+    // swift llvm-cov pattern).
+    const raw = readFixture('coverage-output.xml').replace(
+      /name="[^"]*php-cov\//g,
+      'name="/repo/php-cov/',
+    );
+    const coverage = parsePhpCloverXml(raw, 'coverage-output.xml', '/repo/php-cov');
     expect(coverage).not.toBeNull();
     const greeter = coverage!.files.get('src/Greeter.php');
-    expect(greeter).toEqual({ path: 'src/Greeter.php', covered: 1, total: 2, pct: 50 });
-    // Out-of-repo entries (vendor mis-scoping) are dropped.
+    expect(greeter).toBeDefined();
+    // Real clover interleaves `type="method"` lines and nests <file> inside
+    // <package> — only the two `type="stmt"` lines count, both covered.
+    expect(greeter).toEqual({ path: 'src/Greeter.php', covered: 2, total: 2, pct: 100 });
+    expect(coverage!.linePercent).toBe(100);
+  });
+
+  it('drops out-of-repo entries and uncovered statements count against', () => {
+    const xml = [
+      '<coverage generated="1"><project timestamp="1">',
+      '  <file name="/repo/src/a.php"><line num="1" type="stmt" count="1"/><line num="2" type="stmt" count="0"/></file>',
+      '  <file name="/elsewhere/vendor/dep.php"><line num="1" type="stmt" count="1"/></file>',
+      '</project></coverage>',
+    ].join('\n');
+    const coverage = parsePhpCloverXml(xml, 'clover.xml', '/repo');
     expect(coverage!.files.size).toBe(1);
     expect(coverage!.linePercent).toBe(50);
   });
