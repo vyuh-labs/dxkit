@@ -7,10 +7,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { allCiSetupSteps } from '../src/languages';
+import { swift } from '../src/languages/swift';
 import { installCiGuardrails } from '../src/ship-installers';
 import type { DetectedStack } from '../src/types';
 
@@ -54,6 +55,35 @@ describe('allCiSetupSteps — pack-driven CI runtime setup', () => {
     const steps = allCiSetupSteps(flags({ typescript: true, go: true }));
     expect(steps.some((s) => s.uses === 'actions/setup-go@v5')).toBe(true);
     expect(steps.some((s) => s.uses.includes('setup-node'))).toBe(false);
+  });
+
+  it('swift: provisioning never sees the pbxproj SWIFT_VERSION language mode (4.1.0 rollout bug)', () => {
+    // The shipped class: both real iOS repos' pbxproj said SWIFT_VERSION =
+    // 5.0 (Xcode's source-compat MODE), the workflow rendered
+    // `swift-version: '5.0'`, and setup-swift 404'd the guardrail job — no
+    // such toolchain exists for current runners.
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-swift-ci-'));
+    try {
+      const proj = join(dir, 'App.xcodeproj');
+      mkdirSync(proj, { recursive: true });
+      writeFileSync(join(proj, 'project.pbxproj'), 'SWIFT_VERSION = 5.0;\n');
+      const step = allCiSetupSteps(flags({ swift: true }), dir).find((s) =>
+        s.uses.startsWith('swift-actions/setup-swift'),
+      )!;
+      // Reporting still sees the dialect; provisioning keeps the declared
+      // default.
+      expect(swift.detectVersion!(dir)).toBe('5.0');
+      expect(step.with!['swift-version']).toBe('6.1');
+
+      // A REAL toolchain pin (.swift-version) IS substituted.
+      writeFileSync(join(dir, '.swift-version'), '6.0.3\n');
+      const pinned = allCiSetupSteps(flags({ swift: true }), dir).find((s) =>
+        s.uses.startsWith('swift-actions/setup-swift'),
+      )!;
+      expect(pinned.with!['swift-version']).toBe('6.0.3');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

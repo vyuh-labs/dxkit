@@ -591,6 +591,22 @@ const swiftCorrectnessProvider: CorrectnessProvider = {
  *  Xcode-shaped repo has — verified on a real iOS repo whose root carries
  *  neither manifest). */
 function detectSwiftVersion(cwd: string): string | undefined {
+  const toolchain = detectSwiftToolchainVersion(cwd);
+  if (toolchain) return toolchain;
+  for (const rel of walkPaths(cwd, { extensions: [], basenames: ['project.pbxproj'] })) {
+    const m = readRepoFile(cwd, rel).match(/SWIFT_VERSION\s*=\s*(\d+(?:\.\d+)?)/);
+    if (m) return m[1].includes('.') ? m[1] : `${m[1]}.0`;
+  }
+  return undefined;
+}
+
+/** The PROVISIONABLE slice of the above — only sources that name a real
+ *  installable toolchain (`.swift-version` pin, tools-version floor). The
+ *  pbxproj `SWIFT_VERSION` is deliberately excluded: it is Xcode's
+ *  source-compatibility MODE (modern projects still say 5.0), and feeding it
+ *  to setup-swift 404'd the guardrail job on both real iOS repos in the 4.1.0
+ *  org rollout — no "swift 5.0" toolchain exists for current runners. */
+function detectSwiftToolchainVersion(cwd: string): string | undefined {
   const pin = readRepoFile(cwd, '.swift-version').trim();
   const pinMatch = pin.match(/^(\d+\.\d+(?:\.\d+)?)/);
   if (pinMatch) return pinMatch[1];
@@ -598,10 +614,6 @@ function detectSwiftVersion(cwd: string): string | undefined {
     /\/\/\s*swift-tools-version\s*:\s*(\d+\.\d+)/,
   );
   if (tools) return tools[1];
-  for (const rel of walkPaths(cwd, { extensions: [], basenames: ['project.pbxproj'] })) {
-    const m = readRepoFile(cwd, rel).match(/SWIFT_VERSION\s*=\s*(\d+(?:\.\d+)?)/);
-    if (m) return m[1].includes('.') ? m[1] : `${m[1]}.0`;
-  }
   return undefined;
 }
 
@@ -739,6 +751,9 @@ export const swift: LanguageSupport = {
         versionInput: 'swift-version',
       },
     ],
+    // Provisioning must never see the pbxproj SWIFT_VERSION language mode —
+    // an Xcode-only repo keeps the declared 6.1 default above.
+    detectToolchainVersion: detectSwiftToolchainVersion,
   },
   defaultVersion: '6.1',
   detectVersion: detectSwiftVersion,

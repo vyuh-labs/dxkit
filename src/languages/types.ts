@@ -70,6 +70,19 @@ export interface CiSetupStep {
 /** A pack's CI runtime setup — the ordered steps unioned into the workflow. */
 export interface CiSetupSupport {
   readonly steps: ReadonlyArray<CiSetupStep>;
+  /**
+   * The toolchain version CI can PROVISION for this repo, when it differs
+   * from `detectVersion`'s answer. `allCiSetupSteps` substitutes
+   * `detectToolchainVersion?.(cwd) ?? detectVersion?.(cwd)` into
+   * `versionInput` — declare this when the pack's detected version includes
+   * signals that name a LANGUAGE DIALECT rather than an installable
+   * toolchain. The shipped class: swift's `detectVersion` reads the Xcode
+   * project's `SWIFT_VERSION` (a source-compatibility MODE — modern projects
+   * still say `5.0`), and feeding it to `swift-actions/setup-swift` 404s the
+   * org's guardrail job because no such toolchain exists for the runner.
+   * Return undefined to leave the step's declared default untouched.
+   */
+  readonly detectToolchainVersion?: (cwd: string) => string | undefined;
 }
 
 export interface ArchitecturalShape {

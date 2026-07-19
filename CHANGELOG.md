@@ -5,6 +5,19 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- **Fix: CI never provisions Swift from the pbxproj `SWIFT_VERSION`.** Both
+  real iOS repos in the 4.1.0 org rollout had their `dxkit-guardrails` job
+  404 in `swift-actions/setup-swift`: the generated workflow pinned
+  `swift-version: '5.0'`, taken from the Xcode project's `SWIFT_VERSION` —
+  which is a source-compatibility MODE (modern projects still say 5.0), not
+  an installable toolchain. `CiSetupSupport` gains an optional
+  `detectToolchainVersion`; `allCiSetupSteps` substitutes it in preference
+  to `detectVersion`, and the swift pack routes only `.swift-version` pins
+  and `Package.swift` tools-version through it. An Xcode-only repo keeps the
+  declared modern default; `detectVersion` still reports the dialect.
+
 ## [4.1.0] - 2026-07-19
 
 - **PHP language pack** (10th pack). Detection (`composer.json` + a
