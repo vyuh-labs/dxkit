@@ -293,6 +293,22 @@ __DXKIT_CI_RUNTIME_SETUP__
               printf -- '- [ ] Consuming UI handles error + empty responses, not just the happy path\n'
             } >> comment.md
           fi
+          # GitHub caps issue comments at 65,536 characters, and an oversized
+          # body fails this WHOLE job even after a PASSED gate (seen live on a
+          # repo with a 23k-finding baseline). Keep the top of the report — the
+          # verdict and summary lead it — cut at a line boundary, and point at
+          # the job log for the rest. Bytes ≥ characters, so a byte cap is
+          # safely conservative.
+          MAX_BYTES=60000
+          if [ "$(wc -c < comment.md)" -gt "$MAX_BYTES" ]; then
+            head -c "$MAX_BYTES" comment.md | sed '$d' > comment.trunc
+            {
+              printf '\n\n---\n'
+              printf '⚠️ **Report truncated** to fit GitHub'"'"'s comment size limit — the full report is in this run'"'"'s job log: %s/%s/actions/runs/%s\n' \
+                "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}"
+            } >> comment.trunc
+            mv comment.trunc comment.md
+          fi
           existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" \
             | head -n1)
