@@ -207,7 +207,7 @@ const FIXTURE_PROFILES = {
       '//\n' +
       '// The key below is intentionally fake (low-entropy, no valid AWS\n' +
       '// checksum) so it cannot be used to authenticate.\n' +
-      'let awsAccessKeyId = "AKIA1234567890ABCDEF"\n',
+      'let awsAccessKeyId = "AKIA1234567890ABCDEF"\n', // dxkit-allow:false-positive reason="fake AWS key fixture SEED in the new-lang scaffolder (swift profile) — intentionally flagged-by-design content the scaffold writes into generated per-language secret fixtures; low-entropy, cannot authenticate (same class as the allowlisted php profile seed)"
     badLint:
       '// Deliberate SwiftLint violations on default config:\n' +
       '//   - force_cast (error): `as!`\n' +

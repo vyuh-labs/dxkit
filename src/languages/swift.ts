@@ -638,7 +638,7 @@ export const swift: LanguageSupport = {
   // security-policy escape hatch, and Alamofire's trust-evaluation
   // disablers (v5 DisabledTrustEvaluator / v4 disableEvaluation).
   tlsBypassPatterns: [
-    'NSAllowsArbitraryLoads',
+    'NSAllowsArbitraryLoads', // dxkit-allow:false-positive reason="tls-bypass detector pattern DEFINITION in the swift language pack, not a real bypass (same class as the allowlisted csharp/java/python pattern definitions)"
     'allowInvalidCertificates[[:space:]]*=[[:space:]]*(true|YES)',
     'DisabledTrustEvaluator|disableEvaluation',
   ],
