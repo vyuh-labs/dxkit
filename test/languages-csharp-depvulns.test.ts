@@ -211,6 +211,50 @@ describe('parseDotnetVulnerableOutput', () => {
     expect(parsed.findings).toHaveLength(4);
   });
 
+  it('surfaces unrestored projects from the problems array — never a silent clean (the unrestored-tree class)', () => {
+    // Shape captured live from `dotnet list package --vulnerable
+    // --include-transitive --format json` on an unrestored tree: exit 0,
+    // zero packages, and a per-project error INSIDE the JSON. Reading
+    // this as ran-and-clean is the false-clean that made a committed
+    // baseline "comparable" with CI's restored scan and false-blocked 9
+    // pre-existing vulns as a PR's own.
+    const raw = JSON.stringify({
+      version: 1,
+      parameters: '--vulnerable --include-transitive',
+      problems: [
+        {
+          project: '/repo/App.Web/App.Web.csproj',
+          level: 'error',
+          text: 'No assets file was found for `/repo/App.Web/App.Web.csproj`. Please run restore before running this command.',
+        },
+        {
+          project: '/repo/App.Core/App.Core.csproj',
+          level: 'error',
+          text: 'No assets file was found for `/repo/App.Core/App.Core.csproj`. Please run restore before running this command.',
+        },
+        // A non-restore warning must NOT count as unobserved.
+        { project: '/repo/App.Web/App.Web.csproj', level: 'warning', text: 'some other notice' },
+      ],
+      projects: [
+        { path: '/repo/App.Web/App.Web.csproj' },
+        { path: '/repo/App.Core/App.Core.csproj' },
+      ],
+    });
+    const parsed = parseDotnetVulnerableOutput(raw)!;
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.unrestoredProjects).toEqual([
+      '/repo/App.Web/App.Web.csproj',
+      '/repo/App.Core/App.Core.csproj',
+    ]);
+  });
+
+  it('a fully-restored report carries no unrestored projects', () => {
+    const raw = JSON.stringify({
+      projects: [{ frameworks: [{ topLevelPackages: [] }] }],
+    });
+    expect(parseDotnetVulnerableOutput(raw)!.unrestoredProjects).toEqual([]);
+  });
+
   it('handles empty vulnerabilities array as zero findings', () => {
     const raw = JSON.stringify({
       projects: [

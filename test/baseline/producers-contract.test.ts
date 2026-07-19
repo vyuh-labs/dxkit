@@ -267,3 +267,20 @@ describe('producer recall-context contract (Rule 19)', () => {
     }
   });
 });
+
+describe('toolchain-backed scanner names survive recall-input resolution (Rule 19)', () => {
+  it('dotnet-vulnerable is never dropped as unknown — its presence is the discriminating signal', async () => {
+    // The unrestored-tree class (caught live on a real org repo): the dotnet half of the C# dep audit ran in CI
+    // (restored tree) and not at capture, but `resolveToolInputs` dropped
+    // the name as a non-registry `unknown` on BOTH sides — so two scans
+    // with different observable surfaces compared "comparable" and CI's
+    // pre-existing findings false-blocked as net-new. The name resolves
+    // through the registry def that gates the scanner's availability
+    // (`dotnet-format` — the same findTool probe the gather makes), so it
+    // can never fall out of the input set while the scanner ran.
+    const { resolveToolInputs } = await import('../../src/baseline/producers/recall-inputs');
+    const inputs = resolveToolInputs(['dotnet-vulnerable'], process.cwd());
+    expect(Object.keys(inputs)).toContain('dotnet-vulnerable');
+    expect(inputs['dotnet-vulnerable']).not.toBe('unknown');
+  });
+});
