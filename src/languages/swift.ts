@@ -542,10 +542,15 @@ function swiftRelevantChange(f: string): boolean {
  * Xcode-only repos: `xcodebuild build` compiles the project's default target
  * (scheme-less form — the discovered root project). It carries the macos
  * execution requirement above, so on any other host the runner discloses
- * `skipped-environment` BEFORE spawning. `xcodebuild test` additionally
- * needs a scheme + simulator destination — genuinely repo-configured, so the
- * test half stays null (a disclosed gap, closable via a Rule-17 custom
- * check) rather than a command that fails on every unconfigured repo.
+ * `skipped-environment` BEFORE spawning. Signing is disabled
+ * (`CODE_SIGNING_ALLOWED=NO`): the floor asks "does this compile", and a
+ * distribution certificate is machine state, not code state — the macOS
+ * tester's real iOS repo resolved the scheme-less build fine and died only
+ * on `No signing certificate "iOS Distribution" found`. `xcodebuild test`
+ * additionally needs a scheme + simulator destination — genuinely
+ * repo-configured, so the test half stays null (a disclosed gap, closable
+ * via a Rule-17 custom check) rather than a command that fails on every
+ * unconfigured repo.
  */
 const swiftCorrectnessProvider: CorrectnessProvider = {
   execution: swiftBuildExecution,
@@ -555,7 +560,11 @@ const swiftCorrectnessProvider: CorrectnessProvider = {
       return { label: 'build', bin: 'swift', args: ['build'] };
     }
     if (hasXcodeProject(ctx.cwd)) {
-      return { label: 'xcodebuild', bin: 'xcodebuild', args: ['build'] };
+      return {
+        label: 'xcodebuild',
+        bin: 'xcodebuild',
+        args: ['build', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO'],
+      };
     }
     return null;
   },
