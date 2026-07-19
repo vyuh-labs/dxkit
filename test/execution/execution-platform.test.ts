@@ -358,6 +358,25 @@ describe('classifyEnvironmentFailure (the F-14 post-failure tier)', () => {
     ).toBeNull();
   });
 
+  it('xcode: a missing signing identity is environment, not a finding (4.1 macOS tester)', () => {
+    // The exact output the macOS tester's real iOS repo emitted: scheme-less
+    // build resolved fine, then died on the machine's missing distribution
+    // cert. The floor now builds with CODE_SIGNING_ALLOWED=NO; this net
+    // covers a target that force-enables signing anyway.
+    const CERT_MISSING =
+      'MovableApp.xcodeproj: error: No signing certificate "iOS Distribution" found: No "iOS Distribution" signing certificate matching team ID "DUW9E2KK9V" with a private key was found.';
+    const hit = classifyEnvironmentFailure(['xcode'], CERT_MISSING);
+    expect(hit?.toolchain).toBe('xcode');
+    expect(hit?.problem).toContain('signing certificate');
+    // a real swift compile error is never reclassified
+    expect(
+      classifyEnvironmentFailure(
+        ['xcode'],
+        "ContentView.swift:12:5: error: cannot find 'foo' in scope",
+      ),
+    ).toBeNull();
+  });
+
   it('missing-toolchain descriptions name the per-host install (root remedy)', () => {
     const line = describeUnmetRequirement(
       { kind: 'missing-toolchain', toolchains: ['dotnet-sdk'] },

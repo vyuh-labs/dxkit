@@ -378,6 +378,18 @@ export const TOOLCHAIN_DEFS = {
         remedy:
           'install Xcode from the App Store, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`',
       },
+      // The floor builds with CODE_SIGNING_ALLOWED=NO, but a target that
+      // force-enables signing can still demand a certificate/profile this
+      // machine does not hold — machine state, never a code finding.
+      {
+        id: 'xcode-signing-identity-missing',
+        pattern:
+          'No signing certificate .* found|No profiles for .* were found|requires a provisioning profile',
+        problem:
+          'the build demands a signing certificate/provisioning profile this machine does not have',
+        remedy:
+          'install the signing identity in Keychain (or a provisioning profile), or disable signing for the CI/analysis build (CODE_SIGNING_ALLOWED=NO)',
+      },
     ],
   },
   ruby: {

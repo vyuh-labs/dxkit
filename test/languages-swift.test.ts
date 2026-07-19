@@ -64,10 +64,15 @@ describe('swift pack — metadata', () => {
       const req = swift.correctness.execution(dir);
       expect(req.hosts).toEqual(['macos']);
       expect(req.toolchains).toContain('xcode');
-      // The floor's build half still answers (scheme-less xcodebuild) while
+      // The floor's build half still answers (scheme-less xcodebuild, signing
+      // disabled — a distribution cert is machine state, not code state) while
       // the test half is a disclosed null (needs a configured scheme).
       const build = swift.correctness.syntaxCheck({ cwd: dir, changedFiles: [], scope: 'full' });
-      expect(build).toEqual({ label: 'xcodebuild', bin: 'xcodebuild', args: ['build'] });
+      expect(build).toEqual({
+        label: 'xcodebuild',
+        bin: 'xcodebuild',
+        args: ['build', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO'],
+      });
       expect(
         swift.correctness.affectedTests({ cwd: dir, changedFiles: [], scope: 'full' }),
       ).toBeNull();
