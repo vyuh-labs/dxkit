@@ -12,7 +12,7 @@ tests for 5 months while returning 0 findings on real `dotnet list package
 | ---------------------- | ------------------------------------- | ------------------------------------------- |
 | `lint-output.json`     | PHP_CodeSniffer 4.0.1 `--report=json` | `parsePhpcsJson` correctness                |
 | `depvulns-output.json` | osv-scanner 2.4.0 (Packagist)         | shared osv parse with ecosystem `Packagist` |
-| `coverage-output.xml`  | PHPUnit `--coverage-clover`           | `parsePhpCloverXml` — **NOT YET HARVESTED** |
+| `coverage-output.xml`  | PHPUnit 12 `--coverage-clover` (xdebug) | `parsePhpCloverXml` correctness           |
 
 ## Capture commands
 
@@ -31,14 +31,13 @@ cd test/fixtures/benchmarks/php
 osv-scanner scan source --lockfile composer.lock --format json \
   > ../../raw/php/depvulns-output.json
 
-# coverage-output.xml — PENDING a real harvest: needs a PHP with a coverage
-# DRIVER (pcov or xdebug; the static-php build used for pack verification
-# ships neither). On a driver-equipped machine:
-#   cd <a small composer project with phpunit + one test>
-#   vendor/bin/phpunit --coverage-clover coverage-clover.xml
-#   cp coverage-clover.xml test/fixtures/raw/php/coverage-output.xml
-# Until then test/languages-php.test.ts covers the clover parser with a
-# format-shape sample (labeled interim in the test).
+# coverage-output.xml — needs a PHP with a coverage DRIVER (xdebug/pcov).
+# Run from a NEUTRAL directory (absolute filenames are committed bytes):
+cp -r test/fixtures/analysis/php-app/. /tmp/dxkit-harvest/php-cov && cd /tmp/dxkit-harvest/php-cov
+composer require --dev phpunit/phpunit
+#   ...add phpunit.xml + tests/GreeterTest.php (one passing test)...
+XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-clover coverage-clover.xml
+cp coverage-clover.xml <dxkit>/test/fixtures/raw/php/coverage-output.xml
 ```
 
 ## Why committed
