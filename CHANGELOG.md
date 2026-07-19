@@ -5,6 +5,32 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.2] - 2026-07-19
+
+- **Fix: the CI PR-comment step bounds its body to GitHub's 65,536-char
+  limit.** A very large repo's PASSED guardrail failed its job anyway —
+  the full report blew the comment cap and the post errored. The step now
+  truncates at a line boundary with a link to the job log's full report.
+- **Fix: an unrestored .NET tree can no longer produce a "comparable and
+  clean" dependency baseline.** Caught live in the 4.1.0 org rollout: a
+  repo's install-time baseline held 1 dep-vuln while CI found 16 more and
+  BLOCKED them as the PR's own — pre-existing vulnerabilities blamed on
+  whoever opened the next PR (the exact false-block class Rule 19 exists
+  to kill). Two coupled defects: (1) `dotnet list package --vulnerable`
+  on an unrestored tree exits 0 with per-project `No assets file` errors
+  inside the JSON, and the parser read that as ran-and-clean — the dotnet
+  half now returns a disclosed `unavailable` (run `dotnet restore` for
+  the full transitive audit) and drops out of provenance honestly;
+  (2) the `dotnet-vulnerable` recall input was silently dropped as a
+  non-registry `unknown`, so two scans with different observable surfaces
+  compared "comparable" — toolchain-backed scanner names now resolve
+  through the registry def that gates their availability
+  (`TOOLCHAIN_BACKED_TOOLS`), so the presence difference drifts the kind
+  and demotes the delta to a disclosed warning instead of a block. Both
+  directions pinned; proven on the affected repo (unrestored → honest
+  osv-only; restored → 16 findings with `dotnet-vulnerable: <sdk>` in the
+  recall inputs).
+
 ## [4.1.1] - 2026-07-19
 
 - **Fix: CI never provisions Swift from the pbxproj `SWIFT_VERSION`.** Both
