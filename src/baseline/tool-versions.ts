@@ -50,6 +50,23 @@ export function buildToolsMap(
 const IN_PROCESS_TOOLS: ReadonlySet<string> = new Set(['tls-bypass-registry', 'grep-secrets']);
 
 /**
+ * Scanner names backed by an AMBIENT TOOLCHAIN rather than a registry
+ * binary, mapped to the TOOL_DEFS key that gates their availability (the
+ * same `findTool` probe the gather itself makes). Without this map the
+ * name shortens to no registry key, resolves `unknown`, and is DROPPED
+ * from recall inputs — but unlike a builtin (`git`, `find`), an
+ * ambient-toolchain scanner's presence VARIES by environment, and that
+ * presence is exactly the discriminating signal Rule 19 needs. The
+ * shipped class: `dotnet-vulnerable` ran in CI (restored tree, 16
+ * findings) and not at capture (no dotnet, 1 finding), both recall
+ * contexts read `{osv-scanner}`, the sets compared "comparable", and 9
+ * pre-existing NuGet vulns false-blocked as the PR's.
+ */
+const TOOLCHAIN_BACKED_TOOLS: Readonly<Record<string, string>> = {
+  'dotnet-vulnerable': 'dotnet-format',
+};
+
+/**
  * Per-process cache of resolved tool versions, keyed by `${name}::${cwd}`.
  *
  * Why this exists: `findTool` spawns an `execFileSync` subprocess to
@@ -87,7 +104,8 @@ function resolveToolVersion(name: string, cwd: string): string {
 
 function resolveToolVersionUncached(name: string, cwd: string): string {
   if (IN_PROCESS_TOOLS.has(name)) return `dxkit-${DXKIT_VERSION}`;
-  const parts = name.split('-');
+  const backing = TOOLCHAIN_BACKED_TOOLS[name];
+  const parts = (backing ?? name).split('-');
   for (let i = parts.length; i > 0; i--) {
     const candidate = parts.slice(0, i).join('-');
     const def = TOOL_DEFS[candidate];

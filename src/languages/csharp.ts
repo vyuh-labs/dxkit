@@ -192,6 +192,14 @@ interface DotnetVulnerableReport {
     path?: string;
     frameworks?: DotnetFramework[];
   }>;
+  /** Per-project errors dotnet emits INSIDE the JSON (exit stays 0) — the
+   *  load-bearing one: `No assets file was found ... Please run restore`
+   *  on every unrestored project. */
+  problems?: Array<{
+    project?: string;
+    level?: string;
+    text?: string;
+  }>;
 }
 
 /**
@@ -262,9 +270,18 @@ function extractGhsaIdFromUrl(url: string | undefined): string | null {
  * matches Python's venv-missing behavior: degrade gracefully rather
  * than invent false parents.
  */
-export function parseDotnetVulnerableOutput(
-  raw: string,
-): { counts: SeverityCounts; findings: DepVulnFinding[] } | null {
+export function parseDotnetVulnerableOutput(raw: string): {
+  counts: SeverityCounts;
+  findings: DepVulnFinding[];
+  /** Projects the report says it could NOT observe (`No assets file was
+   *  found ... Please run restore`, level error). Non-empty means this
+   *  output is a PARTIAL view of the dependency tree — the caller must
+   *  refuse to read it as ran-and-clean (the unrestored-tree class, caught live on a real org repo: an
+   *  unrestored tree parsed as 0 findings, the baseline read
+   *  "comparable", and CI's restored scan false-blocked 9 pre-existing
+   *  vulns as the PR's). */
+  unrestoredProjects: string[];
+} | null {
   let data: DotnetVulnerableReport;
   try {
     data = JSON.parse(raw) as DotnetVulnerableReport;
@@ -322,7 +339,16 @@ export function parseDotnetVulnerableOutput(
       }
     }
   }
-  return { counts: { critical, high, medium, low }, findings };
+  const unrestoredProjects = (data.problems ?? [])
+    .filter(
+      (p) =>
+        p.level === 'error' &&
+        typeof p.text === 'string' &&
+        /no assets file was found|please run restore/i.test(p.text),
+    )
+    .map((p) => p.project ?? '(unknown project)');
+
+  return { counts: { critical, high, medium, low }, findings, unrestoredProjects };
 }
 
 /**
@@ -788,6 +814,22 @@ async function runDotnetVulnerablePath(cwd: string): Promise<DepVulnGatherOutcom
   const parsed = parseDotnetVulnerableOutput(vulnRaw);
   if (!parsed) {
     return { kind: 'unavailable', reason: 'dotnet list package output failed JSON parse' };
+  }
+
+  // An unrestored project makes this half's view PARTIAL — reading it as
+  // ran-and-clean is the false-clean class (proven live: an unrestored
+  // tree reported 1 finding where the restored tree reports 16, and the
+  // committed baseline then false-blocked CI's true findings as net-new).
+  // Unavailable is honest: this half drops out of provenance, so Rule 19
+  // sees the environments differ instead of "comparable and clean". The
+  // osv half still covers committed lockfiles / direct references.
+  if (parsed.unrestoredProjects.length > 0) {
+    return {
+      kind: 'unavailable',
+      reason:
+        `dotnet list package could not observe ${parsed.unrestoredProjects.length} unrestored ` +
+        'project(s) (no assets file) — run `dotnet restore` for the full transitive audit',
+    };
   }
 
   const { counts, findings } = parsed;
