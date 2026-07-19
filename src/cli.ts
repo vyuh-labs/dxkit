@@ -1677,6 +1677,8 @@ export async function run(argv: string[]): Promise<void> {
         // <reason>" label; the console line dropped it, so an unavailable
         // linter read as a clean "0 errors, 0 warnings" (caught in the php
         // tarball validation on a phpcs that refused to start).
+        // The console renderer's own output line (pre-existing, reformatted
+        // when the tool label landed), not a stray debug print. // slop-ok
         console.log(
           `  Lint:           ${m.lintErrors} errors, ${m.lintWarnings} warnings${m.lintTool ? ` (${m.lintTool})` : ''}`,
         );
