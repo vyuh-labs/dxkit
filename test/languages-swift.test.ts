@@ -64,15 +64,14 @@ describe('swift pack — metadata', () => {
       const req = swift.correctness.execution(dir);
       expect(req.hosts).toEqual(['macos']);
       expect(req.toolchains).toContain('xcode');
-      // The floor's build half still answers (scheme-less xcodebuild, signing
-      // disabled — a distribution cert is machine state, not code state) while
-      // the test half is a disclosed null (needs a configured scheme).
-      const build = swift.correctness.syntaxCheck({ cwd: dir, changedFiles: [], scope: 'full' });
-      expect(build).toEqual({
-        label: 'xcodebuild',
-        bin: 'xcodebuild',
-        args: ['build', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO'],
-      });
+      // Xcode-only: the floor DECLINES both halves (buildTarget 'configured',
+      // the csharp no-root-solution pattern) — two real-repo tester runs
+      // proved a discovered scheme-less build false-blocks (signing identity;
+      // third-party explicit-module failures in the generic Release config).
+      expect(req.buildTarget).toBe('configured');
+      expect(
+        swift.correctness.syntaxCheck({ cwd: dir, changedFiles: [], scope: 'full' }),
+      ).toBeNull();
       expect(
         swift.correctness.affectedTests({ cwd: dir, changedFiles: [], scope: 'full' }),
       ).toBeNull();

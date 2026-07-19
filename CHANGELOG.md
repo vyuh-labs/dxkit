@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare `hosts: ['macos']` + the new `xcode` toolchain (Rule 20), so a
   non-mac host discloses `skipped-environment` and CI placement routes a
   macos job instead of failing weirdly.
+- **Xcode-only repos: the correctness floor declines** (`buildTarget:
+  'configured'`, the C# no-root-solution pattern). Two real-iOS-repo tester
+  runs proved a discovered scheme-less `xcodebuild build` is not a reliable
+  liveness signal: it demands a signing identity the machine may not hold
+  (run 1), and with signing disabled it can still fail inside third-party
+  package targets (`Unable to find module dependency` — an explicit-module
+  quirk of the generic Release config) while the team's own scheme builds
+  daily (run 2). Either failure would false-block a developer for a build
+  nobody runs. Remedy: declare the repo's real build as a custom check
+  (`.dxkit/policy.json:checks`), e.g. `xcodebuild -scheme <App> -destination
+  'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO
+  CODE_SIGNING_REQUIRED=NO`; the `xcode` toolchain's environment-failure
+  patterns (Xcode-missing, signing-identity-missing) net that check's
+  machine-state failures as disclosed skips, never code findings.
 - **Honest CocoaPods posture.** OSV.dev has NO CocoaPods ecosystem (verified
   against the API), so a `Podfile.lock` is disclosed as UNAUDITED rather than
   scanned-into-a-fake-clean — the wrong-artifact-reads-as-CLEAN class,

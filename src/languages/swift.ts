@@ -72,12 +72,19 @@ const SWIFT_SPM_BUILD_EXECUTION: ExecutionRequirement = {
   weight: 'build',
 };
 
-/** An Xcode-project build is macOS + Xcode, full stop. */
+/** An Xcode-project build is macOS + Xcode, full stop. `configured`: two
+ *  real-repo tester runs proved a discovered scheme-less build is not a
+ *  reliable liveness signal (run 1: demands a signing identity; run 2, with
+ *  signing disabled: third-party package targets fail explicit-module
+ *  resolution in the generic Release config — `Unable to find module
+ *  dependency: 'Crypto'` — while the team's own scheme builds fine). Only
+ *  the repo knows its buildable scheme + destination, so the floor declines
+ *  rather than blame the developer for a build shape nobody runs. */
 const SWIFT_XCODE_BUILD_EXECUTION: ExecutionRequirement = {
   hosts: ['macos'],
   toolchains: ['xcode'],
   needsBuild: true,
-  buildTarget: 'discovered',
+  buildTarget: 'configured',
   weight: 'build',
 };
 
@@ -539,18 +546,20 @@ function swiftRelevantChange(f: string): boolean {
  * Swift-relevant file changed and skips otherwise (a docs-only change never
  * pays a build) — CI's `full` scope is the backstop, the Go-pack pattern.
  *
- * Xcode-only repos: `xcodebuild build` compiles the project's default target
- * (scheme-less form — the discovered root project). It carries the macos
- * execution requirement above, so on any other host the runner discloses
- * `skipped-environment` BEFORE spawning. Signing is disabled
- * (`CODE_SIGNING_ALLOWED=NO`): the floor asks "does this compile", and a
- * distribution certificate is machine state, not code state — the macOS
- * tester's real iOS repo resolved the scheme-less build fine and died only
- * on `No signing certificate "iOS Distribution" found`. `xcodebuild test`
- * additionally needs a scheme + simulator destination — genuinely
- * repo-configured, so the test half stays null (a disclosed gap, closable
- * via a Rule-17 custom check) rather than a command that fails on every
- * unconfigured repo.
+ * Xcode-only repos: the floor DECLINES (both builders null) — the csharp
+ * no-root-solution pattern. A discovered scheme-less `xcodebuild build` is
+ * not a reliable liveness signal on real repos: the macOS tester's run 1
+ * died on the machine's missing signing identity, and run 2 (signing
+ * disabled) died inside third-party package targets (`Unable to find module
+ * dependency: 'Crypto'` — an explicit-module quirk of the generic Release
+ * config) while the team's own scheme builds daily. Either failure would
+ * false-block a developer for a build nobody runs. The remedy is a Rule-17
+ * custom check naming the repo's real build, e.g.
+ * `xcodebuild -scheme <App> -destination 'generic/platform=iOS' build
+ * CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` (the signing flags ARE
+ * proven load-bearing — run 2 got past run 1's cert failure with them), and
+ * the xcode toolchain's environmentFailurePatterns net that check's
+ * machine-state failures.
  */
 const swiftCorrectnessProvider: CorrectnessProvider = {
   execution: swiftBuildExecution,
@@ -559,13 +568,8 @@ const swiftCorrectnessProvider: CorrectnessProvider = {
     if (hasSpmManifest(ctx.cwd)) {
       return { label: 'build', bin: 'swift', args: ['build'] };
     }
-    if (hasXcodeProject(ctx.cwd)) {
-      return {
-        label: 'xcodebuild',
-        bin: 'xcodebuild',
-        args: ['build', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO'],
-      };
-    }
+    // Xcode-only: declined — see the provider doc above (buildTarget is
+    // 'configured'; a repo-named scheme via a custom check is the remedy).
     return null;
   },
 
