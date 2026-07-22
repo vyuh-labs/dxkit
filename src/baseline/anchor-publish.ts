@@ -152,19 +152,37 @@ export function announceAnchorNotPushed(anchorRef: string, reason: string | unde
  * use — one reader of a side ref, one write path below.
  */
 export function readFromAnchorRef(cwd: string, anchorRef: string, relPath: string): string | null {
-  // Best-effort fetch so `origin/<ref>` exists locally (no-op offline / in CI
-  // where the checkout already fetched).
+  // Fetch with an EXPLICIT refspec into a private local ref (D4d). A bare
+  // `git fetch origin <ref>` only writes FETCH_HEAD when the clone's fetch
+  // refspec doesn't map the ref — single-branch clones and actions/checkout
+  // workspaces configure exactly such narrow refspecs — so `origin/<ref>`
+  // never materializes, `git show` fails on every candidate, and the caller
+  // silently falls back to the stale tree copy. The `+refs/heads/<ref>:<priv>`
+  // form materializes the ref regardless of the clone's refspec config; the
+  // private `refs/dxkit/` namespace never collides with user branches.
+  const privateRef = `refs/dxkit/anchor/${anchorRef}`;
   try {
-    execFileSync('git', ['fetch', '--depth=1', 'origin', anchorRef], { cwd, stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['fetch', '--depth=1', 'origin', `+refs/heads/${anchorRef}:${privateRef}`],
+      { cwd, stdio: 'ignore' },
+    );
   } catch {
-    /* offline / already present */
+    /* offline / no origin — fall through to whatever refs exist locally */
   }
-  for (const ref of [`origin/${anchorRef}`, anchorRef]) {
+  for (const ref of [privateRef, `origin/${anchorRef}`, anchorRef]) {
     try {
       return execFileSync('git', ['show', `${ref}:${relPath}`], {
         cwd,
         stdio: ['ignore', 'pipe', 'ignore'],
         encoding: 'utf8',
+        // D4d, the LIVE incident cause (found on the real repo): a large
+        // brownfield baseline (~19k findings ⇒ multi-MB JSON) blows
+        // execFileSync's default 1MiB maxBuffer — `git show` dies ENOBUFS
+        // with EMPTY stderr, the catch swallowed it, and the check silently
+        // gated against the stale tree copy while `origin/<anchorRef>` was
+        // sitting right there in the checkout.
+        maxBuffer: 256 * 1024 * 1024,
       });
     } catch {
       /* try next ref form */
