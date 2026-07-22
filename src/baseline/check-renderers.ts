@@ -26,7 +26,12 @@
  */
 
 import * as logger from '../logger';
-import type { ClassifiedPair, EnvelopeDrift, GuardrailCheckResult } from './check';
+import type {
+  AnchorSourceDisclosure,
+  ClassifiedPair,
+  EnvelopeDrift,
+  GuardrailCheckResult,
+} from './check';
 import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
 import { RECALL_DRIFT_REMEDY, describeRecallDrift } from './recall';
@@ -240,6 +245,16 @@ export function renderConsole(result: GuardrailCheckResult): string {
     `  Commit:      ${shortSha(result.baseline.repo.commitSha)} (${result.baseline.repo.branch || 'detached'})`,
   );
   lines.push(`  Findings:    ${result.baseline.findings.length}`);
+  // D4d: under the `branch` anchor transport, say WHICH file actually loaded —
+  // an unreachable side branch silently gating against a stale tree copy was
+  // invisible in the incident output.
+  if (result.anchorSource) {
+    lines.push(
+      result.anchorSource.used === 'anchor'
+        ? `  Anchor:      side branch '${result.anchorSource.anchorRef}'`
+        : `  ⚠ Anchor:    TREE FALLBACK — ${result.anchorSource.note}`,
+    );
+  }
   const debtNote = floorDebtNotice(result.baseline);
   if (debtNote) lines.push(`  ${debtNote}`);
   lines.push('');
@@ -1010,6 +1025,9 @@ export interface GuardrailJsonPayload {
     readonly commitSha: string;
     readonly branch: string;
     readonly findingsCount: number;
+    /** D4d: under the `branch` anchor transport, which file actually loaded —
+     *  the side-branch anchor, or the tree copy as a disclosed fallback. */
+    readonly anchorSource?: AnchorSourceDisclosure;
     /** Resolved baseline mode (`committed-full` / `committed-
      *  sanitized` / `ref-based`) + its audit trail. Surfaced so
      *  agents + dashboards can see WHY the run picked a given
@@ -1207,6 +1225,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       commitSha: result.baseline.repo.commitSha,
       branch: result.baseline.repo.branch,
       findingsCount: result.baseline.findings.length,
+      ...(result.anchorSource ? { anchorSource: result.anchorSource } : {}),
       mode: {
         value: result.mode.mode,
         source: result.mode.source,
@@ -1584,11 +1603,24 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('');
   }
 
+  // D4d: an unreachable side-branch anchor silently gating against a stale
+  // tree copy must be loud in the PR comment, not only in the JSON.
+  if (result.anchorSource?.used === 'tree-fallback') {
+    lines.push('');
+    lines.push(`> ⚠️ **Baseline anchor fallback** — ${escapeMd(result.anchorSource.note)}`);
+    lines.push('');
+  }
+
   lines.push('---');
   lines.push('');
   lines.push(
-    `_Baseline_: \`${escapeMd(result.baseline.name)}\` @ ${shortSha(result.baseline.repo.commitSha)} · ` +
-      `_Mode_: \`${escapeMd(result.mode.mode)}\`${formatModeRef(result.mode)} · ` +
+    `_Baseline_: \`${escapeMd(result.baseline.name)}\` @ ${shortSha(result.baseline.repo.commitSha)}` +
+      (result.anchorSource
+        ? result.anchorSource.used === 'anchor'
+          ? ` (anchor: \`${escapeMd(result.anchorSource.anchorRef)}\`)`
+          : ' (tree fallback)'
+        : '') +
+      ` · _Mode_: \`${escapeMd(result.mode.mode)}\`${formatModeRef(result.mode)} · ` +
       `_Current_: ${shortSha(result.current.repoState.commitSha)} · ` +
       `_Matcher_: ${result.matchResult.gitAware ? 'git-aware' : 'degraded'} · ` +
       `_dxkit_: ${escapeMd(result.current.analysisMeta.dxkitVersion)}`,

@@ -56,7 +56,7 @@ import type { CoverageDrift } from './coverage';
 import { entriesToLocated } from './entry-to-located';
 import { gitAwareMatch } from './git-aware-match';
 import type { LocatedIdentity } from './git-aware-match';
-import { resolveBaselineMode } from './modes';
+import { DEFAULT_ANCHOR_REF, resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { resolvePolicy, loadPolicyFromCwd } from './policy';
 import { classify } from './classify';
@@ -271,11 +271,27 @@ export interface EnvelopeDrift {
   readonly coverageDrift: ReadonlyArray<CoverageDrift>;
 }
 
+/** How the committed prior side was obtained under the `branch` anchor
+ *  transport (D4d). `anchor` = read fresh from the side branch (the intended
+ *  path — the footer's baseline SHA is the anchor's). `tree-fallback` = the
+ *  side branch was unreachable and the check gated against the possibly-stale
+ *  tree copy. The fallback stays fail-open, but it is DISCLOSED: in the #375
+ *  incident nothing in the output said which file loaded, so an inert branch
+ *  transport was invisible (the GateFailure discipline — fail open, always say
+ *  why). */
+export interface AnchorSourceDisclosure {
+  readonly used: 'anchor' | 'tree-fallback';
+  readonly anchorRef: string;
+  readonly note: string;
+}
+
 export interface GuardrailCheckResult {
   /** Pre-resolved baseline mode (which path produced `baseline`).
    *  Carries the audit trail (CLI / policy / auto-detect) so the
    *  CLI surface can log WHY the mode was picked. */
   readonly mode: ResolvedMode;
+  /** Present only when the anchor transport is `branch` (D4d disclosure). */
+  readonly anchorSource?: AnchorSourceDisclosure;
   /** On-disk path of the baseline file, or undefined when mode is
    *  `ref-based` (the prior side was computed from a git ref, not
    *  read from a committed file). */
@@ -585,7 +601,7 @@ export async function runGuardrailCheck(
   // out a git ref into a temporary worktree. Both paths produce a
   // `BaselineFile`-shaped value so the matcher / classifier
   // downstream stay mode-agnostic.
-  const { baseline, baselinePath } = await loadPriorSide(
+  const { baseline, baselinePath, anchorSource } = await loadPriorSide(
     cwd,
     mode,
     options,
@@ -935,6 +951,7 @@ export async function runGuardrailCheck(
   return {
     mode,
     ...(baselinePath !== undefined ? { baselinePath } : {}),
+    ...(anchorSource !== undefined ? { anchorSource } : {}),
     baseline,
     current,
     matchResult,
@@ -1304,11 +1321,16 @@ async function loadPriorSide(
   options: RunGuardrailCheckOptions,
   incrementalFiles?: ReadonlyArray<string>,
   scope: GatherScope = FULL_SCOPE,
-): Promise<{ baseline: BaselineFile; baselinePath?: string }> {
+): Promise<{
+  baseline: BaselineFile;
+  baselinePath?: string;
+  anchorSource?: AnchorSourceDisclosure;
+}> {
   if (mode.mode !== 'ref-based') {
     const baselinePath =
       options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
     const section = safeBaselineSection(cwd);
+    const anchorRef = section?.anchorRef ?? DEFAULT_ANCHOR_REF;
     // Scoped to the `branch` anchor transport: the source-of-truth anchor lives
     // on the side branch (the refresh only updates that, so a committed tree copy
     // goes stale). Read it from there — read-only, into a temp file — so a LOCAL
@@ -1320,7 +1342,15 @@ async function loadPriorSide(
     if (fromBranch) {
       // Keep `baselinePath` as the logical tree path for display; read the fresh
       // side-branch anchor from the temp file.
-      return { baseline: readBaselineFile(fromBranch), baselinePath };
+      return {
+        baseline: readBaselineFile(fromBranch),
+        baselinePath,
+        anchorSource: {
+          used: 'anchor',
+          anchorRef,
+          note: `baseline read from the '${anchorRef}' side branch (anchor transport)`,
+        },
+      };
     }
     if (!fs.existsSync(baselinePath)) {
       // No on-disk copy: materialize a `branch` anchor at the tree path if we can
@@ -1334,7 +1364,28 @@ async function loadPriorSide(
         );
       }
     }
-    return { baseline: readBaselineFile(baselinePath), baselinePath };
+    // D4d disclosure: with the `branch` transport, reaching this line means the
+    // side branch could NOT be read and the check gates against the tree copy —
+    // possibly stale (the refresh only updates the side branch). Fail-open, but
+    // never silent: the incident's footer cited the stale tree SHA with nothing
+    // saying the anchor read failed.
+    const anchorSource: AnchorSourceDisclosure | undefined =
+      section?.anchor === 'branch'
+        ? {
+            used: 'tree-fallback',
+            anchorRef,
+            note:
+              `anchor transport 'branch': the '${anchorRef}' side branch could not be read ` +
+              `(not created yet, offline, or unfetchable) — gating against the committed tree ` +
+              `copy, which may be STALE. If this repo's refresh publishes the anchor, ` +
+              `investigate with \`${dxkitCli('doctor')}\`.`,
+          }
+        : undefined;
+    return {
+      baseline: readBaselineFile(baselinePath),
+      baselinePath,
+      ...(anchorSource ? { anchorSource } : {}),
+    };
   }
 
   if (!mode.ref) {
