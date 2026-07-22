@@ -5,6 +5,51 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.3] - 2026-07-22
+
+- **Security fix (P0): `--untrusted` now reaches every in-process plugin
+  load.** The trust tier promises that executable flow plugins never load
+  when the scanned source is attacker-controlled — the shipped PR workflow
+  runs `flow console --untrusted` against PR-head code. The boolean was
+  honored by the gate but silently dropped at three call sites: `flow
+  console` → the integration gate, `flow map` → the seam inventory (whose
+  dead-surface ladder gathers a flow model, and through it loads plugins),
+  and `evaluate` → the trial's seam-visibility lane. All three now forward
+  the posture, and a side-effect canary test (a fixture plugin that writes
+  a sentinel file at load) drives every `--untrusted` entry point in both
+  directions — untrusted must never fire it, trusted must (so the
+  untrusted assertion can never pass vacuously).
+- **Newly published advisories stop being blamed on the PR (D4 phase 1).**
+  The incident class (two live batches in 48h against one customer repo): a
+  committed-mode PR that touches no dependency manifest goes red as "N new
+  regressions" the day an advisory batch lands on an unchanged dependency.
+  An `added` dep-vuln on a diff that touched no dependency manifest of any
+  active pack — the same pack-declared `changedFilesTouchDependencyManifest`
+  the ref-based dep-audit skip trusts, parity-pinned — is now classified
+  `newly-published-advisory`: the report and PR comment state the findings
+  were published after baseline capture, not introduced by this PR, and
+  present both lanes (fix the vulnerability, or defer time-boxed). Gate
+  semantics are UNCHANGED in this release: the finding blocks exactly as
+  `added` does, including every armed block rule — what changed is
+  attribution honesty and the cost of the defer lane. (The policy tier knob
+  and base-branch-first surfacing ship next, as 4.1.4.)
+- **New: `vyuh-dxkit allowlist defer` — bulk, dep-vuln-only, time-boxed
+  deferral.** Productizes the incident bridge script: one command adds
+  `category=deferred` entries with a short shared expiry (default 7 days —
+  the expiry is the forcing function back into the fix lane) for either an
+  explicit fingerprint list or `--from-last-check` (the blocking dep-vulns
+  of the last same-tree guardrail run, read from the verdict cache, which
+  now carries the blocking-finding list). Structurally incapable of bulk
+  bypass: entries are minted `kind=dep-vuln` (suppression matches on kind),
+  and non-dep-vuln findings are refused loudly, never deferred.
+- **Fix: dep-vuln report rows show the advisory id, not the fingerprint.**
+  `describeEntryLocation` read `entry.id` — which on a baseline entry is the
+  finding FINGERPRINT — where the advisory id belongs, so a multi-advisory
+  package rendered as duplicate rows with contradictory severities and the
+  Location column repeated the Fingerprint column. Rows now read
+  `package@version · GHSA-…` (falling back to the fingerprint only on a
+  pre-advisoryId baseline).
+
 ## [4.1.2] - 2026-07-19
 
 - **Fix: the CI PR-comment step bounds its body to GitHub's 65,536-char
