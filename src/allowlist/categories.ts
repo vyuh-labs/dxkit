@@ -224,3 +224,20 @@ export function defaultExpiryDate(now: Date = new Date()): string {
   expires.setUTCDate(expires.getUTCDate() + DEFAULT_EXPIRY_DAYS);
   return expires.toISOString().slice(0, 10);
 }
+
+/**
+ * Default expiry window for `allowlist defer` — the bulk deferral of newly
+ * published dep-vuln advisories (D4). Deliberately SHORT: the expiry is the
+ * forcing function back into the fix lane, so a live advisory a time-sensitive
+ * change deferred re-blocks within days, not the 90-day accepted-risk horizon.
+ * Matches the window the incident bridge script shipped to customers.
+ */
+export const DEFER_ADVISORY_EXPIRY_DAYS = 7;
+
+/** ISO `YYYY-MM-DD` expiry `DEFER_ADVISORY_EXPIRY_DAYS` from `now` (UTC-
+ *  anchored like `defaultExpiryDate`; `now` injected for tests). */
+export function deferAdvisoryExpiryDate(now: Date = new Date()): string {
+  const expires = new Date(now);
+  expires.setUTCDate(expires.getUTCDate() + DEFER_ADVISORY_EXPIRY_DAYS);
+  return expires.toISOString().slice(0, 10);
+}

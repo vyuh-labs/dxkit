@@ -235,6 +235,14 @@ ${renderCommandIndex().join('\n')}
                                  accepted-risk / deferred) and required reason. Inline
                                  form inserts a dxkit-allow: annotation; file-level
                                  form writes to .dxkit/allowlist.json.
+    vyuh-dxkit allowlist defer [<fingerprint>…] [--from-last-check] --reason=<text>
+                               [--expires=<YYYY-MM-DD|+Nd>]
+                                 Bulk, dep-vuln-only, time-boxed deferral of newly
+                                 published advisories (category=deferred, default
+                                 expiry +7d — the expiry re-blocks, forcing the fix
+                                 lane). --from-last-check pulls the blocking dep-vulns
+                                 from the last same-tree guardrail run; other kinds are
+                                 refused, never bulk-deferred.
     vyuh-dxkit allowlist list | show <fingerprint> | audit | prune [--dry-run] [--json]
                                  Review / audit / clean the allowlist. audit surfaces
                                  expired + soon-to-expire (within 14 days) + missing-
@@ -425,11 +433,12 @@ export async function run(argv: string[]): Promise<void> {
       target: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       plan: { type: 'boolean', default: false },
-      // allowlist flags (allowlist add | list | show | audit | prune | remove | export)
+      // allowlist flags (allowlist add | defer | list | show | audit | prune | remove | export)
       category: { type: 'string' },
       reason: { type: 'string' },
       fingerprint: { type: 'string' },
       expires: { type: 'string' },
+      'from-last-check': { type: 'boolean', default: false },
       'acknowledged-severity': { type: 'string' },
       'added-by': { type: 'string' },
       mode: { type: 'string' },
@@ -2733,7 +2742,7 @@ export async function run(argv: string[]): Promise<void> {
       const { runGuardrailCheck } = await import('./baseline/check');
       const { renderConsole, renderJson, renderMarkdown, verdictCounts } =
         await import('./baseline/check-renderers');
-      const { writeVerdict } = await import('./baseline/verdict-cache');
+      const { cacheBlockingFindings, writeVerdict } = await import('./baseline/verdict-cache');
       const { parseBaselineMode } = await import('./baseline/modes');
       const cliModeRaw = values.mode as string | undefined;
       const cliMode = cliModeRaw !== undefined ? parseBaselineMode(cliModeRaw) : undefined;
@@ -2778,6 +2787,7 @@ export async function run(argv: string[]): Promise<void> {
           warningCount: counts.warning,
           markdown: renderMarkdown(result),
           ranAt: new Date().toISOString(),
+          blockingFindings: cacheBlockingFindings(result.pairs),
         });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
@@ -3079,10 +3089,12 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'allowlist': {
       const { runAllowlist } = await import('./allowlist/cli');
-      // positionals[1] = subcommand (add | list | show | audit | prune | remove | export)
+      // positionals[1] = subcommand (add | defer | list | show | audit | prune | remove | export)
       // positionals[2] = optional target (file:line for add; fingerprint for show / remove)
+      // positionals[2..] = repeated fingerprints for defer
       await runAllowlist(cwd, positionals[1], {
         positionalAfter: positionals[2],
+        positionalsAfter: positionals.slice(2),
         values: values as Record<string, unknown>,
       });
       break;

@@ -705,6 +705,28 @@ export async function runGuardrailCheck(
   const linesChangedFor = (file: string): ReadonlySet<number> | 'all' | null =>
     changedLineIndex ? changedLineIndex.linesFor(file) : null;
 
+  // D4: the manifest-untouched discriminator for `added` dep-vulns. A net-new
+  // dependency vulnerability requires a manifest/lockfile change; when the diff
+  // (baseline anchor → working tree, the same basis as the changed-line index)
+  // touched none, the advisory was published AFTER baseline capture and the
+  // classifier relabels the pair `newly_published_advisory` — attribution
+  // honesty only, the verdict is unchanged. Consumes the ONE pack-declared
+  // `changedFilesTouchDependencyManifest` — the same helper the ref-based
+  // incremental dep-audit skip trusts (Rule 2.30 parity, pinned by
+  // test/baseline/advisory-attribution.test.ts). Memoized: one `git diff` per
+  // run, and only when an added dep-vuln pair actually asks. `null` changed
+  // files (attribution unavailable) reads as UNKNOWN → no relabel.
+  let manifestUntouchedMemo: boolean | undefined;
+  const manifestUntouched = (): boolean => {
+    if (manifestUntouchedMemo === undefined) {
+      const changed = baseSha ? computeChangedFiles(cwd, baseSha) : null;
+      manifestUntouchedMemo =
+        changed !== null &&
+        !changedFilesTouchDependencyManifest(changed, detectActiveLanguages(cwd));
+    }
+    return manifestUntouchedMemo;
+  };
+
   // Load the per-finding allowlist once. An active (unexpired) entry
   // whose fingerprint matches a would-block finding waives the block —
   // this is what makes "I reviewed and accepted this finding" actually
@@ -780,6 +802,11 @@ export async function runGuardrailCheck(
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(malicious ? { malicious } : {}),
       ...(reachable ? { reachable } : {}),
+      // Only asked for added dep-vuln pairs, so a run with none never pays the
+      // git diff (and other kinds never see the flag).
+      ...(anchorEntry.kind === 'dep-vuln' && pair.status === 'added' && manifestUntouched()
+        ? { manifestUntouched: true }
+        : {}),
     };
 
     // `classify` is kind-agnostic; fold in the custom-check block INTENT (a
@@ -1075,7 +1102,14 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
 export function describeEntryLocation(entry: BaselineEntry): string {
   if (!isSanitized(entry) && entry.kind === 'dep-vuln') {
     const ver = entry.installedVersion ? `@${entry.installedVersion}` : '';
-    const adv = entry.id ? ` · ${entry.id}` : '';
+    // The ADVISORY id, not `entry.id` (the fingerprint — a naming collision:
+    // `DepVulnIdentityInput.id` means advisory id, `BaselineEntry.id` means
+    // finding id). Reading the fingerprint made ten same-package rows repeat
+    // the Fingerprint column and read as duplicates with contradictory
+    // severities (severity is per-advisory). Fallback covers pre-advisoryId
+    // baselines.
+    const advisoryId = entry.advisoryId ?? entry.id;
+    const adv = advisoryId ? ` · ${advisoryId}` : '';
     return `${entry.package}${ver}${adv}`;
   }
   if (!isSanitized(entry) && entry.kind === 'custom-check') {
@@ -1197,10 +1231,11 @@ function locatorLine(entry: BaselineEntry): number | undefined {
  * Whether a classified pair contributes a BLOCK to the verdict. Folds
  * the classifier's verdict together with allowlist suppression: a pair
  * the classifier would block but an active allowlist entry accepted
- * does not block. Single chokepoint so the main verdict and the
- * post-`--changed-only` re-derivation can't drift.
+ * does not block. Single chokepoint so the main verdict, the
+ * post-`--changed-only` re-derivation, and the verdict cache's
+ * blocking-finding projection can't drift. Exported for the cache.
  */
-function pairBlocks(p: ClassifiedPair): boolean {
+export function pairBlocks(p: ClassifiedPair): boolean {
   return p.classification.blocks && p.suppressedByAllowlist === undefined;
 }
 

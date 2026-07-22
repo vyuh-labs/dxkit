@@ -803,6 +803,14 @@ export type FindingStatus =
   | 'newly_detected'
   | 'tooling_drift'
   | 'config_drift'
+  /** An `added` dep-vuln on a diff that touched NO dependency manifest of any
+   *  active pack: the dependency set is identical on both sides, so the delta's
+   *  cause is the advisory FEED moving after baseline capture — never the
+   *  developer (D4, Rule 19 cause-5 in its data-vintage variant). Attribution
+   *  relabel only: it gates exactly as `added` does (the classifier maps it to
+   *  `added` for policy membership and block rules), it just stops blaming the
+   *  PR and names the defer lane. */
+  | 'newly_published_advisory'
   | 'probable_existing'
   | 'uncertain';
 

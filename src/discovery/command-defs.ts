@@ -328,7 +328,8 @@ export const COMMANDS = [
     summary: 'Suppress / audit individual findings with typed reasons',
     typicalRuntime: '< 1 sec',
     docsBlurb:
-      'Accept a finding with a typed category + required reason + optional expiry; audit and prune entries.',
+      'Accept a finding with a typed category + required reason + optional expiry; audit and prune ' +
+      'entries. `defer` bulk-defers newly published dep-vuln advisories time-boxed (dep-vuln-only).',
     skill: 'dxkit-allowlist',
   },
   {

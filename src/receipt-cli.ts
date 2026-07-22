@@ -18,7 +18,7 @@
  * it never sets a failing exit code; `guardrail check` is the gate.
  */
 import { loadPolicyFromCwd } from './baseline/policy';
-import { readFreshVerdict, writeVerdict } from './baseline/verdict-cache';
+import { cacheBlockingFindings, readFreshVerdict, writeVerdict } from './baseline/verdict-cache';
 import type { DimensionScore } from './analyzers/types';
 
 export interface ReceiptOptions {
@@ -166,6 +166,7 @@ async function resolveVerdict(
     warningCount: counts.warning,
     markdown,
     ranAt,
+    blockingFindings: cacheBlockingFindings(result.pairs),
   });
   return {
     markdown,
