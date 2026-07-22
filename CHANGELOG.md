@@ -5,6 +5,60 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.4] - 2026-07-22
+
+D4 complete — the advisory-feed release (phase 2 of the class 4.1.3 opened).
+
+- **The advisory tier knob: `newAdvisories.blockSeverities`.** A dep-vuln
+  classified `newly-published-advisory` (the feed moved after baseline
+  capture; the diff touched no dependency manifest) now gates by an explicit
+  policy tier instead of the generic `added` semantics: default
+  critical + high BLOCK (a live advisory must not silently ride in),
+  medium + low WARN. Two invariants the tier cannot override: a
+  malicious-package advisory blocks at any severity, and an unknown severity
+  blocks (conservative). Registered with the full Rule 16 discovery
+  contract — a `POSTURE_KNOBS` entry plus a grounded doctor probe that
+  surfaces the knob only after a run has concretely blocked a newly
+  published advisory. One normalizer (`newAdvisoryBlockSeverities`) feeds
+  the classifier, the renderers, and the probe.
+- **Base-branch-first surfacing: `vyuh-dxkit baseline refresh`.** The
+  scheduled refresh workflows now run a capture WITH the advisory decision
+  lane instead of a bare `create --force`, which silently ABSORBED newly
+  published advisories into the fresh anchor (defer-forever, no expiry
+  pressure — the inverse failure of the false-block). New advisories —
+  detected against the prior effective baseline with the same
+  manifest-untouched discriminator the classifier trusts — are HELD OUT of
+  the refreshed baseline and raised as one standing base-branch decision PR
+  (`dxkit/advisory-decision`) carrying short-dated `deferred` allowlist
+  entries: merging IS the defer lane (7-day expiry, preserved across
+  re-raises so the window never quietly rolls), fixing the dependencies
+  instead obsoletes the PR. Dependency owners decide before feature PRs
+  fight the findings one at a time. Manifest-touching diffs absorb
+  normally; a first capture or an uncomputable diff degrades to a plain
+  refresh — every case disclosed, never silent.
+- **Fix (D4d): the `branch` anchor transport silently gated against a stale
+  tree copy.** Root-caused ON the incident repo during validation: a large
+  brownfield baseline (~19k findings, multi-MB JSON) blew the side-ref
+  reader's default 1MiB `execFileSync` buffer — `git show` died ENOBUFS with
+  empty stderr, the catch swallowed it, and the check silently used the
+  stale committed copy while the fresh anchor sat reachable in the checkout
+  (the exact #375 footer). Three coupled repairs: (1) the read carries a
+  256MiB buffer; (2) the reader fetches with an explicit refspec into a
+  private `refs/dxkit/` ref, so it also materializes on single-branch
+  clones and actions/checkout workspaces whose narrow fetch refspec never
+  mapped `origin/<anchorRef>` (a second, independent way to the same silent
+  fallback); (3) the check now DISCLOSES which file loaded — `anchorSource`
+  in the result and all three renderers: the side-branch anchor (the footer
+  SHA is then the anchor's), or a loud TREE FALLBACK warning naming the
+  possibly-stale copy. Precedence (anchor wins over the tree copy) is
+  pinned end-to-end; validated on the incident repo (the check now loads
+  the fresh anchor and the 21 live advisories classify + tier correctly).
+- **Disclosed (D4b, not fixed here):** dep-vuln recall keys on the
+  machine-local scanner version, so verdict flavor is machine-dependent on
+  an identical tree; the drift line now names the cause and the remedy
+  (align the local toolchain with repo CI, or run the check in CI). The
+  structural fix is CI-canonical baseline capture — strategy track.
+
 ## [4.1.3] - 2026-07-22
 
 - **Security fix (P0): `--untrusted` now reaches every in-process plugin
