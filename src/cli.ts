@@ -194,6 +194,13 @@ ${renderCommandIndex().join('\n')}
                                  (read later by guardrail check to gate new regressions).
                                  --mode=committed-full|committed-sanitized|ref-based picks
                                  the on-disk posture; default auto-selects from repo visibility.
+    vyuh-dxkit baseline refresh [path] [--name <n>] [--json]
+                                 The scheduled-refresh capture with the advisory
+                                 decision lane: re-capture, hold newly published
+                                 dep-vuln advisories OUT of the baseline (never
+                                 silently absorbed), and raise the two-lane decision
+                                 PR (merge = defer time-boxed; fix = upgrade instead).
+                                 What the refresh workflows run.
     vyuh-dxkit baseline publish [path]
                                  Publish .dxkit/baselines/ to the anchor side branch
                                  (baseline.anchor: 'branch' in .dxkit/policy.json) via
@@ -2564,6 +2571,44 @@ export async function run(argv: string[]): Promise<void> {
         }
         break;
       }
+      if (subCommand === 'refresh') {
+        // The scheduled-refresh capture with the D4 advisory decision lane:
+        // capture, hold newly published advisories OUT of the baseline, raise
+        // the two-lane decision PR. What the refresh workflows run instead of
+        // a bare `create --force` (which silently absorbed the advisories).
+        const targetPath = resolveRepoPath(positionals[2]);
+        const { runBaselineRefresh } = await import('./baseline/refresh');
+        logger.header('vyuh-dxkit baseline refresh');
+        try {
+          const result = await runBaselineRefresh({
+            cwd: targetPath,
+            name: values.name as string | undefined,
+            verbose: !!values.verbose,
+          });
+          if (values.json) {
+            await emitJson(result);
+            break;
+          }
+          logger.success(`Baseline refreshed — ${result.findings} finding(s).`);
+          logger.info(`  ${result.note}`);
+          if (result.heldOut.length > 0) {
+            for (const a of result.heldOut) {
+              logger.info(
+                `    ${a.package}${a.installedVersion ? `@${a.installedVersion}` : ''} · ${a.advisoryId}`,
+              );
+            }
+            if (result.decision?.prUrl) {
+              logger.info(`  Decision PR: ${result.decision.prUrl}`);
+            } else if (result.decision?.note) {
+              logger.warn(`  ${result.decision.note}`);
+            }
+          }
+        } catch (err) {
+          logger.fail((err as Error).message);
+          process.exit(1);
+        }
+        break;
+      }
       if (subCommand === 'publish') {
         const targetPath = resolveRepoPath(positionals[2]);
         const { publishBaselineAnchor } = await import('./baseline/anchor');
@@ -2719,6 +2764,7 @@ export async function run(argv: string[]): Promise<void> {
       logger.fail(
         `Unknown baseline subcommand: ${subCommand ?? '(missing)'}. ` +
           `Available: vyuh-dxkit baseline create [path] [--name <name>] [--force] · ` +
+          `vyuh-dxkit baseline refresh [path] [--name <name>] [--json] · ` +
           `vyuh-dxkit baseline publish [path] · ` +
           `vyuh-dxkit baseline show [path] [--name <name>] [--baseline <path>] [--kind <kind>] [--json] · ` +
           `vyuh-dxkit baseline fragment [path] [--checks <a,b>] [--out <file>] · ` +

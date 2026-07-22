@@ -181,11 +181,37 @@ git checkout release/2.5.x
 vyuh-dxkit baseline create --name release
 ```
 
+## `baseline refresh`
+
+The scheduled-refresh capture with the advisory decision lane. What the
+bundled refresh workflows run instead of a bare `create --force`:
+
+1. Re-captures the baseline (the same capture path as `create`).
+2. Diffs the fresh dep-vulns against the PRIOR effective baseline (side-branch
+   anchor first, tree copy second — the guardrail's own precedence). A fresh
+   dep-vuln absent from the prior baseline, on a tree whose diff since the
+   prior anchor touched **no dependency manifest**, is a **newly published
+   advisory** — the feed moved, not this repo.
+3. Holds those OUT of the written baseline (never silently grandfathered — a
+   silent absorption is defer-forever with no expiry pressure) and raises one
+   standing decision PR (`dxkit/advisory-decision`) carrying short-dated
+   `deferred` allowlist entries: **merge = defer time-boxed** (default 7-day
+   expiry — the forcing function back into the fix lane); **fix the
+   dependencies instead** and the next refresh absorbs the resolution. Until
+   one happens, the advisories classify as `newly_published_advisory` on
+   every check, gated by the
+   [`newAdvisories` tier](../configuration/policy.md#newadvisories--the-newly-published-advisory-tier).
+
+A diff that DID touch a dependency manifest absorbs new advisories normally (a
+dependency change legitimately brings its advisories as pre-existing debt), and
+a first capture or an uncomputable diff runs as a plain capture — each case is
+disclosed in the output, never silent.
+
 ## Refreshing the baseline
 
 The `--with-baseline-refresh` flag on `init` installs a GitHub Actions
-workflow that runs `baseline create --force` on every push to `main`,
-then stores the result per the anchor transport: on `tree` it
+workflow that runs [`baseline refresh`](#baseline-refresh) on every push
+to `main`, then stores the result per the anchor transport: on `tree` it
 auto-commits the updated file with `[skip ci]`; on `branch` it runs
 [`baseline publish`](#baseline-publish) to the unprotected side branch
 (no push to `main` at all). The next PR's
