@@ -32,6 +32,7 @@ import type { AttributionGap } from './attribution-gap';
 import { RECALL_DRIFT_REMEDY, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
+import { DEFER_ADVISORY_EXPIRY_DAYS } from '../allowlist/categories';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
@@ -275,6 +276,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   if (blocking.length > 0) {
     lines.push(logger.bold(`Blocking (${blocking.length})`));
     for (const p of blocking) lines.push(...formatPairLines(p, '  '));
+    lines.push(...newlyPublishedAdvisoryNote(blocking, '  '));
     lines.push('');
   }
   if (unattributable.length > 0) {
@@ -831,6 +833,53 @@ export function formatDriftWarningSummary(
   ];
 }
 
+/**
+ * The honest-attribution note under a blocking list that contains newly
+ * published advisories (D4): states the PR did not cause them and names both
+ * lanes as one-command remedies. Empty when none are present. Exported for
+ * unit testing (the `formatDriftWarningSummary` pattern).
+ */
+export function newlyPublishedAdvisoryNote(
+  blocking: ReadonlyArray<ClassifiedPair>,
+  indent: string,
+): string[] {
+  const advisories = blocking.filter((p) => p.classification.status === 'newly_published_advisory');
+  if (advisories.length === 0) return [];
+  return [
+    `${indent}${advisories.length} of the blocking finding${blocking.length === 1 ? '' : 's'} ` +
+      `${advisories.length === 1 ? 'is a newly published advisory' : 'are newly published advisories'} — ` +
+      `not introduced by this PR (no dependency manifest changed; published after baseline capture).`,
+    `${indent}  · fix lane: upgrade/patch the dependency — that is what unblocks`,
+    `${indent}  · defer lane (time-sensitive change): vyuh-dxkit allowlist defer --from-last-check --reason="…" ` +
+      `(time-boxed; expires in ${DEFER_ADVISORY_EXPIRY_DAYS} days by default)`,
+  ];
+}
+
+/** Markdown sibling of `newlyPublishedAdvisoryNote` — the blockquote above the
+ *  blocking table. Exported for unit testing. */
+export function markdownNewlyPublishedAdvisoryNote(
+  blocking: ReadonlyArray<ClassifiedPair>,
+): string[] {
+  const advisories = blocking.filter((p) => p.classification.status === 'newly_published_advisory');
+  if (advisories.length === 0) return [];
+  const head =
+    advisories.length === blocking.length
+      ? advisories.length === 1
+        ? 'This blocking finding is a newly published advisory'
+        : `All ${advisories.length} blocking findings are newly published advisories`
+      : `${advisories.length} of these ${blocking.length} blocking findings ` +
+        `${advisories.length === 1 ? 'is a newly published advisory' : 'are newly published advisories'}`;
+  return [
+    `> **${head}** — ` +
+      `not introduced by this PR: the diff touches no dependency manifest, so they were ` +
+      `published to the advisory feed after the baseline was captured. Two lanes: **fix** the ` +
+      `vulnerabilities (that is what unblocks), or **defer time-boxed** when the change is ` +
+      'time-sensitive: `vyuh-dxkit allowlist defer --from-last-check --reason="…"` (expires in ' +
+      `${DEFER_ADVISORY_EXPIRY_DAYS} days by default — the expiry forces the fix lane).`,
+    '',
+  ];
+}
+
 function statusLabel(status: FindingStatus): string {
   switch (status) {
     case 'added':
@@ -845,6 +894,8 @@ function statusLabel(status: FindingStatus): string {
       return 'TOOLING-DRIFT';
     case 'config_drift':
       return 'CONFIG-DRIFT';
+    case 'newly_published_advisory':
+      return 'NEWLY-PUBLISHED-ADVISORY';
     case 'newly_detected':
       return 'NEWLY-DETECTED';
     case 'probable_existing':
@@ -1405,6 +1456,7 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   if (blocking.length > 0) {
     lines.push('### Blocking findings');
     lines.push('');
+    lines.push(...markdownNewlyPublishedAdvisoryNote(blocking));
     lines.push('| Status | Kind | Severity | Location | Fingerprint | Reason |');
     lines.push('|---|---|---|---|---|---|');
     for (const p of blocking) lines.push(markdownPairRow(p));

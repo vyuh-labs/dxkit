@@ -24,8 +24,48 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { workingTreeSignature } from '../loop/gate-cache';
 import type { BrownfieldPolicy } from './policy';
+import { pairBlocks, type ClassifiedPair } from './check';
 
 const CACHE_REL = path.join('.dxkit', 'cache', 'verdict.json');
+
+/**
+ * One live blocking finding, projected for replay consumers. `allowlist defer
+ * --from-last-check` reads this list to bulk-defer newly published dep-vuln
+ * advisories without hand-copying fingerprints; the `kind` is what lets it
+ * refuse to defer anything that isn't a dep-vuln.
+ */
+export interface CachedBlockingFinding {
+  readonly fingerprint: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly severity?: string;
+  /** Human descriptor (`package@version · advisory-id` for dep-vulns). */
+  readonly locator?: string;
+}
+
+/**
+ * Project a check result's LIVE blocking pairs (via the one `pairBlocks`
+ * chokepoint — suppressed pairs excluded) into the cacheable shape. Pairs
+ * without a current-side fingerprint are dropped: they cannot be allowlisted.
+ */
+export function cacheBlockingFindings(
+  pairs: ReadonlyArray<ClassifiedPair>,
+): CachedBlockingFinding[] {
+  const out: CachedBlockingFinding[] = [];
+  for (const p of pairs) {
+    if (!pairBlocks(p)) continue;
+    const fingerprint = p.pair.currentId ?? p.pair.priorId;
+    if (!fingerprint) continue;
+    out.push({
+      fingerprint,
+      kind: p.kind,
+      status: p.classification.status,
+      ...(p.severity !== undefined ? { severity: p.severity } : {}),
+      ...(p.locator !== undefined ? { locator: p.locator } : {}),
+    });
+  }
+  return out;
+}
 
 /** A replayable verdict. Stores the rendered signals markdown + the summary
  *  fields a `--json` consumer needs, keyed on the tree signature + policy hash
@@ -49,6 +89,11 @@ export interface CachedVerdict {
   readonly markdown: string;
   /** ISO timestamp of the run this verdict came from. */
   readonly ranAt: string;
+  /** The live blocking findings (fingerprint + kind + status), so
+   *  `allowlist defer --from-last-check` can bulk-defer dep-vuln advisories
+   *  from the last same-tree run. Optional: a cache written by an older dxkit
+   *  lacks it — defer then asks for a re-run rather than guessing. */
+  readonly blockingFindings?: ReadonlyArray<CachedBlockingFinding>;
 }
 
 /** Stable hash of the resolved policy — the block/warn severity routing that
@@ -81,6 +126,29 @@ export function readFreshVerdict(cwd: string, policy: BrownfieldPolicy): CachedV
   if (typeof parsed.unattributableCount !== 'number') return null;
   if (parsed.signature !== sig) return null; // tree moved
   if (parsed.policyHash !== policyHash(policy)) return null; // policy changed
+  return parsed;
+}
+
+/**
+ * The cached verdict for the CURRENT tree, ignoring the policy hash — for
+ * consumers that need the last run's FINDING LIST rather than a replayable
+ * verdict (`allowlist defer --from-last-check`). The tree-signature check
+ * still applies: a fingerprint list from a different tree could defer findings
+ * that no longer exist (or miss ones that do), so a moved tree reads as "no
+ * cache — re-run the check". A policy edit, by contrast, changes which
+ * findings BLOCK but not what the findings ARE; requiring a policy match here
+ * would force a pointless re-gather before every defer. Never throws.
+ */
+export function readVerdictForTree(cwd: string): CachedVerdict | null {
+  const sig = workingTreeSignature(cwd);
+  if (!sig) return null;
+  let parsed: CachedVerdict;
+  try {
+    parsed = JSON.parse(fs.readFileSync(path.join(cwd, CACHE_REL), 'utf8')) as CachedVerdict;
+  } catch {
+    return null;
+  }
+  if (typeof parsed.signature !== 'string' || parsed.signature !== sig) return null;
   return parsed;
 }
 

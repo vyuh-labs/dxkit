@@ -11,26 +11,42 @@ import type { BaselineEntry } from '../../src/baseline/types';
 import type { ClassifyResult } from '../../src/baseline/classify';
 
 describe('describeEntryLocation', () => {
-  it('dep-vuln → package@version · advisory-id (the fix for Location: —)', () => {
+  it('dep-vuln → package@version · ADVISORY id, never the fingerprint (D4c)', () => {
+    // On a real BaselineEntry `id` is the FINDING fingerprint — the naming
+    // collision that shipped ten same-package rows repeating the Fingerprint
+    // column and reading as duplicates with contradictory severities. The
+    // locator must show `advisoryId`.
     const entry = {
       kind: 'dep-vuln',
-      fingerprint: 'abcd000000000000',
+      id: 'abcd000000000000',
       package: 'dompurify',
       installedVersion: '3.2.7',
-      id: 'GHSA-76mc-f452-cxcm',
+      advisoryId: 'GHSA-76mc-f452-cxcm',
     } as unknown as BaselineEntry;
-    expect(describeEntryLocation(entry)).toBe('dompurify@3.2.7 · GHSA-76mc-f452-cxcm');
+    const loc = describeEntryLocation(entry);
+    expect(loc).toBe('dompurify@3.2.7 · GHSA-76mc-f452-cxcm');
+    expect(loc).not.toContain('abcd000000000000');
   });
 
   it('dep-vuln with no installed version → package · advisory-id', () => {
     const entry = {
       kind: 'dep-vuln',
-      fingerprint: 'abcd000000000000',
+      id: 'abcd000000000000',
       package: 'uuid',
       installedVersion: undefined,
-      id: 'GHSA-w5hq-g745-h8pq',
+      advisoryId: 'GHSA-w5hq-g745-h8pq',
     } as unknown as BaselineEntry;
     expect(describeEntryLocation(entry)).toBe('uuid · GHSA-w5hq-g745-h8pq');
+  });
+
+  it('dep-vuln from a pre-advisoryId baseline falls back to the entry id', () => {
+    const entry = {
+      kind: 'dep-vuln',
+      id: 'abcd000000000000',
+      package: 'axios',
+      installedVersion: '1.16.1',
+    } as unknown as BaselineEntry;
+    expect(describeEntryLocation(entry)).toBe('axios@1.16.1 · abcd000000000000');
   });
 
   it('located kinds still render file:line', () => {

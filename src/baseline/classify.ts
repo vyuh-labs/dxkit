@@ -65,6 +65,15 @@ export interface ClassifyContext {
    *  ChangedFiles` and similar rules; absent context is treated as
    *  "we don't know, assume outside changed lines." */
   readonly overlapsChangedLines?: boolean;
+  /** True when the diff (baseline anchor → working tree) touched NO dependency
+   *  manifest of any active pack. For an `added` dep-vuln this rules the
+   *  developer out as the delta's cause — the dependency set is unchanged, so
+   *  the advisory was published to the feed after baseline capture (D4). The
+   *  discriminator is the ONE `changedFilesTouchDependencyManifest` — the same
+   *  helper the ref-based incremental dep-audit skip trusts (Rule 2.30 parity).
+   *  Absent (changed files unknowable) ⇒ no relabel: the evidence is missing,
+   *  so the finding keeps its `added` attribution. */
+  readonly manifestUntouched?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
   /** True when an `added` dep-vuln's advisory reports the package itself
@@ -160,6 +169,26 @@ export function classify(
             `baseline is re-captured`,
         });
       }
+    } else if (context.kind === 'dep-vuln' && context.manifestUntouched) {
+      // D4: the PR changed no dependency manifest, so the dependency set is
+      // identical to the baseline's — the developer cannot be the cause of an
+      // added dep-vuln. The one input that moved is the advisory FEED
+      // (published after baseline capture). Recall is genuinely clean here
+      // (Rule 19's recallDrifted branch above wins when it isn't), so this is
+      // its own status — never "regression", never `tooling_drift`. The
+      // VERDICT is unchanged (phase 1): block rules and policy membership
+      // treat it exactly as `added` — a live high/critical advisory must not
+      // silently ride in — but the report stops blaming the PR and names the
+      // two lanes (fix the vuln, or short-dated `allowlist defer`).
+      status = 'newly_published_advisory';
+      reasons.push({
+        code: 'newly-published-advisory',
+        detail:
+          'not introduced by this PR — the diff touches no dependency manifest, so this ' +
+          'advisory was published after the baseline was captured. Fix the vulnerability to ' +
+          'unblock, or defer time-boxed: vyuh-dxkit allowlist defer --from-last-check ' +
+          '--reason="…"',
+      });
     } else if (context.configDiffers && !context.fileChangedInDiff) {
       // Config drift only explains a finding that appeared WITHOUT a code
       // change (e.g. a path the policy newly un-ignored). A finding on a file
@@ -235,9 +264,14 @@ export function classify(
     });
   }
 
-  // Step 5: policy block/warn membership.
-  const blocks = blockRuleHit !== null || policy.block.includes(status);
-  const warns = policy.warn.includes(status);
+  // Step 5: policy block/warn membership. `newly_published_advisory` is an
+  // attribution RELABEL of `added` (D4 phase 1: gate semantics unchanged), so
+  // membership is evaluated as `added` — every policy that blocks added
+  // dep-vulns today keeps blocking them, whatever its lists say, without each
+  // committed policy.json needing to learn the new status.
+  const membershipStatus: FindingStatus = status === 'newly_published_advisory' ? 'added' : status;
+  const blocks = blockRuleHit !== null || policy.block.includes(membershipStatus);
+  const warns = policy.warn.includes(membershipStatus);
 
   return {
     status,
@@ -275,7 +309,11 @@ function evaluateBlockRules(
   rules: BrownfieldBlockRules,
   context: ClassifyContext,
 ): string | null {
-  if (status !== 'added' && status !== 'config_drift') return null;
+  // `newly_published_advisory` fires block rules exactly as `added` — the
+  // relabel changes attribution (who is blamed), never the floor (D4 phase 1).
+  if (status !== 'added' && status !== 'config_drift' && status !== 'newly_published_advisory') {
+    return null;
+  }
   if (rules.newSecret && context.kind === 'secret') return 'newSecret';
   if (rules.newCriticalSecurity && context.kind === 'code' && context.severity === 'critical') {
     return 'newCriticalSecurity';

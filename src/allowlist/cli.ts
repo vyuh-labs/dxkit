@@ -17,6 +17,10 @@
  * - `list` — print every entry across the file-level allowlist.
  * Reads only; no mutation. Honors `--json` for structured output.
  *
+ * - `defer [<fp>…] [--from-last-check]` — bulk, dep-vuln-only,
+ * time-boxed deferral of newly published advisories (D4). Short
+ * default expiry; refuses every other finding kind.
+ *
  * - `show <fingerprint>` — print one entry's full detail. Falls
  * back to a "no entry found" message when the fingerprint isn't
  * present.
@@ -65,11 +69,13 @@ import {
   ALL_CATEGORIES,
   DEFAULT_EXPIRY_DAYS,
   INLINE_COMPATIBLE_CATEGORIES,
+  deferAdvisoryExpiryDate,
   defaultExpiryDate,
   isCategoryValidForKind,
   requiresExpiry,
   type AllowlistCategory,
 } from './categories';
+import { readVerdictForTree } from '../baseline/verdict-cache';
 import {
   ALLOWLIST_FILENAME,
   ALL_MODES,
@@ -94,6 +100,7 @@ import { insertAnnotation } from './inline';
 /** Subcommands recognized under `vyuh-dxkit allowlist`. */
 export const ALLOWLIST_SUBCOMMANDS = [
   'add',
+  'defer',
   'list',
   'show',
   'audit',
@@ -180,6 +187,9 @@ export async function runAllowlist(
   subcommand: string | undefined,
   args: {
     positionalAfter?: string;
+    /** ALL positionals after the subcommand — `defer` takes a repeated
+     *  fingerprint list. Falls back to `[positionalAfter]` when absent. */
+    positionalsAfter?: readonly string[];
     values: Record<string, unknown>;
   },
 ): Promise<void> {
@@ -203,6 +213,16 @@ export async function runAllowlist(
         acknowledgedSeverity: args.values['acknowledged-severity'] as string | undefined,
         addedBy: args.values['added-by'] as string | undefined,
         mode: args.values.mode as AllowlistMode | undefined,
+      });
+    case 'defer':
+      return runAllowlistDefer(cwd, {
+        fingerprints: args.positionalsAfter ?? (args.positionalAfter ? [args.positionalAfter] : []),
+        fromLastCheck: !!args.values['from-last-check'],
+        reason: args.values.reason as string | undefined,
+        expires: args.values.expires as string | undefined,
+        addedBy: args.values['added-by'] as string | undefined,
+        mode: args.values.mode as AllowlistMode | undefined,
+        json: !!args.values.json,
       });
     case 'list':
       return runAllowlistList(cwd, { json: !!args.values.json });
@@ -389,6 +409,212 @@ async function runAddFileLevel(args: {
     `Added allowlist entry for fingerprint ${fingerprint} (kind=${kind}, category=${category})` +
       (expiresAt ? `, expires ${expiresAt}` : ''),
   );
+}
+
+// ─── defer ────────────────────────────────────────────────────────────────
+
+export interface AllowlistDeferOpts {
+  /** Explicit fingerprints (positional, repeated). */
+  readonly fingerprints?: readonly string[];
+  /** Pull the blocking dep-vulns from the last same-tree guardrail run's
+   *  verdict cache. */
+  readonly fromLastCheck?: boolean;
+  readonly reason?: string;
+  /** ISO `YYYY-MM-DD`, or relative `+Nd`. Default: `+7d`
+   *  (`DEFER_ADVISORY_EXPIRY_DAYS`). */
+  readonly expires?: string;
+  readonly addedBy?: string;
+  readonly mode?: AllowlistMode;
+  readonly json?: boolean;
+}
+
+/**
+ * `vyuh-dxkit allowlist defer` — bulk, dep-vuln-only, time-boxed deferral of
+ * newly published advisories (D4). Productizes the incident bridge script:
+ * one command adds `category=deferred` entries with a SHORT shared expiry for
+ * either an explicit fingerprint list or the blocking dep-vulns of the last
+ * same-tree guardrail run (`--from-last-check`).
+ *
+ * Deliberately narrow so it can never become a bulk bypass:
+ *   - every entry is minted `kind=dep-vuln` — suppression matches on kind, so
+ *     a deferred fingerprint can never waive a secret / SAST / any other
+ *     finding even if someone pastes the wrong id;
+ *   - `--from-last-check` defers ONLY dep-vuln findings and names anything it
+ *     left blocking; an explicit fingerprint the cache shows as a non-dep-vuln
+ *     finding is refused loudly;
+ *   - the expiry is required-by-category and defaults SHORT
+ *     (`DEFER_ADVISORY_EXPIRY_DAYS` days) — the window is the forcing
+ *     function back into the fix lane.
+ */
+export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): Promise<void> {
+  const reason = (opts.reason ?? '').trim();
+  if (!reason) {
+    logger.fail('--reason is required (non-empty rationale string)');
+    process.exit(1);
+  }
+  const expiresAt = resolveDeferExpiry(opts.expires);
+
+  const explicit = [...new Set((opts.fingerprints ?? []).map((f) => f.trim()).filter(Boolean))];
+  if (explicit.length === 0 && !opts.fromLastCheck) {
+    logger.fail(
+      'Nothing to defer. Pass fingerprints (vyuh-dxkit allowlist defer <fp> [<fp>…]) ' +
+        'or --from-last-check to defer the blocking dep-vulns of the last guardrail run.',
+    );
+    process.exit(1);
+  }
+
+  // The last same-tree run's blocking findings — the source for
+  // --from-last-check, and the kind cross-check for explicit fingerprints.
+  const cached = readVerdictForTree(cwd);
+  const cachedBlocking = cached?.blockingFindings;
+
+  const targets = new Map<string, { locator?: string; severity?: string }>();
+  const leftBlocking: string[] = [];
+  if (opts.fromLastCheck) {
+    if (!cachedBlocking) {
+      logger.fail(
+        cached
+          ? 'The cached verdict has no finding list (written by an older dxkit). ' +
+              `Re-run \`${dxkitCli('guardrail check')}\` on this tree, then retry.`
+          : 'No cached guardrail verdict for this tree. Run ' +
+              `\`${dxkitCli('guardrail check')}\` first (same tree, no edits in between), then retry.`,
+      );
+      process.exit(1);
+    }
+    for (const f of cachedBlocking) {
+      if (f.kind === 'dep-vuln') {
+        targets.set(f.fingerprint, {
+          ...(f.locator !== undefined ? { locator: f.locator } : {}),
+          ...(f.severity !== undefined ? { severity: f.severity } : {}),
+        });
+      } else {
+        leftBlocking.push(`${f.kind} ${f.locator ?? f.fingerprint}`);
+      }
+    }
+    if (targets.size === 0 && explicit.length === 0) {
+      logger.fail(
+        leftBlocking.length > 0
+          ? `The last run's blocking findings are not dep-vulns — defer refuses to touch them ` +
+              `(${leftBlocking.join('; ')}). Fix them, or review each with ` +
+              `\`${dxkitCli('allowlist add')}\` individually.`
+          : 'The last guardrail run had no blocking findings — nothing to defer.',
+      );
+      process.exit(1);
+    }
+  }
+  for (const fp of explicit) {
+    // Cross-check against the cache when we have it: a fingerprint the last
+    // run shows as a NON-dep-vuln finding must not be bulk-deferred.
+    const known = cachedBlocking?.find((f) => f.fingerprint === fp);
+    if (known && known.kind !== 'dep-vuln') {
+      logger.fail(
+        `Refusing to defer ${fp}: the last guardrail run reports it as a ${known.kind} finding ` +
+          `(${known.locator ?? 'no locator'}), and \`allowlist defer\` is dep-vuln-only. ` +
+          `Review it individually with \`${dxkitCli('allowlist add')}\`.`,
+      );
+      process.exit(1);
+    }
+    if (!targets.has(fp)) {
+      targets.set(fp, {
+        ...(known?.locator !== undefined ? { locator: known.locator } : {}),
+        ...(known?.severity !== undefined ? { severity: known.severity } : {}),
+      });
+    }
+  }
+
+  const addedBy = opts.addedBy?.trim() || resolveGitUserEmail(cwd);
+  if (!addedBy) {
+    logger.fail(`--added-by is required (or set git config user.email so it can be inferred)`);
+    process.exit(1);
+  }
+  const addedAt = todayISO();
+  const mode = resolveMode(cwd, opts.mode);
+  let file = loadAllowlist(cwd) ?? emptyAllowlistFile(mode);
+
+  const added: string[] = [];
+  const alreadyPresent: string[] = [];
+  for (const [fingerprint] of targets) {
+    if (findEntry(file, fingerprint)) {
+      alreadyPresent.push(fingerprint);
+      continue;
+    }
+    const entry: AllowlistEntry = {
+      fingerprint,
+      kind: 'dep-vuln',
+      category: 'deferred',
+      reason,
+      addedBy,
+      addedAt,
+      expiresAt,
+    };
+    const validationErrors = validateAllowlistEntry(entry, mode);
+    if (validationErrors.length > 0) {
+      logger.fail(`allowlist entry for ${fingerprint} failed validation:`);
+      for (const e of validationErrors) logger.fail(` - ${e.field}: ${e.message}`);
+      process.exit(1);
+    }
+    file = addEntry(file, entry);
+    added.push(fingerprint);
+  }
+
+  if (added.length > 0) saveAllowlist(cwd, { ...file, mode });
+
+  if (opts.json) {
+    process.stdout.write(
+      JSON.stringify({ added, alreadyPresent, leftBlocking, expiresAt, reason }, null, 2) + '\n',
+    );
+    return;
+  }
+
+  if (added.length === 0) {
+    logger.info(
+      alreadyPresent.length > 0
+        ? `All ${alreadyPresent.length} fingerprint(s) already have allowlist entries — nothing written.`
+        : 'Nothing to defer.',
+    );
+  } else {
+    logger.success(
+      `Deferred ${added.length} dep-vuln finding${added.length === 1 ? '' : 's'} ` +
+        `(category=deferred, expires ${expiresAt}).`,
+    );
+    for (const fp of added) {
+      const meta = targets.get(fp);
+      logger.info(`  ${fp}${meta?.locator ? `  ${meta.locator}` : ''}`);
+    }
+    logger.info(
+      `  Commit .dxkit/allowlist.json (via your PR) — the expiry re-blocks these in ` +
+        `${daysUntil(expiresAt)} day(s), so plan the dependency fix now.`,
+    );
+  }
+  if (alreadyPresent.length > 0) {
+    logger.info(`Skipped ${alreadyPresent.length} fingerprint(s) already allowlisted.`);
+  }
+  if (leftBlocking.length > 0) {
+    logger.warn(
+      `Left blocking (not dep-vulns — defer refuses to touch them): ${leftBlocking.join('; ')}`,
+    );
+  }
+}
+
+/** Parse `--expires` for defer: ISO `YYYY-MM-DD` or relative `+Nd`; default
+ *  the short advisory window. */
+function resolveDeferExpiry(raw: string | undefined): string {
+  if (raw === undefined) return deferAdvisoryExpiryDate();
+  const rel = raw.match(/^\+(\d+)d$/);
+  if (rel) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + parseInt(rel[1], 10));
+    return d.toISOString().slice(0, 10);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  logger.fail(`--expires must be ISO date YYYY-MM-DD or relative +Nd; got ${JSON.stringify(raw)}`);
+  process.exit(1);
+}
+
+/** Whole days from today (UTC) to an ISO date — for the defer summary line. */
+function daysUntil(iso: string): number {
+  const ms = new Date(`${iso}T00:00:00Z`).getTime() - Date.now();
+  return Math.max(0, Math.round(ms / 86_400_000));
 }
 
 // ─── list ─────────────────────────────────────────────────────────────────
