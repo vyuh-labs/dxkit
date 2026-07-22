@@ -293,7 +293,18 @@ export function describeRecallDrift(drift: RecallDrift): string {
       const detail = drift.changed
         .map((c) => `${c.input} ${c.before ?? '(absent)'} -> ${c.after ?? '(absent)'}`)
         .join(', ');
-      return `${drift.kind}: ${detail}`;
+      // D4b disclosure: dep-vuln recall keys on the AMBIENT scanner version
+      // (e.g. the npm bundled with the local node), so an identical tree can
+      // read comparable on one machine and drifted on another — the verdict
+      // flavor is machine-dependent until baselines are CI-canonically
+      // captured. Name the near-term operator remedy where it bites.
+      const machineHint =
+        drift.kind === 'dep-vuln'
+          ? ' (dep-vuln recall follows the machine-local scanner — a sandbox/laptop whose ' +
+            'toolchain differs from CI produces this on an unchanged tree; align the local ' +
+            'node/scanner version with the repo CI, or run the check in CI)'
+          : '';
+      return `${drift.kind}: ${detail}${machineHint}`;
     }
   }
 }

@@ -1,7 +1,7 @@
 /**
  * `vyuh-dxkit allowlist defer` — the bulk, dep-vuln-only, time-boxed deferral
  * of newly published advisories (D4 phase 1). Productizes the incident bridge
- * script (web-client #375/#376): one command, short shared expiry, and a hard
+ * script shipped during the incident: one command, short shared expiry, and a hard
  * structural guarantee that it can never bulk-defer a real regression — every
  * entry is minted `kind=dep-vuln` (suppression matches on kind), non-dep-vuln
  * findings are refused, and `--from-last-check` only ever reads dep-vulns out

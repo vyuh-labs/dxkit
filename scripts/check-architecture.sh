@@ -1589,8 +1589,8 @@ fi
 # existence, synthetic-injection — live in test/discovery-playbook.test.ts.)
 RULE16_CLI_CASES=$(grep -oE "^    case '[a-z][a-z-]*':" src/cli.ts | sed -E "s/^    case '([a-z-]+)':/\1/" | sort -u)
 RULE16_REG_TOKENS=$( { \
-  grep -hoE "id: '[a-z][a-z-]*'" src/discovery/command-defs.ts src/discovery/command-defs-internal.ts | sed -E "s/id: '([a-z-]+)'/\1/"; \
-  grep -hoE "aliases: \[[^]]*\]" src/discovery/command-defs.ts src/discovery/command-defs-internal.ts | grep -oE "'[a-z-]+'" | tr -d "'"; \
+  grep -hoE "id: '[a-z][a-z-]*'" src/discovery/command-defs.ts src/discovery/command-defs-gate.ts src/discovery/command-defs-internal.ts | sed -E "s/id: '([a-z-]+)'/\1/"; \
+  grep -hoE "aliases: \[[^]]*\]" src/discovery/command-defs.ts src/discovery/command-defs-gate.ts src/discovery/command-defs-internal.ts | grep -oE "'[a-z-]+'" | tr -d "'"; \
 } | sort -u)
 RULE16_UNREGISTERED=$(comm -23 <(printf '%s\n' "$RULE16_CLI_CASES") <(printf '%s\n' "$RULE16_REG_TOKENS"))
 RULE16_ORPHANED=$(comm -13 <(printf '%s\n' "$RULE16_CLI_CASES") <(printf '%s\n' "$RULE16_REG_TOKENS"))

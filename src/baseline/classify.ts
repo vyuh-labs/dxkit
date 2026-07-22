@@ -11,6 +11,7 @@ import {
   type BrownfieldPolicy,
   type BrownfieldBlockRules,
   DEFAULT_BROWNFIELD_POLICY,
+  newAdvisoryBlockSeverities,
 } from './policy';
 
 /**
@@ -176,10 +177,8 @@ export function classify(
       // (published after baseline capture). Recall is genuinely clean here
       // (Rule 19's recallDrifted branch above wins when it isn't), so this is
       // its own status — never "regression", never `tooling_drift`. The
-      // VERDICT is unchanged (phase 1): block rules and policy membership
-      // treat it exactly as `added` — a live high/critical advisory must not
-      // silently ride in — but the report stops blaming the PR and names the
-      // two lanes (fix the vuln, or short-dated `allowlist defer`).
+      // verdict is decided by the advisory TIER below (default: high/critical
+      // block, medium/low warn; malicious always blocks).
       status = 'newly_published_advisory';
       reasons.push({
         code: 'newly-published-advisory',
@@ -255,6 +254,43 @@ export function classify(
     }
   }
 
+  // D4 phase 2: the advisory TIER governs this status's verdict — not the
+  // generic block/warn membership, and not the block rules (both were the
+  // phase-1 bridge, which evaluated the status exactly as `added`). The tier
+  // is the repo's explicit posture for a class the developer did not cause:
+  // by default a live critical/high advisory still blocks (it must not ride
+  // in silently), medium/low warn. Two invariants: a malicious-package
+  // advisory blocks at ANY severity (install-time malware is not
+  // tier-negotiable), and an UNKNOWN severity blocks (conservative — never a
+  // silent pass on missing evidence).
+  if (status === 'newly_published_advisory') {
+    const tier = newAdvisoryBlockSeverities(policy);
+    const tierProse = tier.size > 0 ? [...tier].join('/') : 'none';
+    let blocks: boolean;
+    if (context.malicious === true) {
+      blocks = true;
+      reasons.push({
+        code: 'advisory-malicious',
+        detail:
+          'malicious-package advisory — blocks at any severity, tier-exempt ' +
+          '(install-time malware executes at install; CVSS is the wrong lens)',
+      });
+    } else {
+      blocks = context.severity === undefined || tier.has(context.severity);
+      reasons.push({
+        code: 'advisory-tier',
+        detail: blocks
+          ? `${context.severity ?? 'unknown-severity'} is in the advisory block tier ` +
+            `(newAdvisories.blockSeverities: ${tierProse}) — fix the dependency to unblock, ` +
+            `or defer time-boxed: vyuh-dxkit allowlist defer --from-last-check --reason="…"`
+          : `${context.severity} is below the advisory block tier ` +
+            `(newAdvisories.blockSeverities: ${tierProse}) — warning, not blocking; ` +
+            `the advisory is live, plan the dependency fix`,
+      });
+    }
+    return { status, blocks, warns: !blocks, reasons };
+  }
+
   // Step 4: block-rule overrides for newly-added findings.
   const blockRuleHit = evaluateBlockRules(status, policy.blockRules, context);
   if (blockRuleHit) {
@@ -264,14 +300,9 @@ export function classify(
     });
   }
 
-  // Step 5: policy block/warn membership. `newly_published_advisory` is an
-  // attribution RELABEL of `added` (D4 phase 1: gate semantics unchanged), so
-  // membership is evaluated as `added` — every policy that blocks added
-  // dep-vulns today keeps blocking them, whatever its lists say, without each
-  // committed policy.json needing to learn the new status.
-  const membershipStatus: FindingStatus = status === 'newly_published_advisory' ? 'added' : status;
-  const blocks = blockRuleHit !== null || policy.block.includes(membershipStatus);
-  const warns = policy.warn.includes(membershipStatus);
+  // Step 5: policy block/warn membership.
+  const blocks = blockRuleHit !== null || policy.block.includes(status);
+  const warns = policy.warn.includes(status);
 
   return {
     status,
@@ -309,11 +340,11 @@ function evaluateBlockRules(
   rules: BrownfieldBlockRules,
   context: ClassifyContext,
 ): string | null {
-  // `newly_published_advisory` fires block rules exactly as `added` — the
-  // relabel changes attribution (who is blamed), never the floor (D4 phase 1).
-  if (status !== 'added' && status !== 'config_drift' && status !== 'newly_published_advisory') {
-    return null;
-  }
+  // `newly_published_advisory` never reaches here — its verdict is governed by
+  // the advisory tier (see the early return in `classify`), which owns the
+  // malicious always-block invariant that `newMaliciousDependency` covers for
+  // ordinary `added` findings.
+  if (status !== 'added' && status !== 'config_drift') return null;
   if (rules.newSecret && context.kind === 'secret') return 'newSecret';
   if (rules.newCriticalSecurity && context.kind === 'code' && context.severity === 'critical') {
     return 'newCriticalSecurity';

@@ -8,6 +8,7 @@
  */
 import * as path from 'path';
 import { resolveBaselineMode } from '../baseline/modes';
+import { readVerdictForTree } from '../baseline/verdict-cache';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { DUPLICATION_CONFIG_SCHEMA_VERSION } from '../analyzers/duplication/config';
@@ -132,6 +133,32 @@ export function recommendChecks(ctx: RecommendContext): Recommendation | null {
     reason:
       'this repo runs a linter but it is not a guardrail gate — enable the lint gate so net-new lint errors block (pre-existing debt is grandfathered)',
     command: 'vyuh-dxkit checks',
+  };
+}
+
+/**
+ * Recommend the advisory tier knob (`newAdvisories.blockSeverities`, D4) when
+ * the repo has CONCRETELY hit the class: the last same-tree guardrail run's
+ * cached verdict blocked at least one `newly_published_advisory` finding, and
+ * the policy has not set the knob. Grounded, not a blanket nag — a repo that
+ * never sees a post-baseline advisory batch never hears about the knob, and
+ * one that tuned it stops hearing immediately.
+ */
+export function recommendNewAdvisoryTier(ctx: RecommendContext): Recommendation | null {
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json'));
+  if (policy && 'newAdvisories' in policy) return null;
+  const cached = readVerdictForTree(ctx.cwd);
+  const advisories = (cached?.blockingFindings ?? []).filter(
+    (f) => f.status === 'newly_published_advisory',
+  );
+  if (advisories.length === 0) return null;
+  return {
+    reason:
+      `the last guardrail run blocked ${advisories.length} newly published advisor` +
+      `${advisories.length === 1 ? 'y' : 'ies'} (not introduced by the change) — the tier knob ` +
+      `decides which severities block vs warn (default: critical/high block, medium/low warn); ` +
+      `set .dxkit/policy.json newAdvisories.blockSeverities to tune`,
+    command: 'vyuh-dxkit allowlist defer --from-last-check --reason="<why>"',
   };
 }
 
