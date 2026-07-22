@@ -190,7 +190,7 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
   // that has not enabled those gates. Runs in a disposable worktree at the head
   // (zero-write, the same spine as the per-landing checks); fail-open — a head
   // that can't be analyzed simply omits the lane.
-  const seams = await gatherTrialSeams(cwd, pairs[0]?.pair.headSha);
+  const seams = await gatherTrialSeams(cwd, pairs[0]?.pair.headSha, untrusted);
 
   return buildEvidenceDoc({
     branch: currentBranch(cwd),
@@ -211,11 +211,14 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
 async function gatherTrialSeams(
   cwd: string,
   headSha: string | undefined,
+  untrusted: boolean,
 ): Promise<SeamVisibility | undefined> {
   if (!headSha) return undefined;
   try {
     return await withRefWorktree({ cwd, ref: headSha }, async (wt) =>
-      seamVisibilityFrom(await gatherSeamInventory(wt)),
+      // The trial's trust posture reaches the seam lane too — the gate runs
+      // untrusted but this lane also gathers from the same head (N-TRUST-01).
+      seamVisibilityFrom(await gatherSeamInventory(wt, { untrusted })),
     );
   } catch {
     return undefined;
