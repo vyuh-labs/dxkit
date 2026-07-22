@@ -52,7 +52,16 @@ const EMPTY: SeamInventory = {
  * and only builds fresh when no fresh artifact is present (e.g. a git worktree at
  * a ref, where evaluate always builds).
  */
-export async function gatherSeamInventory(cwd: string): Promise<SeamInventory> {
+export async function gatherSeamInventory(
+  cwd: string,
+  opts: {
+    /** Attacker-controlled-source posture: threaded to the dead-surface
+     *  ladder's flow gather so executable flow plugins never load
+     *  (N-TRUST-01 — the trust tier must survive every hop, not just the
+     *  surface that received the flag). */
+    readonly untrusted?: boolean;
+  } = {},
+): Promise<SeamInventory> {
   try {
     // Resolve to an ABSOLUTE path: graphify's subprocess resolves its target
     // from its own working directory, so a relative `cwd` silently yields "no
@@ -70,6 +79,7 @@ export async function gatherSeamInventory(cwd: string): Promise<SeamInventory> {
     const dead = await gatherDeadSurfaces(root, {
       dupFindings: duplicates,
       ...(graph ? { graph } : {}),
+      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
     });
     const converged = convergeSeams(dead.surfaces, duplicates);
     return { duplicates, dead, converged };

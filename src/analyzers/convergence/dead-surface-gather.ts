@@ -242,7 +242,13 @@ function stripHandler(handler: string): string {
  */
 export async function gatherDeadSurfaces(
   cwd: string,
-  opts: { readonly dupFindings?: readonly DuplicateFinding[]; readonly graph?: Graph } = {},
+  opts: {
+    readonly dupFindings?: readonly DuplicateFinding[];
+    readonly graph?: Graph;
+    /** Trust posture, forwarded to diagnoseFlow's model gather so plugins
+     *  never load on an untrusted tree (N-TRUST-01). */
+    readonly untrusted?: boolean;
+  } = {},
 ): Promise<DeadSurfaceResult> {
   const empty: DeadSurfaceResult = {
     surfaces: [],
@@ -251,7 +257,9 @@ export async function gatherDeadSurfaces(
   };
   let diag: FlowDiagnosis | null;
   try {
-    diag = await diagnoseFlow(cwd);
+    diag = await diagnoseFlow(cwd, {
+      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+    });
   } catch {
     return empty;
   }

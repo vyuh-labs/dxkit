@@ -168,7 +168,9 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
   // ladder over served-but-unconsumed routes. Zero-write; gathered once (the ONE
   // seam-inventory orchestration, shared with `evaluate`) and used by both the
   // console + JSON surfaces.
-  const inv = await gatherSeamInventory(opts.cwd);
+  const inv = await gatherSeamInventory(opts.cwd, {
+    ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+  });
 
   if (opts.json) {
     emitJson({
@@ -371,6 +373,10 @@ export async function runFlowConsole(opts: FlowConsoleOptions): Promise<void> {
         cwd: opts.cwd,
         baseRef: opts.diff,
         allowlist: loadAllowlist(opts.cwd),
+        // The console's trust tier must reach the gate's in-process plugin
+        // load — dropping it here was N-TRUST-01 (the shipped PR workflow
+        // runs `flow console --untrusted` against PR-head source).
+        ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
       });
       if (outcome.ran) {
         for (const f of outcome.findings) {

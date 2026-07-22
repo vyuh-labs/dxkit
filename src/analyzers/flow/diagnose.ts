@@ -242,12 +242,23 @@ function resolveConnection(cwd: string, model: FlowModel): { rung: ConnectionRun
  * section) when no flow-capable pack is active, when extraction finds nothing,
  * or on any error.
  */
-export async function diagnoseFlow(cwd: string): Promise<FlowDiagnosis | null> {
+export async function diagnoseFlow(
+  cwd: string,
+  opts: {
+    /** Attacker-controlled-source posture, forwarded to the model gather so
+     *  executable flow plugins never load through the diagnose path
+     *  (N-TRUST-01: the seam-inventory chain reaches here from surfaces that
+     *  accept --untrusted). */
+    readonly untrusted?: boolean;
+  } = {},
+): Promise<FlowDiagnosis | null> {
   if (allFlowSourceExtensions(detectActiveLanguages(cwd)).length === 0) return null;
 
   let model: FlowModel;
   try {
-    model = await gatherSystemFlowModel(cwd);
+    model = await gatherSystemFlowModel(cwd, {
+      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+    });
   } catch {
     return null;
   }
