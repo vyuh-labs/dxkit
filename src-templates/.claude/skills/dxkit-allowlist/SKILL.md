@@ -67,7 +67,7 @@ npx vyuh-dxkit allowlist defer --from-last-check --reason="advisory batch YYYY-M
 npx vyuh-dxkit allowlist defer <fp1> <fp2> … --reason="…" [--expires=+7d|YYYY-MM-DD]
 ```
 
-The scenario: a PR that touches **no dependency manifest** goes red because new advisories were published to the feed *after* the baseline was captured. The guardrail labels these `NEWLY-PUBLISHED-ADVISORY` — not introduced by this PR — and the decision is **time-sensitivity**:
+The scenario: a PR that touches **no dependency manifest** goes red because new advisories were published to the feed *after* the baseline was captured. The guardrail labels these `NEWLY-PUBLISHED-ADVISORY` — not introduced by this PR — and gates them by the policy tier (`newAdvisories.blockSeverities`, default: critical/high block, medium/low warn; malicious always blocks). The decision is **time-sensitivity**:
 
 - change is **not** time-sensitive → **fix the vulnerabilities** (upgrade/patch); that is what unblocks;
 - change **is** time-sensitive → `allowlist defer` clears the gate now with short-dated `deferred` entries (default expiry **7 days**, not the 90-day accepted-risk default). The expiry is the forcing function: the findings re-block when it lapses, so plan the dependency fix immediately.
@@ -79,6 +79,8 @@ The scenario: a PR that touches **no dependency manifest** goes red because new 
 - explicit fingerprints the last run reports as non-dep-vuln findings are refused loudly.
 
 Commit the updated `.dxkit/allowlist.json` **via the blocked PR itself** (or a dedicated PR when the base branch is push-protected) — once merged to the base, every other open PR clears on a check re-run, and remediation sweeps inherit the entries on their next clone. Do **not** refresh the baseline for this: the allowlist is the time-boxed instrument; a refresh would grandfather the advisories with no expiry pressure.
+
+**Base-branch-first (the well-configured path):** on repos with the scheduled refresh installed, `vyuh-dxkit baseline refresh` detects new advisories itself, holds them out of the baseline, and raises one standing decision PR (`dxkit/advisory-decision`) carrying exactly these deferred entries — merging it IS the defer lane, executed by the dependency owners before feature PRs ever fight the findings. The per-PR `defer` command above is the fallback for repos without the scheduled lane (or for an advisory batch that lands mid-decision).
 
 ## Remove a single entry
 

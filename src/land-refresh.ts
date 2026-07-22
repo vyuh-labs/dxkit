@@ -124,7 +124,30 @@ export function landRefreshPaths(opts: LandRefreshOptions): LandRefreshResult {
     exec('git', ['checkout', priorRef], { allowFail: true });
   }
 
-  // The PR itself is best-effort: no gh / not GitHub → the branch still landed.
+  return openOrUpdateStandingPr(exec, {
+    branchName: opts.branchName,
+    defaultBranch: opts.defaultBranch,
+    prTitle: opts.prTitle,
+    prBody: opts.prBody,
+  });
+}
+
+/**
+ * Open (or update in place) the ONE standing PR for a refresh branch that has
+ * already been pushed. Best-effort: no `gh` / not GitHub / no permission → the
+ * branch still landed and the result says to open it manually. Extracted so
+ * every standing-PR surface (this lander's `pr` mode, the advisory decision
+ * lane) shares one implementation of the gh mechanics (Rule 2).
+ */
+export function openOrUpdateStandingPr(
+  exec: Exec,
+  opts: {
+    readonly branchName: string;
+    readonly defaultBranch: string;
+    readonly prTitle: string;
+    readonly prBody: string;
+  },
+): LandRefreshResult {
   const existing = exec(
     'gh',
     ['pr', 'list', '--head', opts.branchName, '--state', 'open', '--json', 'url'],

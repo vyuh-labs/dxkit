@@ -88,7 +88,12 @@ __DXKIT_CI_RUNTIME_SETUP__
           else
             DXKIT=vyuh-dxkit
           fi
-          "${DXKIT}" baseline create --force
+          # `baseline refresh` = capture + the D4 advisory decision lane: newly
+          # published dep-vuln advisories (feed moved, no manifest change) are
+          # HELD OUT of the baseline — never silently absorbed — and raised as
+          # the standing two-lane decision PR (merge = defer time-boxed; fix =
+          # upgrade the dependency instead).
+          "${DXKIT}" baseline refresh
 __DXKIT_FRAGMENT_MERGE_STEPS__
 
       - name: Store anchor in the Actions cache
