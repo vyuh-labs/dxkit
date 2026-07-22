@@ -85,6 +85,17 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
   },
   { path: 'loop.preset', command: 'loop', requiresPlan: true, requiresRecommend: true },
   {
+    path: 'newAdvisories.blockSeverities',
+    command: 'guardrail',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note:
+      'the default tier (critical/high block, medium/low warn) is right regardless of any ' +
+      'repo-observable fact, so a planConfig would only ever emit the default — no plan; ' +
+      'recommendNewAdvisoryTier surfaces the knob once a run has concretely blocked a newly ' +
+      'published advisory.',
+  },
+  {
     path: 'reports.onMerge',
     command: 'report',
     requiresPlan: false,

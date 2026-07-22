@@ -175,18 +175,19 @@ shapes, and troubleshooting live in [`vyuh-dxkit checks`](../commands/checks.md)
 
 ## Finding statuses
 
-| Status              | Meaning                                                                    |
-| ------------------- | -------------------------------------------------------------------------- |
-| `persisted`         | Same finding, same location — pre-existing debt                            |
-| `relocated`         | Same finding, moved (line drift, file rename)                              |
-| `removed`           | Was in baseline, no longer scanned                                         |
-| `fixed`             | Intentionally suppressed via comment/ignore                                |
-| `added`             | Net-new finding the developer just introduced                              |
-| `tooling_drift`     | New on disk but the scanner version / ruleset changed                      |
-| `config_drift`      | New on disk but `.dxkit-ignore` / dxkit config changed                     |
-| `newly_detected`    | New but envelope signals can't tell whether tooling or developer caused it |
-| `probable_existing` | Heuristic match below the confidence threshold                             |
-| `uncertain`         | Below every threshold; manual review                                       |
+| Status                     | Meaning                                                                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `persisted`                | Same finding, same location — pre-existing debt                                                                                                                   |
+| `relocated`                | Same finding, moved (line drift, file rename)                                                                                                                     |
+| `removed`                  | Was in baseline, no longer scanned                                                                                                                                |
+| `fixed`                    | Intentionally suppressed via comment/ignore                                                                                                                       |
+| `added`                    | Net-new finding the developer just introduced                                                                                                                     |
+| `newly_published_advisory` | An added dep-vuln on a diff touching no dependency manifest — the advisory feed moved after baseline capture, not the PR. Gated by the `newAdvisories` tier below |
+| `tooling_drift`            | New on disk but the scanner version / ruleset changed                                                                                                             |
+| `config_drift`             | New on disk but `.dxkit-ignore` / dxkit config changed                                                                                                            |
+| `newly_detected`           | New but envelope signals can't tell whether tooling or developer caused it                                                                                        |
+| `probable_existing`        | Heuristic match below the confidence threshold                                                                                                                    |
+| `uncertain`                | Below every threshold; manual review                                                                                                                              |
 
 ## Block rules
 
@@ -203,6 +204,38 @@ of confidence" policy lines. Set any flag to `false` to suppress.
 | `newMaliciousDependency`                  | Block a newly-introduced dependency carrying a malicious-code advisory (OSV `MAL-*`, CWE-506 family, malware-titled GHSA) at ANY severity — install-time malware runs at install, so CVSS and reachability are the wrong lens |
 | `newUntestedChangedSource`                | Block when an untested source file appears alongside changed code                                                                                                                                                             |
 | `newSevereQualityIssueInChangedFiles`     | Block newly-introduced severe quality issues touching changed lines                                                                                                                                                           |
+
+## `newAdvisories` — the newly-published-advisory tier
+
+When the vulnerability feed publishes an advisory about a dependency the repo
+ALREADY had, every open PR that touched no dependency manifest would otherwise
+go red for something disclosure-dated after its branch point. Those findings
+classify as `newly_published_advisory` — the report states they were published
+after baseline capture, not introduced by the PR — and gate by this tier
+instead of the generic block list:
+
+```json
+{
+  "newAdvisories": {
+    "blockSeverities": ["critical", "high"]
+  }
+}
+```
+
+- Default (field absent): `critical` + `high` block; `medium` + `low` warn.
+- `"blockSeverities": []` — warn at every severity (visible pressure, no
+  hard block). A malicious-package advisory still blocks regardless of this
+  list — install-time malware is not tier-negotiable.
+- The two remedies render on every such finding: fix the dependency (that is
+  what unblocks), or defer time-boxed with
+  `vyuh-dxkit allowlist defer --from-last-check --reason="…"` (default expiry
+  7 days — the expiry is the forcing function back into the fix lane).
+- The scheduled refresh (`vyuh-dxkit baseline refresh`, run by the
+  `dxkit-baseline-refresh` workflow) surfaces these on the BASE branch first:
+  new advisories are held out of the refreshed baseline (never silently
+  grandfathered) and raised as one standing decision PR
+  (`dxkit/advisory-decision`) whose merge defers them time-boxed — dependency
+  owners decide before feature PRs fight the findings one at a time.
 
 ## Common customisations
 

@@ -285,6 +285,17 @@ export interface BrownfieldPolicy {
    */
   readonly lint?: LintPolicy;
   /**
+   * Posture for dep-vulns classified `newly_published_advisory` (D4): the
+   * advisory feed moved after baseline capture and the diff touched no
+   * dependency manifest, so the finding is not the PR's fault — but a live
+   * advisory still must not silently ride in. This tier decides which
+   * severities BLOCK (the rest warn). Absent ⟹ the default
+   * (`DEFAULT_NEW_ADVISORY_BLOCK_SEVERITIES`: critical + high block,
+   * medium + low warn). Malicious-package advisories always block regardless
+   * — install-time malware is not tier-negotiable.
+   */
+  readonly newAdvisories?: NewAdvisoriesPolicy;
+  /**
    * Recall-attribution tuning (Rule 19). Absent ⟹ `inputs: 'resolved'`.
    */
   readonly recall?: RecallPolicy;
@@ -297,6 +308,42 @@ export interface BrownfieldPolicy {
    * because it's a CI-performance optimization, not a correctness gate.
    */
   readonly graph?: GraphSection;
+}
+
+/** `newAdvisories.*` block in `.dxkit/policy.json` (the D4 tier knob). */
+export interface NewAdvisoriesPolicy {
+  /** Severities that BLOCK when a dep-vuln is classified
+   *  `newly_published_advisory`. An explicit empty array is a legitimate
+   *  warn-everything posture. Unknown values are dropped by the ONE
+   *  normalizer `newAdvisoryBlockSeverities`. */
+  readonly blockSeverities?: ReadonlyArray<FindingSeverity>;
+}
+
+/** The default advisory block tier: a live high/critical advisory must not
+ *  silently ride in even though the PR did not cause it; medium/low warn —
+ *  visible pressure without a false hard-block. */
+export const DEFAULT_NEW_ADVISORY_BLOCK_SEVERITIES: ReadonlyArray<FindingSeverity> = Object.freeze([
+  'critical',
+  'high',
+]);
+
+const VALID_SEVERITIES: ReadonlyArray<FindingSeverity> = ['critical', 'high', 'medium', 'low'];
+
+/**
+ * The ONE normalizer of the advisory tier (Rule 2): the classifier, the
+ * renderers, and the doctor probe all read the effective block set through
+ * this. A missing/malformed field falls back to the default; a present array
+ * is filtered to known severities (an explicit `[]` means warn-everything —
+ * a deliberate posture, not an error).
+ */
+export function newAdvisoryBlockSeverities(
+  policy: Pick<BrownfieldPolicy, 'newAdvisories'>,
+): ReadonlySet<FindingSeverity> {
+  const declared = policy.newAdvisories?.blockSeverities;
+  if (!Array.isArray(declared)) return new Set(DEFAULT_NEW_ADVISORY_BLOCK_SEVERITIES);
+  return new Set(
+    declared.filter((s): s is FindingSeverity => (VALID_SEVERITIES as string[]).includes(s)),
+  );
 }
 
 /** `graph.*` block in `.dxkit/policy.json`. */

@@ -3,7 +3,8 @@
  *
  * The incident class: a committed-mode repo's PR that touches NO dependency
  * manifest gets hard-blocked as "N new regressions" the day an advisory batch
- * lands on any unchanged dependency (web-client #375, then #376 48h later).
+ * lands on any unchanged dependency (seen live as two advisory batches in
+ * 48 hours against one production repo).
  * Recall is genuinely clean (same scanner, same version), so Rule 19 rightly
  * stays silent — the one input that moved is the advisory FEED. The fix is
  * attribution honesty with gate semantics UNCHANGED: the finding still blocks
@@ -21,7 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { classify } from '../../src/baseline/classify';
 import type { ClassifyContext } from '../../src/baseline/classify';
-import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
+import { DEFAULT_BROWNFIELD_POLICY, newAdvisoryBlockSeverities } from '../../src/baseline/policy';
 import type { BrownfieldPolicy } from '../../src/baseline/policy';
 import type { MatchPair } from '../../src/baseline/types';
 import { changedFilesTouchDependencyManifest, getLanguage } from '../../src/languages';
@@ -52,66 +53,79 @@ describe('classify — newly_published_advisory (D4 phase 1)', () => {
     expect(reason!.detail).toContain('allowlist defer');
   });
 
-  it('gate semantics are UNCHANGED: it blocks exactly as added does (policy membership)', () => {
-    // Default policy blocks 'added' by membership; the relabel must not open
-    // a bypass for severities no block rule covers.
+  it('the default TIER: critical + high block, medium + low warn (D4 phase 2)', () => {
+    const verdicts = (['critical', 'high', 'medium', 'low'] as const).map((severity) => {
+      const out = classify(
+        addedPair,
+        DEFAULT_BROWNFIELD_POLICY,
+        ctx({ severity, manifestUntouched: true }),
+      );
+      expect(out.status).toBe('newly_published_advisory');
+      expect(out.warns).toBe(!out.blocks);
+      expect(out.reasons.some((r) => r.code === 'advisory-tier')).toBe(true);
+      return [severity, out.blocks] as const;
+    });
+    expect(verdicts).toEqual([
+      ['critical', true],
+      ['high', true],
+      ['medium', false],
+      ['low', false],
+    ]);
+  });
+
+  it('the tier is the authority: it overrides block/warn membership and block rules', () => {
+    // A repo that blocks everything as `added` still gets the tier verdict for
+    // this status — medium warns — because the tier IS the explicit posture
+    // for a class the developer did not cause.
+    const blockAll: BrownfieldPolicy = { ...DEFAULT_BROWNFIELD_POLICY, block: ['added'] };
     const medium = classify(
       addedPair,
-      DEFAULT_BROWNFIELD_POLICY,
+      blockAll,
       ctx({ severity: 'medium', manifestUntouched: true }),
     );
-    const asAdded = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, ctx({ severity: 'medium' }));
-    expect(medium.status).toBe('newly_published_advisory');
-    expect(medium.blocks).toBe(asAdded.blocks);
-    expect(medium.warns).toBe(asAdded.warns);
+    expect(medium.blocks).toBe(false);
+    expect(medium.warns).toBe(true);
   });
 
-  it('armed block rules still fire through the relabel (critical, high+reachable, malicious)', () => {
-    const critical = classify(
-      addedPair,
-      DEFAULT_BROWNFIELD_POLICY,
-      ctx({ severity: 'critical', manifestUntouched: true }),
-    );
-    expect(critical.blocks).toBe(true);
+  it('a custom tier reshapes the verdict in both directions', () => {
+    const strict: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      newAdvisories: { blockSeverities: ['critical', 'high', 'medium'] },
+    };
     expect(
-      critical.reasons.some((r) => r.detail.includes('newCriticalDependencyVulnerability')),
+      classify(addedPair, strict, ctx({ severity: 'medium', manifestUntouched: true })).blocks,
     ).toBe(true);
 
-    const reachable = classify(
-      addedPair,
-      DEFAULT_BROWNFIELD_POLICY,
-      ctx({ severity: 'high', reachable: true, manifestUntouched: true }),
-    );
-    expect(reachable.blocks).toBe(true);
-    expect(
-      reachable.reasons.some((r) => r.detail.includes('newHighReachableDependencyVulnerability')),
-    ).toBe(true);
+    const warnAll: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      newAdvisories: { blockSeverities: [] },
+    };
+    const high = classify(addedPair, warnAll, ctx({ severity: 'high', manifestUntouched: true }));
+    expect(high.blocks).toBe(false);
+    expect(high.warns).toBe(true);
+  });
 
-    const malicious = classify(
+  it('malicious-package advisories block at ANY severity, tier-exempt', () => {
+    const warnAll: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      newAdvisories: { blockSeverities: [] },
+    };
+    const out = classify(
       addedPair,
-      DEFAULT_BROWNFIELD_POLICY,
+      warnAll,
       ctx({ severity: 'low', malicious: true, manifestUntouched: true }),
     );
-    expect(malicious.blocks).toBe(true);
-    expect(malicious.reasons.some((r) => r.detail.includes('newMaliciousDependency'))).toBe(true);
+    expect(out.blocks).toBe(true);
+    expect(out.reasons.some((r) => r.code === 'advisory-malicious')).toBe(true);
   });
 
-  it('a warn-only policy keeps warning (relabel never escalates)', () => {
-    const warnOnly: BrownfieldPolicy = {
-      ...DEFAULT_BROWNFIELD_POLICY,
-      block: [],
-      warn: ['added'],
-      blockRules: {
-        ...DEFAULT_BROWNFIELD_POLICY.blockRules,
-        newCriticalDependencyVulnerability: false,
-        newHighReachableDependencyVulnerability: false,
-        newMaliciousDependency: false,
-      },
-    };
-    const out = classify(addedPair, warnOnly, ctx({ severity: 'medium', manifestUntouched: true }));
+  it('an UNKNOWN severity blocks (conservative — never a silent pass on missing evidence)', () => {
+    const out = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, {
+      kind: 'dep-vuln',
+      manifestUntouched: true,
+    });
     expect(out.status).toBe('newly_published_advisory');
-    expect(out.blocks).toBe(false);
-    expect(out.warns).toBe(true);
+    expect(out.blocks).toBe(true);
   });
 
   it('absent evidence means NO relabel — an added dep-vuln stays added', () => {
@@ -146,6 +160,28 @@ describe('classify — newly_published_advisory (D4 phase 1)', () => {
     );
     expect(out.status).toBe('tooling_drift');
     expect(out.unattributableBlockRule).toBe('newCriticalDependencyVulnerability');
+  });
+});
+
+describe('newAdvisoryBlockSeverities — the ONE tier normalizer', () => {
+  it('absent/malformed → the default (critical + high)', () => {
+    expect([...newAdvisoryBlockSeverities({})].sort()).toEqual(['critical', 'high']);
+    expect([
+      ...newAdvisoryBlockSeverities({
+        newAdvisories: { blockSeverities: 'high' as unknown as ['high'] },
+      }),
+    ]).toEqual(['critical', 'high']);
+  });
+
+  it('an explicit empty array is warn-everything, not the default', () => {
+    expect(newAdvisoryBlockSeverities({ newAdvisories: { blockSeverities: [] } }).size).toBe(0);
+  });
+
+  it('unknown values are dropped, known ones kept', () => {
+    const tier = newAdvisoryBlockSeverities({
+      newAdvisories: { blockSeverities: ['critical', 'bogus'] as unknown as ['critical'] },
+    });
+    expect([...tier]).toEqual(['critical']);
   });
 });
 
