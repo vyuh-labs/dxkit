@@ -620,13 +620,14 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
     name: 'graphify',
     description: 'Deterministic AST extraction via tree-sitter (20+ languages)',
     // graphifyy pinned to a tested release. Unpinned, `pip install graphifyy`
-    // pulls the latest, and graphifyy's internal API drifts between minors
-    // (0.8 changed `cache_dir(root)` → `cache_dir(root, kind)`, #582). The
-    // generated script in graphify.ts now drives graphify only through its
-    // public surface (`extract(..., cache_root=...)`), so the pin guards
-    // against a future *public*-API drift, not the cache_dir signature.
-    // Bumping requires retesting the generated script against the new release.
-    install: 'pip install "graphifyy==0.8.40"',
+    // pulls the latest, and graphify ships near-daily with occasional
+    // breaking changes (0.9.0 changed the node-id scheme). Since the 4.2
+    // driver rewrite, dxkit drives graphify only through its supported CLI
+    // (`python -m graphify extract --code-only --out <dir>`) and translates
+    // the emitted graph.json in `graphify-translate.ts`, so the pin guards
+    // the CLI contract + wire dialect. Bumping = re-running the graph-bench
+    // matrix (`scripts/graph-bench/`) against the new release.
+    install: 'pip install "graphifyy==0.9.25"',
     check: 'python3 -c "import graphify"',
     for: 'all',
     layer: 'optional',
@@ -636,10 +637,10 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       'python3 -c "import graphify; print(\'installed\')" || $HOME/.cache/dxkit/tools-venv/bin/python -c "import graphify; print(\'installed\')"',
     installCommands: {
       macos:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.40"',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.9.25"',
       linux:
-        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.8.40"',
-      windows: 'pip install --user "graphifyy==0.8.40"',
+        'mkdir -p "$HOME/.cache/dxkit" && (test -d "$HOME/.cache/dxkit/tools-venv" || python3 -m venv "$HOME/.cache/dxkit/tools-venv") && "$HOME/.cache/dxkit/tools-venv/bin/pip" install -q "graphifyy==0.9.25"',
+      windows: 'pip install --user "graphifyy==0.9.25"',
     },
   },
   jscpd: {

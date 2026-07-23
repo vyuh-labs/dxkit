@@ -639,6 +639,7 @@ export const swift: LanguageSupport = {
   exportDetection: {
     reliability: 'full',
     strategy: 'public/open access-level modifiers mark API surface (internal-by-default semantics)',
+    lineCheck: (line) => /\b(public|open)\b/.test(line),
   },
 
   // Swift doc-comment markers: `///` is the dominant form, `/** */` the

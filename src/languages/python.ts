@@ -1262,6 +1262,7 @@ export const python: LanguageSupport = {
     reliability: 'partial',
     strategy:
       '`__all__` list when present, else public-name heuristic (identifier without leading underscore)',
+    lineCheck: (_line, name) => (name ? !name.startsWith('_') : null),
   },
 
   // D027 (2.4.7): Python module/class/function docstrings use either

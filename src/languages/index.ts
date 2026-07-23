@@ -106,6 +106,25 @@ export function allSourceExtensions(): string[] {
 }
 
 /**
+ * Lowercased source extension → owning pack id, unioned across all packs.
+ * The registry-derived replacement for the `_EXT_TO_PACK` literal that the
+ * generated graphify Python script used to carry as a hand-maintained
+ * mirror of pack declarations (the Rule 2.30 shape — it could and did
+ * drift silently as packs landed). First extension claim wins on the rare
+ * shared extension.
+ */
+export function extensionToPackMap(): ReadonlyMap<string, LanguageId> {
+  const map = new Map<string, LanguageId>();
+  for (const lang of LANGUAGES) {
+    for (const ext of lang.sourceExtensions) {
+      const key = ext.toLowerCase();
+      if (!map.has(key)) map.set(key, lang.id);
+    }
+  }
+  return map;
+}
+
+/**
  * Dependency-manifest / lockfile patterns declared by the given packs'
  * `depVulns` capability, deduplicated. Pack-driven (Rule 6): each pack owns its
  * patterns next to the audit they gate; this union grows as packs land.

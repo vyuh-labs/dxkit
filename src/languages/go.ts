@@ -1052,6 +1052,7 @@ export const go: LanguageSupport = {
   exportDetection: {
     reliability: 'full',
     strategy: 'Capitalized first letter on top-level identifiers (Go idiomatic export convention)',
+    lineCheck: (_line, name) => (name ? /^[A-Z]/.test(name) : null),
   },
 
   // D034 (2.4.7): `tls.Config{InsecureSkipVerify: true}` is the

@@ -1809,6 +1809,7 @@ export const csharp: LanguageSupport = {
   exportDetection: {
     reliability: 'full',
     strategy: '`public` access modifier on type and member declarations',
+    lineCheck: (line) => /\bpublic\b/.test(line),
   },
 
   // graphify can't resolve `using`-directive call targets across

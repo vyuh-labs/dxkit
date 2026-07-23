@@ -493,6 +493,7 @@ export const java: LanguageSupport = {
   exportDetection: {
     reliability: 'full',
     strategy: '`public` access modifier on type and member declarations',
+    lineCheck: (line) => /\bpublic\b/.test(line),
   },
 
   // D027 (2.4.7): Javadoc uses the `/**` block opener.
