@@ -27,15 +27,17 @@ the 10 language packs works:
   "dxkitRoot": "/abs/path/to/dxkit-repo",
   "latestVenv": "~/.cache/dxkit/bench/graphify-<ver>-venv",
   "timeoutMinutes": 30,
-  "repos": [
-    { "name": "nestjs-realworld", "path": "/abs/path", "stack": "ts-nestjs" }
-  ]
+  "repos": [{ "name": "nestjs-realworld", "path": "/abs/path", "stack": "ts-nestjs" }]
 }
 ```
 
-Create the "latest" venv with `uv venv <dir> && uv pip install --python
-<dir>/bin/python "graphifyy==<ver>"` — it stays separate from the
-`~/.cache/dxkit/tools-venv` the product uses.
+Create the "latest" venv (kept separate from the `~/.cache/dxkit/tools-venv`
+the product uses):
+
+```bash
+uv venv <dir>
+uv pip install --python <dir>/bin/python "graphifyy==<ver>"
+```
 
 ## Usage
 
@@ -65,7 +67,7 @@ claimed call sites. Sampling is seeded — runs reproduce.
 3. Read the disagreement sets, not the raw counts — graphify indexes
    files dxkit deliberately excludes (build output, JSON configs), so
    totals overstate; the translator (`src/analyzers/tools/
-   graphify-translate.ts`) applies dxkit scoping.
+graphify-translate.ts`) applies dxkit scoping.
 4. Bump the pin in `tool-registry.ts` (+ the version-pins test), re-run
    the matrix against the new driver, and record a comparison note with
    every loss dispositioned before releasing.
