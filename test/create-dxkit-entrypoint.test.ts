@@ -112,11 +112,19 @@ interface RunOpts {
 function runShim(opts: RunOpts = {}) {
   const npmLog = path.join(stubs, 'npm-calls.log');
   const initLog = path.join(stubs, 'init-calls.log');
+  // Strip EVERY case variant of npm_execpath from the inherited env before
+  // injecting the stub. On Windows the child's env lookup is case-insensitive
+  // and an UPPERCASE variant (present in GitHub's Windows runner env) shadows
+  // a lowercase override — verified empirically: the first CI run of this
+  // suite silently drove REAL registry npm through the shim for 6 minutes.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'npm_execpath'),
+  );
   const result = spawnSync(process.execPath, [ENTRY, ...(opts.args ?? [])], {
     cwd: opts.cwd ?? fixture,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...inherited,
       npm_execpath: writeFakeNpm(),
       FAKE_NPM_MODE: opts.mode ?? 'ok',
       FAKE_NPM_LOG: npmLog,
@@ -136,7 +144,10 @@ function runShim(opts: RunOpts = {}) {
           .filter(Boolean)
           .map((l) => JSON.parse(l) as string[])
       : [];
-  return { ...result, npmCalls: readLog(npmLog), initCalls: readLog(initLog) };
+  // `trace` rides along on every assertion so a CI-only failure shows what
+  // the child actually printed instead of a bare length mismatch.
+  const trace = `shim stdout:\n${result.stdout}\nshim stderr:\n${result.stderr}`;
+  return { ...result, npmCalls: readLog(npmLog), initCalls: readLog(initLog), trace };
 }
 
 describe('create-dxkit entry point (child-process integration)', () => {
@@ -144,30 +155,30 @@ describe('create-dxkit entry point (child-process integration)', () => {
     const home = path.join(tmp, 'home');
     fs.mkdirSync(home);
     const r = runShim({ cwd: home, home });
-    expect(r.status).toBe(1);
+    expect(r.status, r.trace).toBe(1);
     expect(r.stderr).toContain('home directory');
     expect(r.stderr).toContain('cd into the repository');
     // The refusal must come BEFORE the package.json seed — the shipped
     // failure left a stray package.json in the user's home folder.
     expect(fs.existsSync(path.join(home, 'package.json'))).toBe(false);
-    expect(r.npmCalls).toHaveLength(0);
+    expect(r.npmCalls, r.trace).toHaveLength(0);
   });
 
   it('happy path: seeds package.json, installs via npm_execpath, runs init with default args', () => {
     plantInstalledDxkit();
     const r = runShim();
-    expect(r.status).toBe(0);
+    expect(r.status, r.trace).toBe(0);
     expect(fs.existsSync(path.join(fixture, 'package.json'))).toBe(true);
-    expect(r.npmCalls).toHaveLength(1);
+    expect(r.npmCalls, r.trace).toHaveLength(1);
     expect(r.npmCalls[0]).toEqual(['install', '--save-dev', '--no-audit', '@vyuhlabs/dxkit']);
-    expect(r.initCalls).toHaveLength(1);
+    expect(r.initCalls, r.trace).toHaveLength(1);
     expect(r.initCalls[0]).toEqual(['init', '--full', '--yes']);
   });
 
   it('forwards user args to init verbatim', () => {
     plantInstalledDxkit();
     const r = runShim({ args: ['--claude-loop', '--yes'] });
-    expect(r.status).toBe(0);
+    expect(r.status, r.trace).toBe(0);
     expect(r.initCalls[0]).toEqual(['init', '--claude-loop', '--yes']);
   });
 
@@ -177,32 +188,32 @@ describe('create-dxkit entry point (child-process integration)', () => {
     // and silently fall back. The direct node_modules path must win.
     plantInstalledDxkit(true);
     const r = runShim();
-    expect(r.status).toBe(0);
-    expect(r.initCalls).toHaveLength(1);
+    expect(r.status, r.trace).toBe(0);
+    expect(r.initCalls, r.trace).toHaveLength(1);
   });
 
   it('ERESOLVE: retries with --legacy-peer-deps, persists .npmrc, still runs init', () => {
     plantInstalledDxkit();
     const r = runShim({ mode: 'fail-then-ok' });
-    expect(r.status).toBe(0);
-    expect(r.npmCalls).toHaveLength(2);
+    expect(r.status, r.trace).toBe(0);
+    expect(r.npmCalls, r.trace).toHaveLength(2);
     expect(r.npmCalls[1]).toContain('--legacy-peer-deps');
     expect(fs.readFileSync(path.join(fixture, '.npmrc'), 'utf8')).toContain(
       'legacy-peer-deps=true',
     );
-    expect(r.initCalls).toHaveLength(1);
+    expect(r.initCalls, r.trace).toHaveLength(1);
     // The retry line no longer asserts a diagnosis npm never made.
     expect(r.stdout).not.toMatch(/Peer-dep conflict detected/);
   });
 
   it('both installs fail: names the debug log, offers the PACKAGE-form escape hatch, exit 1', () => {
     const r = runShim({ mode: 'fail' });
-    expect(r.status).toBe(1);
-    expect(r.npmCalls).toHaveLength(2); // strict + legacy retry
+    expect(r.status, r.trace).toBe(1);
+    expect(r.npmCalls, r.trace).toHaveLength(2); // strict + legacy retry
     expect(r.stderr).toContain('Full npm error log: /fake/_logs/2026-07-23-debug-0.log');
     expect(r.stderr).toContain('npx -y @vyuhlabs/dxkit init --full --yes');
     expect(r.stderr).not.toMatch(/npx vyuh-dxkit/); // the 404 form, banned
-    expect(r.initCalls).toHaveLength(0);
+    expect(r.initCalls, r.trace).toHaveLength(0);
   });
 
   it('PM spawn failure: says npm never ran — no phantom peer-dep diagnosis, no pointless retry', () => {
@@ -217,7 +228,7 @@ describe('create-dxkit entry point (child-process integration)', () => {
     const r = runShim({
       extraEnv: { npm_execpath: undefined, PATH: emptyBin },
     });
-    expect(r.status).toBe(1);
+    expect(r.status, r.trace).toBe(1);
     expect(r.stderr).toContain('Could not launch npm at all');
     expect(r.stderr).toContain('npm never ran');
     expect(r.stderr).not.toMatch(/peer-dep/i);
@@ -231,7 +242,7 @@ describe('create-dxkit entry point (child-process integration)', () => {
     fs.writeFileSync(path.join(fixture, 'package.json'), manifest);
     plantInstalledDxkit();
     const r = runShim();
-    expect(r.status).toBe(0);
+    expect(r.status, r.trace).toBe(0);
     const after = JSON.parse(fs.readFileSync(path.join(fixture, 'package.json'), 'utf8'));
     expect(after.name).toBe('my-app');
   });
