@@ -5,6 +5,49 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.5] - 2026-07-23
+
+The graph decision release: dxkit keeps graphify as its graph substrate —
+deliberately, on benchmark evidence — and bumps it 0.8.40 → 0.9.25 (~50
+upstream releases). Decision record: a 25-repo two-lane benchmark
+(`scripts/graph-bench/`) showed graphify 0.9.25 contains 99.96% of the
+symbols our shipped driver extracted while resolving substantially more
+call edges, so the planned native-emitter replacement is shelved with
+named tripwires and dxkit owns the layers above (scoping, stable keys,
+verification overlays) instead of racing the commodity layer.
+
+- **Graphify driver rewritten: supported CLI + pure translator.** The
+  embedded ~650-line Python script (which imported graphify's internals —
+  moved by their 0.9.11 refactor) is replaced by graphify's supported
+  headless path (`python -m graphify extract --code-only --out <tmpdir>`,
+  no API key, nothing written into the repo) plus the pure, unit-tested
+  translator `src/analyzers/tools/graphify-translate.ts`. dxkit's scoping
+  is applied at translation (Rule 4 exclusions, pack-declared source
+  extensions, minified filter, manifest/doc/concept nodes dropped), so the
+  graph inherits graphify's better resolution without its broader indexing
+  appetite.
+- **Stable node identity.** graph.json node ids are now graphify's
+  deterministic path-based ids — stable across runs (the old driver minted
+  per-run `n0, n1, …`). Ids remain intra-artifact; nothing outside
+  graph.json may reference them.
+- **Measurably better graphs on the 25-repo matrix.** Call edges up on
+  matched scope (typed member-call resolution: spring-boot-realworld
+  189→462; django-oscar +1,799; several production TS repos +5–10%), and
+  the 0.8.x noise class removed — external framework/stdlib types
+  materialized as local nodes (axum: 2,091 such nodes, including Rust std
+  traits and generic type parameters; spring-boot-realworld: 4,112
+  imports_from noise edges → 348 real). Known loss, dispositioned: 0.9.x's
+  typed resolver misses inherited-member calls (`pet.isNew()` declared on
+  a parent class — spring-petclinic) — to be filed upstream.
+- **Export detection is pack-declared** (`exportDetection.lineCheck` on
+  `LanguageSupport`, 9 packs). The per-language branches previously lived
+  inside the generated Python string — a Rule 2.30 mirror the arch-check
+  could not see — alongside a hand-maintained ext→pack literal now derived
+  from the registry (`extensionToPackMap()`).
+- **`meta.graphifyVersion` is now stamped** in graph.json (was always
+  empty), and `graph.html` (graphify's interactive viewer) is copied
+  alongside when produced.
+
 ## [4.1.4] - 2026-07-22
 
 D4 complete — the advisory-feed release (phase 2 of the class 4.1.3 opened).
