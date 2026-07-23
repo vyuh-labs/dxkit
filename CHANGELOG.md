@@ -5,6 +5,69 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.6] - 2026-07-23
+
+First-run reliability release: a field report showed that the very first
+commands our README and demo print could not complete on a current
+Windows Node. Ships alongside
+`@vyuhlabs/create-dxkit@0.4.0` (see below — the bootstrap shim carries the
+core fix).
+
+- **Demo hint no longer 404s pre-install.** The `demo loop-guardrail`
+  gitleaks hint invoked the CLI by BINARY name (`npx vyuh-dxkit tools
+  install`), which resolves only through an installed package — and the
+  demo's whole audience has not installed one yet, so the printed command
+  failed with npm E404. Pre-install surfaces now use the one-shot PACKAGE
+  form via the new `dxkitOneShotCli` helper in `src/self-invocation.ts`
+  (`npx -y @vyuhlabs/dxkit tools install`), the same form the demo command
+  itself uses.
+- **README funnel reordered: `npm init @vyuhlabs/dxkit` is the first
+  command.** The demo led the quick start, but on a fresh machine it
+  degrades to a labelled illustration (no gitleaks) and its follow-ups run
+  outside a repo; `init` provisions its own prerequisites and is
+  reversible. The demo stays as the explicit "see it without installing
+  anything" alternative.
+- **`exports` now exposes `./package.json`** so tooling (including the
+  bootstrap shim's bin resolution) can read package metadata through
+  `require.resolve`.
+- **New Windows first-run smoke job** (`smoke.yml:first-run-windows`): runs
+  the shim's unit + child-process integration suites on a real Windows
+  Node, then performs a real first run — the shim launched by real npm into
+  a fresh git fixture. The class this closes could not be seen by any
+  Linux-only job.
+
+### @vyuhlabs/create-dxkit 0.4.0
+
+- **Windows install fixed (the shipped first-run break).** Node's
+  CVE-2024-27980 fix (≥ 18.20.2 / 20.12.2 / 21.7.3) makes spawning a
+  `.cmd` with `shell: false` throw EINVAL — so the shim's
+  `spawnSync('npm.cmd', …)` could never install on a current Windows Node,
+  and the un-checked spawn error surfaced as a phantom "Peer-dep conflict
+  detected" with empty stderr. The shim now runs npm via
+  `process.execPath` on `npm_execpath` (the JS entry npm itself provides —
+  no shell, no `.cmd`, any OS), falls back to `shell: true` with quoted
+  args for other package managers on Windows, and never produces a
+  shell-less `.cmd` spawn (property-pinned in tests).
+- **Honest failure reporting.** A spawn-level failure (the PM never ran)
+  is now reported as exactly that — no fabricated peer-dep diagnosis, no
+  pointless retry, no pointer to an npm debug log that does not exist.
+- **The install-failure escape hatch no longer 404s.** It printed
+  `npx vyuh-dxkit init --full --yes` — the binary form, which resolves
+  only through the install that just failed. It now prints the package
+  form (`npx -y @vyuhlabs/dxkit init --full --yes`). The arch-check's
+  Rule 14 grep now covers `packages/create-dxkit/` so the binary form
+  cannot return there.
+- **Home-directory guard.** Running the bootstrap from the OS home
+  directory or a filesystem root is refused before anything is written —
+  previously it seeded a `package.json` into the user's home folder.
+- **Post-install `init` runs the installed bin directly** (`node
+  <resolved bin>`), immune to the Windows spawn class and to npx
+  resolution; falls back to a one-shot npx by package name.
+- **Entry-point integration suite** (`test/create-dxkit-entrypoint.test.ts`):
+  the real shim as a child process across refusal / happy path / ERESOLVE
+  retry / both-fail / spawn-failure branches, with npm stubbed through the
+  production `npm_execpath` mechanism.
+
 ## [4.1.5] - 2026-07-23
 
 The graph decision release: dxkit keeps graphify as its graph substrate —

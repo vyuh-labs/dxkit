@@ -1,11 +1,12 @@
 /**
- * Unit tests for the `@vyuhlabs/create-dxkit` shim's pure helpers.
+ * Unit tests for the `@vyuhlabs/create-dxkit` shim's pure helpers:
+ * arg routing, cwd refusal, package.json seeding, PM detection, the
+ * CVE-2024-27980-safe spawn plan, bin resolution, and failure text.
  *
- * The shim itself shells out to `npm install` and `npx vyuh-dxkit
- * init` — those legs aren't unit-testable without network/install
- * machinery. The decision logic (arg routing, package.json seeding,
- * platform-aware binary names) lives in three exported helpers and
- * IS unit-testable; that's what this file covers.
+ * The shim's ORCHESTRATION (the `require.main` block) is covered by
+ * `create-dxkit-entrypoint.test.ts`, which runs the real entry point
+ * as a child process — the layer where the shipped Windows first-run
+ * break lived and where pure-helper tests are structurally blind.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
@@ -17,19 +18,34 @@ import * as path from 'path';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const shim = require('../packages/create-dxkit/index.js') as {
   resolveInitArgs: (argv: string[]) => string[];
+  refuseCwdReason: (cwd: string, homeDir?: string, platform?: NodeJS.Platform) => string | null;
   ensurePackageJson: (cwd: string, fsMod?: typeof fs, pathMod?: typeof path) => { seeded: boolean };
-  npmBin: (platform?: NodeJS.Platform) => string;
-  npxBin: (platform?: NodeJS.Platform) => string;
   persistLegacyPeerDeps: (
     cwd: string,
     fsMod?: typeof fs,
     pathMod?: typeof path,
   ) => { changed: boolean; reason: string };
   extractNpmLogPath: (text: string | null | undefined) => string | null;
-  formatInstallFailure: (opts?: { stderrChunks?: string[]; pm?: string }) => string;
+  formatInstallFailure: (opts?: {
+    stderrChunks?: string[];
+    pm?: string;
+    spawnError?: Error & { code?: string };
+  }) => string;
   detectPackageManager: (cwd: string, fsMod?: typeof fs, pathMod?: typeof path) => string;
   pmBin: (pm: string, platform?: NodeJS.Platform) => string;
+  windowsQuoteArg: (arg: string) => string;
+  installSpawnPlan: (
+    pm: string,
+    pmArgs: string[],
+    env?: Record<string, string | undefined>,
+    platform?: NodeJS.Platform,
+  ) => { cmd: string; args: string[]; shell: boolean };
   installArgs: (pm: string) => string[];
+  resolveInstalledBin: (
+    cwd: string,
+    requireResolve?: (id: string, opts?: { paths: string[] }) => string,
+    fsMod?: typeof fs,
+  ) => string | null;
 };
 
 let tmp: string;
@@ -176,10 +192,27 @@ describe('extractNpmLogPath', () => {
 });
 
 describe('formatInstallFailure', () => {
-  it('never says "above" and always offers the npx-init escape hatch', () => {
+  it('never says "above" and always offers the one-shot npx escape hatch BY PACKAGE NAME', () => {
     const msg = shim.formatInstallFailure({ stderrChunks: [] });
     expect(msg).not.toMatch(/error above/i);
-    expect(msg).toContain('npx vyuh-dxkit init --full --yes');
+    // The remedy fires precisely when no dxkit install exists, so the binary
+    // form (`npx vyuh-dxkit …`) would 404 — the package form must be shown.
+    // The previous version of this test PINNED the 404ing string; the break
+    // was caught in the field.
+    expect(msg).toContain('npx -y @vyuhlabs/dxkit init --full --yes');
+    expect(msg).not.toMatch(/npx vyuh-dxkit/);
+  });
+
+  it('spawn-level failure: says the PM never ran, skips the peer-dep story, keeps the escape hatch', () => {
+    const err = Object.assign(new Error('spawnSync npm.cmd EINVAL'), { code: 'EINVAL' });
+    const msg = shim.formatInstallFailure({ pm: 'npm', spawnError: err });
+    expect(msg).toContain('Could not launch npm at all (EINVAL)');
+    expect(msg).toContain('npm never ran');
+    // No fabricated diagnosis: the install-cause list and debug-log pointer
+    // describe an npm run that never happened.
+    expect(msg).not.toMatch(/peer-dep/i);
+    expect(msg).not.toMatch(/debug log/i);
+    expect(msg).toContain('npx -y @vyuhlabs/dxkit init --full --yes');
   });
 
   it('surfaces captured npm stderr when present', () => {
@@ -214,20 +247,113 @@ describe('formatInstallFailure', () => {
   });
 });
 
-describe('npmBin / npxBin', () => {
-  it('returns plain names on linux', () => {
-    expect(shim.npmBin('linux')).toBe('npm');
-    expect(shim.npxBin('linux')).toBe('npx');
+describe('refuseCwdReason', () => {
+  it('refuses the home directory', () => {
+    const reason = shim.refuseCwdReason('/home/admin', '/home/admin', 'linux');
+    expect(reason).toContain('home directory');
+    expect(reason).toContain('Nothing was written');
   });
 
-  it('returns .cmd-suffixed names on win32', () => {
-    expect(shim.npmBin('win32')).toBe('npm.cmd');
-    expect(shim.npxBin('win32')).toBe('npx.cmd');
+  it('refuses the home directory case-insensitively on win32', () => {
+    const reason = shim.refuseCwdReason('C:\\Users\\Admin', 'c:\\users\\admin', 'win32');
+    expect(reason).toContain('home directory');
   });
 
-  it('returns plain names on darwin', () => {
-    expect(shim.npmBin('darwin')).toBe('npm');
-    expect(shim.npxBin('darwin')).toBe('npx');
+  it('refuses a filesystem root', () => {
+    const reason = shim.refuseCwdReason('/', '/home/admin', 'linux');
+    expect(reason).toContain('filesystem root');
+  });
+
+  it('accepts an ordinary project directory', () => {
+    expect(shim.refuseCwdReason(tmp, '/home/admin', 'linux')).toBeNull();
+    expect(
+      shim.refuseCwdReason('C:\\Users\\Admin\\my-app', 'C:\\Users\\Admin', 'win32'),
+    ).toBeNull();
+  });
+});
+
+describe('installSpawnPlan (the CVE-2024-27980 net)', () => {
+  // Spawning a `.cmd` with `shell: false` throws EINVAL on Node ≥ 18.20.2 /
+  // 20.12.2 / 21.7.3 — the plan must never produce that combination.
+  const npmEnv = { npm_execpath: '/usr/lib/node_modules/npm/bin/npm-cli.js' };
+
+  it('npm with npm_execpath: runs node on npm-cli.js directly — no shell, no .cmd, any OS', () => {
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      const plan = shim.installSpawnPlan('npm', ['install', 'x'], npmEnv, platform);
+      expect(plan.cmd).toBe(process.execPath);
+      expect(plan.args).toEqual([npmEnv.npm_execpath, 'install', 'x']);
+      expect(plan.shell).toBe(false);
+    }
+  });
+
+  it('non-npm PM on win32: .cmd via shell (the only EINVAL-safe way to run a .cmd)', () => {
+    const plan = shim.installSpawnPlan('pnpm', ['add', '-D', 'x'], {}, 'win32');
+    expect(plan.cmd).toBe('pnpm.cmd');
+    expect(plan.shell).toBe(true);
+  });
+
+  it('npm WITHOUT npm_execpath on win32 still avoids shell-less .cmd', () => {
+    const plan = shim.installSpawnPlan('npm', ['install'], {}, 'win32');
+    expect(plan.cmd).toBe('npm.cmd');
+    expect(plan.shell).toBe(true);
+  });
+
+  it('posix without npm_execpath: plain direct spawn', () => {
+    const plan = shim.installSpawnPlan('pnpm', ['add', '-D', 'x'], {}, 'linux');
+    expect(plan).toEqual({ cmd: 'pnpm', args: ['add', '-D', 'x'], shell: false });
+  });
+
+  it('never yields a .cmd command with shell: false, across PMs and platforms', () => {
+    for (const pm of ['npm', 'pnpm', 'yarn', 'bun']) {
+      for (const platform of ['linux', 'win32', 'darwin'] as const) {
+        for (const env of [{}, npmEnv]) {
+          const plan = shim.installSpawnPlan(pm, ['x'], env, platform);
+          if (/\.(cmd|bat)$/i.test(plan.cmd)) expect(plan.shell).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe('windowsQuoteArg', () => {
+  it('leaves simple args untouched', () => {
+    expect(shim.windowsQuoteArg('--save-dev')).toBe('--save-dev');
+    expect(shim.windowsQuoteArg('@vyuhlabs/dxkit')).toBe('@vyuhlabs/dxkit');
+  });
+
+  it('quotes args with spaces or shell metacharacters', () => {
+    expect(shim.windowsQuoteArg('a b')).toBe('"a b"');
+    expect(shim.windowsQuoteArg('a&b')).toBe('"a&b"');
+    expect(shim.windowsQuoteArg('a"b')).toBe('"a""b"');
+  });
+});
+
+describe('resolveInstalledBin', () => {
+  it('resolves the installed package bin to an absolute JS path', () => {
+    const pkgDir = path.join(tmp, 'node_modules', '@vyuhlabs', 'dxkit');
+    fs.mkdirSync(path.join(pkgDir, 'dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@vyuhlabs/dxkit', bin: { 'vyuh-dxkit': './dist/index.js' } }),
+    );
+    fs.writeFileSync(path.join(pkgDir, 'dist', 'index.js'), '');
+    const bin = shim.resolveInstalledBin(tmp);
+    expect(bin).toBe(path.join(pkgDir, 'dist', 'index.js'));
+  });
+
+  it('returns null when the package is not installed', () => {
+    expect(shim.resolveInstalledBin(tmp)).toBeNull();
+  });
+
+  it('returns null when the bin entry is missing or its file does not exist', () => {
+    const pkgDir = path.join(tmp, 'node_modules', '@vyuhlabs', 'dxkit');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: '@vyuhlabs/dxkit', bin: { 'vyuh-dxkit': './dist/index.js' } }),
+    );
+    // bin declared but dist/index.js absent
+    expect(shim.resolveInstalledBin(tmp)).toBeNull();
   });
 });
 

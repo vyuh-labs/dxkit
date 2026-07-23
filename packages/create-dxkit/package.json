@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/create-dxkit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "One-command bootstrap for @vyuhlabs/dxkit. Detects your package manager (pnpm/yarn/bun/npm) to add it as a devDependency, then runs `vyuh-dxkit init`.",
   "license": "MIT",
   "author": "Vyuh Labs",

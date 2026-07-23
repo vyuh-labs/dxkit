@@ -22,7 +22,7 @@ import type { GuardrailJsonPayload } from '../baseline/check-renderers';
 import { GUARDRAIL_JSON_SCHEMA } from '../baseline/check-renderers';
 import { buildRepairMessage } from './stop-gate';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
-import { dxkitCli } from '../self-invocation';
+import { dxkitCli, dxkitOneShotCli } from '../self-invocation';
 import * as logger from '../logger';
 
 type DemoPair = GuardrailJsonPayload['pairs'][number];
@@ -291,8 +291,11 @@ function printIllustration(reason: 'no-gitleaks' | 'sandbox-failed'): void {
   const { blockMessage } = renderLoopGuardrailDemo();
   if (reason === 'no-gitleaks') {
     logger.warn('gitleaks not installed — showing an illustration, not a real scan.');
+    // One-shot PACKAGE form, not `dxkitCli`: the demo itself runs via one-shot
+    // npx, so the viewer has no dxkit install for a binary-name invocation to
+    // resolve — it would 404 here (the class Rule 14 exists for).
     logger.dim(
-      `  Install it (\`${dxkitCli('tools install')}\`) and re-run to scan a real sandbox.`,
+      `  Install it (\`${dxkitOneShotCli('tools install')}\`) and re-run to scan a real sandbox.`,
     );
   } else {
     logger.warn('Could not run the sandbox scan here — showing an illustration instead.');
