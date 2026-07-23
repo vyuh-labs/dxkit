@@ -12,7 +12,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
 
 /** The package this bootstrap installs. */
 const PKG = '@vyuhlabs/dxkit';
