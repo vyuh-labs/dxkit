@@ -26,10 +26,12 @@ into one. Useful at the first-install moment — the highest-leverage UX touchpo
 
 ## What it does
 
-1. If the current directory has no `package.json`, seed a minimal one.
-2. Install `@vyuhlabs/dxkit` into `devDependencies` (retries with
+1. Refuse to run in a home directory or filesystem root (a project
+   directory is required — nothing is written on refusal).
+2. If the current directory has no `package.json`, seed a minimal one.
+3. Install `@vyuhlabs/dxkit` into `devDependencies` (retries with
    `--legacy-peer-deps` once if the initial install hits an ERESOLVE).
-3. Forward your args (or `--full --yes` if none) to `vyuh-dxkit init`.
+4. Forward your args (or `--full --yes` if none) to `vyuh-dxkit init`.
 
 After this runs, every dxkit subcommand is available via
 `./node_modules/.bin/vyuh-dxkit` or `npx vyuh-dxkit`.

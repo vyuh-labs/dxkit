@@ -28,6 +28,50 @@ permissions:
   contents: read
 
 jobs:
+  # The FIRST command a new user runs (`npm init @vyuhlabs/dxkit`) must never
+  # break — and its worst shipped break was Windows-only: Node's
+  # CVE-2024-27980 fix makes a shell-less `.cmd` spawn throw EINVAL, so the
+  # old shim could never install on a current Windows Node, and no
+  # Linux-only job could see it — it surfaced in the field. This job runs
+  # the shim's unit + child-process integration suites on a real Windows
+  # Node, then performs the real first run: the PR's shim, launched by real
+  # npm (which sets `npm_execpath` exactly as `npm init` does), installing
+  # the published @vyuhlabs/dxkit into a fresh git repo.
+  first-run-windows:
+    name: windows first run (create-dxkit shim)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Shim unit + entry-point integration tests (real Windows spawn semantics)
+        run: npx vitest run test/create-dxkit.test.ts test/create-dxkit-entrypoint.test.ts
+
+      - name: Real first run in a fresh repo
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'first-run'
+          New-Item -ItemType Directory -Path $fixture | Out-Null
+          Set-Location $fixture
+          git init -q -b main
+          git config user.email "smoke@example.com"
+          git config user.name "smoke"
+          # `npm exec --package <dir>` launches the PR's shim under real npm,
+          # with the same env (`npm_execpath` et al.) `npm init @vyuhlabs/dxkit`
+          # provides. `--dx-only` keeps the published init's work light (agent
+          # context only — no scanner provisioning on a bare runner).
+          npm exec --yes --package "$env:GITHUB_WORKSPACE\packages\create-dxkit" -- create-dxkit --dx-only --yes
+          if ($LASTEXITCODE -ne 0) { throw "create-dxkit exited $LASTEXITCODE" }
+          if (-not (Test-Path 'node_modules/@vyuhlabs/dxkit')) { throw 'dxkit was not installed into the fixture' }
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if (-not $pkg.devDependencies.'@vyuhlabs/dxkit') { throw 'dxkit devDependency was not declared' }
+
   pack-smoke:
     name: npm pack + init --full + baseline + guardrail
     runs-on: ubuntu-latest

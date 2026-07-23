@@ -1502,6 +1502,25 @@ if [ -n "$RULE14_SELFINVOKE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Rule 14, pre-install variant: the create-dxkit bootstrap shim runs BEFORE
+# any dxkit install exists, so a binary-name invocation (`npx vyuh-dxkit`)
+# 404s by construction there — the exact remedy string a Windows customer
+# hit in its install-failure text. Pre-install surfaces use the PACKAGE
+# form (`npx -y @vyuhlabs/dxkit …` / dxkitOneShotCli). The shim is a
+# separate zero-dep package, so it can't import the helper — this grep is
+# its net. Scoped to .js (the code whose strings print in a pre-install
+# context); the package README describes POST-install usage, where the
+# binary form is correct.
+RULE14_CREATE_DXKIT=$(grep -rn --include="*.js" "npx vyuh-dxkit" packages/create-dxkit/ 2>/dev/null \
+  | grep -v "// self-invocation-ok")
+if [ -n "$RULE14_CREATE_DXKIT" ]; then
+  echo "❌ Rule 14 violation: binary-form 'npx vyuh-dxkit' in create-dxkit (pre-install"
+  echo "   context — it 404s there; vyuh-dxkit is a binary name, not a package):"
+  echo "$RULE14_CREATE_DXKIT"
+  echo "   → Use the package form: npx -y @vyuhlabs/dxkit <subcommand>"
+  ERRORS=$((ERRORS + 1))
+fi
+
 # AST tree-lifecycle rule (wave-3 class-fix): repo-scale parsing goes through
 # the scoped withParsedFile(path, fn), never a raw parseFile loop.
 #

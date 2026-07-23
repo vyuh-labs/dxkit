@@ -29,7 +29,28 @@ Likely affected tests               Exact repair reason
 </p>
 <p align="center"><sub>Recorded from a real run on a synthetic repository, shortened for readability. Blocked and repaired inside the same warm loop.</sub></p>
 
-### See the gate run in about 20 seconds
+## Start in one command
+
+From the root of the repository you want to gate:
+
+```bash
+npm init @vyuhlabs/dxkit -- --claude-loop --yes
+```
+
+That is the whole setup. dxkit reads your stack, wires the agent context, arms
+the gates, installs the scanners a baseline needs, and captures today's
+baseline, so the repository is gated on the very next change. No questions, no
+homework. Undo anytime with `npx vyuh-dxkit uninstall`.
+
+<p align="center">
+  <img src=".github/assets/init-quickstart.gif" width="760" alt="vyuh-dxkit init reads the stack, wires the agent context, arms the gates, installs scanners, captures the baseline, and reports the repository is gated in about ten seconds." />
+</p>
+
+Existing findings are grandfathered, not approved. Only what a change _adds_
+from here can block. Already have dxkit installed? `init` detects the version
+and points you at `npx vyuh-dxkit update` instead of re-running setup.
+
+### Want to see the gate first, without installing anything?
 
 ```bash
 npx -y @vyuhlabs/dxkit@latest demo loop-guardrail
@@ -87,25 +108,6 @@ What you can rely on:
   passed.
 
 ---
-
-## Start in one command
-
-```bash
-npm init @vyuhlabs/dxkit -- --claude-loop --yes
-```
-
-That is the whole setup. dxkit reads your stack, wires the agent context, arms
-the gates, installs the scanners a baseline needs, and captures today's
-baseline, so the repository is gated on the very next change. No questions, no
-homework. Undo anytime with `npx vyuh-dxkit uninstall`.
-
-<p align="center">
-  <img src=".github/assets/init-quickstart.gif" width="760" alt="vyuh-dxkit init reads the stack, wires the agent context, arms the gates, installs scanners, captures the baseline, and reports the repository is gated in about ten seconds." />
-</p>
-
-Existing findings are grandfathered, not approved. Only what a change _adds_
-from here can block. Already have dxkit installed? `init` detects the version
-and points you at `npx vyuh-dxkit update` instead of re-running setup.
 
 ## See your code the way an agent should
 

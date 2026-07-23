@@ -45,6 +45,22 @@ export function dxkitCli(subcommand = ''): string {
 }
 
 /**
+ * The PRE-INSTALL form: a one-shot npx invocation by PACKAGE name, for
+ * surfaces shown to a user who has NOT installed dxkit anywhere (the demo's
+ * own hints, bootstrap-failure remedies). `dxkitCli` resolves a binary and
+ * therefore 404s in that context — `vyuh-dxkit` is a binary name, not a
+ * package. This is the form the README's demo command itself uses, so it is
+ * guaranteed to work wherever the user already got this far.
+ */
+export const DXKIT_ONE_SHOT_CLI = 'npx -y @vyuhlabs/dxkit';
+
+/** Build a pre-install one-shot invocation string.
+ *  `dxkitOneShotCli('tools install')` → `'npx -y @vyuhlabs/dxkit tools install'`. */
+export function dxkitOneShotCli(subcommand = ''): string {
+  return subcommand ? `${DXKIT_ONE_SHOT_CLI} ${subcommand}` : DXKIT_ONE_SHOT_CLI;
+}
+
+/**
  * The cwd-anchored form for a `.claude/settings.json` hook command
  * (`context-hook`, the loop Stop-gate). A Claude Code hook runs with the
  * AGENT'S current working directory, which can be any subdirectory the
