@@ -278,18 +278,27 @@ export interface LanguageSupport {
    * this pack determines exported state, surfaced in CLI / dashboard
    * help text when explaining exclusion or partial coverage.
    *
-   * Detection itself is implemented in the Python graphify-symbols
-   * extension (`src/analyzers/tools/graphify.ts`) — AST-based
-   * per-language patterns living next to the tree-sitter language
-   * dispatch. Packs declare the reliability promise here; the script
-   * keeps the per-language detection code organized.
+   * Detection itself runs in the graph translation layer
+   * (`src/analyzers/tools/graphify-translate.ts`), which calls the
+   * pack's `lineCheck` against the symbol's declaration line — the
+   * executable form of `strategy`. Pre-4.2 the per-language patterns
+   * lived as branches inside the generated graphify Python script,
+   * a Rule 2.30 mirror of these declarations that the arch-check
+   * could not see; `lineCheck` moves the fact into the pack.
    *
-   * Optional — packs without graphify symbol-extension coverage omit
-   * the field. Consumers treat absent as `'unreliable'`.
+   * Optional — packs without export detection omit the field.
+   * Consumers treat absent as `'unreliable'`.
    */
   exportDetection?: {
     reliability: 'full' | 'partial' | 'unreliable';
     strategy: string;
+    /**
+     * Decide exported-ness from the declaration line + symbol name.
+     * Return true/false when the line answers; null when it does not
+     * (caller records `exported: absent`). Only consulted when
+     * `reliability` is not `'unreliable'`.
+     */
+    lineCheck?: (line: string, name: string) => boolean | null;
   };
 
   /**

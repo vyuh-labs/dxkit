@@ -10,9 +10,11 @@ import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
  * change on our side. Real instances we shipped fixes for:
  *   - jscpd 5.x (Rust rewrite) dropped `--gitignore` + changed the report
  *     schema → exit 2.  (pinned jscpd@4.2.5)
- *   - graphifyy 0.8 changed an internal `cache_dir` signature.  (pinned
- *     graphifyy==0.8.40; the generated script now also drives graphify only
- *     through its public API)
+ *   - graphifyy 0.8 changed an internal `cache_dir` signature, and 0.9.0
+ *     changed the node-id scheme.  (pinned graphifyy==0.9.25; since the 4.2
+ *     driver rewrite dxkit drives graphify only through its supported CLI
+ *     and translates the emitted graph.json — bumping = re-running the
+ *     graph-bench matrix)
  *
  * This test locks every tool we install from a versioned GitHub release /
  * pinned npm-or-pip spec so the pin can't silently regress to "latest".
@@ -35,7 +37,7 @@ const PINNED_TOOLS: Record<string, string> = {
   pmd: '7.24.0',
   detekt: 'v1.23.6',
   ktlint: '1.5.0',
-  graphify: 'graphifyy==0.8.40',
+  graphify: 'graphifyy==0.9.25',
   jscpd: 'jscpd@4.2.5',
   // 2.10 version-pin sweep: defensive freezes for the dxkit-owned,
   // deterministic-output scanners so a future breaking major can't

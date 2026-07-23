@@ -540,6 +540,7 @@ export const php: LanguageSupport = {
     reliability: 'full',
     strategy:
       'public-by-default visibility semantics (no private/protected keyword on the declaration)',
+    lineCheck: (line) => !/\b(private|protected)\b/.test(line),
   },
 
   // PHPDoc block openers.

@@ -1069,6 +1069,7 @@ export const rust: LanguageSupport = {
   exportDetection: {
     reliability: 'full',
     strategy: '`pub`, `pub(crate)`, `pub(super)` visibility modifiers on items',
+    lineCheck: (line) => /^\s*pub(\s|\()/.test(line),
   },
 
   // D027 (2.4.7): rustdoc uses outer (`///`) and inner (`//!`)

@@ -1807,6 +1807,7 @@ export const typescript: LanguageSupport = {
     reliability: 'full',
     strategy:
       'TypeScript `export` keyword on top-level declarations + named `export { ... }` re-export blocks',
+    lineCheck: (line) => /^\s*export\b/.test(line),
   },
 
   // D027 (2.4.7): JSDoc / TSDoc block comments are the conventional

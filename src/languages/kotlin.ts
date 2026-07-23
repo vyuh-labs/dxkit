@@ -547,6 +547,7 @@ export const kotlin: LanguageSupport = {
     reliability: 'full',
     strategy:
       'Public-by-default modifier semantics (no `private` / `internal` / `protected` keyword)',
+    lineCheck: (line) => !/\b(private|internal|protected)\b/.test(line),
   },
 
   // D027 (2.4.7): KDoc uses the JSDoc-style `/**` block opener.
