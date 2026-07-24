@@ -140,6 +140,24 @@ describe('gatherSourceFiles', () => {
     expect(files[0].path).toBe('src/app.ts');
   });
 
+  it('exempts pack-declared tooling-config files from test-gap candidacy (4.2)', () => {
+    // The shipped class: a change that legitimately adds jest.config.js +
+    // jest.setup.js was BLOCKED for two net-new test-gaps — nobody unit-tests
+    // a jest config. KNOWN basenames only (false-negative bias): a real
+    // source file merely named like config still counts.
+    writeFile('src/app.ts', 'export const x = 1;\n'.repeat(10));
+    writeFile('jest.config.js', 'module.exports = { testEnvironment: "node" };');
+    writeFile('jest.setup.js', 'global.fetch = () => {};');
+    writeFile('vite.config.ts', 'export default {};');
+    writeFile('src/configurator.ts', 'export const conf = 1;\n'.repeat(5)); // real code
+    const files = gatherSourceFiles(tmp, TS_FLAGS).map((f) => f.path);
+    expect(files).toContain('src/app.ts');
+    expect(files).toContain('src/configurator.ts');
+    expect(files).not.toContain('jest.config.js');
+    expect(files).not.toContain('jest.setup.js');
+    expect(files).not.toContain('vite.config.ts');
+  });
+
   it('classifies controllers using the active pack vocabulary', () => {
     writeFile('src/controllers/user.ts', 'export class UserController {}\n'.repeat(5));
     const files = gatherSourceFiles(tmp, TS_FLAGS);

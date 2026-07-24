@@ -463,6 +463,14 @@ export const ${id}: LanguageSupport = {
   // Include build artifact dirs specific to this ecosystem.
   extraExcludes: [],
 
+  // TODO(${id}): OPTIONAL — known tooling-config BASENAMES that carry this
+  // language's source extension but are build/test/bundler config, not
+  // test-gap candidates (e.g. jest.config.*, build.gradle.kts,
+  // Package.swift). KNOWN names only — false-negative bias; a real source
+  // file merely named like config still counts. Omit when the ecosystem has
+  // none.
+  // toolingConfigPatterns: [],
+
   detect: detect${capitalize(id)},
 
   // TODO(${id}): list TOOL_DEFS keys this pack relies on. Every entry must
@@ -594,6 +602,13 @@ export const ${id}: LanguageSupport = {
   // PATH, or may be an absolute interpreter path the pack resolved itself. The
   // field is REQUIRED on LanguageSupport — this scaffold wires a DORMANT (both
   // builders return null) provider so the pack compiles; fill in real commands
+  //
+  // OPTIONAL third member \`resolutionCheck\` (4.2): for INTERPRETED stacks
+  // only — a pure, read-only tri-state (clean / unresolved[] / disclosed-skip)
+  // verifying bare import specifiers resolve against the installed dependency
+  // tree (the phantom-dependency class). Compiled languages DECLINE by
+  // omission: their compiler IS the resolution check. See the typescript
+  // pack's tsResolutionCheck for the reference implementation + bias rules.
   // before ship. syntaxCheck = the cheap "does it compile/parse" check every
   // language can give; affectedTests = run the tests the change reaches (native
   // impact-selection where the ecosystem supports it, else a coarser fallback

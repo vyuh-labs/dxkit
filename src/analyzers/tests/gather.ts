@@ -9,7 +9,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { walkSourceFiles } from '../tools/walk-source-files';
-import { allModelPaths, allPrimaryComponentPaths, allTestGapPriorityPaths } from '../../languages';
+import {
+  allModelPaths,
+  allPrimaryComponentPaths,
+  allTestGapPriorityPaths,
+  allToolingConfigPatterns,
+  isToolingConfigFile,
+} from '../../languages';
 import type { DetectedStack } from '../../types';
 import { TestFile, SourceFile, RiskTier } from './types';
 
@@ -177,9 +183,17 @@ export function gatherSourceFiles(
   const primaryPaths = allPrimaryComponentPaths(flags);
   const modelPaths = allModelPaths(flags);
   const taxonomy = allTestGapPriorityPaths(flags);
+  // Tooling-config files (jest.config.js, build.gradle.kts, Package.swift…)
+  // carry a source extension but are not test-gap candidates — nobody
+  // unit-tests a jest config, and a policy that arms test-gap would
+  // FALSE-BLOCK a change that legitimately adds one (4.2). Pack-declared
+  // KNOWN basenames only (Rule 6), filtered here at the ONE gather so the
+  // baseline producer and the guardrail see the identical set.
+  const toolingConfig = allToolingConfigPatterns(flags);
 
   const files: SourceFile[] = [];
   for (const p of sources) {
+    if (isToolingConfigFile(p, toolingConfig)) continue;
     const fullPath = path.join(cwd, p);
     let lines = 0;
     try {
