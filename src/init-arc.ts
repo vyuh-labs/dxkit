@@ -367,6 +367,16 @@ async function runFinishingArc(
       const modeWord =
         result.mode.mode === 'committed-sanitized' ? 'committed (sanitized)' : 'committed';
       bl.note(`private repo → ${modeWord} baseline`);
+      // CI-canonical capture (4.2): a local first capture stamps THIS
+      // machine's toolchain into recall; the shipped refresh surface
+      // re-captures in CI, converging recall to the environment the required
+      // check runs in. Said here so the transient window is a known state,
+      // not a surprise drift warning later.
+      if (result.file.capturedIn === 'local' && opts.surfaces.some((s) => /ci/i.test(s))) {
+        bl.note(
+          'captured with your local toolchain — the CI refresh re-captures canonically on the first merge/scheduled run',
+        );
+      }
       // A class this environment could not observe (a scanner your package index
       // couldn't reach, a wrong-host build gate) is recorded as DEFERRED, not
       // fail-open-committed as if measured. It completes on CI with the

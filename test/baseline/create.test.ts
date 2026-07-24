@@ -347,3 +347,52 @@ describe('createBaseline (integration)', () => {
     });
   });
 });
+
+describe('capture-environment provenance (4.2 CI-canonical capture)', () => {
+  it('scanToBaselineFile stamps capturedIn, injectable and env-derived', async () => {
+    const { scanToBaselineFile, captureEnvironmentKind } =
+      await import('../../src/baseline/create');
+    // Injection wins (deterministic tests / callers that know better).
+    const scan = {
+      repoState: { commitSha: 'x', branch: 'b', dirty: false },
+      analysisMeta: {
+        dxkitVersion: 't',
+        policyHash: '',
+        ignoreHash: '',
+        toolchainHash: '',
+        configHash: '',
+      },
+      tools: {},
+      saltMode: 'none',
+      recall: {},
+      coverage: [],
+      deferred: [],
+      findings: [],
+      producerCtx: {},
+    } as never;
+    const file = scanToBaselineFile(scan, { name: 'main', findings: [], capturedIn: 'ci' });
+    expect(file.capturedIn).toBe('ci');
+    // Default derives from the environment: inside this test run, CI env vars
+    // decide — assert agreement with the one helper rather than a fixed value.
+    const derived = scanToBaselineFile(scan, { name: 'main', findings: [] });
+    expect(derived.capturedIn).toBe(captureEnvironmentKind());
+  });
+
+  it('captureEnvironmentKind reads the CI markers', async () => {
+    const { captureEnvironmentKind } = await import('../../src/baseline/create');
+    const prevGA = process.env.GITHUB_ACTIONS;
+    const prevCI = process.env.CI;
+    try {
+      process.env.GITHUB_ACTIONS = 'true';
+      expect(captureEnvironmentKind()).toBe('ci');
+      delete process.env.GITHUB_ACTIONS;
+      delete process.env.CI;
+      expect(captureEnvironmentKind()).toBe('local');
+    } finally {
+      if (prevGA !== undefined) process.env.GITHUB_ACTIONS = prevGA;
+      else delete process.env.GITHUB_ACTIONS;
+      if (prevCI !== undefined) process.env.CI = prevCI;
+      else delete process.env.CI;
+    }
+  });
+});
