@@ -17,7 +17,12 @@ import {
   checkKey,
   type FloorBaseCheck,
 } from '../src/analyzers/correctness/attribution';
-import { netNewFloorFailures, type FloorBaseline } from '../src/loop/floor-state';
+import {
+  netNewFloorFailures,
+  readFloorBaseline,
+  writeFloorBaseline,
+  type FloorBaseline,
+} from '../src/loop/floor-state';
 import {
   runFloorForSurface,
   attributeCiFloorOutcome,
@@ -57,6 +62,56 @@ describe('attributeFloorFailures (the lattice)', () => {
     expect(byKey.get('ts:typecheck')).toBe('net-new');
     expect(byKey.get('ts:affected-tests')).toBe('pre-existing');
     expect(byKey.get('kotlin:compile')).toBe('unattributed');
+  });
+
+  describe('finding-level attribution (import-resolution granularity)', () => {
+    const failWith = (findings: string[]): CorrectnessCheckResult => ({
+      ...fail('ts', 'import-resolution'),
+      findings,
+    });
+
+    it('an already-red check still yields NET-NEW on a new finding (the grandfather hole)', () => {
+      // Base: 'old-debt' unresolved. Current: 'old-debt' AND 'form-data'.
+      // Check-level comparison would say pre-existing and wave it through —
+      // exactly how a repo with debt would grandfather every future break.
+      const out = attributeFloorFailures(
+        result([failWith(['old-debt', 'form-data'])]),
+        [{ pack: 'ts', label: 'import-resolution', status: 'fail', findings: ['old-debt'] }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0].attribution).toBe('net-new');
+      expect(out[0].netNewFindings).toEqual(['form-data']);
+    });
+
+    it('the identical finding set stays pre-existing (no false block on unchanged debt)', () => {
+      const out = attributeFloorFailures(
+        result([failWith(['old-debt'])]),
+        [{ pack: 'ts', label: 'import-resolution', status: 'fail', findings: ['old-debt'] }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(out[0].attribution).toBe('pre-existing');
+      expect(out[0].netNewFindings).toBeUndefined();
+    });
+
+    it('a base failure with NO recorded findings stays check-level (never fabricate precision)', () => {
+      const out = attributeFloorFailures(
+        result([failWith(['form-data'])]),
+        [{ pack: 'ts', label: 'import-resolution', status: 'fail' }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(out[0].attribution).toBe('pre-existing');
+      expect(out[0].netNewFindings).toBeUndefined();
+    });
+
+    it('a base PASS with a current findings-failure is plain net-new (check-level path)', () => {
+      const out = attributeFloorFailures(
+        result([failWith(['form-data'])]),
+        [{ pack: 'ts', label: 'import-resolution', status: 'pass' }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(out[0].attribution).toBe('net-new');
+    });
   });
 
   it('absent from base takes the DECLARED policy — both modes', () => {
@@ -116,6 +171,50 @@ describe('PARITY: the loop wrapper preserves its exact semantics through the one
     // Null snapshot: every failure net-new (fails toward blocking) — both paths.
     const current = result([fail('ts', 'typecheck')]);
     expect(netNewFloorFailures(current, null)).toHaveLength(1);
+  });
+
+  it('narrows a finding-level net-new to the NEW findings in the repair payload', () => {
+    // The loop's entry snapshot recorded pre-existing unresolved-import debt;
+    // a later Stop adds a new one. The wrapper must (a) block, (b) hand the
+    // model the NEW finding, not the grandfathered backlog.
+    const snapshot: FloorBaseline = {
+      capturedAtCommit: 'abc',
+      checks: [{ pack: 'ts', label: 'import-resolution', status: 'fail', findings: ['old-debt'] }],
+    };
+    const current = result([
+      {
+        ...fail('ts', 'import-resolution'),
+        findings: ['old-debt', 'form-data'],
+        output: 'both listed here',
+      },
+    ]);
+    const netNew = netNewFloorFailures(current, snapshot);
+    expect(netNew).toHaveLength(1);
+    expect(netNew[0].findings).toEqual(['form-data']);
+    expect(netNew[0].output).toContain('net-new (this change): form-data');
+    // And the unchanged set stays grandfathered — no block.
+    const unchanged = result([{ ...fail('ts', 'import-resolution'), findings: ['old-debt'] }]);
+    expect(netNewFloorFailures(unchanged, snapshot)).toHaveLength(0);
+  });
+
+  it('the entry snapshot PERSISTS finding identities (write→read roundtrip)', () => {
+    // Without this the finding-level comparator silently degrades to
+    // check-level on every real loop — the snapshot is the base side.
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-floorstate-'));
+    try {
+      const run = result([
+        { ...fail('ts', 'import-resolution'), findings: ['old-debt'] },
+        pass('ts', 'typecheck'),
+      ]);
+      writeFloorBaseline(dir, run, 'deadbeef');
+      const read = readFloorBaseline(dir);
+      expect(read?.checks).toEqual([
+        { pack: 'ts', label: 'import-resolution', status: 'fail', findings: ['old-debt'] },
+        { pack: 'ts', label: 'typecheck', status: 'pass' },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -301,6 +301,10 @@ export async function attributeCiFloorOutcome(
           pack: c.pack as string,
           label: c.label,
           status: c.status === 'pass' || c.status === 'fail' ? c.status : ('skipped' as const),
+          // Finding-level identities carry through so the comparator can diff
+          // the set (a base already red in import-resolution still yields
+          // net-new on a NEW unresolved specifier).
+          ...(c.findings ? { findings: c.findings } : {}),
         }));
   const attributed = attributeFloorFailures(outcome.result, baseChecks, {
     absentMeans: 'unattributed',
@@ -313,7 +317,11 @@ export async function attributeCiFloorOutcome(
   if (netNew.length > 0) {
     parts.push(
       `correctness floor: ${netNew.length} NET-NEW failure(s) vs ${baseSha.slice(0, 12)} — ${netNew
-        .map((a) => `${a.check.pack} ${a.check.label}`)
+        .map(
+          (a) =>
+            `${a.check.pack} ${a.check.label}` +
+            (a.netNewFindings ? ` (${a.netNewFindings.join(', ')})` : ''),
+        )
         .join(', ')}`,
     );
   } else {

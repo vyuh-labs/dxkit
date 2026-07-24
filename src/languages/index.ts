@@ -11,6 +11,7 @@ import type {
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { CapabilityRequirement } from '../execution';
+import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { csharp } from './csharp';
 import { go } from './go';
 import { python } from './python';
@@ -236,22 +237,10 @@ export function anyActivePackSupportsSnykCode(flags: DetectedStack['languages'])
  * organizes tests by directory is classified correctly in any language,
  * and why adding a new pack inherits them for free.
  *
- * Path-anchored (each contains `/`), so `splitTestFilePatterns` routes
- * them to the path matcher: `__tests__/**` matches `src/__tests__/a.ts`
- * AND `a/b/__tests__/c.ts` (anywhere in the tree). The walker only
- * evaluates these against files that already passed the source-extension
- * filter, so non-source files under a test dir are never misclassified.
- *
- * `__mocks__/` is intentionally excluded — mocks are test *support*, not
- * tests, and counting them would inflate the test-file ratio.
+ * Definition lives in the LEAF module `test-dir-patterns.ts` (re-exported
+ * here) so a pack can consume it without a module cycle — see that file.
  */
-export const UNIVERSAL_TEST_DIR_PATTERNS: readonly string[] = [
-  '__tests__/**',
-  'test/**',
-  'tests/**',
-  'spec/**',
-  'e2e/**',
-];
+export { UNIVERSAL_TEST_DIR_PATTERNS };
 
 /**
  * All test-file patterns: each pack's language-specific filename

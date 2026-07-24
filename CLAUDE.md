@@ -860,7 +860,18 @@ never hardcodes a per-language command (mirror of Rule 6):
   native impact-selection where the ecosystem supports it, else a
   coarser fallback with CI's `full` scope as the backstop). Each returns
   a `{ label, bin, args }` command or null. A pack NEVER shells out
-  itself.
+  itself. A pack may additionally declare `resolutionCheck` (4.2) — a
+  pure, read-only, tri-state computation (clean / unresolved[] /
+  disclosed-skip) verifying every bare import specifier resolves against
+  the installed dependency tree: the floor BETWEEN "compiles" and
+  "bundles" that interpreted stacks lack (the phantom-dependency class —
+  a lockfile change un-hoists a package that source imports but no
+  manifest declares). Finding-level identity (per unresolved specifier)
+  flows through the ONE attribution comparator, so an already-red repo
+  still blocks on a NEW break. Compiled packs decline by omission (their
+  compiler IS the check). Biased hard toward false negatives: skips are
+  DISCLOSED (no install, PnP, unmodeled bundler aliases, implausibly
+  many misses), never silent, never a false block.
 - **Dispatched** via `activeCorrectnessProviders(packs)` in
   `src/languages/index.ts`.
 - **Executed** via the ONE canonical runner
@@ -869,7 +880,14 @@ never hardcodes a per-language command (mirror of Rule 6):
   (non-zero exit blocks), fail-OPEN on infrastructure (missing binary /
   timeout → skipped, never a block — a slow or un-installed toolchain is
   not broken code; CI is the backstop). Command execution is injected
-  for tests.
+  for tests. The runner also owns MANIFEST-AWARE SCOPE (4.2): a diff
+  touching the pack-declared `manifestPatterns` union escalates an
+  `affected` run to `full` — a dependency change alters module
+  resolution for every file, so the per-pack "no source changed → skip"
+  heuristics must never see it (the shipped class: a dep-override PR
+  whose diff was manifests + docs ran NOTHING and broke the build).
+  Decided once here, never per-pack; the escalation is a disclosed
+  `scopeEscalated` on the result, rendered by every surface.
 - **Diff-scoped, without a baseline artifact.** The loop Stop-gate
   captures an ENTRY SNAPSHOT of the already-broken set on the pristine
   tree at activation (`src/loop/floor-state.ts`, `vyuh-dxkit loop

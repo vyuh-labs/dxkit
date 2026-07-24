@@ -70,6 +70,17 @@ export interface WalkOpts {
 
   /** Restrict to one language pack's `sourceExtensions`. Default: all. */
   packId?: LanguageId;
+
+  /** Explicit test-file patterns to filter with when `includeTests` is
+   *  false. Default: the registry union (`allTestFilePatterns()`). A caller
+   *  INSIDE a language pack must pass its own pack's patterns here — the
+   *  registry default reads `LANGUAGES`, which is holed when a pack is the
+   *  entry module (see the module-cycle note above). */
+  testFilePatterns?: string[];
+
+  /** Explicit autogen basename patterns to filter with when
+   *  `includeAutogen` is false. Same pack-path rule as `testFilePatterns`. */
+  autogenPatterns?: string[];
 }
 
 interface ResolvedOpts {
@@ -132,11 +143,14 @@ function resolveOpts(opts: WalkOpts): ResolvedOpts {
     includeAutogen,
     respectIgnore: opts.respectIgnore ?? true,
     // Only resolve autogen / test patterns from the registry when they
-    // will actually be used as a filter (i.e. when NOT including them).
-    autogenBasenamePatterns: includeAutogen ? [] : allAutogenSourcePatterns(),
+    // will actually be used as a filter (i.e. when NOT including them) AND
+    // the caller supplied none explicitly (the pack path always does).
+    autogenBasenamePatterns: includeAutogen
+      ? []
+      : (opts.autogenPatterns ?? allAutogenSourcePatterns()),
     testFilePatterns: includeTests
       ? { nameOnly: [], pathAnchored: [] }
-      : splitTestPatterns(allTestFilePatterns()),
+      : splitTestPatterns(opts.testFilePatterns ?? allTestFilePatterns()),
   };
 }
 
@@ -147,6 +161,8 @@ function cacheKeyFor(opts: WalkOpts): string {
     opts.includeAutogen ?? false,
     opts.respectIgnore ?? true,
     opts.packId ?? null,
+    opts.testFilePatterns ?? null,
+    opts.autogenPatterns ?? null,
   ]);
 }
 

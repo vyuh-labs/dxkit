@@ -282,6 +282,99 @@ describe('runCorrectnessFloor', () => {
     });
   });
 
+  describe('resolutionCheck integration (the import-resolution floor)', () => {
+    const ok: CommandExec = () => ({ available: true, code: 0, output: '' });
+    function resPack(result: unknown): LanguageSupport {
+      return {
+        id: 'ts',
+        correctness: {
+          execution: () => ({
+            hosts: ['any' as const],
+            toolchains: [],
+            needsBuild: false,
+            buildTarget: 'none' as const,
+            weight: 'cheap' as const,
+          }),
+          syntaxCheck: () => null,
+          affectedTests: () => null,
+          resolutionCheck: () => {
+            if (result instanceof Error) throw result;
+            return result;
+          },
+        },
+      } as unknown as LanguageSupport;
+    }
+
+    it('clean → pass', () => {
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [resPack({ kind: 'clean', checkedSpecifiers: 42 })],
+        exec: ok,
+      });
+      expect(r.checks).toEqual([
+        { pack: 'ts', label: 'import-resolution', bin: '', status: 'pass' },
+      ]);
+      expect(r.blocks).toBe(false);
+    });
+
+    it('unresolved → fail, with finding-level identities keyed by specifier', () => {
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [
+          resPack({
+            kind: 'unresolved',
+            unresolved: [
+              { specifier: 'form-data', file: 'src/upload.js' },
+              { specifier: 'form-data', file: 'src/other.js' }, // same root cause
+              { specifier: 'left-pad', file: 'src/pad.js' },
+            ],
+          }),
+        ],
+        exec: ok,
+      });
+      expect(r.blocks).toBe(true);
+      const check = r.checks[0];
+      expect(check.status).toBe('fail');
+      expect(check.findings).toEqual(['form-data', 'left-pad']); // deduped
+      expect(check.output).toContain("'form-data' does not resolve");
+      expect(check.output).toContain('src/upload.js');
+    });
+
+    it('skipped → disclosed fail-open skip, surfaced by the disclosure helper', async () => {
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [resPack({ kind: 'skipped', reason: 'dependencies are not installed' })],
+        exec: ok,
+      });
+      expect(r.blocks).toBe(false);
+      expect(r.checks[0].status).toBe('skipped-unavailable');
+      const { describeEnvironmentSkips } = await import('../src/analyzers/correctness/run');
+      expect(
+        describeEnvironmentSkips(r).some((l) => l.includes('dependencies are not installed')),
+      ).toBe(true);
+    });
+
+    it('a throwing check is infrastructure: disclosed skip, never a verdict', () => {
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [resPack(new Error('walker exploded'))],
+        exec: ok,
+      });
+      expect(r.blocks).toBe(false);
+      expect(r.checks[0].status).toBe('skipped-unavailable');
+      expect(r.checks[0].output).toContain('walker exploded');
+    });
+
+    it('a pack without the optional capability contributes no resolution check', () => {
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [pack('go', cmd('compile', 'go'), null)],
+        exec: ok,
+      });
+      expect(r.checks.map((c) => c.label)).toEqual(['compile']);
+    });
+  });
+
   it('describes a floor result', () => {
     const exec: CommandExec = (c) =>
       c.bin === 'tsc'

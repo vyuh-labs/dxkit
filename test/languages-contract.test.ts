@@ -409,6 +409,20 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         expect(Array.isArray(cmd.args)).toBe(true);
       }
     }
+    // The OPTIONAL import-resolution check (4.2): a pack that declares it must
+    // return a well-formed tri-state and never throw — including on a repo
+    // that does not exist (the fail-open contract: the answer there is a
+    // disclosed skip, not an exception the runner has to absorb).
+    if (c.resolutionCheck) {
+      const res = c.resolutionCheck(ctx);
+      expect(['clean', 'unresolved', 'skipped']).toContain(res.kind);
+      if (res.kind === 'skipped') {
+        expect(
+          res.reason.length,
+          `${lang.id}: a resolution-check skip must disclose its reason`,
+        ).toBeGreaterThan(0);
+      }
+    }
   });
 
   // custom-check flagship: every pack declares a lint-GATE provider (Rule 6),
