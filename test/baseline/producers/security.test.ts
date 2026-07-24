@@ -87,6 +87,21 @@ describe('securityAggregateToBaselineEntries', () => {
     expect(kinds).toEqual(['secret', 'code', 'config', 'dep-vuln']);
   });
 
+  it('persists each finding’s OBSERVED severity on the entry (4.2 — debt ordering is real, not kind-default)', () => {
+    const aggregate = emptyAggregate({
+      findingsByCategory: {
+        secret: [codeFinding({ category: 'secret', severity: 'critical' })],
+        code: [codeFinding({ category: 'code', severity: 'low' })],
+        config: [codeFinding({ category: 'config', severity: 'medium', line: 0 })],
+        dependency: [depFinding({ severity: 'high' })],
+      },
+    });
+    const severities = securityAggregateToBaselineEntries(aggregate).map(
+      (e) => (e as { severity?: string }).severity,
+    );
+    expect(severities).toEqual(['critical', 'low', 'medium', 'high']);
+  });
+
   it('stamps the matching `identityFor` value on each entry', () => {
     const code = codeFinding({
       category: 'code',

@@ -97,6 +97,7 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(f.severity !== undefined ? { severity: f.severity } : {}),
       ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
@@ -123,6 +124,7 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(f.severity !== undefined ? { severity: f.severity } : {}),
       ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
@@ -152,6 +154,7 @@ export function securityAggregateToBaselineEntries(
       rule: f.rule,
       file: f.file,
       line: f.line,
+      ...(f.severity !== undefined ? { severity: f.severity } : {}),
       ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
@@ -172,6 +175,7 @@ export function securityAggregateToBaselineEntries(
       kind: 'dep-vuln',
       package: f.package,
       advisoryId: f.id,
+      ...(f.severity !== undefined ? { severity: f.severity } : {}),
       ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
     };
     out.push(entry);
