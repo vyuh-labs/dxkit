@@ -182,6 +182,7 @@ describe('computeStopGate', () => {
       checks: CorrectnessCheckResult[],
       netNew: CorrectnessCheckResult[],
     ): FloorGateOutcome => ({
+      kind: 'ran',
       result: {
         ran: checks.some((c) => c.status === 'pass' || c.status === 'fail'),
         checks,
@@ -229,14 +230,42 @@ describe('computeStopGate', () => {
       expect(d.event.tests_status).toBe('pass');
     });
 
-    it('is a no-op when no pack provides a floor (null)', async () => {
+    it('is a disclosed no-op when no pack provides a floor', async () => {
       const d = await computeStopGate(
         '/repo',
         { session_id: 's' },
         async () => payload([]),
-        () => null,
+        () => ({ kind: 'unavailable', reason: 'no active language pack provides a floor' }),
       );
       expect(d.outcome).toBe('allow');
+      expect(d.event.floor_status).toBe('unavailable');
+      expect(d.event.floor_detail).toContain('no active language pack');
+    });
+
+    it('an internal floor error is fail-open but DISCLOSED, never silent (4.2)', async () => {
+      // The pre-4.2 shape returned null here — indistinguishable from "no
+      // floor configured": a gate silently not enforcing while looking
+      // healthy. The allow is unchanged; the ledger now says why.
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => ({ kind: 'internal-error', message: 'detectActiveLanguages exploded' }),
+      );
+      expect(d.outcome).toBe('allow'); // fail-open stays fail-open
+      expect(d.event.floor_status).toBe('internal-error');
+      expect(d.event.floor_detail).toContain('exploded');
+    });
+
+    it('records floor_status ran on a clean stop with a live floor', async () => {
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        () => floor([passCheck('typecheck')], []),
+      );
+      expect(d.event.floor_status).toBe('ran');
+      expect(d.event.floor_detail).toBeUndefined();
     });
 
     it('does not consult the floor when the guardrail already blocks', async () => {
@@ -247,7 +276,7 @@ describe('computeStopGate', () => {
         async () => payload([blockingPair()]),
         () => {
           floorCalled = true;
-          return null;
+          return { kind: 'unavailable', reason: 'not reached' };
         },
       );
       expect(d.outcome).toBe('block-model'); // guardrail block, not floor

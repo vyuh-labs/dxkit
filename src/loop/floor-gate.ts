@@ -27,16 +27,25 @@ import { clearStateCache } from './gate-cache';
 import { type CheckStatus } from './ledger';
 
 /**
- * The correctness-floor outcome for one Stop: the full run plus the failures
- * that are net-new vs the loop's entry snapshot. `runFloor` (injected into
- * `computeStopGate`) returns this, or null when no active pack provides a
- * correctness floor. The gate blocks only on `netNew` — a pre-existing failure
- * recorded in the entry snapshot never blocks.
+ * The correctness-floor outcome for one Stop, as a TYPED union — never a bare
+ * null. The pre-4.2 shape returned null for "disabled", "no floor-capable
+ * pack", "everything skipped" AND "the floor runner itself threw", so an
+ * internal error was indistinguishable from a repo with no floor — a gate
+ * silently not enforcing while looking healthy (the fail-open-gate
+ * diagnosability class). Fail-open stays fail-open: neither non-`ran` lane
+ * ever blocks — it just always says why, and the ledger records it.
+ *
+ * The gate blocks only on `netNew` — a pre-existing failure recorded in the
+ * entry snapshot never blocks.
  */
-export interface FloorGateOutcome {
-  readonly result: CorrectnessFloorResult;
-  readonly netNew: readonly CorrectnessCheckResult[];
-}
+export type FloorGateOutcome =
+  | {
+      readonly kind: 'ran';
+      readonly result: CorrectnessFloorResult;
+      readonly netNew: readonly CorrectnessCheckResult[];
+    }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+  | { readonly kind: 'internal-error'; readonly message: string };
 
 /** Derive the ledger's typecheck / tests status from a floor run. A failing
  *  check dominates; else a check that ran is `pass`; else `not_configured`. */
@@ -131,19 +140,23 @@ function resolveFloorBase(repoDir: string): string {
 /**
  * The production correctness-floor gate for one Stop: resolve the active packs,
  * scope to the files changed vs the loop base, run the AFFECTED floor, and diff
- * it against the loop's entry snapshot. Returns null when no active pack
- * provides a floor (nothing to run) or when nothing actually executed. Best-
- * effort — any error returns null so the floor can never break the gate; the
- * finding guardrail still runs regardless.
+ * it against the loop's entry snapshot. Every non-`ran` path is a NAMED lane
+ * (disabled / no pack / all-skipped / internal error) — fail-open, never a
+ * block, never a silent null; the finding guardrail still runs regardless.
  */
-export function buildFloorGate(repoDir: string): FloorGateOutcome | null {
+export function buildFloorGate(repoDir: string): FloorGateOutcome {
   try {
     // The loop Stop-gate is default-on, but an explicit flag / DXKIT_FLOOR_LOOP /
     // policy can disable the floor here — resolve through the one canonical
     // surface resolver so this default never drifts from the other surfaces.
-    if (!resolveCorrectnessSurface({ surface: 'loop-stop', cwd: repoDir }).enabled) return null;
+    const surface = resolveCorrectnessSurface({ surface: 'loop-stop', cwd: repoDir });
+    if (!surface.enabled) {
+      return { kind: 'unavailable', reason: `floor disabled — ${surface.reason}` };
+    }
     const packs = detectActiveLanguages(repoDir).filter((p) => p.correctness);
-    if (packs.length === 0) return null;
+    if (packs.length === 0) {
+      return { kind: 'unavailable', reason: 'no active language pack provides a floor' };
+    }
     const base = resolveFloorBase(repoDir);
     // Empty changedFiles (no base, or diff undeterminable) → the packs treat
     // the scope as full, per the CorrectnessContext contract.
@@ -160,10 +173,20 @@ export function buildFloorGate(repoDir: string): FloorGateOutcome | null {
       timeoutMs: floorTimeoutMs(),
       packs,
     });
-    if (!result.ran) return null; // every check skipped (toolchain absent) → no-op
-    return { result, netNew: netNewFloorFailures(result, readFloorBaseline(repoDir)) };
-  } catch {
-    return null; // fail-open: the floor must never break the gate
+    if (!result.ran) {
+      return {
+        kind: 'unavailable',
+        reason: 'every floor check skipped (toolchain not present) — CI is the backstop',
+      };
+    }
+    return { kind: 'ran', result, netNew: netNewFloorFailures(result, readFloorBaseline(repoDir)) };
+  } catch (err) {
+    // Fail-open: the floor must never break the gate — but an internal error
+    // is DISCLOSED, never folded into "no floor here".
+    return {
+      kind: 'internal-error',
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
