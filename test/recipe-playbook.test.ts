@@ -469,6 +469,34 @@ describe('recipe playbook — synthetic pack', () => {
     expect(playbookChecks).toContain('playbook-tests');
   });
 
+  // 4.2: the floor's manifest-aware scope escalation consumes the SAME
+  // pack-declared `manifestPatterns` union as the dep-audit skip (Rule 6 /
+  // Rule 2.30 — one manifest concept, one code path), so a change to the
+  // synthetic pack's distinctive lockfile must escalate an `affected` run to
+  // `full` with the file named — no per-pack or hardcoded manifest list.
+  it('runCorrectnessFloor escalates on the mock pack manifest patterns (4.2 manifest-aware scope)', () => {
+    const packs = [...LANGUAGES];
+    const result = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['playbook.lock', 'README.md'],
+      scope: 'affected',
+      packs,
+      exec: () => ({ available: true, code: 0, output: '' }),
+    });
+    expect(result.scopeEscalated?.reason).toBe('dependency-manifest-changed');
+    expect(result.scopeEscalated?.files).toContain('playbook.lock');
+    // And a source-only diff does NOT escalate — the over-escalation direction
+    // (every fast run silently paying the full suite) is the dangerous one.
+    const sourceOnly = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['a.pbk'],
+      scope: 'affected',
+      packs,
+      exec: () => ({ available: true, code: 0, output: '' }),
+    });
+    expect(sourceOnly.scopeEscalated).toBeUndefined();
+  });
+
   // custom-check flagship: the lint gate iterates `activeLintGateProviders`, so a
   // synthetic pack that declares a `lintGate` provider must surface a
   // `lint:<pack>` spec through `lintGateSpecs` — codifying "the lint gate is a

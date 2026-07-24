@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   runCorrectnessFloor,
   describeCorrectnessFloor,
+  describeScopeEscalation,
   makeCommandExec,
   type CommandExec,
 } from '../src/analyzers/correctness/run';
@@ -178,6 +179,107 @@ describe('runCorrectnessFloor', () => {
     const out = exec({ bin: 'node', args: ['-e', 'process.exit(0)'] }, process.cwd());
     expect(out.timedOut).toBeFalsy();
     expect(out.code).toBe(0);
+  });
+
+  describe('manifest-aware scope (the dep-override under-block class)', () => {
+    /** A pack that mimics the real affected-scope heuristic: at `affected`
+     *  with a diff that touched no source file it declines the test run, at
+     *  `full` it always runs. Declares manifest patterns like a real pack. */
+    function scopedPack(id: string, patterns: string[]): LanguageSupport {
+      return {
+        id,
+        capabilities: { depVulns: { manifestPatterns: patterns } },
+        correctness: {
+          execution: () => ({
+            hosts: ['any' as const],
+            toolchains: [],
+            needsBuild: false,
+            buildTarget: 'none' as const,
+            weight: 'cheap' as const,
+          }),
+          syntaxCheck: () => null,
+          affectedTests: (ctx: CorrectnessContext) => {
+            const source = ctx.changedFiles.filter((f) => f.endsWith('.ts'));
+            if (ctx.scope === 'affected' && ctx.changedFiles.length > 0 && source.length === 0) {
+              return null; // "docs-only, nothing to run" — the heuristic D1 defeats
+            }
+            return cmd('affected-tests', 'vitest');
+          },
+        },
+      } as unknown as LanguageSupport;
+    }
+    const ok: CommandExec = () => ({ available: true, code: 0, output: '' });
+
+    it('a manifest-only diff escalates affected → full: the suite RUNS and the escalation is disclosed', () => {
+      // The shipped class: the diff was package.json + lockfile + docs — zero
+      // source files — so the pack heuristic skipped everything while the
+      // lockfile change broke module resolution repo-wide. The runner must
+      // escalate BEFORE the pack sees the scope.
+      const r = runCorrectnessFloor({
+        cwd: '/repo',
+        changedFiles: ['package.json', 'package-lock.json', 'docs/x.md'],
+        scope: 'affected',
+        packs: [scopedPack('ts', ['package.json', 'package-lock.json'])],
+        exec: ok,
+      });
+      expect(r.checks.map((c) => c.label)).toEqual(['affected-tests']); // ran, not skipped
+      expect(r.scopeEscalated).toEqual({
+        reason: 'dependency-manifest-changed',
+        files: ['package.json', 'package-lock.json'],
+      });
+      expect(describeScopeEscalation(r)).toContain('package-lock.json');
+      expect(describeScopeEscalation(r)).toContain('full suite');
+    });
+
+    it('a source-only diff stays at affected scope (no escalation)', () => {
+      const r = runCorrectnessFloor({
+        cwd: '/repo',
+        changedFiles: ['src/a.ts'],
+        scope: 'affected',
+        packs: [scopedPack('ts', ['package.json', 'package-lock.json'])],
+        exec: ok,
+      });
+      expect(r.scopeEscalated).toBeUndefined();
+      expect(describeScopeEscalation(r)).toBeNull();
+    });
+
+    it('an empty changed set (undeterminable diff) is not labeled an escalation', () => {
+      // Packs already treat an empty set as full per the contract; claiming
+      // "dependency manifest changed" over a diff we could not read would be
+      // a false disclosure.
+      const r = runCorrectnessFloor({
+        cwd: '/repo',
+        changedFiles: [],
+        scope: 'affected',
+        packs: [scopedPack('ts', ['package.json'])],
+        exec: ok,
+      });
+      expect(r.scopeEscalated).toBeUndefined();
+    });
+
+    it('a full-scope run is never re-labeled as escalated', () => {
+      const r = runCorrectnessFloor({
+        cwd: '/repo',
+        changedFiles: ['package.json'],
+        scope: 'full',
+        packs: [scopedPack('ts', ['package.json'])],
+        exec: ok,
+      });
+      expect(r.scopeEscalated).toBeUndefined();
+    });
+
+    it('fail-safe: packs with no declared manifest patterns escalate (cannot prove dependency-free), files empty', () => {
+      // Mirrors the predicate's documented fail-safe. No specific file can be
+      // named, but the honest default is still the full suite.
+      const r = runCorrectnessFloor({
+        cwd: '/repo',
+        changedFiles: ['whatever.txt'],
+        scope: 'affected',
+        packs: [scopedPack('ts', [])],
+        exec: ok,
+      });
+      expect(r.scopeEscalated).toEqual({ reason: 'dependency-manifest-changed', files: [] });
+    });
   });
 
   it('describes a floor result', () => {

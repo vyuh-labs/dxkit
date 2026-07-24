@@ -149,7 +149,23 @@ export function changedFilesTouchDependencyManifest(
 ): boolean {
   const patterns = allDependencyManifestPatterns(packs);
   if (patterns.length === 0) return true;
-  return changedFiles.some((f) => patterns.some((p) => matchesManifestPattern(f, p)));
+  return dependencyManifestFilesIn(changedFiles, packs).length > 0;
+}
+
+/**
+ * The changed files that ARE dependency manifests/lockfiles for the given
+ * packs — the same match the predicate above decides on, exposed so a consumer
+ * that escalates on a manifest change (the correctness floor) can NAME the
+ * files in its disclosure. Empty when no pattern matches (including the
+ * no-patterns fail-safe case, where the predicate returns true but no specific
+ * file can be named).
+ */
+export function dependencyManifestFilesIn(
+  changedFiles: readonly string[],
+  packs: readonly LanguageSupport[],
+): string[] {
+  const patterns = allDependencyManifestPatterns(packs);
+  return changedFiles.filter((f) => patterns.some((p) => matchesManifestPattern(f, p)));
 }
 
 /**
