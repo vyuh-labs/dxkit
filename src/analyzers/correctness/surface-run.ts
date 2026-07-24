@@ -38,6 +38,7 @@ import {
   runCorrectnessFloor,
   describeCorrectnessFloor,
   describeEnvironmentSkips,
+  describeScopeEscalation,
   type CommandExec,
   type CorrectnessFloorResult,
 } from './run';
@@ -185,7 +186,10 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
   // A declared environment boundary is disclosed on every outcome — a floor
   // that cannot run HERE names where it would run, never skips silently
   // (Rule 20). Appended to the summary so hooks/CI logs carry it verbatim.
-  const envSkips = describeEnvironmentSkips(result);
+  // A manifest-driven scope escalation is the same disclosure obligation: a
+  // fast surface that ran the full suite always says why.
+  const escalation = describeScopeEscalation(result);
+  const envSkips = [...(escalation ? [escalation] : []), ...describeEnvironmentSkips(result)];
   const envSuffix = envSkips.length > 0 ? ` [${envSkips.join('; ')}]` : '';
   if (!result.ran) {
     const cause =

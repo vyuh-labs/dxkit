@@ -15,7 +15,11 @@
  * execution is injected so tests exercise the policy without a real toolchain.
  */
 
-import { activeCorrectnessProviders } from '../../languages';
+import {
+  activeCorrectnessProviders,
+  changedFilesTouchDependencyManifest,
+  dependencyManifestFilesIn,
+} from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
 import {
@@ -85,6 +89,19 @@ export interface CorrectnessFloorResult {
   readonly checks: readonly CorrectnessCheckResult[];
   /** True when any check that ran failed — the floor blocks. */
   readonly blocks: boolean;
+  /** Present when an `affected` request was escalated to `full` because the
+   *  diff touched a dependency manifest/lockfile. A manifest change alters
+   *  module resolution for EVERY file, so no affected-subset is sound — the
+   *  shipped class: a dep-override PR whose diff was `package.json` +
+   *  lockfile + docs read as "no source changed, nothing to run" and the
+   *  floor ran NOTHING while the change broke the build. Disclosed so every
+   *  surface can say WHY the full suite ran on a fast surface. `files` names
+   *  the matched manifests (empty only in the no-declared-patterns fail-safe
+   *  case, where escalation is still the honest default). */
+  readonly scopeEscalated?: {
+    readonly reason: 'dependency-manifest-changed';
+    readonly files: readonly string[];
+  };
 }
 
 export interface CorrectnessFloorOptions {
@@ -112,7 +129,26 @@ export interface CorrectnessFloorOptions {
 export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessFloorResult {
   const exec = opts.exec ?? makeCommandExec(opts.timeoutMs);
   const env = opts.env ?? currentEnvironment();
-  const ctx = { cwd: opts.cwd, changedFiles: opts.changedFiles, scope: opts.scope };
+  // Manifest-aware scope (decided ONCE here, never per-pack — Rule 2.30): a
+  // diff that touches a dependency manifest/lockfile changes module resolution
+  // for every file, which is the OPPOSITE of docs-only, so the pack-level
+  // "no relevant source changed → skip" affected heuristics must never see it.
+  // Escalate the whole run to `full`; the fail-open timeout bounds the cost on
+  // fast surfaces. The predicate is the SAME pack-declared manifest union the
+  // dep-audit skip consults (`manifestPatterns`, Rule 6). An empty changed set
+  // (undeterminable diff) is not escalation — packs already treat it as full.
+  const escalate =
+    opts.scope === 'affected' &&
+    opts.changedFiles.length > 0 &&
+    changedFilesTouchDependencyManifest(opts.changedFiles, opts.packs);
+  const scope: CorrectnessScope = escalate ? 'full' : opts.scope;
+  const scopeEscalated = escalate
+    ? ({
+        reason: 'dependency-manifest-changed',
+        files: dependencyManifestFilesIn(opts.changedFiles, opts.packs),
+      } as const)
+    : undefined;
+  const ctx = { cwd: opts.cwd, changedFiles: opts.changedFiles, scope };
   const checks: CorrectnessCheckResult[] = [];
 
   for (const { id, provider } of activeCorrectnessProviders(opts.packs)) {
@@ -203,7 +239,17 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
 
   const ran = checks.some((c) => c.status === 'pass' || c.status === 'fail');
   const blocks = checks.some((c) => c.status === 'fail');
-  return { ran, checks, blocks };
+  return { ran, checks, blocks, ...(scopeEscalated ? { scopeEscalated } : {}) };
+}
+
+/** One-line disclosure of a manifest-driven scope escalation (null when the
+ *  run was not escalated). Every surface that summarizes a floor run appends
+ *  it, so a full-suite run on a fast surface always says why. */
+export function describeScopeEscalation(result: CorrectnessFloorResult): string | null {
+  if (!result.scopeEscalated) return null;
+  const files = result.scopeEscalated.files;
+  const which = files.length > 0 ? ` (${files.join(', ')})` : '';
+  return `dependency manifest changed${which} — ran the full suite (a dependency change can affect any file)`;
 }
 
 /** One-line human summary of a floor result (for the Stop-gate / hook block). */

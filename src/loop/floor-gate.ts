@@ -17,6 +17,7 @@ import { detectActiveLanguages } from '../languages';
 import { computeChangedFiles } from '../baseline/changed-files';
 import {
   runCorrectnessFloor,
+  describeScopeEscalation,
   type CorrectnessCheckResult,
   type CorrectnessFloorResult,
 } from '../analyzers/correctness/run';
@@ -59,14 +60,25 @@ export function floorLedgerStatuses(result: CorrectnessFloorResult): {
  * The repair message shown to the model when the correctness floor blocks.
  * Lists each net-new failing check with the captured output tail so the model
  * can fix it, and is explicit that the fix is the code, not the snapshot.
+ * When the run was escalated to the full suite by a manifest change, says so —
+ * an agent whose diff touched only `package.json` must understand why a test
+ * in a file it never edited is now its problem.
  */
-export function buildFloorRepairMessage(netNew: readonly CorrectnessCheckResult[]): string {
+export function buildFloorRepairMessage(
+  netNew: readonly CorrectnessCheckResult[],
+  result?: CorrectnessFloorResult,
+): string {
   const lines: string[] = [];
   lines.push(
     `dxkit blocked completion because this change introduces ${netNew.length} net-new ` +
       `correctness failure${netNew.length === 1 ? '' : 's'} (code that does not compile or ` +
       `whose tests fail).`,
   );
+  const escalation = result ? describeScopeEscalation(result) : null;
+  if (escalation) {
+    lines.push('');
+    lines.push(`Note: ${escalation}`);
+  }
   lines.push('');
   lines.push('Do not refresh the floor snapshot.');
   lines.push('Fix the failing check(s) below, then try to stop again.');

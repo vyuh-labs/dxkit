@@ -231,7 +231,11 @@ export async function computeStopGate(
       typecheck_status: floorStatuses.typecheck_status,
       duration_ms: Date.now() - start,
     });
-    return { outcome: 'block-model', event, message: buildFloorRepairMessage(floor.netNew) };
+    return {
+      outcome: 'block-model',
+      event,
+      message: buildFloorRepairMessage(floor.netNew, floor.result),
+    };
   }
   const floorStatuses = floor
     ? floorLedgerStatuses(floor.result)
