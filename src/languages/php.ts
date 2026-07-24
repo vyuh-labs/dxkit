@@ -8,6 +8,7 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import type { ExecutionRequirement } from '../execution';
 import type {
@@ -19,6 +20,7 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  ResolutionCheckResult,
 } from './capabilities/correctness';
 import type {
   CoverageResult,
@@ -484,7 +486,134 @@ function phpRelevantChange(f: string): boolean {
   return f.endsWith('.php') || f.endsWith('composer.json') || f.endsWith('composer.lock');
 }
 
+/** The pack's test-file naming conventions — shared by the pack metadata
+ *  and the resolution check's walk (one definition). */
+const PHP_TEST_FILE_PATTERNS: readonly string[] = ['*Test.php', '*_test.php'];
+
+/* ------------------------------------------------------------------------- *
+ * Import-resolution floor (4.2) — the PHP analog of the phantom-dependency
+ * check: a `use Vendor\Thing` whose namespace root no autoloader serves
+ * fatals at first touch, and PHP has no compile stage to see it. The
+ * ground truth is composer's own generated autoload maps under
+ * `vendor/composer/` (PSR-4, PSR-0, classmap) plus the repo's declared
+ * autoload roots in composer.json — text-parsed, never executed. Bias hard
+ * toward false NEGATIVES: single-segment names (global classes, built-in
+ * extensions) and path-based require/include are never considered.
+ * ------------------------------------------------------------------------- */
+
+/** Namespace ROOTS served by the repo's composer setup: keys of the
+ *  generated vendor/composer autoload maps + the repo's own composer.json
+ *  autoload/autoload-dev PSR-4 roots. First namespace segment, lowercased. */
+export function phpAutoloadRoots(cwd: string): Set<string> {
+  const roots = new Set<string>();
+  const addKeyRoots = (raw: string): void => {
+    // Map keys look like 'Monolog\\Handler\\' => ... — capture the first
+    // segment before the (escaped) backslash. Over-capture is safe.
+    for (const m of raw.matchAll(/['"]([A-Za-z_][A-Za-z0-9_]*)\\\\/g))
+      roots.add(m[1].toLowerCase());
+  };
+  for (const rel of [
+    'vendor/composer/autoload_psr4.php',
+    'vendor/composer/autoload_namespaces.php',
+    'vendor/composer/autoload_classmap.php',
+    'vendor/composer/autoload_static.php',
+  ]) {
+    try {
+      addKeyRoots(fs.readFileSync(path.join(cwd, rel), 'utf-8'));
+    } catch {
+      /* absent map contributes nothing */
+    }
+  }
+  try {
+    const composer = JSON.parse(fs.readFileSync(path.join(cwd, 'composer.json'), 'utf-8')) as {
+      autoload?: { 'psr-4'?: Record<string, unknown>; 'psr-0'?: Record<string, unknown> };
+      'autoload-dev'?: { 'psr-4'?: Record<string, unknown>; 'psr-0'?: Record<string, unknown> };
+    };
+    for (const section of [composer.autoload, composer['autoload-dev']]) {
+      for (const table of [section?.['psr-4'], section?.['psr-0']]) {
+        for (const key of Object.keys(table ?? {})) {
+          const first = key.split('\\').filter(Boolean)[0];
+          if (first) roots.add(first.toLowerCase());
+        }
+      }
+    }
+  } catch {
+    /* unreadable composer.json contributes nothing */
+  }
+  return roots;
+}
+
+/**
+ * The PHP import-resolution check. Reuses the pack's one `use` extraction;
+ * a namespace is reported only when its root is served by NO autoload map —
+ * vendor's generated maps or the repo's own declared roots.
+ */
+export function phpResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResult {
+  const cwd = ctx.cwd;
+  let vendorPresent = false;
+  try {
+    vendorPresent = fs.statSync(path.join(cwd, 'vendor', 'composer')).isDirectory();
+  } catch {
+    vendorPresent = false;
+  }
+  if (!vendorPresent) {
+    return {
+      kind: 'skipped',
+      reason:
+        'dependencies are not installed (no vendor/composer) — run composer install to enable the import-resolution check',
+    };
+  }
+  const roots = phpAutoloadRoots(cwd);
+  if (roots.size === 0) {
+    return { kind: 'skipped', reason: 'no readable composer autoload maps under vendor/composer' };
+  }
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.php'],
+    includeTests: false,
+    includeAutogen: false,
+    testFilePatterns: [...PHP_TEST_FILE_PATTERNS, ...UNIVERSAL_TEST_DIR_PATTERNS],
+    autogenPatterns: [],
+  });
+  const unresolved = new Map<string, string>();
+  const resolved = new Set<string>();
+  let checked = 0;
+  for (const rel of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const spec of extractPhpImportsRaw(content)) {
+      // Only namespaced `use` imports: path-shaped entries are the
+      // require/include captures (file paths, not namespaces), and a
+      // single-segment name is a global class or extension built-in.
+      if (spec.includes('/') || spec.includes('.') || !spec.includes('\\')) continue;
+      const root = spec.split('\\').filter(Boolean)[0];
+      if (!root) continue;
+      checked++;
+      const key = root.toLowerCase();
+      if (resolved.has(key) || unresolved.has(key)) continue;
+      if (roots.has(key)) resolved.add(key);
+      else unresolved.set(key, rel);
+    }
+  }
+  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size > 10) {
+    return {
+      kind: 'skipped',
+      reason: `${unresolved.size} namespace roots do not resolve — that many at once suggests an autoload layout dxkit does not model, not simultaneous breaks; declining rather than false-blocking`,
+    };
+  }
+  return {
+    kind: 'unresolved',
+    unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+  };
+}
+
 const phpCorrectnessProvider: CorrectnessProvider = {
+  resolutionCheck: phpResolutionCheck,
+
   execution: () => PHP_CLI_EXECUTION,
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
@@ -532,7 +661,7 @@ export const php: LanguageSupport = {
   displayName: 'PHP',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.php'],
-  testFilePatterns: ['*Test.php', '*_test.php'],
+  testFilePatterns: [...PHP_TEST_FILE_PATTERNS],
   // Composer's dependency tree; framework caches that carry generated PHP.
   extraExcludes: ['vendor', 'storage', 'bootstrap/cache', 'var/cache'],
 

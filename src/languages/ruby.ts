@@ -3,6 +3,7 @@ import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { gatherOsvScannerDepVulnsResult } from '../analyzers/tools/osv-scanner-deps';
 import { fileExists, run } from '../analyzers/tools/runner';
@@ -17,6 +18,7 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
 import type {
@@ -709,7 +711,211 @@ function isRubyTestFile(rel: string): boolean {
  * touching no test file on the fast surface skips (the syntax check still runs;
  * CI's full scope is the backstop).
  */
+/** The pack's test-file naming conventions — shared by the pack metadata
+ *  and the resolution check's walk (one definition). */
+const RUBY_TEST_FILE_PATTERNS: readonly string[] = [
+  '*_spec.rb',
+  '*_test.rb',
+  'test_*.rb',
+  'spec/**/*_spec.rb',
+  'test/**/*_test.rb',
+];
+
+/* ------------------------------------------------------------------------- *
+ * Import-resolution floor (4.2) — the Ruby analog of the phantom-dependency
+ * check: a column-0 `require` of a gem that is neither in Gemfile.lock nor
+ * the standard library fails at boot under bundler, and Ruby has no compile
+ * stage to see it. Bias hard toward false NEGATIVES: only top-level requires
+ * count (indented = begin/rescue LoadError optional-dependency guards),
+ * require paths fold against gem names both ways (`active_support` ↔
+ * `activesupport`, `rack/test` ↔ `rack-test`), and local files exempt.
+ * ------------------------------------------------------------------------- */
+
+/** Ruby standard-library require roots (the perennial set; a curated
+ *  language fact, no interpreter probe). First path segment matched. */
+const RUBY_STDLIB = new Set([
+  'abbrev',
+  'base64',
+  'benchmark',
+  'bigdecimal',
+  'cgi',
+  'coverage',
+  'csv',
+  'date',
+  'delegate',
+  'did_you_mean',
+  'digest',
+  'drb',
+  'english',
+  'erb',
+  'etc',
+  'fcntl',
+  'fiddle',
+  'fileutils',
+  'find',
+  'forwardable',
+  'getoptlong',
+  'io',
+  'ipaddr',
+  'irb',
+  'json',
+  'logger',
+  'matrix',
+  'minitest',
+  'monitor',
+  'mutex_m',
+  'net',
+  'nkf',
+  'objspace',
+  'observer',
+  'open-uri',
+  'open3',
+  'openssl',
+  'optparse',
+  'ostruct',
+  'pathname',
+  'pp',
+  'prettyprint',
+  'prime',
+  'pstore',
+  'psych',
+  'pty',
+  'racc',
+  'rake',
+  'rdoc',
+  'readline',
+  'reline',
+  'resolv',
+  'rexml',
+  'rinda',
+  'ripper',
+  'rss',
+  'rubygems',
+  'securerandom',
+  'set',
+  'shellwords',
+  'singleton',
+  'socket',
+  'stringio',
+  'strscan',
+  'syslog',
+  'tempfile',
+  'time',
+  'timeout',
+  'tmpdir',
+  'tsort',
+  'un',
+  'uri',
+  'weakref',
+  'yaml',
+  'zlib',
+]);
+
+/** Gem names from the `specs:` sections of a Gemfile.lock — the committed,
+ *  text-parseable record of everything bundler can serve. */
+export function parseGemfileLockGems(raw: string): Set<string> {
+  const out = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    // Direct + transitive spec lines are indented `name (version)`; four or
+    // six spaces both appear. Over-capture is safe (names only EXEMPT).
+    const m = line.match(/^ {2,6}([A-Za-z0-9_.-]+) \(/);
+    if (m) out.add(m[1].toLowerCase());
+  }
+  return out;
+}
+
+/** Fold a require path / gem name for comparison: lowercase, strip
+ *  separators (`-`, `_`, `/`). `active_support/core_ext` and
+ *  `activesupport` both fold to a comparable stem. */
+function foldRequire(nameOrPath: string): string {
+  return nameOrPath.toLowerCase().replace(/[-_/]/g, '');
+}
+
+/**
+ * The Ruby import-resolution check. Reuses the pack's one require
+ * extraction; a require is reported only when no folded candidate (first
+ * segment, whole path) matches a Gemfile.lock gem or the stdlib, and no
+ * repo-local file serves it.
+ */
+export function rubyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResult {
+  const cwd = ctx.cwd;
+  let lockRaw: string;
+  try {
+    lockRaw = fs.readFileSync(path.join(cwd, 'Gemfile.lock'), 'utf-8');
+  } catch {
+    return {
+      kind: 'skipped',
+      reason:
+        'no Gemfile.lock — the check reasons against the locked gem set; run bundler to generate one',
+    };
+  }
+  const gems = parseGemfileLockGems(lockRaw);
+  if (gems.size === 0) {
+    return { kind: 'skipped', reason: 'Gemfile.lock has no specs section dxkit can read' };
+  }
+  const foldedGems = new Set([...gems].map(foldRequire));
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.rb'],
+    includeTests: false,
+    includeAutogen: false,
+    testFilePatterns: [...RUBY_TEST_FILE_PATTERNS, ...UNIVERSAL_TEST_DIR_PATTERNS],
+    autogenPatterns: [],
+  });
+  const localExists = (spec: string): boolean => {
+    for (const base of ['', 'lib', 'app']) {
+      const p = base ? path.join(cwd, base, spec) : path.join(cwd, spec);
+      try {
+        if (fs.existsSync(`${p}.rb`) || fs.statSync(p).isDirectory()) return true;
+      } catch {
+        /* keep probing the next root */
+      }
+    }
+    return false;
+  };
+  const unresolved = new Map<string, string>();
+  const resolved = new Set<string>();
+  let checked = 0;
+  for (const rel of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    // Column-0 `require '...'` ONLY: the pack's full extraction also captures
+    // require_relative / autoload (local by definition) and indented requires
+    // (begin/rescue LoadError optional-gem guards) — none may be flagged.
+    for (const m of content.matchAll(/^require\s+['"]([^'"]+)['"]/gm)) {
+      const spec = m[1];
+      if (spec.startsWith('.') || spec.startsWith('/')) continue;
+      const first = spec.split('/')[0];
+      if (RUBY_STDLIB.has(first.toLowerCase())) continue;
+      checked++;
+      if (resolved.has(spec) || unresolved.has(spec)) continue;
+      const hit =
+        foldedGems.has(foldRequire(first)) ||
+        foldedGems.has(foldRequire(spec)) ||
+        localExists(spec);
+      if (hit) resolved.add(spec);
+      else unresolved.set(spec, rel);
+    }
+  }
+  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size > 10) {
+    return {
+      kind: 'skipped',
+      reason: `${unresolved.size} requires do not resolve — that many at once suggests a load-path layout dxkit does not model, not simultaneous breaks; declining rather than false-blocking`,
+    };
+  }
+  return {
+    kind: 'unresolved',
+    unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+  };
+}
+
 const rubyCorrectnessProvider: CorrectnessProvider = {
+  resolutionCheck: rubyResolutionCheck,
+
   // Rule 20: host-agnostic, needs the Ruby runtime; the floor runs the
   // project's own specs — 'build' weight without a compiled-build env.
   execution: (): ExecutionRequirement => ({
@@ -857,13 +1063,7 @@ export const ruby: LanguageSupport = {
 
   sourceExtensions: ['.rb'],
 
-  testFilePatterns: [
-    '*_spec.rb',
-    '*_test.rb',
-    'test_*.rb',
-    'spec/**/*_spec.rb',
-    'test/**/*_test.rb',
-  ],
+  testFilePatterns: [...RUBY_TEST_FILE_PATTERNS],
 
   extraExcludes: ['vendor/bundle', '.bundle', 'coverage', 'tmp', 'log'],
 

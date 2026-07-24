@@ -866,12 +866,20 @@ never hardcodes a per-language command (mirror of Rule 6):
   the installed dependency tree: the floor BETWEEN "compiles" and
   "bundles" that interpreted stacks lack (the phantom-dependency class —
   a lockfile change un-hoists a package that source imports but no
-  manifest declares). Finding-level identity (per unresolved specifier)
-  flows through the ONE attribution comparator, so an already-red repo
-  still blocks on a NEW break. Compiled packs decline by omission (their
-  compiler IS the check). Biased hard toward false negatives: skips are
-  DISCLOSED (no install, PnP, unmodeled bundler aliases, implausibly
-  many misses), never silent, never a false block.
+  manifest declares). All four interpreted packs implement it, one per
+  dependency-surface shape (ts: node_modules walk; python: venv
+  site-packages + declared manifests + a curated import↔dist alias
+  table; ruby: Gemfile.lock with require↔gem name folding; php:
+  composer's generated autoload maps) — a new interpreted pack follows
+  whichever shape matches its ecosystem. Finding-level identity (per
+  unresolved specifier) flows through the ONE attribution comparator, so
+  an already-red repo still blocks on a NEW break. Compiled packs
+  decline by omission (their compiler IS the check). Biased hard toward
+  false negatives: skips are DISCLOSED (no install, PnP, unmodeled
+  bundler aliases, implausibly many misses), never silent, never a false
+  block. The affected-tests COMMAND may carry `parseFailures` (4.2) —
+  per-failure identities from runner output, same comparator, disclosed
+  check-level fallback.
 - **Dispatched** via `activeCorrectnessProviders(packs)` in
   `src/languages/index.ts`.
 - **Executed** via the ONE canonical runner

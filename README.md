@@ -341,12 +341,14 @@ across those environments. See the execution-environment notes in
 
 The correctness floor (does the change still compile, do its tests still
 pass) runs on every pack through each language's own build and test
-commands. Two deeper floor checks are TypeScript/JavaScript-first today:
-import resolution (catches a dependency change that breaks module
-resolution — compiled languages don't need it, their compiler is that
-check; Python/Ruby/PHP follow) and per-test failure attribution (jest and
-vitest output; other runners compare at whole-check level, and that
-coarser comparison is disclosed, never silent).
+commands. Import resolution — the check that catches a dependency change
+breaking module resolution — covers every interpreted pack:
+TypeScript/JavaScript (node_modules), Python (the project venv +
+declared manifests), Ruby (Gemfile.lock), and PHP (composer's autoload
+maps). Compiled languages don't need it; their compiler is that check.
+Per-test failure attribution is TypeScript/JavaScript-first (jest and
+vitest output); other runners compare at whole-check level, and that
+coarser comparison is disclosed, never silent.
 
 <details>
 <summary><strong>Per-pack capabilities</strong>: coverage import, import-graph, severity tiers (click to expand)</summary>

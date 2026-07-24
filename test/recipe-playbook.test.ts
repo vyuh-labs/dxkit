@@ -201,7 +201,15 @@ const mockPlaybookPack = {
   // liveness floor is pack-driven, not analyzer-by-analyzer."
   correctness: {
     syntaxCheck: () => ({ label: 'playbook-typecheck', bin: 'playbookc-mock', args: ['--check'] }),
-    affectedTests: () => ({ label: 'playbook-tests', bin: 'playbookc-mock', args: ['test'] }),
+    affectedTests: () => ({
+      label: 'playbook-tests',
+      bin: 'playbookc-mock',
+      args: ['test'],
+      // Failure-level identities (4.2): a distinctive parse proves the
+      // command-level parser flows pack → runner into finding identities.
+      parseFailures: (output: string) =>
+        output.includes('PLAYBOOK-FAIL') ? ['test: playbook broke'] : null,
+    }),
     // Import-resolution floor (4.2): a distinctive unresolved specifier proves
     // the optional capability flows pack → runner with finding-level identity.
     resolutionCheck: () => ({
@@ -479,6 +487,23 @@ describe('recipe playbook — synthetic pack', () => {
       .map((c) => c.label);
     expect(playbookChecks).toContain('playbook-typecheck');
     expect(playbookChecks).toContain('playbook-tests');
+    // Failure-level attribution stays pack-driven (4.2): a failing run's
+    // output parses into finding identities through the runner, no per-pack
+    // wiring in the runner itself.
+    const failing = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['a.pbk'],
+      scope: 'affected',
+      packs,
+      exec: (cmd) =>
+        cmd.args.includes('test')
+          ? { available: true, code: 1, output: 'PLAYBOOK-FAIL something' }
+          : { available: true, code: 0, output: '' },
+    });
+    const failedTests = failing.checks.find(
+      (c) => (c.pack as string) === 'playbook' && c.label === 'playbook-tests',
+    );
+    expect(failedTests?.findings).toEqual(['test: playbook broke']);
     // The optional import-resolution capability: the synthetic pack's check
     // must surface as a failing 'import-resolution' check with finding-level
     // identity — codifying "the resolution floor is pack-driven" (4.2).

@@ -607,8 +607,18 @@ export const ${id}: LanguageSupport = {
   // only — a pure, read-only tri-state (clean / unresolved[] / disclosed-skip)
   // verifying bare import specifiers resolve against the installed dependency
   // tree (the phantom-dependency class). Compiled languages DECLINE by
-  // omission: their compiler IS the resolution check. See the typescript
-  // pack's tsResolutionCheck for the reference implementation + bias rules.
+  // omission: their compiler IS the resolution check. Reference
+  // implementations, one per dependency-surface shape: tsResolutionCheck
+  // (node_modules walk), pyResolutionCheck (venv site-packages + manifests),
+  // rubyResolutionCheck (Gemfile.lock folding), phpResolutionCheck
+  // (composer autoload maps). Follow the bias rules they share: disclosed
+  // skips, never a spawn, false-negative everywhere ambiguous.
+  //
+  // OPTIONAL on the affectedTests COMMAND: \`parseFailures\` (4.2) — extract
+  // durable per-failure identities (failing test names / suite files) from
+  // the runner's output so a NEW failing test blocks even inside an
+  // already-red check. Return null when unsure (check-level fallback is
+  // disclosed). See parseTsTestRunnerFailures for the reference parser.
   // before ship. syntaxCheck = the cheap "does it compile/parse" check every
   // language can give; affectedTests = run the tests the change reaches (native
   // impact-selection where the ecosystem supports it, else a coarser fallback
