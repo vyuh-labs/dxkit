@@ -37,6 +37,28 @@ export interface CorrectnessCommand {
   readonly label: string;
   readonly bin: string;
   readonly args: readonly string[];
+  /**
+   * OPTIONAL failure-level parser (4.2): extract durable per-failure
+   * identities (failing test names / failing suite files) from the command's
+   * FULL captured output on a non-zero exit. The pack attaches the parser
+   * matching the exact command it built — it knows whether it emitted vitest
+   * or jest — so the runner stays runner-agnostic (Rule 6).
+   *
+   * Why: check-level identity (`pack:label`) silently absorbs a NEW failing
+   * test into an already-red check — on a repo whose suite was already
+   * failing at loop entry, nothing the agent breaks in that check can ever
+   * block. With per-failure identities the attribution comparator diffs the
+   * SET, so new failures block while the pre-existing red stays
+   * grandfathered.
+   *
+   * Contract: identities must be output-order-independent and durable across
+   * runs (test full names, suite file paths — never durations or line
+   * numbers). Return null when the output is not confidently parseable —
+   * the comparator then stays at check level and the non-comparability is
+   * DISCLOSED, never guessed (Rule 19: no fabricated precision). Bias
+   * false-negative: an unmatched line is dropped, not guessed at.
+   */
+  readonly parseFailures?: (output: string) => string[] | null;
 }
 
 /** One import specifier that demonstrably does not resolve against the

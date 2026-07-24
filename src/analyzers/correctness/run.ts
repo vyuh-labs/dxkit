@@ -22,6 +22,7 @@ import {
 } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type {
+  CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
   CorrectnessScope,
@@ -137,6 +138,21 @@ export interface CorrectnessFloorOptions {
  *  floor-state snapshot, the attribution comparator's finding-level path, and
  *  every renderer. */
 export const IMPORT_RESOLUTION_LABEL = 'import-resolution';
+
+/** Run a command's optional failure parser defensively: a parser throw or a
+ *  non-array result is "not parseable" (null → check-level precision), never
+ *  an error that breaks the floor. Results are deduped and order-normalized —
+ *  identity must not depend on output order. */
+function parseFailuresSafely(cmd: CorrectnessCommand, output: string): string[] | null {
+  try {
+    const raw = cmd.parseFailures!(output);
+    if (raw === null || !Array.isArray(raw)) return null;
+    const cleaned = [...new Set(raw.filter((f) => typeof f === 'string' && f.length > 0))].sort();
+    return cleaned.length > 0 ? cleaned : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Execute a pack's optional import-resolution check (a pure computation, not a
@@ -285,6 +301,14 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
           continue;
         }
       }
+      // Failure-level identities (4.2): parse the FULL captured output — the
+      // display tail is a truncation, and a snapshot built from a truncated
+      // parse would under-record the base set and false-block later. A parser
+      // that returns null or nothing on a failing run means "not confidently
+      // parseable": the check stays at check-level precision and the
+      // comparator DISCLOSES that instead of guessing.
+      const parsed =
+        outcome.code !== 0 && cmd.parseFailures ? parseFailuresSafely(cmd, outcome.output) : null;
       checks.push({
         pack: id,
         label: cmd.label,
@@ -294,6 +318,7 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         // DISPLAY only — `tail` belongs here, at the renderer boundary, not in the
         // capture primitive where a parser could mistake it for the whole stream.
         ...(outcome.code === 0 ? {} : { output: tail(outcome.output) }),
+        ...(parsed !== null && parsed.length > 0 ? { findings: parsed } : {}),
       });
     }
     // The import-resolution check (optional capability): a direct computation,

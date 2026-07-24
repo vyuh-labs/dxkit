@@ -469,6 +469,7 @@ describe('typescript.correctness', () => {
       label: 'affected-tests',
       bin: 'npx',
       args: ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', 'src/a.ts'],
+      parseFailures: expect.any(Function),
     });
   });
 
@@ -479,6 +480,7 @@ describe('typescript.correctness', () => {
       label: 'affected-tests',
       bin: 'npx',
       args: ['--no-install', 'vitest', 'run', '--passWithNoTests'],
+      parseFailures: expect.any(Function),
     });
   });
 
@@ -500,6 +502,7 @@ describe('typescript.correctness', () => {
       label: 'affected-tests',
       bin: 'npx',
       args: ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', 'src/a.ts'],
+      parseFailures: expect.any(Function),
     });
   });
 
@@ -512,5 +515,66 @@ describe('typescript.correctness', () => {
 
   it('affectedTests: skips (fail-open) when no runner is installed', () => {
     expect(typescript.correctness!.affectedTests(ctx())).toBeNull();
+  });
+
+  it('affectedTests: carries the failure-level parser (4.2 attribution)', () => {
+    installBin('jest');
+    const cmd = typescript.correctness!.affectedTests(ctx());
+    expect(typeof cmd?.parseFailures).toBe('function');
+  });
+});
+
+describe('parseTsTestRunnerFailures (4.2 failure-level floor attribution)', () => {
+  it('extracts jest failing tests and failing suite files, durations stripped', async () => {
+    const { parseTsTestRunnerFailures } = await import('../src/languages/typescript');
+    const out = [
+      'FAIL src/upload.test.js',
+      '  upload',
+      '    ✕ sends the file (12 ms)',
+      '    ✓ validates the name (1 ms)',
+      'FAIL src/auth.test.js',
+      '  ● Test suite failed to run',
+      'Tests: 1 failed, 1 passed',
+    ].join('\n');
+    expect(parseTsTestRunnerFailures(out)).toEqual([
+      'suite: src/upload.test.js',
+      'test: sends the file',
+      'suite: src/auth.test.js',
+    ]);
+  });
+
+  it('extracts vitest failure lines (× marker, trailing duration)', async () => {
+    const { parseTsTestRunnerFailures } = await import('../src/languages/typescript');
+    const out = [
+      ' FAIL  src/math.test.ts > adds',
+      '   × src/math.test.ts > adds 5ms',
+      '   ✓ src/math.test.ts > subtracts 1ms',
+    ].join('\n');
+    expect(parseTsTestRunnerFailures(out)).toEqual([
+      'suite: src/math.test.ts',
+      'test: src/math.test.ts > adds',
+    ]);
+  });
+
+  it('the empty-failing-suites shape is attributable: each broken suite file is its own identity', async () => {
+    // The incident class: a repo red with N empty-failing jest suites — a
+    // change that breaks an (N+1)th file must be distinguishable.
+    const { parseTsTestRunnerFailures } = await import('../src/languages/typescript');
+    const before = parseTsTestRunnerFailures('FAIL a.test.js\nFAIL b.test.js');
+    const after = parseTsTestRunnerFailures('FAIL a.test.js\nFAIL b.test.js\nFAIL c.test.js');
+    expect(before).toEqual(['suite: a.test.js', 'suite: b.test.js']);
+    expect(after).toContain('suite: c.test.js');
+  });
+
+  it('returns null on unrecognized output — check-level fallback, never a guess', async () => {
+    const { parseTsTestRunnerFailures } = await import('../src/languages/typescript');
+    expect(parseTsTestRunnerFailures('some totally custom reporter text')).toBeNull();
+    expect(parseTsTestRunnerFailures('')).toBeNull();
+  });
+
+  it('strips forced ANSI color before matching', async () => {
+    const { parseTsTestRunnerFailures } = await import('../src/languages/typescript');
+    const out = '\u001b[31m✕ colored failure (3 ms)\u001b[39m';
+    expect(parseTsTestRunnerFailures(out)).toEqual(['test: colored failure']);
   });
 });

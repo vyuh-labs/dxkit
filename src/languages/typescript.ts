@@ -1580,6 +1580,7 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
     const runner = tsTestRunner(ctx.cwd);
     if (runner === null) return null; // no vitest/jest installed → nothing to run
+    const parseFailures = parseTsTestRunnerFailures;
 
     // On the fast (affected) surface run only the tests the changed source
     // files reach — native impact-selection both runners support. Fall back to
@@ -1598,16 +1599,50 @@ const tsCorrectnessProvider: CorrectnessProvider = {
       const args = affected
         ? ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', ...changed]
         : ['--no-install', 'vitest', 'run', '--passWithNoTests'];
-      return { label: 'affected-tests', bin: 'npx', args };
+      return { label: 'affected-tests', bin: 'npx', args, parseFailures };
     }
     // jest — `--findRelatedTests` consumes every following positional as its
     // file list, so it stays last with the changed files as its arguments.
     const args = affected
       ? ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', ...changed]
       : ['--no-install', 'jest', '--passWithNoTests'];
-    return { label: 'affected-tests', bin: 'npx', args };
+    return { label: 'affected-tests', bin: 'npx', args, parseFailures };
   },
 };
+
+/**
+ * Failure-level identities from jest / vitest output (4.2 floor attribution).
+ * One parser for both: their failure-line shapes overlap (`✕ name (3 ms)` /
+ * `× file > suite > name 5ms` per failing test, `FAIL <path>` per failing
+ * suite file). Identities are durable, order-independent, duration-stripped:
+ * `test: <name-as-printed>` and `suite: <path>`. The suite tier is what makes
+ * the empty-failing-suites shape attributable — a repo red with N broken
+ * suite files still blocks when a change adds an (N+1)th `FAIL` line.
+ * Returns null when nothing parses from a failing run (an unrecognized
+ * reporter/format) — the comparator then stays at check level and DISCLOSES
+ * it. False-negative bias: an unmatched line is dropped, never guessed at.
+ */
+export function parseTsTestRunnerFailures(output: string): string[] | null {
+  const out = new Set<string>();
+  for (const raw of output.split('\n')) {
+    // Defensive ANSI strip — runners suppress color on a pipe, but a repo's
+    // jest config can force it.
+    // eslint-disable-next-line no-control-regex
+    const line = raw.replace(/\u001b\[[0-9;]*m/g, '').trim();
+    const test = /^[✕✗×]\s+(.+)$/.exec(line);
+    if (test) {
+      const name = test[1]
+        .replace(/\s*\(\d+(?:\.\d+)?\s*m?s\)\s*$/, '')
+        .replace(/\s+\d+(?:\.\d+)?m?s$/, '')
+        .trim();
+      if (name.length > 0) out.add(`test: ${name}`);
+      continue;
+    }
+    const suite = /^FAIL\s+(\S+)/.exec(line);
+    if (suite) out.add(`suite: ${suite[1]}`);
+  }
+  return out.size > 0 ? [...out] : null;
+}
 
 /**
  * Lint-GATE provider: eslint, for the net-new lint gate. Only when eslint is

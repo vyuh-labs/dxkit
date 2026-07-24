@@ -333,6 +333,19 @@ export async function attributeCiFloorOutcome(
         .map((a) => `${a.check.pack} ${a.check.label}`)
         .join(', ')}`,
     );
+    // Rule 19 disclosure: a check red on BOTH sides without per-failure
+    // identities may hide additional net-new failures inside the red — say
+    // so instead of letting "pre-existing" read as "fully attributed".
+    const checkLevel = preExisting.filter((a) => a.precision === 'check');
+    if (checkLevel.length > 0) {
+      parts.push(
+        `note: ${checkLevel
+          .map((a) => `${a.check.pack} ${a.check.label}`)
+          .join(
+            ', ',
+          )} compared at CHECK level (runner output not parseable per-test) — additional failures inside an already-red check are not attributable`,
+      );
+    }
   }
   if (unattributed.length > 0) {
     parts.push(

@@ -112,6 +112,33 @@ describe('attributeFloorFailures (the lattice)', () => {
       );
       expect(out[0].attribution).toBe('net-new');
     });
+
+    it('marks fail-vs-fail PRECISION: finding when both sides carried identities, check when not (4.2)', () => {
+      // 'check' precision is the disclosure obligation: an already-red check
+      // without per-failure identities can hide net-new failures inside the
+      // red, and renderers must say so (Rule 19), never let "pre-existing"
+      // read as "fully attributed".
+      const findingLevel = attributeFloorFailures(
+        result([failWith(['a'])]),
+        [{ pack: 'ts', label: 'import-resolution', status: 'fail', findings: ['a'] }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(findingLevel[0].precision).toBe('finding');
+      const checkLevel = attributeFloorFailures(
+        result([fail('ts', 'affected-tests')]),
+        [{ pack: 'ts', label: 'affected-tests', status: 'fail' }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(checkLevel[0].attribution).toBe('pre-existing');
+      expect(checkLevel[0].precision).toBe('check');
+      // The question does not arise on a base pass — no precision claimed.
+      const basePass = attributeFloorFailures(
+        result([fail('ts', 'typecheck')]),
+        [{ pack: 'ts', label: 'typecheck', status: 'pass' }],
+        { absentMeans: 'unattributed' },
+      );
+      expect(basePass[0].precision).toBeUndefined();
+    });
   });
 
   it('absent from base takes the DECLARED policy — both modes', () => {
