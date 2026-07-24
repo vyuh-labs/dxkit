@@ -326,18 +326,18 @@ generated to run them, and the committed baseline is composed from captures
 across those environments. See the execution-environment notes in
 [init](docs/commands/init.md) and [checks](docs/commands/checks.md).
 
-| Language                | Detected by                 | Native linter + audit                     |
-| ----------------------- | --------------------------- | ----------------------------------------- |
-| TypeScript / JavaScript | `package.json`              | ESLint, npm audit                         |
-| Python                  | `pyproject.toml`, `*.py`    | ruff, pip-audit                           |
-| Go                      | `go.mod`                    | golangci-lint, govulncheck                |
-| Rust                    | `Cargo.toml`                | clippy, cargo-audit                       |
-| C# / .NET               | `*.csproj`, `*.sln`         | dotnet-format, `dotnet list --vulnerable` |
-| Java                    | `pom.xml`, `src/main/java/` | PMD, osv-scanner                          |
-| Kotlin                  | `*.gradle{.kts,}`, `*.kt`   | detekt, osv-scanner                       |
-| Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                    |
-| Swift                   | `Package.swift`, `Podfile`  | SwiftLint, osv-scanner                    |
-| PHP                     | `composer.json`, `*.php`    | PHP_CodeSniffer, osv-scanner              |
+| Language                | Detected by                 | Native linter + audit                        |
+| ----------------------- | --------------------------- | -------------------------------------------- |
+| TypeScript / JavaScript | `package.json`              | ESLint, npm audit                            |
+| Python                  | `pyproject.toml`, `*.py`    | ruff, pip-audit                              |
+| Go                      | `go.mod`                    | golangci-lint, govulncheck                   |
+| Rust                    | `Cargo.toml`                | clippy, cargo-audit                          |
+| C# / .NET               | `*.csproj`, `*.sln`         | Roslyn analyzers, `dotnet list --vulnerable` |
+| Java                    | `pom.xml`, `src/main/java/` | PMD, osv-scanner                             |
+| Kotlin                  | `*.gradle{.kts,}`, `*.kt`   | detekt, osv-scanner                          |
+| Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                       |
+| Swift                   | `Package.swift`, `Podfile`  | SwiftLint, osv-scanner                       |
+| PHP                     | `composer.json`, `*.php`    | PHP_CodeSniffer, osv-scanner                 |
 
 The correctness floor (does the change still compile, do its tests still
 pass) runs on every pack through each language's own build and test
@@ -357,7 +357,7 @@ coarser comparison is disclosed, never silent).
 | Python   | `pyproject.toml`, `setup.py`, `*.py`      | ✅ coverage.py      | ✅ import/from                               | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4)           |
 | Go       | `go.mod`                                  | ✅ coverprofile     | ✅ import blocks                             | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev             |
 | Rust     | `Cargo.toml`                              | ✅ lcov + cobertura | ⚠️ use statements, extracted only¹           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native                         |
-| C#       | `*.csproj`, `*.sln`                       | ✅ cobertura XML    | ⚠️ using declarations, extracted only¹       | dotnet-format (formatter)           | ⚠️ format-only²        | ✅ dotnet list --vulnerable                   |
+| C#       | `*.csproj`, `*.sln`                       | ✅ cobertura XML    | ⚠️ using declarations, extracted only¹       | Roslyn analyzers (dotnet build)     | ✅ Roslyn code family² | ✅ dotnet list --vulnerable                   |
 | Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`          | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹        | detekt, osv-scanner (Maven)         | ✅ detekt severity     | ✅ osv-scanner + OSV.dev (Maven)              |
 | Java     | `pom.xml`, `src/main/java/`, `*.java`     | ✅ JaCoCo XML       | ⚠️ import statements, extracted only¹        | PMD, osv-scanner (Maven)            | ✅ PMD priority tiers  | ✅ osv-scanner + OSV.dev (Maven)              |
 | Ruby     | `*.rb`                                    | ✅ SimpleCov JSON   | ⚠️ require/require_relative, extracted only¹ | rubocop, bundler-audit, osv-scanner | ✅ rubocop severity    | ✅ bundler-audit + osv-scanner (Gemfile.lock) |
@@ -369,12 +369,12 @@ file-level resolver is a no-op. Downstream analyses that need an edge graph
 (reachability, import-graph test-gap credit) degrade to conservative
 defaults for those packs. Resolver support for these packs is planned.
 
-² C# lint is severity-tiered via the Roslyn analyzers (`dotnet build`
-diagnostics: security analyzer families rank high, design/compiler
-warnings medium, style low). A repo the SDK cannot build (legacy .NET
-Framework projects) falls back to `dotnet-format`, whose formatting
-violations count at `low` tier so they do not inflate the Code Quality
-score.
+² C# lint severity tiers come from the Roslyn analyzer diagnostics
+`dotnet build` emits: security analyzer families rank high,
+design/compiler warnings medium, style low. A repo the SDK cannot build
+(legacy .NET Framework projects) falls back to `dotnet-format`, whose
+formatting violations count at `low` tier so they do not inflate the
+Code Quality score.
 
 ³ Swift dep auditing covers SwiftPM (`Package.resolved`, OSV `SwiftURL`
 ecosystem; needs osv-scanner ≥ 2.4.0). CocoaPods has NO advisory
