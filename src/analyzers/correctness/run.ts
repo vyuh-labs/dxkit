@@ -21,7 +21,11 @@ import {
   dependencyManifestFilesIn,
 } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
-import type { CorrectnessScope } from '../../languages/capabilities/correctness';
+import type {
+  CorrectnessContext,
+  CorrectnessProvider,
+  CorrectnessScope,
+} from '../../languages/capabilities/correctness';
 import {
   classifyEnvironmentFailure,
   currentEnvironment,
@@ -81,6 +85,15 @@ export interface CorrectnessCheckResult {
   /** Present only on `skipped-environment` — the structured unmet-requirement
    *  reason (phrase via `describeUnmetRequirement`). */
   readonly unmet?: UnmetRequirement;
+  /** FINDING-level identities for a check whose failure decomposes into
+   *  diffable findings (today: the import-resolution check, one entry per
+   *  unresolved specifier). When present on a failing check, the attribution
+   *  comparator diffs the SET instead of the check's pass/fail bit — so a repo
+   *  with pre-existing unresolved debt still blocks on a NEW break instead of
+   *  grandfathering the whole check. Absent on command-backed checks (their
+   *  granularity is the check — item for the failure-level attribution
+   *  refinement). */
+  readonly findings?: readonly string[];
 }
 
 export interface CorrectnessFloorResult {
@@ -118,6 +131,54 @@ export interface CorrectnessFloorOptions {
   readonly exec?: CommandExec;
   /** Injected for tests; defaults to the real local host + toolchain probes. */
   readonly env?: ExecutionEnvironment;
+}
+
+/** The one label the import-resolution check reports under — shared by the
+ *  floor-state snapshot, the attribution comparator's finding-level path, and
+ *  every renderer. */
+export const IMPORT_RESOLUTION_LABEL = 'import-resolution';
+
+/**
+ * Execute a pack's optional import-resolution check (a pure computation, not a
+ * command). Findings are keyed by SPECIFIER — the durable identity of "package
+ * X does not resolve": a second file importing the same missing package is the
+ * same root cause, while a NEW missing package on an already-red repo is a new
+ * finding (the granularity the class fix requires). A throw is infrastructure:
+ * disclosed skip, never a verdict.
+ */
+function runResolutionCheck(
+  id: LanguageId,
+  provider: CorrectnessProvider,
+  ctx: CorrectnessContext,
+): CorrectnessCheckResult {
+  const base = { pack: id, label: IMPORT_RESOLUTION_LABEL, bin: '' };
+  try {
+    const res = provider.resolutionCheck!(ctx);
+    if (res.kind === 'clean') return { ...base, status: 'pass' };
+    if (res.kind === 'unresolved') {
+      const lines = res.unresolved.map(
+        (u) =>
+          `'${u.specifier}' does not resolve against the installed tree (imported by ${u.file})`,
+      );
+      lines.push(
+        'An import of an uninstalled/undeclared package fails at build or run time. ' +
+          'Declare it in the dependency manifest and install it (or remove the import).',
+      );
+      return {
+        ...base,
+        status: 'fail',
+        output: lines.join('\n'),
+        findings: [...new Set(res.unresolved.map((u) => u.specifier))],
+      };
+    }
+    return { ...base, status: 'skipped-unavailable', output: res.reason };
+  } catch (err) {
+    return {
+      ...base,
+      status: 'skipped-unavailable',
+      output: `import-resolution check errored: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**
@@ -234,6 +295,12 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         // capture primitive where a parser could mistake it for the whole stream.
         ...(outcome.code === 0 ? {} : { output: tail(outcome.output) }),
       });
+    }
+    // The import-resolution check (optional capability): a direct computation,
+    // not a command — no spawn, no PATH, no timeout budget needed. A throw is
+    // infrastructure, never a verdict: fail-OPEN as a disclosed skip.
+    if (provider.resolutionCheck) {
+      checks.push(runResolutionCheck(id, provider, ctx));
     }
   }
 

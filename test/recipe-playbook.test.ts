@@ -196,6 +196,12 @@ const mockPlaybookPack = {
   correctness: {
     syntaxCheck: () => ({ label: 'playbook-typecheck', bin: 'playbookc-mock', args: ['--check'] }),
     affectedTests: () => ({ label: 'playbook-tests', bin: 'playbookc-mock', args: ['test'] }),
+    // Import-resolution floor (4.2): a distinctive unresolved specifier proves
+    // the optional capability flows pack → runner with finding-level identity.
+    resolutionCheck: () => ({
+      kind: 'unresolved' as const,
+      unresolved: [{ specifier: 'playbook-phantom-pkg', file: 'src/a.pbk' }],
+    }),
     // Rule 20: satisfiable everywhere, so the floor-pickup assertion above
     // keeps exercising the dispatch path on any test host.
     execution: () => ({
@@ -467,6 +473,14 @@ describe('recipe playbook — synthetic pack', () => {
       .map((c) => c.label);
     expect(playbookChecks).toContain('playbook-typecheck');
     expect(playbookChecks).toContain('playbook-tests');
+    // The optional import-resolution capability: the synthetic pack's check
+    // must surface as a failing 'import-resolution' check with finding-level
+    // identity — codifying "the resolution floor is pack-driven" (4.2).
+    const resolution = result.checks.find(
+      (c) => (c.pack as string) === 'playbook' && c.label === 'import-resolution',
+    );
+    expect(resolution?.status).toBe('fail');
+    expect(resolution?.findings).toEqual(['playbook-phantom-pkg']);
   });
 
   // 4.2: the floor's manifest-aware scope escalation consumes the SAME

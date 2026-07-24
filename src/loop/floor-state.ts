@@ -43,6 +43,11 @@ export interface FloorCheckState {
   readonly pack: string;
   readonly label: string;
   readonly status: 'pass' | 'fail';
+  /** Finding-level identities of a failing check that decomposes into
+   *  findings (the import-resolution check's unresolved specifiers).
+   *  Persisted so the comparator can diff the SET at a later Stop — an
+   *  already-red check still blocks on a NEW finding. */
+  readonly findings?: readonly string[];
 }
 
 /** The entry snapshot: what the floor looked like on the pristine base. */
@@ -66,7 +71,12 @@ function floorBaselinePath(cwd: string): string {
 function liveChecks(checks: readonly CorrectnessCheckResult[]): FloorCheckState[] {
   return checks
     .filter((c) => c.status === 'pass' || c.status === 'fail')
-    .map((c) => ({ pack: c.pack, label: c.label, status: c.status as 'pass' | 'fail' }));
+    .map((c) => ({
+      pack: c.pack,
+      label: c.label,
+      status: c.status as 'pass' | 'fail',
+      ...(c.findings ? { findings: c.findings } : {}),
+    }));
 }
 
 /**
@@ -130,5 +140,17 @@ export function netNewFloorFailures(
   const base = baseline === null ? null : baseline.checks;
   return attributeFloorFailures(current, base, { absentMeans: 'net-new' })
     .filter((a) => a.attribution === 'net-new')
-    .map((a) => a.check);
+    .map((a) =>
+      // Finding-level narrowing: when the comparator identified WHICH findings
+      // are new, the repair message must lead with them — the pre-existing
+      // findings in the same check are grandfathered debt, not the block.
+      a.netNewFindings
+        ? {
+            ...a.check,
+            findings: a.netNewFindings,
+            output:
+              `net-new (this change): ${a.netNewFindings.join(', ')}\n` + (a.check.output ?? ''),
+          }
+        : a.check,
+    );
 }

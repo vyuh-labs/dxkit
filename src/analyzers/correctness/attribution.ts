@@ -42,6 +42,10 @@ export interface FloorBaseCheck {
   readonly pack: string;
   readonly label: string;
   readonly status: 'pass' | 'fail' | 'skipped';
+  /** Finding-level identities recorded for a failing base check (today: the
+   *  import-resolution check's unresolved specifiers). Lets the comparator
+   *  diff the SET below instead of grandfathering the whole check. */
+  readonly findings?: readonly string[];
 }
 
 export type FloorAttribution = 'net-new' | 'pre-existing' | 'unattributed';
@@ -49,6 +53,12 @@ export type FloorAttribution = 'net-new' | 'pre-existing' | 'unattributed';
 export interface AttributedFloorFailure {
   readonly check: CorrectnessCheckResult;
   readonly attribution: FloorAttribution;
+  /** Present when the comparator worked at FINDING level (both sides carried
+   *  findings for this check): the current findings absent from the base —
+   *  i.e. exactly what the change introduced. `net-new` with this field means
+   *  "these specific findings are new"; the check's other findings are
+   *  pre-existing debt. */
+  readonly netNewFindings?: readonly string[];
 }
 
 /**
@@ -62,12 +72,31 @@ export function attributeFloorFailures(
   base: readonly FloorBaseCheck[] | null,
   opts: { readonly absentMeans: 'net-new' | 'unattributed' },
 ): AttributedFloorFailure[] {
-  const byKey = new Map<string, FloorBaseCheck['status']>();
-  for (const c of base ?? []) byKey.set(checkKey(c.pack, c.label), c.status);
+  const byKey = new Map<string, FloorBaseCheck>();
+  for (const c of base ?? []) byKey.set(checkKey(c.pack, c.label), c);
   const out: AttributedFloorFailure[] = [];
   for (const check of current.checks) {
     if (check.status !== 'fail') continue;
-    const baseStatus = byKey.get(checkKey(check.pack, check.label));
+    const baseCheck = byKey.get(checkKey(check.pack, check.label));
+    const baseStatus = baseCheck?.status;
+    // FINDING-level path: when BOTH sides recorded finding identities for a
+    // failing check, the unit of attribution is the finding, not the check —
+    // otherwise a repo whose base was already red in this check grandfathers
+    // every future break of the same kind (the class the import-resolution
+    // check exists to catch would sail through on any repo with pre-existing
+    // unresolved-import debt). A base that recorded NO findings for its
+    // failure stays check-level — never fabricate precision the snapshot
+    // does not have (Rule 19).
+    if (baseStatus === 'fail' && check.findings && baseCheck?.findings) {
+      const known = new Set(baseCheck.findings);
+      const netNewFindings = check.findings.filter((f) => !known.has(f));
+      out.push(
+        netNewFindings.length > 0
+          ? { check, attribution: 'net-new', netNewFindings }
+          : { check, attribution: 'pre-existing' },
+      );
+      continue;
+    }
     const attribution: FloorAttribution =
       baseStatus === 'fail'
         ? 'pre-existing'

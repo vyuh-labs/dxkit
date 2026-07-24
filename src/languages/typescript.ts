@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { builtinModules } from 'module';
 
 import hostedGitInfo from 'hosted-git-info';
 
@@ -19,6 +20,7 @@ import { detectLockfile } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
+import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import type {
@@ -33,6 +35,7 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
 import type {
@@ -1230,6 +1233,302 @@ function tsTypecheckScript(cwd: string): string | null {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * Import-resolution floor (the phantom-dependency class)
+ *
+ * A lockfile change can un-hoist a package that source imports but no
+ * manifest declares — the import resolved only through a transitive copy, and
+ * after the change "module not found" appears at build time in files the PR
+ * never touched. No existing TS/JS floor sees it: a pure-JS repo has no tsc
+ * stage, and a broken/empty test suite loads nothing. The check below verifies
+ * every bare specifier imported from source either resolves on the Node walk
+ * or is declared in a governing manifest. Bias: hard toward false NEGATIVES —
+ * a specifier is only reported when its package demonstrably neither exists on
+ * the resolution path nor is declared anywhere that governs the importer.
+ * ------------------------------------------------------------------------- */
+
+/** Node builtins (bare names and subpaths like `fs/promises`; the `node:`
+ *  prefixed forms are excluded by the protocol skip). */
+const NODE_BUILTINS = new Set(builtinModules);
+
+/** The pack's co-located test-file naming conventions — Jest/Vitest
+ *  `.test.`/`.spec.`, plus the widespread `.unit.` / `.e2e.` / `.cy.`
+ *  (Cypress) suffixes. Declared once: the pack metadata (`testFilePatterns`)
+ *  and the resolution check's walk both consume it. */
+const TS_TEST_FILE_PATTERNS: readonly string[] = [
+  '*.test.ts',
+  '*.test.tsx',
+  '*.test.js',
+  '*.test.jsx',
+  '*.test.mjs',
+  '*.test.cjs',
+  '*.spec.ts',
+  '*.spec.tsx',
+  '*.spec.js',
+  '*.spec.jsx',
+  '*.spec.mjs',
+  '*.spec.cjs',
+  '*.unit.ts',
+  '*.unit.tsx',
+  '*.unit.js',
+  '*.unit.jsx',
+  '*.e2e.ts',
+  '*.e2e.tsx',
+  '*.e2e.js',
+  '*.e2e.jsx',
+  '*.cy.ts',
+  '*.cy.tsx',
+  '*.cy.js',
+  '*.cy.jsx',
+];
+
+/** A cap on how many distinct unresolved packages the check will report as a
+ *  FAILURE. Beyond it the repo almost certainly uses a resolution mechanism
+ *  dxkit does not model (a bundler plugin, a custom loader), not dozens of
+ *  simultaneous breaks — so the check steps back to a disclosed skip rather
+ *  than false-blocking (false-negative bias). */
+const MAX_CREDIBLE_UNRESOLVED = 10;
+
+/** Shape of a plausible npm specifier worth reasoning about. Anything else —
+ *  whitespace/newlines (the regex extractor matching import-looking text
+ *  inside an embedded-code template literal), `${}` fragments, path noise —
+ *  is extractor noise and is never flagged (false-negative bias). Verified on
+ *  dxkit's own tree: without this, Go source embedded in a template string
+ *  produced multi-line "specifiers". */
+const PLAUSIBLE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(\/[\w.-]+)*$/i;
+
+/** The npm package name a bare specifier resolves through (`@scope/pkg/sub`
+ *  → `@scope/pkg`, `pkg/sub` → `pkg`), or null when malformed. */
+export function tsPackageNameOf(spec: string): string | null {
+  if (spec.startsWith('@')) {
+    const parts = spec.split('/');
+    return parts.length >= 2 && parts[0].length > 1 && parts[1] ? `${parts[0]}/${parts[1]}` : null;
+  }
+  const head = spec.split('/')[0];
+  return head || null;
+}
+
+/** Bundler / transpiler config files whose contents can declare module
+ *  aliases the resolver below does not model. Presence of the word `alias`
+ *  (or babel's module-resolver plugin) in one disables the whole check with a
+ *  disclosed reason — dxkit cannot distinguish an aliased import from a
+ *  missing package there. */
+const BUNDLER_ALIAS_CONFIG_PREFIXES = [
+  'vite.config',
+  'webpack.config',
+  'rollup.config',
+  'next.config',
+  'nuxt.config',
+  'metro.config',
+  'craco.config',
+  'babel.config',
+  '.babelrc',
+];
+
+function bundlerAliasConfig(cwd: string): string | null {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(cwd);
+  } catch {
+    return null;
+  }
+  for (const e of entries) {
+    if (!BUNDLER_ALIAS_CONFIG_PREFIXES.some((c) => e === c || e.startsWith(c + '.'))) continue;
+    try {
+      const text = fs.readFileSync(path.join(cwd, e), 'utf-8');
+      if (/\balias\b|module-resolver/.test(text)) return e;
+    } catch {
+      /* unreadable config → not treated as alias-declaring */
+    }
+  }
+  return null;
+}
+
+/** Does the specifier SHAPE-match any tsconfig `paths` mapping? A matching
+ *  spec whose target file is missing is a broken alias, which tsc reports
+ *  precisely — ambiguous for this check, so it is skipped, never flagged. */
+function matchesTsPathMapping(spec: string, cfg: TsPathConfig): boolean {
+  return cfg.mappings.some((m) =>
+    m.hasWildcard
+      ? spec.length >= m.prefix.length + m.suffix.length &&
+        spec.startsWith(m.prefix) &&
+        spec.endsWith(m.suffix)
+      : spec === m.prefix,
+  );
+}
+
+function dirOrFileExists(p: string): boolean {
+  try {
+    fs.statSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The dependency names declared by the nearest `package.json` at or above
+ *  `dir` (up to the repo root), plus the root manifest. A package DECLARED but
+ *  absent on disk is an install-state problem (environment), not broken code —
+ *  the phantom-dependency class is import-without-declaration, so declaration
+ *  anywhere that governs the importer resolves the question in the code's
+ *  favor. Cached per directory. */
+function declaredDepsFor(
+  cwd: string,
+  fileDirAbs: string,
+  cache: Map<string, ReadonlySet<string>>,
+): ReadonlySet<string> {
+  const key = fileDirAbs;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const names = new Set<string>();
+  const addFrom = (manifestPath: string) => {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<
+        string,
+        Record<string, string> | undefined
+      >;
+      for (const field of [
+        'dependencies',
+        'devDependencies',
+        'peerDependencies',
+        'optionalDependencies',
+      ]) {
+        for (const name of Object.keys(pkg[field] ?? {})) names.add(name);
+      }
+    } catch {
+      /* unreadable manifest contributes nothing */
+    }
+  };
+  const rootAbs = path.resolve(cwd);
+  let dir = fileDirAbs;
+  for (;;) {
+    const manifest = path.join(dir, 'package.json');
+    if (dirOrFileExists(manifest)) {
+      addFrom(manifest);
+      break; // the nearest manifest governs the importer
+    }
+    if (dir === rootAbs) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  addFrom(path.join(rootAbs, 'package.json'));
+  cache.set(key, names);
+  return names;
+}
+
+/** Node's resolution walk for a bare package: `node_modules/<pkg>` in every
+ *  ancestor of the importing file up to the filesystem root (a workspace root
+ *  ABOVE the repo legitimately hosts the hoisted install). */
+function nodePackageResolves(cwd: string, fromRel: string, pkg: string): boolean {
+  if (dirOrFileExists(path.join(cwd, 'node_modules', pkg))) return true;
+  let dir = path.dirname(path.resolve(cwd, fromRel));
+  for (;;) {
+    if (dirOrFileExists(path.join(dir, 'node_modules', pkg))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+/**
+ * The TS/JS import-resolution check (see `CorrectnessProvider.resolutionCheck`).
+ * Repo-wide by design: the class it catches breaks files the diff never
+ * touched. Skips (disclosed, fail-open): no installed tree, Yarn PnP, a
+ * bundler config declaring aliases. Reuses the pack's one import extraction
+ * (`extractTsImportsRaw`) and tsconfig resolution (`resolveTsImportRaw`) —
+ * Rule 2, no second parser.
+ */
+export function tsResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResult {
+  const cwd = ctx.cwd;
+  if (fileExists(cwd, '.pnp.cjs') || fileExists(cwd, '.pnp.js')) {
+    return {
+      kind: 'skipped',
+      reason: "Yarn Plug'n'Play resolution is not modeled — import resolution not verified here",
+    };
+  }
+  if (!dirOrFileExists(path.join(cwd, 'node_modules'))) {
+    return {
+      kind: 'skipped',
+      reason:
+        'dependencies are not installed (no node_modules) — install them to enable the import-resolution check',
+    };
+  }
+  const aliasConfig = bundlerAliasConfig(cwd);
+  if (aliasConfig !== null) {
+    return {
+      kind: 'skipped',
+      reason: `${aliasConfig} declares module aliases dxkit does not model — an aliased import is indistinguishable from a missing package, so the check declines`,
+    };
+  }
+
+  const pathConfig = loadTsPathConfig(cwd);
+  // PRODUCTION source only. Test files routinely embed fixture source as
+  // string literals whose import statements the regex extractor cannot tell
+  // from real ones (verified on dxkit's own tree: nearly every false positive
+  // was a fixture string in a test) — and a test-only phantom import fails the
+  // affected-tests check LIVE, so excluding tests loses nothing the floor
+  // needs. Generated code likewise: rebuilt, not hand-broken.
+  const files = walkSourceFiles(cwd, {
+    extensions: TS_JS_EXT,
+    includeTests: false,
+    includeAutogen: false,
+    // Explicit patterns — the pack path must never trigger the walker's
+    // registry-union default (module cycle; see walk-source-files.ts).
+    testFilePatterns: [...TS_TEST_FILE_PATTERNS, ...UNIVERSAL_TEST_DIR_PATTERNS],
+    autogenPatterns: [],
+  });
+  const unresolved = new Map<string, string>(); // package → first importing file
+  const resolvedPkgs = new Set<string>(); // per-run cache (root-walk hits dominate)
+  const declaredCache = new Map<string, ReadonlySet<string>>();
+  let checked = 0;
+  for (const rel of files) {
+    if (rel.endsWith('.d.ts')) continue; // declaration files: type-only imports
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const spec of extractTsImportsRaw(content)) {
+      if (spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/')) continue;
+      if (spec.startsWith('#')) continue; // package-imports field
+      if (/[:!?~]/.test(spec)) continue; // node:/virtual: protocols, loader/query syntax
+      if (!PLAUSIBLE_SPECIFIER.test(spec)) continue; // extractor noise, never a finding
+      const pkg = tsPackageNameOf(spec);
+      if (pkg === null) continue;
+      if (NODE_BUILTINS.has(pkg) || NODE_BUILTINS.has(spec)) continue;
+      if (pathConfig !== null) {
+        if (resolveTsImportRaw(rel, spec, cwd, pathConfig) !== null) continue; // internal
+        if (matchesTsPathMapping(spec, pathConfig)) continue; // broken alias — tsc's domain
+      }
+      checked++;
+      if (resolvedPkgs.has(pkg) || unresolved.has(pkg)) continue;
+      const fileDirAbs = path.dirname(path.resolve(cwd, rel));
+      if (
+        nodePackageResolves(cwd, rel, pkg) ||
+        declaredDepsFor(cwd, fileDirAbs, declaredCache).has(pkg)
+      ) {
+        resolvedPkgs.add(pkg);
+      } else {
+        unresolved.set(pkg, rel);
+      }
+    }
+  }
+
+  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size > MAX_CREDIBLE_UNRESOLVED) {
+    return {
+      kind: 'skipped',
+      reason: `${unresolved.size} packages do not resolve — that many at once suggests a resolution mechanism dxkit does not model, not simultaneous breaks; declining rather than false-blocking`,
+    };
+  }
+  return {
+    kind: 'unresolved',
+    unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+  };
+}
+
 /** Rule 20: the TS/JS tooling is host-agnostic and needs only Node — the
  *  runtime dxkit itself runs on, so the requirement is trivially satisfiable
  *  wherever dxkit runs. Declared anyway: the model is total, never assumed. */
@@ -1251,6 +1550,8 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   // The floor runs the project's compiler pass + test suite — 'build' weight,
   // though no compiled-output environment is needed (needsBuild false).
   execution: () => ({ ...TS_TOOLING_EXECUTION, weight: 'build' }),
+
+  resolutionCheck: tsResolutionCheck,
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     // Prefer the project's own typecheck script — it carries their exact
@@ -1770,37 +2071,11 @@ export const typescript: LanguageSupport = {
   sourceExtensions: [...TS_JS_EXT],
   // Filename conventions for the JS/TS ecosystem. The `__tests__/`
   // directory convention is supplied once, cross-ecosystem, by
-  // `UNIVERSAL_TEST_DIR_PATTERNS` (languages/index.ts) — these are the
-  // co-located naming conventions that vary by ecosystem and so belong
-  // in the pack: Jest/Vitest `.test.`/`.spec.`, plus the widespread
-  // `.unit.` / `.e2e.` / `.cy.` (Cypress) suffixes for tests that sit
-  // next to the code they exercise rather than under a test directory.
-  testFilePatterns: [
-    '*.test.ts',
-    '*.test.tsx',
-    '*.test.js',
-    '*.test.jsx',
-    '*.test.mjs',
-    '*.test.cjs',
-    '*.spec.ts',
-    '*.spec.tsx',
-    '*.spec.js',
-    '*.spec.jsx',
-    '*.spec.mjs',
-    '*.spec.cjs',
-    '*.unit.ts',
-    '*.unit.tsx',
-    '*.unit.js',
-    '*.unit.jsx',
-    '*.e2e.ts',
-    '*.e2e.tsx',
-    '*.e2e.js',
-    '*.e2e.jsx',
-    '*.cy.ts',
-    '*.cy.tsx',
-    '*.cy.js',
-    '*.cy.jsx',
-  ],
+  // `UNIVERSAL_TEST_DIR_PATTERNS` (languages/test-dir-patterns.ts) — these
+  // are the co-located naming conventions that vary by ecosystem and so
+  // belong in the pack (declared once above as `TS_TEST_FILE_PATTERNS`, which
+  // the resolution check also filters with).
+  testFilePatterns: [...TS_TEST_FILE_PATTERNS],
   extraExcludes: ['node_modules', 'dist', '.next', '.turbo', 'coverage', '.cache'],
 
   exportDetection: {

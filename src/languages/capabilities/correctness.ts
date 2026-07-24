@@ -39,6 +39,33 @@ export interface CorrectnessCommand {
   readonly args: readonly string[];
 }
 
+/** One import specifier that demonstrably does not resolve against the
+ *  installed dependency tree. */
+export interface UnresolvedImport {
+  /** The bare package specifier that failed to resolve (e.g. `form-data`). */
+  readonly specifier: string;
+  /** Repo-relative POSIX path of an importing file (the first one seen), so
+   *  the failure is actionable without re-running the walk. */
+  readonly file: string;
+}
+
+/**
+ * The tri-state result of a pack's import-resolution check.
+ *
+ *   - `clean`      — every checked specifier resolves. A floor PASS.
+ *   - `unresolved` — at least one bare specifier demonstrably does not exist
+ *     on the resolution path. A floor FAILURE (finding-level: each entry is
+ *     its own diffable identity, so a repo with pre-existing unresolved debt
+ *     still blocks on a NEW one).
+ *   - `skipped`    — the check could not answer here (dependencies not
+ *     installed, an alias/PnP configuration it does not understand). Fail-OPEN
+ *     with the reason DISCLOSED, never silent.
+ */
+export type ResolutionCheckResult =
+  | { readonly kind: 'clean'; readonly checkedSpecifiers: number }
+  | { readonly kind: 'unresolved'; readonly unresolved: readonly UnresolvedImport[] }
+  | { readonly kind: 'skipped'; readonly reason: string };
+
 import type { ExecutionRequirement } from '../../execution';
 
 /**
@@ -56,6 +83,24 @@ export interface CorrectnessProvider {
    *  CI's `full` scope as the backstop. Returns `null` when nothing relevant
    *  changed, or when the pack has no test command at all. */
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null;
+  /**
+   * OPTIONAL: verify every bare import specifier in the repo's source resolves
+   * against the installed dependency tree. This is the floor BETWEEN "compiles"
+   * and "bundles" that interpreted stacks lack: a pure-JS repo has no compile
+   * stage, and a broken/empty test suite loads nothing — so a lockfile change
+   * that un-hoists a phantom dependency ("module not found" at build time)
+   * passed every check. Compiled packs DECLINE by omission (their compiler IS
+   * the resolution check).
+   *
+   * Unlike the two command builders this is a direct computation — the pack
+   * already extracts import specifiers (Rule 6), and checking them against the
+   * installed tree needs no external tool. It must be read-only, never spawn,
+   * and bias hard toward false NEGATIVES (benign.ts discipline): skip builtins,
+   * `#`-imports, path aliases, anything ambiguous — only report a specifier
+   * whose package demonstrably does not exist on the resolution path. The
+   * runner treats a throw as a disclosed skip (fail-open).
+   */
+  resolutionCheck?(ctx: CorrectnessContext): ResolutionCheckResult;
   /**
    * What the floor NEEDS from the environment that runs it (CLAUDE.md Rule 20):
    * host OS, ambient toolchains, whether it builds the project, how its target

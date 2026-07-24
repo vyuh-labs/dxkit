@@ -906,12 +906,12 @@ fi
 # builder directly. This mirrors Rule 2 (one gather path) + Rule 12 (one query
 # point): bypassing the runner means re-implementing the fail-open/timeout
 # policy and silently drifting from the pack-driven contract.
-ROGUE_FLOOR=$(grep -rnE "\.(syntaxCheck|affectedTests)[[:space:]]*\(" src/ 2>/dev/null \
+ROGUE_FLOOR=$(grep -rnE "\.(syntaxCheck|affectedTests|resolutionCheck)[[:space:]]*\(" src/ 2>/dev/null \
   | grep -v "// correctness-runner-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | grep -v "^src/analyzers/correctness/")
 if [ -n "$ROGUE_FLOOR" ]; then
-  echo "❌ Correctness-floor rule violation: a pack's syntaxCheck()/affectedTests() builder"
+  echo "❌ Correctness-floor rule violation: a pack's syntaxCheck()/affectedTests()/resolutionCheck() builder"
   echo "   invoked outside the canonical runner src/analyzers/correctness/run.ts:"
   echo "$ROGUE_FLOOR"
   echo "   → Call runCorrectnessFloor() from src/analyzers/correctness/run.ts instead;"
