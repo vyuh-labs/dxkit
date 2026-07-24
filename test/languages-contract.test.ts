@@ -425,6 +425,19 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
     }
   });
 
+  // 4.2 (test-gap tooling-config exemption): a pack that declares
+  // `toolingConfigPatterns` must declare BASENAME patterns — non-empty,
+  // no path separators (the exemption is a known-config-name list, not a
+  // directory carve-out; a path pattern would silently widen the false-
+  // negative bias into whole-tree exclusions).
+  it('toolingConfigPatterns, when declared, are well-formed basenames', () => {
+    for (const p of lang.toolingConfigPatterns ?? []) {
+      expect(typeof p, `${lang.id}: pattern must be a string`).toBe('string');
+      expect(p.length, `${lang.id}: empty tooling-config pattern`).toBeGreaterThan(0);
+      expect(p.includes('/'), `${lang.id}: '${p}' — basenames only, no paths`).toBe(false);
+    }
+  });
+
   // custom-check flagship: every pack declares a lint-GATE provider (Rule 6),
   // so the lint gate is uniformly pack-driven and no pack silently lacks the
   // slot. A pack with no zero-config standalone linter returns null (dormant —

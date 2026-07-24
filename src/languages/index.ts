@@ -170,6 +170,25 @@ export function dependencyManifestFilesIn(
 }
 
 /**
+ * Union of the active packs' tooling-config basename patterns (4.2) — files
+ * that carry a source extension but are build/test/bundler CONFIG, not
+ * test-gap candidates. Consumed by the test-gap gather; a new pack's
+ * declarations extend every consumer automatically (Rule 6).
+ */
+export function allToolingConfigPatterns(flags: DetectedStack['languages']): string[] {
+  return [
+    ...new Set(activeLanguagesFromFlags(flags).flatMap((l) => l.toolingConfigPatterns ?? [])),
+  ];
+}
+
+/** Is this repo-relative path a declared tooling-config file for any active
+ *  pack? Same matching rules as the dependency-manifest patterns — one
+ *  matcher, not a second glob dialect. */
+export function isToolingConfigFile(relPath: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => matchesManifestPattern(relPath, p));
+}
+
+/**
  * Match one repo-relative path against one manifest pattern (exported for
  * tests). A multi-segment pattern matches a path equal to it or nested under
  * any directory; a `*` glob matches on the basename; a bare name matches any

@@ -1258,6 +1258,11 @@ export const python: LanguageSupport = {
   testFilePatterns: ['test_*.py', '*_test.py'],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],
 
+  // Python files that are tooling/packaging CONFIG, not test-gap candidates
+  // (4.2): conftest.py is pytest fixture wiring, setup.py is packaging,
+  // noxfile/fabfile drive task runners. KNOWN names only.
+  toolingConfigPatterns: ['conftest.py', 'setup.py', 'noxfile.py', 'fabfile.py'],
+
   exportDetection: {
     reliability: 'partial',
     strategy:

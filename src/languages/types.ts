@@ -234,6 +234,21 @@ export interface LanguageSupport {
   extraExcludes?: string[];
 
   /**
+   * Basename patterns for TOOLING-CONFIG files that carry a source extension
+   * but are not test-gap candidates (4.2): `jest.config.js`, `vite.config.ts`,
+   * `build.gradle.kts`, `Package.swift`, … Nobody unit-tests a jest config, so
+   * a policy that arms test-gap would otherwise FALSE-BLOCK a completed change
+   * that legitimately adds one (the shipped class: a fix-build PR blocked on
+   * net-new test-gaps for `jest.config.js` + `jest.setup.js`).
+   *
+   * Bias: list only KNOWN config basenames (false-negative bias — a real
+   * source file merely named like config still counts). Matched on basename
+   * with `*` globs (the `matchesManifestPattern` rules); unioned across active
+   * packs via `allToolingConfigPatterns`.
+   */
+  toolingConfigPatterns?: readonly string[];
+
+  /**
    * D028 (2.4.7): basename glob patterns identifying auto-generated
    * source files that should be EXCLUDED from per-file metrics
    * (source-file counts, files-over-500-lines, largest-file probes,

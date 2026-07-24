@@ -543,6 +543,10 @@ export const kotlin: LanguageSupport = {
   // `out` = IntelliJ IDE build output.
   extraExcludes: ['build', '.gradle', 'out'],
 
+  // Gradle build scripts carry the .kts source extension but are build
+  // CONFIG, not test-gap candidates (4.2). KNOWN names only.
+  toolingConfigPatterns: ['build.gradle.kts', 'settings.gradle.kts', '*.gradle.kts'],
+
   exportDetection: {
     reliability: 'full',
     strategy:
