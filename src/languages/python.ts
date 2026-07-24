@@ -5,6 +5,7 @@ import { type Coverage, type FileCoverage, round1, toRelative } from '../analyze
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
 import { commandExists, fileExists, run } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
+import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
@@ -21,6 +22,7 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
 import type {
@@ -706,9 +708,21 @@ const pyCoverageProvider: CapabilityProvider<CoverageResult> = {
  * unit tests can exercise it directly; the imports capability batches
  * it across all .py files under the repo.
  */
-export function extractPyImportsRaw(content: string): string[] {
+export function extractPyImportsRaw(
+  content: string,
+  opts: {
+    /** Only imports at COLUMN 0 (module top level). The resolution floor
+     *  sets this: an indented import lives inside a function, a
+     *  `try/except ImportError` optional-dependency guard, or an
+     *  `if TYPE_CHECKING:` block — all shapes whose absence is handled at
+     *  runtime, so flagging them would false-block (false-negative bias).
+     *  Default false: the imports capability keeps its full extraction. */
+    readonly topLevelOnly?: boolean;
+  } = {},
+): string[] {
   const out: string[] = [];
   for (const line of stripPyComments(content).split('\n')) {
+    if (opts.topLevelOnly && /^\s/.test(line)) continue;
     const trimmed = line.trim();
     const fromMatch = trimmed.match(/^from\s+([.\w]+)\s+import\s+/);
     if (fromMatch) {
@@ -937,7 +951,431 @@ function isPyTestFile(rel: string): boolean {
  * changed test module is syntax-checked on the fast surface and fully tested in
  * CI. (Documented ceiling; testmon-based per-test selection is a future upgrade.)
  */
+/** The pack's test-file naming conventions — shared by the pack metadata
+ *  and the resolution check's walk (one definition). */
+const PY_TEST_FILE_PATTERNS: readonly string[] = ['test_*.py', '*_test.py'];
+
+/* ------------------------------------------------------------------------- *
+ * Import-resolution floor (4.2) — the Python analog of the TS/JS
+ * phantom-dependency check: a top-level import of a package that is neither
+ * installed in the project environment nor declared in any dependency
+ * manifest fails at runtime, and no compile stage exists to see it.
+ * Bias hard toward false NEGATIVES: only column-0 imports count (indented =
+ * optional-dependency guards / TYPE_CHECKING / function-local), stdlib and
+ * local modules are exempt, and a declared-but-not-installed package is
+ * install state, not broken code.
+ * ------------------------------------------------------------------------- */
+
+/** Top-level standard-library module names (Python 3.9–3.13 union, plus the
+ *  perennial `__future__`). A curated language fact, not a probe — the check
+ *  must not depend on a local interpreter being present (Rule 19-style
+ *  machine-independence). */
+const PY_STDLIB = new Set([
+  '__future__',
+  'abc',
+  'aifc',
+  'argparse',
+  'array',
+  'ast',
+  'asyncio',
+  'atexit',
+  'audioop',
+  'base64',
+  'bdb',
+  'binascii',
+  'bisect',
+  'builtins',
+  'bz2',
+  'calendar',
+  'cgi',
+  'cgitb',
+  'chunk',
+  'cmath',
+  'cmd',
+  'code',
+  'codecs',
+  'codeop',
+  'collections',
+  'colorsys',
+  'compileall',
+  'concurrent',
+  'configparser',
+  'contextlib',
+  'contextvars',
+  'copy',
+  'copyreg',
+  'cProfile',
+  'crypt',
+  'csv',
+  'ctypes',
+  'curses',
+  'dataclasses',
+  'datetime',
+  'dbm',
+  'decimal',
+  'difflib',
+  'dis',
+  'distutils',
+  'doctest',
+  'email',
+  'encodings',
+  'ensurepip',
+  'enum',
+  'errno',
+  'faulthandler',
+  'fcntl',
+  'filecmp',
+  'fileinput',
+  'fnmatch',
+  'fractions',
+  'ftplib',
+  'functools',
+  'gc',
+  'getopt',
+  'getpass',
+  'gettext',
+  'glob',
+  'graphlib',
+  'grp',
+  'gzip',
+  'hashlib',
+  'heapq',
+  'hmac',
+  'html',
+  'http',
+  'idlelib',
+  'imaplib',
+  'imghdr',
+  'imp',
+  'importlib',
+  'inspect',
+  'io',
+  'ipaddress',
+  'itertools',
+  'json',
+  'keyword',
+  'lib2to3',
+  'linecache',
+  'locale',
+  'logging',
+  'lzma',
+  'mailbox',
+  'mailcap',
+  'marshal',
+  'math',
+  'mimetypes',
+  'mmap',
+  'modulefinder',
+  'msilib',
+  'msvcrt',
+  'multiprocessing',
+  'netrc',
+  'nis',
+  'nntplib',
+  'ntpath',
+  'numbers',
+  'operator',
+  'optparse',
+  'os',
+  'ossaudiodev',
+  'pathlib',
+  'pdb',
+  'pickle',
+  'pickletools',
+  'pipes',
+  'pkgutil',
+  'platform',
+  'plistlib',
+  'poplib',
+  'posix',
+  'posixpath',
+  'pprint',
+  'profile',
+  'pstats',
+  'pty',
+  'pwd',
+  'py_compile',
+  'pyclbr',
+  'pydoc',
+  'queue',
+  'quopri',
+  'random',
+  're',
+  'readline',
+  'reprlib',
+  'resource',
+  'rlcompleter',
+  'runpy',
+  'sched',
+  'secrets',
+  'select',
+  'selectors',
+  'shelve',
+  'shlex',
+  'shutil',
+  'signal',
+  'site',
+  'smtplib',
+  'sndhdr',
+  'socket',
+  'socketserver',
+  'spwd',
+  'sqlite3',
+  'ssl',
+  'stat',
+  'statistics',
+  'string',
+  'stringprep',
+  'struct',
+  'subprocess',
+  'sunau',
+  'symtable',
+  'sys',
+  'sysconfig',
+  'syslog',
+  'tabnanny',
+  'tarfile',
+  'telnetlib',
+  'tempfile',
+  'termios',
+  'test',
+  'textwrap',
+  'threading',
+  'time',
+  'timeit',
+  'tkinter',
+  'token',
+  'tokenize',
+  'tomllib',
+  'trace',
+  'traceback',
+  'tracemalloc',
+  'tty',
+  'turtle',
+  'turtledemo',
+  'types',
+  'typing',
+  'unicodedata',
+  'unittest',
+  'urllib',
+  'uu',
+  'uuid',
+  'venv',
+  'warnings',
+  'wave',
+  'weakref',
+  'webbrowser',
+  'winreg',
+  'winsound',
+  'wsgiref',
+  'xdrlib',
+  'xml',
+  'xmlrpc',
+  'zipapp',
+  'zipfile',
+  'zipimport',
+  'zlib',
+  'zoneinfo',
+]);
+
+/** Import-name → PyPI distribution names for the well-known mismatches
+ *  (`import yaml` installs as `pyyaml`). Consulted only on the DECLARED
+ *  side — an installed module is found in site-packages under its import
+ *  name regardless. KNOWN pairs only (false-negative bias). */
+const PY_MODULE_DIST_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  yaml: ['pyyaml'],
+  PIL: ['pillow'],
+  sklearn: ['scikit-learn', 'scikit_learn'],
+  bs4: ['beautifulsoup4'],
+  cv2: ['opencv-python', 'opencv-python-headless', 'opencv_python'],
+  dotenv: ['python-dotenv', 'python_dotenv'],
+  dateutil: ['python-dateutil', 'python_dateutil'],
+  jose: ['python-jose', 'python_jose'],
+  jwt: ['pyjwt'],
+  Crypto: ['pycryptodome', 'pycrypto'],
+  magic: ['python-magic', 'python_magic'],
+  git: ['gitpython'],
+  github: ['pygithub'],
+  docx: ['python-docx', 'python_docx'],
+  pptx: ['python-pptx', 'python_pptx'],
+  slugify: ['python-slugify', 'python_slugify'],
+  MySQLdb: ['mysqlclient'],
+  psycopg2: ['psycopg2-binary', 'psycopg2_binary'],
+  attr: ['attrs'],
+  serial: ['pyserial'],
+  usb: ['pyusb'],
+  OpenSSL: ['pyopenssl'],
+  wx: ['wxpython'],
+  fitz: ['pymupdf'],
+  kafka: ['kafka-python', 'kafka_python'],
+  snowflake: ['snowflake-connector-python', 'snowflake_connector_python'],
+  google: ['protobuf', 'google-api-python-client', 'google-cloud-storage'],
+};
+
+/** Repo-local virtualenv site-packages directories (`.venv` / `venv`,
+ *  POSIX `lib/pythonX.Y/site-packages` and Windows `Lib/site-packages`).
+ *  The Python analog of "does node_modules exist". */
+export function pySitePackagesDirs(cwd: string): string[] {
+  const out: string[] = [];
+  for (const envName of ['.venv', 'venv']) {
+    const envRoot = path.join(cwd, envName);
+    if (!isDir(envRoot)) continue;
+    const winSite = path.join(envRoot, 'Lib', 'site-packages');
+    if (isDir(winSite)) out.push(winSite);
+    const libDir = path.join(envRoot, 'lib');
+    if (isDir(libDir)) {
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(libDir);
+      } catch {
+        /* unreadable env dir contributes nothing */
+      }
+      for (const e of entries) {
+        const site = path.join(libDir, e, 'site-packages');
+        if (e.startsWith('python') && isDir(site)) out.push(site);
+      }
+    }
+  }
+  return out;
+}
+
+/** Direct dependency names declared by the repo's Python manifests
+ *  (requirements*.txt via the one parser, pyproject [project]/[tool.poetry]
+ *  dependency lines, Pipfile package sections), normalized to
+ *  lowercase-with-underscores. Regex extraction, biased toward capturing
+ *  MORE names (an over-captured token can only suppress a finding). */
+export function pyDeclaredDeps(cwd: string): Set<string> {
+  const norm = (n: string): string => n.toLowerCase().replace(/-/g, '_');
+  const out = new Set<string>();
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(cwd);
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (/^requirements[\w.-]*\.txt$/i.test(e)) {
+      try {
+        for (const n of parseRequirementsTxtTopLevels(fs.readFileSync(path.join(cwd, e), 'utf-8')))
+          out.add(norm(n));
+      } catch {
+        /* unreadable manifest contributes nothing */
+      }
+    }
+  }
+  const readText = (rel: string): string => {
+    try {
+      return fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      return '';
+    }
+  };
+  const pyproject = readText('pyproject.toml');
+  if (pyproject) {
+    // [project] dependencies / optional-dependencies arrays: quoted PEP 508
+    // strings; and poetry-style `name = "^1.0"` key lines. Over-capture is
+    // safe here (names only ever EXEMPT a specifier).
+    for (const m of pyproject.matchAll(/["']([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[><=!~;[\s]|["'])/g))
+      out.add(norm(m[1]));
+    for (const m of pyproject.matchAll(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=\s*["'{[]/gm))
+      out.add(norm(m[1]));
+  }
+  const pipfile = readText('Pipfile');
+  if (pipfile) {
+    for (const m of pipfile.matchAll(/^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/gm)) out.add(norm(m[1]));
+  }
+  return out;
+}
+
+/**
+ * The Python import-resolution check (`CorrectnessProvider.resolutionCheck`).
+ * Reuses the pack's ONE import extraction (column-0 only) and local resolver;
+ * a specifier is reported only when its top-level module is not stdlib, not a
+ * local module, not installed in a repo-local venv, and not declared (directly
+ * or via a known import-name alias) in any manifest.
+ */
+export function pyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResult {
+  const cwd = ctx.cwd;
+  const siteDirs = pySitePackagesDirs(cwd);
+  if (siteDirs.length === 0) {
+    return {
+      kind: 'skipped',
+      reason:
+        'no repo-local virtualenv (.venv / venv) found — the check cannot see the installed environment; install dependencies into a project venv to enable it',
+    };
+  }
+  const declared = pyDeclaredDeps(cwd);
+  const roots = pySourceRoots(cwd);
+  const files = walkSourceFiles(cwd, {
+    extensions: ['.py'],
+    includeTests: false,
+    includeAutogen: false,
+    testFilePatterns: [...PY_TEST_FILE_PATTERNS, ...UNIVERSAL_TEST_DIR_PATTERNS],
+    autogenPatterns: [],
+  });
+  // Any top-level dir / module file name in the repo is a local-module
+  // candidate — namespace packages have no __init__.py, so existence is the
+  // honest (false-negative-biased) test.
+  const localTops = new Set<string>();
+  for (const rel of files) {
+    const top = rel.split('/')[0];
+    localTops.add(top.endsWith('.py') ? top.slice(0, -3) : top);
+    const srcRel = rel.startsWith('src/') ? rel.slice(4) : null;
+    if (srcRel) {
+      const t = srcRel.split('/')[0];
+      localTops.add(t.endsWith('.py') ? t.slice(0, -3) : t);
+    }
+  }
+  const unresolved = new Map<string, string>();
+  const resolvedTops = new Set<string>();
+  let checked = 0;
+  for (const rel of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const spec of extractPyImportsRaw(content, { topLevelOnly: true })) {
+      if (spec.startsWith('.')) continue; // relative — the local resolver's domain
+      const top = spec.split('.')[0];
+      if (!top || !/^[A-Za-z_]\w*$/.test(top)) continue;
+      if (PY_STDLIB.has(top) || localTops.has(top)) continue;
+      checked++;
+      if (resolvedTops.has(top) || unresolved.has(top)) continue;
+      const installed =
+        siteDirs.some(
+          (d) =>
+            isDir(path.join(d, top)) ||
+            isFile(path.join(d, `${top}.py`)) ||
+            isFile(path.join(d, `${top}.pyi`)),
+        ) || resolvePyImportRaw(rel, spec, cwd, roots) !== null;
+      const normTop = top.toLowerCase().replace(/-/g, '_');
+      const declaredHit =
+        declared.has(normTop) ||
+        (PY_MODULE_DIST_ALIASES[top] ?? []).some((d) =>
+          declared.has(d.toLowerCase().replace(/-/g, '_')),
+        );
+      if (installed || declaredHit) resolvedTops.add(top);
+      else unresolved.set(top, rel);
+    }
+  }
+  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size > 10) {
+    return {
+      kind: 'skipped',
+      reason: `${unresolved.size} modules do not resolve — that many at once suggests an environment layout dxkit does not model, not simultaneous breaks; declining rather than false-blocking`,
+    };
+  }
+  return {
+    kind: 'unresolved',
+    unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+  };
+}
+
 const pyCorrectnessProvider: CorrectnessProvider = {
+  resolutionCheck: pyResolutionCheck,
+
   // Rule 20: host-agnostic, needs the Python runtime; py_compile + pytest run
   // the project's own code — 'build' weight without a compiled-build env.
   execution: (): ExecutionRequirement => ({
@@ -1255,7 +1693,7 @@ export const python: LanguageSupport = {
   displayName: 'Python',
   commentSyntax: { lineComment: '#' },
   sourceExtensions: ['.py'],
-  testFilePatterns: ['test_*.py', '*_test.py'],
+  testFilePatterns: [...PY_TEST_FILE_PATTERNS],
   extraExcludes: ['__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'venv', '.mypy_cache'],
 
   // Python files that are tooling/packaging CONFIG, not test-gap candidates

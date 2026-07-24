@@ -407,6 +407,20 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         expect(typeof cmd.label).toBe('string');
         expect(typeof cmd.bin).toBe('string');
         expect(Array.isArray(cmd.args)).toBe(true);
+        // Failure-level parser (4.2), when attached: TOTAL over arbitrary
+        // output — never throws, returns identities or null (the runner's
+        // defensive wrapper exists for pack bugs, not as license for them).
+        if (cmd.parseFailures) {
+          for (const sample of [
+            '',
+            'random text',
+            '\u0000binary\u0000',
+            'FAIL x\n\u2715 y (1 ms)',
+          ]) {
+            const parsed = cmd.parseFailures(sample);
+            expect(parsed === null || Array.isArray(parsed)).toBe(true);
+          }
+        }
       }
     }
     // The OPTIONAL import-resolution check (4.2): a pack that declares it must

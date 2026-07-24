@@ -259,6 +259,36 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   contract test requires BOTH builders if you declare it. See
   `typescript.ts` (`tsc --noEmit` + vitest/jest) and `python.ts`
   (`py_compile` + pytest) for worked examples, and CLAUDE.md Rule 15.
+
+  Two OPTIONAL floor extensions (4.2) deepen it — declare them when your
+  ecosystem's shape supports them:
+  - `resolutionCheck(ctx)` — for INTERPRETED languages only: a pure,
+    read-only tri-state (`clean` / `unresolved[]` / disclosed `skipped`)
+    verifying bare import specifiers resolve against the installed
+    dependency surface (the phantom-dependency class — no compile stage
+    sees it). Compiled languages decline by omission; their compiler IS
+    this check. Four reference implementations, one per
+    dependency-surface shape: `tsResolutionCheck` (node_modules walk),
+    `pyResolutionCheck` (venv site-packages + declared manifests + a
+    curated import↔dist alias table), `rubyResolutionCheck`
+    (Gemfile.lock with require↔gem name folding), `phpResolutionCheck`
+    (composer's generated autoload maps). Shared bias rules: never
+    spawn, skip DISCLOSED when the environment can't answer (no
+    install, unmodeled aliasing, implausibly many misses), false
+    negatives over false blocks everywhere ambiguous. The contract test
+    requires a well-formed tri-state that never throws; the playbook
+    proves the capability flows pack → runner with finding-level
+    identity.
+  - `parseFailures(output)` on the `affectedTests` COMMAND — extract
+    durable per-failure identities (failing test names, failing suite
+    files) from the runner's output, so a NEW failing test blocks even
+    inside an already-red check while the pre-existing red stays
+    grandfathered. Identities must be order-independent and durable
+    (names/paths, never durations or line numbers); return `null` when
+    unsure — the comparator then stays at check level and DISCLOSES it.
+    The contract test requires totality over arbitrary output; see
+    `parseTsTestRunnerFailures` (one parser covering jest + vitest).
+
 - **Lint gate** (3.0, structured since 3.9) — `lintGate?: LintGateProvider`,
   the pack's standard zero-config linter wired as an opt-in guardrail gate (a
   net-new lint error blocks; the repo's pre-existing lint debt is
