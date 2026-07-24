@@ -55,7 +55,19 @@ export interface DebtFloorFailure {
 export interface DebtFindingGroup {
   readonly kind: string;
   readonly severity: FindingSeverity;
+  /**
+   * Where `severity` came from (4.2): 'observed' — every entry carries its
+   * captured severity and the group takes the highest; 'partial' — some
+   * entries pre-date severity capture, highest observed wins; 'kind-default'
+   * — no entry carries one (a pre-4.2 baseline), so this is the kind's
+   * PRIORITY guess, not a measured severity. Disclosed so the burn-down
+   * ordering never presents a default as a measurement.
+   */
+  readonly severitySource: 'observed' | 'partial' | 'kind-default';
   readonly count: number;
+  /** Entry counts by observed severity (only severities present appear).
+   *  Empty on a pre-4.2 baseline. */
+  readonly bySeverity: Readonly<Partial<Record<FindingSeverity, number>>>;
   /** Up to three sample entries so an agent can orient without the file. */
   readonly samples: ReadonlyArray<{ fingerprint: string; locator: string }>;
 }
@@ -139,15 +151,38 @@ export function buildDebtReport(
     byKind.set(e.kind, arr);
   }
   const groups: DebtFindingGroup[] = [...byKind.entries()]
-    .map(([kind, entries]) => ({
-      kind,
-      severity: KIND_DEFAULT_SEVERITY[kind as BaselineEntry['kind']] ?? 'medium',
-      count: entries.length,
-      samples: entries.slice(0, 3).map((e) => ({
-        fingerprint: e.id,
-        locator: describeEntryLocation(e) || e.kind,
-      })),
-    }))
+    .map(([kind, entries]) => {
+      // Severity is REAL where the baseline captured it (4.2): the group takes
+      // the highest observed severity; only a pre-4.2 baseline falls back to
+      // the kind default, and the source is disclosed either way so the
+      // ordering never presents a priority guess as a measurement.
+      const observed = entries
+        .map((e) => (e as { severity?: FindingSeverity }).severity)
+        .filter((s): s is FindingSeverity => s !== undefined);
+      const bySeverity: Partial<Record<FindingSeverity, number>> = {};
+      for (const s of observed) bySeverity[s] = (bySeverity[s] ?? 0) + 1;
+      const severity =
+        observed.length > 0
+          ? observed.reduce((a, b) => (SEVERITY_RANK[b] < SEVERITY_RANK[a] ? b : a))
+          : (KIND_DEFAULT_SEVERITY[kind as BaselineEntry['kind']] ?? 'medium');
+      const severitySource: DebtFindingGroup['severitySource'] =
+        observed.length === entries.length
+          ? 'observed'
+          : observed.length > 0
+            ? 'partial'
+            : 'kind-default';
+      return {
+        kind,
+        severity,
+        severitySource,
+        count: entries.length,
+        bySeverity,
+        samples: entries.slice(0, 3).map((e) => ({
+          fingerprint: e.id,
+          locator: describeEntryLocation(e) || e.kind,
+        })),
+      };
+    })
     .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.count - a.count);
 
   // The one hard dependency the ordering encodes: a broken build makes
@@ -170,8 +205,17 @@ export function buildDebtReport(
     );
   }
   for (const g of groups) {
+    const breakdown = Object.entries(g.bySeverity)
+      .sort(([a], [b]) => SEVERITY_RANK[a as FindingSeverity] - SEVERITY_RANK[b as FindingSeverity])
+      .map(([s, n]) => `${n} ${s}`)
+      .join(', ');
+    const uncaptured = g.count - Object.values(g.bySeverity).reduce((a, b) => a + (b ?? 0), 0);
+    const sev =
+      g.severitySource === 'kind-default'
+        ? `${g.severity} — kind priority, not per-finding severity; re-baseline to capture it`
+        : breakdown + (uncaptured > 0 ? `, ${uncaptured} without captured severity` : '');
     plan.push(
-      `Burn down ${g.count} ${g.kind} finding(s) (${g.severity}) — fingerprints in the baseline file`,
+      `Burn down ${g.count} ${g.kind} finding(s) (${sev}) — fingerprints in the baseline file`,
     );
   }
   if (unobservable.length > 0) {

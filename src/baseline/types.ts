@@ -520,6 +520,11 @@ export type BaselineEntry =
       rule: string;
       file: string;
       line: number;
+      /** The finding's OBSERVED severity at capture time (4.2). Display
+       * metadata, never identity — `vyuh-dxkit debt` orders burn-down by it
+       * instead of a kind-default guess. Absent on baselines written before
+       * 4.2 (consumers fall back to the kind default and SAY so). */
+      severity?: FindingSeverity;
       /** 16-char hex hash of normalized context around `line` at
        * baseline-create time. Stamped via `computeContentHashFromCommit`;
        * the matcher's third pass uses it as a fallback when git-aware
@@ -541,6 +546,10 @@ export type BaselineEntry =
       package: string;
       installedVersion?: string;
       advisoryId: string;
+      /** Observed advisory severity at capture time (4.2) — display
+       * metadata, never identity; same fallback contract as the
+       * secret/code/config `severity`. */
+      severity?: FindingSeverity;
     }
   | {
       id: FindingId;

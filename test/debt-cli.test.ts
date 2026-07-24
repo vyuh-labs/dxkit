@@ -118,6 +118,69 @@ describe('buildDebtReport', () => {
     expect(r.plan[0]).toContain('npx tsc --noEmit');
     expect(r.plan[1]).toContain('failing tests');
     expect(r.plan[2]).toContain('secret');
+    // Pre-4.2 entries carry no severity → the ordering is a kind-priority
+    // guess and SAYS so, never presenting a default as a measurement.
+    expect(r.findings.groups[0].severitySource).toBe('kind-default');
+    expect(r.plan[2]).toContain('kind priority, not per-finding severity');
+  });
+
+  it('uses OBSERVED severity when the baseline captured it, with a real breakdown (4.2)', () => {
+    writeBaseline(dir, undefined, [
+      // code default is medium — but these entries CARRY critical/high, so the
+      // group must outrank dep-vuln's observed low and say what it measured.
+      {
+        id: 'bbbb000000000001',
+        kind: 'code',
+        tool: 't',
+        rule: 'r',
+        file: 'a.ts',
+        line: 1,
+        severity: 'critical',
+      },
+      {
+        id: 'bbbb000000000002',
+        kind: 'code',
+        tool: 't',
+        rule: 'r',
+        file: 'b.ts',
+        line: 2,
+        severity: 'high',
+      },
+      {
+        id: 'bbbb000000000003',
+        kind: 'dep-vuln',
+        package: 'p',
+        advisoryId: 'GHSA-x',
+        severity: 'low',
+      },
+    ]);
+    const r = buildDebtReport(dir, { liveFloor: () => null });
+    expect(r.findings.groups.map((g) => g.kind)).toEqual(['code', 'dep-vuln']);
+    const code = r.findings.groups[0];
+    expect(code.severity).toBe('critical'); // highest observed, not the kind default
+    expect(code.severitySource).toBe('observed');
+    expect(code.bySeverity).toEqual({ critical: 1, high: 1 });
+    const planLine = r.plan.find((p) => p.includes('code finding'));
+    expect(planLine).toContain('1 critical, 1 high');
+    expect(planLine).not.toContain('kind priority');
+    // A mixed group (some entries pre-date capture) disclosed as partial.
+    writeBaseline(dir, undefined, [
+      {
+        id: 'cccc000000000001',
+        kind: 'code',
+        tool: 't',
+        rule: 'r',
+        file: 'a.ts',
+        line: 1,
+        severity: 'high',
+      },
+      { id: 'cccc000000000002', kind: 'code', tool: 't', rule: 'r', file: 'b.ts', line: 2 },
+    ]);
+    const r2 = buildDebtReport(dir, { liveFloor: () => null });
+    expect(r2.findings.groups[0].severitySource).toBe('partial');
+    expect(r2.plan.find((p) => p.includes('code finding'))).toContain(
+      '1 without captured severity',
+    );
   });
 
   it('renders a console report with repro commands and the suggested order', () => {
