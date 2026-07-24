@@ -225,6 +225,10 @@ export interface FinishSetupOptions {
   readonly surfaces: readonly string[];
   /** Overwrite an existing baseline (the `--force` passthrough). */
   readonly force?: boolean;
+  /** Skip the floor-debt capture (the `--no-floor` passthrough) — the
+   *  build + full-test-suite part of the first baseline, deferred to a later
+   *  explicit capture or CI (4.2 evaluate-first onboarding). */
+  readonly noFloor?: boolean;
 }
 
 /**
@@ -324,10 +328,33 @@ async function runFinishingArc(
   // a hang. (No-op'd visually for the fast already-gated path, which resolves
   // before anyone reads it.)
   bl.note('scanning your code for the grandfathered floor — the first run can take a few minutes');
+  // Evaluate-first honesty (4.2): the floor-debt capture runs the repo's OWN
+  // build + full test suite — the expensive part — so the exact commands are
+  // NAMED before they run, with the defer remedy. A fast synthetic demo must
+  // never imply the same duration on a production repository.
+  if (opts.noFloor) {
+    bl.note(
+      'floor-debt capture skipped (--no-floor) — capture later with `' +
+        'vyuh-dxkit baseline create --force` or let CI record it',
+    );
+  } else {
+    const { describeFloorCapturePlan } = await import('./baseline/floor-debt');
+    const floorPlan = describeFloorCapturePlan(cwd, detectActiveLanguages(cwd));
+    if (floorPlan.length > 0) {
+      bl.note(
+        `floor-debt capture will run your build + full test suite (bounded, minutes on large repos): ` +
+          `${floorPlan.join('; ')} — skip with --no-floor`,
+      );
+    }
+  }
   let baselineFindings: number | null = null;
   let baselineMode: BaselineMode | null = null;
   try {
-    const result = await createBaseline({ cwd, force: !!opts.force });
+    const result = await createBaseline({
+      cwd,
+      force: !!opts.force,
+      ...(opts.noFloor ? { floor: false } : {}),
+    });
     baselineMode = result.mode.mode;
     if (result.mode.mode === 'ref-based') {
       bl.note('public repo → ref-based (nothing written to your tree)');

@@ -375,6 +375,42 @@ describe('runCorrectnessFloor', () => {
     });
   });
 
+  describe('describeFloorCapturePlan (the pre-capture estimate — 4.2 evaluate-first)', () => {
+    it('names the full-scope commands capture would run, without executing anything', async () => {
+      const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');
+      const p = pack('ts', cmd('typecheck', 'tsc'), cmd('affected-tests', 'vitest'));
+      const plan = describeFloorCapturePlan('/repo', [p]);
+      expect(plan).toEqual(['ts typecheck: tsc', 'ts affected-tests: vitest']);
+    });
+
+    it('is empty when no active pack provides a floor (capture would no-op)', async () => {
+      const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');
+      const plain = { id: 'go' } as unknown as LanguageSupport;
+      expect(describeFloorCapturePlan('/repo', [plain])).toEqual([]);
+    });
+
+    it('notes the read-only resolution check without pretending it costs anything', async () => {
+      const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');
+      const p = {
+        id: 'ts',
+        correctness: {
+          execution: () => ({
+            hosts: ['any' as const],
+            toolchains: [],
+            needsBuild: false,
+            buildTarget: 'none' as const,
+            weight: 'cheap' as const,
+          }),
+          syntaxCheck: () => null,
+          affectedTests: () => null,
+          resolutionCheck: () => ({ kind: 'clean' as const, checkedSpecifiers: 0 }),
+        },
+      } as unknown as LanguageSupport;
+      const plan = describeFloorCapturePlan('/repo', [p]);
+      expect(plan).toEqual(['ts import-resolution: read-only, sub-second']);
+    });
+  });
+
   it('describes a floor result', () => {
     const exec: CommandExec = (c) =>
       c.bin === 'tsc'

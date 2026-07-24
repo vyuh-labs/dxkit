@@ -940,7 +940,12 @@ export async function run(argv: string[]): Promise<void> {
       const baselineGates = wantHooks || wantCi || wantClaudeLoop;
       const wantFinish = !values['no-finish'] && baselineGates;
       let closingState = wantFinish
-        ? await finishSetup({ cwd, surfaces: gateSurfaces, force: !!values.force })
+        ? await finishSetup({
+            cwd,
+            surfaces: gateSurfaces,
+            force: !!values.force,
+            noFloor: !!values['no-floor'],
+          })
         : {
             gated: baselineGates,
             baselineFindings: null,
