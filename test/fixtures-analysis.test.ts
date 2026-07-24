@@ -32,6 +32,7 @@ import { gatherRepoFlowModel } from '../src/analyzers/flow/gather';
 import { gatherRepoModelSet } from '../src/analyzers/model-schema/gather';
 import { summarize } from '../src/analyzers/flow/model';
 import { buildReachable } from '../src/analyzers/tests/import-graph';
+import { trustedLocalContext } from '../src/analysis-trust';
 
 const FIXTURES = join(__dirname, 'fixtures', 'analysis');
 
@@ -269,7 +270,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
       // The user-facing surface loads .dxkit/policy.json:flow config itself
       // (ts-webapp: stripUrlPrefixes + the [...slug] catch-all; python-svc:
       // FastAPI decorators + Flask methods-kwarg + a Django ANY route).
-      const model = await gatherRepoFlowModel(staged[stack]);
+      const model = await gatherRepoFlowModel(staged[stack], { trust: trustedLocalContext() });
       const s = summarize(model);
       expect(s.calls).toBe(flow!.calls);
       expect(s.unresolved).toBe(0); // the last-mile of flow correctness
@@ -277,7 +278,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   }
 
   it('python-svc: the three Python served forms + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['python-svc']);
+    const model = await gatherRepoFlowModel(staged['python-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // FastAPI member decorators, Flask methods-kwarg (one route per verb),
     // Django path() as ANY — and the include('admin/') mount mints NOTHING.
@@ -297,7 +298,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('go-svc: stdlib registrars + 1.22 patterns + chi verbs + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['go-svc']);
+    const model = await gatherRepoFlowModel(staged['go-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // Plain HandleFunc → ANY; 1.22 "GET /…" patterns → concrete verbs with
     // {id} canonicalized; the chi-style r.Post rides routeRouterCallees.
@@ -318,7 +319,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('java-svc: Spring class prefix + builder chain + enum-verb exchange hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['java-svc']);
+    const model = await gatherRepoFlowModel(staged['java-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // Class-level @RequestMapping("/api/reports") prefixes both handlers —
     // the marker @PostMapping is the prefix alone; the class annotation
@@ -335,7 +336,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('kotlin-svc: Ktor DSL nesting + $id templates + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['kotlin-svc']);
+    const model = await gatherRepoFlowModel(staged['kotlin-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // route("/api") { … } prefixes the nested verbs; the top-level get
     // stays unprefixed; {id} and $id both canonicalize to {var}.
@@ -349,7 +350,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('csharp-svc: the [controller] token + attribute pairs + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['csharp-svc']);
+    const model = await gatherRepoFlowModel(staged['csharp-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // [Route("api/[controller]")] substitutes the class name (never an
     // over-matching {var}); the marker [HttpPost] serves the prefix alone.
@@ -364,7 +365,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('ruby-svc: resources expansion + draw qualifiers + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['ruby-svc']);
+    const model = await gatherRepoFlowModel(staged['ruby-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // resources :articles, only: [:index, :create] under namespace :api →
     // exactly two routes with the /api prefix; the explicit get qualifies
@@ -379,7 +380,7 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
   });
 
   it('rust-svc: axum nest argument-side prefixing + ANY routes + coverage honesty hold end-to-end', async () => {
-    const model = await gatherRepoFlowModel(staged['rust-svc']);
+    const model = await gatherRepoFlowModel(staged['rust-svc'], { trust: trustedLocalContext() });
     const served = model.routes.map((r) => `${r.method} ${r.path}`).sort();
     // .nest("/api", …) prefixes ONLY its argument router; the chain-link
     // /healthz sibling stays unprefixed; .route mints ANY routes.

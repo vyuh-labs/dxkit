@@ -29,6 +29,7 @@ import { csharp } from '../../src/languages/csharp';
 import { typescript } from '../../src/languages/typescript';
 import { renderFragmentOrchestration } from '../../src/ship-installers';
 import type { ExecutionEnvironment } from '../../src/execution';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 const LINT_ON = { lint: { enabled: true } } as unknown as BrownfieldPolicy;
 
@@ -59,12 +60,20 @@ describe('check-level recall honesty (the unobserved-check lie, closed)', () => 
     const dir = winformsRepo();
     try {
       const base = { cwd: dir, policy: LINT_ON, packs: [csharp] };
-      const onLinux = customCheckRecallInputs({ ...base, env: envOf('linux') });
+      const onLinux = customCheckRecallInputs({
+        trust: trustedLocalContext(),
+        ...base,
+        env: envOf('linux'),
+      });
       // The windows-only gate was NOT observed here — claiming its recall
       // would read as "comparable, zero findings" and flag the whole
       // pre-existing backlog as net-new on the first windows-side check.
       expect(Object.keys(onLinux).filter((k) => k.startsWith('lint:csharp/'))).toEqual([]);
-      const onWindows = customCheckRecallInputs({ ...base, env: envOf('windows') });
+      const onWindows = customCheckRecallInputs({
+        trust: trustedLocalContext(),
+        ...base,
+        env: envOf('windows'),
+      });
       expect(onWindows['lint:csharp/cmd']).toBeTruthy();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -77,6 +86,7 @@ describe('captureFragment', () => {
     const dir = winformsRepo();
     try {
       const fragment = captureFragment({
+        trust: trustedLocalContext(),
         cwd: dir,
         policy: LINT_ON,
         packs: [csharp, typescript],
@@ -121,6 +131,7 @@ describe('captureFragment', () => {
     try {
       expect(() =>
         captureFragment({
+          trust: trustedLocalContext(),
           cwd: dir,
           policy: LINT_ON,
           packs: [csharp],
@@ -130,6 +141,7 @@ describe('captureFragment', () => {
       ).toThrow(FragmentCaptureError);
       try {
         captureFragment({
+          trust: trustedLocalContext(),
           cwd: dir,
           policy: LINT_ON,
           packs: [csharp],
@@ -153,6 +165,7 @@ describe('captureFragment', () => {
     try {
       expect(() =>
         captureFragment({
+          trust: trustedLocalContext(),
           cwd: dir,
           policy: LINT_ON,
           packs: [csharp],
@@ -169,6 +182,7 @@ describe('captureFragment', () => {
     const dir = winformsRepo();
     try {
       const fragment = captureFragment({
+        trust: trustedLocalContext(),
         cwd: dir,
         policy: LINT_ON,
         packs: [csharp],

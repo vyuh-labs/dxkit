@@ -24,6 +24,7 @@ import { buildByTopLevelDep, gatherBomEntries } from './gather';
 import { licenseClass, stalenessTier, type LicenseClass } from './pm-signals';
 import type { BomEntry, BomReport, BomSeverity } from './types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type { BomReport, BomEntry } from './types';
 
@@ -54,7 +55,7 @@ export async function analyzeBom(
   // boundaries).
   const cacheResult = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack, capabilities } = cacheResult;
   const cachedLicenses = capabilities.licenses ?? null;

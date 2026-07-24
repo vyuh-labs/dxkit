@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { diagnoseFlow } from '../src/analyzers/flow/diagnose';
+import { trustedLocalContext } from '../src/analysis-trust';
 
 function makeRepo(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'dxkit-flowdiag-'));
@@ -29,7 +30,7 @@ describe('diagnoseFlow', () => {
       'api/ctrl.ts': "class C { @get('/articles') a() {} @get('/orphan') b() {} }\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       expect(d!.topology).toBe('monorepo');
       expect(d!.resolved).toBe(1);
@@ -58,7 +59,7 @@ describe('diagnoseFlow', () => {
       'api/ctrl.ts': "class C { @get('/articles') a() {} }\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       expect(d!.frontendConsumers).toBeGreaterThan(0);
     } finally {
@@ -73,7 +74,7 @@ describe('diagnoseFlow', () => {
       'api/ctrl.ts': "class C { @get('/articles') a() {} @get('/orphan') b() {} }\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       expect(d!.frontendConsumers).toBe(0);
     } finally {
@@ -86,7 +87,7 @@ describe('diagnoseFlow', () => {
       'web/List.tsx': "axios.get('/articles');\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       expect(d!.topology).toBe('consumer-only');
       // No routes in-repo, so the call can't resolve; the provider lives
@@ -105,7 +106,7 @@ describe('diagnoseFlow', () => {
       'api/ctrl.ts': "class C { @get('/articles') a() {} }\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d!.unresolved).toEqual([]);
       expect(d!.servedUnconsumed).toEqual([]);
       expect(d!.resolved).toBe(1);
@@ -128,7 +129,7 @@ describe('diagnoseFlow', () => {
       }),
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       expect(d!.contract?.generatedAt).toBe('2026-06-01T00:00:00.000Z');
       // No workspace entry for the participant → tip unknowable → honest null,
@@ -151,7 +152,7 @@ describe('diagnoseFlow', () => {
       'api/ctrl.ts': "class C { @get('/articles') a() {} }\n",
     });
     try {
-      const d = await diagnoseFlow(dir);
+      const d = await diagnoseFlow(dir, { trust: trustedLocalContext() });
       expect(d).not.toBeNull();
       const cov = d!.coverage;
       expect(cov.extracted).toBe(2);
@@ -170,7 +171,7 @@ describe('diagnoseFlow', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-flowdiag-none-'));
     try {
       writeFileSync(join(dir, 'README.md'), '# hi\n');
-      expect(await diagnoseFlow(dir)).toBeNull();
+      expect(await diagnoseFlow(dir, { trust: trustedLocalContext() })).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

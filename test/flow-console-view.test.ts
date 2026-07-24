@@ -12,6 +12,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runFlowConsole } from '../src/flow-cli';
+import { trustedLocalContext } from '../src/analysis-trust';
 
 function write(root: string, rel: string, content: string): void {
   const abs = join(root, rel);
@@ -67,7 +68,7 @@ describe('runFlowConsole', () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it('full scope: writes a self-contained HTML console with every endpoint', async () => {
-    await runFlowConsole({ cwd: root });
+    await runFlowConsole({ trust: trustedLocalContext(), cwd: root });
     const outPath = join(root, '.dxkit', 'reports', 'flow-console.html');
     const html = readFileSync(outPath, 'utf8');
     expect(html.startsWith('<!doctype html>')).toBe(true);
@@ -85,7 +86,7 @@ describe('runFlowConsole', () => {
       join(root, 'frontend/api.ts'),
       'export const getWidget = (id) => axios.get(`/widgets/${id}`);\n',
     );
-    await runFlowConsole({ cwd: root, diff: base });
+    await runFlowConsole({ trust: trustedLocalContext(), cwd: root, diff: base });
     const data = readConsole(root, join(root, '.dxkit', 'reports', 'flow-console.html'));
     expect((data.meta as { scope: string }).scope).toBe('diff');
     const broken = data.broken as Array<{ path: string; broken: { reason: string } }>;
@@ -100,7 +101,7 @@ describe('runFlowConsole', () => {
       join(root, 'frontend/api.ts'),
       'export const getWidget = (id) => axios.get(`/widgets/${id}`);\n',
     );
-    await runFlowConsole({ cwd: root, diff: base, noGate: true });
+    await runFlowConsole({ trust: trustedLocalContext(), cwd: root, diff: base, noGate: true });
     const data = readConsole(root, join(root, '.dxkit', 'reports', 'flow-console.html'));
     expect((data.meta as { scope: string }).scope).toBe('diff');
     expect((data.broken as unknown[]).length).toBe(0);
@@ -108,7 +109,7 @@ describe('runFlowConsole', () => {
 
   it('honours --out for the artifact location', async () => {
     const out = join(root, 'custom', 'console.html');
-    await runFlowConsole({ cwd: root, out });
+    await runFlowConsole({ trust: trustedLocalContext(), cwd: root, out });
     expect(() => readFileSync(out, 'utf8')).not.toThrow();
   });
 });

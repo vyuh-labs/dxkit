@@ -15,6 +15,7 @@ import {
   gatherSummary,
 } from './gather';
 import { DevReport } from './types';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type { DevReport, ContributorStats, HotFile, CommitQuality, WeeklyVelocity } from './types';
 
@@ -37,7 +38,7 @@ export async function analyzeDevActivity(
   // legitimately run per-invocation.
   const cacheResult = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack } = cacheResult;
   // Default: last 3 months

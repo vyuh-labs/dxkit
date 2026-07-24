@@ -24,6 +24,7 @@ import { makeCommandExec } from '../../src/analyzers/tools/bounded-exec';
 import { runCustomChecks } from '../../src/analyzers/custom-checks/run';
 import { parseLocated } from '../../src/analyzers/custom-checks/parse';
 import { parseEslintJson } from '../../src/languages/typescript';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 /** A real child emitting a real eslint `--format json` blob at brownfield scale
  *  (~5 MB for 30k messages). `exitCode` (not `exit()`) so stdout flushes — a
@@ -64,7 +65,11 @@ describe('command output capture (real exec, real scale)', () => {
   });
 
   it('the gate itemizes EVERY finding in the stream', () => {
-    const res = runCustomChecks({ cwd: process.cwd(), specs: [lintSpec] });
+    const res = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: process.cwd(),
+      specs: [lintSpec],
+    });
 
     // Every finding is itemized so the baseline can grandfather each one. The
     // old code returned 501 here (a 500-finding prefix + a catch-all) and, before
@@ -77,6 +82,7 @@ describe('command output capture (real exec, real scale)', () => {
 
   it('a clean command yields no findings (the dogfood case still works)', () => {
     const res = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: process.cwd(),
       specs: [{ ...lintSpec, command: { bin: 'node', args: ['-e', ''] } }],
     });

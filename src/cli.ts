@@ -45,6 +45,7 @@ import type { ShipInstallResult } from './ship-installers';
 import { dxkitCli, requiresResolvableCli } from './self-invocation';
 import * as fs from 'fs';
 import * as path from 'path';
+import { trustContextFromFlag, trustedLocalContext } from './analysis-trust';
 
 // process.stdout.write returns false when the OS pipe buffer is full
 // (typically 64KB on Linux). Without awaiting 'drain', the process exits
@@ -1168,6 +1169,7 @@ export async function run(argv: string[]): Promise<void> {
       // reference live (no extra compute).
       const healthResult = await analyzeHealthWithMetrics(targetPath, {
         verbose: !!values.verbose,
+        trust: trustedLocalContext(),
       });
       const report = healthResult.report;
       const healthMetrics = healthResult.metrics;
@@ -1328,7 +1330,7 @@ export async function run(argv: string[]): Promise<void> {
           backend,
           specs,
           json: !!values.json,
-          untrusted: !!values.untrusted,
+          trust: trustContextFromFlag(!!values.untrusted),
         });
         break;
       }
@@ -1346,7 +1348,7 @@ export async function run(argv: string[]): Promise<void> {
           backend,
           specs,
           json: !!values.json,
-          untrusted: !!values.untrusted,
+          trust: trustContextFromFlag(!!values.untrusted),
           target,
         });
         break;
@@ -1361,7 +1363,7 @@ export async function run(argv: string[]): Promise<void> {
           specs,
           out: values.out as string | undefined,
           json: !!values.json,
-          untrusted: !!values.untrusted,
+          trust: trustContextFromFlag(!!values.untrusted),
         });
         break;
       }
@@ -1378,7 +1380,7 @@ export async function run(argv: string[]): Promise<void> {
           out: values.out as string | undefined,
           noGate: !!values['no-gate'],
           json: !!values.json,
-          untrusted: !!values.untrusted,
+          trust: trustContextFromFlag(!!values.untrusted),
         });
         break;
       }
@@ -1386,7 +1388,14 @@ export async function run(argv: string[]): Promise<void> {
       // cross-repo integration gate reads.
       if (subCommand === 'refresh') {
         const { runFlowRefresh } = await import('./flow-contract-cli');
-        await runFlowRefresh({ cwd, frontend, backend, specs, json: !!values.json });
+        await runFlowRefresh({
+          cwd,
+          frontend,
+          backend,
+          specs,
+          json: !!values.json,
+          trust: trustedLocalContext(),
+        });
         break;
       }
       // `flow publish` → the multi-repo handshake: union every workspace
@@ -1399,6 +1408,7 @@ export async function run(argv: string[]): Promise<void> {
           backend,
           specs,
           json: !!values.json,
+          trust: trustedLocalContext(),
           // --land=<pr|push|policy> lands the refreshed snapshots on the
           // default branch; `policy` resolves the mode from flow.refreshMode
           // (what the refresh workflow passes), pr/push override explicitly.
@@ -2707,6 +2717,7 @@ export async function run(argv: string[]): Promise<void> {
           fragment = captureFragment({
             cwd: targetPath,
             policy: loadPolicyFromCwd(targetPath),
+            trust: trustedLocalContext(),
             ...(checks ? { checks } : {}),
           });
         } catch (err) {
@@ -2818,7 +2829,7 @@ export async function run(argv: string[]): Promise<void> {
           baselinePath: values.baseline as string | undefined,
           changedOnly: !!values['changed-only'],
           incremental: !!values.incremental,
-          untrusted: !!values.untrusted,
+          trust: trustContextFromFlag(!!values.untrusted),
           policyPath: values.policy as string | undefined,
           verbose: !!values.verbose,
           cliMode: cliMode ?? undefined,

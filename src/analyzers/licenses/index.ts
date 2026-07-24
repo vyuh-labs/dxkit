@@ -16,6 +16,7 @@ import * as path from 'path';
 import { readOrBuildAnalysisResult } from '../cache';
 import { gatherAnalysisResultBody } from '../health';
 import type { LicensesReport } from './types';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type { LicensesReport } from './types';
 
@@ -35,7 +36,7 @@ export async function analyzeLicenses(
   // same degraded-fallback flagging, the same availability state.
   const result = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack, capabilities } = result;
   const envelope = capabilities.licenses;

@@ -19,6 +19,7 @@ import { isPlaceholderOnlyPath } from './model';
 import { writeFlowPolicy, type FlowGateMode } from './config';
 import { writeWorkspace, type WorkspaceParticipant } from '../../workspace';
 import type { ClientCall, RouteEndpoint } from './extract';
+import { trustedLocalContext } from '../../analysis-trust';
 
 /** Which halves of the UI→API contract this repo contains. */
 export type FlowTopology = 'monorepo' | 'consumer-only' | 'provider-only' | 'none';
@@ -60,7 +61,7 @@ export async function detectFlowTopology(cwd: string): Promise<FlowDetection> {
 
   let model;
   try {
-    model = await gatherRepoFlowModel(cwd);
+    model = await gatherRepoFlowModel(cwd, { trust: trustedLocalContext() });
   } catch {
     return NONE;
   }

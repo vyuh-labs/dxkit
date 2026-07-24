@@ -17,6 +17,7 @@ import { gatherExtensionFindings } from '../../src/extensions/extension-findings
 import { gatherCustomCheckFindings } from '../../src/analyzers/custom-checks/gather';
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import { identityFor } from '../../src/baseline/finding-identity';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 let tmp: string;
 beforeEach(() => {
@@ -127,6 +128,7 @@ describe('the seam entry point folds extensions in', () => {
   it('gatherCustomCheckFindings returns extension findings with no checks configured', async () => {
     writeExtension('perm-audit', 'block', [FINDING]);
     const out = gatherCustomCheckFindings({
+      trust: trustedLocalContext(),
       cwd: tmp,
       policy: DEFAULT_BROWNFIELD_POLICY,
       packs: [],

@@ -16,6 +16,7 @@ import { gatherDuplicateFindings, type DuplicateFinding } from '../duplication/f
 import { obtainGraph } from '../../explore/load';
 import { gatherDeadSurfaces, type DeadSurfaceResult } from './dead-surface-gather';
 import { convergeSeams, type SeamConvergence } from './index';
+import type { AnalysisTrustContext } from '../../analysis-trust';
 
 /** Minimum structural-similarity for a duplicate to enter the inventory — the
  *  anti-slop proof's precision floor for the graph-duplicate signal. */
@@ -55,12 +56,12 @@ const EMPTY: SeamInventory = {
 export async function gatherSeamInventory(
   cwd: string,
   opts: {
-    /** Attacker-controlled-source posture: threaded to the dead-surface
-     *  ladder's flow gather so executable flow plugins never load
-     *  (N-TRUST-01 — the trust tier must survive every hop, not just the
-     *  surface that received the flag). */
-    readonly untrusted?: boolean;
-  } = {},
+    /** REQUIRED (4.2): threaded to the dead-surface ladder's flow gather so
+     *  executable flow plugins never load on an untrusted tree — the trust
+     *  tier must survive every hop, not just the surface that received the
+     *  flag. */
+    readonly trust: AnalysisTrustContext;
+  },
 ): Promise<SeamInventory> {
   try {
     // Resolve to an ABSOLUTE path: graphify's subprocess resolves its target
@@ -79,7 +80,7 @@ export async function gatherSeamInventory(
     const dead = await gatherDeadSurfaces(root, {
       dupFindings: duplicates,
       ...(graph ? { graph } : {}),
-      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+      trust: opts.trust,
     });
     const converged = convergeSeams(dead.surfaces, duplicates);
     return { duplicates, dead, converged };

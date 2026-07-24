@@ -39,6 +39,7 @@ import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/ch
 import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
 import { findTool, TOOL_DEFS } from '../../src/analyzers/tools/tool-registry';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 // The two end-to-end tests below drive a REAL secret scan of a fixture repo, so
 // they need a secret scanner present. dxkit's grep fallback only emits its
@@ -193,7 +194,7 @@ describe('runGuardrailCheck — a net-new secret under absent recall CANNOT pass
       const dir = makeRepo();
       await createBaseline({ cwd: dir });
       addSecret(dir);
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const secretPairs = result.pairs.filter(
         (p) => p.kind === 'secret' && p.classification.status === 'added',
       );
@@ -212,7 +213,7 @@ describe('runGuardrailCheck — a net-new secret under absent recall CANNOT pass
       await createBaseline({ cwd: dir });
       stripRecall(dir);
       addSecret(dir);
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
 
       // The demotion happened (drift is real — blocking would misattribute) …
       const secretPairs = result.pairs.filter((p) => p.kind === 'secret');
@@ -250,7 +251,7 @@ describe('runGuardrailCheck — a net-new secret under absent recall CANNOT pass
     const dir = makeRepo();
     await createBaseline({ cwd: dir });
     stripRecall(dir);
-    const result = await runGuardrailCheck({ cwd: dir });
+    const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
     expect(result.attributionGaps).toEqual([]);
     const counts = verdictCounts(result);
     expect(counts.exitCode).toBe(0);

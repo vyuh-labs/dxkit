@@ -27,6 +27,7 @@ import { runGuardrailCheck } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { readFromAnchorRef, publishFilesToAnchorRef } from '../../src/baseline/anchor-publish';
 import { loadAnchorFromBranch } from '../../src/baseline/anchor';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 const tmps: string[] = [];
 function git(cwd: string, ...args: string[]): string {
@@ -129,7 +130,7 @@ describe('hydrate precedence + disclosure (integration)', () => {
     const stale = { ...fresh, repo: { ...fresh.repo, commitSha: 'f'.repeat(40) } };
     writeFileSync(treePath, JSON.stringify(stale));
 
-    const result = await runGuardrailCheck({ cwd: repo });
+    const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: repo });
     // The loaded baseline is the ANCHOR's (fresh commitSha), not the doctored
     // tree copy — precedence pinned end-to-end, visible in the footer SHA.
     expect(result.baseline.repo.commitSha).toBe(fresh.repo.commitSha);
@@ -150,7 +151,7 @@ describe('hydrate precedence + disclosure (integration)', () => {
     // silent-fallback shape).
     await createBaseline({ cwd: repo });
 
-    const result = await runGuardrailCheck({ cwd: repo });
+    const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: repo });
     expect(result.anchorSource?.used).toBe('tree-fallback');
     expect(result.anchorSource?.note).toContain('may be STALE');
     expect(renderConsole(result)).toContain('TREE FALLBACK');
@@ -161,7 +162,7 @@ describe('hydrate precedence + disclosure (integration)', () => {
   it('the tree transport carries NO anchor disclosure (nothing to disclose)', async () => {
     const { repo } = makeRepoWithOrigin();
     await createBaseline({ cwd: repo });
-    const result = await runGuardrailCheck({ cwd: repo });
+    const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: repo });
     expect(result.anchorSource).toBeUndefined();
     expect(renderConsole(result)).not.toContain('TREE FALLBACK');
   }, 240_000);

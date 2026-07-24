@@ -26,6 +26,7 @@ import { gatherRepoFlowModel, gatherSystemFlowModel } from '../src/analyzers/flo
 import { sawParticipantConsumers } from '../src/analyzers/flow/model';
 import { runFlowRefresh } from '../src/flow-contract-cli';
 import { readConsumedContract } from '../src/analyzers/flow/contract';
+import { trustedLocalContext } from '../src/analysis-trust';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -85,7 +86,7 @@ describe('flow model scope — repo vs system', () => {
   it('gatherRepoFlowModel NEVER reaches across the workspace boundary', async () => {
     const provider = makeProvider();
     declareParticipant(provider, makeConsumer());
-    const model = await gatherRepoFlowModel(provider);
+    const model = await gatherRepoFlowModel(provider, { trust: trustedLocalContext() });
     // Only this repo's own call. The participant is declared and on disk, and
     // must still be invisible here.
     expect(model.calls).toHaveLength(1);
@@ -99,7 +100,7 @@ describe('flow model scope — repo vs system', () => {
   it('gatherSystemFlowModel merges the participant consumed side, normalized by the PARTICIPANT policy', async () => {
     const provider = makeProvider();
     declareParticipant(provider, makeConsumer());
-    const model = await gatherSystemFlowModel(provider);
+    const model = await gatherSystemFlowModel(provider, { trust: trustedLocalContext() });
     const fromConsumer = model.calls.filter((c) => c.file.includes('TeamList'));
     expect(fromConsumer).toHaveLength(1);
     // `${Config.api()}/teams` only strips to `/teams` under the CONSUMER's own
@@ -114,8 +115,8 @@ describe('flow model scope — repo vs system', () => {
 
   it('a repo with no participants is identical under both entries (single-repo path unchanged)', async () => {
     const provider = makeProvider();
-    const repo = await gatherRepoFlowModel(provider);
-    const system = await gatherSystemFlowModel(provider);
+    const repo = await gatherRepoFlowModel(provider, { trust: trustedLocalContext() });
+    const system = await gatherSystemFlowModel(provider, { trust: trustedLocalContext() });
     expect(system.calls).toHaveLength(repo.calls.length);
     expect(system.routes).toHaveLength(repo.routes.length);
     expect(system.participantConsumers).toBeUndefined();
@@ -124,7 +125,7 @@ describe('flow model scope — repo vs system', () => {
   it('flow refresh authors a REPO-ONLY consumed contract — a participant never leaks into it', async () => {
     const provider = makeProvider();
     declareParticipant(provider, makeConsumer());
-    await runFlowRefresh({ cwd: provider, json: true });
+    await runFlowRefresh({ trust: trustedLocalContext(), cwd: provider, json: true });
 
     const consumed = readConsumedContract(provider);
     expect(consumed).toBeDefined();
@@ -183,7 +184,7 @@ describe('flow mesh — cross-stack (the anti-overfit net)', () => {
     );
 
     declareParticipant(provider, consumer);
-    const model = await gatherSystemFlowModel(provider);
+    const model = await gatherSystemFlowModel(provider, { trust: trustedLocalContext() });
     expect(model.routes.some((r) => r.path === '/teams' && r.method === 'GET')).toBe(true);
     // The TS client's call bound to the Python route — the join is stack-blind.
     expect(model.participantConsumers).toEqual([
@@ -212,7 +213,7 @@ describe('flow mesh — cross-stack (the anti-overfit net)', () => {
     );
 
     declareParticipant(provider, consumer);
-    const model = await gatherSystemFlowModel(provider);
+    const model = await gatherSystemFlowModel(provider, { trust: trustedLocalContext() });
     expect(model.routes.some((r) => r.path === '/teams')).toBe(true);
     const prov = model.participantConsumers![0];
     expect(prov.source).toBe('local');

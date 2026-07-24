@@ -6,6 +6,7 @@ import { gatherCustomCheckFindings } from '../../src/analyzers/custom-checks/gat
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import type { CommandExec } from '../../src/analyzers/tools/bounded-exec';
 import type { CustomCheckFinding } from '../../src/analyzers/custom-checks/types';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 describe('customCheckFindingsToBaselineEntries (Rule 10 producer)', () => {
   it('maps a located finding to an entry with the canonical identity', () => {
@@ -48,6 +49,7 @@ describe('customCheckFindingsToBaselineEntries (Rule 10 producer)', () => {
 describe('gatherCustomCheckFindings', () => {
   it('no-ops (returns []) when nothing is configured', () => {
     const findings = gatherCustomCheckFindings({
+      trust: trustedLocalContext(),
       cwd: '/repo',
       policy: DEFAULT_BROWNFIELD_POLICY,
       packs: [],
@@ -61,6 +63,7 @@ describe('gatherCustomCheckFindings', () => {
   it('runs configured user checks through the one runner', () => {
     const exec: CommandExec = () => ({ available: true, code: 1, output: 'seam violated' });
     const findings = gatherCustomCheckFindings({
+      trust: trustedLocalContext(),
       cwd: '/repo',
       policy: {
         ...DEFAULT_BROWNFIELD_POLICY,

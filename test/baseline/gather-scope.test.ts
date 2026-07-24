@@ -17,6 +17,7 @@ import type { BrownfieldPolicy, BrownfieldBlockRules } from '../../src/baseline/
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
 import { resolveLoopPolicy } from '../../src/loop/policy';
 import { gatherCurrentScan } from '../../src/baseline/create';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 /**
  * The gather scope is the load-bearing safety boundary for opt 1: it decides
@@ -201,8 +202,12 @@ describe('scoped gather drops non-security analyzers (observable effect)', () =>
   });
 
   it('full scope produces test-gap findings; security-only scope does not', async () => {
-    const full = await gatherCurrentScan({ cwd: dir });
-    const scoped = await gatherCurrentScan({ cwd: dir, scope: scopeForPolicy(SECURITY_ONLY) });
+    const full = await gatherCurrentScan({ trust: trustedLocalContext(), cwd: dir });
+    const scoped = await gatherCurrentScan({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      scope: scopeForPolicy(SECURITY_ONLY),
+    });
 
     const kindsOf = (s: { findings: ReadonlyArray<{ kind: string }> }) =>
       new Set(s.findings.map((f) => f.kind));

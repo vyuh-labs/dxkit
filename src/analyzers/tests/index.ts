@@ -10,6 +10,7 @@ import { buildReachable } from './import-graph';
 import { gatherTestFiles, gatherSourceFiles, matchTestsToSource } from './gather';
 import { TestGapsReport, SourceFile, CoverageSource, CoverageFidelity } from './types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type {
   TestGapsReport,
@@ -50,7 +51,7 @@ export async function analyzeTestGaps(
   // signals aren't part of the cached envelope today).
   const cacheResult = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack } = cacheResult;
   const toolsUsed: string[] = ['find', 'grep', 'git'];

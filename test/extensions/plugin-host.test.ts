@@ -14,6 +14,7 @@ import * as path from 'path';
 import { defineExtension, SDK_MAJOR } from '@vyuhlabs/dxkit-sdk';
 import { discoverExtensions } from '../../src/extensions/manifest';
 import { loadFlowPluginOverlay, loadPluginDefinition } from '../../src/extensions/plugin-host';
+import { trustedLocalContext, untrustedContentContext } from '../../src/analysis-trust';
 
 let tmp: string;
 beforeEach(() => {
@@ -264,7 +265,7 @@ describe('loadFlowPluginOverlay (the gather-time trust tier)', () => {
       `module.exports = { name: 'tenant-urls', sdkMajor: ${SDK_MAJOR},
         urlNormalizer: (u) => u.startsWith('tenant://') ? u.slice('tenant://'.length) : null };`,
     );
-    const overlay = loadFlowPluginOverlay(tmp);
+    const overlay = loadFlowPluginOverlay(tmp, trustedLocalContext());
     expect(overlay.dialects).toHaveLength(1);
     expect(overlay.readers.map((r) => r.kind)).toEqual(['acme-csv']);
     expect(overlay.rewriteUrl?.('tenant:///api/x')).toBe('/api/x');
@@ -274,18 +275,18 @@ describe('loadFlowPluginOverlay (the gather-time trust tier)', () => {
 
   it('--untrusted loads NOTHING and discloses exactly what was skipped', () => {
     writePlugin('acme-dialect', DIALECT_PLUGIN);
-    const overlay = loadFlowPluginOverlay(tmp, { untrusted: true });
+    const overlay = loadFlowPluginOverlay(tmp, untrustedContentContext());
     expect(overlay.dialects).toEqual([]);
     expect(overlay.readers).toEqual([]);
     expect(overlay.rewriteUrl).toBeUndefined();
     expect(overlay.disclosures).toEqual([expect.stringContaining('acme-dialect')]);
-    expect(overlay.disclosures[0]).toContain('--untrusted');
+    expect(overlay.disclosures[0]).toContain('untrusted content');
   });
 
   it('a broken plugin is disclosed and never hides a healthy sibling', () => {
     writePlugin('acme-dialect', DIALECT_PLUGIN);
     writePlugin('boom', `throw new Error('kaput');`);
-    const overlay = loadFlowPluginOverlay(tmp);
+    const overlay = loadFlowPluginOverlay(tmp, trustedLocalContext());
     expect(overlay.dialects).toHaveLength(1);
     expect(overlay.disclosures).toContainEqual(expect.stringContaining('kaput'));
   });
@@ -304,7 +305,7 @@ describe('loadFlowPluginOverlay (the gather-time trust tier)', () => {
         output: '.dxkit/contrib/script-ext.json',
       }),
     );
-    const overlay = loadFlowPluginOverlay(tmp);
+    const overlay = loadFlowPluginOverlay(tmp, trustedLocalContext());
     expect(overlay).toEqual({ dialects: [], readers: [], disclosures: [] });
   });
 });

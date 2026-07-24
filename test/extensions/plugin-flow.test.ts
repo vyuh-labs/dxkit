@@ -15,6 +15,7 @@ import * as path from 'path';
 import { SDK_MAJOR } from '@vyuhlabs/dxkit-sdk';
 import { gatherRepoFlowModel } from '../../src/analyzers/flow/gather';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
+import { trustedLocalContext, untrustedContentContext } from '../../src/analysis-trust';
 
 let tmp: string;
 beforeEach(() => {
@@ -58,11 +59,14 @@ describe('httpFlowDialect through real extraction', () => {
   it('a dialect-declared wrapper method becomes a consumed call', async () => {
     write('src/app.ts', APP_TS);
 
-    const before = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const before = await gatherRepoFlowModel(tmp, {
+      trust: trustedLocalContext(),
+      relativeTo: tmp,
+    });
     expect(before.calls).toHaveLength(0); // fetchJson is invisible without the dialect
 
     writeDialectPlugin();
-    const after = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const after = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext(), relativeTo: tmp });
     expect(after.calls).toHaveLength(1);
     expect(after.calls[0]).toMatchObject({ method: 'GET', path: '/articles/1' });
   });
@@ -70,9 +74,12 @@ describe('httpFlowDialect through real extraction', () => {
   it('--untrusted keeps the dialect out and discloses the skip', async () => {
     write('src/app.ts', APP_TS);
     writeDialectPlugin();
-    const model = await gatherRepoFlowModel(tmp, { relativeTo: tmp, untrusted: true });
+    const model = await gatherRepoFlowModel(tmp, {
+      relativeTo: tmp,
+      trust: untrustedContentContext(),
+    });
     expect(model.calls).toHaveLength(0);
-    expect(model.sourceDisclosures).toContainEqual(expect.stringContaining('--untrusted'));
+    expect(model.sourceDisclosures).toContainEqual(expect.stringContaining('untrusted content'));
     expect(model.sourceDisclosures?.[0]).toContain('acme-dialect');
   });
 
@@ -84,7 +91,7 @@ describe('httpFlowDialect through real extraction', () => {
       plugin: { module: 'plugin.js' },
     });
     write('.dxkit/extensions/boom/plugin.js', `throw new Error('kaput');`);
-    const model = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext(), relativeTo: tmp });
     expect(model.calls).toHaveLength(0);
     expect(model.sourceDisclosures).toContainEqual(expect.stringContaining('kaput'));
   });
@@ -123,7 +130,7 @@ describe('a plugin contractReader dispatches from flow.sources', () => {
     });
     write('contracts/calls.acme.csv', 'GET,/articles/1\nPOST,/comments');
 
-    const model = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext(), relativeTo: tmp });
     expect(model.calls).toHaveLength(2);
     expect(model.calls.map((c) => c.receiver)).toEqual(['acme-csv', 'acme-csv']);
     expect(model.calls[1]).toMatchObject({ method: 'POST', path: '/comments', line: 2 });
@@ -134,7 +141,7 @@ describe('a plugin contractReader dispatches from flow.sources', () => {
       flow: { sources: [{ kind: 'acme-csv', path: 'contracts/calls.acme.csv' }] },
     });
     write('contracts/calls.acme.csv', 'GET,/articles/1');
-    const model = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext(), relativeTo: tmp });
     expect(model.calls).toHaveLength(0);
     expect(model.sourceDisclosures).toContainEqual(
       expect.stringContaining("unknown kind 'acme-csv'"),
@@ -159,7 +166,7 @@ describe('a plugin urlNormalizer rides the ONE normalizer', () => {
     });
     write('requests/smoke.http', 'GET internal://svc/users/42\n');
 
-    const model = await gatherRepoFlowModel(tmp, { relativeTo: tmp });
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext(), relativeTo: tmp });
     expect(model.calls).toHaveLength(1);
     expect(model.calls[0].path).toBe('/users/42');
   });
@@ -207,7 +214,11 @@ export const b = () => api.fetchJson('/legacy/orphan');
     const baseSha = commitAll('base');
 
     // Unchanged tree: nothing net-new.
-    const clean = await evaluateFlowGateForGuardrail({ cwd: tmp, baseRef: baseSha });
+    const clean = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: tmp,
+      baseRef: baseSha,
+    });
     expect(clean.blocks).toBe(false);
 
     // HEAD adds a NEW dialect-visible call nothing serves → net-new block.
@@ -219,7 +230,11 @@ export const c = () => api.fetchJson('/brand-new/call');
 `,
     );
     commitAll('add unserved call');
-    const dirty = await evaluateFlowGateForGuardrail({ cwd: tmp, baseRef: baseSha });
+    const dirty = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: tmp,
+      baseRef: baseSha,
+    });
     expect(dirty.blocks).toBe(true);
     expect(JSON.stringify(dirty)).toContain('/brand-new/call');
     expect(JSON.stringify(dirty)).not.toContain('/legacy/orphan');
@@ -240,7 +255,11 @@ export const c = () => api.fetchJson('/brand-new/call');
 `,
     );
     commitAll('add unserved call');
-    const out = await evaluateFlowGateForGuardrail({ cwd: tmp, baseRef: baseSha, untrusted: true });
+    const out = await evaluateFlowGateForGuardrail({
+      cwd: tmp,
+      baseRef: baseSha,
+      trust: untrustedContentContext(),
+    });
     expect(out.blocks).toBe(false);
   }, 30_000);
 });
@@ -265,7 +284,7 @@ describe('every canonical flow surface applies the overlay (no half-landed lens)
       flow: { sources: [{ kind: 'http', path: 'requests/smoke.http' }] },
     });
     write('requests/smoke.http', 'GET internal://svc/users/42\n');
-    const model = await gatherModel({ cwd: tmp });
+    const model = await gatherModel({ cwd: tmp, trust: trustedLocalContext() });
     expect(model.calls).toHaveLength(1);
     expect(model.calls[0].path).toBe('/users/42');
   });
@@ -288,7 +307,7 @@ describe('every canonical flow surface applies the overlay (no half-landed lens)
       flow: { sources: [{ kind: 'http', path: 'requests/smoke.http' }] },
     });
     write('requests/smoke.http', 'GET internal://svc/users/42\n');
-    await runFlowPublish({ cwd: tmp, json: true });
+    await runFlowPublish({ trust: trustedLocalContext(), cwd: tmp, json: true });
     const consumed = JSON.parse(
       fs.readFileSync(path.join(tmp, '.dxkit/flow/consumed.json'), 'utf8'),
     ) as { bindings: Array<{ path: string }> };

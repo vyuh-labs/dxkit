@@ -15,6 +15,7 @@ import { QUALITY_SCORING_SPEC, type QualityScoreInput, evaluateSpec } from '../.
 import { QualityReport, QualityMetrics } from './types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 import { stripNotRunSuffix } from '../tools/lint-label';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type { QualityReport, QualityMetrics } from './types';
 
@@ -80,7 +81,7 @@ export async function analyzeQuality(
   // Closes the dual-Quality-formula drift class structurally.
   const cacheResult = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack } = cacheResult;
   const cm = cacheResult.metrics;

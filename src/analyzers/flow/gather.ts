@@ -36,6 +36,7 @@ import { dialectsByPack } from './dialects';
 import { loadFlowPluginOverlay } from '../../extensions/plugin-host';
 import type { HttpFlowDialect } from '@vyuhlabs/dxkit-sdk';
 import type { NormalizeConfig } from './normalize';
+import type { AnalysisTrustContext } from '../../analysis-trust';
 
 export interface GatherFlowOptions {
   /** Directories to scan for source (frontend, backend, services…). */
@@ -169,19 +170,22 @@ export async function gatherRepoFlowModel(
   opts: {
     roots?: readonly string[];
     relativeTo?: string;
-    untrusted?: boolean;
+    /** REQUIRED (4.2): whose tree is this? The rung-4 plugin overlay loads
+     *  here, so the caller must state it — an omission fails to compile
+     *  instead of silently defaulting to trusted. */
+    trust: AnalysisTrustContext;
     /** Extra OpenAPI specs to union with `flow.specs` — the flow CLI's
      *  `--specs` flag. Additive to policy, never a replacement, so a CLI
      *  invocation cannot silently drop the repo's configured specs. */
     extraSpecs?: readonly string[];
-  } = {},
+  },
 ): Promise<RepoFlowModel> {
   const config = readFlowConfig(cwd);
   // The rung-4 overlay loads here — the canonical repo entry — so every
   // single-repo surface (map, diagnose, detect) sees plugin dialects,
   // readers, and the rewriteUrl hook without threading them itself. Under
-  // `untrusted` nothing loads (trust tier) and the skip is disclosed.
-  const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
+  // an untrusted tree nothing loads (trust tier) and the skip is disclosed.
+  const overlay = loadFlowPluginOverlay(cwd, opts.trust);
   const model = await gatherFlowModel({
     roots: opts.roots ?? [cwd],
     specs: [...(opts.extraSpecs ?? []), ...config.specs.map((s) => resolve(cwd, s))],
@@ -243,9 +247,10 @@ export async function gatherSystemFlowModel(
   opts: {
     roots?: readonly string[];
     relativeTo?: string;
-    untrusted?: boolean;
+    /** REQUIRED (4.2) — see `gatherRepoFlowModel`. */
+    trust: AnalysisTrustContext;
     extraSpecs?: readonly string[];
-  } = {},
+  },
 ): Promise<FlowModel> {
   const model = await gatherRepoFlowModel(cwd, opts);
   const participants = readWorkspace(cwd)?.participants ?? [];
@@ -261,9 +266,7 @@ export async function gatherSystemFlowModel(
     }
     let pModel: RepoFlowModel;
     try {
-      pModel = await gatherRepoFlowModel(root, {
-        ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
-      });
+      pModel = await gatherRepoFlowModel(root, { trust: opts.trust });
     } catch {
       // An unreadable participant tree is a no-opinion, never fatal.
       provenance.push({ name: p.name, source: 'not-checked-out', calls: 0, bound: 0 });

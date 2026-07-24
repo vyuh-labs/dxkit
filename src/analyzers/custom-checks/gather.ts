@@ -25,9 +25,15 @@ import {
   gatherExtensionFindings,
 } from '../../extensions/extension-findings';
 import type { CustomCheckFinding, CustomCheckSpec } from './types';
+import type { AnalysisTrustContext } from '../../analysis-trust';
 
 export interface GatherCustomChecksOptions {
   readonly cwd: string;
+  /** REQUIRED (4.2): whose tree is this? Threaded to the one runner — an
+   *  untrusted context never spawns a repo-declared command, and requiring
+   *  it here means the guardrail's create-scan path cannot forget it (the
+   *  ungated-sink class). */
+  readonly trust: AnalysisTrustContext;
   readonly policy: BrownfieldPolicy;
   /** Active language packs. Defaults to `detectActiveLanguages(cwd)`; injected
    *  in tests + reused by callers that already detected them. */
@@ -208,6 +214,7 @@ export function gatherCustomCheckFindings(
       ? []
       : runCustomChecks({
           cwd: opts.cwd,
+          trust: opts.trust,
           specs,
           ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
           ...(opts.exec !== undefined ? { exec: opts.exec } : {}),

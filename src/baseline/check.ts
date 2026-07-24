@@ -78,6 +78,7 @@ import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 import { evaluateDupGateForGuardrail } from './dup-gate-check';
 import type { DupGateOutcome } from './dup-gate-check';
 import type { DuplicationGateMode } from '../analyzers/duplication/config';
+import type { AnalysisTrustContext } from '../analysis-trust';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
 import type { FlowGateMode } from '../analyzers/flow/config';
 import { isSanitized } from './sanitize';
@@ -174,7 +175,7 @@ export interface RunGuardrailCheckOptions {
    * `guardrail check --untrusted`; off by default (trusted local runs and the
    * loop on your own repo keep full coverage).
    */
-  readonly untrusted?: boolean;
+  readonly trust: AnalysisTrustContext;
   /**
    * Loop-seam override for the flow integration gate's posture (`block` /
    * `warn` / `off`), winning over `.dxkit/policy.json:flow.mode`. The loop
@@ -656,7 +657,7 @@ export async function runGuardrailCheck(
     skipRemediation: true,
     // Hosted PR gates set --untrusted so dep audits never execute the scanned
     // source (e.g. Python skips `pip-audit .` project-build).
-    untrusted: options.untrusted,
+    trust: options.trust,
   });
 
   // In ref-based mode the prior side came from a detached worktree that
@@ -911,7 +912,7 @@ export async function runGuardrailCheck(
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
     // Hosted-PR posture reaches the gate so rung-4 plugins never load on
     // untrusted source (the overlay degrades symmetrically on both sides).
-    ...(options.untrusted !== undefined ? { untrusted: options.untrusted } : {}),
+    trust: options.trust,
   });
 
   // The model-schema drift gate — same additive, fail-open shape as the flow
@@ -1409,7 +1410,7 @@ async function loadPriorSide(
     // never reads `upgradePlan`; the enrichment runs the package manager).
     skipRemediation: true,
     // Match the current side: never execute untrusted source during the audit.
-    untrusted: options.untrusted,
+    trust: options.trust,
   });
   // The ref-based prior side goes through the ONE `CurrentScan -> BaselineFile`
   // converter, so it carries `recall` + `coverage` exactly like the committed

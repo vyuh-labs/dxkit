@@ -33,6 +33,7 @@ import { RefBaselineError } from '../../src/baseline/ref-baseline';
 import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck, type GuardrailCheckResult } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 /** A ref that resolves to no checkoutable commit — forces the base-worktree
  *  step of every gate to throw. */
@@ -102,6 +103,7 @@ describe('gate fail-open contract — no silent swallow', () => {
   it('flow gate: an unreachable base ref errors WITH a reason, never silently', async () => {
     const dir = makeRepo();
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: UNREACHABLE_REF,
       modeOverride: 'warn',
@@ -156,7 +158,7 @@ describe('renderers surface a fail-open gate error (never silent)', () => {
   beforeAll(async () => {
     dir = makeRepo();
     await createBaseline({ cwd: dir });
-    base = await runGuardrailCheck({ cwd: dir });
+    base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
   });
 
   afterAll(() => {

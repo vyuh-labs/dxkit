@@ -67,6 +67,7 @@ import { CURRENT_IDENTITY_SCHEME } from './types';
 import { gatherCurrentScan } from './create';
 import type { CurrentScan } from './create';
 import { type GatherScope, FULL_SCOPE, scopeSignature } from './gather-scope';
+import type { AnalysisTrustContext } from '../analysis-trust';
 
 /**
  * Recoverable error from the ref-based gather path. Carries an
@@ -260,9 +261,9 @@ export async function gatherFromRef(opts: {
    *  matching the current side. The gate never reads `upgradePlan`, and the
    *  enrichment runs the package manager (slow + unsafe on untrusted code). */
   readonly skipRemediation?: boolean;
-  /** The scanned source may be untrusted: dep audits must not execute it
+  /** REQUIRED (4.2): whose tree is this? Untrusted: dep audits must not execute it
    *  (e.g. Python drops `pip-audit .` project-build). Mirrors the current side. */
-  readonly untrusted?: boolean;
+  readonly trust: AnalysisTrustContext;
 }): Promise<CurrentScan> {
   const sha = resolveRefToSha(opts.cwd, opts.ref);
   if (sha === null) throw unreachableRefError(opts.cwd, opts.ref);
@@ -274,7 +275,7 @@ export async function gatherFromRef(opts: {
     scope,
     opts.incrementalFiles,
     opts.skipRemediation,
-    opts.untrusted,
+    !opts.trust.repoExecutionAllowed,
   );
   const cached = readRefScanCache(opts.cwd, key);
   if (cached) return cached;
@@ -286,7 +287,7 @@ export async function gatherFromRef(opts: {
       scope,
       incrementalFiles: opts.incrementalFiles,
       skipRemediation: opts.skipRemediation,
-      untrusted: opts.untrusted,
+      trust: opts.trust,
     });
   });
   writeRefScanCache(opts.cwd, key, scan);

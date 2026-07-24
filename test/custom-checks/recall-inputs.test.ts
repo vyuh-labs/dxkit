@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import { customCheckRecallInputs } from '../../src/analyzers/custom-checks/gather';
 import type { BrownfieldPolicy } from '../../src/baseline/policy';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 function policyWithCheck(command: string | string[]): BrownfieldPolicy {
   return {
@@ -31,10 +32,12 @@ describe('customCheckRecallInputs — machine stability', () => {
     // A pack resolves its linter through findTool, so `bin` is an absolute
     // path into a venv / Homebrew prefix / ~/.cargo/bin — all machine-specific.
     const a = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck(['/home/alice/.venv/bin/ruff', 'check', '.']),
     });
     const b = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck(['/opt/ci/tools/bin/ruff', 'check', '.']),
     });
@@ -47,12 +50,14 @@ describe('customCheckRecallInputs — machine stability', () => {
     // eslint formatter by absolute path): an argument that resolves under
     // wherever a tool is installed differs per machine.
     const local = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck(
         'npx --no-install eslint . --format /home/me/dxkit-repo/dist/formatters/eslint-unix.cjs',
       ),
     });
     const ci = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck(
         'npx --no-install eslint . --format /build/repo/node_modules/@vyuhlabs/dxkit/dist/formatters/eslint-unix.cjs',
@@ -64,6 +69,7 @@ describe('customCheckRecallInputs — machine stability', () => {
 
   it('reduces an absolute path in a --flag=value argument', () => {
     const a = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck('mytool --config=/home/alice/cfg/rules.yml'),
     });
@@ -74,10 +80,12 @@ describe('customCheckRecallInputs — machine stability', () => {
     // Dropping the directory must not drop the meaning. Swapping which config
     // a check reads changes what it can see, and must still drift.
     const a = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck('mytool --config /etc/dxkit/strict.yml'),
     });
     const b = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck('mytool --config /etc/dxkit/loose.yml'),
     });
@@ -87,6 +95,7 @@ describe('customCheckRecallInputs — machine stability', () => {
 
   it('leaves relative paths and flags alone', () => {
     const a = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck('npm run check:arch -- --strict ./src'),
     });
@@ -97,6 +106,7 @@ describe('customCheckRecallInputs — machine stability', () => {
 describe('customCheckRecallInputs — what determines extraction', () => {
   it('records the parse mode of a binary check', () => {
     const inputs = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: policyWithCheck('make lint'),
     });
@@ -108,6 +118,7 @@ describe('customCheckRecallInputs — what determines extraction', () => {
     // The multi-line react-hooks blindness in one assertion: the pattern is
     // not cosmetic, it is the upper bound on what the check can ever report.
     const loose = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: {
         checks: [
@@ -116,6 +127,7 @@ describe('customCheckRecallInputs — what determines extraction', () => {
       } as unknown as BrownfieldPolicy,
     });
     const tight = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: {
         checks: [
@@ -133,6 +145,7 @@ describe('customCheckRecallInputs — what determines extraction', () => {
 
   it('a repo with nothing configured has no check inputs (and pays nothing)', () => {
     const inputs = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       ...NO_PACKS,
       policy: {} as unknown as BrownfieldPolicy,
     });

@@ -53,6 +53,7 @@ import type {
   WireFindingsDoc,
   WireInventoryDoc,
 } from '@vyuhlabs/dxkit-sdk';
+import { trustedLocalContext } from './analysis-trust';
 
 export type ExtensionsSubcommand = 'list' | 'refresh' | 'dev' | 'init';
 
@@ -165,7 +166,7 @@ function wireCall(c: ClientCall): WireConsumedCall {
  * resolved against NO serving route (the gate's block candidates).
  */
 async function verifierFlowContext(cwd: string): Promise<VerifierFlowContext> {
-  const model = await gatherRepoFlowModel(cwd, { relativeTo: cwd });
+  const model = await gatherRepoFlowModel(cwd, { trust: trustedLocalContext(), relativeTo: cwd });
   const bindings = joinFlow(model.calls, model.routes);
   return {
     consumed: model.calls.map(wireCall),

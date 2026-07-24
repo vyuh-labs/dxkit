@@ -23,6 +23,7 @@ import { analyzeQuality, formatQualityReport } from '../../src/analyzers/quality
 import { QualityReport } from '../../src/analyzers/quality/types';
 import { analyzeDevActivity, formatDevReport } from '../../src/analyzers/developer';
 import { DevReport } from '../../src/analyzers/developer/types';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 let tmp: string;
 
@@ -102,7 +103,7 @@ beforeAll(async () => {
   // Run each analyzer ONCE. Subsequent tests read the cached result.
   // `analyzeHealthWithMetrics` gives us both the report and the metrics;
   // the plain report is identical, so one call covers both.
-  const h = await analyzeHealthWithMetrics(tmp);
+  const h = await analyzeHealthWithMetrics(tmp, { trust: trustedLocalContext() });
   healthReport = h.report;
   healthMetrics = h.metrics;
   testGapsReport = await analyzeTestGaps(tmp);
