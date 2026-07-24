@@ -76,7 +76,10 @@ export async function computeStopGate(
   cwd: string,
   payload: StopHookPayload,
   runCheck: (repoDir: string) => Promise<GuardrailJsonPayload>,
-  runFloor: (repoDir: string) => FloorGateOutcome | null = () => null,
+  runFloor: (repoDir: string) => FloorGateOutcome = () => ({
+    kind: 'unavailable',
+    reason: 'floor not wired for this gate run',
+  }),
 ): Promise<StopGateDecision> {
   const start = Date.now();
   const repoDir = payload.cwd || cwd;
@@ -211,7 +214,18 @@ export async function computeStopGate(
   // debt it did not introduce). A skipped floor (no active pack provides one,
   // or the toolchain isn't installed) is a no-op.
   const floor = runFloor(repoDir);
-  if (floor && floor.netNew.length > 0) {
+  // Floor availability is recorded on every subsequent ledger event — an
+  // internal floor error or an unavailable floor is fail-open (never blocks)
+  // but DISCLOSED, so a floor that silently stopped enforcing is visible in
+  // the ledger instead of reading as "no floor configured".
+  const floorDisclosure =
+    floor.kind === 'ran'
+      ? { floor_status: 'ran' as const }
+      : {
+          floor_status: floor.kind,
+          floor_detail: floor.kind === 'unavailable' ? floor.reason : floor.message,
+        };
+  if (floor.kind === 'ran' && floor.netNew.length > 0) {
     const floorStatuses = floorLedgerStatuses(floor.result);
     const event = buildLedgerEvent(repoDir, {
       session_id: session,
@@ -229,6 +243,7 @@ export async function computeStopGate(
       tests_status: floorStatuses.tests_status,
       lint_status: 'not_configured',
       typecheck_status: floorStatuses.typecheck_status,
+      ...floorDisclosure,
       duration_ms: Date.now() - start,
     });
     return {
@@ -237,12 +252,13 @@ export async function computeStopGate(
       message: buildFloorRepairMessage(floor.netNew, floor.result),
     };
   }
-  const floorStatuses = floor
-    ? floorLedgerStatuses(floor.result)
-    : {
-        typecheck_status: 'not_configured' as CheckStatus,
-        tests_status: 'not_configured' as CheckStatus,
-      };
+  const floorStatuses =
+    floor.kind === 'ran'
+      ? floorLedgerStatuses(floor.result)
+      : {
+          typecheck_status: 'not_configured' as CheckStatus,
+          tests_status: 'not_configured' as CheckStatus,
+        };
 
   // Guardrail + floor passed — run the optional configured test command.
   const tests = runConfiguredTests(repoDir);
@@ -263,6 +279,7 @@ export async function computeStopGate(
       tests_status: 'fail',
       lint_status: 'not_configured',
       typecheck_status: floorStatuses.typecheck_status,
+      ...floorDisclosure,
       duration_ms: Date.now() - start,
     });
     return {
@@ -293,6 +310,7 @@ export async function computeStopGate(
     tests_status: tests.status !== 'not_configured' ? tests.status : floorStatuses.tests_status,
     lint_status: 'not_configured',
     typecheck_status: floorStatuses.typecheck_status,
+    ...floorDisclosure,
     duration_ms: Date.now() - start,
   });
   return { outcome: 'allow', event, message: '' };

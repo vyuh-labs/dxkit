@@ -85,6 +85,19 @@ export interface LedgerEvent {
   readonly tests_status: CheckStatus;
   readonly lint_status: CheckStatus;
   readonly typecheck_status: CheckStatus;
+  /**
+   * Correctness-floor availability for this Stop: `ran` when at least one
+   * check executed; `unavailable` (disabled / no floor-capable pack /
+   * toolchain absent) and `internal-error` (the floor runner itself threw)
+   * are DISCLOSED fail-open lanes. The pre-4.2 shape collapsed an internal
+   * floor error into a silent null indistinguishable from "no floor
+   * configured" — a gate that silently stopped enforcing while looking
+   * healthy (the fail-open-gate diagnosability class). Optional for
+   * forward/backward compat.
+   */
+  readonly floor_status?: 'ran' | 'unavailable' | 'internal-error';
+  /** The disclosed reason when `floor_status` is not `ran`. */
+  readonly floor_detail?: string;
   readonly duration_ms: number;
   /**
    * True when this verdict was replayed from the tree-signature cache
