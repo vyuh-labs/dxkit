@@ -313,7 +313,7 @@ either kind; `extensions dev` validates in seconds. See
 
 ## Languages
 
-dxkit covers 8 ecosystems. Detection is automatic from your manifests and
+dxkit covers 10 ecosystems. Detection is automatic from your manifests and
 source; each language brings its own native linter, dependency-audit tool, and
 coverage parser, layered on the universal scanners.
 
@@ -336,6 +336,17 @@ across those environments. See the execution-environment notes in
 | Java                    | `pom.xml`, `src/main/java/` | PMD, osv-scanner                          |
 | Kotlin                  | `*.gradle{.kts,}`, `*.kt`   | detekt, osv-scanner                       |
 | Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                    |
+| Swift                   | `Package.swift`, `Podfile`  | SwiftLint, osv-scanner                    |
+| PHP                     | `composer.json`, `*.php`    | PHP_CodeSniffer, osv-scanner              |
+
+The correctness floor (does the change still compile, do its tests still
+pass) runs on every pack through each language's own build and test
+commands. Two deeper floor checks are TypeScript/JavaScript-first today:
+import resolution (catches a dependency change that breaks module
+resolution — compiled languages don't need it, their compiler is that
+check; Python/Ruby/PHP follow) and per-test failure attribution (jest and
+vitest output; other runners compare at whole-check level, and that
+coarser comparison is disclosed, never silent).
 
 <details>
 <summary><strong>Per-pack capabilities</strong>: coverage import, import-graph, severity tiers (click to expand)</summary>
