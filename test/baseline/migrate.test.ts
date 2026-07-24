@@ -19,6 +19,7 @@ import {
 } from '../../src/allowlist/file';
 import { pathForBaseline } from '../../src/baseline/baseline-file';
 import type { BaselineEntry } from '../../src/baseline/types';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 describe('buildIdentityRemap (pure)', () => {
   it('maps a changed kind (code) old→new when its id differs', () => {
@@ -151,7 +152,7 @@ describe('migrateIdentity (end-to-end)', () => {
     // (no scheme-mismatch error) and passes with no net-new.
     const migratedBaseline = JSON.parse(readFileSync(blPath, 'utf8'));
     expect(migratedBaseline.identityScheme).toBe('v2');
-    const check = await runGuardrailCheck({ cwd: dir });
+    const check = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
     expect(check.blocks).toBe(false);
   }, 300_000);
 });

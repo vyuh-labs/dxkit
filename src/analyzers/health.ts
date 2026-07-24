@@ -53,6 +53,7 @@ import { computeOverall } from '../scoring';
 import { ScoreInput } from './types';
 import { type GatherScope, FULL_SCOPE } from '../baseline/gather-scope';
 import { resetAnalysisMemos } from './analysis-memos';
+import type { AnalysisTrustContext } from '../analysis-trust';
 
 /** Default values for all HealthMetrics fields. */
 export function defaultMetrics(): HealthMetrics {
@@ -144,7 +145,7 @@ export interface AnalyzeHealthOptions {
    * (whose build backend can run code) and audits only a requirements file.
    * Set by `guardrail check --untrusted`; trusted runs leave it unset.
    */
-  untrusted?: boolean;
+  trust: AnalysisTrustContext;
 }
 
 /**
@@ -154,7 +155,7 @@ export interface AnalyzeHealthOptions {
  */
 export async function analyzeHealthWithMetrics(
   repoPath: string,
-  options: AnalyzeHealthOptions = {},
+  options: AnalyzeHealthOptions,
 ): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
   return analyzeHealthInternal(repoPath, options);
 }
@@ -162,14 +163,14 @@ export async function analyzeHealthWithMetrics(
 /** Run a full health analysis on a repository. */
 export async function analyzeHealth(
   repoPath: string,
-  options: AnalyzeHealthOptions = {},
+  options: AnalyzeHealthOptions,
 ): Promise<HealthReport> {
   return (await analyzeHealthInternal(repoPath, options)).report;
 }
 
 async function analyzeHealthInternal(
   repoPath: string,
-  options: AnalyzeHealthOptions = {},
+  options: AnalyzeHealthOptions,
 ): Promise<{ report: HealthReport; metrics: HealthMetrics }> {
   const result = await readOrBuildAnalysisResult({
     cwd: repoPath,
@@ -196,7 +197,7 @@ async function analyzeHealthInternal(
  */
 export async function gatherAnalysisResultBody(
   repoPath: string,
-  options: AnalyzeHealthOptions = {},
+  options: AnalyzeHealthOptions,
 ): Promise<AnalysisResultBody> {
   const verbose = !!options.verbose;
   const scope = options.scope ?? FULL_SCOPE;
@@ -306,7 +307,9 @@ export async function gatherAnalysisResultBody(
   const capabilities = await timedAsync('capabilities', verbose, () =>
     gatherCapabilityReport(repoPath, scope, options.incrementalFiles, {
       skipRemediation: options.skipRemediation,
-      untrusted: options.untrusted,
+      // Pack seam stays a boolean (DepVulnGatherOptions is a frozen-in-place
+      // pack contract); derived here, at the one adapter.
+      untrusted: !options.trust.repoExecutionAllowed,
     }),
   );
 

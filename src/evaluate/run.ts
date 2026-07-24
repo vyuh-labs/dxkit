@@ -39,6 +39,7 @@ import {
 } from './evidence';
 import { enumerateLandings, type LandingPair } from './pr-ranges';
 import { gatherSeamInventory } from '../analyzers/convergence/inventory';
+import type { AnalysisTrustContext } from '../analysis-trust';
 
 export interface EvaluateOptions {
   readonly cwd: string;
@@ -53,7 +54,7 @@ export interface EvaluateOptions {
    *  dep audit) — the same soundness argument as the CI ref-based gate.
    *  Default true; `--no-incremental` opts out for a full-tree replay. */
   readonly incremental?: boolean;
-  readonly untrusted?: boolean;
+  readonly trust: AnalysisTrustContext;
   readonly verbose?: boolean;
   /** Per-landing progress line, wired to stderr by the CLI. */
   readonly onProgress?: (line: string) => void;
@@ -112,7 +113,7 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
   const preset = opts.preset ?? DEFAULT_LOOP_PRESET;
   const presetSource: 'flag' | 'default' = opts.preset ? 'flag' : 'default';
   const incremental = opts.incremental ?? true;
-  const untrusted = opts.untrusted ?? false;
+  const untrusted = !opts.trust.repoExecutionAllowed; // evidence attestation
 
   // The base policy is the repo's committed policy when one exists (the
   // user's current intent), else the compiled-in defaults — so the trial
@@ -168,7 +169,7 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
           duplicationMode: applied.duplicationMode,
           scope,
           incremental,
-          untrusted,
+          trust: opts.trust,
           verbose: opts.verbose,
         }),
       );
@@ -190,7 +191,7 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
   // that has not enabled those gates. Runs in a disposable worktree at the head
   // (zero-write, the same spine as the per-landing checks); fail-open — a head
   // that can't be analyzed simply omits the lane.
-  const seams = await gatherTrialSeams(cwd, pairs[0]?.pair.headSha, untrusted);
+  const seams = await gatherTrialSeams(cwd, pairs[0]?.pair.headSha, opts.trust);
 
   return buildEvidenceDoc({
     branch: currentBranch(cwd),
@@ -211,14 +212,14 @@ export async function runEvaluate(opts: EvaluateOptions): Promise<EvaluateEviden
 async function gatherTrialSeams(
   cwd: string,
   headSha: string | undefined,
-  untrusted: boolean,
+  trust: AnalysisTrustContext,
 ): Promise<SeamVisibility | undefined> {
   if (!headSha) return undefined;
   try {
     return await withRefWorktree({ cwd, ref: headSha }, async (wt) =>
       // The trial's trust posture reaches the seam lane too — the gate runs
       // untrusted but this lane also gathers from the same head (N-TRUST-01).
-      seamVisibilityFrom(await gatherSeamInventory(wt, { untrusted })),
+      seamVisibilityFrom(await gatherSeamInventory(wt, { trust })),
     );
   } catch {
     return undefined;

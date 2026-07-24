@@ -19,6 +19,7 @@ import { snapshotEngines, readSnapshot } from './ingest/snapshot';
 import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-failure';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
+import { trustedLocalContext } from './analysis-trust';
 
 /**
  * Three-tier doctor:
@@ -1247,7 +1248,7 @@ export async function runDoctor(cwd: string, opts: { json?: boolean } = {}): Pro
   const base = buildReport(cwd, checks);
   // Fold the flow-contract diagnosis into the report (absent on non-flow repos).
   // Never fails doctor — diagnoseFlow is fail-open (returns null on any error).
-  const flow = await diagnoseFlow(cwd);
+  const flow = await diagnoseFlow(cwd, { trust: trustedLocalContext() });
   // Advisor mode: capabilities the repo would benefit from but isn't using,
   // grounded in repo signals via the registry's whenToRecommend probes.
   const recommendations = gatherRecommendations(cwd);

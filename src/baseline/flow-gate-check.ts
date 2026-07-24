@@ -45,6 +45,7 @@ import { readFlowConfig, type FlowGateMode } from '../analyzers/flow/config';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
 import { captureGateFailure, type GateFailure } from './gate-failopen';
+import type { AnalysisTrustContext } from '../analysis-trust';
 
 /** Why the gate produced no verdict, when it didn't run. */
 export type FlowGateSkip =
@@ -174,7 +175,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
   readonly now?: Date;
   /** Hosted-PR posture: plugins never load (trust tier); the overlay is
    *  empty on BOTH sides, so the narrower lens cannot mint a false block. */
-  readonly untrusted?: boolean;
+  readonly trust: AnalysisTrustContext;
 }): Promise<FlowGateOutcome> {
   const cwd = path.resolve(opts.cwd);
   const config = readFlowConfig(cwd);
@@ -213,7 +214,7 @@ export async function evaluateFlowGateForGuardrail(opts: {
     // same rule the gate's policy config follows). Under --untrusted the
     // overlay is empty on both sides — symmetric degradation.
     step = 'plugin-overlay';
-    const overlay = loadFlowPluginOverlay(cwd, { untrusted: opts.untrusted });
+    const overlay = loadFlowPluginOverlay(cwd, opts.trust);
     const overlayGather = {
       dialects: overlay.dialects,
       extraReaders: overlay.readers,

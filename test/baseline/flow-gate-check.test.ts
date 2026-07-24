@@ -16,6 +16,7 @@ import { tmpdir } from 'os';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
 import type { AllowlistFile } from '../../src/allowlist/file';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 function git(dir: string, args: string[]): void {
   execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
@@ -44,7 +45,7 @@ describe('evaluateFlowGateForGuardrail — skip paths', () => {
   it('skips when no base commit is resolvable (no ref, no anchor SHA)', async () => {
     const dir = makeFlowRepo();
     try {
-      const out = await evaluateFlowGateForGuardrail({ cwd: dir });
+      const out = await evaluateFlowGateForGuardrail({ trust: trustedLocalContext(), cwd: dir });
       expect(out.ran).toBe(false);
       expect(out.skipped).toBe('no-base-ref');
     } finally {
@@ -56,6 +57,7 @@ describe('evaluateFlowGateForGuardrail — skip paths', () => {
     const dir = makeFlowRepo();
     try {
       const out = await evaluateFlowGateForGuardrail({
+        trust: trustedLocalContext(),
         cwd: dir,
         baseRef: 'main',
         modeOverride: 'off',
@@ -78,7 +80,11 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
   it('blocks a net-new call to a non-served endpoint', async () => {
     // Working tree adds a NEW call to a route nobody serves.
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+    const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      baseRef: 'main',
+    });
     expect(out.ran).toBe(true);
     expect(out.blocks).toBe(true);
     expect(out.findings.map((f) => f.path)).toContain('/dead');
@@ -90,6 +96,7 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
   it('warn mode demotes a would-block breakage to a warning', async () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: 'main',
       modeOverride: 'warn',
@@ -118,7 +125,11 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
     git(dir, ['add', '.']);
     git(dir, ['commit', '-q', '-m', 'commit counterpart']);
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+    const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      baseRef: 'main',
+    });
     expect(out.ran).toBe(true);
     expect(out.contractGeneratedAt).toBe('2026-06-01T00:00:00.000Z');
     // And the counterpart's routes were honored as served truth.
@@ -127,7 +138,11 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
 
   it('passes clean when every call still resolves', async () => {
     // No change to the working tree — the one call still resolves.
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+    const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      baseRef: 'main',
+    });
     expect(out.blocks).toBe(false);
     expect(out.findings).toEqual([]);
   });
@@ -137,7 +152,11 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
     // not a branch. The gate must run identically: diff HEAD against that commit.
     const baseSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim();
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: baseSha });
+    const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      baseRef: baseSha,
+    });
     expect(out.ran).toBe(true);
     expect(out.blocks).toBe(true);
     expect(out.findings.map((f) => f.path)).toContain('/dead');
@@ -155,6 +174,7 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
       "axios.get('/articles');\naxios.get('/legacy');\n// edit\n",
     );
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: 'base2',
     });
@@ -163,7 +183,11 @@ describe('evaluateFlowGateForGuardrail — real ref-based gate', () => {
 
   it('skips a diff that touches no flow surface (docs-only change)', async () => {
     writeFileSync(join(dir, 'README.md'), '# docs\n');
-    const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+    const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      baseRef: 'main',
+    });
     expect(out.ran).toBe(false);
     expect(out.skipped).toBe('no-flow-surface-change');
   });
@@ -198,6 +222,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
   it('an active allowlist entry waives a flow block (per-finding escape hatch)', async () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: 'main',
       allowlist: allowlistFor('GET', '/dead', 'web/List.tsx'),
@@ -213,6 +238,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
   it('an EXPIRED allowlist entry does not waive — the finding re-blocks', async () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: 'main',
       now: new Date('2026-06-01'),
@@ -229,6 +255,7 @@ describe('evaluateFlowGateForGuardrail — allowlist suppression', () => {
   it('an entry for a DIFFERENT binding does not waive this one', async () => {
     writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/dead');\n");
     const out = await evaluateFlowGateForGuardrail({
+      trust: trustedLocalContext(),
       cwd: dir,
       baseRef: 'main',
       allowlist: allowlistFor('GET', '/other', 'web/List.tsx'), // wrong path → different id
@@ -254,7 +281,11 @@ describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
       git(dir, ['commit', '-q', '-m', 'base']);
       // HEAD adds another call — still no served side anywhere.
       writeFileSync(join(dir, 'web', 'List.tsx'), "axios.get('/articles');\naxios.get('/more');\n");
-      const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+      const out = await evaluateFlowGateForGuardrail({
+        trust: trustedLocalContext(),
+        cwd: dir,
+        baseRef: 'main',
+      });
       expect(out.ran).toBe(false);
       expect(out.skipped).toBe('no-served-truth');
     } finally {
@@ -291,7 +322,11 @@ describe('evaluateFlowGateForGuardrail — served-truth self-skip', () => {
         join(dir, 'web', 'List.tsx'),
         "axios.get('/articles');\naxios.get('/ghost');\n",
       );
-      const out = await evaluateFlowGateForGuardrail({ cwd: dir, baseRef: 'main' });
+      const out = await evaluateFlowGateForGuardrail({
+        trust: trustedLocalContext(),
+        cwd: dir,
+        baseRef: 'main',
+      });
       expect(out.ran).toBe(true);
       expect(out.blocks).toBe(true);
       // /ghost blocks; /articles resolved against the snapshot and did not.

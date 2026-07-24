@@ -35,6 +35,7 @@ import {
   type ParticipantSource,
   type ParticipantProvenance,
 } from './contract';
+import { trustedLocalContext } from '../../analysis-trust';
 
 // The source taxonomy lives on the contract schema (contract.ts) — provenance
 // is a committed artifact field now, not just CLI display. Re-exported so
@@ -189,7 +190,7 @@ export async function publishFlow(cwd: string, opts: PublishOptions): Promise<Pu
   // never executes another repo's code. A participant's plugin-widened
   // served set reaches the mesh through ITS own `flow publish --land`
   // committed served.json, which gatherParticipant prefers when present.
-  const selfOverlay = loadFlowPluginOverlay(cwd);
+  const selfOverlay = loadFlowPluginOverlay(cwd, trustedLocalContext());
   const selfModel = await gatherFlowModel({
     roots: [cwd],
     ...(opts.specs ? { specs: opts.specs.map((s) => path.resolve(cwd, s)) } : {}),

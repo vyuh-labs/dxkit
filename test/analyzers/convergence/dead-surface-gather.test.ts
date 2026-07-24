@@ -22,6 +22,7 @@ import {
 } from '../../../src/analyzers/convergence/dead-surface-gather';
 import { convergeSeams } from '../../../src/analyzers/convergence';
 import type { DuplicateFinding } from '../../../src/analyzers/duplication/findings';
+import { trustedLocalContext } from '../../../src/analysis-trust';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -78,7 +79,7 @@ const dupFindings: DuplicateFinding[] = [
 describe('gatherDeadSurfaces — real flow extraction → tier → convergence', () => {
   it('converges a dead copy-paste route to removable when a co-located UI makes consumers visible', async () => {
     const dir = makeRepo(true);
-    const res = await gatherDeadSurfaces(dir, { dupFindings });
+    const res = await gatherDeadSurfaces(dir, { trust: trustedLocalContext(), dupFindings });
     // Consumers visible via the co-located .tsx frontend.
     expect(res.crossRepoConsumersVisible).toBe(true);
     // /teams is consumed → not in the unconsumed set; /teams-legacy is dead.
@@ -102,7 +103,7 @@ describe('gatherDeadSurfaces — real flow extraction → tier → convergence',
 
   it('the SAME dead copy-paste stays likely (never removable) on a backend with no visible UI consumer', async () => {
     const dir = makeRepo(false);
-    const res = await gatherDeadSurfaces(dir, { dupFindings });
+    const res = await gatherDeadSurfaces(dir, { trust: trustedLocalContext(), dupFindings });
     // A server-to-server call is not a frontend consumer → consumers not visible.
     expect(res.crossRepoConsumersVisible).toBe(false);
     const legacy = res.surfaces.find((s) => s.route.path === '/teams-legacy')!;
@@ -184,7 +185,7 @@ describe('gatherDeadSurfaces — cross-repo consumer mesh (workspace participant
   it('a DECLARED but not-checked-out participant is not evidence — routes stay likely', async () => {
     const provider = makeProvider();
     declareParticipant(provider, '../does-not-exist-on-disk');
-    const res = await gatherDeadSurfaces(provider, { dupFindings });
+    const res = await gatherDeadSurfaces(provider, { trust: trustedLocalContext(), dupFindings });
     // The declaration alone must never satisfy the predicate.
     expect(res.crossRepoConsumersVisible).toBe(false);
     expect(res.byTier.removable).toBe(0);
@@ -200,7 +201,7 @@ describe('gatherDeadSurfaces — cross-repo consumer mesh (workspace participant
     // NOT that the provider's whole surface is dead.
     const consumer = makeConsumer({ viaHelper: true, withPolicy: false });
     declareParticipant(provider, consumer);
-    const res = await gatherDeadSurfaces(provider, { dupFindings });
+    const res = await gatherDeadSurfaces(provider, { trust: trustedLocalContext(), dupFindings });
     expect(res.crossRepoConsumersVisible).toBe(false);
     expect(res.byTier.removable).toBe(0);
     // Even /teams — which the consumer genuinely calls — is only `likely`, never
@@ -228,7 +229,7 @@ describe('gatherDeadSurfaces — cross-repo consumer mesh (workspace participant
         routes: [{ method: 'GET', path: '/teams', file: 'src/api/ctrl.ts', line: 2 }],
       }),
     );
-    const res = await gatherDeadSurfaces(provider, { dupFindings });
+    const res = await gatherDeadSurfaces(provider, { trust: trustedLocalContext(), dupFindings });
     expect(res.crossRepoConsumersVisible).toBe(false);
     expect(res.byTier.removable).toBe(0);
     expect(res.surfaces.find((s) => s.route.path === '/teams-legacy')!.tier).toBe('likely');
@@ -238,7 +239,7 @@ describe('gatherDeadSurfaces — cross-repo consumer mesh (workspace participant
     const provider = makeProvider();
     const consumer = makeConsumer({ viaHelper: true, withPolicy: true });
     declareParticipant(provider, consumer);
-    const res = await gatherDeadSurfaces(provider, { dupFindings });
+    const res = await gatherDeadSurfaces(provider, { trust: trustedLocalContext(), dupFindings });
     // The consumer's calls normalize under ITS OWN policy and bind → real evidence.
     expect(res.crossRepoConsumersVisible).toBe(true);
     const paths = res.surfaces.map((s) => s.route.path);

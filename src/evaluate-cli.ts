@@ -15,6 +15,7 @@ import { RefBaselineError } from './baseline/ref-baseline';
 import { runEvaluate } from './evaluate/run';
 import { redactEvidence } from './evaluate/redact';
 import { renderEvaluateText } from './evaluate/render';
+import { trustContextFromFlag } from './analysis-trust';
 
 export interface EvaluateCliOptions {
   readonly base?: string;
@@ -50,7 +51,7 @@ export async function runEvaluateCli(cwd: string, opts: EvaluateCliOptions): Pro
       lastLandings,
       preset: opts.preset !== undefined && isLoopPreset(opts.preset) ? opts.preset : undefined,
       incremental: opts.noIncremental ? false : undefined,
-      untrusted: opts.untrusted,
+      trust: trustContextFromFlag(!!opts.untrusted),
       verbose: opts.verbose,
       onProgress: (line) => logger.dim(line),
     });

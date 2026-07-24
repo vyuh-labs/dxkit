@@ -13,6 +13,7 @@ import type { LanguageId } from '../../types';
 import { renderToolsUnavailableLines } from '../tools/tools-unavailable-prose';
 import { isTestSourceFile } from '../tools/walk-source-files';
 import { detectScannerCoverageDrift } from './scanner-drift';
+import { trustedLocalContext } from '../../analysis-trust';
 
 export type { SecurityReport, SecurityFinding } from './types';
 
@@ -97,7 +98,7 @@ export async function analyzeSecurity(
   // drift class for code-side numbers by construction.
   const result = await readOrBuildAnalysisResult({
     cwd: repoPath,
-    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose }),
+    build: (cwd) => gatherAnalysisResultBody(cwd, { verbose, trust: trustedLocalContext() }),
   });
   const { stack, capabilities } = result;
   const aggregate = capabilities.securityAggregate;

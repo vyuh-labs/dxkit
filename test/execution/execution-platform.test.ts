@@ -31,6 +31,7 @@ import { csharp } from '../../src/languages/csharp';
 import { runCorrectnessFloor, describeEnvironmentSkips } from '../../src/analyzers/correctness/run';
 import { runCustomChecks } from '../../src/analyzers/custom-checks/run';
 import type { LanguageSupport } from '../../src/languages/types';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 const env = (host: 'linux' | 'macos' | 'windows', toolchains: string[]): ExecutionEnvironment => ({
   host,
@@ -447,6 +448,7 @@ describe('runners reclassify environment-shaped failures (F-14, both directions)
 
   it('lint gate: an SDK-shaped failure is a disclosed boundary, never a binary finding', () => {
     const result = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       specs: [lintSpec],
       exec: () => NETSDK_FAIL,
@@ -459,6 +461,7 @@ describe('runners reclassify environment-shaped failures (F-14, both directions)
 
   it('lint gate: a non-environment failure still yields the binary finding', () => {
     const result = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       specs: [lintSpec],
       exec: () => REAL_FAIL,
@@ -473,6 +476,7 @@ describe('custom-check runner: declaration-less checks keep the plain path', () 
   it('a user check (no execution declared) is never environment-skipped', () => {
     const exec = vi.fn(() => ({ available: true, code: 0, output: '' }));
     const result = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       specs: [
         {

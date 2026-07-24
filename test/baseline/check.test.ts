@@ -7,6 +7,7 @@ import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 /**
  * End-to-end exercise of the guardrail-check orchestrator. The
@@ -72,7 +73,7 @@ describe('runGuardrailCheck (integration)', () => {
       expect(ccEntries.length).toBe(1);
       expect(ccEntries[0]).toMatchObject({ kind: 'custom-check', check: 'custom:always-fail' });
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       // The still-failing check is present on both sides → persisted, not net-new.
       const ccPairs = result.pairs.filter((p) => p.kind === 'custom-check');
       expect(ccPairs.length).toBe(1);
@@ -82,7 +83,7 @@ describe('runGuardrailCheck (integration)', () => {
 
     it('renderers surface an UNMEASURED dependency audit — fail-loud, no silent clean (#73)', async () => {
       await createBaseline({ cwd: dir });
-      const base = await runGuardrailCheck({ cwd: dir });
+      const base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       // The guardrail sets depVulnsUnmeasured when a REQUESTED dep scan could not
       // run (scanner absent). A pass must not then read as "no net-new dep vulns".
       const unmeasured = { ...base, depVulnsUnmeasured: { reason: 'pip-audit not installed' } };
@@ -98,7 +99,7 @@ describe('runGuardrailCheck (integration)', () => {
 
     it('arming banner surfaces a deferred capture without changing the verdict (Rule 20)', async () => {
       await createBaseline({ cwd: dir });
-      const base = await runGuardrailCheck({ cwd: dir });
+      const base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       // A baseline captured where a scanner could not run (stale mirror) records
       // the class as deferred; the gate reads it into `deferredCapture`.
       const armed = {
@@ -146,7 +147,7 @@ describe('runGuardrailCheck (integration)', () => {
       ];
       writeFileSync(created.path!, JSON.stringify(file, null, 2));
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       // The gate READS it from disk (not injected) — proves the whole wiring:
       // baseline.deferred → result.deferredCapture → arming banner.
       expect(result.deferredCapture).toHaveLength(1);
@@ -161,7 +162,7 @@ describe('runGuardrailCheck (integration)', () => {
 
     it('UNMEASURED remediation is reason-aware — absent vs present-but-unusable (#15)', async () => {
       await createBaseline({ cwd: dir });
-      const base = await runGuardrailCheck({ cwd: dir });
+      const base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
 
       // Scanner genuinely absent → "tools install" is the right fix.
       const absent = { ...base, depVulnsUnmeasured: { reason: 'osv-scanner not installed' } };
@@ -188,7 +189,7 @@ describe('runGuardrailCheck (integration)', () => {
       // toolchainHash stability across the back-to-back gathers
       // is guaranteed by the per-process version cache.
       const created = await createBaseline({ cwd: dir });
-      const noop = await runGuardrailCheck({ cwd: dir });
+      const noop = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       expect(noop.blocks).toBe(false);
       expect(noop.warns).toBe(false);
       expect(noop.pairs).toEqual([]);
@@ -212,7 +213,7 @@ describe('runGuardrailCheck (integration)', () => {
       execFileSync('git', ['add', '.'], { cwd: dir });
       execFileSync('git', ['commit', '-q', '-m', 'drop a .bak'], { cwd: dir });
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const added = result.pairs.filter((p) => p.classification.status === 'added');
       expect(added.length).toBeGreaterThan(0);
       const staleAdds = added.filter((p) => p.kind === 'stale-file');
@@ -235,7 +236,11 @@ describe('runGuardrailCheck (integration)', () => {
       const stashed = join(dir, 'stashed-baseline.json');
       if (!created.path) throw new Error('expected committed-mode baseline');
       writeFileSync(stashed, readFileSync(created.path));
-      const viaPath = await runGuardrailCheck({ cwd: dir, baselinePath: stashed });
+      const viaPath = await runGuardrailCheck({
+        trust: trustedLocalContext(),
+        cwd: dir,
+        baselinePath: stashed,
+      });
       expect(viaPath.baselinePath).toBe(stashed);
       expect(viaPath.baseline.name).toBe('main');
     }, 300_000);
@@ -300,7 +305,7 @@ describe('runGuardrailCheck (integration)', () => {
         ) + '\n',
       );
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const codeAdds = result.pairs.filter(
         (p) => p.kind === 'code' && p.classification.status === 'added',
       );
@@ -356,7 +361,7 @@ describe('runGuardrailCheck (integration)', () => {
         ) + '\n',
       );
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const codeAdds = result.pairs.filter(
         (p) => p.kind === 'code' && p.classification.status === 'added',
       );
@@ -397,7 +402,7 @@ describe('runGuardrailCheck (integration)', () => {
         ) + '\n',
       );
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       expect(result.allowlistDelta).toBeDefined();
       expect(result.allowlistDelta.baselineAccessible).toBe(true);
       expect(result.allowlistDelta.added).toHaveLength(1);
@@ -430,7 +435,7 @@ describe('runGuardrailCheck (integration)', () => {
 
       // Step A — no allowlist: the finding blocks and carries no
       // suppression.
-      const before = await runGuardrailCheck({ cwd: dir });
+      const before = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const staleBefore = findStale(before);
       expect(staleBefore).toBeDefined();
       expect(staleBefore?.classification.blocks).toBe(true);
@@ -465,7 +470,7 @@ describe('runGuardrailCheck (integration)', () => {
           2,
         ) + '\n',
       );
-      const suppressed = await runGuardrailCheck({ cwd: dir });
+      const suppressed = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       const staleSupp = findStale(suppressed);
       expect(staleSupp?.classification.blocks).toBe(true);
       expect(staleSupp?.suppressedByAllowlist?.category).toBe('false-positive');
@@ -498,7 +503,11 @@ describe('runGuardrailCheck (integration)', () => {
       const findStale = (r: Awaited<ReturnType<typeof runGuardrailCheck>>) =>
         r.pairs.find((p) => p.kind === 'stale-file' && p.classification.status === 'added');
 
-      const before = await runGuardrailCheck({ cwd: dir, policyPath });
+      const before = await runGuardrailCheck({
+        trust: trustedLocalContext(),
+        cwd: dir,
+        policyPath,
+      });
       const staleBefore = findStale(before);
       expect(staleBefore?.classification.warns).toBe(true);
       expect(staleBefore?.classification.blocks).toBe(false);
@@ -530,7 +539,7 @@ describe('runGuardrailCheck (integration)', () => {
         }),
       );
 
-      const after = await runGuardrailCheck({ cwd: dir, policyPath });
+      const after = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir, policyPath });
       const staleAfter = findStale(after);
       expect(staleAfter?.suppressedByAllowlist).toBeDefined(); // suppression ran for a WARNING
       expect(after.warns).toBe(false); // the warning is waived from the verdict
@@ -551,16 +560,24 @@ describe('runGuardrailCheck (integration)', () => {
     });
 
     it('errors on missing baseline, malformed --policy, missing --policy file', async () => {
-      await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(/baseline file not found/);
+      await expect(runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir })).rejects.toThrow(
+        /baseline file not found/,
+      );
 
       await createBaseline({ cwd: dir });
       await expect(
-        runGuardrailCheck({ cwd: dir, policyPath: join(dir, 'does-not-exist.json') }),
+        runGuardrailCheck({
+          trust: trustedLocalContext(),
+          cwd: dir,
+          policyPath: join(dir, 'does-not-exist.json'),
+        }),
       ).rejects.toThrow(/not readable/);
 
       const policyPath = join(dir, 'broken.json');
       writeFileSync(policyPath, '{ this is not json');
-      await expect(runGuardrailCheck({ cwd: dir, policyPath })).rejects.toThrow(/not valid JSON/);
+      await expect(
+        runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir, policyPath }),
+      ).rejects.toThrow(/not valid JSON/);
     }, 300_000);
 
     it('auto-discovers .dxkit/policy.json when no --policy flag is passed', async () => {
@@ -577,7 +594,7 @@ describe('runGuardrailCheck (integration)', () => {
         JSON.stringify({ block: [], warn: ['added'], blockRules: {} }, null, 2),
       );
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       expect(result.policy.block).toEqual([]);
       expect(result.blocks).toBe(false);
       const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
@@ -596,7 +613,11 @@ describe('runGuardrailCheck (integration)', () => {
         policyPath,
         JSON.stringify({ block: [], warn: ['added'], blockRules: {} }, null, 2),
       );
-      const result = await runGuardrailCheck({ cwd: dir, policyPath });
+      const result = await runGuardrailCheck({
+        trust: trustedLocalContext(),
+        cwd: dir,
+        policyPath,
+      });
       expect(result.policy.block).toEqual([]);
       expect(result.blocks).toBe(false);
       const addedPairs = result.pairs.filter((p) => p.classification.status === 'added');
@@ -618,7 +639,7 @@ describe('runGuardrailCheck (integration)', () => {
       execFileSync('git', ['add', '.'], { cwd: dir });
       execFileSync('git', ['commit', '-q', '-m', 'add ignore + bak'], { cwd: dir });
 
-      const result = await runGuardrailCheck({ cwd: dir });
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
       expect(result.envelopeDrift.ignoreHashChanged).toBe(true);
       const staleBak = result.pairs.find((p) => p.kind === 'stale-file');
       expect(staleBak?.classification.status).toBe('added');
@@ -649,10 +670,10 @@ describe('runGuardrailCheck — identity-scheme migration guard', () => {
     const bl = JSON.parse(readFileSync(created.path, 'utf8'));
     bl.identityScheme = 'v1'; // simulate a pre-2.11 baseline
     writeFileSync(created.path, JSON.stringify(bl, null, 2));
-    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(
+    await expect(runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir })).rejects.toThrow(
       /identity.*scheme|scheme.*changed/i,
     );
-    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(
+    await expect(runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir })).rejects.toThrow(
       /vyuh-dxkit update|baseline create --force/,
     );
   }, 300_000);
@@ -663,7 +684,9 @@ describe('runGuardrailCheck — identity-scheme migration guard', () => {
     const bl = JSON.parse(readFileSync(created.path, 'utf8'));
     delete bl.identityScheme; // pre-field baseline
     writeFileSync(created.path, JSON.stringify(bl, null, 2));
-    await expect(runGuardrailCheck({ cwd: dir })).rejects.toThrow(/scheme/i);
+    await expect(runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir })).rejects.toThrow(
+      /scheme/i,
+    );
   }, 300_000);
 });
 
@@ -699,7 +722,12 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     // `loadPriorSide` hand-built the prior BaselineFile and dropped `recall`, so
     // every kind read as `absent-from-baseline` and drifted on every ref-based
     // run (the public-repo default, the loop, `evaluate`, the self-guardrail).
-    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      cliMode: 'ref-based',
+      cliRef: 'main',
+    });
     // The prior side carries recall (the direct fix): undefined before.
     expect(result.baseline.recall).toBeDefined();
     expect(Object.keys(result.baseline.recall ?? {}).length).toBeGreaterThan(0);
@@ -711,7 +739,12 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
 
   it('folds a net-new broken integration into the top-level BLOCK verdict', async () => {
     writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      cliMode: 'ref-based',
+      cliRef: 'main',
+    });
     expect(result.blocks).toBe(true);
     expect(result.flowGate?.ran).toBe(true);
     expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
@@ -742,6 +775,7 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
   it('warn flowMode surfaces the breakage without blocking the build', async () => {
     writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
     const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
       cwd: dir,
       cliMode: 'ref-based',
       cliRef: 'main',
@@ -777,7 +811,12 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
         ],
       }),
     );
-    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'ref-based', cliRef: 'main' });
+    const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      cliMode: 'ref-based',
+      cliRef: 'main',
+    });
     expect(result.flowGate?.ran).toBe(true);
     expect(result.blocks).toBe(false); // the flow block was waived
     expect(result.flowGate?.suppressed.map((s) => s.finding.path)).toContain('/dead');
@@ -790,7 +829,11 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     // commit — so a private repo on the default committed-full is flow-gated too.
     await createBaseline({ cwd: dir });
     writeFileSync(join(dir, 'client.ts'), "axios.get('/articles');\naxios.get('/dead');\n");
-    const result = await runGuardrailCheck({ cwd: dir, cliMode: 'committed-full' });
+    const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
+      cwd: dir,
+      cliMode: 'committed-full',
+    });
     expect(result.mode.mode).toBe('committed-full');
     expect(result.flowGate?.ran).toBe(true);
     expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');

@@ -32,6 +32,7 @@
 
 import { createRequire } from 'module';
 import * as path from 'path';
+import type { AnalysisTrustContext } from '../analysis-trust';
 import {
   SDK_MAJOR,
   type ContractSourceReader,
@@ -329,22 +330,22 @@ const EMPTY_OVERLAY: FlowPluginOverlay = { dialects: [], readers: [], disclosure
 
 /**
  * Load every committed plugin extension's gather-time contributions.
- * `untrusted` disables loading entirely (the trust tier), with one
- * disclosure naming what was skipped — callers apply the SAME overlay to
- * both gate sides, so the degraded lens can never mint a false block.
+ * `trust` is REQUIRED (4.2): loading a plugin is a `require` of
+ * repo-declared JS, so the caller must state whose tree this is — an
+ * omission fails to compile instead of silently defaulting to trusted (the
+ * class that shipped). An untrusted context disables loading entirely, with
+ * one disclosure naming what was skipped — callers apply the SAME overlay
+ * to both gate sides, so the degraded lens can never mint a false block.
  */
-export function loadFlowPluginOverlay(
-  cwd: string,
-  opts: { untrusted?: boolean } = {},
-): FlowPluginOverlay {
+export function loadFlowPluginOverlay(cwd: string, trust: AnalysisTrustContext): FlowPluginOverlay {
   const { extensions } = discoverExtensions(cwd);
   const pluginExts = extensions.filter((e) => e.manifest.plugin !== undefined);
   if (pluginExts.length === 0) return EMPTY_OVERLAY;
-  if (opts.untrusted) {
+  if (!trust.repoExecutionAllowed) {
     return {
       ...EMPTY_OVERLAY,
       disclosures: [
-        `plugins not loaded (--untrusted): ${pluginExts.map((e) => e.manifest.name).join(', ')} — gather-time contributions disabled on both sides; committed snapshots still read`,
+        `plugins not loaded (untrusted content): ${pluginExts.map((e) => e.manifest.name).join(', ')} — gather-time contributions disabled on both sides; committed snapshots still read`,
       ],
     };
   }

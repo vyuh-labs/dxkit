@@ -33,6 +33,7 @@ import {
 import { runCustomChecks, describeCustomChecks } from './analyzers/custom-checks/run';
 import { normalizeCustomChecks, LINT_CHECK_PREFIX } from './analyzers/custom-checks/config';
 import type { CustomCheckSpec } from './analyzers/custom-checks/types';
+import { trustedLocalContext } from './analysis-trust';
 
 export type ChecksSubcommand = 'list' | 'run';
 
@@ -51,7 +52,7 @@ function renderCommand(spec: CustomCheckSpec): string {
 
 export function runChecks(cwd: string, sub: ChecksSubcommand, opts: ChecksOptions = {}): void {
   const policy = loadPolicyFromCwd(cwd);
-  const specs = resolveCustomCheckSpecs({ cwd, policy });
+  const specs = resolveCustomCheckSpecs({ cwd, policy, trust: trustedLocalContext() });
   const { warnings } = normalizeCustomChecks(policy.checks);
 
   if (sub === 'run') {
@@ -146,7 +147,7 @@ function runChecksDryRun(
     return;
   }
 
-  const result = runCustomChecks({ cwd, specs });
+  const result = runCustomChecks({ cwd, specs, trust: trustedLocalContext() });
 
   if (opts.json) {
     const payload = {
@@ -188,5 +189,5 @@ function runChecksDryRun(
  */
 export function checksFindingCount(cwd: string): number {
   const policy = loadPolicyFromCwd(cwd);
-  return gatherCustomCheckFindings({ cwd, policy }).length;
+  return gatherCustomCheckFindings({ cwd, policy, trust: trustedLocalContext() }).length;
 }

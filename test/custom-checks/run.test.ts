@@ -4,6 +4,7 @@ import { runCustomChecks, describeCustomChecks } from '../../src/analyzers/custo
 import { parseLocated } from '../../src/analyzers/custom-checks/parse';
 import type { CommandExec } from '../../src/analyzers/tools/bounded-exec';
 import type { CustomCheckSpec } from '../../src/analyzers/custom-checks/types';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 const CWD = '/repo';
 
@@ -25,14 +26,24 @@ const timedOut: CommandExec = () => ({ available: true, timedOut: true, code: -1
 
 describe('runCustomChecks — exit-code policy', () => {
   it('a passing check yields no findings and status pass', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: pass });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: pass,
+    });
     expect(r.ran).toBe(true);
     expect(r.results[0].status).toBe('pass');
     expect(r.findings).toEqual([]);
   });
 
   it('a binary failure yields one finding carrying the check name + message', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: failBinary });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: failBinary,
+    });
     expect(r.results[0].status).toBe('fail');
     expect(r.findings).toHaveLength(1);
     expect(r.findings[0]).toMatchObject({
@@ -44,14 +55,24 @@ describe('runCustomChecks — exit-code policy', () => {
   });
 
   it('a missing binary is fail-OPEN (skipped-unavailable), never a failure', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: missing });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: missing,
+    });
     expect(r.results[0].status).toBe('skipped-unavailable');
     expect(r.findings).toEqual([]);
     expect(r.ran).toBe(false);
   });
 
   it('a timeout is fail-OPEN (skipped-timeout), never a failure', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: timedOut });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: timedOut,
+    });
     expect(r.results[0].status).toBe('skipped-timeout');
     expect(r.findings).toEqual([]);
     expect(r.ran).toBe(false);
@@ -59,15 +80,26 @@ describe('runCustomChecks — exit-code policy', () => {
 
   it('honors a non-zero expectedExit (e.g. a check that "passes" with exit 2)', () => {
     const exec: CommandExec = () => ({ available: true, code: 2, output: '' });
-    const r = runCustomChecks({ cwd: CWD, specs: [spec({ expectedExit: 2 })], exec });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec({ expectedExit: 2 })],
+      exec,
+    });
     expect(r.results[0].status).toBe('pass');
     // And a DIFFERENT exit is a failure.
-    const r0 = runCustomChecks({ cwd: CWD, specs: [spec({ expectedExit: 2 })], exec: pass });
+    const r0 = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec({ expectedExit: 2 })],
+      exec: pass,
+    });
     expect(r0.results[0].status).toBe('fail');
   });
 
   it('carries the per-check blocking flag onto its findings', () => {
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [spec({ blocking: false })],
       exec: failBinary,
@@ -81,6 +113,7 @@ describe('runCustomChecks — exit-code policy', () => {
         ? { available: true, code: 0, output: '' }
         : { available: true, code: 1, output: 'bad' };
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [
         spec({ name: 'a', command: { bin: 'faketool', args: ['ok'] } }),
@@ -96,11 +129,21 @@ describe('runCustomChecks — exit-code policy', () => {
 
 describe('describeCustomChecks', () => {
   it('summarizes the failing checks', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: failBinary });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: failBinary,
+    });
     expect(describeCustomChecks(r)).toMatch(/1 failed — check:seam \(1\)/);
   });
   it('reports all-passed', () => {
-    const r = runCustomChecks({ cwd: CWD, specs: [spec()], exec: pass });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [spec()],
+      exec: pass,
+    });
     expect(describeCustomChecks(r)).toBe('custom checks: all passed');
   });
 });
@@ -119,6 +162,7 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
     ].join('\n');
     const exec: CommandExec = () => ({ available: true, code: 1, output });
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [spec({ name: 'lint:typescript', parse: eslintish })],
       exec,
@@ -136,6 +180,7 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
   it('falls back to a binary finding when the pattern matches nothing (failure never lost)', () => {
     const exec: CommandExec = () => ({ available: true, code: 1, output: 'totally unparseable' });
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [spec({ name: 'lint:typescript', parse: eslintish })],
       exec,
@@ -148,6 +193,7 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
   it('a clean lint check (exit 0, no matching output) yields nothing', () => {
     const exec: CommandExec = () => ({ available: true, code: 0, output: '' });
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [spec({ name: 'lint:typescript', parse: eslintish })],
       exec,
@@ -167,6 +213,7 @@ describe('runCustomChecks — regex parse mode (lint)', () => {
     };
     const exec: CommandExec = () => ({ available: true, code: 0, output });
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [spec({ name: 'lint:csharp', parse: csharpParse })],
       exec,
@@ -211,7 +258,12 @@ describe('declared-but-unresolvable lint gate (VERIFY-40 F-9 — disclosed, neve
       spawned++;
       return { available: true, code: 0, output: '' };
     };
-    const r = runCustomChecks({ cwd: CWD, specs: [stub], exec: counting });
+    const r = runCustomChecks({
+      trust: trustedLocalContext(),
+      cwd: CWD,
+      specs: [stub],
+      exec: counting,
+    });
     expect(r.results[0].status).toBe('skipped-unavailable');
     expect(r.results[0].reason).toContain('not installed');
     expect(r.findings).toEqual([]);
@@ -231,6 +283,7 @@ describe('declared-but-unresolvable lint gate (VERIFY-40 F-9 — disclosed, neve
       },
     });
     const r = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: CWD,
       specs: [winOnly],
       exec: pass,

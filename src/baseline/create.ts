@@ -60,6 +60,7 @@ import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import { captureFloorDebt, type FloorDebt } from './floor-debt';
 import { hashContent, readRepoState, buildAnalysisMeta } from './envelope-meta';
+import { trustedLocalContext, type AnalysisTrustContext } from '../analysis-trust';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -224,7 +225,9 @@ export async function gatherCurrentScan(options: {
    *  in a changed file). */
   readonly incrementalFiles?: ReadonlyArray<string>;
   readonly skipRemediation?: boolean; // gate-only; see `DepVulnGatherOptions`
-  readonly untrusted?: boolean; // gate-only: untrusted source (no project builds)
+  /** REQUIRED (4.2): whose tree is this? Governs plugin loads, custom-check
+   *  / lint command execution, and project-building dep audits. */
+  readonly trust: AnalysisTrustContext;
 }): Promise<CurrentScan> {
   const cwd = path.resolve(options.cwd);
   const scope = options.scope ?? FULL_SCOPE;
@@ -241,7 +244,7 @@ export async function gatherCurrentScan(options: {
         scope,
         incrementalFiles: options.incrementalFiles,
         skipRemediation: options.skipRemediation,
-        untrusted: options.untrusted,
+        trust: options.trust,
       }),
     opts: { partial },
   });
@@ -282,12 +285,14 @@ export async function gatherCurrentScan(options: {
   // policy can't block on (the loop Stop-gate's fast path), matching the other
   // producer inputs.
   const policy = loadPolicyFromCwd(cwd);
-  const customCheckFindings = scope.customChecks ? gatherCustomCheckFindings({ cwd, policy }) : [];
+  const customCheckFindings = scope.customChecks
+    ? gatherCustomCheckFindings({ cwd, policy, trust: options.trust })
+    : [];
   // Recall inputs are resolved even when the scope skipped the RUN: the kind's
   // context describes what the checks WOULD see, and a scope that can't block
   // on custom checks still records honest metadata. Pure string work + a
   // manifest read — no command executes here.
-  const customCheckRecall = customCheckRecallInputs({ cwd, policy });
+  const customCheckRecall = customCheckRecallInputs({ cwd, policy, trust: options.trust });
 
   const producerCtx: ProducerContext = {
     cwd,
@@ -410,7 +415,13 @@ export async function createBaseline(
     );
   }
 
-  const scan = await gatherCurrentScan({ cwd, verbose: options.verbose });
+  // Baseline capture runs on the operator's own tree by definition — you do
+  // not baseline untrusted content. Explicit, not defaulted (4.2).
+  const scan = await gatherCurrentScan({
+    cwd,
+    verbose: options.verbose,
+    trust: trustedLocalContext(),
+  });
 
   // Exclude actively-allowlisted findings from the captured set so a
   // reviewed-and-accepted finding never grandfathers into the baseline as

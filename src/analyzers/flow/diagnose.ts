@@ -25,6 +25,7 @@ import { readServedContract } from './contract';
 import { contractFreshness, type ContractFreshness } from './staleness';
 import { readWorkspace } from '../../workspace';
 import type { FlowTopology } from './setup';
+import type { AnalysisTrustContext } from '../../analysis-trust';
 
 /** Why a client call did not cleanly bind to a served route. */
 export type UnresolvedReason = 'no-route' | 'external' | 'placeholder-only';
@@ -245,20 +246,18 @@ function resolveConnection(cwd: string, model: FlowModel): { rung: ConnectionRun
 export async function diagnoseFlow(
   cwd: string,
   opts: {
-    /** Attacker-controlled-source posture, forwarded to the model gather so
-     *  executable flow plugins never load through the diagnose path
-     *  (N-TRUST-01: the seam-inventory chain reaches here from surfaces that
-     *  accept --untrusted). */
-    readonly untrusted?: boolean;
-  } = {},
+    /** REQUIRED (4.2): forwarded to the model gather so executable flow
+     *  plugins never load through the diagnose path on an untrusted tree —
+     *  the trust tier must survive every hop, not just the surface that
+     *  received the flag. */
+    readonly trust: AnalysisTrustContext;
+  },
 ): Promise<FlowDiagnosis | null> {
   if (allFlowSourceExtensions(detectActiveLanguages(cwd)).length === 0) return null;
 
   let model: FlowModel;
   try {
-    model = await gatherSystemFlowModel(cwd, {
-      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
-    });
+    model = await gatherSystemFlowModel(cwd, { trust: opts.trust });
   } catch {
     return null;
   }

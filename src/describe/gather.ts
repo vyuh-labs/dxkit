@@ -29,6 +29,7 @@ import type { ModelSet } from '../analyzers/model-schema/model';
 import { contractFreshness } from '../analyzers/flow/staleness';
 import type { ContractFreshness } from '../analyzers/flow/staleness';
 import { resolveProvenance, type ResolvedProvenance } from '../analyzers/cache';
+import { trustedLocalContext } from '../analysis-trust';
 
 /** The raw, read-only material a repo card is built from. */
 export interface DescribeInput {
@@ -53,8 +54,8 @@ export async function gatherDescribeInput(cwd: string): Promise<DescribeInput> {
   const stack = detect(cwd);
   const provenance = resolveProvenance(cwd);
 
-  const flow = await gatherSystemFlowModel(cwd);
-  const diagnosis = await diagnoseFlow(cwd);
+  const flow = await gatherSystemFlowModel(cwd, { trust: trustedLocalContext() });
+  const diagnosis = await diagnoseFlow(cwd, { trust: trustedLocalContext() });
   const models = await gatherRepoModelSet(cwd);
 
   // Freshness OFFLINE: never touch the network from a zero-write trial card.
@@ -91,7 +92,7 @@ export async function gatherHolisticGraph(cwd: string): Promise<HolisticGraph> {
   const models = [];
   for (const { name, root } of roots) {
     const sigs = await gatherFunctionSignatures(root);
-    const flow = await gatherRepoFlowModel(root);
+    const flow = await gatherRepoFlowModel(root, { trust: trustedLocalContext() });
     models.push(buildIntraRepoModel(name, root, sigs, flow));
   }
   return buildHolisticGraph(models);

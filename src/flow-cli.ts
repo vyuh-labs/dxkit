@@ -26,6 +26,7 @@ import { gatherSeamInventory, type SeamInventory } from './analyzers/convergence
 import { loadAllowlist } from './allowlist/file';
 import { readVisNetworkBundle } from './dashboard/vendor';
 import { readDxkitVersion } from './issue-cli';
+import type { AnalysisTrustContext } from './analysis-trust';
 
 export interface FlowExtractOptions extends FlowViewOptions {
   readonly out?: string;
@@ -42,7 +43,7 @@ export interface FlowViewOptions {
    *  plugins are NOT loaded (disclosed, not silent — the same trust tier
    *  the guardrail's --untrusted uses). The shipped PR workflow passes
    *  this on pull_request events (S-05). */
-  readonly untrusted?: boolean;
+  readonly trust: AnalysisTrustContext;
 }
 
 /**
@@ -78,12 +79,12 @@ function resolveRoots(opts: { cwd: string; frontend?: string; backend?: string }
 function gatherOptions(
   opts: FlowViewOptions,
   extra?: { relativeTo?: string },
-): { roots: string[]; extraSpecs: string[]; relativeTo?: string; untrusted?: boolean } {
+): { roots: string[]; extraSpecs: string[]; relativeTo?: string; trust: AnalysisTrustContext } {
   return {
     roots: resolveRoots(opts),
     extraSpecs: splitPaths(opts.specs, opts.cwd),
     ...(extra?.relativeTo !== undefined ? { relativeTo: extra.relativeTo } : {}),
-    ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+    trust: opts.trust,
   };
 }
 
@@ -169,7 +170,7 @@ export async function runFlowMap(opts: FlowViewOptions): Promise<void> {
   // seam-inventory orchestration, shared with `evaluate`) and used by both the
   // console + JSON surfaces.
   const inv = await gatherSeamInventory(opts.cwd, {
-    ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+    trust: opts.trust,
   });
 
   if (opts.json) {
@@ -376,7 +377,7 @@ export async function runFlowConsole(opts: FlowConsoleOptions): Promise<void> {
         // The console's trust tier must reach the gate's in-process plugin
         // load — dropping it here was N-TRUST-01 (the shipped PR workflow
         // runs `flow console --untrusted` against PR-head source).
-        ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+        trust: opts.trust,
       });
       if (outcome.ran) {
         for (const f of outcome.findings) {

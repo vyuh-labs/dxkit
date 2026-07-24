@@ -45,6 +45,7 @@ import type {
 } from './types';
 import { loadAllowlist, saveAllowlist } from '../allowlist/file';
 import type { AllowlistEntry } from '../allowlist/file';
+import { trustedLocalContext } from '../analysis-trust';
 
 export interface MigrationResult {
   readonly fromScheme: IdentitySchemeVersion;
@@ -266,7 +267,11 @@ export async function migrateIdentity(opts: {
 
   // One scan: entries carry the new-scheme ids; the remap recomputes the
   // old id per entry.
-  const scan = await gatherCurrentScan({ cwd, verbose: opts.verbose });
+  const scan = await gatherCurrentScan({
+    cwd,
+    trust: trustedLocalContext(),
+    verbose: opts.verbose,
+  });
   const remap = buildIdentityRemap(scan.findings, opts.from);
   const currentIds = new Set(scan.findings.map((f) => f.id));
 

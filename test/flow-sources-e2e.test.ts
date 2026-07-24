@@ -11,6 +11,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { gatherRepoFlowModel } from '../src/analyzers/flow/gather';
 import { changedFilesTouchFlowSurface } from '../src/languages';
+import { trustedLocalContext } from '../src/analysis-trust';
 
 let tmp: string;
 beforeEach(() => {
@@ -46,7 +47,7 @@ describe('flow.sources through the canonical repo gather', () => {
       item: [{ request: { method: 'GET', url: '/articles/:id' } }],
     });
 
-    const model = await gatherRepoFlowModel(tmp);
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext() });
     expect(model.calls).toHaveLength(2);
     expect(model.routes).toHaveLength(1);
     const bound = model.bindings.filter((b) => b.route !== null);
@@ -63,7 +64,7 @@ describe('flow.sources through the canonical repo gather', () => {
     write('.dxkit/policy.json', {
       flow: { sources: [{ kind: 'pact', path: 'pacts/nope.json' }] },
     });
-    const model = await gatherRepoFlowModel(tmp);
+    const model = await gatherRepoFlowModel(tmp, { trust: trustedLocalContext() });
     expect(model.sourceDisclosures).toHaveLength(1);
     expect(model.sourceDisclosures?.[0]).toContain("cannot read 'pacts/nope.json'");
   });

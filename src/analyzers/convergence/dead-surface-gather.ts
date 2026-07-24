@@ -32,6 +32,7 @@ import {
   matchesNonConsumerConvention,
   type DeadSurfaceTier,
 } from './dead-surface';
+import type { AnalysisTrustContext } from '../../analysis-trust';
 
 /** A served-but-unconsumed route with its resolved confidence tier + the reason
  *  the tier landed where it did (the honest ladder — never present uncertain as
@@ -246,9 +247,9 @@ export async function gatherDeadSurfaces(
     readonly dupFindings?: readonly DuplicateFinding[];
     readonly graph?: Graph;
     /** Trust posture, forwarded to diagnoseFlow's model gather so plugins
-     *  never load on an untrusted tree (N-TRUST-01). */
-    readonly untrusted?: boolean;
-  } = {},
+     *  never load on an untrusted tree. REQUIRED (4.2). */
+    readonly trust: AnalysisTrustContext;
+  },
 ): Promise<DeadSurfaceResult> {
   const empty: DeadSurfaceResult = {
     surfaces: [],
@@ -258,7 +259,7 @@ export async function gatherDeadSurfaces(
   let diag: FlowDiagnosis | null;
   try {
     diag = await diagnoseFlow(cwd, {
-      ...(opts.untrusted !== undefined ? { untrusted: opts.untrusted } : {}),
+      trust: opts.trust,
     });
   } catch {
     return empty;

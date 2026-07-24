@@ -22,6 +22,7 @@ import { SDK_MAJOR } from '@vyuhlabs/dxkit-sdk';
 import { runFlowConsole, runFlowExtract, runFlowMap } from '../src/flow-cli';
 import { gatherSeamInventory } from '../src/analyzers/convergence/inventory';
 import { runEvaluate } from '../src/evaluate/run';
+import { trustedLocalContext, untrustedContentContext } from '../src/analysis-trust';
 
 let repo: string;
 let sentinelDir: string;
@@ -109,12 +110,12 @@ describe('the plugin canary never fires through an --untrusted entry', () => {
     write('src/app.ts', `export async function load() { return api.fetchJson('/a'); }\n`);
     writeCanaryPlugin();
 
-    await runFlowMap({ cwd: repo, json: true, untrusted: true });
+    await runFlowMap({ cwd: repo, json: true, trust: untrustedContentContext() });
     expect(fired()).toBe(false);
 
     // Positive control: the same entry, trusted, DOES load the plugin — the
     // untrusted assertion above is not vacuous.
-    await runFlowMap({ cwd: repo, json: true, untrusted: false });
+    await runFlowMap({ cwd: repo, json: true, trust: trustedLocalContext() });
     expect(fired()).toBe(true);
   }, 120_000);
 
@@ -122,20 +123,25 @@ describe('the plugin canary never fires through an --untrusted entry', () => {
     write('src/app.ts', `export async function load() { return api.fetchJson('/a'); }\n`);
     writeCanaryPlugin();
 
-    await runFlowExtract({ cwd: repo, json: true, untrusted: true });
+    await runFlowExtract({ cwd: repo, json: true, trust: untrustedContentContext() });
     expect(fired()).toBe(false);
 
-    await runFlowExtract({ cwd: repo, json: true, untrusted: false });
+    await runFlowExtract({ cwd: repo, json: true, trust: trustedLocalContext() });
     expect(fired()).toBe(true);
   }, 120_000);
 
   it('flow console --diff (the gate path — the shipped PR workflow entry)', async () => {
     setupGitRepo();
 
-    await runFlowConsole({ cwd: repo, json: true, diff: 'HEAD~1', untrusted: true });
+    await runFlowConsole({
+      cwd: repo,
+      json: true,
+      diff: 'HEAD~1',
+      trust: untrustedContentContext(),
+    });
     expect(fired()).toBe(false);
 
-    await runFlowConsole({ cwd: repo, json: true, diff: 'HEAD~1', untrusted: false });
+    await runFlowConsole({ cwd: repo, json: true, diff: 'HEAD~1', trust: trustedLocalContext() });
     expect(fired()).toBe(true);
   }, 120_000);
 
@@ -144,21 +150,72 @@ describe('the plugin canary never fires through an --untrusted entry', () => {
     write('src/app.ts', `export async function load() { return api.fetchJson('/a'); }\n`);
     writeCanaryPlugin();
 
-    await gatherSeamInventory(repo, { untrusted: true });
+    await gatherSeamInventory(repo, { trust: untrustedContentContext() });
     expect(fired()).toBe(false);
 
-    await gatherSeamInventory(repo);
+    await gatherSeamInventory(repo, { trust: trustedLocalContext() });
     expect(fired()).toBe(true);
   }, 120_000);
 
   it('evaluate (the trial seam-visibility lane)', async () => {
     setupGitRepo();
 
-    await runEvaluate({ cwd: repo, base: 'HEAD~1', head: 'HEAD', untrusted: true });
+    await runEvaluate({
+      cwd: repo,
+      base: 'HEAD~1',
+      head: 'HEAD',
+      trust: untrustedContentContext(),
+    });
     expect(fired()).toBe(false);
 
     resetSentinel();
-    await runEvaluate({ cwd: repo, base: 'HEAD~1', head: 'HEAD', untrusted: false });
+    await runEvaluate({ cwd: repo, base: 'HEAD~1', head: 'HEAD', trust: trustedLocalContext() });
     expect(fired()).toBe(true);
   }, 300_000);
+});
+
+/**
+ * The custom-check / pack-lint sink (found in the 4.2 sweep): check commands
+ * come from the repo's committed policy, and the guardrail's scan path ran
+ * them REGARDLESS of trust — on `guardrail check --untrusted` a fork PR's
+ * tree had its policy-declared command executed against it. Same canary
+ * discipline: sentinel-writing command, untrusted must not fire, trusted must
+ * (proving the entry is covered, not vacuous).
+ */
+describe('untrusted canary — custom-check command execution', () => {
+  it('gatherCustomCheckFindings never spawns a policy command on untrusted content', async () => {
+    const { gatherCustomCheckFindings } = await import('../src/analyzers/custom-checks/gather');
+    const policy = {
+      checks: [
+        {
+          name: 'canary-check',
+          command: [
+            'node',
+            '-e',
+            `require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'fired')`,
+          ],
+          parse: 'exit',
+        },
+      ],
+    } as never;
+
+    gatherCustomCheckFindings({ cwd: repo, policy, trust: untrustedContentContext() });
+    expect(fired()).toBe(false);
+
+    gatherCustomCheckFindings({ cwd: repo, policy, trust: trustedLocalContext() });
+    expect(fired()).toBe(true);
+  }, 60_000);
+
+  it('the untrusted skip is DISCLOSED per check, never silent', async () => {
+    const { runCustomChecks } = await import('../src/analyzers/custom-checks/run');
+    const { resolveCustomCheckSpecs } = await import('../src/analyzers/custom-checks/gather');
+    const policy = {
+      checks: [{ name: 'canary-check', command: 'echo hi', parse: 'exit' }],
+    } as never;
+    const specs = resolveCustomCheckSpecs({ cwd: repo, policy, trust: untrustedContentContext() });
+    const result = runCustomChecks({ cwd: repo, specs, trust: untrustedContentContext() });
+    expect(result.results.every((r) => r.status === 'skipped-untrusted')).toBe(true);
+    expect(result.results[0].reason).toContain('untrusted content');
+    expect(result.findings).toHaveLength(0);
+  });
 });

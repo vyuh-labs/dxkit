@@ -921,6 +921,38 @@ if [ -n "$ROGUE_FLOOR" ]; then
 fi
 
 # =============================================================================
+# Analysis trust context (4.2): no optional-boolean trust carrier.
+# =============================================================================
+#
+# Whether repo-declared executable content (plugins, custom-check/lint
+# commands, project-building dep audits) may run is carried by the REQUIRED
+# typed `AnalysisTrustContext` (src/analysis-trust.ts). The optional
+# `untrusted?: boolean` shape shipped the default-to-trusted class twice: a
+# call site that omitted the flag silently ran plugins / check commands on
+# untrusted PR trees. A new `untrusted?:` declaration re-opens that door.
+# Allowed carriers: the CLI flag boundary (evaluate-cli.ts, converted
+# immediately via trustContextFromFlag), the frozen pack seam
+# (languages/capabilities/provider.ts + pack impls — DepVulnsProvider freezes
+# in place, fed by the one adapter in health.ts), and the ref-scan cache-key
+# param (a derived key input, not a decision carrier).
+ROGUE_TRUST=$(grep -rn "untrusted?:" src/ --include="*.ts" 2>/dev/null \
+  | grep -v "// trust-carrier-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)' \
+  | grep -v "^src/analysis-trust.ts" \
+  | grep -v "^src/evaluate-cli.ts" \
+  | grep -v "^src/baseline/ref-baseline.ts:.*untrusted?: boolean," \
+  | grep -v "^src/languages/")
+if [ -n "$ROGUE_TRUST" ]; then
+  echo "❌ Trust-context rule violation (4.2): an optional 'untrusted?:' carrier outside"
+  echo "   the allowed boundaries. Thread the REQUIRED typed AnalysisTrustContext instead"
+  echo "   (src/analysis-trust.ts) — an optional boolean silently defaults plugin-capable"
+  echo "   paths to trusted (the class that executed repo commands on fork-PR trees):"
+  echo "$ROGUE_TRUST"
+  echo "   → Annotate '// trust-carrier-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# =============================================================================
 # Custom-check gate (3.0): the one-runner seam stays single-path.
 # =============================================================================
 #

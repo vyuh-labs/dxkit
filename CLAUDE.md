@@ -1076,6 +1076,17 @@ the repo's own committed `.dxkit/policy.json` or a pack's built-in lint command
 — the same trust boundary as the repo's npm scripts / CI config. dxkit NEVER
 runs a check from a CLI flag or any other untrusted source. Review a PR that
 edits `checks[].command` with the scrutiny of a PR that edits a CI workflow.
+AND the TREE side (4.2): even a policy-declared command must not run against
+UNTRUSTED CONTENT (a fork PR's checkout — the command's inputs and reachable
+scripts are attacker-controlled there). Every plugin-capable seam (plugin
+loads, this runner, the flow/seam/evaluate/guardrail carriers) takes the
+REQUIRED typed `AnalysisTrustContext` (`src/analysis-trust.ts`) — constructed
+once at the boundary (`trustContextFromFlag` / `trustedLocalContext`), never
+an optional `untrusted?: boolean` (the optional shape shipped the
+default-to-trusted class twice; the arch-check bans it, and
+`test/flow-untrusted-canary.test.ts` side-effect-pins every entry point with
+positive controls). An untrusted tree yields disclosed `skipped-untrusted`
+outcomes, never a silent skip and never a spawn.
 
 **Bad**: a second `execFileSync` of a check command outside the runner; a
 lint code path that fingerprints/baselines separately from user checks; a

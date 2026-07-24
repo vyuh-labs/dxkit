@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { runEvaluate } from '../../src/evaluate/run';
+import { trustedLocalContext } from '../../src/analysis-trust';
 
 /**
  * THE zero-write proof: `evaluate` runs the real guardrail over a real ref
@@ -93,7 +94,7 @@ describe('evaluate zero-write invariant', () => {
       const gitStateBefore =
         git(d, 'for-each-ref') + '\n' + git(d, 'status', '--porcelain=v1', '-uall');
 
-      const doc = await runEvaluate({ cwd: d, base, head });
+      const doc = await runEvaluate({ trust: trustedLocalContext(), cwd: d, base, head });
 
       const after = snapshotTree(d);
       const gitStateAfter =
@@ -128,7 +129,7 @@ describe('evaluate zero-write invariant', () => {
       commit(d, { 'src/a.js': 'const a = 2;\nmodule.exports = a;\n' }, 'feat: bump a (#2)');
 
       const before = snapshotTree(d);
-      const doc = await runEvaluate({ cwd: d, lastLandings: 5 });
+      const doc = await runEvaluate({ trust: trustedLocalContext(), cwd: d, lastLandings: 5 });
       expect(Object.fromEntries(snapshotTree(d))).toEqual(Object.fromEntries(before));
 
       // Root has no base side → 2 replayable landings.

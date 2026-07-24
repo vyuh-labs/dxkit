@@ -20,6 +20,7 @@
 import { loadPolicyFromCwd } from './baseline/policy';
 import { cacheBlockingFindings, readFreshVerdict, writeVerdict } from './baseline/verdict-cache';
 import type { DimensionScore } from './analyzers/types';
+import { trustedLocalContext } from './analysis-trust';
 
 export interface ReceiptOptions {
   /** Base ref for score movement (e.g. `origin/main`). Omit to skip that section. */
@@ -154,7 +155,7 @@ async function resolveVerdict(
   }
   const { runGuardrailCheck } = await import('./baseline/check');
   const { renderMarkdown, verdictCounts } = await import('./baseline/check-renderers');
-  const result = await runGuardrailCheck({ cwd });
+  const result = await runGuardrailCheck({ cwd, trust: trustedLocalContext() });
   const markdown = renderMarkdown(result);
   const counts = verdictCounts(result);
   const ranAt = new Date().toISOString();
@@ -190,8 +191,10 @@ async function computeScoreMovement(cwd: string, ref: string): Promise<ScoreMove
   try {
     const { analyzeHealth } = await import('./analyzers/health');
     const { withRefWorktree } = await import('./baseline/ref-baseline');
-    const head = await analyzeHealth(cwd);
-    const base = await withRefWorktree({ cwd, ref }, (wt) => analyzeHealth(wt));
+    const head = await analyzeHealth(cwd, { trust: trustedLocalContext() });
+    const base = await withRefWorktree({ cwd, ref }, (wt) =>
+      analyzeHealth(wt, { trust: trustedLocalContext() }),
+    );
     const delta = (b: number, h: number): number => Math.round((h - b) * 10) / 10;
     const dims = DIMENSIONS.map(({ id, label }) => {
       const b = base.dimensions[id].score;

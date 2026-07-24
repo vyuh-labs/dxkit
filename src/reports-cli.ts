@@ -25,6 +25,7 @@ import { renderHistoryMarkdown } from './reports/render';
 import { loadPolicyFromCwd, type ReportsPolicy } from './baseline/policy';
 import { announceAnchorNotPushed } from './baseline/anchor-publish';
 import * as logger from './logger';
+import { trustedLocalContext } from './analysis-trust';
 
 /** The repo's `policy.json:reports` block (opt-in), via the one policy loader. */
 function readReportsPolicy(cwd: string): ReportsPolicy {
@@ -80,7 +81,7 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   const anchorRef = opts.anchorRef ?? policy.anchorRef ?? DEFAULT_REPORTS_REF;
   const retainHistory = opts.retainHistory ?? policy.retain?.history ?? 0;
 
-  const report = await analyzeHealth(cwd);
+  const report = await analyzeHealth(cwd, { trust: trustedLocalContext() });
   const sha = gitLine(cwd, ['rev-parse', 'HEAD']) || 'unknown';
   const branch = gitLine(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) || undefined;
   const date = opts.now ?? new Date().toISOString();

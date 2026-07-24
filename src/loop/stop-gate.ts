@@ -55,6 +55,7 @@ import {
   type FloorGateOutcome,
 } from './floor-gate';
 import { readStdinPayload, runConfiguredTests, type StopHookPayload } from './stop-gate-io';
+import { trustedLocalContext } from '../analysis-trust';
 
 /** What the gate decided, before any process I/O. */
 export interface StopGateDecision {
@@ -406,6 +407,7 @@ export async function runStopGate(cwd: string): Promise<void> {
     // code finding only appears in a file the diff touched, and the scan
     // falls back to full whenever the changed set can't be computed.
     const result = await runGuardrailCheck({
+      trust: trustedLocalContext(),
       cwd: dir,
       policy,
       scope,

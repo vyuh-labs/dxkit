@@ -149,7 +149,14 @@ export type CustomCheckStatus =
    *  but DISCLOSED via `reason`, and decided BEFORE the spawn: an unrunnable
    *  `dotnet build` must not execute just to fail in a way the parser would
    *  surface as a binary finding (the half-provisioned-SDK class). */
-  | 'skipped-environment';
+  | 'skipped-environment'
+  /** The analyzed tree is UNTRUSTED CONTENT (a fork PR, `--untrusted`) — a
+   *  check command comes from the repo's committed policy / pack lint, and
+   *  running it against a tree the repo's writers do not control executes
+   *  whatever that tree put in reach (4.2; the same trust tier that disables
+   *  plugin loads). Fail-OPEN, decided BEFORE any spawn, DISCLOSED via
+   *  `reason`; a trusted run (own branch / local) is the backstop. */
+  | 'skipped-untrusted';
 
 /** Per-check outcome. `findings` is non-empty only on `fail`. */
 export interface CustomCheckResult {

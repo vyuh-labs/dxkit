@@ -78,6 +78,7 @@ import type { BrownfieldPolicy } from '../src/baseline/policy';
 import { deriveFileRoutePath } from '../src/analyzers/flow/file-routes';
 import { extractFromTree } from '../src/analyzers/flow/extract';
 import { parseSource } from '../src/ast/parse';
+import { trustedLocalContext } from '../src/analysis-trust';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
 import { extractModelsFromTree } from '../src/analyzers/model-schema/extract';
@@ -629,6 +630,7 @@ describe('recipe playbook — synthetic pack', () => {
 
     const exec = vi.fn(() => ({ available: true, code: 0, output: '' }));
     const onLinux = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       specs,
       exec,
@@ -639,6 +641,7 @@ describe('recipe playbook — synthetic pack', () => {
     expect(exec).not.toHaveBeenCalled(); // decided BEFORE the spawn
 
     const onWindows = runCustomChecks({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       specs,
       exec,
@@ -653,6 +656,7 @@ describe('recipe playbook — synthetic pack', () => {
     // producer reads. If any link stopped being registry-driven the synthetic
     // pack's inputs would vanish here.
     const inputs = customCheckRecallInputs({
+      trust: trustedLocalContext(),
       cwd: '/nonexistent-repo',
       packs: [...LANGUAGES],
       policy: { lint: { enabled: true } } as unknown as BrownfieldPolicy,

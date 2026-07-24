@@ -25,6 +25,7 @@
  */
 
 import { makeCommandExec, tail, type CommandExec } from '../tools/bounded-exec';
+import { describeTrustSkip, type AnalysisTrustContext } from '../../analysis-trust';
 import {
   classifyEnvironmentFailure,
   currentEnvironment,
@@ -42,6 +43,14 @@ import type {
 
 export interface RunCustomChecksOptions {
   readonly cwd: string;
+  /** REQUIRED (4.2): whose tree is this? A check command is repo-declared
+   *  executable content — spawning it against untrusted content (a fork PR)
+   *  executes whatever that tree put in reach. With
+   *  `trust.repoExecutionAllowed` false every spec is a disclosed
+   *  `skipped-untrusted`, decided before any spawn. Required so an omission
+   *  is a compile error, never a silent default to trusted (the class that
+   *  shipped for plugins and, unpinned, for this exact sink). */
+  readonly trust: AnalysisTrustContext;
   /** Normalized checks to run (user policy + pack lint, already merged). */
   readonly specs: readonly CustomCheckSpec[];
   /** Per-command wall-clock budget (ms). A command that exceeds it is a
@@ -65,6 +74,17 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
   const findings: CustomCheckFinding[] = [];
 
   for (const spec of opts.specs) {
+    // Trust tier FIRST (4.2): untrusted content never spawns a repo-declared
+    // command — decided before every other boundary, disclosed per spec.
+    if (!opts.trust.repoExecutionAllowed) {
+      results.push({
+        name: spec.name,
+        status: 'skipped-untrusted',
+        findings: [],
+        reason: describeTrustSkip(`check '${spec.name}'`),
+      });
+      continue;
+    }
     // Rule 20: a check with a declared execution requirement is checked
     // against the environment BEFORE spawning — an unrunnable command must
     // not execute just to fail in a way the parser reads as a finding (the
