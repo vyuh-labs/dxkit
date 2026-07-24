@@ -309,6 +309,26 @@ export function describeRecallDrift(drift: RecallDrift): string {
   }
 }
 
-/** The remedy every drift shares. One string so the three renderers agree. */
-export const RECALL_DRIFT_REMEDY =
-  'run `vyuh-dxkit baseline create --force` to re-baseline; these findings warn instead of blocking until then';
+/**
+ * The remedy every drift shares — one derivation so the three renderers agree.
+ * `capturedIn` is the baseline's capture provenance (4.2): a LOCALLY captured
+ * baseline drifting against CI (or another machine) is the machine-dependent
+ * flavor whose ROOT fix is the CI-canonical re-capture the shipped refresh
+ * surface performs on merge + schedule — so the remedy leads there, and a
+ * local `--force` (which would just stamp THIS machine's environment) is the
+ * fallback, not the headline.
+ */
+export function recallDriftRemedy(capturedIn?: 'ci' | 'local'): string {
+  if (capturedIn === 'local') {
+    return (
+      'this baseline was captured on a developer machine — the CI refresh surface ' +
+      're-captures it canonically (on merge / on schedule), which retires the ' +
+      'machine-dependence; or run `vyuh-dxkit baseline create --force` in the ' +
+      'environment the gate runs in. These findings warn instead of blocking until then'
+    );
+  }
+  return 'run `vyuh-dxkit baseline create --force` to re-baseline; these findings warn instead of blocking until then';
+}
+
+/** Back-compat constant for renderers that predate capture provenance. */
+export const RECALL_DRIFT_REMEDY = recallDriftRemedy();

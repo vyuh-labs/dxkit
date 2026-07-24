@@ -171,6 +171,17 @@ export interface CurrentScan {
  * survives. `findings` is a param: the committed write persists the
  * allowlist-filtered `live` set, the ref-based side keeps the full gathered set.
  */
+/** Where a capture is running. CI (GITHUB_ACTIONS / CI env) is the CANONICAL
+ *  capture environment — the shipped refresh surface re-captures there on
+ *  merge + schedule, so committed recall converges to the toolchain of the
+ *  environment the required check runs in (the 4.2 fix for the
+ *  machine-dependent verdict flavor: a sandbox whose ambient scanner differs
+ *  now reads as "differs from canonical", with the remedy pointing at the
+ *  canonical surface). */
+export function captureEnvironmentKind(): 'ci' | 'local' {
+  return process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true' ? 'ci' : 'local';
+}
+
 export function scanToBaselineFile(
   scan: CurrentScan,
   opts: {
@@ -178,6 +189,8 @@ export function scanToBaselineFile(
     readonly findings: ReadonlyArray<RichBaselineEntry>;
     /** Injectable for deterministic tests; defaults to now. */
     readonly createdAt?: string;
+    /** Injectable for tests; defaults to the real environment detection. */
+    readonly capturedIn?: 'ci' | 'local';
     /** Floor-debt envelope (informational — Rule 15; never gates). Only the
      *  committed write supplies it: the ref-based prior side runs in a
      *  throwaway worktree where the floor would mostly skip-unavailable,
@@ -191,6 +204,7 @@ export function scanToBaselineFile(
     createdAt: opts.createdAt ?? new Date().toISOString(),
     repo: scan.repoState,
     analysis: scan.analysisMeta,
+    capturedIn: opts.capturedIn ?? captureEnvironmentKind(),
     tools: scan.tools,
     saltMode: scan.saltMode,
     identityScheme: CURRENT_IDENTITY_SCHEME,

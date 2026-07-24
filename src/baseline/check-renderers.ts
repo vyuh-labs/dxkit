@@ -34,7 +34,7 @@ import type {
 } from './check';
 import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
-import { RECALL_DRIFT_REMEDY, describeRecallDrift } from './recall';
+import { recallDriftRemedy, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 import { DEFER_ADVISORY_EXPIRY_DAYS } from '../allowlist/categories';
@@ -959,7 +959,9 @@ function formatDrift(drift: EnvelopeDrift): string[] {
     out.push(`cannot attribute ${describeRecallDrift(d)}`);
   }
   if (drift.recallDrift.length > 0) {
-    out.push(`${drift.recallDrift.length} kind(s) not attributable — ${RECALL_DRIFT_REMEDY}`);
+    out.push(
+      `${drift.recallDrift.length} kind(s) not attributable — ${recallDriftRemedy(drift.baselineCapturedIn)}`,
+    );
   }
   for (const d of drift.coverageDrift) {
     if (!d.baselineAvailable && d.currentAvailable) {

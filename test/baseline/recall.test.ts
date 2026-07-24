@@ -205,3 +205,22 @@ describe('describeRecallDrift', () => {
     expect(RECALL_DRIFT_REMEDY).toContain('baseline create');
   });
 });
+
+describe('recallDriftRemedy (4.2 CI-canonical capture)', () => {
+  it('a locally captured baseline leads with the canonical CI re-capture, not a local --force', async () => {
+    const { recallDriftRemedy } = await import('../../src/baseline/recall');
+    const local = recallDriftRemedy('local');
+    expect(local).toContain('CI refresh');
+    expect(local).toContain('developer machine');
+    // The local --force stays available but is the fallback, not the headline.
+    expect(local.indexOf('CI refresh')).toBeLessThan(local.indexOf('baseline create --force'));
+  });
+
+  it('ci-captured / unknown provenance keeps the plain re-baseline remedy', async () => {
+    const { recallDriftRemedy } = await import('../../src/baseline/recall');
+    for (const p of ['ci', undefined] as const) {
+      expect(recallDriftRemedy(p)).toContain('baseline create --force');
+      expect(recallDriftRemedy(p)).not.toContain('developer machine');
+    }
+  });
+});

@@ -100,6 +100,17 @@ export interface BaselineFile {
   readonly createdAt: string;
   readonly repo: BaselineRepoState;
   readonly analysis: BaselineAnalysisMeta;
+  /**
+   * Where this capture ran (4.2). CI is the CANONICAL capture environment:
+   * the shipped refresh surface re-captures there on merge + schedule, so
+   * recall converges to the toolchain of the one environment the required
+   * check also runs in — a laptop/sandbox whose ambient scanner differs then
+   * reads as "my environment differs from the canonical one", not as a
+   * machine-dependent verdict flavor. Drift renderers use it to point the
+   * remedy at the canonical surface instead of a local re-capture. Optional:
+   * absent on baselines written before 4.2 (treated as unknown provenance).
+   */
+  readonly capturedIn?: 'ci' | 'local';
   /** Flattened name → version/hash record of everything that determined what
    *  this scan could see. Sparse: only inputs that actually applied appear.
    *

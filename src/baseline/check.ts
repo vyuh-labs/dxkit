@@ -264,6 +264,11 @@ export interface EnvelopeDrift {
    *  to kinds with findings on at least one side — drift with nothing to
    *  misattribute is not worth reporting. */
   readonly recallDrift: ReadonlyArray<RecallDrift>;
+  /** The baseline's capture provenance (4.2): drives the drift REMEDY. A
+   *  locally captured baseline drifting is the machine-dependent flavor whose
+   *  root fix is the CI-canonical re-capture; renderers lead there instead of
+   *  a local `--force`. Absent on pre-4.2 baselines (unknown provenance). */
+  readonly baselineCapturedIn?: 'ci' | 'local';
   /** Scanners whose availability flipped between baseline capture and
    *  this check. A tool missing at baseline but present now means the
    *  baseline never covered that category — its findings surface as new
@@ -1104,6 +1109,7 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
     dxkitVersionChanged: baseline.analysis.dxkitVersion !== current.analysisMeta.dxkitVersion,
     toolVersionDiffs,
     recallDrift,
+    ...(baseline.capturedIn ? { baselineCapturedIn: baseline.capturedIn } : {}),
     coverageDrift: diffCoverage(baseline.coverage, current.coverage),
   };
 }
