@@ -118,3 +118,9 @@ export function captureFloorDebt(
     checks,
   };
 }
+
+// The pre-capture ESTIMATE (`describeFloorCapturePlan`) lives with the runner
+// in src/analyzers/correctness/run.ts — building pack commands is runner
+// territory (the arch-check keeps builder calls there). Re-exported here for
+// capture-side callers.
+export { describeFloorCapturePlan } from '../analyzers/correctness/run';

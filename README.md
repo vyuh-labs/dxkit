@@ -50,6 +50,22 @@ Existing findings are grandfathered, not approved. Only what a change _adds_
 from here can block. Already have dxkit installed? `init` detects the version
 and points you at `npx vyuh-dxkit update` instead of re-running setup.
 
+One honest cost note: the first baseline also records your repo's pre-existing
+build/test state, which means running your build and full test suite once
+(bounded; minutes on a large repository — `init` names the exact commands
+before they run). Add `--no-floor` to defer that part to CI or a later
+capture.
+
+### Try it read-only on your own repository first
+
+```bash
+npx -y @vyuhlabs/dxkit@latest evaluate
+```
+
+`evaluate` writes nothing to your repository and installs nothing: it replays
+your recently landed changes through the same gate `init` would arm and shows
+what would have blocked, warned, or passed — evidence first, setup second.
+
 ### Want to see the gate first, without installing anything?
 
 ```bash

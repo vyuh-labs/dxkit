@@ -319,6 +319,27 @@ export function describeScopeEscalation(result: CorrectnessFloorResult): string 
   return `dependency manifest changed${which} — ran the full suite (a dependency change can affect any file)`;
 }
 
+/**
+ * What a full-scope floor run WOULD execute here — the estimate an operator
+ * sees BEFORE the expensive part (4.2 evaluate-first onboarding): capture runs
+ * each pack's compile pass + FULL test suite, which is minutes on a real
+ * repo, and a spinner that says only "capturing baseline" makes that read as
+ * a hang. Pure: calls the pack command BUILDERS (never executes) at the same
+ * full-scope context the capture uses, so the plan can never drift from the
+ * run. Empty when no floor-capable pack is active (capture would no-op).
+ */
+export function describeFloorCapturePlan(cwd: string, packs: readonly LanguageSupport[]): string[] {
+  const ctx = { cwd, changedFiles: [] as string[], scope: 'full' as const };
+  const plan: string[] = [];
+  for (const { id, provider } of activeCorrectnessProviders(packs)) {
+    for (const cmd of [provider.syntaxCheck(ctx), provider.affectedTests(ctx)]) {
+      if (cmd !== null) plan.push(`${id} ${cmd.label}: ${[cmd.bin, ...cmd.args].join(' ')}`);
+    }
+    if (provider.resolutionCheck) plan.push(`${id} import-resolution: read-only, sub-second`);
+  }
+  return plan;
+}
+
 /** One-line human summary of a floor result (for the Stop-gate / hook block). */
 export function describeCorrectnessFloor(result: CorrectnessFloorResult): string {
   const failed = result.checks.filter((c) => c.status === 'fail');
