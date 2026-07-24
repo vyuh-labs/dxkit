@@ -59,6 +59,14 @@ export interface AttributedFloorFailure {
    *  "these specific findings are new"; the check's other findings are
    *  pre-existing debt. */
   readonly netNewFindings?: readonly string[];
+  /** Set on a FAIL-vs-FAIL comparison (4.2): 'finding' — both sides carried
+   *  failure identities and the set was diffed; 'check' — at least one side
+   *  did not, so additional failures piled onto the already-red check are NOT
+   *  distinguishable from the pre-existing one. The check-level lane must be
+   *  DISCLOSED by renderers (Rule 19: grandfathering by inability to observe
+   *  is stated, never silent). Absent on the other lattice outcomes, where
+   *  the question does not arise. */
+  readonly precision?: 'finding' | 'check';
 }
 
 /**
@@ -92,8 +100,8 @@ export function attributeFloorFailures(
       const netNewFindings = check.findings.filter((f) => !known.has(f));
       out.push(
         netNewFindings.length > 0
-          ? { check, attribution: 'net-new', netNewFindings }
-          : { check, attribution: 'pre-existing' },
+          ? { check, attribution: 'net-new', netNewFindings, precision: 'finding' }
+          : { check, attribution: 'pre-existing', precision: 'finding' },
       );
       continue;
     }
@@ -105,7 +113,14 @@ export function attributeFloorFailures(
           : baseStatus === 'skipped'
             ? 'unattributed'
             : opts.absentMeans;
-    out.push({ check, attribution });
+    out.push({
+      check,
+      attribution,
+      // FAIL-vs-FAIL without failure identities on both sides: the comparator
+      // cannot see a NEW failure piled onto the already-red check — disclosed
+      // check-level precision, never a silent grandfather (Rule 19).
+      ...(baseStatus === 'fail' ? { precision: 'check' as const } : {}),
+    });
   }
   return out;
 }

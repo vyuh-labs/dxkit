@@ -375,6 +375,88 @@ describe('runCorrectnessFloor', () => {
     });
   });
 
+  describe('parseFailures integration (4.2 failure-level attribution)', () => {
+    const failing = (label: string, parse: (o: string) => string[] | null): LanguageSupport =>
+      ({
+        id: 'ts',
+        correctness: {
+          execution: () => ({
+            hosts: ['any' as const],
+            toolchains: [],
+            needsBuild: false,
+            buildTarget: 'none' as const,
+            weight: 'cheap' as const,
+          }),
+          syntaxCheck: () => null,
+          affectedTests: () => ({ label, bin: 'npx', args: [], parseFailures: parse }),
+        },
+      }) as unknown as LanguageSupport;
+
+    it('parses the FULL output, not the display tail (a truncated snapshot false-blocks later)', () => {
+      // A marker early in a long stream: the display tail loses it, the
+      // findings must not.
+      const early = 'FAIL early.test.js';
+      const output = early + '\n' + Array.from({ length: 500 }, (_, i) => `noise ${i}`).join('\n');
+      const exec: CommandExec = () => ({ available: true, code: 1, output });
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [
+          failing('affected-tests', (o) =>
+            o.includes(early) ? ['suite: early.test.js'] : ['MISSED'],
+          ),
+        ],
+        exec,
+      });
+      expect(r.checks[0].findings).toEqual(['suite: early.test.js']);
+      expect(r.checks[0].output).not.toContain(early); // the tail truncated it
+    });
+
+    it('normalizes findings: deduped, sorted, order-independent identity', () => {
+      const exec: CommandExec = () => ({ available: true, code: 1, output: 'x' });
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [failing('affected-tests', () => ['b', 'a', 'b'])],
+        exec,
+      });
+      expect(r.checks[0].findings).toEqual(['a', 'b']);
+    });
+
+    it('a null/empty/throwing parse means check-level: no findings attached, the failure stands', () => {
+      const exec: CommandExec = () => ({ available: true, code: 1, output: 'x' });
+      for (const parse of [
+        () => null,
+        () => [],
+        () => {
+          throw new Error('bad reporter');
+        },
+      ]) {
+        const r = runCorrectnessFloor({
+          ...base,
+          packs: [failing('affected-tests', parse as () => string[] | null)],
+          exec,
+        });
+        expect(r.checks[0].status).toBe('fail');
+        expect(r.checks[0].findings).toBeUndefined();
+      }
+    });
+
+    it('never parses a passing run', () => {
+      let called = false;
+      const exec: CommandExec = () => ({ available: true, code: 0, output: 'all good' });
+      runCorrectnessFloor({
+        ...base,
+        packs: [
+          failing('affected-tests', () => {
+            called = true;
+            return ['x'];
+          }),
+        ],
+        exec,
+      });
+      expect(called).toBe(false);
+    });
+  });
+
   describe('describeFloorCapturePlan (the pre-capture estimate — 4.2 evaluate-first)', () => {
     it('names the full-scope commands capture would run, without executing anything', async () => {
       const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');
