@@ -90,6 +90,7 @@ visibility-derived defaults (`gh repo view --json visibility` →
 | `ref`       | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
 | `anchor`    | `string` | Where a committed anchor is stored: `tree`, `branch`, or `cache`. See "Anchor transport" below. Auto-selected when omitted.                 |
 | `anchorRef` | `string` | Branch that stores the anchor when `anchor` is `branch`. Default `dxkit-baselines`. Must NOT be a protection-covered branch.                |
+| `refreshCadence` | `string` | How often the scheduled baseline refresh runs: `weekly` (default), `daily`, or a raw 5-field cron. See "Refresh cadence" below.        |
 
 CLI `--mode` / `--ref` flags override the policy fields.
 
@@ -134,6 +135,31 @@ Run `vyuh-dxkit doctor` to check whether your guardrail is actually _enforced_
 (a required check on a protected branch) rather than merely wired, and
 `vyuh-dxkit protect` (dry-run by default; `--apply` to write) to require the
 `dxkit-guardrails` check + PR review.
+
+### Refresh cadence
+
+On the `branch` and `cache` transports the refresh workflow also runs on a
+schedule, so newly published advisories reach the standing decision PR without
+waiting for a merge. `baseline.refreshCadence` sets that schedule:
+
+```jsonc
+{
+  "baseline": { "refreshCadence": "daily" },
+}
+```
+
+Accepted values: `weekly` (Monday 06:00 UTC — the default), `daily`
+(06:00 UTC), or a raw 5-field cron expression (e.g. `"30 5 * * 1,4"`).
+Anything else falls back to the default. The value is rendered into the
+installed workflow at `init`/`update` time, so after changing it run
+`vyuh-dxkit update` (or re-run `init`) to re-render
+`.github/workflows/dxkit-baseline-refresh.yml`, and commit the result.
+
+Cadence tunes how *soon* the decision surface sees a new advisory batch — it
+never changes what a refresh does: newly published advisories are always held
+out of the baseline and raised for a decision, whatever the schedule. The
+`tree` transport refreshes on every default-branch push and has no schedule,
+so the knob does not apply there.
 
 ## Custom checks + lint gate
 

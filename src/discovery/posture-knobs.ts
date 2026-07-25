@@ -85,6 +85,16 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
   },
   { path: 'loop.preset', command: 'loop', requiresPlan: true, requiresRecommend: true },
   {
+    path: 'baseline.refreshCadence',
+    command: 'baseline',
+    requiresPlan: false,
+    requiresRecommend: false,
+    exemptionReason:
+      'a schedule-frequency tune of the already-installed refresh workflow, not a gate/posture — ' +
+      'it changes when the advisory decision surface runs, never what any run finds or blocks, and ' +
+      'no repo-observable fact selects a cadence. Documented under "Refresh cadence" in policy.md.',
+  },
+  {
     path: 'newAdvisories.blockSeverities',
     command: 'guardrail',
     requiresPlan: false,

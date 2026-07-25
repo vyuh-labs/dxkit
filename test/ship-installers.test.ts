@@ -300,6 +300,51 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     expect(content).toContain('--mode ref-based --ref origin/$DXKIT_PR_BASE');
   });
 
+  it('renders the default weekly cron into a scheduled refresh transport', () => {
+    const result = installCiBaselineRefresh(tmp, { policyAnchor: 'branch' });
+    expect(result.installed).toContain('.github/workflows/dxkit-baseline-refresh.yml');
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-baseline-refresh.yml'),
+      'utf8',
+    );
+    expect(content).not.toContain('__DXKIT_REFRESH_CRON__');
+    expect(content).toContain("- cron: '0 6 * * 1'");
+  });
+
+  it('renders baseline.refreshCadence from policy into the schedule (named + raw cron)', () => {
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { refreshCadence: 'daily' } }),
+    );
+    installCiBaselineRefresh(tmp, { policyAnchor: 'branch' });
+    const workflowPath = path.join(tmp, '.github/workflows/dxkit-baseline-refresh.yml');
+    expect(fs.readFileSync(workflowPath, 'utf8')).toContain("- cron: '0 6 * * *'");
+
+    // A raw cron passes through; re-render propagates it (the update lane).
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { refreshCadence: '30 5 * * 1,4' } }),
+    );
+    installCiBaselineRefresh(tmp, { policyAnchor: 'branch', force: true });
+    expect(fs.readFileSync(workflowPath, 'utf8')).toContain("- cron: '30 5 * * 1,4'");
+  });
+
+  it('falls back to the weekly default on a malformed cadence — never renders an unvalidated value', () => {
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { refreshCadence: "0 6 * * 1' && whoami" } }),
+    );
+    installCiBaselineRefresh(tmp, { policyAnchor: 'branch' });
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-baseline-refresh.yml'),
+      'utf8',
+    );
+    expect(content).toContain("- cron: '0 6 * * 1'");
+    expect(content).not.toContain('whoami');
+  });
+
   it('installs the graph-refresh workflow with the default branch substituted (#119)', () => {
     execFileSync('git', ['init', '-q', '-b', 'develop'], { cwd: tmp });
     const result = installCiGraphRefresh(tmp);

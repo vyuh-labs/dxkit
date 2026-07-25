@@ -24,7 +24,7 @@ on:
   push:
     branches: [__DXKIT_DEFAULT_BRANCH__]
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: '__DXKIT_REFRESH_CRON__'
   workflow_dispatch: {}
 
 permissions:

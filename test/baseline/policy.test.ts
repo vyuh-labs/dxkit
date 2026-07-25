@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
+import {
+  DEFAULT_BASELINE_REFRESH_CRON,
+  DEFAULT_BROWNFIELD_POLICY,
+  baselineRefreshCron,
+} from '../../src/baseline/policy';
 import { classify, classifyAll } from '../../src/baseline/classify';
 import { verdictWordFrom } from '../../src/baseline/check-renderers';
 import { buildReachableIndex } from '../../src/baseline/check';
@@ -490,5 +494,48 @@ describe('classifyAll — bulk classification preserves order', () => {
       recallDrifted: true,
     }));
     expect(results.every((r) => r.status === 'tooling_drift')).toBe(true);
+  });
+});
+
+describe('baselineRefreshCron — the ONE cadence normalizer', () => {
+  it('defaults to weekly when absent', () => {
+    expect(baselineRefreshCron({})).toBe(DEFAULT_BASELINE_REFRESH_CRON);
+    expect(baselineRefreshCron({ baseline: {} })).toBe('0 6 * * 1');
+  });
+
+  it('maps the named cadences', () => {
+    expect(baselineRefreshCron({ baseline: { refreshCadence: 'weekly' } })).toBe('0 6 * * 1');
+    expect(baselineRefreshCron({ baseline: { refreshCadence: 'daily' } })).toBe('0 6 * * *');
+  });
+
+  it('passes a valid 5-field cron through, trimmed', () => {
+    expect(baselineRefreshCron({ baseline: { refreshCadence: '30 5 * * 1,4' } })).toBe(
+      '30 5 * * 1,4',
+    );
+    expect(baselineRefreshCron({ baseline: { refreshCadence: ' 0 */6 * * * ' } })).toBe(
+      '0 */6 * * *',
+    );
+    expect(baselineRefreshCron({ baseline: { refreshCadence: '0 6 1-15 * *' } })).toBe(
+      '0 6 1-15 * *',
+    );
+  });
+
+  it('rejects malformed or unsafe values back to the default — the value lands in executable workflow YAML', () => {
+    for (const bad of [
+      'hourly', // unknown name
+      '0 6 * *', // 4 fields
+      '0 6 * * 1 2', // 6 fields
+      "0 6 * * 1' && rm -rf /", // quote / injection shape
+      '0 6 * * MON', // day names not in the strict grammar
+      '0 6 * * 1\nsteps:', // newline
+      '', // empty
+    ]) {
+      expect(baselineRefreshCron({ baseline: { refreshCadence: bad } })).toBe(
+        DEFAULT_BASELINE_REFRESH_CRON,
+      );
+    }
+    expect(
+      baselineRefreshCron({ baseline: { refreshCadence: 42 as unknown as string } }),
+    ).toBe(DEFAULT_BASELINE_REFRESH_CRON);
   });
 });
