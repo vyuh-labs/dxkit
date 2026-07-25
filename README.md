@@ -122,6 +122,9 @@ What you can rely on:
 - **Explicit failure states.** dxkit distinguishes a clean verdict from a
   skipped or unavailable check. A skipped detector is never reported as
   passed.
+- **Deliberate releases.** Minors are batched scope; patches are verified
+  production fixes that may ship same-day; every release passes the full gate
+  suite including dxkit's own guardrail. Policy: [RELEASES.md](RELEASES.md).
 
 ---
 
