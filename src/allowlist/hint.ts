@@ -248,6 +248,14 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'needs none — allowlist with category=deferred and a short expiry so the ' +
         'exception stays visible and time-boxed.'
       );
+    case 'license':
+      return (
+        "A dependency's license matches this repo's prohibited list " +
+        '(policy.json:licenses.prohibited). Replace the dependency or move it out ' +
+        'of the shipped surface — or, with legal sign-off, allowlist with ' +
+        'category=accepted-risk (ideally with an expiry) so the decision stays ' +
+        'visible and attributable.'
+      );
   }
 }
 
@@ -291,9 +299,10 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'duplication':
     case 'code-reimplementation':
     case 'paired-change':
-      // A symmetric PAIR of anchors (or a diff-scoped rule), no single
-      // canonical file:line → route to the `--fingerprint=<id>` CLI form,
-      // like duplication.
+    case 'license':
+      // A symmetric PAIR of anchors (or a diff-scoped rule, or a
+      // contract-domain package identity), no single canonical file:line →
+      // route to the `--fingerprint=<id>` CLI form, like duplication.
       return {};
   }
 }

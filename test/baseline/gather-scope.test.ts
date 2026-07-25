@@ -50,12 +50,20 @@ describe('scopeForRefBasedDiff', () => {
     expect(scope.duplication).toBe(false);
     expect(scope.testGaps).toBe(false);
     expect(scope.customChecks).toBe(false);
+    // Licenses read the INSTALLED dependency tree, which a bare worktree
+    // lacks — same class as custom-check.
+    expect(scope.licenses).toBe(false);
     // The secrets analyzer stays on: secret-hmac is its companion output
     // and the located `secret` kind still gates.
     expect(scope.secrets).toBe(true);
     expect(scope.codePatterns).toBe(true);
     expect(scope.depVulns).toBe(true);
-    expect([...skippedKinds].sort()).toEqual(['custom-check', 'duplication', 'test-gap']);
+    expect([...skippedKinds].sort()).toEqual([
+      'custom-check',
+      'duplication',
+      'license',
+      'test-gap',
+    ]);
   });
 
   it('is a no-op on a scope that never enabled the discarded analyzers', () => {
@@ -146,6 +154,7 @@ describe('scopeForPolicy', () => {
       newMaliciousDependency: false,
       newUntestedChangedSource: false,
       newSevereQualityIssueInChangedFiles: false,
+      newProhibitedLicense: false,
     };
     for (const rule of Object.keys(BLOCK_RULE_EVIDENCE) as Array<keyof BrownfieldBlockRules>) {
       const evidence = BLOCK_RULE_EVIDENCE[rule];

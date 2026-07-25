@@ -224,6 +224,8 @@ function describeEntry(entry: BaselineEntry): string {
     }
     case 'paired-change':
       return `${entry.check}  [paired-change${entry.blocking ? '' : ' · warn-only'}]`;
+    case 'license':
+      return `${entry.package}${entry.version ? '@' + entry.version : ''}  [${entry.licenseType}]`;
     case 'custom-check':
       return entry.file !== undefined
         ? `${entry.file}:${entry.line ?? '?'}  [${entry.check}${entry.rule ? '/' + entry.rule : ''}]`

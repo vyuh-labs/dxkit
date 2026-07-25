@@ -87,5 +87,6 @@ export function producerFixtureContext(): ProducerContext {
     inlineAllowlistAnnotations: [],
     customCheckFindings: [],
     customCheckRecall: {},
+    prohibitedLicenses: [],
   };
 }

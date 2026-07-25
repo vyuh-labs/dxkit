@@ -63,6 +63,7 @@ tuning belongs here.
 | `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                                                                                                                                                           |
 | `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
 | `pairedChecks`              | `object[]`     | Declarative "changing X requires also changing Y" rules evaluated over the diff (no command run). See "Paired-change rules" below.                                                                                                                                                                                   |
+| `licenses`                  | `object`       | License posture: `prohibited` lists SPDX ids/prefixes that block on new dependencies. See "Prohibited licenses" below.                                                                                                                                                                                               |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 | `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
@@ -263,6 +264,7 @@ of confidence" policy lines. Set any flag to `false` to suppress.
 | `newMaliciousDependency`                  | Block a newly-introduced dependency carrying a malicious-code advisory (OSV `MAL-*`, CWE-506 family, malware-titled GHSA) at ANY severity — install-time malware runs at install, so CVSS and reachability are the wrong lens |
 | `newUntestedChangedSource`                | Block when an untested source file appears alongside changed code                                                                                                                                                             |
 | `newSevereQualityIssueInChangedFiles`     | Block newly-introduced severe quality issues touching changed lines                                                                                                                                                           |
+| `newProhibitedLicense`                    | Block a new dependency whose license matches `licenses.prohibited`. Armed by default and inert until that list is declared — see "Prohibited licenses" below                                                                  |
 
 ## `newAdvisories` — the newly-published-advisory tier
 
@@ -295,6 +297,42 @@ instead of the generic block list:
   grandfathered) and raised as one standing decision PR
   (`dxkit/advisory-decision`) whose merge defers them time-boxed — dependency
   owners decide before feature PRs fight the findings one at a time.
+
+## Prohibited licenses
+
+`licenses.prohibited` turns the license inventory (the `licenses` report +
+BOM) into a gate: a **new** dependency whose license matches the list blocks
+(the `newProhibitedLicense` block rule, armed by default).
+
+```jsonc
+{
+  "licenses": { "prohibited": ["GPL-", "AGPL-3.0"] },
+}
+```
+
+Semantics, deliberately biased toward false negatives:
+
+- Entries are SPDX ids or family **prefixes** (`"GPL-"` covers `GPL-2.0`,
+  `GPL-3.0-only`, …). Compound expressions are split, so a dual-licensed
+  `"GPL-3.0 OR MIT"` package still matches.
+- `UNKNOWN` (an unresolvable license) never matches unless you list it
+  explicitly — an unresolved license is a disclosure problem, not a violation.
+- Only matches become findings; the inventory itself never enters the
+  baseline. An empty/absent list means the rule is inert — dxkit never
+  invents a legal posture.
+- **Brownfield semantics**: pre-existing violations are grandfathered into the
+  baseline (burn them down via `vyuh-dxkit debt`); the gate blocks the next
+  dependency that *introduces* one. Widening the list later reads as policy
+  drift (warn), not as the next PR author's fault — re-baseline to adopt the
+  tightened posture.
+- Finding identity is `(package, license)` — version-free, so a routine bump
+  of an accepted-risk dependency keeps its one allowlist decision, while a
+  license *change* on upgrade re-mints and gates.
+- Gates in committed/baseline mode (the license gather reads the installed
+  dependency tree, which a bare ref-worktree lacks — same class as custom
+  checks). Exceptions with legal sign-off:
+  `vyuh-dxkit allowlist add --fingerprint=<id> --kind=license
+--category=accepted-risk --reason="…"`.
 
 ## Common customisations
 

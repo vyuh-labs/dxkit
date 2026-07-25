@@ -29,9 +29,16 @@ const STRONG_COPYLEFT_PREFIXES: ReadonlyArray<string> = ['GPL-', 'AGPL-'];
  */
 const WEAK_COPYLEFT_PREFIXES: ReadonlyArray<string> = ['LGPL-', 'MPL-', 'EPL-', 'CDDL-'];
 
-function matchesAny(licenseType: string, prefixes: ReadonlyArray<string>): boolean {
-  // license-checker may emit "GPL-3.0 OR MIT" compound expressions.
-  // Split and test any term so a dual-licensed package still gets flagged.
+/**
+ * The ONE SPDX-expression matcher (Rule 2): the risk-category tiers here AND
+ * the prohibited-license producer both resolve "does this license match any
+ * of these ids/prefixes?" through it. Compound expressions
+ * ("GPL-3.0 OR MIT", "X AND Y", comma lists) are split and any term tested,
+ * so a dual-licensed package still matches; matching is prefix-based per
+ * term, so a family prefix ("GPL-") covers its variants and an exact id
+ * ("AGPL-3.0") matches itself.
+ */
+export function licenseMatchesAny(licenseType: string, prefixes: ReadonlyArray<string>): boolean {
   const terms = licenseType.split(/\s+OR\s+|\s+AND\s+|,\s*/);
   for (const term of terms) {
     for (const p of prefixes) {
@@ -40,6 +47,8 @@ function matchesAny(licenseType: string, prefixes: ReadonlyArray<string>): boole
   }
   return false;
 }
+
+const matchesAny = licenseMatchesAny;
 
 export interface LicenseRiskCategory {
   /** Severity tier for ordering and display. */

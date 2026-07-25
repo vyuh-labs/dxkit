@@ -22,6 +22,7 @@ import {
   computeFlowBindingFingerprint,
   computeModelSchemaDriftFingerprint,
   computePairedChangeFingerprint,
+  computeProhibitedLicenseFingerprint,
   lineWindowFor,
   SECRET_CANONICAL_RULE,
 } from '../analyzers/tools/fingerprint';
@@ -162,6 +163,12 @@ export function identityFor(
       // (would churn as the diff iterates) and never the globs (editing a
       // committed rule's patterns is policy evolution, not a new violation).
       return computePairedChangeFingerprint(input.check);
+    case 'license':
+      // Version-independent (the dep-vuln doctrine): `(package, licenseType)`
+      // — a routine bump under the same prohibited license keeps one
+      // allowlist decision; a license CHANGE re-mints. Never a scanner's raw
+      // captured text (Rule 9).
+      return computeProhibitedLicenseFingerprint(input.package, input.licenseType);
   }
 }
 

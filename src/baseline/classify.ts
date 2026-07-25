@@ -374,6 +374,11 @@ function evaluateBlockRules(
   if (rules.newMaliciousDependency && context.kind === 'dep-vuln' && context.malicious === true) {
     return 'newMaliciousDependency';
   }
+  // Every minted `license` finding is already a prohibited-list match (the
+  // inventory never becomes findings), so kind alone is the whole predicate.
+  if (rules.newProhibitedLicense && context.kind === 'license') {
+    return 'newProhibitedLicense';
+  }
   if (
     rules.newUntestedChangedSource &&
     context.kind === 'test-gap' &&

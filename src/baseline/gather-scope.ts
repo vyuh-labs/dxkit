@@ -65,7 +65,8 @@ export interface GatherScope {
   readonly lint: boolean;
   /** coverage providers → Tests dimension. */
   readonly coverage: boolean;
-  /** license scan → attribution (never a blockable kind). */
+  /** license scan → attribution + the `license` kind (prohibited-list
+   *  matches only; blockable via `newProhibitedLicense`). */
   readonly licenses: boolean;
   /** import graph → dep-vuln reachability + DX metrics. */
   readonly imports: boolean;
@@ -145,7 +146,7 @@ export function scopeSignature(s: GatherScope): string {
  *  scope flags of the analyzers that produce them. `secret-hmac` is absent
  *  deliberately: it is a companion output of the secrets analyzer, which
  *  must still run for the located `secret` kind. */
-export type RefSkippableKind = 'duplication' | 'test-gap' | 'custom-check';
+export type RefSkippableKind = 'duplication' | 'test-gap' | 'custom-check' | 'license';
 
 /**
  * Drop the analyzers whose finding kinds a ref-based diff throws away
@@ -179,6 +180,10 @@ export function scopeForRefBasedDiff(scope: GatherScope): {
   if (next.customChecks) {
     next.customChecks = false;
     skipped.push('custom-check');
+  }
+  if (next.licenses) {
+    next.licenses = false;
+    skipped.push('license');
   }
   if (skipped.length === 0) return { scope, skippedKinds: skipped };
   return { scope: Object.freeze(next), skippedKinds: skipped };
@@ -216,6 +221,9 @@ export const BLOCK_RULE_EVIDENCE: Record<
   newMaliciousDependency: ['depVulns'],
   newUntestedChangedSource: ['testGaps'],
   newSevereQualityIssueInChangedFiles: ['codePatterns', 'hygiene'],
+  // The license inventory is the whole evidence: every minted `license`
+  // finding is already a prohibited-list match, so no second signal exists.
+  newProhibitedLicense: ['licenses'],
 });
 
 /**

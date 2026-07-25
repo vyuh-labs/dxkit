@@ -127,7 +127,8 @@ export type IdentityInput =
   | ModelSchemaDriftIdentityInput
   | CodeReimplementationIdentityInput
   | CustomCheckIdentityInput
-  | PairedChangeIdentityInput;
+  | PairedChangeIdentityInput
+  | LicenseIdentityInput;
 
 /**
  * Content anchor for the secret/code/config identity schemes.
@@ -528,6 +529,25 @@ export interface PairedChangeIdentityInput {
 }
 
 /**
+ * A prohibited-license finding — a dependency whose license matches the
+ * repo's `licenses.prohibited` list. Only MATCHES become findings (the
+ * license inventory itself never enters the baseline), so the kind stays
+ * small and every entry is a standing violation.
+ *
+ * Identity is `(package, licenseType)` — the dep-vuln doctrine: version-free,
+ * so a routine bump under the same license keeps one allowlist decision,
+ * while a license CHANGE re-mints. Tool-independent by construction (SPDX
+ * ids dxkit normalized, never a scanner's raw text).
+ */
+export interface LicenseIdentityInput {
+  readonly kind: 'license';
+  /** Package name as the ecosystem declares it. */
+  readonly package: string;
+  /** Canonical SPDX license expression (`GPL-3.0`, `AGPL-3.0-only`). */
+  readonly licenseType: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -708,6 +728,18 @@ export type BaselineEntry =
       /** The rule's declared message, when present. Display metadata only. */
       message?: string;
     }
+  | {
+      id: FindingId;
+      kind: 'license';
+      /** Package name — identity input. */
+      package: string;
+      /** Canonical SPDX expression that matched the prohibited list —
+       * identity input. */
+      licenseType: string;
+      /** Installed version at capture time. Display metadata only — a bump
+       * under the same license is the same standing violation (Rule 9). */
+      version?: string;
+    }
   | SanitizedBaselineEntry;
 
 /**
@@ -759,7 +791,8 @@ export interface SanitizedBaselineEntry {
     | 'model-schema-drift'
     | 'code-reimplementation'
     | 'custom-check'
-    | 'paired-change';
+    | 'paired-change'
+    | 'license';
   readonly sanitized: true;
 }
 
