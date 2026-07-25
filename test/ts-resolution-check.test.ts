@@ -204,6 +204,19 @@ describe('tsResolutionCheck', () => {
     if (r.kind === 'skipped') expect(r.reason).toContain('12');
   });
 
+  it('the framework static-asset dir is exempt (vendored UMD bundles are not app modules)', () => {
+    // Mirror-validated shape: a browserify-wrapped vendored file under
+    // public/ carries an internal require() the app bundler never resolves.
+    const cwd = repo({
+      'package.json': '{}',
+      'node_modules/': '',
+      'public/vendor/leaflet-thing.js':
+        "var queue = require('d3-queue').queue;\nmodule.exports = queue;\n",
+      'src/a.js': 'export default 1;\n',
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
   it('declaration files are exempt (type-only imports)', () => {
     const cwd = repo({
       'package.json': '{}',

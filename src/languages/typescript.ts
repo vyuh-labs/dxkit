@@ -1484,6 +1484,13 @@ export function tsResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
   let checked = 0;
   for (const rel of files) {
     if (rel.endsWith('.d.ts')) continue; // declaration files: type-only imports
+    // The framework STATIC-ASSET dir (CRA / Vite / Next `public/`) is copied
+    // verbatim and never goes through module resolution — files there are
+    // routinely vendored browserify/UMD bundles whose internal `require`
+    // calls are the bundle's own resolver, not the app's (mirror-validated:
+    // three such bundles produced the only false-positive-shaped findings on
+    // a real repository). False-negative bias: skip the whole dir.
+    if (rel === 'public' || rel.startsWith('public/')) continue;
     let content: string;
     try {
       content = fs.readFileSync(path.join(cwd, rel), 'utf-8');
